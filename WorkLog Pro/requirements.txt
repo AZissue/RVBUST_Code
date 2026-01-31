@@ -1,0 +1,13 @@
+# 项目依赖
+# UI 库
+PyQt5
+
+# 数据处理
+# pandas
+
+# 测试
+pytest
+
+# 代码质量
+flake8
+black
