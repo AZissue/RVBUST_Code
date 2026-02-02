@@ -62,6 +62,8 @@ class WorkLogPro(QMainWindow):
         # 排序状态变量
         self.sort_columns = []  # 当前排序的列索引列表，按优先级排序
         self.sort_orders = {}  # 当前排序顺序，键为列索引，值为排序顺序
+        # 原始行顺序存储
+        self.original_row_order = []  # 存储原始行顺序的ID列表
         self.setup_ui()
         self.apply_styles()
         self.load_data_from_excel()
@@ -546,6 +548,8 @@ class WorkLogPro(QMainWindow):
             if df is not None:
                 # 清空表格
                 self.table.setRowCount(0)
+                # 清空原始行顺序
+                self.original_row_order = []
                 
                 # 填充表格
                 for index, row in df.iterrows():
@@ -559,9 +563,12 @@ class WorkLogPro(QMainWindow):
                     self.table.setItem(table_row, 0, checkbox_item)
                     
                     # ID
-                    id_item = QTableWidgetItem(str(int(row.get('ID', index + 1))))
+                    id = str(int(row.get('ID', index + 1)))
+                    id_item = QTableWidgetItem(id)
                     id_item.setTextAlignment(Qt.AlignCenter)
                     self.table.setItem(table_row, 1, id_item)
+                    # 保存到原始行顺序
+                    self.original_row_order.append(id)
                     
                     # 日期
                     date_item = QTableWidgetItem(str(row.get('日期', '')))
@@ -775,6 +782,24 @@ class WorkLogPro(QMainWindow):
                 id_item = QTableWidgetItem(str(i + 1))
                 id_item.setTextAlignment(Qt.AlignCenter)
                 self.table.setItem(i, 1, id_item)  # 调整为第1列
+            
+            # 更新原始行顺序
+            for deleted_id in deleted_ids:
+                if deleted_id in self.original_row_order:
+                    self.original_row_order.remove(deleted_id)
+            # 重新映射原始行顺序中的ID
+            new_original_order = []
+            for id in self.original_row_order:
+                try:
+                    old_id = int(id)
+                    # 对于大于删除ID的，需要减1
+                    for deleted_id in sorted([int(d) for d in deleted_ids], reverse=True):
+                        if old_id > deleted_id:
+                            old_id -= 1
+                    new_original_order.append(str(old_id))
+                except ValueError:
+                    new_original_order.append(id)
+            self.original_row_order = new_original_order
             
             # 保存到Excel
             if self.save_data_to_excel():
@@ -1032,24 +1057,14 @@ class WorkLogPro(QMainWindow):
         # 检查当前列是否已经在排序列表中
         if logical_index in self.sort_columns:
             # 重复点击，取消该列的排序
-            self.sort_columns.remove(logical_index)
-            if logical_index in self.sort_orders:
-                del self.sort_orders[logical_index]
-            self.add_log(f"取消 {column_name} 排序", "操作")
+            self.sort_columns = []
+            self.sort_orders = {}
+            self.add_log(f"取消排序", "操作")
         else:
-            # 首次点击，添加到排序列表
-            # 特殊处理：如果当前排序列表为空，直接添加
-            # 如果当前排序列表不为空，且当前点击的是相机型号，且客户名称已在排序列表中，则在客户名称排序基础上添加相机型号排序
-            if self.sort_columns and logical_index == 4 and 3 in self.sort_columns:
-                # 相机型号在客户名称排序基础上添加
-                self.sort_columns.append(logical_index)
-                self.sort_orders[logical_index] = Qt.AscendingOrder
-                self.add_log(f"在客户名称排序基础上添加 {column_name} 升序排序", "操作")
-            else:
-                # 其他情况，重置排序，只按当前列排序
-                self.sort_columns = [logical_index]
-                self.sort_orders = {logical_index: Qt.AscendingOrder}
-                self.add_log(f"按 {column_name} 升序排序", "操作")
+            # 点击表头，重置排序，只按当前列排序
+            self.sort_columns = [logical_index]
+            self.sort_orders = {logical_index: Qt.AscendingOrder}
+            self.add_log(f"按 {column_name} 升序排序", "操作")
         
         # 执行排序
         self.perform_sort()
@@ -1068,32 +1083,54 @@ class WorkLogPro(QMainWindow):
                 row_data[col] = item.text() if item else ""
             rows_data.append(row_data)
         
-        # 按多列排序
-        # 使用自定义比较函数，只支持升序排列
-        def custom_sort(a, b):
-            for col in self.sort_columns:
-                val_a = a[col]
-                val_b = b[col]
-                
-                # 特殊处理ID列，将其转换为整数进行比较
-                if col == 1:  # ID列
-                    try:
-                        val_a = int(val_a)
-                        val_b = int(val_b)
-                    except ValueError:
-                        # 如果转换失败，按字符串比较
-                        pass
-                
-                # 只使用升序排列
-                if val_a < val_b:
-                    return -1
-                elif val_a > val_b:
-                    return 1
-            return 0
-        
-        # 导入functools.cmp_to_key来使用自定义比较函数
-        import functools
-        rows_data.sort(key=functools.cmp_to_key(custom_sort))
+        # 检查是否需要排序
+        if self.sort_columns:
+            # 按多列排序
+            # 使用自定义比较函数，只支持升序排列
+            def custom_sort(a, b):
+                for col in self.sort_columns:
+                    val_a = a[col]
+                    val_b = b[col]
+                    
+                    # 特殊处理ID列，将其转换为整数进行比较
+                    if col == 1:  # ID列
+                        try:
+                            val_a = int(val_a)
+                            val_b = int(val_b)
+                        except ValueError:
+                            # 如果转换失败，按字符串比较
+                            pass
+                    
+                    # 只使用升序排列
+                    if val_a < val_b:
+                        return -1
+                    elif val_a > val_b:
+                        return 1
+                return 0
+            
+            # 导入functools.cmp_to_key来使用自定义比较函数
+            import functools
+            rows_data.sort(key=functools.cmp_to_key(custom_sort))
+        else:
+            # 无排序，恢复原始行顺序
+            if self.original_row_order:
+                # 创建ID到行数据的映射
+                id_to_row = {}
+                for row in rows_data:
+                    # 使用整数键 1 来访问 ID 列
+                    if 1 in row:
+                        id_to_row[row[1]] = row
+                # 按原始顺序重新排列
+                ordered_rows = []
+                for id in self.original_row_order:
+                    if id in id_to_row:
+                        ordered_rows.append(id_to_row[id])
+                # 添加不在原始顺序中的新行
+                for row in rows_data:
+                    # 使用整数键 1 来访问 ID 列
+                    if 1 in row and row[1] not in self.original_row_order:
+                        ordered_rows.append(row)
+                rows_data = ordered_rows
         
         # 清空表格
         self.table.setRowCount(0)
@@ -1237,6 +1274,12 @@ class WorkLogPro(QMainWindow):
             if col == 0:
                 item.setTextAlignment(Qt.AlignCenter)
             self.table.setItem(row, col + 1, item)
+        
+        # 更新原始行顺序
+        if row_data:
+            new_id = str(row_data[0])
+            if new_id not in self.original_row_order:
+                self.original_row_order.append(new_id)
             
     def clear_table(self):
         """清空表格"""
