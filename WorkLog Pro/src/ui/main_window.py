@@ -1,5 +1,9 @@
 import sys
 import os
+
+# 添加项目根目录到Python路径，确保能正确导入core模块
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QLabel, QLineEdit, QTextEdit, QComboBox, 
                              QPushButton, QDateEdit, QTableWidget, QTableWidgetItem,
@@ -1011,45 +1015,40 @@ class WorkLogPro(QMainWindow):
         self.add_log(f"双击记录行 {row} 进入编辑模式", "操作")
         
     def on_header_clicked(self, logical_index):
-        """表头点击事件处理，实现组合排序功能"""
-        # 只对客户名称(3)、相机型号(4)、问题类型(7)和问题进度(8)列进行排序
-        if logical_index not in [3, 4, 7, 8]:
+        """表头点击事件处理，实现特定的排序功能"""
+        # 只对ID(1)、客户名称(3)和相机型号(4)列进行排序
+        if logical_index not in [1, 3, 4]:
             return
         
         # 获取列名称
-        if logical_index == 3:
+        if logical_index == 1:
+            column_name = "ID"
+        elif logical_index == 3:
             column_name = "客户名称"
         elif logical_index == 4:
             column_name = "相机型号"
-        elif logical_index == 7:
-            column_name = "问题类型"
-        else:  # logical_index == 8
-            column_name = "问题进度"
         
-        # 检查是否按下了Ctrl键（这里简化处理，实际应用中需要通过QMouseEvent获取）
-        # 注意：在PyQt中，需要重写header的mousePressEvent来获取按键状态
-        # 这里我们使用一种简化的方式，通过检查当前列是否已经在排序列表中来模拟
-        is_ctrl_pressed = logical_index in self.sort_columns
-        
-        if not is_ctrl_pressed:
-            # 没有按Ctrl键，重置排序，只按当前列排序
-            self.sort_columns = [logical_index]
-            self.sort_orders = {logical_index: Qt.AscendingOrder}
-            self.add_log(f"按 {column_name} 升序排序", "操作")
+        # 检查当前列是否已经在排序列表中
+        if logical_index in self.sort_columns:
+            # 重复点击，取消该列的排序
+            self.sort_columns.remove(logical_index)
+            if logical_index in self.sort_orders:
+                del self.sort_orders[logical_index]
+            self.add_log(f"取消 {column_name} 排序", "操作")
         else:
-            # 按了Ctrl键，添加到排序列表
-            if logical_index in self.sort_columns:
-                # 如果当前列已经在排序列表中，切换排序顺序
-                current_order = self.sort_orders.get(logical_index, Qt.AscendingOrder)
-                new_order = Qt.DescendingOrder if current_order == Qt.AscendingOrder else Qt.AscendingOrder
-                self.sort_orders[logical_index] = new_order
-                order_text = "降序" if new_order == Qt.DescendingOrder else "升序"
-                self.add_log(f"按 {column_name} {order_text} 排序", "操作")
-            else:
-                # 添加到排序列表
+            # 首次点击，添加到排序列表
+            # 特殊处理：如果当前排序列表为空，直接添加
+            # 如果当前排序列表不为空，且当前点击的是相机型号，且客户名称已在排序列表中，则在客户名称排序基础上添加相机型号排序
+            if self.sort_columns and logical_index == 4 and 3 in self.sort_columns:
+                # 相机型号在客户名称排序基础上添加
                 self.sort_columns.append(logical_index)
                 self.sort_orders[logical_index] = Qt.AscendingOrder
-                self.add_log(f"添加 {column_name} 升序排序", "操作")
+                self.add_log(f"在客户名称排序基础上添加 {column_name} 升序排序", "操作")
+            else:
+                # 其他情况，重置排序，只按当前列排序
+                self.sort_columns = [logical_index]
+                self.sort_orders = {logical_index: Qt.AscendingOrder}
+                self.add_log(f"按 {column_name} 升序排序", "操作")
         
         # 执行排序
         self.perform_sort()
@@ -1069,20 +1068,31 @@ class WorkLogPro(QMainWindow):
             rows_data.append(row_data)
         
         # 按多列排序
-        def sort_key(row):
-            keys = []
+        # 使用自定义比较函数，只支持升序排列
+        def custom_sort(a, b):
             for col in self.sort_columns:
-                value = row[col]
-                # 根据排序顺序调整键值
-                if self.sort_orders.get(col, Qt.AscendingOrder) == Qt.DescendingOrder:
-                    # 对于降序，我们需要反转字符串的比较
-                    # 注意：这只是一个简化的实现，对于数字等类型可能需要特殊处理
-                    if isinstance(value, str):
-                        value = ''.join(chr(255 - ord(c)) for c in value)
-                keys.append(value)
-            return keys
+                val_a = a[col]
+                val_b = b[col]
+                
+                # 特殊处理ID列，将其转换为整数进行比较
+                if col == 1:  # ID列
+                    try:
+                        val_a = int(val_a)
+                        val_b = int(val_b)
+                    except ValueError:
+                        # 如果转换失败，按字符串比较
+                        pass
+                
+                # 只使用升序排列
+                if val_a < val_b:
+                    return -1
+                elif val_a > val_b:
+                    return 1
+            return 0
         
-        rows_data.sort(key=sort_key)
+        # 导入functools.cmp_to_key来使用自定义比较函数
+        import functools
+        rows_data.sort(key=functools.cmp_to_key(custom_sort))
         
         # 清空表格
         self.table.setRowCount(0)
