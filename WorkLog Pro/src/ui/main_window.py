@@ -153,7 +153,42 @@ class WorkLogPro(QMainWindow):
         type_layout = QVBoxLayout()
         type_label = QLabel("问题类型:")
         self.type_combo = QComboBox()
-        self.type_combo.addItems(["账户问题", "硬件故障", "软件设置", "网络连接", "其他"])
+        self.type_combo.addItems(["点云调试", "SDK开发", "手眼标定", "使用培训", "资料提供", "需求沟通", "相机选型", "软件问题", "硬件问题", "其他"])
+        # 设置下拉框样式，添加选中项高亮效果
+        self.type_combo.setStyleSheet("""
+            QComboBox {
+                border: 1px solid #d1d5db;
+                border-radius: 6px;
+                padding: 8px 12px;
+                background-color: #ffffff;
+                font-size: 14px;
+                color: #2d3748;
+            }
+            QComboBox:hover {
+                border-color: #a0aec0;
+            }
+            QComboBox:focus {
+                border-color: #3182ce;
+                outline: none;
+            }
+            QComboBox QAbstractItemView {
+                border: 1px solid #e2e8f0;
+                border-radius: 6px;
+                padding: 4px;
+                background-color: #ffffff;
+            }
+            QComboBox QAbstractItemView::item {
+                padding: 8px 12px;
+                border-radius: 4px;
+            }
+            QComboBox QAbstractItemView::item:hover {
+                background-color: #ebf8ff;
+            }
+            QComboBox QAbstractItemView::item:selected {
+                background-color: #ebf8ff;
+                color: #3182ce;
+            }
+        """)
         type_layout.addWidget(type_label)
         type_layout.addWidget(self.type_combo)
         combo_layout.addLayout(type_layout)
@@ -162,7 +197,42 @@ class WorkLogPro(QMainWindow):
         status_layout = QVBoxLayout()
         status_label = QLabel("问题进度:")
         self.status_combo = QComboBox()
-        self.status_combo.addItems(["待处理", "处理中", "已解决", "已关闭"])
+        self.status_combo.addItems(["未解决", "跟进中", "已解决", "已关闭"])
+        # 设置下拉框样式，添加选中项高亮效果
+        self.status_combo.setStyleSheet("""
+            QComboBox {
+                border: 1px solid #d1d5db;
+                border-radius: 6px;
+                padding: 8px 12px;
+                background-color: #ffffff;
+                font-size: 14px;
+                color: #2d3748;
+            }
+            QComboBox:hover {
+                border-color: #a0aec0;
+            }
+            QComboBox:focus {
+                border-color: #3182ce;
+                outline: none;
+            }
+            QComboBox QAbstractItemView {
+                border: 1px solid #e2e8f0;
+                border-radius: 6px;
+                padding: 4px;
+                background-color: #ffffff;
+            }
+            QComboBox QAbstractItemView::item {
+                padding: 8px 12px;
+                border-radius: 4px;
+            }
+            QComboBox QAbstractItemView::item:hover {
+                background-color: #ebf8ff;
+            }
+            QComboBox QAbstractItemView::item:selected {
+                background-color: #ebf8ff;
+                color: #3182ce;
+            }
+        """)
         status_layout.addWidget(status_label)
         status_layout.addWidget(self.status_combo)
         combo_layout.addLayout(status_layout)
