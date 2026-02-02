@@ -1,5 +1,8 @@
 import os
 import pandas as pd
+from openpyxl import Workbook
+from openpyxl.styles import Alignment
+from openpyxl.utils import get_column_letter
 
 class DataManager:
     def __init__(self):
@@ -44,7 +47,48 @@ class DataManager:
                 os.makedirs(directory, exist_ok=True)
             
             df = pd.DataFrame(data)
-            df.to_excel(file_path, index=False)
+            # 使用openpyxl引擎保存，以便后续设置格式
+            with pd.ExcelWriter(file_path, engine='openpyxl') as writer:
+                df.to_excel(writer, sheet_name='Sheet1', index=False)
+                
+                # 获取worksheet对象
+                worksheet = writer.sheets['Sheet1']
+                
+                # 设置列宽和自动换行
+                for col_idx, column in enumerate(df.columns, 1):
+                    col_letter = get_column_letter(col_idx)
+                    
+                    # ID栏缩短
+                    if column == 'ID':
+                        worksheet.column_dimensions[col_letter].width = 8
+                    # 日期栏缩短
+                    elif column == '日期':
+                        worksheet.column_dimensions[col_letter].width = 15
+                    # 用户名称栏缩短
+                    elif column == '用户名称':
+                        worksheet.column_dimensions[col_letter].width = 15
+                    # 相机型号栏缩短
+                    elif column == '相机型号':
+                        worksheet.column_dimensions[col_letter].width = 18
+                    # 问题类型栏缩短
+                    elif column == '问题类型':
+                        worksheet.column_dimensions[col_letter].width = 12
+                    # 问题进度栏缩短
+                    elif column == '问题进度':
+                        worksheet.column_dimensions[col_letter].width = 12
+                    # 客户问题和解决方法扩大
+                    elif column == '客户问题' or column == '解决方法':
+                        worksheet.column_dimensions[col_letter].width = 50
+                    # 其他列设置合适的宽度
+                    else:
+                        worksheet.column_dimensions[col_letter].width = 15
+                
+                # 为所有单元格添加自动换行
+                for row in worksheet.iter_rows(min_row=2, max_row=worksheet.max_row, 
+                                              min_col=1, max_col=worksheet.max_column):
+                    for cell in row:
+                        cell.alignment = Alignment(wrap_text=True, vertical='top')
+            
             return True
         except Exception as e:
             raise Exception(f"保存Excel文件失败: {str(e)}")
@@ -67,7 +111,48 @@ class DataManager:
                 os.makedirs(directory, exist_ok=True)
             
             df = pd.DataFrame(data)
-            df.to_excel(file_path, index=False)
+            # 使用openpyxl引擎保存，以便后续设置格式
+            with pd.ExcelWriter(file_path, engine='openpyxl') as writer:
+                df.to_excel(writer, sheet_name='Sheet1', index=False)
+                
+                # 获取worksheet对象
+                worksheet = writer.sheets['Sheet1']
+                
+                # 设置列宽和自动换行
+                for col_idx, column in enumerate(df.columns, 1):
+                    col_letter = get_column_letter(col_idx)
+                    
+                    # ID栏缩短
+                    if column == 'ID':
+                        worksheet.column_dimensions[col_letter].width = 8
+                    # 日期栏缩短
+                    elif column == '日期':
+                        worksheet.column_dimensions[col_letter].width = 15
+                    # 用户名称栏缩短
+                    elif column == '用户名称':
+                        worksheet.column_dimensions[col_letter].width = 15
+                    # 相机型号栏缩短
+                    elif column == '相机型号':
+                        worksheet.column_dimensions[col_letter].width = 18
+                    # 问题类型栏缩短
+                    elif column == '问题类型':
+                        worksheet.column_dimensions[col_letter].width = 12
+                    # 问题进度栏缩短
+                    elif column == '问题进度':
+                        worksheet.column_dimensions[col_letter].width = 12
+                    # 客户问题和解决方法扩大
+                    elif column == '客户问题' or column == '解决方法':
+                        worksheet.column_dimensions[col_letter].width = 50
+                    # 其他列设置合适的宽度
+                    else:
+                        worksheet.column_dimensions[col_letter].width = 15
+                
+                # 为所有单元格添加自动换行
+                for row in worksheet.iter_rows(min_row=2, max_row=worksheet.max_row, 
+                                              min_col=1, max_col=worksheet.max_column):
+                    for cell in row:
+                        cell.alignment = Alignment(wrap_text=True, vertical='top')
+            
             return True
         except Exception as e:
             raise Exception(f"导出Excel文件失败: {str(e)}")
