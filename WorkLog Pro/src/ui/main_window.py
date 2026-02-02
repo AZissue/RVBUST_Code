@@ -346,6 +346,11 @@ class WorkLogPro(QMainWindow):
                 font-weight: 500;
                 font-size: 13px;
                 min-height: 32px;
+                outline: none;
+            }
+            
+            QPushButton:focus {
+                outline: none;
             }
             
             #primaryBtn {
