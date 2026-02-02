@@ -1,9 +1,5 @@
 import sys
 import os
-
-# 添加项目根目录到Python路径，确保能正确导入core模块
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QLabel, QLineEdit, QTextEdit, QComboBox, 
                              QPushButton, QDateEdit, QTableWidget, QTableWidgetItem,
