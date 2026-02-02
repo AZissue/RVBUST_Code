@@ -7,7 +7,9 @@ class Logger:
     
     def get_log_file_path(self):
         """获取日志文件路径"""
-        data_dir = "d:\\WorkLog Pro\\src\\data"
+        # 使用C盘用户文件夹作为存储位置
+        user_dir = os.path.expanduser("~")
+        data_dir = os.path.join(user_dir, "WorkLog Pro", "data")
         return os.path.join(data_dir, "app.log")
     
     def add_log(self, message, level="信息"):

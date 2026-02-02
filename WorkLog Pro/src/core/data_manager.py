@@ -7,7 +7,9 @@ class DataManager:
     
     def get_default_excel_path(self):
         """获取默认Excel文件路径"""
-        data_dir = "d:\\WorkLog Pro\\data"
+        # 使用C盘用户文件夹作为存储位置
+        user_dir = os.path.expanduser("~")
+        data_dir = os.path.join(user_dir, "WorkLog Pro", "data")
         return os.path.join(data_dir, "worklog.xlsx")
     
     def get_excel_file_path(self):
