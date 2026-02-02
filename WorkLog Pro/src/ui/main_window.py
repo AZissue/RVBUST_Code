@@ -656,7 +656,7 @@ class WorkLogPro(QMainWindow):
                         # 重置状态并清空表单
                         self.clear_form()
                     else:
-                        QMessageBox.error(self, "错误", "记录编辑失败，请检查日志！")
+                        QMessageBox.critical(self, "错误", "记录编辑失败，请检查日志！")
                 else:
                     # 非编辑模式，检查问题进度是否有更新
                     current_status = data.get('status', '')
@@ -693,7 +693,7 @@ class WorkLogPro(QMainWindow):
                             # 重置状态并清空表单
                             self.clear_form()
                         else:
-                            QMessageBox.error(self, "错误", "记录保存失败，请检查日志！")
+                            QMessageBox.critical(self, "错误", "记录保存失败，请检查日志！")
                     else:
                         # 问题进度无更新，提示用户
                         QMessageBox.information(self, "提示", "问题进度未发生变化，无需保存。")
@@ -728,11 +728,11 @@ class WorkLogPro(QMainWindow):
                     QMessageBox.information(self, "成功", "记录保存成功！")
                     self.clear_form()
                 else:
-                    QMessageBox.error(self, "错误", "记录保存失败，请检查日志！")
+                    QMessageBox.critical(self, "错误", "记录保存失败，请检查日志！")
         except ValueError as e:
             QMessageBox.warning(self, "警告", str(e))
         except Exception as e:
-            QMessageBox.error(self, "错误", f"保存失败: {str(e)}")
+            QMessageBox.critical(self, "错误", f"保存失败: {str(e)}")
             self.add_log(f"保存失败: {str(e)}", "错误")
         
     def on_delete_click(self):
@@ -783,7 +783,7 @@ class WorkLogPro(QMainWindow):
                 else:
                     QMessageBox.information(self, "成功", f"成功删除 {len(deleted_ids)} 条记录！")
             else:
-                QMessageBox.error(self, "错误", "记录删除失败，请检查日志！")
+                QMessageBox.critical(self, "错误", "记录删除失败，请检查日志！")
         
     def on_clear_click(self):
         """清除按钮点击"""
@@ -951,7 +951,7 @@ class WorkLogPro(QMainWindow):
                 QMessageBox.information(self, "成功", f"成功导入 {len(df)} 条记录！\n默认保存路径已更新为：{file_path}")
             except Exception as e:
                 self.add_log(f"导入Excel文件失败: {str(e)}", "错误")
-                QMessageBox.error(self, "错误", f"导入失败: {str(e)}")
+                QMessageBox.critical(self, "错误", f"导入失败: {str(e)}")
             
     def on_export_click(self):
         """导出Excel"""
@@ -983,7 +983,7 @@ class WorkLogPro(QMainWindow):
                 QMessageBox.information(self, "成功", "导出成功！")
             except Exception as e:
                 self.add_log(f"导出Excel文件失败: {str(e)}", "错误")
-                QMessageBox.error(self, "错误", f"导出失败: {str(e)}")
+                QMessageBox.critical(self, "错误", f"导出失败: {str(e)}")
             
     def on_table_selection_changed(self):
         """表格选择变更"""

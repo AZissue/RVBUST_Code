@@ -36,6 +36,11 @@ class DataManager:
         file_path = self.get_excel_file_path()
         
         try:
+            # 确保目录存在
+            directory = os.path.dirname(file_path)
+            if directory and not os.path.exists(directory):
+                os.makedirs(directory, exist_ok=True)
+            
             df = pd.DataFrame(data)
             df.to_excel(file_path, index=False)
             return True
@@ -54,6 +59,11 @@ class DataManager:
     def export_data_to_excel(self, data, file_path):
         """导出数据到指定Excel文件"""
         try:
+            # 确保目录存在
+            directory = os.path.dirname(file_path)
+            if directory and not os.path.exists(directory):
+                os.makedirs(directory, exist_ok=True)
+            
             df = pd.DataFrame(data)
             df.to_excel(file_path, index=False)
             return True
