@@ -30,6 +30,8 @@ class DataManager:
         try:
             if os.path.exists(file_path):
                 df = pd.read_excel(file_path)
+                # 将NaN值替换为空字符串
+                df = df.fillna('')
                 return df
             else:
                 return None
@@ -97,6 +99,8 @@ class DataManager:
         """从指定Excel文件导入数据"""
         try:
             df = pd.read_excel(file_path)
+            # 将NaN值替换为空字符串
+            df = df.fillna('')
             self.set_excel_file_path(file_path)
             return df
         except Exception as e:

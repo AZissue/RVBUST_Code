@@ -20,8 +20,7 @@ class BusinessLogic:
     
     def validate_record(self, record):
         """验证记录数据"""
-        if not record.get('customer'):
-            raise ValueError("客户名称不能为空！")
+        # 客户名称已设置为选填内容
         
         return True
     
