@@ -3,7 +3,8 @@
 PyQt5
 
 # 数据处理
-# pandas
+pandas
+openpyxl
 
 # 测试
 pytest

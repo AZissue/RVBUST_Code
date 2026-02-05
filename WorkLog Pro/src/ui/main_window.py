@@ -729,7 +729,8 @@ class WorkLogPro(QMainWindow):
                     
                     # 保存到Excel
                     if self.save_data_to_excel():
-                        QMessageBox.information(self, "成功", "记录编辑成功！已覆盖原记录。")
+                        # 取消弹窗，改为日志输出
+                        self.add_log("记录编辑成功！已覆盖原记录。", "操作")
                         # 重置状态并清空表单
                         self.clear_form()
                     else:
@@ -766,7 +767,8 @@ class WorkLogPro(QMainWindow):
                         
                         # 保存到Excel
                         if self.save_data_to_excel():
-                            QMessageBox.information(self, "成功", "记录保存成功！问题进度已更新并另存为新记录。")
+                            # 取消弹窗，改为日志输出
+                            self.add_log("记录保存成功！问题进度已更新并另存为新记录。", "操作")
                             # 重置状态并清空表单
                             self.clear_form()
                         else:
@@ -802,7 +804,8 @@ class WorkLogPro(QMainWindow):
                 
                 # 保存到Excel
                 if self.save_data_to_excel():
-                    QMessageBox.information(self, "成功", "记录保存成功！")
+                    # 取消弹窗，改为日志输出
+                    self.add_log("记录保存成功！", "操作")
                     self.clear_form()
                 else:
                     QMessageBox.critical(self, "错误", "记录保存失败，请检查日志！")
@@ -1184,22 +1187,31 @@ class WorkLogPro(QMainWindow):
         else:
             # 无排序，恢复原始行顺序
             if self.original_row_order:
-                # 创建ID到行数据的映射
+                # 创建ID到行数据的映射，并去重
                 id_to_row = {}
+                seen_ids = set()
                 for row in rows_data:
                     # 使用整数键 1 来访问 ID 列
                     if 1 in row:
-                        id_to_row[row[1]] = row
-                # 按原始顺序重新排列
+                        row_id = row[1]
+                        if row_id not in seen_ids:
+                            id_to_row[row_id] = row
+                            seen_ids.add(row_id)
+                # 按原始顺序重新排列，并去重
                 ordered_rows = []
+                seen_ids_in_order = set()
                 for id in self.original_row_order:
-                    if id in id_to_row:
+                    if id in id_to_row and id not in seen_ids_in_order:
                         ordered_rows.append(id_to_row[id])
-                # 添加不在原始顺序中的新行
+                        seen_ids_in_order.add(id)
+                # 添加不在原始顺序中的新行，并去重
                 for row in rows_data:
                     # 使用整数键 1 来访问 ID 列
-                    if 1 in row and row[1] not in self.original_row_order:
-                        ordered_rows.append(row)
+                    if 1 in row:
+                        row_id = row[1]
+                        if row_id not in seen_ids_in_order:
+                            ordered_rows.append(row)
+                            seen_ids_in_order.add(row_id)
                 rows_data = ordered_rows
         
         # 清空表格
