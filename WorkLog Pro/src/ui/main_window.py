@@ -653,12 +653,12 @@ class WorkLogPro(QMainWindow):
                     self.table.setItem(table_row, 4, camera_item)
                     
                     # 客户问题
-                    problem = str(row.get('客户问题', ''))[:50] + '...' if len(str(row.get('客户问题', ''))) > 50 else str(row.get('客户问题', ''))
+                    problem = str(row.get('客户问题', ''))
                     problem_item = QTableWidgetItem(problem)
                     self.table.setItem(table_row, 5, problem_item)
                     
                     # 解决方法
-                    solution = str(row.get('解决方法', ''))[:50] + '...' if len(str(row.get('解决方法', ''))) > 50 else str(row.get('解决方法', ''))
+                    solution = str(row.get('解决方法', ''))
                     solution_item = QTableWidgetItem(solution)
                     self.table.setItem(table_row, 6, solution_item)
                     
@@ -696,10 +696,24 @@ class WorkLogPro(QMainWindow):
                 }
                 data.append(record)
             
+            # 按ID排序数据
+            data.sort(key=lambda x: int(x['ID']) if x['ID'].isdigit() else 0)
+            
+            # 重新生成连续的ID值
+            for i, record in enumerate(data, 1):
+                record['ID'] = str(i)
+            
+            # 同时更新表格中的ID显示
+            for i, record in enumerate(data):
+                if i < self.table.rowCount():
+                    id_item = self.table.item(i, 1)
+                    if id_item:
+                        id_item.setText(record['ID'])
+            
             # 使用data_manager保存数据
             self.data_manager.save_data_to_excel(data)
             
-            self.add_log(f"成功保存 {len(data)} 条记录到Excel文件", "信息")
+            self.add_log(f"成功保存 {len(data)} 条记录到Excel文件，已按ID重新排序并生成连续ID", "信息")
             return True
         except Exception as e:
             self.add_log(f"保存Excel文件失败: {str(e)}", "错误")
@@ -1386,10 +1400,10 @@ class WorkLogPro(QMainWindow):
         if "camera" in data:
             self.table.setItem(row, 4, QTableWidgetItem(data["camera"]))  # 调整为第4列
         if "problem" in data:
-            problem = data["problem"][:50] + '...' if len(data["problem"]) > 50 else data["problem"]
+            problem = data["problem"]
             self.table.setItem(row, 5, QTableWidgetItem(problem))  # 调整为第5列
         if "solution" in data:
-            solution = data["solution"][:50] + '...' if len(data["solution"]) > 50 else data["solution"]
+            solution = data["solution"]
             self.table.setItem(row, 6, QTableWidgetItem(solution))  # 调整为第6列
         if "type" in data:
             self.table.setItem(row, 7, QTableWidgetItem(data["type"]))  # 调整为第7列

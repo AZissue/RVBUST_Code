@@ -1,7 +1,7 @@
 import os
 import pandas as pd
 from openpyxl import Workbook
-from openpyxl.styles import Alignment
+from openpyxl.styles import Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
 class DataManager:
@@ -85,11 +85,20 @@ class DataManager:
                     else:
                         worksheet.column_dimensions[col_letter].width = 15
                 
-                # 为所有单元格添加自动换行
-                for row in worksheet.iter_rows(min_row=2, max_row=worksheet.max_row, 
+                # 创建边框样式
+                thin_border = Border(
+                    left=Side(style='thin'),
+                    right=Side(style='thin'),
+                    top=Side(style='thin'),
+                    bottom=Side(style='thin')
+                )
+                
+                # 为所有单元格添加自动换行和边框
+                for row in worksheet.iter_rows(min_row=1, max_row=worksheet.max_row, 
                                               min_col=1, max_col=worksheet.max_column):
                     for cell in row:
                         cell.alignment = Alignment(wrap_text=True, vertical='top')
+                        cell.border = thin_border
             
             return True
         except Exception as e:
@@ -151,11 +160,20 @@ class DataManager:
                     else:
                         worksheet.column_dimensions[col_letter].width = 15
                 
-                # 为所有单元格添加自动换行
-                for row in worksheet.iter_rows(min_row=2, max_row=worksheet.max_row, 
+                # 创建边框样式
+                thin_border = Border(
+                    left=Side(style='thin'),
+                    right=Side(style='thin'),
+                    top=Side(style='thin'),
+                    bottom=Side(style='thin')
+                )
+                
+                # 为所有单元格添加自动换行和边框
+                for row in worksheet.iter_rows(min_row=1, max_row=worksheet.max_row, 
                                               min_col=1, max_col=worksheet.max_column):
                     for cell in row:
                         cell.alignment = Alignment(wrap_text=True, vertical='top')
+                        cell.border = thin_border
             
             return True
         except Exception as e:
