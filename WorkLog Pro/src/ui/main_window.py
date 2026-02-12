@@ -135,6 +135,8 @@ class WorkLogPro(QMainWindow):
         self.problem_text = QTextEdit()
         self.problem_text.setPlaceholderText("请详细描述客户遇到的问题...")
         self.problem_text.setFixedHeight(100)
+        # 设置垂直滚动条策略，确保内容过长时显示滚动条
+        self.problem_text.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         form_layout.addWidget(problem_label)
         form_layout.addWidget(self.problem_text)
         
@@ -143,6 +145,8 @@ class WorkLogPro(QMainWindow):
         self.solution_text = QTextEdit()
         self.solution_text.setPlaceholderText("记录问题的解决步骤和方法...")
         self.solution_text.setFixedHeight(100)
+        # 设置垂直滚动条策略，确保内容过长时显示滚动条
+        self.solution_text.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         form_layout.addWidget(solution_label)
         form_layout.addWidget(self.solution_text)
         
@@ -308,7 +312,6 @@ class WorkLogPro(QMainWindow):
         self.table.setHorizontalHeaderLabels(headers)
         
         # 表格设置
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         # 设置固定宽度的列
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)  # 选择列固定
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Fixed)  # ID列固定
@@ -316,10 +319,14 @@ class WorkLogPro(QMainWindow):
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)  # 日期自适应
         self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)  # 客户名称自适应
         self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)  # 相机型号自适应
+        # 设置自动拉伸的列，占用剩余空间
+        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.Stretch)  # 客户问题自动拉伸
+        self.table.horizontalHeader().setSectionResizeMode(6, QHeaderView.Stretch)  # 解决方法自动拉伸
+        # 设置自适应宽度的列
         self.table.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeToContents)  # 问题类型自适应
         self.table.horizontalHeader().setSectionResizeMode(8, QHeaderView.ResizeToContents)  # 问题进度自适应
         
-        # 设置列宽度
+        # 设置固定列宽度
         self.table.setColumnWidth(0, 50)  # 选择列宽度
         self.table.setColumnWidth(1, 50)  # ID列宽度
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -652,13 +659,17 @@ class WorkLogPro(QMainWindow):
                     camera_item = QTableWidgetItem(str(row.get('相机型号', '')))
                     self.table.setItem(table_row, 4, camera_item)
                     
-                    # 客户问题
+                    # 客户问题 - 只显示前一段字符，不添加省略号
                     problem = str(row.get('客户问题', ''))
+                    if len(problem) > 30:
+                        problem = problem[:30]
                     problem_item = QTableWidgetItem(problem)
                     self.table.setItem(table_row, 5, problem_item)
                     
-                    # 解决方法
+                    # 解决方法 - 只显示前一段字符，不添加省略号
                     solution = str(row.get('解决方法', ''))
+                    if len(solution) > 30:
+                        solution = solution[:30]
                     solution_item = QTableWidgetItem(solution)
                     self.table.setItem(table_row, 6, solution_item)
                     
@@ -1341,8 +1352,11 @@ class WorkLogPro(QMainWindow):
         self.date_edit.setEnabled(True)
         self.customer_input.setEnabled(True)
         self.camera_input.setEnabled(True)
-        self.problem_text.setEnabled(True)
-        self.solution_text.setEnabled(True)
+        # 启用文本编辑器并允许滚动
+        self.problem_text.setReadOnly(False)
+        self.problem_text.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.solution_text.setReadOnly(False)
+        self.solution_text.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.type_combo.setEnabled(True)
         self.status_combo.setEnabled(True)
         
@@ -1351,27 +1365,62 @@ class WorkLogPro(QMainWindow):
         self.date_edit.setEnabled(False)
         self.customer_input.setEnabled(False)
         self.camera_input.setEnabled(False)
-        self.problem_text.setEnabled(False)
-        self.solution_text.setEnabled(False)
+        # 禁用文本编辑器但允许滚动查看内容
+        self.problem_text.setReadOnly(True)
+        self.problem_text.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.solution_text.setReadOnly(True)
+        self.solution_text.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.type_combo.setEnabled(True)
         self.status_combo.setEnabled(True)
         
+    def get_record_from_excel_by_id(self, record_id: str):
+        """根据ID从Excel文件中获取完整记录"""
+        try:
+            df = self.data_manager.load_data_from_excel()
+            if df is not None:
+                # 查找匹配ID的记录
+                for index, row in df.iterrows():
+                    if str(int(row.get('ID', 0))) == record_id:
+                        return {
+                            "date": str(row.get('日期', '')),
+                            "customer": str(row.get('客户名称', '')),
+                            "camera": str(row.get('相机型号', '')),
+                            "problem": str(row.get('客户问题', '')),
+                            "solution": str(row.get('解决方法', '')),
+                            "type": str(row.get('问题类型', '')),
+                            "status": str(row.get('问题进度', '')),
+                        }
+            return None
+        except Exception as e:
+            self.add_log(f"从Excel读取记录失败: {str(e)}", "错误")
+            return None
+    
     def fill_form_from_table(self, row: int):
         """从表格行填充表单（快速编辑）"""
         try:
-            data = {
-                "date": self.table.item(row, 2).text(),  # 调整为第2列
-                "customer": self.table.item(row, 3).text(),  # 调整为第3列
-                "camera": self.table.item(row, 4).text(),  # 调整为第4列
-                "problem": self.table.item(row, 5).text(),  # 调整为第5列
-                "solution": self.table.item(row, 6).text(),  # 调整为第6列
-                "type": self.table.item(row, 7).text(),  # 调整为第7列
-                "status": self.table.item(row, 8).text(),  # 调整为第8列
-            }
+            # 获取记录ID
+            record_id = self.table.item(row, 1).text()  # 调整为第1列
+            
+            # 首先尝试从Excel文件中读取完整记录
+            data = self.get_record_from_excel_by_id(record_id)
+            
+            # 如果从Excel读取失败，回退到从表格读取
+            if data is None:
+                data = {
+                    "date": self.table.item(row, 2).text(),  # 调整为第2列
+                    "customer": self.table.item(row, 3).text(),  # 调整为第3列
+                    "camera": self.table.item(row, 4).text(),  # 调整为第4列
+                    "problem": self.table.item(row, 5).text(),  # 调整为第5列
+                    "solution": self.table.item(row, 6).text(),  # 调整为第6列
+                    "type": self.table.item(row, 7).text(),  # 调整为第7列
+                    "status": self.table.item(row, 8).text(),  # 调整为第8列
+                }
+            
             # 保存原始问题进度
             self.original_status = data.get("status", "")
             self.set_form_data(data)
-        except:
+        except Exception as e:
+            self.add_log(f"填充表单失败: {str(e)}", "错误")
             pass
             
     def get_log_file_path(self):

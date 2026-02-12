@@ -26,9 +26,16 @@ class BusinessLogic:
     
     def prepare_record_for_table(self, record):
         """准备记录数据用于表格显示"""
-        # 截断过长的文本
-        problem = record.get('problem', '')[:50] + '...' if len(record.get('problem', '')) > 50 else record.get('problem', '')
-        solution = record.get('solution', '')[:50] + '...' if len(record.get('solution', '')) > 50 else record.get('solution', '')
+        # 保持完整内容，不添加省略号
+        problem = record.get('problem', '')
+        solution = record.get('solution', '')
+        
+        # 只显示前一段字符，不添加省略号
+        max_length = 30
+        if len(problem) > max_length:
+            problem = problem[:max_length]
+        if len(solution) > max_length:
+            solution = solution[:max_length]
         
         return {
             'ID': record.get('ID'),
