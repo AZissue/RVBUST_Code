@@ -683,6 +683,9 @@ class WorkLogPro(QMainWindow):
         try:
             # 准备数据
             data = []
+            max_id = 0
+            
+            # 收集数据并找出最大ID
             for row in range(self.table.rowCount()):
                 record = {
                     'ID': self.table.item(row, 1).text(),  # 调整为第1列
@@ -695,25 +698,62 @@ class WorkLogPro(QMainWindow):
                     '问题进度': self.table.item(row, 8).text()  # 调整为第8列
                 }
                 data.append(record)
+                
+                # 计算最大ID
+                if record['ID'].isdigit():
+                    current_id = int(record['ID'])
+                    if current_id > max_id:
+                        max_id = current_id
             
-            # 按ID排序数据
-            data.sort(key=lambda x: int(x['ID']) if x['ID'].isdigit() else 0)
+            # 检查是否有重复ID
+            seen_ids = set()
+            duplicate_ids = set()
+            original_ids = set()
             
-            # 重新生成连续的ID值
-            for i, record in enumerate(data, 1):
-                record['ID'] = str(i)
+            # 第一次遍历，收集所有ID
+            for record in data:
+                original_ids.add(record['ID'])
             
-            # 同时更新表格中的ID显示
-            for i, record in enumerate(data):
-                if i < self.table.rowCount():
-                    id_item = self.table.item(i, 1)
-                    if id_item:
-                        id_item.setText(record['ID'])
+            # 第二次遍历，检查重复ID
+            for record in data:
+                if record['ID'] in seen_ids:
+                    duplicate_ids.add(record['ID'])
+                seen_ids.add(record['ID'])
+            
+            # 如果有重复ID，基于最大ID递增分配新ID
+            # 但只对重复的记录分配新ID，保持原始唯一ID不变
+            if duplicate_ids:
+                self.add_log(f"发现重复ID: {duplicate_ids}，正在重新分配", "操作")
+                current_id = max_id
+                
+                # 统计每个ID的出现次数
+                id_counts = {}
+                for record in data:
+                    id = record['ID']
+                    id_counts[id] = id_counts.get(id, 0) + 1
+                
+                # 为重复的记录分配新ID
+                for record in data:
+                    id = record['ID']
+                    # 只对出现多次的ID的后续实例分配新ID
+                    if id_counts[id] > 1:
+                        # 保留第一个出现的实例的ID，对后续实例分配新ID
+                        if id_counts[id] > 1:
+                            current_id += 1
+                            record['ID'] = str(current_id)
+                            id_counts[id] -= 1
+                
+                # 更新表格中的ID显示
+                for i, record in enumerate(data):
+                    if i < self.table.rowCount():
+                        id_item = self.table.item(i, 1)
+                        if id_item:
+                            id_item.setText(record['ID'])
             
             # 使用data_manager保存数据
             self.data_manager.save_data_to_excel(data)
             
-            self.add_log(f"成功保存 {len(data)} 条记录到Excel文件，已按ID重新排序并生成连续ID", "信息")
+            self.add_log(f"成功保存 {len(data)} 条记录到Excel文件，最大ID: {max_id}", "信息")
             return True
         except Exception as e:
             self.add_log(f"保存Excel文件失败: {str(e)}", "错误")
@@ -756,11 +796,17 @@ class WorkLogPro(QMainWindow):
                     
                     if status_changed:
                         # 问题进度有更新，创建新记录
-                        # 生成新ID
+                        # 生成新ID - 检查整个表格中的最大ID
                         new_id = 1
                         if self.table.rowCount() > 0:
-                            last_id = int(self.table.item(self.table.rowCount() - 1, 1).text())  # 调整为第1列
-                            new_id = last_id + 1
+                            max_id = 0
+                            for row in range(self.table.rowCount()):
+                                id_text = self.table.item(row, 1).text()  # 调整为第1列
+                                if id_text.isdigit():
+                                    current_id = int(id_text)
+                                    if current_id > max_id:
+                                        max_id = current_id
+                            new_id = max_id + 1
                         
                         # 准备表格数据
                         record = self.business_logic.format_record_from_form(data, new_id)
@@ -793,11 +839,17 @@ class WorkLogPro(QMainWindow):
                         # 重置状态并清空表单
                         self.clear_form()
             else:
-                # 生成新ID
+                # 生成新ID - 检查整个表格中的最大ID
                 new_id = 1
                 if self.table.rowCount() > 0:
-                    last_id = int(self.table.item(self.table.rowCount() - 1, 1).text())  # 调整为第1列
-                    new_id = last_id + 1
+                    max_id = 0
+                    for row in range(self.table.rowCount()):
+                        id_text = self.table.item(row, 1).text()  # 调整为第1列
+                        if id_text.isdigit():
+                            current_id = int(id_text)
+                            if current_id > max_id:
+                                max_id = current_id
+                    new_id = max_id + 1
                 
                 # 准备表格数据
                 record = self.business_logic.format_record_from_form(data, new_id)
@@ -1199,34 +1251,14 @@ class WorkLogPro(QMainWindow):
             import functools
             rows_data.sort(key=functools.cmp_to_key(custom_sort))
         else:
-            # 无排序，恢复原始行顺序
-            if self.original_row_order:
-                # 创建ID到行数据的映射，并去重
-                id_to_row = {}
-                seen_ids = set()
-                for row in rows_data:
-                    # 使用整数键 1 来访问 ID 列
-                    if 1 in row:
-                        row_id = row[1]
-                        if row_id not in seen_ids:
-                            id_to_row[row_id] = row
-                            seen_ids.add(row_id)
-                # 按原始顺序重新排列，并去重
-                ordered_rows = []
-                seen_ids_in_order = set()
-                for id in self.original_row_order:
-                    if id in id_to_row and id not in seen_ids_in_order:
-                        ordered_rows.append(id_to_row[id])
-                        seen_ids_in_order.add(id)
-                # 添加不在原始顺序中的新行，并去重
-                for row in rows_data:
-                    # 使用整数键 1 来访问 ID 列
-                    if 1 in row:
-                        row_id = row[1]
-                        if row_id not in seen_ids_in_order:
-                            ordered_rows.append(row)
-                            seen_ids_in_order.add(row_id)
-                rows_data = ordered_rows
+            # 无排序，按照ID升序排列
+            # 按ID升序排序数据
+            def sort_by_id(row):
+                try:
+                    return int(row[1])
+                except ValueError:
+                    return 0
+            rows_data.sort(key=sort_by_id)
         
         # 清空表格
         self.table.setRowCount(0)
