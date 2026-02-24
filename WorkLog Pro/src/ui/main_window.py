@@ -652,22 +652,24 @@ class WorkLogPro(QMainWindow):
                     self.table.setItem(table_row, 2, date_item)
                     
                     # 客户名称
-                    customer_item = QTableWidgetItem(str(row.get('客户名称', '')))
+                    customer_value = row.get('客户名称', '')
+                    customer_item = QTableWidgetItem(self.format_value(customer_value))
                     self.table.setItem(table_row, 3, customer_item)
                     
                     # 相机型号
-                    camera_item = QTableWidgetItem(str(row.get('相机型号', '')))
+                    camera_value = row.get('相机型号', '')
+                    camera_item = QTableWidgetItem(self.format_value(camera_value))
                     self.table.setItem(table_row, 4, camera_item)
                     
                     # 客户问题 - 只显示前一段字符，不添加省略号
-                    problem = str(row.get('客户问题', ''))
+                    problem = self.format_value(row.get('客户问题', ''))
                     if len(problem) > 30:
                         problem = problem[:30]
                     problem_item = QTableWidgetItem(problem)
                     self.table.setItem(table_row, 5, problem_item)
                     
                     # 解决方法 - 只显示前一段字符，不添加省略号
-                    solution = str(row.get('解决方法', ''))
+                    solution = self.format_value(row.get('解决方法', ''))
                     if len(solution) > 30:
                         solution = solution[:30]
                     solution_item = QTableWidgetItem(solution)
@@ -1324,8 +1326,12 @@ class WorkLogPro(QMainWindow):
         """设置表单数据"""
         if "date" in data:
             self.date_edit.setDate(QDate.fromString(data["date"], "yyyy-MM-dd"))
-        self.customer_input.setText(data.get("customer", ""))
-        self.camera_input.setText(data.get("camera", ""))
+        # 格式化客户名称，去除.0后缀
+        customer_value = data.get("customer", "")
+        self.customer_input.setText(self.format_value(customer_value))
+        # 格式化相机型号，去除.0后缀
+        camera_value = data.get("camera", "")
+        self.camera_input.setText(self.format_value(camera_value))
         self.problem_text.setPlainText(data.get("problem", ""))
         self.solution_text.setPlainText(data.get("solution", ""))
         self.type_combo.setCurrentText(data.get("type", ""))
@@ -1359,6 +1365,20 @@ class WorkLogPro(QMainWindow):
         self.solution_text.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.type_combo.setEnabled(True)
         self.status_combo.setEnabled(True)
+    
+    def format_value(self, value):
+        """格式化值，去除数字的.0后缀"""
+        try:
+            # 尝试转换为字符串
+            str_value = str(value)
+            # 检查是否是数字且以.0结尾
+            if '.' in str_value and str_value.endswith('.0'):
+                # 转换为整数并返回
+                return str(int(float(str_value)))
+            return str_value
+        except:
+            # 如果转换失败，返回原始值的字符串表示
+            return str(value)
         
     def enable_only_type_and_status(self):
         """只启用问题类型和问题进度字段"""
@@ -1448,7 +1468,9 @@ class WorkLogPro(QMainWindow):
         
         # 添加其他数据
         for col, value in enumerate(row_data):
-            item = QTableWidgetItem(str(value))
+            # 格式化值，去除数字的.0后缀
+            formatted_value = self.format_value(value)
+            item = QTableWidgetItem(formatted_value)
             if col == 0:
                 item.setTextAlignment(Qt.AlignCenter)
             self.table.setItem(row, col + 1, item)
@@ -1477,14 +1499,14 @@ class WorkLogPro(QMainWindow):
         if "date" in data:
             self.table.setItem(row, 2, QTableWidgetItem(data["date"]))  # 调整为第2列
         if "customer" in data:
-            self.table.setItem(row, 3, QTableWidgetItem(data["customer"]))  # 调整为第3列
+            self.table.setItem(row, 3, QTableWidgetItem(self.format_value(data["customer"])))  # 调整为第3列
         if "camera" in data:
-            self.table.setItem(row, 4, QTableWidgetItem(data["camera"]))  # 调整为第4列
+            self.table.setItem(row, 4, QTableWidgetItem(self.format_value(data["camera"])))  # 调整为第4列
         if "problem" in data:
-            problem = data["problem"]
+            problem = self.format_value(data["problem"])
             self.table.setItem(row, 5, QTableWidgetItem(problem))  # 调整为第5列
         if "solution" in data:
-            solution = data["solution"]
+            solution = self.format_value(data["solution"])
             self.table.setItem(row, 6, QTableWidgetItem(solution))  # 调整为第6列
         if "type" in data:
             self.table.setItem(row, 7, QTableWidgetItem(data["type"]))  # 调整为第7列
