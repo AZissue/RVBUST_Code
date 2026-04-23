@@ -487,98 +487,142 @@ const formatDate = (d, fmt = 'yyyy-MM-dd HH:mm') => {
 const escapeHtml = str => str == null ? '' : String(str).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[m]));
 const debounce = (fn, delay) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), delay); }; };
 
-// ===================== 数据层API (localStorage) =====================
-const LS = {
-  get: k => { try { return JSON.parse(localStorage.getItem(k)); } catch(e) { return null; } },
-  set: (k, v) => localStorage.setItem(k, JSON.stringify(v)),
-};
-const getUsers = () => LS.get('crm_users') || [];
-const saveUsers = v => LS.set('crm_users', v);
-const getTickets = () => LS.get('crm_tickets') || [];
-const saveTickets = v => LS.set('crm_tickets', v);
-const getCustomers = () => LS.get('crm_customers') || [];
-const saveCustomers = v => LS.set('crm_customers', v);
-const getSession = () => {
-  try {
-    const sess = sessionStorage.getItem('crm_session');
-    if (sess) return JSON.parse(sess);
-    const persist = localStorage.getItem('crm_session');
-    if (persist) return JSON.parse(persist);
-    return null;
-  } catch(e) { return null; }
-};
-const saveSession = (v, persistent) => {
-  const json = JSON.stringify(v);
-  sessionStorage.setItem('crm_session', json);
-  if (persistent) localStorage.setItem('crm_session', json);
-  else localStorage.removeItem('crm_session');
-};
-const clearSession = () => {
-  sessionStorage.removeItem('crm_session');
-  localStorage.removeItem('crm_session');
-};
 
-// ===================== 初始化数据 =====================
-function initData() {
-  if (!LS.get('crm_users')) {
-    const users = [
-      { id: 'u1', username: 'admin', password: 'admin123', name: '系统管理员', role: 'admin', email: 'admin@company.com', phone: '13800138000', createdAt: '2024-01-01T00:00:00' },
-      { id: 'u2', username: 'zhangsan', password: '123456', name: '张三', role: 'engineer', email: 'zhangsan@company.com', phone: '13800138001', createdAt: '2024-01-01T00:00:00' },
-      { id: 'u3', username: 'lisi', password: '123456', name: '李四', role: 'engineer', email: 'lisi@company.com', phone: '13800138002', createdAt: '2024-01-01T00:00:00' },
-      { id: 'u4', username: 'wangwu', password: '123456', name: '王五', role: 'engineer', email: 'wangwu@company.com', phone: '13800138003', createdAt: '2024-01-01T00:00:00' },
-      { id: 'u5', username: 'zhaoliu', password: '123456', name: '赵六', role: 'engineer', email: 'zhaoliu@company.com', phone: '13800138004', createdAt: '2024-01-01T00:00:00' },
-    ];
-    saveUsers(users);
+// ===================== API Client =====================
+const API_BASE = 'http://localhost:3000/api';
+let __token = localStorage.getItem('crm_token') || '';
+let __users = [];
+let __tickets = [];
+let __customers = [];
+
+async function apiFetch(path, opts = {}) {
+  const url = `${API_BASE}${path}`;
+  const res = await fetch(url, {
+    ...opts,
+    headers: {
+      'Content-Type': 'application/json',
+      ...( __token ? { 'Authorization': `Bearer ${__token}` } : {} ),
+      ...(opts.headers || {})
+    }
+  });
+  if (res.status === 401) { logout(); throw new Error('未登录'); }
+  if (res.status === 403) throw new Error('权限不足');
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `HTTP ${res.status}`);
   }
-  if (!LS.get('crm_customers')) {
-    const customers = [
-      { id: 'c1', name: '科技创新有限公司', contact: '陈经理', phone: '13900001111', email: 'chen@tech.com', address: '北京市海淀区中关村大街1号', industry: '互联网', level: 'A', devices: [{ name: '服务器A', model: 'Dell R740', sn: 'SN123456' }, { name: '交换机', model: 'Cisco 2960', sn: 'SN789012' }], createdAt: '2024-01-15T10:00:00' },
-      { id: 'c2', name: '智慧物流公司', contact: '刘总', phone: '13900002222', email: 'liu@wiselog.com', address: '上海市浦东新区张江路2号', industry: '物流', level: 'A', devices: [{ name: '条码打印机', model: 'Zebra ZT410', sn: 'SN345678' }], createdAt: '2024-02-01T09:00:00' },
-      { id: 'c3', name: '绿色能源集团', contact: '王工', phone: '13900003333', email: 'wang@green.com', address: '广州市天河区珠江新城3号', industry: '能源', level: 'B', devices: [{ name: '工控机', model: 'Advantech UNO', sn: 'SN901234' }, { name: '传感器', model: 'Siemens S7', sn: 'SN567890' }], createdAt: '2024-02-15T14:00:00' },
-      { id: 'c4', name: '金融数据服务', contact: '张经理', phone: '13900004444', email: 'zhang@fin.com', address: '深圳市福田区金融中心4号', industry: '金融', level: 'A', devices: [{ name: '存储阵列', model: 'EMC VNX', sn: 'SN111222' }], createdAt: '2024-03-01T11:00:00' },
-      { id: 'c5', name: '医疗科技股份', contact: '李主任', phone: '13900005555', email: 'li@med.com', address: '杭州市西湖区文三路5号', industry: '医疗', level: 'B', devices: [{ name: 'PACS服务器', model: 'HP DL380', sn: 'SN333444' }], createdAt: '2024-03-10T08:30:00' },
-      { id: 'c6', name: '教育科技集团', contact: '赵老师', phone: '13900006666', email: 'zhao@edu.com', address: '南京市鼓楼区中山路6号', industry: '教育', level: 'C', devices: [{ name: '投影机', model: 'Epson CB', sn: 'SN555666' }], createdAt: '2024-03-20T15:00:00' },
-      { id: 'c7', name: '智能制造工厂', contact: '孙厂长', phone: '13900007777', email: 'sun@smart.com', address: '苏州市工业园区星湖街7号', industry: '制造', level: 'B', devices: [{ name: 'CNC机床', model: 'Fanuc 0i', sn: 'SN777888' }, { name: 'PLC控制器', model: 'Mitsubishi FX', sn: 'SN999000' }], createdAt: '2024-04-01T10:00:00' },
-      { id: 'c8', name: '电子商务平台', contact: '周运营', phone: '13900008888', email: 'zhou@ecom.com', address: '成都市高新区天府大道8号', industry: '电商', level: 'A', devices: [{ name: '负载均衡', model: 'F5 BIG-IP', sn: 'SN121212' }], createdAt: '2024-04-10T09:00:00' },
-    ];
-    saveCustomers(customers);
-  }
-  if (!LS.get('crm_tickets')) {
-    const now = new Date();
-    const d = (days, hours=0) => new Date(now.getTime() - days*86400000 - hours*3600000).toISOString();
-    const tickets = [
-      { id: 'TK001', title: '服务器无法远程连接', customerId: 'c1', engineerId: 'u2', status: 'processing', priority: 'high', category: '硬件故障', description: '客户反映服务器A从今早8点开始无法通过RDP远程连接，现场指示灯正常。', createdAt: d(0,4), updatedAt: d(0,2), dueDate: d(-1), creatorId: 'u1', comments: [{ id: generateId(), userId: 'u2', userName: '张三', content: '已联系客户，准备远程排查。', createdAt: d(0,3) }] },
-      { id: 'TK002', title: '网络间歇性断线', customerId: 'c2', engineerId: 'u3', status: 'pending', priority: 'medium', category: '网络问题', description: '仓库区域WiFi频繁断线，影响扫码入库操作。', createdAt: d(1,2), updatedAt: d(1,2), dueDate: d(0), creatorId: 'u1', comments: [] },
-      { id: 'TK003', title: '工控机系统蓝屏', customerId: 'c3', engineerId: 'u2', status: 'resolved', priority: 'high', category: '系统故障', description: '生产线工控机频繁蓝屏，错误代码0x0000007E。', createdAt: d(3,5), updatedAt: d(1,1), dueDate: d(-2), creatorId: 'u1', comments: [{ id: generateId(), userId: 'u2', userName: '张三', content: '已更换内存条，问题解决。', createdAt: d(1,1) }] },
-      { id: 'TK004', title: '存储阵列容量告警', customerId: 'c4', engineerId: 'u4', status: 'processing', priority: 'medium', category: '存储问题', description: 'EMC存储阵列使用率超过85%，需要扩容或清理。', createdAt: d(0,6), updatedAt: d(0,1), dueDate: d(-1), creatorId: 'u1', comments: [] },
-      { id: 'TK005', title: 'PACS系统访问缓慢', customerId: 'c5', engineerId: 'u5', status: 'pending', priority: 'low', category: '性能问题', description: '医生反映PACS影像加载时间过长，影响诊断效率。', createdAt: d(2,3), updatedAt: d(2,3), dueDate: d(1), creatorId: 'u1', comments: [] },
-      { id: 'TK006', title: '投影机无法开机', customerId: 'c6', engineerId: 'u3', status: 'resolved', priority: 'low', category: '硬件故障', description: '教室投影机按下电源键无反应，灯泡已更换。', createdAt: d(5,2), updatedAt: d(3,4), dueDate: d(-4), creatorId: 'u1', comments: [{ id: generateId(), userId: 'u3', userName: '李四', content: '电源板故障，已更换。', createdAt: d(3,4) }] },
-      { id: 'TK007', title: 'CNC机床程序报错', customerId: 'c7', engineerId: 'u4', status: 'processing', priority: 'high', category: '设备故障', description: '加工程序运行到第N120行报警，显示伺服异常。', createdAt: d(0,8), updatedAt: d(0,3), dueDate: d(0), creatorId: 'u1', comments: [{ id: generateId(), userId: 'u4', userName: '王五', content: '正在排查伺服驱动器。', createdAt: d(0,3) }] },
-      { id: 'TK008', title: '负载均衡配置更新', customerId: 'c8', engineerId: 'u5', status: 'pending', priority: 'medium', category: '配置变更', description: '需要为新上线业务配置负载均衡策略。', createdAt: d(1,5), updatedAt: d(1,5), dueDate: d(0), creatorId: 'u1', comments: [] },
-      { id: 'TK009', title: '交换机端口故障', customerId: 'c1', engineerId: 'u2', status: 'resolved', priority: 'medium', category: '网络问题', description: 'Cisco交换机第12端口频繁UP/DOWN。', createdAt: d(4,2), updatedAt: d(2,5), dueDate: d(-3), creatorId: 'u1', comments: [{ id: generateId(), userId: 'u2', userName: '张三', content: '更换网线后稳定。', createdAt: d(2,5) }] },
-      { id: 'TK010', title: '条码打印机卡纸', customerId: 'c2', engineerId: 'u3', status: 'resolved', priority: 'low', category: '硬件故障', description: '打印机频繁卡纸，已清理多次。', createdAt: d(6,1), updatedAt: d(4,3), dueDate: d(-5), creatorId: 'u1', comments: [{ id: generateId(), userId: 'u3', userName: '李四', content: '更换搓纸轮，问题解决。', createdAt: d(4,3) }] },
-      { id: 'TK011', title: '传感器数据异常', customerId: 'c3', engineerId: 'u4', status: 'processing', priority: 'medium', category: '设备故障', description: '温度传感器读数异常，显示-40度。', createdAt: d(0,5), updatedAt: d(0,1), dueDate: d(-1), creatorId: 'u1', comments: [] },
-      { id: 'TK012', title: '数据库备份失败', customerId: 'c4', engineerId: 'u5', status: 'pending', priority: 'high', category: '系统故障', description: '近3天数据库自动备份任务均失败。', createdAt: d(2,6), updatedAt: d(2,6), dueDate: d(0), creatorId: 'u1', comments: [] },
-      { id: 'TK013', title: '服务器硬盘告警', customerId: 'c5', engineerId: 'u2', status: 'processing', priority: 'high', category: '硬件故障', description: 'RAID5中一块硬盘报错，需更换。', createdAt: d(0,3), updatedAt: d(0,1), dueDate: d(0), creatorId: 'u1', comments: [{ id: generateId(), userId: 'u2', userName: '张三', content: '已申请备件，预计明天更换。', createdAt: d(0,1) }] },
-      { id: 'TK014', title: 'PLC通信中断', customerId: 'c7', engineerId: 'u4', status: 'pending', priority: 'high', category: '设备故障', description: 'PLC与HMI通信中断，产线停止。', createdAt: d(0,2), updatedAt: d(0,2), dueDate: d(0), creatorId: 'u1', comments: [] },
-      { id: 'TK015', title: '网站访问502错误', customerId: 'c8', engineerId: 'u5', status: 'processing', priority: 'high', category: '应用故障', description: '用户反馈网站间歇性出现502 Bad Gateway。', createdAt: d(0,1), updatedAt: d(0,0.5), dueDate: d(0), creatorId: 'u1', comments: [{ id: generateId(), userId: 'u5', userName: '赵六', content: '正在检查后端服务状态。', createdAt: d(0,0.5) }] },
-    ];
-    saveTickets(tickets);
+  return res.json().catch(() => ({}));
+}
+
+async function loadAllData() {
+  try {
+    const [users, tickets, customers] = await Promise.all([
+      apiFetch('/users'),
+      apiFetch('/tickets'),
+      apiFetch('/customers')
+    ]);
+    __users = users || [];
+    __tickets = tickets || [];
+    __customers = customers || [];
+    return true;
+  } catch (e) {
+    console.error('[API] 加载数据失败:', e);
+    return false;
   }
 }
 
-// ===================== 认证模块 =====================
-const login = (username, password, remember) => {
-  const user = getUsers().find(u => u.username === username && u.password === password);
-  if (!user) return null;
-  const session = { userId: user.id, username: user.username, name: user.name, role: user.role, loginAt: new Date().toISOString() };
-  saveSession(session, remember);
-  return session;
-};
-const logout = () => clearSession();
-const getCurrentUser = () => getSession();
-const isAdmin = () => { const s = getSession(); return s && s.role === 'admin'; };
-const isEngineer = () => { const s = getSession(); return s && (s.role === 'engineer' || s.role === 'admin'); };
+const getUsers = () => __users;
+const getTickets = () => __tickets;
+const getCustomers = () => __customers;
+
+// ===================== Auth (API) =====================
+async function loginAsync(username, password, remember) {
+  const result = await apiFetch('/login', { method: 'POST', body: JSON.stringify({ username, password }) });
+  if (!result.token) return null;
+  __token = result.token;
+  if (remember) localStorage.setItem('crm_token', __token);
+  else sessionStorage.setItem('crm_token', __token);
+  await loadAllData();
+  return result.user;
+}
+
+function logout() {
+  __token = '';
+  localStorage.removeItem('crm_token');
+  sessionStorage.removeItem('crm_token');
+  __users = []; __tickets = []; __customers = [];
+  window.location.hash = '#login';
+}
+
+function getCurrentUser() {
+  if (!__token) {
+    const t = localStorage.getItem('crm_token') || sessionStorage.getItem('crm_token');
+    if (t) __token = t;
+    else return null;
+  }
+  try {
+    const decoded = atob(__token);
+    const [id, username, role] = decoded.split(':');
+    const user = __users.find(u => u.id === id);
+    if (user) return { ...user, userId: user.id };
+    return { id, username, role, userId: id };
+  } catch { return null; }
+}
+
+const isAdmin = () => { const s = getCurrentUser(); return s && s.role === 'admin'; };
+const isEngineer = () => { const s = getCurrentUser(); return s && (s.role === 'engineer' || s.role === 'admin'); };
+
+// ===================== 数据操作 (API + 本地缓存) =====================
+async function saveTicketUpdate(id, fields) {
+  await apiFetch(`/tickets/${id}`, { method: 'PUT', body: JSON.stringify(fields) });
+  const idx = __tickets.findIndex(t => t.id === id);
+  if (idx >= 0) Object.assign(__tickets[idx], fields);
+}
+
+async function createTicketAsync(ticket) {
+  const newT = await apiFetch('/tickets', { method: 'POST', body: JSON.stringify(ticket) });
+  __tickets.unshift(newT);
+  return newT;
+}
+
+async function addTicketComment(id, comment) {
+  await apiFetch(`/tickets/${id}/comments`, { method: 'POST', body: JSON.stringify(comment) });
+  const t = __tickets.find(tk => tk.id === id);
+  if (t) {
+    t.comments = t.comments || [];
+    t.comments.push({ ...comment, userId: getCurrentUser()?.id, userName: getCurrentUser()?.name, createdAt: new Date().toISOString() });
+  }
+}
+
+async function createCustomerAsync(c) {
+  const newC = await apiFetch('/customers', { method: 'POST', body: JSON.stringify(c) });
+  __customers.push(newC);
+  return newC;
+}
+
+async function updateCustomerAsync(id, fields) {
+  await apiFetch(`/customers/${id}`, { method: 'PUT', body: JSON.stringify(fields) });
+  const idx = __customers.findIndex(c => c.id === id);
+  if (idx >= 0) Object.assign(__customers[idx], fields);
+}
+
+async function createUserAsync(u) {
+  const newU = await apiFetch('/users', { method: 'POST', body: JSON.stringify(u) });
+  __users.push(newU);
+  return newU;
+}
+
+async function updateUserAsync(id, fields) {
+  await apiFetch(`/users/${id}`, { method: 'PUT', body: JSON.stringify(fields) });
+  const idx = __users.findIndex(u => u.id === id);
+  if (idx >= 0) Object.assign(__users[idx], fields);
+}
+
+async function fetchStats() {
+  return apiFetch('/stats');
+}
+
+// 初始化数据由后端 seed，前端不再 initData
 
 // ===================== 自然语言解析模块 =====================
 function parseTicketInput(text) {
@@ -696,9 +740,10 @@ function toggleUserDropdown() { document.getElementById('user-dropdown').classLi
 function toggleNotifyDropdown() { document.getElementById('notify-dropdown').classList.toggle('open'); }
 function doLogout() { logout(); notify('已退出', '您已成功退出系统', 'success'); navigate('login'); }
 
-// 提醒/通知数据
-function getReminders() { return LS.get('crm_reminders') || []; }
-function saveReminders(v) { LS.set('crm_reminders', v); }
+// 提醒/通知数据（本地内存，无需持久化）
+let __reminders = [];
+function getReminders() { return __reminders; }
+function saveReminders(v) { __reminders = v; }
 function addReminder(ticketId, toUserId, message) {
   const list = getReminders();
   list.push({ id: generateId(), ticketId, toUserId, message, fromUserId: getCurrentUser().userId, fromName: getCurrentUser().name, createdAt: new Date().toISOString(), read: false });
@@ -790,33 +835,37 @@ window.bindLoginEvents = () => {
   if (!form) return;
   form.addEventListener('submit', (e) => {
     e.preventDefault();
-    const btn = document.getElementById('login-btn');
-    const btnText = btn.querySelector('.btn-text');
-    btn.disabled = true;
-    btnText.innerHTML = '<span class="spinner"></span>登录中...';
-    setTimeout(() => {
-      const u = document.getElementById('login-user').value.trim();
-      const p = document.getElementById('login-pass').value;
-      const remember = document.getElementById('login-remember')?.checked;
-      const s = login(u, p, remember);
-      if (s) {
-        notify('登录成功', `欢迎回来，${s.name}`, 'success');
-        navigate('dashboard');
-      } else {
-        notify('登录失败', '用户名或密码错误', 'error');
-        btn.disabled = false;
-        btnText.textContent = '登 录';
-      }
-    }, 600);
+    handleLogin();
   });
-  // 回车触发
   document.getElementById('login-pass')?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') form.dispatchEvent(new Event('submit'));
   });
 };
-window.handleLogin = () => {
+window.handleLogin = async () => {
   const form = document.getElementById('login-form');
-  if (form) form.dispatchEvent(new Event('submit'));
+  if (!form) return;
+  const btn = document.getElementById('login-btn');
+  const btnText = btn.querySelector('.btn-text');
+  btn.disabled = true;
+  btnText.innerHTML = '<span class="spinner"></span>登录中...';
+  try {
+    const u = document.getElementById('login-user').value.trim();
+    const p = document.getElementById('login-pass').value;
+    const remember = document.getElementById('login-remember')?.checked;
+    const user = await loginAsync(u, p, remember);
+    if (user) {
+      notify('登录成功', `欢迎回来，${user.name}`, 'success');
+      navigate('dashboard');
+    } else {
+      notify('登录失败', '用户名或密码错误', 'error');
+      btn.disabled = false;
+      btnText.textContent = '登 录';
+    }
+  } catch (e) {
+    notify('登录失败', e.message || '网络错误，请检查后端服务是否启动', 'error');
+    btn.disabled = false;
+    btnText.textContent = '登 录';
+  }
 };
 
 // ===================== Dashboard =====================
@@ -987,7 +1036,7 @@ window.openCreateTicketModal = () => {
   }, 400));
 };
 
-window.submitNewTicket = () => {
+window.submitNewTicket = async () => {
   const title = document.getElementById('new-title').value.trim();
   const customerId = document.getElementById('new-customer').value;
   const engineerId = document.getElementById('new-engineer').value;
@@ -995,18 +1044,23 @@ window.submitNewTicket = () => {
   const category = document.getElementById('new-category').value;
   const description = document.getElementById('new-desc').value.trim();
   if (!title) { notify('请填写标题', '', 'warning'); return; }
-  const tickets = getTickets();
-  const id = 'TK' + String(tickets.length + 1).padStart(3, '0');
-  const now = new Date().toISOString();
-  const due = new Date(Date.now() + 86400000 * (priority==='high'?1:priority==='medium'?3:7)).toISOString();
-  tickets.push({ id, title, customerId, engineerId, status: 'pending', priority, category, description, createdAt: now, updatedAt: now, dueDate: due, creatorId: getCurrentUser().userId, comments: [] });
-  saveTickets(tickets);
-  // 给被指派的工程师发送提醒
-  addReminder(id, engineerId, `您有一个新工单被指派：${title}`);
-  notify('创建成功', `工单 ${id} 已创建`, 'success');
-  document.querySelector('.modal-overlay').remove();
-  if (currentRoute === 'tickets') { window.dispatchEvent(new HashChangeEvent('hashchange')); }
-  else { navigate('tickets'); }
+  try {
+    const now = new Date().toISOString();
+    const due = new Date(Date.now() + 86400000 * (priority==='high'?1:priority==='medium'?3:7)).toISOString();
+    const id = 'TK' + String(Date.now()).slice(-6);
+    await createTicketAsync({
+      id, title, customerId, engineerId, status: 'pending', priority, category, description,
+      createdAt: now, updatedAt: now, dueDate: due, creatorId: getCurrentUser().id, comments: []
+    });
+    // 给被指派的工程师发送提醒
+    addReminder(id, engineerId, `您有一个新工单被指派：${title}`);
+    notify('创建成功', `工单 ${id} 已创建`, 'success');
+    document.querySelector('.modal-overlay').remove();
+    if (currentRoute === 'tickets') { window.dispatchEvent(new HashChangeEvent('hashchange')); }
+    else { navigate('tickets'); }
+  } catch (e) {
+    notify('创建失败', e.message, 'error');
+  }
 };
 
 // ===================== 工单详情 =====================
@@ -1092,17 +1146,25 @@ route('ticket/([^/]+)', (id) => {
   });
 });
 
-window.resolveTicket = (id) => {
-  const tickets = getTickets();
-  const t = tickets.find(x => x.id === id);
-  if (t) { t.status = 'resolved'; t.updatedAt = new Date().toISOString(); saveTickets(tickets); notify('工单已解决', `${id} 已标记为已解决`, 'success'); navigate('ticket/' + id); }
+window.resolveTicket = async (id) => {
+  try {
+    await saveTicketUpdate(id, { status: 'resolved', updatedAt: new Date().toISOString() });
+    notify('工单已解决', `${id} 已标记为已解决`, 'success');
+    navigate('ticket/' + id);
+  } catch (e) {
+    notify('操作失败', e.message, 'error');
+  }
 };
-window.addComment = (id) => {
+window.addComment = async (id) => {
   const content = document.getElementById('comment-input').value.trim();
   if (!content) return;
-  const tickets = getTickets();
-  const t = tickets.find(x => x.id === id);
-  if (t) { t.comments = t.comments || []; t.comments.push({ id: generateId(), userId: getCurrentUser().userId, userName: getCurrentUser().name, content, createdAt: new Date().toISOString() }); t.updatedAt = new Date().toISOString(); saveTickets(tickets); notify('记录已添加', '', 'success'); navigate('ticket/' + id); }
+  try {
+    await addTicketComment(id, { content });
+    notify('记录已添加', '', 'success');
+    navigate('ticket/' + id);
+  } catch (e) {
+    notify('操作失败', e.message, 'error');
+  }
 };
 
 window.openTransferModal = (id) => {
@@ -1116,19 +1178,23 @@ window.openTransferModal = (id) => {
     <div class="modal-footer"><button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button><button class="btn btn-primary" onclick="doTransfer('${id}')">确认转交</button></div></div>`;
   document.body.appendChild(modal);
 };
-window.doTransfer = (id) => {
+window.doTransfer = async (id) => {
   const newEng = document.getElementById('transfer-engineer').value;
   const note = document.getElementById('transfer-note').value.trim();
-  const tickets = getTickets();
-  const t = tickets.find(x => x.id === id);
-  if (t) {
-    const oldEng = t.engineerId;
-    t.engineerId = newEng; t.updatedAt = new Date().toISOString();
-    t.comments = t.comments || []; t.comments.push({ id: generateId(), userId: getCurrentUser().userId, userName: getCurrentUser().name, content: `工单转交给 ${getUsers().find(u=>u.id===newEng)?.name || ''}${note ? '，备注：'+note : ''}`, createdAt: new Date().toISOString() });
-    saveTickets(tickets);
-    addReminder(id, newEng, `工单 ${id} 已转交给您：${t.title}`);
-    if (oldEng !== newEng) addReminder(id, oldEng, `工单 ${id} 已转交他人：${t.title}`);
-    notify('转交成功', '', 'success'); document.querySelector('.modal-overlay').remove(); navigate('ticket/' + id);
+  try {
+    await saveTicketUpdate(id, { engineerId: newEng, updatedAt: new Date().toISOString() });
+    const t = getTickets().find(x => x.id === id);
+    if (t) {
+      const oldEng = t.engineerId;
+      await addTicketComment(id, { content: `工单转交给 ${getUsers().find(u=>u.id===newEng)?.name || ''}${note ? '，备注：'+note : ''}` });
+      addReminder(id, newEng, `工单 ${id} 已转交给您：${t.title}`);
+      if (oldEng !== newEng) addReminder(id, oldEng, `工单 ${id} 已转交他人：${t.title}`);
+    }
+    notify('转交成功', '', 'success');
+    document.querySelector('.modal-overlay').remove();
+    navigate('ticket/' + id);
+  } catch (e) {
+    notify('转交失败', e.message, 'error');
   }
 };
 
@@ -1141,10 +1207,19 @@ window.openUrgeModal = (id) => {
     <div class="modal-footer"><button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button><button class="btn btn-danger" onclick="doUrge('${id}')">发送催办</button></div></div>`;
   document.body.appendChild(modal);
 };
-window.doUrge = (id) => {
+window.doUrge = async (id) => {
   const msg = document.getElementById('urge-msg').value.trim();
   const t = getTickets().find(x => x.id === id);
-  if (t) { addReminder(id, t.engineerId, `【催办】${getCurrentUser().name}：${msg}（工单：${t.title}）`); notify('催办已发送', '', 'success'); document.querySelector('.modal-overlay').remove(); }
+  if (t) {
+    try {
+      await addTicketComment(id, { content: `【催办】${msg}` });
+      addReminder(id, t.engineerId, `【催办】${getCurrentUser().name}：${msg}（工单：${t.title}）`);
+      notify('催办已发送', '', 'success');
+    } catch (e) {
+      notify('催办失败', e.message, 'error');
+    }
+    document.querySelector('.modal-overlay').remove();
+  }
 };
 
 // ===================== 客户列表 =====================
@@ -1190,14 +1265,18 @@ window.openAddCustomerModal = () => {
     <div class="modal-footer"><button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button><button class="btn btn-primary" onclick="submitCustomer()">保存</button></div></div>`;
   document.body.appendChild(modal);
 };
-window.submitCustomer = () => {
+window.submitCustomer = async () => {
   const name = document.getElementById('cust-name').value.trim();
   const contact = document.getElementById('cust-contact').value.trim();
   if (!name || !contact) { notify('请填写必填项', '', 'warning'); return; }
-  const customers = getCustomers();
-  customers.push({ id: 'c' + (customers.length+1), name, contact, phone: document.getElementById('cust-phone').value, email: document.getElementById('cust-email').value, address: document.getElementById('cust-address').value, industry: document.getElementById('cust-industry').value, level: document.getElementById('cust-level').value, devices: [], createdAt: new Date().toISOString() });
-  saveCustomers(customers);
-  notify('添加成功', '', 'success'); document.querySelector('.modal-overlay').remove(); navigate('customers');
+  try {
+    await createCustomerAsync({ id: generateId('cus'), name, contact, phone: document.getElementById('cust-phone').value, email: document.getElementById('cust-email').value, address: document.getElementById('cust-address').value, industry: document.getElementById('cust-industry').value, level: document.getElementById('cust-level').value, devices: [], createdAt: new Date().toISOString() });
+    notify('添加成功', '', 'success');
+    document.querySelector('.modal-overlay').remove();
+    navigate('customers');
+  } catch (e) {
+    notify('添加失败', e.message, 'error');
+  }
 };
 
 // ===================== 客户详情 =====================
@@ -1247,18 +1326,31 @@ window.openAddDeviceModal = (cid) => {
     <div class="modal-footer"><button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button><button class="btn btn-primary" onclick="submitDevice('${cid}')">保存</button></div></div>`;
   document.body.appendChild(modal);
 };
-window.submitDevice = (cid) => {
+window.submitDevice = async (cid) => {
   const name = document.getElementById('dev-name').value.trim();
   if (!name) { notify('请填写设备名称', '', 'warning'); return; }
-  const customers = getCustomers();
-  const c = customers.find(x => x.id === cid);
-  if (c) { c.devices = c.devices || []; c.devices.push({ name, model: document.getElementById('dev-model').value, sn: document.getElementById('dev-sn').value }); saveCustomers(customers); notify('添加成功', '', 'success'); document.querySelector('.modal-overlay').remove(); navigate('customer/' + cid); }
+  try {
+    const c = getCustomers().find(x => x.id === cid);
+    if (c) {
+      c.devices = c.devices || [];
+      c.devices.push({ name, model: document.getElementById('dev-model').value, sn: document.getElementById('dev-sn').value });
+      await updateCustomerAsync(cid, { devices: c.devices });
+      notify('添加成功', '', 'success');
+      document.querySelector('.modal-overlay').remove();
+      navigate('customer/' + cid);
+    }
+  } catch (e) {
+    notify('添加失败', e.message, 'error');
+  }
 };
-window.removeDevice = (cid, idx) => {
+window.removeDevice = async (cid, idx) => {
   if (!confirm('确定删除此设备？')) return;
-  const customers = getCustomers();
-  const c = customers.find(x => x.id === cid);
-  if (c && c.devices) { c.devices.splice(idx, 1); saveCustomers(customers); notify('已删除', '', 'success'); navigate('customer/' + cid); }
+  try {
+    const c = getCustomers().find(x => x.id === cid);
+    if (c && c.devices) { c.devices.splice(idx, 1); await updateCustomerAsync(cid, { devices: c.devices }); notify('已删除', '', 'success'); navigate('customer/' + cid); }
+  } catch (e) {
+    notify('删除失败', e.message, 'error');
+  }
 };
 
 // ===================== 团队设置 (Admin) =====================
@@ -1289,15 +1381,21 @@ window.openAddUserModal = () => {
     <div class="modal-footer"><button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button><button class="btn btn-primary" onclick="submitUser()">保存</button></div></div>`;
   document.body.appendChild(modal);
 };
-window.submitUser = () => {
+window.submitUser = async () => {
   const username = document.getElementById('new-username').value.trim();
   const name = document.getElementById('new-name').value.trim();
   const password = document.getElementById('new-password').value;
   if (!username || !name || !password) { notify('请填写必填项', '', 'warning'); return; }
   const users = getUsers();
   if (users.find(u => u.username === username)) { notify('用户名已存在', '', 'warning'); return; }
-  users.push({ id: 'u' + (users.length+1), username, name, password, role: document.getElementById('new-role').value, email: document.getElementById('new-email').value, phone: document.getElementById('new-phone').value, createdAt: new Date().toISOString() });
-  saveUsers(users); notify('添加成功', '', 'success'); document.querySelector('.modal-overlay').remove(); navigate('admin/team');
+  try {
+    await createUserAsync({ id: generateId('usr'), username, name, password, role: document.getElementById('new-role').value, email: document.getElementById('new-email').value, phone: document.getElementById('new-phone').value, color: '#2563eb', isActive: true, createdAt: new Date().toISOString() });
+    notify('添加成功', '', 'success');
+    document.querySelector('.modal-overlay').remove();
+    navigate('admin/team');
+  } catch (e) {
+    notify('添加失败', e.message, 'error');
+  }
 };
 window.openEditUserModal = (id) => {
   const u = getUsers().find(x => x.id === id); if (!u) return;
@@ -1311,17 +1409,22 @@ window.openEditUserModal = (id) => {
     <div class="modal-footer"><button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button><button class="btn btn-primary" onclick="updateUser('${id}')">保存</button></div></div>`;
   document.body.appendChild(modal);
 };
-window.updateUser = (id) => {
-  const users = getUsers();
-  const u = users.find(x => x.id === id);
-  if (u) {
-    u.name = document.getElementById('edit-name').value.trim();
-    const pwd = document.getElementById('edit-password').value;
-    if (pwd) u.password = pwd;
-    u.role = document.getElementById('edit-role').value;
-    u.email = document.getElementById('edit-email').value;
-    u.phone = document.getElementById('edit-phone').value;
-    saveUsers(users); notify('保存成功', '', 'success'); document.querySelector('.modal-overlay').remove(); navigate('admin/team');
+window.updateUser = async (id) => {
+  const fields = {
+    name: document.getElementById('edit-name').value.trim(),
+    role: document.getElementById('edit-role').value,
+    email: document.getElementById('edit-email').value,
+    phone: document.getElementById('edit-phone').value
+  };
+  const pwd = document.getElementById('edit-password').value;
+  if (pwd) fields.password = pwd;
+  try {
+    await updateUserAsync(id, fields);
+    notify('保存成功', '', 'success');
+    document.querySelector('.modal-overlay').remove();
+    navigate('admin/team');
+  } catch (e) {
+    notify('保存失败', e.message, 'error');
   }
 };
 
@@ -1417,8 +1520,14 @@ route('admin/stats', () => {
 });
 
 // ===================== 初始化 =====================
-document.addEventListener('DOMContentLoaded', () => {
-  initData();
+document.addEventListener('DOMContentLoaded', async () => {
+  if (__token) {
+    const ok = await loadAllData();
+    if (!ok) {
+      // 后端未启动或认证失败，显示离线提示
+      console.warn('[CRM] 后端连接失败，请确保服务器已启动');
+    }
+  }
   renderRoute();
 });
 </script>
