@@ -1,0 +1,1153 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>技术支持工单与客户管理系统</title>
+<style>
+/* ===== CSS Reset & Base ===== */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 16px; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif; background: #f0f2f5; color: #333; line-height: 1.6; min-height: 100vh; }
+a { text-decoration: none; color: inherit; }
+ul, ol { list-style: none; }
+img { max-width: 100%; display: block; }
+button { font-family: inherit; cursor: pointer; border: none; background: none; }
+input, textarea, select { font-family: inherit; font-size: 1rem; }
+
+/* ===== CSS Variables ===== */
+:root {
+  --primary: #1890ff; --primary-dark: #096dd9; --primary-light: #e6f7ff;
+  --success: #52c41a; --success-light: #f6ffed;
+  --warning: #faad14; --warning-light: #fffbe6;
+  --danger: #ff4d4f; --danger-light: #fff1f0;
+  --info: #13c2c2; --info-light: #e6fffb;
+  --text: #262626; --text-secondary: #595959; --text-muted: #8c8c8c;
+  --border: #d9d9d9; --border-light: #f0f0f0;
+  --bg: #f0f2f5; --bg-white: #fff; --bg-sidebar: #001529;
+  --shadow: 0 2px 8px rgba(0,0,0,0.08); --shadow-lg: 0 4px 16px rgba(0,0,0,0.12);
+  --radius: 6px; --radius-lg: 8px;
+  --sidebar-width: 220px; --header-height: 64px;
+}
+
+/* ===== Layout ===== */
+.app-layout { display: flex; min-height: 100vh; }
+.sidebar {
+  width: var(--sidebar-width); background: var(--bg-sidebar); color: #fff;
+  position: fixed; top: 0; left: 0; bottom: 0; z-index: 100;
+  transition: transform .3s; overflow-y: auto;
+}
+.sidebar-brand { padding: 16px; font-size: 1.1rem; font-weight: 600; border-bottom: 1px solid rgba(255,255,255,0.1); display: flex; align-items: center; gap: 8px; }
+.sidebar-brand .icon { font-size: 1.4rem; }
+.sidebar-nav { padding: 8px 0; }
+.nav-item { display: flex; align-items: center; gap: 10px; padding: 12px 20px; color: rgba(255,255,255,0.7); transition: all .2s; cursor: pointer; }
+.nav-item:hover, .nav-item.active { background: #1890ff; color: #fff; }
+.nav-item .icon { font-size: 1.1rem; width: 20px; text-align: center; }
+.nav-group-title { padding: 12px 20px 4px; font-size: .75rem; color: rgba(255,255,255,0.45); text-transform: uppercase; letter-spacing: .5px; }
+.main { flex: 1; margin-left: var(--sidebar-width); min-height: 100vh; display: flex; flex-direction: column; }
+.header {
+  height: var(--header-height); background: #fff; border-bottom: 1px solid var(--border-light);
+  display: flex; align-items: center; justify-content: space-between; padding: 0 24px;
+  position: sticky; top: 0; z-index: 50;
+}
+.header-left { display: flex; align-items: center; gap: 16px; }
+.menu-toggle { display: none; font-size: 1.3rem; color: var(--text-secondary); }
+.header-right { display: flex; align-items: center; gap: 16px; }
+.badge-btn { position: relative; padding: 8px; color: var(--text-secondary); font-size: 1.1rem; }
+.badge-btn .badge {
+  position: absolute; top: 4px; right: 4px; min-width: 16px; height: 16px; padding: 0 4px;
+  background: var(--danger); color: #fff; font-size: .65rem; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+}
+.user-info { display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 4px 8px; border-radius: var(--radius); }
+.user-info:hover { background: var(--bg); }
+.user-avatar { width: 32px; height: 32px; border-radius: 50%; background: var(--primary); color: #fff; display: flex; align-items: center; justify-content: center; font-size: .85rem; font-weight: 600; }
+.content { flex: 1; padding: 24px; overflow-y: auto; }
+.page-title { font-size: 1.4rem; font-weight: 600; margin-bottom: 20px; color: var(--text); }
+
+/* ===== Mobile Sidebar Overlay ===== */
+.sidebar-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 99; }
+
+/* ===== Cards ===== */
+.card { background: #fff; border-radius: var(--radius-lg); box-shadow: var(--shadow); margin-bottom: 20px; }
+.card-header { padding: 16px 20px; border-bottom: 1px solid var(--border-light); display: flex; align-items: center; justify-content: space-between; }
+.card-title { font-weight: 600; font-size: 1.05rem; }
+.card-body { padding: 20px; }
+
+/* ===== Stats Row ===== */
+.stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 20px; }
+.stat-card { background: #fff; border-radius: var(--radius-lg); box-shadow: var(--shadow); padding: 20px; display: flex; align-items: center; gap: 16px; }
+.stat-icon { width: 48px; height: 48px; border-radius: var(--radius); display: flex; align-items: center; justify-content: center; font-size: 1.4rem; flex-shrink: 0; }
+.stat-icon.blue { background: var(--primary-light); color: var(--primary); }
+.stat-icon.green { background: var(--success-light); color: var(--success); }
+.stat-icon.orange { background: var(--warning-light); color: var(--warning); }
+.stat-icon.red { background: var(--danger-light); color: var(--danger); }
+.stat-icon.cyan { background: var(--info-light); color: var(--info); }
+.stat-value { font-size: 1.6rem; font-weight: 700; color: var(--text); }
+.stat-label { font-size: .85rem; color: var(--text-muted); }
+
+/* ===== Buttons ===== */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 16px; border-radius: var(--radius); font-size: .9rem; transition: all .2s; border: 1px solid transparent; cursor: pointer; }
+.btn:disabled { opacity: .6; cursor: not-allowed; }
+.btn-primary { background: var(--primary); color: #fff; }
+.btn-primary:hover:not(:disabled) { background: var(--primary-dark); }
+.btn-success { background: var(--success); color: #fff; }
+.btn-success:hover:not(:disabled) { background: #389e0d; }
+.btn-warning { background: var(--warning); color: #fff; }
+.btn-warning:hover:not(:disabled) { background: #d48806; }
+.btn-danger { background: var(--danger); color: #fff; }
+.btn-danger:hover:not(:disabled) { background: #cf1322; }
+.btn-default { background: #fff; border-color: var(--border); color: var(--text); }
+.btn-default:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }
+.btn-sm { padding: 4px 12px; font-size: .85rem; }
+.btn-lg { padding: 10px 24px; font-size: 1rem; }
+.btn-group { display: flex; gap: 8px; }
+
+/* ===== Forms ===== */
+.form-group { margin-bottom: 16px; }
+.form-label { display: block; margin-bottom: 6px; font-size: .9rem; color: var(--text-secondary); font-weight: 500; }
+.form-label .required { color: var(--danger); margin-left: 2px; }
+.form-input, .form-select, .form-textarea {
+  width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius);
+  background: #fff; color: var(--text); transition: border-color .2s;
+}
+.form-input:focus, .form-select:focus, .form-textarea:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(24,144,255,0.1); }
+.form-textarea { resize: vertical; min-height: 80px; }
+.form-hint { font-size: .8rem; color: var(--text-muted); margin-top: 4px; }
+.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+
+/* ===== Tables ===== */
+.table-wrap { overflow-x: auto; }
+.data-table { width: 100%; border-collapse: collapse; }
+.data-table th, .data-table td { padding: 12px 16px; text-align: left; font-size: .9rem; }
+.data-table thead th { background: #fafafa; font-weight: 600; color: var(--text-secondary); border-bottom: 1px solid var(--border-light); white-space: nowrap; }
+.data-table tbody tr { border-bottom: 1px solid var(--border-light); transition: background .2s; }
+.data-table tbody tr:hover { background: #fafafa; }
+.data-table td { color: var(--text); }
+
+/* ===== Tags ===== */
+.tag { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 4px; font-size: .8rem; font-weight: 500; }
+.tag-blue { background: var(--primary-light); color: var(--primary); }
+.tag-green { background: var(--success-light); color: var(--success); }
+.tag-orange { background: var(--warning-light); color: var(--warning); }
+.tag-red { background: var(--danger-light); color: var(--danger); }
+.tag-gray { background: #f5f5f5; color: var(--text-muted); }
+
+/* ===== Status ===== */
+.status { display: inline-flex; align-items: center; gap: 4px; }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; }
+.status-dot.blue { background: var(--primary); }
+.status-dot.green { background: var(--success); }
+.status-dot.orange { background: var(--warning); }
+.status-dot.red { background: var(--danger); }
+.status-dot.gray { background: #bfbfbf; }
+
+/* ===== Search & Filters ===== */
+.search-bar { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
+.search-input { flex: 1; min-width: 200px; position: relative; }
+.search-input input { width: 100%; padding: 8px 12px 8px 36px; border: 1px solid var(--border); border-radius: var(--radius); }
+.search-input::before { content: "🔍"; position: absolute; left: 12px; top: 50%; transform: translateY(-50%); opacity: .5; font-size: .9rem; }
+.filter-group { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ===== Empty State ===== */
+.empty-state { text-align: center; padding: 60px 20px; color: var(--text-muted); }
+.empty-state .icon { font-size: 3rem; margin-bottom: 12px; opacity: .5; }
+.empty-state .title { font-size: 1.1rem; color: var(--text-secondary); margin-bottom: 8px; }
+
+/* ===== Modal ===== */
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 200; display: flex; align-items: center; justify-content: center; padding: 20px; }
+.modal { background: #fff; border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); width: 100%; max-width: 560px; max-height: 90vh; overflow-y: auto; animation: modalIn .2s ease; }
+.modal-header { padding: 16px 20px; border-bottom: 1px solid var(--border-light); display: flex; align-items: center; justify-content: space-between; }
+.modal-title { font-weight: 600; font-size: 1.05rem; }
+.modal-close { font-size: 1.3rem; color: var(--text-muted); cursor: pointer; padding: 4px; }
+.modal-close:hover { color: var(--text); }
+.modal-body { padding: 20px; }
+.modal-footer { padding: 12px 20px; border-top: 1px solid var(--border-light); display: flex; justify-content: flex-end; gap: 8px; }
+@keyframes modalIn { from { opacity: 0; transform: translateY(-20px); } to { opacity: 1; transform: translateY(0); } }
+
+/* ===== Dropdown ===== */
+.dropdown { position: relative; }
+.dropdown-menu { position: absolute; right: 0; top: 100%; margin-top: 4px; background: #fff; border-radius: var(--radius); box-shadow: var(--shadow-lg); border: 1px solid var(--border-light); min-width: 160px; z-index: 150; display: none; }
+.dropdown.open .dropdown-menu { display: block; }
+.dropdown-item { padding: 10px 16px; cursor: pointer; font-size: .9rem; color: var(--text); display: flex; align-items: center; gap: 8px; }
+.dropdown-item:hover { background: #f5f5f5; }
+
+/* ===== Login Page ===== */
+.login-page { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #001529 0%, #1890ff 100%); padding: 20px; }
+.login-card { background: #fff; border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); width: 100%; max-width: 400px; padding: 40px; }
+.login-header { text-align: center; margin-bottom: 32px; }
+.login-header .logo { font-size: 2.5rem; margin-bottom: 12px; }
+.login-header h1 { font-size: 1.4rem; color: var(--text); margin-bottom: 4px; }
+.login-header p { color: var(--text-muted); font-size: .9rem; }
+.login-form .form-group { margin-bottom: 20px; }
+.login-form .btn { width: 100%; padding: 12px; font-size: 1rem; }
+.login-tips { margin-top: 20px; padding: 12px; background: #f6ffed; border: 1px solid #b7eb8f; border-radius: var(--radius); font-size: .85rem; color: #52c41a; }
+
+/* ===== Tabs ===== */
+.tabs { display: flex; border-bottom: 1px solid var(--border-light); margin-bottom: 20px; gap: 4px; }
+.tab { padding: 10px 16px; cursor: pointer; color: var(--text-secondary); font-size: .9rem; border-bottom: 2px solid transparent; margin-bottom: -1px; transition: all .2s; }
+.tab:hover { color: var(--primary); }
+.tab.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 500; }
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+/* ===== Timeline ===== */
+.timeline { position: relative; padding-left: 24px; }
+.timeline::before { content: ""; position: absolute; left: 7px; top: 4px; bottom: 4px; width: 2px; background: var(--border-light); }
+.timeline-item { position: relative; padding-bottom: 20px; }
+.timeline-dot { position: absolute; left: -20px; top: 4px; width: 14px; height: 14px; border-radius: 50%; background: var(--primary); border: 2px solid #fff; box-shadow: 0 0 0 2px var(--primary-light); }
+.timeline-dot.green { background: var(--success); box-shadow: 0 0 0 2px var(--success-light); }
+.timeline-dot.orange { background: var(--warning); box-shadow: 0 0 0 2px var(--warning-light); }
+.timeline-dot.red { background: var(--danger); box-shadow: 0 0 0 2px var(--danger-light); }
+.timeline-time { font-size: .8rem; color: var(--text-muted); margin-bottom: 4px; }
+.timeline-content { background: #f5f5f5; padding: 10px 14px; border-radius: var(--radius); font-size: .9rem; }
+
+/* ===== Notifications ===== */
+.notify-container { position: fixed; top: 20px; right: 20px; z-index: 300; display: flex; flex-direction: column; gap: 10px; }
+.notify-item {
+  background: #fff; border-radius: var(--radius); box-shadow: var(--shadow-lg);
+  padding: 14px 18px; min-width: 280px; max-width: 360px;
+  display: flex; align-items: flex-start; gap: 10px; animation: notifyIn .3s ease;
+  border-left: 4px solid var(--primary);
+}
+.notify-item.success { border-left-color: var(--success); }
+.notify-item.warning { border-left-color: var(--warning); }
+.notify-item.error { border-left-color: var(--danger); }
+.notify-item .icon { font-size: 1.2rem; flex-shrink: 0; }
+.notify-item .content { flex: 1; }
+.notify-item .title { font-weight: 600; font-size: .95rem; margin-bottom: 2px; }
+.notify-item .message { font-size: .85rem; color: var(--text-secondary); }
+.notify-close { color: var(--text-muted); cursor: pointer; font-size: 1.1rem; }
+@keyframes notifyIn { from { opacity: 0; transform: translateX(100%); } to { opacity: 1; transform: translateX(0); } }
+@keyframes notifyOut { to { opacity: 0; transform: translateX(100%); } }
+
+/* ===== Smart Input ===== */
+.smart-input-wrap { position: relative; }
+.smart-input { width: 100%; padding: 12px 16px; border: 2px solid var(--border); border-radius: var(--radius-lg); font-size: 1rem; transition: all .2s; resize: vertical; min-height: 60px; }
+.smart-input:focus { outline: none; border-color: var(--primary); }
+.smart-hint { margin-top: 8px; padding: 10px 14px; background: var(--primary-light); border-radius: var(--radius); font-size: .85rem; color: var(--text-secondary); }
+.smart-hint strong { color: var(--primary); }
+
+/* ===== Responsive ===== */
+@media (max-width: 768px) {
+  .sidebar { transform: translateX(-100%); }
+  .sidebar.open { transform: translateX(0); }
+  .main { margin-left: 0; }
+  .menu-toggle { display: block; }
+  .sidebar-overlay.show { display: block; }
+  .stats-row { grid-template-columns: repeat(2, 1fr); }
+  .form-row { grid-template-columns: 1fr; }
+  .search-bar { flex-direction: column; }
+  .header { padding: 0 16px; }
+  .content { padding: 16px; }
+  .data-table th, .data-table td { padding: 10px 12px; white-space: nowrap; }
+  .modal { margin: 10px; }
+}
+@media (max-width: 480px) {
+  .stats-row { grid-template-columns: 1fr; }
+  .login-card { padding: 28px 20px; }
+}
+
+/* ===== Utility ===== */
+.text-right { text-align: right; }
+.text-center { text-align: center; }
+.text-muted { color: var(--text-muted); }
+.text-primary { color: var(--primary); }
+.text-success { color: var(--success); }
+.text-danger { color: var(--danger); }
+.text-warning { color: var(--warning); }
+.font-bold { font-weight: 600; }
+.font-sm { font-size: .85rem; }
+.mt-1 { margin-top: 4px; } .mt-2 { margin-top: 8px; } .mt-3 { margin-top: 12px; } .mt-4 { margin-top: 16px; }
+.mb-1 { margin-bottom: 4px; } .mb-2 { margin-bottom: 8px; } .mb-3 { margin-bottom: 12px; } .mb-4 { margin-bottom: 16px; }
+.flex { display: flex; } .flex-between { justify-content: space-between; } .flex-center { align-items: center; } .gap-2 { gap: 8px; }
+.hide { display: none !important; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+// ===================== 工具函数 =====================
+const generateId = () => Date.now().toString(36) + Math.random().toString(36).substr(2, 6);
+const formatDate = (d, fmt = 'yyyy-MM-dd HH:mm') => {
+  if (!d) return '-';
+  const date = typeof d === 'string' ? new Date(d) : d;
+  if (isNaN(date)) return '-';
+  const pad = n => String(n).padStart(2, '0');
+  const map = { yyyy: date.getFullYear(), MM: pad(date.getMonth()+1), dd: pad(date.getDate()), HH: pad(date.getHours()), mm: pad(date.getMinutes()), ss: pad(date.getSeconds()) };
+  return fmt.replace(/yyyy|MM|dd|HH|mm|ss/g, m => map[m]);
+};
+const escapeHtml = str => str == null ? '' : String(str).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[m]));
+const debounce = (fn, delay) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), delay); }; };
+
+// ===================== 数据层API (localStorage) =====================
+const LS = {
+  get: k => { try { return JSON.parse(localStorage.getItem(k)); } catch(e) { return null; } },
+  set: (k, v) => localStorage.setItem(k, JSON.stringify(v)),
+};
+const getUsers = () => LS.get('crm_users') || [];
+const saveUsers = v => LS.set('crm_users', v);
+const getTickets = () => LS.get('crm_tickets') || [];
+const saveTickets = v => LS.set('crm_tickets', v);
+const getCustomers = () => LS.get('crm_customers') || [];
+const saveCustomers = v => LS.set('crm_customers', v);
+const getSession = () => LS.get('crm_session') || null;
+const saveSession = v => LS.set('crm_session', v);
+const clearSession = () => localStorage.removeItem('crm_session');
+
+// ===================== 初始化数据 =====================
+function initData() {
+  if (!LS.get('crm_users')) {
+    const users = [
+      { id: 'u1', username: 'admin', password: 'admin123', name: '系统管理员', role: 'admin', email: 'admin@company.com', phone: '13800138000', createdAt: '2024-01-01T00:00:00' },
+      { id: 'u2', username: 'zhangsan', password: '123456', name: '张三', role: 'engineer', email: 'zhangsan@company.com', phone: '13800138001', createdAt: '2024-01-01T00:00:00' },
+      { id: 'u3', username: 'lisi', password: '123456', name: '李四', role: 'engineer', email: 'lisi@company.com', phone: '13800138002', createdAt: '2024-01-01T00:00:00' },
+      { id: 'u4', username: 'wangwu', password: '123456', name: '王五', role: 'engineer', email: 'wangwu@company.com', phone: '13800138003', createdAt: '2024-01-01T00:00:00' },
+      { id: 'u5', username: 'zhaoliu', password: '123456', name: '赵六', role: 'engineer', email: 'zhaoliu@company.com', phone: '13800138004', createdAt: '2024-01-01T00:00:00' },
+    ];
+    saveUsers(users);
+  }
+  if (!LS.get('crm_customers')) {
+    const customers = [
+      { id: 'c1', name: '科技创新有限公司', contact: '陈经理', phone: '13900001111', email: 'chen@tech.com', address: '北京市海淀区中关村大街1号', industry: '互联网', level: 'A', devices: [{ name: '服务器A', model: 'Dell R740', sn: 'SN123456' }, { name: '交换机', model: 'Cisco 2960', sn: 'SN789012' }], createdAt: '2024-01-15T10:00:00' },
+      { id: 'c2', name: '智慧物流公司', contact: '刘总', phone: '13900002222', email: 'liu@wiselog.com', address: '上海市浦东新区张江路2号', industry: '物流', level: 'A', devices: [{ name: '条码打印机', model: 'Zebra ZT410', sn: 'SN345678' }], createdAt: '2024-02-01T09:00:00' },
+      { id: 'c3', name: '绿色能源集团', contact: '王工', phone: '13900003333', email: 'wang@green.com', address: '广州市天河区珠江新城3号', industry: '能源', level: 'B', devices: [{ name: '工控机', model: 'Advantech UNO', sn: 'SN901234' }, { name: '传感器', model: 'Siemens S7', sn: 'SN567890' }], createdAt: '2024-02-15T14:00:00' },
+      { id: 'c4', name: '金融数据服务', contact: '张经理', phone: '13900004444', email: 'zhang@fin.com', address: '深圳市福田区金融中心4号', industry: '金融', level: 'A', devices: [{ name: '存储阵列', model: 'EMC VNX', sn: 'SN111222' }], createdAt: '2024-03-01T11:00:00' },
+      { id: 'c5', name: '医疗科技股份', contact: '李主任', phone: '13900005555', email: 'li@med.com', address: '杭州市西湖区文三路5号', industry: '医疗', level: 'B', devices: [{ name: 'PACS服务器', model: 'HP DL380', sn: 'SN333444' }], createdAt: '2024-03-10T08:30:00' },
+      { id: 'c6', name: '教育科技集团', contact: '赵老师', phone: '13900006666', email: 'zhao@edu.com', address: '南京市鼓楼区中山路6号', industry: '教育', level: 'C', devices: [{ name: '投影机', model: 'Epson CB', sn: 'SN555666' }], createdAt: '2024-03-20T15:00:00' },
+      { id: 'c7', name: '智能制造工厂', contact: '孙厂长', phone: '13900007777', email: 'sun@smart.com', address: '苏州市工业园区星湖街7号', industry: '制造', level: 'B', devices: [{ name: 'CNC机床', model: 'Fanuc 0i', sn: 'SN777888' }, { name: 'PLC控制器', model: 'Mitsubishi FX', sn: 'SN999000' }], createdAt: '2024-04-01T10:00:00' },
+      { id: 'c8', name: '电子商务平台', contact: '周运营', phone: '13900008888', email: 'zhou@ecom.com', address: '成都市高新区天府大道8号', industry: '电商', level: 'A', devices: [{ name: '负载均衡', model: 'F5 BIG-IP', sn: 'SN121212' }], createdAt: '2024-04-10T09:00:00' },
+    ];
+    saveCustomers(customers);
+  }
+  if (!LS.get('crm_tickets')) {
+    const now = new Date();
+    const d = (days, hours=0) => new Date(now.getTime() - days*86400000 - hours*3600000).toISOString();
+    const tickets = [
+      { id: 'TK001', title: '服务器无法远程连接', customerId: 'c1', engineerId: 'u2', status: 'processing', priority: 'high', category: '硬件故障', description: '客户反映服务器A从今早8点开始无法通过RDP远程连接，现场指示灯正常。', createdAt: d(0,4), updatedAt: d(0,2), dueDate: d(-1), creatorId: 'u1', comments: [{ id: generateId(), userId: 'u2', userName: '张三', content: '已联系客户，准备远程排查。', createdAt: d(0,3) }] },
+      { id: 'TK002', title: '网络间歇性断线', customerId: 'c2', engineerId: 'u3', status: 'pending', priority: 'medium', category: '网络问题', description: '仓库区域WiFi频繁断线，影响扫码入库操作。', createdAt: d(1,2), updatedAt: d(1,2), dueDate: d(0), creatorId: 'u1', comments: [] },
+      { id: 'TK003', title: '工控机系统蓝屏', customerId: 'c3', engineerId: 'u2', status: 'resolved', priority: 'high', category: '系统故障', description: '生产线工控机频繁蓝屏，错误代码0x0000007E。', createdAt: d(3,5), updatedAt: d(1,1), dueDate: d(-2), creatorId: 'u1', comments: [{ id: generateId(), userId: 'u2', userName: '张三', content: '已更换内存条，问题解决。', createdAt: d(1,1) }] },
+      { id: 'TK004', title: '存储阵列容量告警', customerId: 'c4', engineerId: 'u4', status: 'processing', priority: 'medium', category: '存储问题', description: 'EMC存储阵列使用率超过85%，需要扩容或清理。', createdAt: d(0,6), updatedAt: d(0,1), dueDate: d(-1), creatorId: 'u1', comments: [] },
+      { id: 'TK005', title: 'PACS系统访问缓慢', customerId: 'c5', engineerId: 'u5', status: 'pending', priority: 'low', category: '性能问题', description: '医生反映PACS影像加载时间过长，影响诊断效率。', createdAt: d(2,3), updatedAt: d(2,3), dueDate: d(1), creatorId: 'u1', comments: [] },
+      { id: 'TK006', title: '投影机无法开机', customerId: 'c6', engineerId: 'u3', status: 'resolved', priority: 'low', category: '硬件故障', description: '教室投影机按下电源键无反应，灯泡已更换。', createdAt: d(5,2), updatedAt: d(3,4), dueDate: d(-4), creatorId: 'u1', comments: [{ id: generateId(), userId: 'u3', userName: '李四', content: '电源板故障，已更换。', createdAt: d(3,4) }] },
+      { id: 'TK007', title: 'CNC机床程序报错', customerId: 'c7', engineerId: 'u4', status: 'processing', priority: 'high', category: '设备故障', description: '加工程序运行到第N120行报警，显示伺服异常。', createdAt: d(0,8), updatedAt: d(0,3), dueDate: d(0), creatorId: 'u1', comments: [{ id: generateId(), userId: 'u4', userName: '王五', content: '正在排查伺服驱动器。', createdAt: d(0,3) }] },
+      { id: 'TK008', title: '负载均衡配置更新', customerId: 'c8', engineerId: 'u5', status: 'pending', priority: 'medium', category: '配置变更', description: '需要为新上线业务配置负载均衡策略。', createdAt: d(1,5), updatedAt: d(1,5), dueDate: d(0), creatorId: 'u1', comments: [] },
+      { id: 'TK009', title: '交换机端口故障', customerId: 'c1', engineerId: 'u2', status: 'resolved', priority: 'medium', category: '网络问题', description: 'Cisco交换机第12端口频繁UP/DOWN。', createdAt: d(4,2), updatedAt: d(2,5), dueDate: d(-3), creatorId: 'u1', comments: [{ id: generateId(), userId: 'u2', userName: '张三', content: '更换网线后稳定。', createdAt: d(2,5) }] },
+      { id: 'TK010', title: '条码打印机卡纸', customerId: 'c2', engineerId: 'u3', status: 'resolved', priority: 'low', category: '硬件故障', description: '打印机频繁卡纸，已清理多次。', createdAt: d(6,1), updatedAt: d(4,3), dueDate: d(-5), creatorId: 'u1', comments: [{ id: generateId(), userId: 'u3', userName: '李四', content: '更换搓纸轮，问题解决。', createdAt: d(4,3) }] },
+      { id: 'TK011', title: '传感器数据异常', customerId: 'c3', engineerId: 'u4', status: 'processing', priority: 'medium', category: '设备故障', description: '温度传感器读数异常，显示-40度。', createdAt: d(0,5), updatedAt: d(0,1), dueDate: d(-1), creatorId: 'u1', comments: [] },
+      { id: 'TK012', title: '数据库备份失败', customerId: 'c4', engineerId: 'u5', status: 'pending', priority: 'high', category: '系统故障', description: '近3天数据库自动备份任务均失败。', createdAt: d(2,6), updatedAt: d(2,6), dueDate: d(0), creatorId: 'u1', comments: [] },
+      { id: 'TK013', title: '服务器硬盘告警', customerId: 'c5', engineerId: 'u2', status: 'processing', priority: 'high', category: '硬件故障', description: 'RAID5中一块硬盘报错，需更换。', createdAt: d(0,3), updatedAt: d(0,1), dueDate: d(0), creatorId: 'u1', comments: [{ id: generateId(), userId: 'u2', userName: '张三', content: '已申请备件，预计明天更换。', createdAt: d(0,1) }] },
+      { id: 'TK014', title: 'PLC通信中断', customerId: 'c7', engineerId: 'u4', status: 'pending', priority: 'high', category: '设备故障', description: 'PLC与HMI通信中断，产线停止。', createdAt: d(0,2), updatedAt: d(0,2), dueDate: d(0), creatorId: 'u1', comments: [] },
+      { id: 'TK015', title: '网站访问502错误', customerId: 'c8', engineerId: 'u5', status: 'processing', priority: 'high', category: '应用故障', description: '用户反馈网站间歇性出现502 Bad Gateway。', createdAt: d(0,1), updatedAt: d(0,0.5), dueDate: d(0), creatorId: 'u1', comments: [{ id: generateId(), userId: 'u5', userName: '赵六', content: '正在检查后端服务状态。', createdAt: d(0,0.5) }] },
+    ];
+    saveTickets(tickets);
+  }
+}
+
+// ===================== 认证模块 =====================
+const login = (username, password) => {
+  const user = getUsers().find(u => u.username === username && u.password === password);
+  if (!user) return null;
+  const session = { userId: user.id, username: user.username, name: user.name, role: user.role, loginAt: new Date().toISOString() };
+  saveSession(session);
+  return session;
+};
+const logout = () => clearSession();
+const getCurrentUser = () => getSession();
+const isAdmin = () => { const s = getSession(); return s && s.role === 'admin'; };
+const isEngineer = () => { const s = getSession(); return s && (s.role === 'engineer' || s.role === 'admin'); };
+
+// ===================== 自然语言解析模块 =====================
+function parseTicketInput(text) {
+  const result = { title: '', customerId: '', priority: 'medium', category: '', description: text };
+  const customers = getCustomers();
+  // 提取客户名
+  for (const c of customers) {
+    if (text.includes(c.name) || text.includes(c.contact)) { result.customerId = c.id; break; }
+  }
+  // 提取优先级
+  if (/紧急|立刻|马上|高优|严重|崩溃|宕机/.test(text)) result.priority = 'high';
+  else if (/低优|不急|稍后|低优先级/.test(text)) result.priority = 'low';
+  // 提取类别
+  const catMap = { '硬件': '硬件故障', '网络': '网络问题', '系统': '系统故障', '软件': '软件问题', '性能': '性能问题', '配置': '配置变更', '存储': '存储问题' };
+  for (const [k, v] of Object.entries(catMap)) { if (text.includes(k)) { result.category = v; break; } }
+  // 提取标题（取第一句或前20字）
+  result.title = text.split(/[，。！？\n]/)[0].slice(0, 30);
+  if (!result.title) result.title = '新工单';
+  return result;
+}
+
+// ===================== 通知系统 =====================
+function notify(title, message, type = 'info', duration = 3000) {
+  const container = document.getElementById('notify-container') || (() => {
+    const el = document.createElement('div'); el.id = 'notify-container'; el.className = 'notify-container'; document.body.appendChild(el); return el;
+  })();
+  const icons = { info: 'ℹ️', success: '✅', warning: '⚠️', error: '❌' };
+  const item = document.createElement('div');
+  item.className = `notify-item ${type}`;
+  item.innerHTML = `<span class="icon">${icons[type]}</span><div class="content"><div class="title">${escapeHtml(title)}</div><div class="message">${escapeHtml(message)}</div></div><span class="notify-close">&times;</span>`;
+  item.querySelector('.notify-close').onclick = () => { item.style.animation = 'notifyOut .3s ease forwards'; setTimeout(() => item.remove(), 300); };
+  container.appendChild(item);
+  if (duration) setTimeout(() => { if (item.parentNode) { item.style.animation = 'notifyOut .3s ease forwards'; setTimeout(() => item.remove(), 300); } }, duration);
+}
+
+// ===================== 路由系统 =====================
+const routes = {};
+let currentRoute = '';
+function route(path, handler) { routes[path] = handler; }
+function navigate(path) { window.location.hash = '#' + path; }
+function matchRoute(hash) {
+  const path = hash.replace(/^#/, '') || 'login';
+  for (const [pattern, handler] of Object.entries(routes)) {
+    const regex = new RegExp('^' + pattern.replace(/:\w+/g, '([^/]+)') + '$');
+    const m = path.match(regex);
+    if (m) { currentRoute = path; return () => handler(...m.slice(1)); }
+  }
+  return null;
+}
+function renderRoute() {
+  const app = document.getElementById('app');
+  const user = getCurrentUser();
+  const hash = window.location.hash;
+  // 未登录只能访问login
+  if (!user && hash !== '#login') { window.location.hash = '#login'; return; }
+  const handler = matchRoute(hash);
+  if (handler) { app.innerHTML = ''; handler(); }
+  else { app.innerHTML = '<div class="empty-state"><div class="icon">🔍</div><div class="title">页面未找到</div></div>'; }
+}
+window.addEventListener('hashchange', renderRoute);
+
+// ===================== 布局渲染 =====================
+function renderLayout(contentFn) {
+  const user = getCurrentUser();
+  const isAdminUser = user && user.role === 'admin';
+  const app = document.getElementById('app');
+  app.innerHTML = `
+    <div class="app-layout">
+      <aside class="sidebar" id="sidebar">
+        <div class="sidebar-brand"><span class="icon">🛠️</span> 技术支持系统</div>
+        <nav class="sidebar-nav">
+          <div class="nav-item ${currentRoute==='dashboard'?'active':''}" onclick="navigate('dashboard')"><span class="icon">📊</span> 仪表盘</div>
+          <div class="nav-item ${currentRoute.startsWith('ticket')?'active':''}" onclick="navigate('tickets')"><span class="icon">🎫</span> 工单管理</div>
+          <div class="nav-item ${currentRoute.startsWith('customer')?'active':''}" onclick="navigate('customers')"><span class="icon">👥</span> 客户管理</div>
+          ${isAdminUser ? `<div class="nav-group-title">管理员</div>
+          <div class="nav-item ${currentRoute==='admin/team'?'active':''}" onclick="navigate('admin/team')"><span class="icon">👨‍💻</span> 团队设置</div>
+          <div class="nav-item ${currentRoute==='admin/stats'?'active':''}" onclick="navigate('admin/stats')"><span class="icon">📈</span> 统计报表</div>` : ''}
+        </nav>
+      </aside>
+      <div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div>
+      <div class="main">
+        <header class="header">
+          <div class="header-left">
+            <button class="menu-toggle" onclick="toggleSidebar()">☰</button>
+            <span class="font-sm text-muted">${formatDate(new Date(), 'yyyy年MM月dd日')}</span>
+          </div>
+          <div class="header-right">
+            <div class="dropdown" id="notify-dropdown">
+              <button class="badge-btn" onclick="toggleNotifyDropdown()">🔔 ${getUnreadCount() > 0 ? `<span class="badge">${getUnreadCount()}</span>` : ''}</button>
+              <div class="dropdown-menu" id="notify-menu" style="width:320px;max-height:360px;overflow-y:auto;"></div>
+            </div>
+            <div class="dropdown" id="user-dropdown">
+              <div class="user-info" onclick="toggleUserDropdown()">
+                <div class="user-avatar">${user.name.charAt(0)}</div>
+                <span class="font-sm font-bold">${user.name}</span>
+                <span class="font-sm text-muted">▼</span>
+              </div>
+              <div class="dropdown-menu">
+                <div class="dropdown-item" onclick="navigate('dashboard')"><span>📊</span> 仪表盘</div>
+                <div class="dropdown-item" onclick="doLogout()"><span>🚪</span> 退出登录</div>
+              </div>
+            </div>
+          </div>
+        </header>
+        <div class="content" id="page-content"></div>
+      </div>
+    </div>`;
+  contentFn(document.getElementById('page-content'));
+  updateNotifyMenu();
+}
+
+function toggleSidebar() { document.getElementById('sidebar').classList.toggle('open'); document.getElementById('sidebar-overlay').classList.toggle('show'); }
+function closeSidebar() { document.getElementById('sidebar').classList.remove('open'); document.getElementById('sidebar-overlay').classList.remove('show'); }
+function toggleUserDropdown() { document.getElementById('user-dropdown').classList.toggle('open'); }
+function toggleNotifyDropdown() { document.getElementById('notify-dropdown').classList.toggle('open'); }
+function doLogout() { logout(); notify('已退出', '您已成功退出系统', 'success'); navigate('login'); }
+
+// 提醒/通知数据
+function getReminders() { return LS.get('crm_reminders') || []; }
+function saveReminders(v) { LS.set('crm_reminders', v); }
+function addReminder(ticketId, toUserId, message) {
+  const list = getReminders();
+  list.push({ id: generateId(), ticketId, toUserId, message, fromUserId: getCurrentUser().userId, fromName: getCurrentUser().name, createdAt: new Date().toISOString(), read: false });
+  saveReminders(list);
+}
+function getUnreadCount() {
+  const uid = getCurrentUser()?.userId;
+  return getReminders().filter(r => r.toUserId === uid && !r.read).length;
+}
+function updateNotifyMenu() {
+  const menu = document.getElementById('notify-menu');
+  if (!menu) return;
+  const uid = getCurrentUser()?.userId;
+  const list = getReminders().filter(r => r.toUserId === uid).sort((a,b) => new Date(b.createdAt)-new Date(a.createdAt)).slice(0,20);
+  if (!list.length) { menu.innerHTML = '<div class="dropdown-item text-muted">暂无提醒</div>'; return; }
+  menu.innerHTML = list.map(r => `<div class="dropdown-item" style="${r.read?'':'background:#e6f7ff;'}" onclick="readReminder('${r.id}')">
+    <div><div class="font-sm font-bold">${escapeHtml(r.fromName)} 的提醒</div><div class="font-sm">${escapeHtml(r.message)}</div><div class="font-sm text-muted">${formatDate(r.createdAt)}</div></div>
+  </div>`).join('') + '<div class="dropdown-item text-center text-primary" onclick="clearAllReminders()">全部已读</div>';
+}
+function readReminder(id) {
+  const list = getReminders();
+  const r = list.find(x => x.id === id);
+  if (r) { r.read = true; saveReminders(list); updateNotifyMenu(); if (r.ticketId) navigate('ticket/' + r.ticketId); }
+}
+function clearAllReminders() {
+  const uid = getCurrentUser()?.userId;
+  const list = getReminders().map(r => r.toUserId === uid ? {...r, read: true} : r);
+  saveReminders(list); updateNotifyMenu();
+}
+
+// ===================== 登录页面 =====================
+route('login', () => {
+  const app = document.getElementById('app');
+  app.innerHTML = `
+    <div class="login-page">
+      <div class="login-card">
+        <div class="login-header">
+          <div class="logo">🛠️</div>
+          <h1>技术支持工单系统</h1>
+          <p>工单管理 · 客户服务 · 团队协作</p>
+        </div>
+        <form class="login-form" onsubmit="event.preventDefault(); handleLogin();">
+          <div class="form-group">
+            <label class="form-label">用户名</label>
+            <input type="text" id="login-user" class="form-input" placeholder="请输入用户名" value="admin">
+          </div>
+          <div class="form-group">
+            <label class="form-label">密码</label>
+            <input type="password" id="login-pass" class="form-input" placeholder="请输入密码" value="admin123">
+          </div>
+          <button type="submit" class="btn btn-primary btn-lg">登 录</button>
+        </form>
+        <div class="login-tips">
+          <strong>💡 演示账号：</strong><br>
+          管理员：admin / admin123<br>
+          工程师：zhangsan / 123456<br>
+          lisi / 123456, wangwu / 123456, zhaoliu / 123456
+        </div>
+      </div>
+    </div>`;
+});
+window.handleLogin = () => {
+  const u = document.getElementById('login-user').value.trim();
+  const p = document.getElementById('login-pass').value;
+  const s = login(u, p);
+  if (s) { notify('登录成功', `欢迎回来，${s.name}`, 'success'); navigate('dashboard'); }
+  else { notify('登录失败', '用户名或密码错误', 'error'); }
+};
+
+// ===================== Dashboard =====================
+route('dashboard', () => {
+  if (!getCurrentUser()) return navigate('login');
+  const isAdminUser = isAdmin();
+  renderLayout(container => {
+    const tickets = getTickets();
+    const customers = getCustomers();
+    const users = getUsers();
+    const total = tickets.length;
+    const pending = tickets.filter(t => t.status === 'pending').length;
+    const processing = tickets.filter(t => t.status === 'processing').length;
+    const resolved = tickets.filter(t => t.status === 'resolved').length;
+    const highPriority = tickets.filter(t => t.priority === 'high' && t.status !== 'resolved').length;
+    const overdue = tickets.filter(t => t.status !== 'resolved' && new Date(t.dueDate) < new Date()).length;
+
+    container.innerHTML = `
+      <h1 class="page-title">📊 仪表盘</h1>
+      <div class="stats-row">
+        <div class="stat-card"><div class="stat-icon blue">🎫</div><div><div class="stat-value">${total}</div><div class="stat-label">全部工单</div></div></div>
+        <div class="stat-card"><div class="stat-icon orange">⏳</div><div><div class="stat-value">${pending}</div><div class="stat-label">待处理</div></div></div>
+        <div class="stat-card"><div class="stat-icon cyan">🔄</div><div><div class="stat-value">${processing}</div><div class="stat-label">处理中</div></div></div>
+        <div class="stat-card"><div class="stat-icon green">✅</div><div><div class="stat-value">${resolved}</div><div class="stat-label">已解决</div></div></div>
+        <div class="stat-card"><div class="stat-icon red">🔥</div><div><div class="stat-value">${highPriority}</div><div class="stat-label">高优先级</div></div></div>
+        ${isAdminUser ? `<div class="stat-card"><div class="stat-icon blue">👥</div><div><div class="stat-value">${customers.length}</div><div class="stat-label">客户数量</div></div></div>` : ''}
+      </div>
+      ${overdue > 0 ? `<div class="card mb-4" style="border-left:4px solid var(--danger);"><div class="card-body"><strong>⚠️ 有 ${overdue} 个工单已逾期，请尽快处理！</strong></div></div>` : ''}
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+        <div class="card">
+          <div class="card-header"><span class="card-title">📋 我的工单</span><button class="btn btn-sm btn-primary" onclick="navigate('tickets')">查看全部</button></div>
+          <div class="card-body" style="padding:0;">
+            <div class="table-wrap"><table class="data-table"><thead><tr><th>工单号</th><th>标题</th><th>状态</th><th>优先级</th></tr></thead><tbody>
+              ${getMyTickets().slice(0,5).map(t => `<tr style="cursor:pointer" onclick="navigate('ticket/${t.id}')"><td>${t.id}</td><td>${escapeHtml(t.title)}</td><td>${statusTag(t.status)}</td><td>${priorityTag(t.priority)}</td></tr>`).join('') || '<tr><td colspan="4" class="text-center text-muted">暂无工单</td></tr>'}
+            </tbody></table></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><span class="card-title">🔔 最近提醒</span></div>
+          <div class="card-body" style="padding:0;">
+            <div class="table-wrap"><table class="data-table"><thead><tr><th>来源</th><th>内容</th><th>时间</th></tr></thead><tbody>
+              ${getReminders().filter(r => r.toUserId === getCurrentUser().userId).slice(0,5).map(r => `<tr><td>${escapeHtml(r.fromName)}</td><td>${escapeHtml(r.message)}</td><td class="text-muted font-sm">${formatDate(r.createdAt)}</td></tr>`).join('') || '<tr><td colspan="3" class="text-center text-muted">暂无提醒</td></tr>'}
+            </tbody></table></div>
+          </div>
+        </div>
+      </div>
+      ${isAdminUser ? `
+      <div class="card mt-4">
+        <div class="card-header"><span class="card-title">👨‍💻 工程师负载</span></div>
+        <div class="card-body">
+          <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px,1fr)); gap: 16px;">
+            ${users.filter(u => u.role === 'engineer').map(u => {
+              const engTickets = tickets.filter(t => t.engineerId === u.id && t.status !== 'resolved');
+              return `<div style="background:#f5f5f5; padding:16px; border-radius:var(--radius);"><div class="font-bold">${u.name}</div><div class="text-muted font-sm">${u.email}</div><div class="mt-2">处理中: <span class="text-primary font-bold">${engTickets.filter(t=>t.status==='processing').length}</span> | 待处理: <span class="text-warning font-bold">${engTickets.filter(t=>t.status==='pending').length}</span></div></div>`;
+            }).join('')}
+          </div>
+        </div>
+      </div>` : ''}
+    `;
+  });
+});
+
+function getMyTickets() {
+  const uid = getCurrentUser()?.userId;
+  return getTickets().filter(t => t.engineerId === uid || isAdmin()).sort((a,b) => new Date(b.createdAt)-new Date(a.createdAt));
+}
+function statusTag(s) {
+  const map = { pending: '<span class="tag tag-orange">待处理</span>', processing: '<span class="tag tag-blue">处理中</span>', resolved: '<span class="tag tag-green">已解决</span>', closed: '<span class="tag tag-gray">已关闭</span>' };
+  return map[s] || s;
+}
+function priorityTag(p) {
+  const map = { high: '<span class="tag tag-red">高</span>', medium: '<span class="tag tag-orange">中</span>', low: '<span class="tag tag-green">低</span>' };
+  return map[p] || p;
+}
+
+// ===================== 工单列表 =====================
+route('tickets', () => {
+  if (!getCurrentUser()) return navigate('login');
+  renderLayout(container => {
+    let filterStatus = '', filterPriority = '', search = '';
+    const renderList = () => {
+      let list = isAdmin() ? getTickets() : getTickets().filter(t => t.engineerId === getCurrentUser().userId);
+      if (filterStatus) list = list.filter(t => t.status === filterStatus);
+      if (filterPriority) list = list.filter(t => t.priority === filterPriority);
+      if (search) list = list.filter(t => t.title.includes(search) || t.id.includes(search));
+      list = list.sort((a,b) => new Date(b.createdAt)-new Date(a.createdAt));
+      const tbody = document.getElementById('ticket-tbody');
+      if (!tbody) return;
+      tbody.innerHTML = list.map(t => {
+        const c = getCustomers().find(x => x.id === t.customerId);
+        const overdue = t.status !== 'resolved' && new Date(t.dueDate) < new Date();
+        return `<tr style="cursor:pointer" onclick="navigate('ticket/${t.id}')">
+          <td><span class="font-bold">${t.id}</span>${overdue?' <span class="tag tag-red">逾期</span>':''}</td>
+          <td>${escapeHtml(t.title)}</td>
+          <td>${c ? escapeHtml(c.name) : '-'}</td>
+          <td>${statusTag(t.status)}</td>
+          <td>${priorityTag(t.priority)}</td>
+          <td>${formatDate(t.createdAt)}</td>
+          <td>${formatDate(t.dueDate, 'MM-dd')}</td>
+        </tr>`;
+      }).join('') || '<tr><td colspan="7" class="text-center text-muted">无匹配工单</td></tr>';
+    };
+    container.innerHTML = `
+      <h1 class="page-title">🎫 工单管理</h1>
+      <div class="search-bar">
+        <div class="search-input"><input type="text" id="ticket-search" placeholder="搜索工单号或标题..."></div>
+        <div class="filter-group">
+          <select class="form-select" id="filter-status" style="width:120px"><option value="">全部状态</option><option value="pending">待处理</option><option value="processing">处理中</option><option value="resolved">已解决</option></select>
+          <select class="form-select" id="filter-priority" style="width:120px"><option value="">全部优先级</option><option value="high">高</option><option value="medium">中</option><option value="low">低</option></select>
+          <button class="btn btn-primary" onclick="openCreateTicketModal()">+ 新建工单</button>
+        </div>
+      </div>
+      <div class="card"><div class="card-body" style="padding:0;"><div class="table-wrap">
+        <table class="data-table"><thead><tr><th>工单号</th><th>标题</th><th>客户</th><th>状态</th><th>优先级</th><th>创建时间</th><th>截止日期</th></tr></thead>
+        <tbody id="ticket-tbody"></tbody></table>
+      </div></div></div>`;
+    setTimeout(renderList, 0);
+    document.getElementById('ticket-search').addEventListener('input', debounce(e => { search = e.target.value; renderList(); }, 300));
+    document.getElementById('filter-status').addEventListener('change', e => { filterStatus = e.target.value; renderList(); });
+    document.getElementById('filter-priority').addEventListener('change', e => { filterPriority = e.target.value; renderList(); });
+  });
+});
+
+// ===================== 新建工单弹窗 =====================
+window.openCreateTicketModal = () => {
+  const modal = document.createElement('div'); modal.className = 'modal-overlay';
+  const customers = getCustomers();
+  const engineers = getUsers().filter(u => u.role === 'engineer');
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-header"><span class="modal-title">📝 新建工单</span><span class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</span></div>
+      <div class="modal-body">
+        <div class="smart-input-wrap">
+          <textarea class="smart-input" id="smart-input" rows="3" placeholder="用自然语言描述问题，例如：科技创新公司的服务器连不上了，很紧急..."></textarea>
+          <div class="smart-hint">💡 <strong>智能识别</strong>：系统会自动识别客户、优先级和分类</div>
+        </div>
+        <hr style="margin:16px 0; border:none; border-top:1px solid var(--border-light);">
+        <div class="form-group"><label class="form-label">标题 <span class="required">*</span></label><input type="text" id="new-title" class="form-input"></div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">客户 <span class="required">*</span></label>
+            <select class="form-select" id="new-customer">${customers.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('')}</select>
+          </div>
+          <div class="form-group"><label class="form-label">指派工程师 <span class="required">*</span></label>
+            <select class="form-select" id="new-engineer">${engineers.map(u => `<option value="${u.id}">${escapeHtml(u.name)}</option>`).join('')}</select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">优先级</label>
+            <select class="form-select" id="new-priority"><option value="high">高</option><option value="medium" selected>中</option><option value="low">低</option></select>
+          </div>
+          <div class="form-group"><label class="form-label">分类</label>
+            <select class="form-select" id="new-category"><option value="硬件故障">硬件故障</option><option value="网络问题">网络问题</option><option value="系统故障">系统故障</option><option value="软件问题">软件问题</option><option value="性能问题">性能问题</option><option value="配置变更">配置变更</option><option value="存储问题">存储问题</option><option value="其他">其他</option></select>
+          </div>
+        </div>
+        <div class="form-group"><label class="form-label">详细描述</label><textarea class="form-textarea" id="new-desc" rows="3"></textarea></div>
+      </div>
+      <div class="modal-footer"><button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button><button class="btn btn-primary" onclick="submitNewTicket()">创建工单</button></div>
+    </div>`;
+  document.body.appendChild(modal);
+  const smartInput = document.getElementById('smart-input');
+  smartInput.addEventListener('input', debounce(() => {
+    const parsed = parseTicketInput(smartInput.value);
+    if (parsed.title) document.getElementById('new-title').value = parsed.title;
+    if (parsed.customerId) document.getElementById('new-customer').value = parsed.customerId;
+    if (parsed.priority) document.getElementById('new-priority').value = parsed.priority;
+    if (parsed.category) document.getElementById('new-category').value = parsed.category;
+    if (parsed.description) document.getElementById('new-desc').value = parsed.description;
+  }, 400));
+};
+
+window.submitNewTicket = () => {
+  const title = document.getElementById('new-title').value.trim();
+  const customerId = document.getElementById('new-customer').value;
+  const engineerId = document.getElementById('new-engineer').value;
+  const priority = document.getElementById('new-priority').value;
+  const category = document.getElementById('new-category').value;
+  const description = document.getElementById('new-desc').value.trim();
+  if (!title) { notify('请填写标题', '', 'warning'); return; }
+  const tickets = getTickets();
+  const id = 'TK' + String(tickets.length + 1).padStart(3, '0');
+  const now = new Date().toISOString();
+  const due = new Date(Date.now() + 86400000 * (priority==='high'?1:priority==='medium'?3:7)).toISOString();
+  tickets.push({ id, title, customerId, engineerId, status: 'pending', priority, category, description, createdAt: now, updatedAt: now, dueDate: due, creatorId: getCurrentUser().userId, comments: [] });
+  saveTickets(tickets);
+  // 给被指派的工程师发送提醒
+  addReminder(id, engineerId, `您有一个新工单被指派：${title}`);
+  notify('创建成功', `工单 ${id} 已创建`, 'success');
+  document.querySelector('.modal-overlay').remove();
+  if (currentRoute === 'tickets') { window.dispatchEvent(new HashChangeEvent('hashchange')); }
+  else { navigate('tickets'); }
+};
+
+// ===================== 工单详情 =====================
+route('ticket/([^/]+)', (id) => {
+  if (!getCurrentUser()) return navigate('login');
+  const ticket = getTickets().find(t => t.id === id);
+  if (!ticket) { notify('工单不存在', '', 'error'); navigate('tickets'); return; }
+  const customer = getCustomers().find(c => c.id === ticket.customerId);
+  const engineer = getUsers().find(u => u.id === ticket.engineerId);
+  renderLayout(container => {
+    const canEdit = isAdmin() || ticket.engineerId === getCurrentUser().userId;
+    const overdue = ticket.status !== 'resolved' && new Date(ticket.dueDate) < new Date();
+    container.innerHTML = `
+      <div class="flex flex-between flex-center mb-4">
+        <h1 class="page-title" style="margin:0">🎫 ${ticket.id} ${escapeHtml(ticket.title)}</h1>
+        <div class="btn-group">
+          ${canEdit && ticket.status !== 'resolved' ? `<button class="btn btn-success btn-sm" onclick="resolveTicket('${ticket.id}')">✅ 标记解决</button>` : ''}
+          ${isAdmin() ? `<button class="btn btn-warning btn-sm" onclick="openTransferModal('${ticket.id}')">🔄 转交</button>` : ''}
+          ${canEdit && ticket.status !== 'resolved' ? `<button class="btn btn-danger btn-sm" onclick="openUrgeModal('${ticket.id}')">🔔 催办</button>` : ''}
+          <button class="btn btn-default btn-sm" onclick="navigate('tickets')">返回列表</button>
+        </div>
+      </div>
+      <div style="display:grid; grid-template-columns: 2fr 1fr; gap: 20px;">
+        <div>
+          <div class="card">
+            <div class="card-header"><span class="card-title">工单信息</span>${overdue ? '<span class="tag tag-red">已逾期</span>' : ''}</div>
+            <div class="card-body">
+              <div class="form-row">
+                <div class="form-group"><label class="form-label">状态</label><div>${statusTag(ticket.status)}</div></div>
+                <div class="form-group"><label class="form-label">优先级</label><div>${priorityTag(ticket.priority)}</div></div>
+              </div>
+              <div class="form-row">
+                <div class="form-group"><label class="form-label">分类</label><div>${escapeHtml(ticket.category)}</div></div>
+                <div class="form-group"><label class="form-label">截止日期</label><div class="${overdue?'text-danger font-bold':''}">${formatDate(ticket.dueDate)}</div></div>
+              </div>
+              <div class="form-group"><label class="form-label">问题描述</label><div style="background:#f5f5f5;padding:12px;border-radius:var(--radius);">${escapeHtml(ticket.description)}</div></div>
+            </div>
+          </div>
+          <div class="card mt-4">
+            <div class="card-header"><span class="card-title">💬 处理记录</span></div>
+            <div class="card-body">
+              <div class="timeline">
+                <div class="timeline-item"><div class="timeline-dot blue"></div><div class="timeline-time">${formatDate(ticket.createdAt)}</div><div class="timeline-content">工单创建</div></div>
+                ${(ticket.comments || []).map(c => `<div class="timeline-item"><div class="timeline-dot green"></div><div class="timeline-time">${formatDate(c.createdAt)} - ${escapeHtml(c.userName)}</div><div class="timeline-content">${escapeHtml(c.content)}</div></div>`).join('')}
+              </div>
+              ${ticket.status !== 'resolved' ? `
+              <div class="mt-4">
+                <textarea class="form-textarea" id="comment-input" rows="2" placeholder="添加处理记录..."></textarea>
+                <div class="text-right mt-2"><button class="btn btn-primary btn-sm" onclick="addComment('${ticket.id}')">提交记录</button></div>
+              </div>` : ''}
+            </div>
+          </div>
+        </div>
+        <div>
+          <div class="card">
+            <div class="card-header"><span class="card-title">👤 客户信息</span></div>
+            <div class="card-body">
+              <div class="form-group"><label class="form-label">客户名称</label><div class="font-bold">${customer ? escapeHtml(customer.name) : '-'}</div></div>
+              <div class="form-group"><label class="form-label">联系人</label><div>${customer ? escapeHtml(customer.contact) : '-'}</div></div>
+              <div class="form-group"><label class="form-label">电话</label><div>${customer ? escapeHtml(customer.phone) : '-'}</div></div>
+              <div class="form-group"><label class="form-label">邮箱</label><div>${customer ? escapeHtml(customer.email) : '-'}</div></div>
+              <div class="form-group"><label class="form-label">地址</label><div>${customer ? escapeHtml(customer.address) : '-'}</div></div>
+              ${customer ? `<button class="btn btn-default btn-sm" style="width:100%" onclick="navigate('customer/${customer.id}')">查看客户详情</button>` : ''}
+            </div>
+          </div>
+          <div class="card mt-4">
+            <div class="card-header"><span class="card-title">🔧 设备信息</span></div>
+            <div class="card-body" style="padding:0;">
+              ${customer && customer.devices ? customer.devices.map(d => `<div style="padding:12px 16px; border-bottom:1px solid var(--border-light);"><div class="font-bold">${escapeHtml(d.name)}</div><div class="font-sm text-muted">${escapeHtml(d.model)} | SN: ${escapeHtml(d.sn)}</div></div>`).join('') || '<div class="text-muted text-center" style="padding:16px">暂无设备</div>' : '<div class="text-muted text-center" style="padding:16px">暂无设备</div>'}
+            </div>
+          </div>
+          <div class="card mt-4">
+            <div class="card-header"><span class="card-title">👨‍💻 负责人</span></div>
+            <div class="card-body">
+              <div class="flex flex-center gap-2">
+                <div class="user-avatar">${engineer ? engineer.name.charAt(0) : '?'}</div>
+                <div><div class="font-bold">${engineer ? escapeHtml(engineer.name) : '-'}</div><div class="font-sm text-muted">${engineer ? escapeHtml(engineer.email) : ''}</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>`;
+  });
+});
+
+window.resolveTicket = (id) => {
+  const tickets = getTickets();
+  const t = tickets.find(x => x.id === id);
+  if (t) { t.status = 'resolved'; t.updatedAt = new Date().toISOString(); saveTickets(tickets); notify('工单已解决', `${id} 已标记为已解决`, 'success'); navigate('ticket/' + id); }
+};
+window.addComment = (id) => {
+  const content = document.getElementById('comment-input').value.trim();
+  if (!content) return;
+  const tickets = getTickets();
+  const t = tickets.find(x => x.id === id);
+  if (t) { t.comments = t.comments || []; t.comments.push({ id: generateId(), userId: getCurrentUser().userId, userName: getCurrentUser().name, content, createdAt: new Date().toISOString() }); t.updatedAt = new Date().toISOString(); saveTickets(tickets); notify('记录已添加', '', 'success'); navigate('ticket/' + id); }
+};
+
+window.openTransferModal = (id) => {
+  const modal = document.createElement('div'); modal.className = 'modal-overlay';
+  const engineers = getUsers().filter(u => u.role === 'engineer');
+  modal.innerHTML = `<div class="modal"><div class="modal-header"><span class="modal-title">🔄 转交工单</span><span class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</span></div>
+    <div class="modal-body">
+      <div class="form-group"><label class="form-label">选择新负责人</label><select class="form-select" id="transfer-engineer">${engineers.map(u => `<option value="${u.id}">${escapeHtml(u.name)}</option>`).join('')}</select></div>
+      <div class="form-group"><label class="form-label">转交说明</label><textarea class="form-textarea" id="transfer-note" rows="2"></textarea></div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button><button class="btn btn-primary" onclick="doTransfer('${id}')">确认转交</button></div></div>`;
+  document.body.appendChild(modal);
+};
+window.doTransfer = (id) => {
+  const newEng = document.getElementById('transfer-engineer').value;
+  const note = document.getElementById('transfer-note').value.trim();
+  const tickets = getTickets();
+  const t = tickets.find(x => x.id === id);
+  if (t) {
+    const oldEng = t.engineerId;
+    t.engineerId = newEng; t.updatedAt = new Date().toISOString();
+    t.comments = t.comments || []; t.comments.push({ id: generateId(), userId: getCurrentUser().userId, userName: getCurrentUser().name, content: `工单转交给 ${getUsers().find(u=>u.id===newEng)?.name || ''}${note ? '，备注：'+note : ''}`, createdAt: new Date().toISOString() });
+    saveTickets(tickets);
+    addReminder(id, newEng, `工单 ${id} 已转交给您：${t.title}`);
+    if (oldEng !== newEng) addReminder(id, oldEng, `工单 ${id} 已转交他人：${t.title}`);
+    notify('转交成功', '', 'success'); document.querySelector('.modal-overlay').remove(); navigate('ticket/' + id);
+  }
+};
+
+window.openUrgeModal = (id) => {
+  const modal = document.createElement('div'); modal.className = 'modal-overlay';
+  modal.innerHTML = `<div class="modal"><div class="modal-header"><span class="modal-title">🔔 催办工单</span><span class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</span></div>
+    <div class="modal-body">
+      <div class="form-group"><label class="form-label">催办内容</label><textarea class="form-textarea" id="urge-msg" rows="2">请尽快处理此工单，谢谢！</textarea></div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button><button class="btn btn-danger" onclick="doUrge('${id}')">发送催办</button></div></div>`;
+  document.body.appendChild(modal);
+};
+window.doUrge = (id) => {
+  const msg = document.getElementById('urge-msg').value.trim();
+  const t = getTickets().find(x => x.id === id);
+  if (t) { addReminder(id, t.engineerId, `【催办】${getCurrentUser().name}：${msg}（工单：${t.title}）`); notify('催办已发送', '', 'success'); document.querySelector('.modal-overlay').remove(); }
+};
+
+// ===================== 客户列表 =====================
+route('customers', () => {
+  if (!getCurrentUser()) return navigate('login');
+  renderLayout(container => {
+    let search = '';
+    const render = () => {
+      let list = getCustomers();
+      if (search) list = list.filter(c => c.name.includes(search) || c.contact.includes(search) || c.phone.includes(search));
+      const tbody = document.getElementById('cust-tbody');
+      if (!tbody) return;
+      tbody.innerHTML = list.map(c => `<tr style="cursor:pointer" onclick="navigate('customer/${c.id}')">
+        <td>${escapeHtml(c.name)}</td><td>${escapeHtml(c.contact)}</td><td>${escapeHtml(c.phone)}</td><td>${escapeHtml(c.industry)}</td>
+        <td><span class="tag ${c.level==='A'?'tag-red':c.level==='B'?'tag-orange':'tag-green'}">${c.level}级</span></td>
+        <td>${c.devices?.length || 0}</td>
+      </tr>`).join('') || '<tr><td colspan="6" class="text-center text-muted">无匹配客户</td></tr>';
+    };
+    container.innerHTML = `
+      <h1 class="page-title">👥 客户管理</h1>
+      <div class="search-bar">
+        <div class="search-input"><input type="text" id="cust-search" placeholder="搜索客户名称、联系人或电话..."></div>
+        <button class="btn btn-primary" onclick="openAddCustomerModal()">+ 添加客户</button>
+      </div>
+      <div class="card"><div class="card-body" style="padding:0;"><div class="table-wrap">
+        <table class="data-table"><thead><tr><th>客户名称</th><th>联系人</th><th>电话</th><th>行业</th><th>等级</th><th>设备数</th></tr></thead>
+        <tbody id="cust-tbody"></tbody></table>
+      </div></div></div>`;
+    setTimeout(render, 0);
+    document.getElementById('cust-search').addEventListener('input', debounce(e => { search = e.target.value; render(); }, 300));
+  });
+});
+
+window.openAddCustomerModal = () => {
+  const modal = document.createElement('div'); modal.className = 'modal-overlay';
+  modal.innerHTML = `<div class="modal"><div class="modal-header"><span class="modal-title">➕ 添加客户</span><span class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</span></div>
+    <div class="modal-body">
+      <div class="form-row"><div class="form-group"><label class="form-label">客户名称 <span class="required">*</span></label><input type="text" id="cust-name" class="form-input"></div><div class="form-group"><label class="form-label">联系人 <span class="required">*</span></label><input type="text" id="cust-contact" class="form-input"></div></div>
+      <div class="form-row"><div class="form-group"><label class="form-label">电话</label><input type="text" id="cust-phone" class="form-input"></div><div class="form-group"><label class="form-label">邮箱</label><input type="text" id="cust-email" class="form-input"></div></div>
+      <div class="form-group"><label class="form-label">地址</label><input type="text" id="cust-address" class="form-input"></div>
+      <div class="form-row"><div class="form-group"><label class="form-label">行业</label><input type="text" id="cust-industry" class="form-input"></div><div class="form-group"><label class="form-label">等级</label><select class="form-select" id="cust-level"><option>A</option><option>B</option><option>C</option></select></div></div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button><button class="btn btn-primary" onclick="submitCustomer()">保存</button></div></div>`;
+  document.body.appendChild(modal);
+};
+window.submitCustomer = () => {
+  const name = document.getElementById('cust-name').value.trim();
+  const contact = document.getElementById('cust-contact').value.trim();
+  if (!name || !contact) { notify('请填写必填项', '', 'warning'); return; }
+  const customers = getCustomers();
+  customers.push({ id: 'c' + (customers.length+1), name, contact, phone: document.getElementById('cust-phone').value, email: document.getElementById('cust-email').value, address: document.getElementById('cust-address').value, industry: document.getElementById('cust-industry').value, level: document.getElementById('cust-level').value, devices: [], createdAt: new Date().toISOString() });
+  saveCustomers(customers);
+  notify('添加成功', '', 'success'); document.querySelector('.modal-overlay').remove(); navigate('customers');
+};
+
+// ===================== 客户详情 =====================
+route('customer/([^/]+)', (id) => {
+  if (!getCurrentUser()) return navigate('login');
+  const customer = getCustomers().find(c => c.id === id);
+  if (!customer) { notify('客户不存在', '', 'error'); navigate('customers'); return; }
+  const relatedTickets = getTickets().filter(t => t.customerId === id).sort((a,b) => new Date(b.createdAt)-new Date(a.createdAt));
+  renderLayout(container => {
+    container.innerHTML = `
+      <div class="flex flex-between flex-center mb-4"><h1 class="page-title" style="margin:0">👤 ${escapeHtml(customer.name)}</h1><button class="btn btn-default btn-sm" onclick="navigate('customers')">返回列表</button></div>
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+        <div class="card">
+          <div class="card-header"><span class="card-title">基本信息</span></div>
+          <div class="card-body">
+            <div class="form-row"><div class="form-group"><label class="form-label">联系人</label><div>${escapeHtml(customer.contact)}</div></div><div class="form-group"><label class="form-label">等级</label><div><span class="tag ${customer.level==='A'?'tag-red':customer.level==='B'?'tag-orange':'tag-green'}">${customer.level}级</span></div></div></div>
+            <div class="form-row"><div class="form-group"><label class="form-label">电话</label><div>${escapeHtml(customer.phone)}</div></div><div class="form-group"><label class="form-label">邮箱</label><div>${escapeHtml(customer.email)}</div></div></div>
+            <div class="form-group"><label class="form-label">地址</label><div>${escapeHtml(customer.address)}</div></div>
+            <div class="form-row"><div class="form-group"><label class="form-label">行业</label><div>${escapeHtml(customer.industry)}</div></div><div class="form-group"><label class="form-label">创建时间</label><div>${formatDate(customer.createdAt)}</div></div></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><span class="card-title">设备清单</span><button class="btn btn-sm btn-primary" onclick="openAddDeviceModal('${customer.id}')">+ 添加设备</button></div>
+          <div class="card-body" style="padding:0;">
+            ${customer.devices && customer.devices.length ? customer.devices.map((d,i) => `<div style="padding:12px 16px; border-bottom:1px solid var(--border-light);"><div class="flex flex-between flex-center"><span class="font-bold">${escapeHtml(d.name)}</span><button class="btn btn-sm btn-danger" onclick="removeDevice('${customer.id}',${i})">删除</button></div><div class="font-sm text-muted">${escapeHtml(d.model)} | SN: ${escapeHtml(d.sn)}</div></div>`).join('') : '<div class="empty-state" style="padding:30px;"><div class="text-muted">暂无设备</div></div>'}
+          </div>
+        </div>
+      </div>
+      <div class="card mt-4">
+        <div class="card-header"><span class="card-title">相关工单</span></div>
+        <div class="card-body" style="padding:0;"><div class="table-wrap">
+          <table class="data-table"><thead><tr><th>工单号</th><th>标题</th><th>状态</th><th>优先级</th><th>创建时间</th></tr></thead>
+          <tbody>${relatedTickets.map(t => `<tr style="cursor:pointer" onclick="navigate('ticket/${t.id}')"><td>${t.id}</td><td>${escapeHtml(t.title)}</td><td>${statusTag(t.status)}</td><td>${priorityTag(t.priority)}</td><td>${formatDate(t.createdAt)}</td></tr>`).join('') || '<tr><td colspan="5" class="text-center text-muted">暂无工单</td></tr>'}</tbody>
+          </table>
+        </div></div>
+      </div>`;
+  });
+});
+
+window.openAddDeviceModal = (cid) => {
+  const modal = document.createElement('div'); modal.className = 'modal-overlay';
+  modal.innerHTML = `<div class="modal"><div class="modal-header"><span class="modal-title">➕ 添加设备</span><span class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</span></div>
+    <div class="modal-body">
+      <div class="form-group"><label class="form-label">设备名称 <span class="required">*</span></label><input type="text" id="dev-name" class="form-input"></div>
+      <div class="form-row"><div class="form-group"><label class="form-label">型号</label><input type="text" id="dev-model" class="form-input"></div><div class="form-group"><label class="form-label">序列号</label><input type="text" id="dev-sn" class="form-input"></div></div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button><button class="btn btn-primary" onclick="submitDevice('${cid}')">保存</button></div></div>`;
+  document.body.appendChild(modal);
+};
+window.submitDevice = (cid) => {
+  const name = document.getElementById('dev-name').value.trim();
+  if (!name) { notify('请填写设备名称', '', 'warning'); return; }
+  const customers = getCustomers();
+  const c = customers.find(x => x.id === cid);
+  if (c) { c.devices = c.devices || []; c.devices.push({ name, model: document.getElementById('dev-model').value, sn: document.getElementById('dev-sn').value }); saveCustomers(customers); notify('添加成功', '', 'success'); document.querySelector('.modal-overlay').remove(); navigate('customer/' + cid); }
+};
+window.removeDevice = (cid, idx) => {
+  if (!confirm('确定删除此设备？')) return;
+  const customers = getCustomers();
+  const c = customers.find(x => x.id === cid);
+  if (c && c.devices) { c.devices.splice(idx, 1); saveCustomers(customers); notify('已删除', '', 'success'); navigate('customer/' + cid); }
+};
+
+// ===================== 团队设置 (Admin) =====================
+route('admin/team', () => {
+  if (!isAdmin()) { notify('无权访问', '', 'error'); navigate('dashboard'); return; }
+  renderLayout(container => {
+    const users = getUsers();
+    container.innerHTML = `
+      <h1 class="page-title">👨‍💻 团队设置</h1>
+      <div class="card"><div class="card-body" style="padding:0;"><div class="table-wrap">
+        <table class="data-table"><thead><tr><th>用户名</th><th>姓名</th><th>角色</th><th>邮箱</th><th>电话</th><th>操作</th></tr></thead>
+        <tbody>${users.map(u => `<tr><td>${escapeHtml(u.username)}</td><td>${escapeHtml(u.name)}</td><td>${u.role==='admin'?'<span class="tag tag-red">管理员</span>':'<span class="tag tag-blue">工程师</span>'}</td><td>${escapeHtml(u.email)}</td><td>${escapeHtml(u.phone)}</td>
+          <td><button class="btn btn-sm btn-default" onclick="openEditUserModal('${u.id}')">编辑</button></td></tr>`).join('')}</tbody>
+        </table>
+      </div></div></div>
+      <div class="mt-4"><button class="btn btn-primary" onclick="openAddUserModal()">+ 添加成员</button></div>`;
+  });
+});
+
+window.openAddUserModal = () => {
+  const modal = document.createElement('div'); modal.className = 'modal-overlay';
+  modal.innerHTML = `<div class="modal"><div class="modal-header"><span class="modal-title">➕ 添加成员</span><span class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</span></div>
+    <div class="modal-body">
+      <div class="form-row"><div class="form-group"><label class="form-label">用户名 <span class="required">*</span></label><input type="text" id="new-username" class="form-input"></div><div class="form-group"><label class="form-label">姓名 <span class="required">*</span></label><input type="text" id="new-name" class="form-input"></div></div>
+      <div class="form-row"><div class="form-group"><label class="form-label">密码 <span class="required">*</span></label><input type="password" id="new-password" class="form-input" value="123456"></div><div class="form-group"><label class="form-label">角色</label><select class="form-select" id="new-role"><option value="engineer">工程师</option><option value="admin">管理员</option></select></div></div>
+      <div class="form-row"><div class="form-group"><label class="form-label">邮箱</label><input type="text" id="new-email" class="form-input"></div><div class="form-group"><label class="form-label">电话</label><input type="text" id="new-phone" class="form-input"></div></div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button><button class="btn btn-primary" onclick="submitUser()">保存</button></div></div>`;
+  document.body.appendChild(modal);
+};
+window.submitUser = () => {
+  const username = document.getElementById('new-username').value.trim();
+  const name = document.getElementById('new-name').value.trim();
+  const password = document.getElementById('new-password').value;
+  if (!username || !name || !password) { notify('请填写必填项', '', 'warning'); return; }
+  const users = getUsers();
+  if (users.find(u => u.username === username)) { notify('用户名已存在', '', 'warning'); return; }
+  users.push({ id: 'u' + (users.length+1), username, name, password, role: document.getElementById('new-role').value, email: document.getElementById('new-email').value, phone: document.getElementById('new-phone').value, createdAt: new Date().toISOString() });
+  saveUsers(users); notify('添加成功', '', 'success'); document.querySelector('.modal-overlay').remove(); navigate('admin/team');
+};
+window.openEditUserModal = (id) => {
+  const u = getUsers().find(x => x.id === id); if (!u) return;
+  const modal = document.createElement('div'); modal.className = 'modal-overlay';
+  modal.innerHTML = `<div class="modal"><div class="modal-header"><span class="modal-title">✏️ 编辑成员</span><span class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</span></div>
+    <div class="modal-body">
+      <div class="form-row"><div class="form-group"><label class="form-label">用户名</label><input type="text" class="form-input" value="${escapeHtml(u.username)}" disabled></div><div class="form-group"><label class="form-label">姓名 <span class="required">*</span></label><input type="text" id="edit-name" class="form-input" value="${escapeHtml(u.name)}"></div></div>
+      <div class="form-row"><div class="form-group"><label class="form-label">新密码（留空不修改）</label><input type="password" id="edit-password" class="form-input"></div><div class="form-group"><label class="form-label">角色</label><select class="form-select" id="edit-role"><option value="engineer" ${u.role==='engineer'?'selected':''}>工程师</option><option value="admin" ${u.role==='admin'?'selected':''}>管理员</option></select></div></div>
+      <div class="form-row"><div class="form-group"><label class="form-label">邮箱</label><input type="text" id="edit-email" class="form-input" value="${escapeHtml(u.email||'')}"></div><div class="form-group"><label class="form-label">电话</label><input type="text" id="edit-phone" class="form-input" value="${escapeHtml(u.phone||'')}"></div></div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button><button class="btn btn-primary" onclick="updateUser('${id}')">保存</button></div></div>`;
+  document.body.appendChild(modal);
+};
+window.updateUser = (id) => {
+  const users = getUsers();
+  const u = users.find(x => x.id === id);
+  if (u) {
+    u.name = document.getElementById('edit-name').value.trim();
+    const pwd = document.getElementById('edit-password').value;
+    if (pwd) u.password = pwd;
+    u.role = document.getElementById('edit-role').value;
+    u.email = document.getElementById('edit-email').value;
+    u.phone = document.getElementById('edit-phone').value;
+    saveUsers(users); notify('保存成功', '', 'success'); document.querySelector('.modal-overlay').remove(); navigate('admin/team');
+  }
+};
+
+// ===================== 统计报表 (Admin) =====================
+route('admin/stats', () => {
+  if (!isAdmin()) { notify('无权访问', '', 'error'); navigate('dashboard'); return; }
+  renderLayout(container => {
+    const tickets = getTickets();
+    const users = getUsers();
+    const customers = getCustomers();
+    const statusCounts = { pending: 0, processing: 0, resolved: 0 };
+    tickets.forEach(t => { if (statusCounts[t.status] !== undefined) statusCounts[t.status]++; });
+    const priorityCounts = { high: tickets.filter(t=>t.priority==='high').length, medium: tickets.filter(t=>t.priority==='medium').length, low: tickets.filter(t=>t.priority==='low').length };
+    const categoryCounts = {};
+    tickets.forEach(t => { categoryCounts[t.category] = (categoryCounts[t.category] || 0) + 1; });
+    const engineerStats = users.filter(u=>u.role==='engineer').map(u => {
+      const ts = tickets.filter(t => t.engineerId === u.id);
+      return { name: u.name, total: ts.length, resolved: ts.filter(t=>t.status==='resolved').length, processing: ts.filter(t=>t.status==='processing').length, pending: ts.filter(t=>t.status==='pending').length };
+    });
+    // 最近7天工单趋势
+    const dailyCounts = {};
+    for (let i=6; i>=0; i--) {
+      const d = new Date(); d.setDate(d.getDate()-i);
+      const key = `${d.getMonth()+1}/${d.getDate()}`;
+      dailyCounts[key] = tickets.filter(t => { const cd = new Date(t.createdAt); return cd.getDate()===d.getDate() && cd.getMonth()===d.getMonth(); }).length;
+    }
+    const maxDaily = Math.max(...Object.values(dailyCounts), 1);
+    container.innerHTML = `
+      <h1 class="page-title">📈 统计报表</h1>
+      <div class="stats-row">
+        <div class="stat-card"><div class="stat-icon blue">🎫</div><div><div class="stat-value">${tickets.length}</div><div class="stat-label">总工单</div></div></div>
+        <div class="stat-card"><div class="stat-icon green">✅</div><div><div class="stat-value">${Math.round((statusCounts.resolved/tickets.length)*100)||0}%</div><div class="stat-label">解决率</div></div></div>
+        <div class="stat-card"><div class="stat-icon orange">⏱️</div><div><div class="stat-value">${tickets.filter(t=>t.status!=='resolved').length}</div><div class="stat-label">未完成</div></div></div>
+        <div class="stat-card"><div class="stat-icon cyan">👥</div><div><div class="stat-value">${customers.length}</div><div class="stat-label">客户数</div></div></div>
+      </div>
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+        <div class="card">
+          <div class="card-header"><span class="card-title">工单状态分布</span></div>
+          <div class="card-body">
+            <div style="display:flex; gap: 8px; margin-bottom: 12px;">
+              <div style="flex:${statusCounts.pending}; background:var(--warning); height:24px; border-radius:4px 0 0 4px;" title="待处理"></div>
+              <div style="flex:${statusCounts.processing}; background:var(--primary); height:24px;" title="处理中"></div>
+              <div style="flex:${statusCounts.resolved}; background:var(--success); height:24px; border-radius:0 4px 4px 0;" title="已解决"></div>
+            </div>
+            <div class="flex flex-center gap-2">
+              <span class="tag tag-orange">待处理 ${statusCounts.pending}</span>
+              <span class="tag tag-blue">处理中 ${statusCounts.processing}</span>
+              <span class="tag tag-green">已解决 ${statusCounts.resolved}</span>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><span class="card-title">优先级分布</span></div>
+          <div class="card-body">
+            <div style="display:flex; gap: 8px; margin-bottom: 12px;">
+              <div style="flex:${priorityCounts.high}; background:var(--danger); height:24px; border-radius:4px 0 0 4px;" title="高"></div>
+              <div style="flex:${priorityCounts.medium}; background:var(--warning); height:24px;" title="中"></div>
+              <div style="flex:${priorityCounts.low}; background:var(--success); height:24px; border-radius:0 4px 4px 0;" title="低"></div>
+            </div>
+            <div class="flex flex-center gap-2">
+              <span class="tag tag-red">高 ${priorityCounts.high}</span>
+              <span class="tag tag-orange">中 ${priorityCounts.medium}</span>
+              <span class="tag tag-green">低 ${priorityCounts.low}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="card mt-4">
+        <div class="card-header"><span class="card-title">📅 近7天工单趋势</span></div>
+        <div class="card-body">
+          <div style="display:flex; align-items:flex-end; gap: 12px; height:120px; padding: 10px 0;">
+            ${Object.entries(dailyCounts).map(([k,v]) => `<div style="flex:1; display:flex; flex-direction:column; align-items:center; gap:6px;"><div style="width:100%; background:var(--primary); border-radius:4px 4px 0 0; height:${(v/maxDaily*100)||4}px; min-height:4px; transition:height .3s;"></div><div class="font-sm text-muted">${k}</div><div class="font-sm font-bold">${v}</div></div>`).join('')}
+          </div>
+        </div>
+      </div>
+      <div class="card mt-4">
+        <div class="card-header"><span class="card-title">👨‍💻 工程师工作统计</span></div>
+        <div class="card-body" style="padding:0;"><div class="table-wrap">
+          <table class="data-table"><thead><tr><th>工程师</th><th>总工单</th><th>已解决</th><th>处理中</th><th>待处理</th><th>解决率</th></tr></thead>
+          <tbody>${engineerStats.map(s => `<tr><td>${escapeHtml(s.name)}</td><td>${s.total}</td><td>${s.resolved}</td><td>${s.processing}</td><td>${s.pending}</td><td>${s.total?Math.round(s.resolved/s.total*100):0}%</td></tr>`).join('')}</tbody>
+          </table>
+        </div></div>
+      </div>
+      <div class="card mt-4">
+        <div class="card-header"><span class="card-title">📂 分类统计</span></div>
+        <div class="card-body">
+          <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px;">
+            ${Object.entries(categoryCounts).map(([k,v]) => `<div style="background:#f5f5f5; padding:12px 16px; border-radius:var(--radius); display:flex; justify-content:space-between; align-items:center;"><span>${escapeHtml(k)}</span><span class="font-bold text-primary">${v}</span></div>`).join('')}
+          </div>
+        </div>
+      </div>`;
+  });
+});
+
+// ===================== 初始化 =====================
+document.addEventListener('DOMContentLoaded', () => {
+  initData();
+  renderRoute();
+});
+</script>
+</body>
+</html>
