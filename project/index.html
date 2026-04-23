@@ -543,9 +543,9 @@ async function doRefresh() {
   if (ok) {
     __lastRefresh = Date.now();
     notify('数据已刷新', '', 'success', 1500);
-    // 如果当前在列表页，强制重渲染
-    if (currentRoute === 'dashboard' || currentRoute === 'tickets' || currentRoute === 'customers') {
-      window.dispatchEvent(new HashChangeEvent('hashchange'));
+    // 直接重渲染当前页面
+    if (currentRoute === 'dashboard' || currentRoute === 'tickets' || currentRoute === 'customers' || currentRoute.startsWith('ticket/') || currentRoute.startsWith('customer/')) {
+      renderRoute();
     }
   } else {
     notify('刷新失败', '请检查后端服务是否启动', 'error', 3000);
@@ -559,7 +559,7 @@ function startAutoRefresh() {
     if (document.visibilityState === 'visible' && getCurrentUser()) {
       const ok = await loadAllData();
       if (ok && (currentRoute === 'dashboard' || currentRoute === 'tickets' || currentRoute === 'customers')) {
-        window.dispatchEvent(new HashChangeEvent('hashchange'));
+        renderRoute();
       }
     }
   }, 30000);
