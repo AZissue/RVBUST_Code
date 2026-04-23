@@ -164,6 +164,7 @@ input, textarea, select { font-family: inherit; font-size: 1rem; }
 .modal-body { padding: 20px; }
 .modal-footer { padding: 12px 20px; border-top: 1px solid var(--border-light); display: flex; justify-content: flex-end; gap: 8px; }
 @keyframes modalIn { from { opacity: 0; transform: translateY(-20px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes spin { to { transform: rotate(360deg); } }
 
 /* ===== Dropdown ===== */
 .dropdown { position: relative; }
@@ -531,9 +532,41 @@ async function loadAllData() {
   }
 }
 
-const getUsers = () => __users;
-const getTickets = () => __tickets;
-const getCustomers = () => __customers;
+// 自动刷新
+let __refreshTimer = null;
+let __lastRefresh = 0;
+
+async function doRefresh() {
+  const btn = document.getElementById('btn-refresh');
+  if (btn) { btn.style.animation = 'spin 1s linear infinite'; }
+  const ok = await loadAllData();
+  if (ok) {
+    __lastRefresh = Date.now();
+    notify('数据已刷新', '', 'success', 1500);
+    // 如果当前在列表页，强制重渲染
+    if (currentRoute === 'dashboard' || currentRoute === 'tickets' || currentRoute === 'customers') {
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+    }
+  } else {
+    notify('刷新失败', '请检查后端服务是否启动', 'error', 3000);
+  }
+  if (btn) { btn.style.animation = ''; }
+}
+
+function startAutoRefresh() {
+  stopAutoRefresh();
+  __refreshTimer = setInterval(async () => {
+    if (document.visibilityState === 'visible' && getCurrentUser()) {
+      const ok = await loadAllData();
+      if (ok && (currentRoute === 'dashboard' || currentRoute === 'tickets' || currentRoute === 'customers')) {
+        window.dispatchEvent(new HashChangeEvent('hashchange'));
+      }
+    }
+  }, 30000);
+}
+function stopAutoRefresh() { if (__refreshTimer) { clearInterval(__refreshTimer); __refreshTimer = null; } }
+
+window.addEventListener('beforeunload', stopAutoRefresh);
 
 // ===================== Auth (API) =====================
 async function loginAsync(username, password, remember) {
@@ -543,10 +576,12 @@ async function loginAsync(username, password, remember) {
   if (remember) localStorage.setItem('crm_token', __token);
   else sessionStorage.setItem('crm_token', __token);
   await loadAllData();
+  startAutoRefresh();
   return result.user;
 }
 
 function logout() {
+  stopAutoRefresh();
   __token = '';
   localStorage.removeItem('crm_token');
   sessionStorage.removeItem('crm_token');
@@ -710,6 +745,7 @@ function renderLayout(contentFn) {
             <span class="font-sm text-muted">${formatDate(new Date(), 'yyyy年MM月dd日')}</span>
           </div>
           <div class="header-right">
+            <button class="badge-btn" id="btn-refresh" onclick="doRefresh()" title="刷新数据">🔄</button>
             <div class="dropdown" id="notify-dropdown">
               <button class="badge-btn" onclick="toggleNotifyDropdown()">🔔 ${getUnreadCount() > 0 ? `<span class="badge">${getUnreadCount()}</span>` : ''}</button>
               <div class="dropdown-menu" id="notify-menu" style="width:320px;max-height:360px;overflow-y:auto;"></div>
@@ -738,16 +774,28 @@ function toggleSidebar() { document.getElementById('sidebar').classList.toggle('
 function closeSidebar() { document.getElementById('sidebar').classList.remove('open'); document.getElementById('sidebar-overlay').classList.remove('show'); }
 function toggleUserDropdown() { document.getElementById('user-dropdown').classList.toggle('open'); }
 function toggleNotifyDropdown() { document.getElementById('notify-dropdown').classList.toggle('open'); }
-function doLogout() { logout(); notify('已退出', '您已成功退出系统', 'success'); navigate('login'); }
+function doLogout() { stopAutoRefresh(); logout(); notify('已退出', '您已成功退出系统', 'success'); navigate('login'); }
 
-// 提醒/通知数据（本地内存，无需持久化）
-let __reminders = [];
-function getReminders() { return __reminders; }
-function saveReminders(v) { __reminders = v; }
-function addReminder(ticketId, toUserId, message) {
-  const list = getReminders();
-  list.push({ id: generateId(), ticketId, toUserId, message, fromUserId: getCurrentUser().userId, fromName: getCurrentUser().name, createdAt: new Date().toISOString(), read: false });
-  saveReminders(list);
+// 提醒/通知数据（后端持久化）
+let __remindersCache = [];
+async function loadReminders() {
+  try { __remindersCache = await apiFetch('/reminders'); } catch(e) { console.warn('[Reminders] 加载失败:', e); }
+}
+function getReminders() { return __remindersCache; }
+function saveReminders(v) { __remindersCache = v; }
+async function addReminder(ticketId, toUserId, message) {
+  const r = { id: generateId(), ticketId, toUserId, message, fromUserId: getCurrentUser().userId, fromName: getCurrentUser().name, createdAt: new Date().toISOString(), read: false };
+  try { await apiFetch('/reminders', { method: 'POST', body: JSON.stringify(r) }); __remindersCache.push(r); } catch(e) { console.warn('[Reminders] 添加失败:', e); }
+}
+async function readReminderAsync(id) {
+  try { await apiFetch(`/reminders/${id}/read`, { method: 'PUT' }); } catch(e) {}
+  const r = __remindersCache.find(x => x.id === id);
+  if (r) r.read = true;
+}
+async function clearAllRemindersAsync() {
+  const uid = getCurrentUser()?.userId;
+  try { await apiFetch('/reminders/clear', { method: 'POST' }); } catch(e) {}
+  __remindersCache = __remindersCache.map(r => r.toUserId === uid ? {...r, read: true} : r);
 }
 function getUnreadCount() {
   const uid = getCurrentUser()?.userId;
@@ -759,19 +807,19 @@ function updateNotifyMenu() {
   const uid = getCurrentUser()?.userId;
   const list = getReminders().filter(r => r.toUserId === uid).sort((a,b) => new Date(b.createdAt)-new Date(a.createdAt)).slice(0,20);
   if (!list.length) { menu.innerHTML = '<div class="dropdown-item text-muted">暂无提醒</div>'; return; }
-  menu.innerHTML = list.map(r => `<div class="dropdown-item" style="${r.read?'':'background:#e6f7ff;'}" onclick="readReminder('${r.id}')">
+  menu.innerHTML = list.map(r => `<div class="dropdown-item" style="${r.read?'':'background:#e6f7ff;'}" onclick="readReminderAsync('${r.id}')">
     <div><div class="font-sm font-bold">${escapeHtml(r.fromName)} 的提醒</div><div class="font-sm">${escapeHtml(r.message)}</div><div class="font-sm text-muted">${formatDate(r.createdAt)}</div></div>
-  </div>`).join('') + '<div class="dropdown-item text-center text-primary" onclick="clearAllReminders()">全部已读</div>';
+  </div>`).join('') + '<div class="dropdown-item text-center text-primary" onclick="clearAllRemindersAsync()">全部已读</div>';
 }
-function readReminder(id) {
-  const list = getReminders();
-  const r = list.find(x => x.id === id);
-  if (r) { r.read = true; saveReminders(list); updateNotifyMenu(); if (r.ticketId) navigate('ticket/' + r.ticketId); }
+async function readReminder(id) {
+  await readReminderAsync(id);
+  updateNotifyMenu();
+  const r = getReminders().find(x => x.id === id);
+  if (r && r.ticketId) navigate('ticket/' + r.ticketId);
 }
-function clearAllReminders() {
-  const uid = getCurrentUser()?.userId;
-  const list = getReminders().map(r => r.toUserId === uid ? {...r, read: true} : r);
-  saveReminders(list); updateNotifyMenu();
+async function clearAllReminders() {
+  await clearAllRemindersAsync();
+  updateNotifyMenu();
 }
 
 // ===================== 登录页面 =====================
@@ -957,16 +1005,17 @@ route('tickets', () => {
       tbody.innerHTML = list.map(t => {
         const c = getCustomers().find(x => x.id === t.customerId);
         const overdue = t.status !== 'resolved' && new Date(t.dueDate) < new Date();
-        return `<tr style="cursor:pointer" onclick="navigate('ticket/${t.id}')">
-          <td><span class="font-bold">${t.id}</span>${overdue?' <span class="tag tag-red">逾期</span>':''}</td>
-          <td>${escapeHtml(t.title)}</td>
-          <td>${c ? escapeHtml(c.name) : '-'}</td>
-          <td>${statusTag(t.status)}</td>
-          <td>${priorityTag(t.priority)}</td>
-          <td>${formatDate(t.createdAt)}</td>
-          <td>${formatDate(t.dueDate, 'MM-dd')}</td>
+        return `<tr>
+          <td style="cursor:pointer" onclick="navigate('ticket/${t.id}')"><span class="font-bold">${t.id}</span>${overdue?' <span class="tag tag-red">逾期</span>':''}</td>
+          <td style="cursor:pointer" onclick="navigate('ticket/${t.id}')">${escapeHtml(t.title)}</td>
+          <td style="cursor:pointer" onclick="navigate('ticket/${t.id}')">${c ? escapeHtml(c.name) : '-'}</td>
+          <td style="cursor:pointer" onclick="navigate('ticket/${t.id}')">${statusTag(t.status)}</td>
+          <td style="cursor:pointer" onclick="navigate('ticket/${t.id}')">${priorityTag(t.priority)}</td>
+          <td style="cursor:pointer" onclick="navigate('ticket/${t.id}')">${formatDate(t.createdAt)}</td>
+          <td style="cursor:pointer" onclick="navigate('ticket/${t.id}')">${formatDate(t.dueDate, 'MM-dd')}</td>
+          ${isAdmin() ? `<td><button class="btn btn-sm btn-danger" onclick="event.stopPropagation(); deleteTicket('${t.id}')">删除</button></td>` : ''}
         </tr>`;
-      }).join('') || '<tr><td colspan="7" class="text-center text-muted">无匹配工单</td></tr>';
+      }).join('') || '<tr><td colspan="8" class="text-center text-muted">无匹配工单</td></tr>';
     };
     container.innerHTML = `
       <h1 class="page-title">🎫 工单管理</h1>
@@ -979,7 +1028,7 @@ route('tickets', () => {
         </div>
       </div>
       <div class="card"><div class="card-body" style="padding:0;"><div class="table-wrap">
-        <table class="data-table"><thead><tr><th>工单号</th><th>标题</th><th>客户</th><th>状态</th><th>优先级</th><th>创建时间</th><th>截止日期</th></tr></thead>
+        <table class="data-table"><thead><tr><th>工单号</th><th>标题</th><th>客户</th><th>状态</th><th>优先级</th><th>创建时间</th><th>截止日期</th>${isAdmin()?'<th>操作</th>':''}</tr></thead>
         <tbody id="ticket-tbody"></tbody></table>
       </div></div></div>`;
     setTimeout(renderList, 0);
@@ -1063,6 +1112,53 @@ window.submitNewTicket = async () => {
   }
 };
 
+window.openEditTicketModal = (id) => {
+  const t = getTickets().find(x => x.id === id); if (!t) return;
+  const modal = document.createElement('div'); modal.className = 'modal-overlay';
+  modal.innerHTML = `<div class="modal"><div class="modal-header"><span class="modal-title">✏️ 编辑工单</span><span class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</span></div>
+    <div class="modal-body">
+      <div class="form-group"><label class="form-label">标题 <span class="required">*</span></label><input type="text" id="edit-title" class="form-input" value="${escapeHtml(t.title)}"></div>
+      <div class="form-row"><div class="form-group"><label class="form-label">客户</label><select class="form-select" id="edit-customer">${getCustomers().map(c => `<option value="${c.id}" ${c.id===t.customerId?'selected':''}>${escapeHtml(c.name)}</option>`).join('')}</select></div><div class="form-group"><label class="form-label">负责人</label><select class="form-select" id="edit-engineer">${getUsers().filter(u=>u.role==='engineer').map(u => `<option value="${u.id}" ${u.id===t.engineerId?'selected':''}>${escapeHtml(u.name)}</option>`).join('')}</select></div></div>
+      <div class="form-row"><div class="form-group"><label class="form-label">优先级</label><select class="form-select" id="edit-priority"><option value="low" ${t.priority==='low'?'selected':''}>低</option><option value="medium" ${t.priority==='medium'?'selected':''}>中</option><option value="high" ${t.priority==='high'?'selected':''}>高</option></select></div><div class="form-group"><label class="form-label">分类</label><select class="form-select" id="edit-category"><option value="硬件故障" ${t.category==='硬件故障'?'selected':''}>硬件故障</option><option value="网络问题" ${t.category==='网络问题'?'selected':''}>网络问题</option><option value="系统故障" ${t.category==='系统故障'?'selected':''}>系统故障</option><option value="软件问题" ${t.category==='软件问题'?'selected':''}>软件问题</option><option value="性能问题" ${t.category==='性能问题'?'selected':''}>性能问题</option><option value="配置变更" ${t.category==='配置变更'?'selected':''}>配置变更</option><option value="存储问题" ${t.category==='存储问题'?'selected':''}>存储问题</option><option value="其他" ${t.category==='其他'?'selected':''}>其他</option></select></div></div>
+      <div class="form-group"><label class="form-label">截止日期</label><input type="datetime-local" id="edit-due" class="form-input" value="${t.dueDate ? t.dueDate.slice(0,16) : ''}"></div>
+      <div class="form-group"><label class="form-label">详细描述</label><textarea class="form-textarea" id="edit-desc" rows="3">${escapeHtml(t.description || '')}</textarea></div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button><button class="btn btn-primary" onclick="submitEditTicket('${t.id}')">保存</button></div></div>`;
+  document.body.appendChild(modal);
+};
+window.submitEditTicket = async (id) => {
+  const title = document.getElementById('edit-title').value.trim();
+  const customerId = document.getElementById('edit-customer').value;
+  const engineerId = document.getElementById('edit-engineer').value;
+  const priority = document.getElementById('edit-priority').value;
+  const category = document.getElementById('edit-category').value;
+  const dueDate = document.getElementById('edit-due').value;
+  const description = document.getElementById('edit-desc').value.trim();
+  if (!title) { notify('请填写标题', '', 'warning'); return; }
+  try {
+    const fields = { title, customerId, engineerId, priority, category, description };
+    if (dueDate) fields.dueDate = new Date(dueDate).toISOString();
+    await saveTicketUpdate(id, fields);
+    notify('保存成功', '', 'success');
+    document.querySelector('.modal-overlay').remove();
+    navigate('ticket/' + id);
+  } catch (e) {
+    notify('保存失败', e.message, 'error');
+  }
+};
+
+window.deleteTicket = async (id) => {
+  if (!confirm(`确定删除工单 ${id}？此操作不可恢复。`)) return;
+  try {
+    await apiFetch(`/tickets/${id}`, { method: 'DELETE' });
+    __tickets = __tickets.filter(t => t.id !== id);
+    notify('已删除', `工单 ${id} 已删除`, 'success');
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+  } catch (e) {
+    notify('删除失败', e.message, 'error');
+  }
+};
+
 // ===================== 工单详情 =====================
 route('ticket/([^/]+)', (id) => {
   if (!getCurrentUser()) return navigate('login');
@@ -1077,6 +1173,7 @@ route('ticket/([^/]+)', (id) => {
       <div class="flex flex-between flex-center mb-4">
         <h1 class="page-title" style="margin:0">🎫 ${ticket.id} ${escapeHtml(ticket.title)}</h1>
         <div class="btn-group">
+          ${canEdit ? `<button class="btn btn-primary btn-sm" onclick="openEditTicketModal('${ticket.id}')">✏️ 编辑</button>` : ''}
           ${canEdit && ticket.status !== 'resolved' ? `<button class="btn btn-success btn-sm" onclick="resolveTicket('${ticket.id}')">✅ 标记解决</button>` : ''}
           ${isAdmin() ? `<button class="btn btn-warning btn-sm" onclick="openTransferModal('${ticket.id}')">🔄 转交</button>` : ''}
           ${canEdit && ticket.status !== 'resolved' ? `<button class="btn btn-danger btn-sm" onclick="openUrgeModal('${ticket.id}')">🔔 催办</button>` : ''}
@@ -1232,11 +1329,15 @@ route('customers', () => {
       if (search) list = list.filter(c => c.name.includes(search) || c.contact.includes(search) || c.phone.includes(search));
       const tbody = document.getElementById('cust-tbody');
       if (!tbody) return;
-      tbody.innerHTML = list.map(c => `<tr style="cursor:pointer" onclick="navigate('customer/${c.id}')">
-        <td>${escapeHtml(c.name)}</td><td>${escapeHtml(c.contact)}</td><td>${escapeHtml(c.phone)}</td><td>${escapeHtml(c.industry)}</td>
-        <td><span class="tag ${c.level==='A'?'tag-red':c.level==='B'?'tag-orange':'tag-green'}">${c.level}级</span></td>
-        <td>${c.devices?.length || 0}</td>
-      </tr>`).join('') || '<tr><td colspan="6" class="text-center text-muted">无匹配客户</td></tr>';
+      tbody.innerHTML = list.map(c => `<tr>
+        <td style="cursor:pointer" onclick="navigate('customer/${c.id}')">${escapeHtml(c.name)}</td>
+        <td style="cursor:pointer" onclick="navigate('customer/${c.id}')">${escapeHtml(c.contact)}</td>
+        <td style="cursor:pointer" onclick="navigate('customer/${c.id}')">${escapeHtml(c.phone)}</td>
+        <td style="cursor:pointer" onclick="navigate('customer/${c.id}')">${escapeHtml(c.industry)}</td>
+        <td style="cursor:pointer" onclick="navigate('customer/${c.id}')"><span class="tag ${c.level==='A'?'tag-red':c.level==='B'?'tag-orange':'tag-green'}">${c.level}级</span></td>
+        <td style="cursor:pointer" onclick="navigate('customer/${c.id}')">${c.devices?.length || 0}</td>
+        ${isAdmin()?`<td><button class="btn btn-sm btn-danger" onclick="event.stopPropagation(); deleteCustomer('${c.id}')">删除</button></td>`:''}
+      </tr>`).join('') || '<tr><td colspan="7" class="text-center text-muted">无匹配客户</td></tr>';
     };
     container.innerHTML = `
       <h1 class="page-title">👥 客户管理</h1>
@@ -1245,7 +1346,7 @@ route('customers', () => {
         <button class="btn btn-primary" onclick="openAddCustomerModal()">+ 添加客户</button>
       </div>
       <div class="card"><div class="card-body" style="padding:0;"><div class="table-wrap">
-        <table class="data-table"><thead><tr><th>客户名称</th><th>联系人</th><th>电话</th><th>行业</th><th>等级</th><th>设备数</th></tr></thead>
+        <table class="data-table"><thead><tr><th>客户名称</th><th>联系人</th><th>电话</th><th>行业</th><th>等级</th><th>设备数</th>${isAdmin()?'<th>操作</th>':''}</tr></thead>
         <tbody id="cust-tbody"></tbody></table>
       </div></div></div>`;
     setTimeout(render, 0);
@@ -1287,7 +1388,7 @@ route('customer/([^/]+)', (id) => {
   const relatedTickets = getTickets().filter(t => t.customerId === id).sort((a,b) => new Date(b.createdAt)-new Date(a.createdAt));
   renderLayout(container => {
     container.innerHTML = `
-      <div class="flex flex-between flex-center mb-4"><h1 class="page-title" style="margin:0">👤 ${escapeHtml(customer.name)}</h1><button class="btn btn-default btn-sm" onclick="navigate('customers')">返回列表</button></div>
+      <div class="flex flex-between flex-center mb-4"><h1 class="page-title" style="margin:0">👤 ${escapeHtml(customer.name)}</h1><div class="btn-group"><button class="btn btn-primary btn-sm" onclick="openEditCustomerModal('${customer.id}')">✏️ 编辑</button><button class="btn btn-default btn-sm" onclick="navigate('customers')">返回列表</button></div></div>
       <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 20px;">
         <div class="card">
           <div class="card-header"><span class="card-title">基本信息</span></div>
@@ -1348,6 +1449,52 @@ window.removeDevice = async (cid, idx) => {
   try {
     const c = getCustomers().find(x => x.id === cid);
     if (c && c.devices) { c.devices.splice(idx, 1); await updateCustomerAsync(cid, { devices: c.devices }); notify('已删除', '', 'success'); navigate('customer/' + cid); }
+  } catch (e) {
+    notify('删除失败', e.message, 'error');
+  }
+};
+
+window.openEditCustomerModal = (id) => {
+  const c = getCustomers().find(x => x.id === id); if (!c) return;
+  const modal = document.createElement('div'); modal.className = 'modal-overlay';
+  modal.innerHTML = `<div class="modal"><div class="modal-header"><span class="modal-title">✏️ 编辑客户</span><span class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</span></div>
+    <div class="modal-body">
+      <div class="form-row"><div class="form-group"><label class="form-label">客户名称 <span class="required">*</span></label><input type="text" id="edit-cust-name" class="form-input" value="${escapeHtml(c.name)}"></div><div class="form-group"><label class="form-label">联系人 <span class="required">*</span></label><input type="text" id="edit-cust-contact" class="form-input" value="${escapeHtml(c.contact)}"></div></div>
+      <div class="form-row"><div class="form-group"><label class="form-label">电话</label><input type="text" id="edit-cust-phone" class="form-input" value="${escapeHtml(c.phone||'')}"></div><div class="form-group"><label class="form-label">邮箱</label><input type="text" id="edit-cust-email" class="form-input" value="${escapeHtml(c.email||'')}"></div></div>
+      <div class="form-group"><label class="form-label">地址</label><input type="text" id="edit-cust-address" class="form-input" value="${escapeHtml(c.address||'')}"></div>
+      <div class="form-row"><div class="form-group"><label class="form-label">行业</label><input type="text" id="edit-cust-industry" class="form-input" value="${escapeHtml(c.industry||'')}"></div><div class="form-group"><label class="form-label">等级</label><select class="form-select" id="edit-cust-level"><option value="A" ${c.level==='A'?'selected':''}>A</option><option value="B" ${c.level==='B'?'selected':''}>B</option><option value="C" ${c.level==='C'?'selected':''}>C</option></select></div></div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button><button class="btn btn-primary" onclick="submitEditCustomer('${c.id}')">保存</button></div></div>`;
+  document.body.appendChild(modal);
+};
+window.submitEditCustomer = async (id) => {
+  const name = document.getElementById('edit-cust-name').value.trim();
+  const contact = document.getElementById('edit-cust-contact').value.trim();
+  if (!name || !contact) { notify('请填写必填项', '', 'warning'); return; }
+  try {
+    await updateCustomerAsync(id, {
+      name, contact,
+      phone: document.getElementById('edit-cust-phone').value,
+      email: document.getElementById('edit-cust-email').value,
+      address: document.getElementById('edit-cust-address').value,
+      industry: document.getElementById('edit-cust-industry').value,
+      level: document.getElementById('edit-cust-level').value
+    });
+    notify('保存成功', '', 'success');
+    document.querySelector('.modal-overlay').remove();
+    navigate('customer/' + id);
+  } catch (e) {
+    notify('保存失败', e.message, 'error');
+  }
+};
+
+window.deleteCustomer = async (id) => {
+  if (!confirm(`确定删除此客户？关联工单不会被删除，请谨慎操作。`)) return;
+  try {
+    await apiFetch(`/customers/${id}`, { method: 'DELETE' });
+    __customers = __customers.filter(c => c.id !== id);
+    notify('已删除', '客户已删除', 'success');
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
   } catch (e) {
     notify('删除失败', e.message, 'error');
   }
@@ -1524,8 +1671,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (__token) {
     const ok = await loadAllData();
     if (!ok) {
-      // 后端未启动或认证失败，显示离线提示
       console.warn('[CRM] 后端连接失败，请确保服务器已启动');
+    } else {
+      startAutoRefresh();
     }
   }
   renderRoute();

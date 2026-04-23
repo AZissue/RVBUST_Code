@@ -150,6 +150,25 @@ app.delete('/api/customers/:id', auth, adminOnly, async (req, res) => {
   res.json({ success: true });
 });
 
+// ===== Reminders =====
+app.get('/api/reminders', auth, async (req, res) => {
+  const list = await db.getReminders();
+  res.json(list.filter(r => r.toUserId === req.user.id));
+});
+app.post('/api/reminders', auth, async (req, res) => {
+  const reminder = { ...req.body, createdAt: new Date().toISOString(), read: false };
+  const newR = await db.addReminder(reminder);
+  res.status(201).json(newR);
+});
+app.put('/api/reminders/:id/read', auth, async (req, res) => {
+  await db.markReminderRead(req.params.id);
+  res.json({ success: true });
+});
+app.post('/api/reminders/clear', auth, async (req, res) => {
+  await db.clearReminders(req.user.id);
+  res.json({ success: true });
+});
+
 // ===== Stats =====
 app.get('/api/stats', auth, async (req, res) => {
   const tickets = await db.getTickets();

@@ -121,6 +121,20 @@ const dbApi = {
     db.data.tickets = tickets;
     await db.write();
     console.log('[DB] Seed data created.');
+  },
+
+  async getReminders() { await initDb(); return db.data.reminders || []; },
+  async addReminder(r) { await initDb(); db.data.reminders = db.data.reminders || []; db.data.reminders.push(r); await db.write(); return r; },
+  async markReminderRead(id) {
+    await initDb();
+    db.data.reminders = db.data.reminders || [];
+    const idx = db.data.reminders.findIndex(r => r.id === id);
+    if (idx >= 0) { db.data.reminders[idx].read = true; await db.write(); }
+  },
+  async clearReminders(userId) {
+    await initDb();
+    db.data.reminders = (db.data.reminders || []).map(r => r.toUserId === userId ? { ...r, read: true } : r);
+    await db.write();
   }
 };
 
