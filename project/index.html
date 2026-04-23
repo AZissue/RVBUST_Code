@@ -568,6 +568,10 @@ function stopAutoRefresh() { if (__refreshTimer) { clearInterval(__refreshTimer)
 
 window.addEventListener('beforeunload', stopAutoRefresh);
 
+const getUsers = () => __users;
+const getTickets = () => __tickets;
+const getCustomers = () => __customers;
+
 // ===================== Auth (API) =====================
 async function loginAsync(username, password, remember) {
   const result = await apiFetch('/login', { method: 'POST', body: JSON.stringify({ username, password }) });
@@ -995,7 +999,7 @@ route('tickets', () => {
   renderLayout(container => {
     let filterStatus = '', filterPriority = '', search = '';
     const renderList = () => {
-      let list = isAdmin() ? getTickets() : getTickets().filter(t => t.engineerId === getCurrentUser().userId);
+      let list = getTickets();
       if (filterStatus) list = list.filter(t => t.status === filterStatus);
       if (filterPriority) list = list.filter(t => t.priority === filterPriority);
       if (search) list = list.filter(t => t.title.includes(search) || t.id.includes(search));
