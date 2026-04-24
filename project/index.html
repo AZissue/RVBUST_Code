@@ -173,161 +173,210 @@ input, textarea, select { font-family: inherit; font-size: 1rem; }
 .dropdown-item { padding: 10px 16px; cursor: pointer; font-size: .9rem; color: var(--text); display: flex; align-items: center; gap: 8px; }
 .dropdown-item:hover { background: #f5f5f5; }
 
-/* ===== Login Page ===== */
+/* ===== Login Page - Professional Split Layout ===== */
 .login-page {
   min-height: 100vh;
   display: flex;
-  align-items: center;
+  background: var(--bg-white);
+}
+
+/* 左侧品牌区 */
+.login-left {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
   justify-content: center;
-  background: linear-gradient(135deg, #0c4a6e 0%, #1e3a5f 25%, #2563eb 60%, #7c3aed 100%);
-  padding: 20px;
+  align-items: center;
+  padding: 48px;
+  background: linear-gradient(135deg, #1e3a5f 0%, #2563eb 50%, #4f46e5 100%);
+  color: white;
   position: relative;
   overflow: hidden;
 }
-.login-page::before {
+.login-left::before {
   content: '';
   position: absolute;
-  top: -50%;
-  left: -50%;
-  width: 200%;
-  height: 200%;
-  background: radial-gradient(circle at 30% 70%, rgba(37,99,235,0.15) 0%, transparent 50%),
-              radial-gradient(circle at 70% 30%, rgba(124,58,237,0.12) 0%, transparent 50%);
-  animation: gradientMove 20s ease-in-out infinite;
-}
-@keyframes gradientMove {
-  0%, 100% { transform: translate(0, 0) rotate(0deg); }
-  33% { transform: translate(-2%, 2%) rotate(1deg); }
-  66% { transform: translate(2%, -2%) rotate(-1deg); }
-}
-.login-float-shapes {
-  position: absolute;
   inset: 0;
-  overflow: hidden;
-  pointer-events: none;
+  background: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.05'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+  opacity: 0.5;
 }
-.login-float-shapes span {
-  position: absolute;
-  display: block;
-  width: 20px;
-  height: 20px;
-  background: rgba(255,255,255,0.03);
-  border: 1px solid rgba(255,255,255,0.08);
-  border-radius: 4px;
-  animation: floatShape 15s linear infinite;
-}
-.login-float-shapes span:nth-child(1) { top: 10%; left: 10%; width: 40px; height: 40px; animation-duration: 18s; animation-delay: 0s; }
-.login-float-shapes span:nth-child(2) { top: 20%; left: 80%; width: 25px; height: 25px; animation-duration: 22s; animation-delay: 2s; border-radius: 50%; }
-.login-float-shapes span:nth-child(3) { top: 60%; left: 15%; width: 60px; height: 60px; animation-duration: 16s; animation-delay: 4s; }
-.login-float-shapes span:nth-child(4) { top: 40%; left: 60%; width: 30px; height: 30px; animation-duration: 20s; animation-delay: 1s; border-radius: 50%; }
-.login-float-shapes span:nth-child(5) { top: 80%; left: 70%; width: 45px; height: 45px; animation-duration: 24s; animation-delay: 3s; }
-.login-float-shapes span:nth-child(6) { top: 30%; left: 40%; width: 15px; height: 15px; animation-duration: 14s; animation-delay: 5s; border-radius: 50%; }
-@keyframes floatShape {
-  0% { transform: translateY(0) rotate(0deg); opacity: 0; }
-  10% { opacity: 1; }
-  90% { opacity: 1; }
-  100% { transform: translateY(-100vh) rotate(360deg); opacity: 0; }
-}
-.login-card {
-  background: rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border-radius: 20px;
-  box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25), 0 0 0 1px rgba(255,255,255,0.1) inset;
-  width: 100%;
-  max-width: 440px;
-  padding: 48px 40px;
+.login-left-content {
   position: relative;
-  z-index: 1;
-  animation: cardSlideUp 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+  max-width: 420px;
 }
-@keyframes cardSlideUp {
-  from { opacity: 0; transform: translateY(30px) scale(0.98); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
+.login-brand-logo {
+  font-size: 2rem;
+  font-weight: 800;
+  margin-bottom: 24px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
-.login-header { text-align: center; margin-bottom: 36px; }
-.login-header .logo-wrap {
-  width: 72px;
-  height: 72px;
-  margin: 0 auto 20px;
-  background: linear-gradient(135deg, #2563eb, #7c3aed);
-  border-radius: 20px;
+.login-brand-tagline {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin-bottom: 16px;
+  opacity: 0.95;
+}
+.login-brand-desc {
+  font-size: 1rem;
+  line-height: 1.7;
+  opacity: 0.8;
+  margin-bottom: 32px;
+}
+.login-brand-features {
+  list-style: none;
+}
+.login-brand-features li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  font-size: 0.9rem;
+  opacity: 0.85;
+}
+.login-brand-features li::before {
+  content: '✓';
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.2);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 2rem;
-  box-shadow: 0 8px 24px rgba(37,99,235,0.3);
-  animation: logoPulse 2s ease-in-out infinite;
+  font-size: 12px;
+  flex-shrink: 0;
 }
-@keyframes logoPulse {
-  0%, 100% { box-shadow: 0 8px 24px rgba(37,99,235,0.3); transform: scale(1); }
-  50% { box-shadow: 0 12px 32px rgba(37,99,235,0.4); transform: scale(1.02); }
+
+/* 右侧登录区 */
+.login-right {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding: 48px;
 }
-.login-header h1 { font-size: 1.6rem; color: var(--text); margin-bottom: 6px; font-weight: 700; }
-.login-header p { color: var(--text-muted); font-size: .95rem; }
-.login-form .form-group { margin-bottom: 24px; }
-.login-form .form-group label { display: flex; align-items: center; justify-content: space-between; }
-.login-form .form-group label .form-label { font-size: .9rem; font-weight: 500; color: var(--text-secondary); }
+.login-card {
+  width: 100%;
+  max-width: 420px;
+  background: var(--bg-white);
+  border-radius: 16px;
+  box-shadow: var(--shadow-lg);
+  padding: 48px;
+  animation: cardSlideUp 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes cardSlideUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.login-card-header {
+  text-align: center;
+  margin-bottom: 32px;
+}
+.login-card-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+.login-card-subtitle {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+/* 登录表单 */
+.login-form .form-group {
+  margin-bottom: 20px;
+}
+.login-form .form-label {
+  display: block;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
 .login-form .form-input {
   width: 100%;
-  padding: 12px 16px;
-  border: 2px solid var(--border);
-  border-radius: 12px;
+  height: 48px;
+  padding: 0 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
   font-size: 1rem;
-  transition: all 0.3s ease;
-  background: #fff;
+  color: var(--text);
+  background: var(--bg-white);
+  transition: all 0.2s;
 }
 .login-form .form-input:focus {
   border-color: var(--primary);
-  box-shadow: 0 0 0 4px rgba(24,144,255,0.1);
-  transform: translateY(-1px);
+  box-shadow: 0 0 0 3px var(--primary-light);
+  outline: none;
 }
-.login-form .input-wrap { position: relative; }
+.login-form .form-input::placeholder {
+  color: var(--text-muted);
+}
+.login-form .input-wrap {
+  position: relative;
+}
 .login-form .input-wrap .toggle-pass {
   position: absolute;
-  right: 14px;
+  right: 12px;
   top: 50%;
   transform: translateY(-50%);
   cursor: pointer;
-  color: var(--text-muted);
-  font-size: 1.1rem;
-  user-select: none;
-  transition: color 0.2s;
-}
-.login-form .input-wrap .toggle-pass:hover { color: var(--primary); }
-.login-form .input-icon {
-  position: absolute;
-  left: 14px;
-  top: 50%;
-  transform: translateY(-50%);
   color: var(--text-muted);
   font-size: 1rem;
+  user-select: none;
 }
-.login-form .input-wrap.with-icon .form-input { padding-left: 42px; }
-.login-form .btn-login {
+.login-form .input-wrap .toggle-pass:hover {
+  color: var(--primary);
+}
+.login-remember {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+.login-remember-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.login-remember-label input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--primary);
+}
+.login-btn {
   width: 100%;
-  padding: 14px;
-  font-size: 1.05rem;
-  font-weight: 600;
-  border-radius: 12px;
-  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  height: 48px;
+  background: var(--primary);
   color: #fff;
   border: none;
+  border-radius: 10px;
+  font-size: 1rem;
+  font-weight: 600;
   cursor: pointer;
-  transition: all 0.3s ease;
-  position: relative;
-  overflow: hidden;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
 }
-.login-form .btn-login:hover:not(:disabled) {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 20px rgba(37,99,235,0.35);
+.login-btn:hover:not(:disabled) {
+  background: var(--primary-dark);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(24,144,255,0.3);
 }
-.login-form .btn-login:active:not(:disabled) { transform: translateY(0); }
-.login-form .btn-login:disabled {
-  opacity: 0.7;
+.login-btn:disabled {
+  opacity: 0.6;
   cursor: not-allowed;
+  transform: none;
 }
-.login-form .btn-login .spinner {
+.login-btn .spinner {
   display: inline-block;
   width: 18px;
   height: 18px;
@@ -335,58 +384,41 @@ input, textarea, select { font-family: inherit; font-size: 1rem; }
   border-top-color: #fff;
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
-  margin-right: 8px;
-  vertical-align: middle;
 }
-@keyframes spin { to { transform: rotate(360deg); } }
-.login-form .remember-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 24px;
-  font-size: 0.9rem;
-}
-.login-form .remember-label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-  color: var(--text-secondary);
-}
-.login-form .remember-label input[type="checkbox"] {
-  width: 18px;
-  height: 18px;
-  accent-color: var(--primary);
-  cursor: pointer;
-}
-.login-tips {
+.login-hint {
+  text-align: center;
   margin-top: 24px;
-  padding: 14px 16px;
-  background: linear-gradient(135deg, #f0f9ff, #e0f2fe);
-  border: 1px solid #bae6fd;
-  border-radius: 12px;
-  font-size: .85rem;
-  color: #0369a1;
-  position: relative;
-  overflow: hidden;
+  padding-top: 24px;
+  border-top: 1px solid var(--border-light);
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  line-height: 1.8;
 }
-.login-tips::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 4px;
-  background: linear-gradient(to bottom, #2563eb, #7c3aed);
+.login-hint code {
+  background: var(--bg);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-family: monospace;
+  color: var(--primary);
+  font-size: 0.85rem;
 }
-.login-tips strong { color: #1e3a5f; }
-.login-version {
-  position: absolute;
-  bottom: 16px;
-  right: 20px;
-  font-size: 0.75rem;
-  color: rgba(255,255,255,0.4);
-  z-index: 1;
+
+/* 响应式 */
+@media (max-width: 768px) {
+  .login-page { flex-direction: column; }
+  .login-left {
+    flex: none;
+    padding: 32px 24px;
+    min-height: 200px;
+    text-align: center;
+  }
+  .login-brand-features { display: none; }
+  .login-right { flex: 1; padding: 24px; }
+  .login-card { box-shadow: none; padding: 24px 0; border-radius: 0; }
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 /* ===== Tabs ===== */
@@ -451,8 +483,6 @@ input, textarea, select { font-family: inherit; font-size: 1rem; }
 }
 @media (max-width: 480px) {
   .stats-row { grid-template-columns: 1fr; }
-  .login-card { padding: 32px 24px; }
-  .login-float-shapes { display: none; }
 }
 
 /* ===== Utility ===== */
@@ -1109,48 +1139,59 @@ route('login', () => {
   const app = document.getElementById('app');
   app.innerHTML = `
     <div class="login-page">
-      <div class="login-float-shapes">
-        <span></span><span></span><span></span><span></span><span></span><span></span>
-      </div>
-      <div class="login-card">
-        <div class="login-header">
-          <div class="logo-wrap">🛠️</div>
-          <h1>技术支持工单系统</h1>
-          <p>智能化工单管理 · 客户联动 · 团队协作</p>
+      <div class="login-left">
+        <div class="login-left-content">
+          <div class="login-brand-logo">
+            <span>🎫</span>
+            <span>工单管理系统</span>
+          </div>
+          <div class="login-brand-tagline">技术支持团队协同工作平台</div>
+          <div class="login-brand-desc">
+            专为技术支持团队打造的工单与客户管理工具，支持智能工单创建、客户联动管理、团队高效协作。
+          </div>
+          <ul class="login-brand-features">
+            <li>自然语言智能解析创建工单</li>
+            <li>创建人与负责人分离机制</li>
+            <li>定向催办与逾期提醒</li>
+            <li>客户设备与联系人管理</li>
+            <li>团队工作量统计报表</li>
+          </ul>
         </div>
-        <form class="login-form" id="login-form" onsubmit="event.preventDefault(); handleLogin();">
-          <div class="form-group">
-            <label class="form-label">用户名</label>
-            <div class="input-wrap with-icon">
-              <span class="input-icon">👤</span>
+      </div>
+      <div class="login-right">
+        <div class="login-card">
+          <div class="login-card-header">
+            <div class="login-card-title">欢迎登录</div>
+            <div class="login-card-subtitle">请输入账号密码登录系统</div>
+          </div>
+          <form class="login-form" id="login-form" onsubmit="event.preventDefault(); handleLogin();">
+            <div class="form-group">
+              <label class="form-label">登录账号</label>
               <input type="text" id="login-user" class="form-input" placeholder="请输入用户名" value="admin" autocomplete="username">
             </div>
-          </div>
-          <div class="form-group">
-            <label class="form-label">密码</label>
-            <div class="input-wrap with-icon">
-              <span class="input-icon">🔒</span>
-              <input type="password" id="login-pass" class="form-input" placeholder="请输入密码" value="admin123" autocomplete="current-password">
-              <span class="toggle-pass" onclick="togglePassword()" title="显示/隐藏密码">👁️</span>
+            <div class="form-group">
+              <label class="form-label">登录密码</label>
+              <div class="input-wrap">
+                <input type="password" id="login-pass" class="form-input" placeholder="请输入密码" value="admin123" autocomplete="current-password">
+                <span class="toggle-pass" onclick="togglePassword()" title="显示/隐藏密码">👁️</span>
+              </div>
             </div>
+            <div class="login-remember">
+              <label class="login-remember-label">
+                <input type="checkbox" id="login-remember" checked>
+                <span>记住我（7天内自动登录）</span>
+              </label>
+            </div>
+            <button type="submit" class="login-btn" id="login-btn">
+              <span class="btn-text">登 录</span>
+            </button>
+          </form>
+          <div class="login-hint">
+            首次使用默认管理员账号：<code>admin</code> / <code>admin123</code><br>
+            工程师演示账号：<code>zhangsan</code> / <code>123456</code>
           </div>
-          <div class="remember-row">
-            <label class="remember-label">
-              <input type="checkbox" id="login-remember" checked>
-              <span>记住登录状态</span>
-            </label>
-          </div>
-          <button type="submit" class="btn-login" id="login-btn">
-            <span class="btn-text">登 录</span>
-          </button>
-        </form>
-        <div class="login-tips">
-          <strong>💡 快速登录</strong><br>
-          管理员：admin / admin123<br>
-          工程师：zhangsan / 123456
         </div>
       </div>
-      <div class="login-version">v1.0.0</div>
     </div>`;
   bindLoginEvents();
 });
