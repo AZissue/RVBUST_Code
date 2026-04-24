@@ -668,19 +668,95 @@ async function fetchStats() {
 function parseTicketInput(text) {
   const result = { title: '', customerId: '', priority: 'medium', category: '', description: text };
   const customers = getCustomers();
-  // 提取客户名
+  const t = text.trim();
+  
+  // === 1. 客户识别（支持简称、联系人、模糊匹配）===
+  let bestMatch = null;
+  let bestScore = 0;
   for (const c of customers) {
-    if (text.includes(c.name) || text.includes(c.contact)) { result.customerId = c.id; break; }
+    let score = 0;
+    // 全名匹配
+    if (t.includes(c.name)) score += 100;
+    // 联系人匹配
+    if (c.contact && t.includes(c.contact)) score += 80;
+    // 简称匹配（取前2-4字）
+    if (c.name.length > 4) {
+      const short = c.name.substring(0, 4);
+      if (t.includes(short)) score += 60;
+    }
+    // 电话尾号匹配
+    if (c.phone && t.includes(c.phone.slice(-4))) score += 50;
+    // 行业关键词匹配
+    if (c.industry && t.includes(c.industry)) score += 30;
+    if (score > bestScore) { bestScore = score; bestMatch = c; }
   }
-  // 提取优先级
-  if (/紧急|立刻|马上|高优|严重|崩溃|宕机/.test(text)) result.priority = 'high';
-  else if (/低优|不急|稍后|低优先级/.test(text)) result.priority = 'low';
-  // 提取类别
-  const catMap = { '硬件': '硬件故障', '网络': '网络问题', '系统': '系统故障', '软件': '软件问题', '性能': '性能问题', '配置': '配置变更', '存储': '存储问题' };
-  for (const [k, v] of Object.entries(catMap)) { if (text.includes(k)) { result.category = v; break; } }
-  // 提取标题（取第一句或前20字）
-  result.title = text.split(/[，。！？\n]/)[0].slice(0, 30);
-  if (!result.title) result.title = '新工单';
+  if (bestMatch && bestScore >= 30) result.customerId = bestMatch.id;
+
+  // === 2. 优先级识别（更多关键词 + 组合判断）===
+  const urgentWords = /紧急|立刻|马上|高优|严重|崩溃|宕机|死机|无法启动|断网|全部|都|报警|告警|火灾|漏水|停电|核心|生产|瘫痪/;
+  const highWords = /着急|尽快|重要|关键|影响|故障|报错|异常|连不上|连不了|连不到|访问不了|打不开|连不了|连不上/;
+  const lowWords = /低优|不急|稍后|低优先级|看看|咨询|了解一下|请教|建议|优化|升级|未来|计划/;
+  
+  if (urgentWords.test(t)) result.priority = 'high';
+  else if (lowWords.test(t)) result.priority = 'low';
+  else if (highWords.test(t)) result.priority = 'high';
+  // 增强判断：同时出现多个高优先级词
+  const urgentCount = (t.match(/紧急|立刻|马上|严重|崩溃|宕机|死机|无法|断网|瘫痪/g) || []).length;
+  if (urgentCount >= 2) result.priority = 'high';
+
+  // === 3. 类别识别（更丰富的关键词映射）===
+  const catPatterns = [
+    { keys: ['服务器','蓝屏','死机','宕机','重启','开不了机','电源','主板','内存','硬盘','CPU','风扇','过热','黑屏','花屏','显示器','键盘','鼠标','打印机','扫描仪','复印机','投影仪','电话'], cat: '硬件故障' },
+    { keys: ['网络','断网','连不上网','WiFi','路由器','交换机','网线','带宽','丢包','延迟','DNS','IP','防火墙','VPN','专线','无线','信号','拓扑','ping不通'], cat: '网络问题' },
+    { keys: ['系统','操作系统','Windows','Linux','Mac','Ubuntu','CentOS','死机','卡死','崩溃','蓝屏','黑屏','更新','补丁','重装','升级','版本','兼容','驱动'], cat: '系统故障' },
+    { keys: ['软件','程序','应用','APP','客户端','浏览器','Office','Excel','Word','数据库','SQL','MySQL','Oracle','MongoDB','Redis','安装','卸载','闪退','报错','异常','Bug','接口','API','脚本','代码'], cat: '软件问题' },
+    { keys: ['慢','卡顿','加载','响应','延迟','超时','CPU高','内存高','磁盘满','空间不足','清理','优化','瓶颈','并发','吞吐量','TPS','QPS'], cat: '性能问题' },
+    { keys: ['配置','设置','参数','调整','修改','策略','规则','权限','账号','密码','开通','关闭','启用','禁用','添加','删除','变更','迁移','切换'], cat: '配置变更' },
+    { keys: ['存储','磁盘','硬盘','NAS','SAN','备份','恢复','RAID','空间','容量','满','不足','扩容','清理','归档','迁移','同步','复制','快照'], cat: '存储问题' },
+    { keys: ['安全','病毒','木马','勒索','入侵','攻击','漏洞','补丁','防火墙','WAF','SSL','证书','加密','解密','泄露','窃取','权限','越权','审计','日志'], cat: '安全问题' },
+    { keys: ['数据库','SQL','MySQL','Oracle','PostgreSQL','MongoDB','Redis','表','字段','索引','查询','写入','删除','备份','迁移','同步','锁死','连接池','死锁','慢查询'], cat: '数据库问题' },
+  ];
+  
+  let bestCat = null;
+  let bestCatScore = 0;
+  for (const p of catPatterns) {
+    let score = 0;
+    for (const k of p.keys) {
+      if (t.includes(k)) score += 10;
+    }
+    if (score > bestCatScore) { bestCatScore = score; bestCat = p.cat; }
+  }
+  if (bestCat && bestCatScore >= 10) result.category = bestCat;
+  // 默认兜底
+  if (!result.category) result.category = '其他';
+
+  // === 4. 标题提取（智能清理）===
+  // 先移除已识别的客户名，避免标题冗长
+  let cleanText = t;
+  if (bestMatch) {
+    cleanText = cleanText.replace(bestMatch.name, '').replace(bestMatch.contact || '', '');
+  }
+  // 清理残留的孤立词和噪音
+  cleanText = cleanText.replace(/^[\s的，那边我司]+/, '').replace(/^[\s那边我司]+/, '');
+  const sentences = cleanText.split(/[，。！？\n;；]/).filter(s => s.trim());
+  let title = sentences[0] || cleanText;
+  // 循环移除常见前缀噪音词，直到没有匹配
+  const noisePattern = /^(麻烦|请|帮忙|你好|您好|请问|我们|公司|这边|今天|现在|刚才|刚刚|发现|出现|有个|有个问题|有个故障|有个报错|报错|故障|问题|一下|帮忙|一下|需要|想|要|希望)\s*/i;
+  for (let i = 0; i < 5; i++) {
+    const newTitle = title.replace(noisePattern, '');
+    if (newTitle === title) break;
+    title = newTitle;
+  }
+  // 再次清理残留
+  title = title.replace(/^[\s的，那边]+/, '');
+  // 截取前30字，优先在完整词处截断
+  if (title.length > 30) {
+    const cut = title.substring(0, 30);
+    const lastPunc = Math.max(cut.lastIndexOf(' '), cut.lastIndexOf('，'));
+    title = lastPunc > 15 ? cut.substring(0, lastPunc) + '...' : cut + '...';
+  }
+  result.title = title.trim() || '新工单';
+  
   return result;
 }
 
