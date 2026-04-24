@@ -604,7 +604,8 @@ function getCurrentUser() {
     const [id, username, role] = decoded.split(':');
     const user = __users.find(u => u.id === id);
     if (user) return { ...user, userId: user.id };
-    return { id, username, role, userId: id };
+    // Fallback: 数据未加载时返回基本信息，确保界面不崩溃
+    return { id, username, role, userId: id, name: username || '用户', color: '#1890ff', email: '', phone: '' };
   } catch { return null; }
 }
 
