@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -630,7 +630,7 @@ async function addTicketComment(id, comment) {
   const t = __tickets.find(tk => tk.id === id);
   if (t) {
     t.comments = t.comments || [];
-    t.comments.push({ ...comment, userId: getCurrentUser()?.id, userName: getCurrentUser()?.name, createdAt: new Date().toISOString() });
+    t.comments.push({ ...comment, userId: (getCurrentUser() || {}).id, userName: (getCurrentUser() || {}).name, createdAt: new Date().toISOString() });
   }
 }
 
@@ -874,18 +874,18 @@ async function readReminderAsync(id) {
   if (r) r.read = true;
 }
 async function clearAllRemindersAsync() {
-  const uid = getCurrentUser()?.userId;
+  const uid = (getCurrentUser() || {}).userId;
   try { await apiFetch('/reminders/clear', { method: 'POST' }); } catch(e) {}
   __remindersCache = __remindersCache.map(r => r.toUserId === uid ? {...r, read: true} : r);
 }
 function getUnreadCount() {
-  const uid = getCurrentUser()?.userId;
+  const uid = (getCurrentUser() || {}).userId;
   return getReminders().filter(r => r.toUserId === uid && !r.read).length;
 }
 function updateNotifyMenu() {
   const menu = document.getElementById('notify-menu');
   if (!menu) return;
-  const uid = getCurrentUser()?.userId;
+  const uid = (getCurrentUser() || {}).userId;
   const list = getReminders().filter(r => r.toUserId === uid).sort((a,b) => new Date(b.createdAt)-new Date(a.createdAt)).slice(0,20);
   if (!list.length) { menu.innerHTML = '<div class="dropdown-item text-muted">暂无提醒</div>'; return; }
   menu.innerHTML = list.map(r => `<div class="dropdown-item" style="${r.read?'':'background:#e6f7ff;'}" onclick="readReminderAsync('${r.id}')">
@@ -966,7 +966,7 @@ window.bindLoginEvents = () => {
     e.preventDefault();
     handleLogin();
   });
-  document.getElementById('login-pass')?.addEventListener('keydown', (e) => {
+  document.getElementById('login-pass') && document.getElementById('login-pass').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') form.dispatchEvent(new Event('submit'));
   });
 };
@@ -980,7 +980,7 @@ window.handleLogin = async () => {
   try {
     const u = document.getElementById('login-user').value.trim();
     const p = document.getElementById('login-pass').value;
-    const remember = document.getElementById('login-remember')?.checked;
+    const remember = document.getElementById('login-remember') && document.getElementById('login-remember').checked;
     const user = await loginAsync(u, p, remember);
     if (user) {
       notify('登录成功', `欢迎回来，${user.name}`, 'success');
@@ -1070,7 +1070,7 @@ route('dashboard', () => {
 });
 
 function getMyTickets() {
-  const uid = getCurrentUser()?.userId;
+  const uid = (getCurrentUser() || {}).userId;
   return getTickets().filter(t => t.engineerId === uid || isAdmin()).sort((a,b) => new Date(b.createdAt)-new Date(a.createdAt));
 }
 function statusTag(s) {
@@ -1148,7 +1148,11 @@ window.openCreateTicketModal = () => {
         <div class="form-group"><label class="form-label">标题 <span class="required">*</span></label><input type="text" id="new-title" class="form-input"></div>
         <div class="form-row">
           <div class="form-group"><label class="form-label">客户 <span class="required">*</span></label>
-            <select class="form-select" id="new-customer">${customers.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('')}</select>
+            <div class="customer-search-wrap" style="position:relative;">
+              <input type="text" id="new-customer-search" class="form-input" placeholder="输入客户名称搜索，未匹配将自动创建" autocomplete="off">
+              <input type="hidden" id="new-customer-id">
+              <div id="customer-suggestions" style="display:none;position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid var(--border);border-radius:0 0 var(--radius) var(--radius);max-height:200px;overflow-y:auto;z-index:100;box-shadow:var(--shadow);"></div>
+            </div>
           </div>
           <div class="form-group"><label class="form-label">指派工程师 <span class="required">*</span></label>
             <select class="form-select" id="new-engineer">${engineers.map(u => `<option value="${u.id}">${escapeHtml(u.name)}</option>`).join('')}</select>
@@ -1171,21 +1175,53 @@ window.openCreateTicketModal = () => {
   smartInput.addEventListener('input', debounce(() => {
     const parsed = parseTicketInput(smartInput.value);
     if (parsed.title) document.getElementById('new-title').value = parsed.title;
-    if (parsed.customerId) document.getElementById('new-customer').value = parsed.customerId;
+    if (parsed.customerId) {
+      const c = getCustomers().find(x => x.id === parsed.customerId);
+      if (c) {
+        document.getElementById('new-customer-id').value = c.id;
+        document.getElementById('new-customer-search').value = c.name;
+      }
+    }
     if (parsed.priority) document.getElementById('new-priority').value = parsed.priority;
     if (parsed.category) document.getElementById('new-category').value = parsed.category;
     if (parsed.description) document.getElementById('new-desc').value = parsed.description;
   }, 400));
+  // 绑定客户搜索
+  bindCustomerSearch();
 };
 
 window.submitNewTicket = async () => {
   const title = document.getElementById('new-title').value.trim();
-  const customerId = document.getElementById('new-customer').value;
+  let customerId = document.getElementById('new-customer-id').value;
+  const customerName = document.getElementById('new-customer-search').value.trim();
   const engineerId = document.getElementById('new-engineer').value;
   const priority = document.getElementById('new-priority').value;
   const category = document.getElementById('new-category').value;
   const description = document.getElementById('new-desc').value.trim();
   if (!title) { notify('请填写标题', '', 'warning'); return; }
+  if (!customerName) { notify('请填写客户名称', '', 'warning'); return; }
+  // 如果没有匹配到已有客户，自动创建新客户
+  if (!customerId) {
+    try {
+      const newC = await createCustomerAsync({
+        id: generateId('cus'),
+        name: customerName,
+        contact: '',
+        phone: '',
+        email: '',
+        address: '',
+        industry: '',
+        level: 'C',
+        devices: [],
+        createdAt: new Date().toISOString()
+      });
+      customerId = newC.id;
+      notify('新客户已创建', customerName, 'success');
+    } catch (e) {
+      notify('创建客户失败', e.message, 'error');
+      return;
+    }
+  }
   try {
     const now = new Date().toISOString();
     const due = new Date(Date.now() + 86400000 * (priority==='high'?1:priority==='medium'?3:7)).toISOString();
@@ -1194,7 +1230,6 @@ window.submitNewTicket = async () => {
       id, title, customerId, engineerId, status: 'pending', priority, category, description,
       createdAt: now, updatedAt: now, dueDate: due, creatorId: getCurrentUser().id, comments: []
     });
-    // 给被指派的工程师发送提醒
     addReminder(id, engineerId, `您有一个新工单被指派：${title}`);
     notify('创建成功', `工单 ${id} 已创建`, 'success');
     document.querySelector('.modal-overlay').remove();
@@ -1203,6 +1238,84 @@ window.submitNewTicket = async () => {
   } catch (e) {
     notify('创建失败', e.message, 'error');
   }
+};
+
+window.bindCustomerSearch = () => {
+  const searchInput = document.getElementById('new-customer-search');
+  const idInput = document.getElementById('new-customer-id');
+  const suggestions = document.getElementById('customer-suggestions');
+  if (!searchInput || !suggestions) return;
+
+  const showSuggestions = (list) => {
+    if (!list.length) { suggestions.style.display = 'none'; return; }
+    suggestions.innerHTML = list.map(c => `<div class="suggestion-item" data-id="${c.id}" style="padding:8px 12px;cursor:pointer;transition:background .15s;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background=''">${escapeHtml(c.name)} <span class="text-muted" style="font-size:.8rem">${escapeHtml(c.contact||'')}</span></div>`).join('');
+    suggestions.style.display = 'block';
+    suggestions.querySelectorAll('.suggestion-item').forEach(el => {
+      el.addEventListener('click', () => {
+        searchInput.value = el.textContent.replace(/\s+/g, ' ').trim();
+        idInput.value = el.dataset.id;
+        suggestions.style.display = 'none';
+      });
+    });
+  };
+
+  searchInput.addEventListener('input', debounce(() => {
+    const val = searchInput.value.trim().toLowerCase();
+    idInput.value = ''; // 清空已选ID，重新搜索
+    if (!val) { suggestions.style.display = 'none'; return; }
+    const matches = getCustomers().filter(c =>
+      c.name.toLowerCase().includes(val) ||
+      (c.contact && c.contact.toLowerCase().includes(val)) ||
+      (c.phone && c.phone.includes(val))
+    ).slice(0, 8);
+    showSuggestions(matches);
+  }, 200));
+
+  searchInput.addEventListener('focus', () => {
+    const val = searchInput.value.trim().toLowerCase();
+    if (!val) {
+      // 空值时显示最近客户
+      showSuggestions(getCustomers().slice(0, 6));
+      return;
+    }
+    const matches = getCustomers().filter(c =>
+      c.name.toLowerCase().includes(val) ||
+      (c.contact && c.contact.toLowerCase().includes(val)) ||
+      (c.phone && c.phone.includes(val))
+    ).slice(0, 8);
+    showSuggestions(matches);
+  });
+
+  // 点击外部关闭建议
+  document.addEventListener('click', (e) => {
+    if (!searchInput.contains(e.target) && !suggestions.contains(e.target)) {
+      suggestions.style.display = 'none';
+    }
+  });
+
+  // 键盘导航
+  searchInput.addEventListener('keydown', (e) => {
+    const items = suggestions.querySelectorAll('.suggestion-item');
+    const active = suggestions.querySelector('.suggestion-item.active');
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (!active) { items[0] && items[0].classList.add('active'); items[0] && (items[0].style.background = 'var(--primary-light)'); }
+      else {
+        const next = active.nextElementSibling;
+        if (next) { active.classList.remove('active'); active.style.background = ''; next.classList.add('active'); next.style.background = 'var(--primary-light)'; }
+      }
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (active) {
+        const prev = active.previousElementSibling;
+        if (prev) { active.classList.remove('active'); active.style.background = ''; prev.classList.add('active'); prev.style.background = 'var(--primary-light)'; }
+      }
+    } else if (e.key === 'Enter') {
+      if (active) { active.click(); e.preventDefault(); }
+    } else if (e.key === 'Escape') {
+      suggestions.style.display = 'none';
+    }
+  });
 };
 
 window.openEditTicketModal = (id) => {
@@ -1219,6 +1332,7 @@ window.openEditTicketModal = (id) => {
     <div class="modal-footer"><button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button><button class="btn btn-primary" onclick="submitEditTicket('${t.id}')">保存</button></div></div>`;
   document.body.appendChild(modal);
 };
+
 window.submitEditTicket = async (id) => {
   const title = document.getElementById('edit-title').value.trim();
   const customerId = document.getElementById('edit-customer').value;
@@ -1376,7 +1490,7 @@ window.doTransfer = async (id) => {
     const t = getTickets().find(x => x.id === id);
     if (t) {
       const oldEng = t.engineerId;
-      await addTicketComment(id, { content: `工单转交给 ${getUsers().find(u=>u.id===newEng)?.name || ''}${note ? '，备注：'+note : ''}` });
+      await addTicketComment(id, { content: `工单转交给 ${(getUsers().find(u=>u.id===newEng) || {}).name || ''}${note ? '，备注：'+note : ''}` });
       addReminder(id, newEng, `工单 ${id} 已转交给您：${t.title}`);
       if (oldEng !== newEng) addReminder(id, oldEng, `工单 ${id} 已转交他人：${t.title}`);
     }
@@ -1428,7 +1542,7 @@ route('customers', () => {
         <td style="cursor:pointer" onclick="navigate('customer/${c.id}')">${escapeHtml(c.phone)}</td>
         <td style="cursor:pointer" onclick="navigate('customer/${c.id}')">${escapeHtml(c.industry)}</td>
         <td style="cursor:pointer" onclick="navigate('customer/${c.id}')"><span class="tag ${c.level==='A'?'tag-red':c.level==='B'?'tag-orange':'tag-green'}">${c.level}级</span></td>
-        <td style="cursor:pointer" onclick="navigate('customer/${c.id}')">${c.devices?.length || 0}</td>
+        <td style="cursor:pointer" onclick="navigate('customer/${c.id}')">${c.devices && c.devices.length || 0}</td>
         ${isAdmin()?`<td><button class="btn btn-sm btn-danger" onclick="event.stopPropagation(); deleteCustomer('${c.id}')">删除</button></td>`:''}
       </tr>`).join('') || '<tr><td colspan="7" class="text-center text-muted">无匹配客户</td></tr>';
     };
@@ -1601,7 +1715,7 @@ window.openQuickCreateTicket = () => {
     if (descEl) descEl.value = parsed.description || text;
     if (smartInput) smartInput.value = text;
     // 触发一次 smart input 的解析提示
-    smartInput?.dispatchEvent(new Event('input'));
+    smartInput && smartInput.dispatchEvent(new Event('input'));
   }, 50);
 };
 window.deleteCustomer = async (id) => {
