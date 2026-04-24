@@ -947,6 +947,18 @@ route('dashboard', () => {
         ${isAdminUser ? `<div class="stat-card"><div class="stat-icon blue">👥</div><div><div class="stat-value">${customers.length}</div><div class="stat-label">客户数量</div></div></div>` : ''}
       </div>
       ${overdue > 0 ? `<div class="card mb-4" style="border-left:4px solid var(--danger);"><div class="card-body"><strong>⚠️ 有 ${overdue} 个工单已逾期，请尽快处理！</strong></div></div>` : ''}
+      <div class="card mb-4" style="border-left:4px solid var(--primary);">
+        <div class="card-header"><span class="card-title">⚡ 快速创建工单</span></div>
+        <div class="card-body">
+          <div class="smart-input-wrap">
+            <textarea class="smart-input" id="quick-ticket-input" rows="2" placeholder="用自然语言描述问题，例如：科技创新公司的服务器连不上了，很紧急..."></textarea>
+            <div class="smart-hint">💡 <strong>智能识别</strong>：系统会自动识别客户、优先级和分类</div>
+          </div>
+          <div class="text-right mt-3">
+            <button class="btn btn-primary" onclick="openQuickCreateTicket()">📝 创建工单</button>
+          </div>
+        </div>
+      </div>
       <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 20px;">
         <div class="card">
           <div class="card-header"><span class="card-title">📋 我的工单</span><button class="btn btn-sm btn-primary" onclick="navigate('tickets')">查看全部</button></div>
@@ -1493,6 +1505,29 @@ window.submitEditCustomer = async (id) => {
   }
 };
 
+window.openQuickCreateTicket = () => {
+  const text = document.getElementById('quick-ticket-input').value.trim();
+  if (!text) { notify('请输入问题描述', '', 'warning'); return; }
+  openCreateTicketModal();
+  // 等待弹窗渲染后填充智能解析结果
+  setTimeout(() => {
+    const parsed = parseTicketInput(text);
+    const titleEl = document.getElementById('new-title');
+    const customerEl = document.getElementById('new-customer');
+    const priorityEl = document.getElementById('new-priority');
+    const categoryEl = document.getElementById('new-category');
+    const descEl = document.getElementById('new-desc');
+    const smartInput = document.getElementById('smart-input');
+    if (titleEl) titleEl.value = parsed.title || '';
+    if (customerEl && parsed.customerId) customerEl.value = parsed.customerId;
+    if (priorityEl && parsed.priority) priorityEl.value = parsed.priority;
+    if (categoryEl && parsed.category) categoryEl.value = parsed.category;
+    if (descEl) descEl.value = parsed.description || text;
+    if (smartInput) smartInput.value = text;
+    // 触发一次 smart input 的解析提示
+    smartInput?.dispatchEvent(new Event('input'));
+  }, 50);
+};
 window.deleteCustomer = async (id) => {
   if (!confirm(`确定删除此客户？关联工单不会被删除，请谨慎操作。`)) return;
   try {
