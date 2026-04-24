@@ -1179,6 +1179,9 @@ window.openCreateTicketModal = () => {
     if (parsed.priority) document.getElementById('new-priority').value = parsed.priority;
     if (parsed.category) document.getElementById('new-category').value = parsed.category;
     if (parsed.description) document.getElementById('new-desc').value = parsed.description;
+    if (parsed.engineerId && document.getElementById('new-engineer')) {
+      document.getElementById('new-engineer').value = parsed.engineerId;
+    }
   }, 400));
   // 绑定客户搜索
   bindCustomerSearch();
@@ -1188,12 +1191,16 @@ window.submitNewTicket = async () => {
   const title = document.getElementById('new-title').value.trim();
   let customerId = document.getElementById('new-customer-id').value;
   const customerName = document.getElementById('new-customer-search').value.trim();
-  const engineerId = document.getElementById('new-engineer').value;
+  let engineerId = document.getElementById('new-engineer').value;
   const priority = document.getElementById('new-priority').value;
   const category = document.getElementById('new-category').value;
   const description = document.getElementById('new-desc').value.trim();
   if (!title) { notify('请填写标题', '', 'warning'); return; }
   if (!customerName) { notify('请填写客户名称', '', 'warning'); return; }
+  // 如果没有指定负责人，默认使用创建人自己
+  if (!engineerId) {
+    engineerId = (getCurrentUser() || {}).id || '';
+  }
   // 如果没有匹配到已有客户，自动创建新客户
   if (!customerId) {
     try {
@@ -1707,6 +1714,9 @@ window.openQuickCreateTicket = () => {
     if (priorityEl && parsed.priority) priorityEl.value = parsed.priority;
     if (categoryEl && parsed.category) categoryEl.value = parsed.category;
     if (descEl) descEl.value = parsed.description || text;
+    if (parsed.engineerId && document.getElementById('new-engineer')) {
+      document.getElementById('new-engineer').value = parsed.engineerId;
+    }
     if (smartInput) smartInput.value = text;
     // 触发一次 smart input 的解析提示
     smartInput && smartInput.dispatchEvent(new Event('input'));
