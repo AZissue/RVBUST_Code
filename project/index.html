@@ -665,25 +665,65 @@ function parseTicketInput(text) {
   const engineers = getUsers().filter(u => u.role === 'engineer');
   const t = text.trim();
   
-  // === 1. 客户识别（支持简称、联系人、模糊匹配）===
+  // === Levenshtein 距离（用于模糊匹配）===
+  function levenshtein(a, b) {
+    const m = [], n = a.length, p = b.length;
+    if (!n) return p; if (!p) return n;
+    for (let i = 0; i <= n; i++) m[i] = [i];
+    for (let j = 0; j <= p; j++) m[0][j] = j;
+    for (let i = 1; i <= n; i++) {
+      for (let j = 1; j <= p; j++) {
+        m[i][j] = a[i-1] === b[j-1] ? m[i-1][j-1] : Math.min(m[i-1][j-1]+1, m[i][j-1]+1, m[i-1][j]+1);
+      }
+    }
+    return m[n][p];
+  }
+
+  // === 1. 客户识别（精确匹配 + 模糊匹配）===
   let bestMatch = null;
   let bestScore = 0;
+  // 1a. 精确匹配
   for (const c of customers) {
     let score = 0;
-    // 全名匹配
     if (t.includes(c.name)) score += 100;
-    // 联系人匹配
     if (c.contact && t.includes(c.contact)) score += 80;
-    // 简称匹配（取前2-4字）
     if (c.name.length > 4) {
       const short = c.name.substring(0, 4);
       if (t.includes(short)) score += 60;
     }
-    // 电话尾号匹配
     if (c.phone && t.includes(c.phone.slice(-4))) score += 50;
-    // 行业关键词匹配
     if (c.industry && t.includes(c.industry)) score += 30;
     if (score > bestScore) { bestScore = score; bestMatch = c; }
+  }
+  // 1b. 模糊匹配（纠正错别字）
+  if (!bestMatch || bestScore < 50) {
+    const segments = t.split(/[，。！？,\.\s;；]/).filter(s => s.trim().length >= 2);
+    for (const seg of segments) {
+      const segTrim = seg.trim();
+      for (const c of customers) {
+        const name = c.name;
+        const len = name.length;
+        if (len < 2) continue;
+        // 滑动窗口，大小范围 [len-2, len+2]
+        const minW = Math.max(2, len - 2);
+        const maxW = Math.min(segTrim.length, len + 2);
+        for (let w = minW; w <= maxW; w++) {
+          for (let i = 0; i <= segTrim.length - w; i++) {
+            const candidate = segTrim.substring(i, i + w);
+            if (candidate === name) continue; // 精确匹配已处理
+            const dist = levenshtein(candidate, name);
+            const maxLen = Math.max(candidate.length, name.length);
+            const sim = 1 - dist / maxLen;
+            // 阈值：短名字允许1个误差，长名字允许2个
+            const threshold = len <= 3 ? 1 : 2;
+            if (dist <= threshold && sim >= 0.6) {
+              const score = Math.round(sim * 80);
+              if (score > bestScore) { bestScore = score; bestMatch = c; }
+            }
+          }
+        }
+      }
+    }
   }
   if (bestMatch && bestScore >= 30) result.customerId = bestMatch.id;
 
