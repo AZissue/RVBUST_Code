@@ -660,8 +660,9 @@ async function fetchStats() {
 
 // ===================== 自然语言解析模块 =====================
 function parseTicketInput(text) {
-  const result = { title: '', customerId: '', priority: 'medium', category: '', description: text };
+  const result = { title: '', customerId: '', engineerId: '', priority: 'medium', category: '', description: text };
   const customers = getCustomers();
+  const engineers = getUsers().filter(u => u.role === 'engineer');
   const t = text.trim();
   
   // === 1. 客户识别（支持简称、联系人、模糊匹配）===
@@ -686,7 +687,39 @@ function parseTicketInput(text) {
   }
   if (bestMatch && bestScore >= 30) result.customerId = bestMatch.id;
 
-  // === 2. 优先级识别（更多关键词 + 组合判断）===
+  // === 2. 负责人识别（支持"麻烦某某看一下"、"让某某处理"等模式）===
+  let engMatch = null;
+  let engScore = 0;
+  // 先尝试匹配"麻烦/让/找/指派 + 姓名 + 看一下/处理/跟进"
+  const engPatterns = [
+    /(?:麻烦|让|找|指派|交给|给|请|让)\s*([\u4e00-\u9fa5]{2,4})\s*(?:看一下?|处理|跟进|看看|搞一下?|帮忙|解决|排查)/,
+    /(?:负责人|指派|工程师)\s*[：:]\s*([\u4e00-\u9fa5]{2,4})/,
+  ];
+  for (const re of engPatterns) {
+    const m = t.match(re);
+    if (m) {
+      const name = m[1];
+      const u = engineers.find(e => e.name === name || e.name.includes(name));
+      if (u) { engMatch = u; engScore = 100; break; }
+    }
+  }
+  // 如果没有模式匹配，直接遍历工程师列表做全名/简称匹配
+  if (!engMatch) {
+    for (const u of engineers) {
+      let score = 0;
+      if (t.includes(u.name)) score += 100;
+      // 匹配姓（如"张"匹配"张三"）
+      if (u.name.length >= 2 && t.includes(u.name.charAt(0))) score += 20;
+      if (score > engScore) { engScore = score; engMatch = u; }
+    }
+  }
+  // 排除误匹配：如果匹配到的名字同时出现在客户联系人里，降低置信度
+  if (engMatch && bestMatch && bestMatch.contact && bestMatch.contact.includes(engMatch.name)) {
+    engScore -= 50;
+  }
+  if (engMatch && engScore >= 40) result.engineerId = engMatch.id;
+
+  // === 3. 优先级识别（更多关键词 + 组合判断）===
   const urgentWords = /紧急|立刻|马上|高优|严重|崩溃|宕机|死机|无法启动|断网|全部|都|报警|告警|火灾|漏水|停电|核心|生产|瘫痪/;
   const highWords = /着急|尽快|重要|关键|影响|故障|报错|异常|连不上|连不了|连不到|访问不了|打不开|连不了|连不上/;
   const lowWords = /低优|不急|稍后|低优先级|看看|咨询|了解一下|请教|建议|优化|升级|未来|计划/;
@@ -725,10 +758,13 @@ function parseTicketInput(text) {
   if (!result.category) result.category = '其他';
 
   // === 4. 标题提取（智能清理）===
-  // 先移除已识别的客户名，避免标题冗长
+  // 先移除已识别的客户名和工程师名，避免标题冗长
   let cleanText = t;
   if (bestMatch) {
     cleanText = cleanText.replace(bestMatch.name, '').replace(bestMatch.contact || '', '');
+  }
+  if (engMatch) {
+    cleanText = cleanText.replace(engMatch.name, '');
   }
   // 清理残留的孤立词和噪音
   cleanText = cleanText.replace(/^[\s的，那边我司]+/, '').replace(/^[\s那边我司]+/, '');
@@ -1704,13 +1740,20 @@ window.openQuickCreateTicket = () => {
   setTimeout(() => {
     const parsed = parseTicketInput(text);
     const titleEl = document.getElementById('new-title');
-    const customerEl = document.getElementById('new-customer');
     const priorityEl = document.getElementById('new-priority');
     const categoryEl = document.getElementById('new-category');
     const descEl = document.getElementById('new-desc');
     const smartInput = document.getElementById('smart-input');
     if (titleEl) titleEl.value = parsed.title || '';
-    if (customerEl && parsed.customerId) customerEl.value = parsed.customerId;
+    if (parsed.customerId) {
+      const c = getCustomers().find(x => x.id === parsed.customerId);
+      if (c) {
+        const searchEl = document.getElementById('new-customer-search');
+        const idEl = document.getElementById('new-customer-id');
+        if (searchEl) searchEl.value = c.name;
+        if (idEl) idEl.value = c.id;
+      }
+    }
     if (priorityEl && parsed.priority) priorityEl.value = parsed.priority;
     if (categoryEl && parsed.category) categoryEl.value = parsed.category;
     if (descEl) descEl.value = parsed.description || text;
@@ -1718,7 +1761,6 @@ window.openQuickCreateTicket = () => {
       document.getElementById('new-engineer').value = parsed.engineerId;
     }
     if (smartInput) smartInput.value = text;
-    // 触发一次 smart input 的解析提示
     smartInput && smartInput.dispatchEvent(new Event('input'));
   }, 50);
 };
