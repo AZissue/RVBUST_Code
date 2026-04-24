@@ -1561,7 +1561,10 @@ route('ticket/([^/]+)', (id) => {
   const customer = getCustomers().find(c => c.id === ticket.customerId);
   const engineer = getUsers().find(u => u.id === ticket.engineerId);
   renderLayout(container => {
-    const canEdit = isAdmin() || ticket.engineerId === getCurrentUser().userId;
+    const creator = getUsers().find(u => u.id === ticket.creatorId);
+    const isCreator = ticket.creatorId === (getCurrentUser() || {}).id;
+    const canEdit = isAdmin() || ticket.engineerId === getCurrentUser().userId || isCreator;
+    const canUrge = ticket.status !== 'resolved' && (isAdmin() || ticket.engineerId === getCurrentUser().userId || isCreator);
     const overdue = ticket.status !== 'resolved' && new Date(ticket.dueDate) < new Date();
     container.innerHTML = `
       <div class="flex flex-between flex-center mb-4">
@@ -1570,7 +1573,7 @@ route('ticket/([^/]+)', (id) => {
           ${canEdit ? `<button class="btn btn-primary btn-sm" onclick="openEditTicketModal('${ticket.id}')">✏️ 编辑</button>` : ''}
           ${canEdit && ticket.status !== 'resolved' ? `<button class="btn btn-success btn-sm" onclick="resolveTicket('${ticket.id}')">✅ 标记解决</button>` : ''}
           ${isAdmin() ? `<button class="btn btn-warning btn-sm" onclick="openTransferModal('${ticket.id}')">🔄 转交</button>` : ''}
-          ${canEdit && ticket.status !== 'resolved' ? `<button class="btn btn-danger btn-sm" onclick="openUrgeModal('${ticket.id}')">🔔 催办</button>` : ''}
+          ${canUrge ? `<button class="btn btn-danger btn-sm" onclick="openUrgeModal('${ticket.id}')">🔔 催办</button>` : ''}
           <button class="btn btn-default btn-sm" onclick="navigate('tickets')">返回列表</button>
         </div>
       </div>
@@ -1623,6 +1626,15 @@ route('ticket/([^/]+)', (id) => {
             <div class="card-header"><span class="card-title">🔧 设备信息</span></div>
             <div class="card-body" style="padding:0;">
               ${customer && customer.devices ? customer.devices.map(d => `<div style="padding:12px 16px; border-bottom:1px solid var(--border-light);"><div class="font-bold">${escapeHtml(d.name)}</div><div class="font-sm text-muted">${escapeHtml(d.model)} | SN: ${escapeHtml(d.sn)}</div></div>`).join('') || '<div class="text-muted text-center" style="padding:16px">暂无设备</div>' : '<div class="text-muted text-center" style="padding:16px">暂无设备</div>'}
+            </div>
+          </div>
+          <div class="card mt-4">
+            <div class="card-header"><span class="card-title">📝 创建人</span></div>
+            <div class="card-body">
+              <div class="flex flex-center gap-2">
+                <div class="user-avatar">${creator ? creator.name.charAt(0) : '?'}</div>
+                <div><div class="font-bold">${creator ? escapeHtml(creator.name) : '-'}</div><div class="font-sm text-muted">${creator ? escapeHtml(creator.email || '') : ''}</div><div class="font-sm text-muted">${formatDate(ticket.createdAt)} 创建</div></div>
+              </div>
             </div>
           </div>
           <div class="card mt-4">
