@@ -555,14 +555,8 @@ async function doRefresh() {
 
 function startAutoRefresh() {
   stopAutoRefresh();
-  __refreshTimer = setInterval(async () => {
-    if (document.visibilityState === 'visible' && getCurrentUser()) {
-      const ok = await loadAllData();
-      if (ok && (currentRoute === 'dashboard' || currentRoute === 'tickets' || currentRoute === 'customers')) {
-        renderRoute();
-      }
-    }
-  }, 30000);
+  // 自动刷新已禁用：避免刷新时清除用户正在输入的内容
+  // __refreshTimer = setInterval(...)
 }
 function stopAutoRefresh() { if (__refreshTimer) { clearInterval(__refreshTimer); __refreshTimer = null; } }
 
