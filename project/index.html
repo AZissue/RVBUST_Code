@@ -486,7 +486,105 @@ const formatDate = (d, fmt = 'yyyy-MM-dd HH:mm') => {
   return fmt.replace(/yyyy|MM|dd|HH|mm|ss/g, m => map[m]);
 };
 const escapeHtml = str => str == null ? '' : String(str).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[m]));
+window.closeModalWithCleanup = (btn) => {
+  const modal = btn.closest('.modal-overlay');
+  const container = document.getElementById('new-images');
+  if (container && container._cleanupPaste) container._cleanupPaste();
+  __pendingImages = [];
+  modal.remove();
+};
+
 const debounce = (fn, delay) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), delay); }; };
+
+// ===================== 图片压缩工具 =====================
+function compressImage(file, maxWidth = 1200, quality = 0.7) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        let w = img.width, h = img.height;
+        if (w > maxWidth) { h = Math.round(h * maxWidth / w); w = maxWidth; }
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = reject;
+      img.src = e.target.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+let __pendingImages = []; // 当前弹窗待上传的图片
+
+function initImageUpload(containerId) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  container.innerHTML = `
+    <div class="image-upload-area" id="${containerId}-drop" style="border:2px dashed var(--border);border-radius:var(--radius);padding:12px;text-align:center;color:var(--text-muted);cursor:pointer;transition:all .2s;" onclick="document.getElementById('${containerId}-file').click()">
+      <div style="font-size:1.5rem;margin-bottom:4px;">📎</div>
+      <div style="font-size:.85rem;">点击上传或粘贴图片 (Ctrl+V)</div>
+      <div style="font-size:.75rem;margin-top:2px;">支持 JPG/PNG，自动压缩</div>
+    </div>
+    <input type="file" id="${containerId}-file" accept="image/*" multiple style="display:none">
+    <div id="${containerId}-preview" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;"></div>
+  `;
+  const drop = document.getElementById(`${containerId}-drop`);
+  const fileInput = document.getElementById(`${containerId}-file`);
+  const preview = document.getElementById(`${containerId}-preview`);
+
+  // 点击上传
+  fileInput.addEventListener('change', async (e) => {
+    for (const file of e.target.files) await addImage(file, preview);
+  });
+
+  // 拖拽
+  drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.style.borderColor = 'var(--primary)'; drop.style.background = 'var(--primary-light)'; });
+  drop.addEventListener('dragleave', () => { drop.style.borderColor = 'var(--border)'; drop.style.background = ''; });
+  drop.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    drop.style.borderColor = 'var(--border)'; drop.style.background = '';
+    for (const file of e.dataTransfer.files) if (file.type.startsWith('image/')) await addImage(file, preview);
+  });
+
+  // 粘贴
+  const pasteHandler = async (e) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    let hasImage = false;
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        hasImage = true;
+        e.preventDefault();
+        await addImage(item.getAsFile(), preview);
+      }
+    }
+  };
+  document.addEventListener('paste', pasteHandler);
+  // 清理函数挂在容器上
+  container._cleanupPaste = () => document.removeEventListener('paste', pasteHandler);
+}
+
+async function addImage(file, previewEl) {
+  try {
+    const base64 = await compressImage(file);
+    const id = generateId();
+    __pendingImages.push({ id, base64, name: file.name });
+    const div = document.createElement('div');
+    div.style.cssText = 'position:relative;width:80px;height:80px;border-radius:var(--radius);overflow:hidden;border:1px solid var(--border);';
+    div.innerHTML = `<img src="${base64}" style="width:100%;height:100%;object-fit:cover;"><button onclick="removeImage('${id}',this)" style="position:absolute;top:2px;right:2px;width:20px;height:20px;border-radius:50%;background:rgba(0,0,0,0.5);color:#fff;border:none;font-size:12px;cursor:pointer;">×</button>`;
+    previewEl.appendChild(div);
+  } catch (e) { console.warn('图片压缩失败', e); }
+}
+
+window.removeImage = (id, btn) => {
+  __pendingImages = __pendingImages.filter(x => x.id !== id);
+  btn.closest('div').remove();
+};
 
 
 // ===================== API Client =====================
@@ -1208,7 +1306,7 @@ window.openCreateTicketModal = () => {
   const engineers = getUsers().filter(u => u.role === 'engineer');
   modal.innerHTML = `
     <div class="modal">
-      <div class="modal-header"><span class="modal-title">📝 新建工单</span><span class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</span></div>
+      <div class="modal-header"><span class="modal-title">📝 新建工单</span><span class="modal-close" onclick="closeModalWithCleanup(this)">&times;</span></div>
       <div class="modal-body">
         <div class="smart-input-wrap">
           <textarea class="smart-input" id="smart-input" rows="3" placeholder="用自然语言描述问题，例如：科技创新公司的服务器连不上了，很紧急..."></textarea>
@@ -1237,10 +1335,13 @@ window.openCreateTicketModal = () => {
           </div>
         </div>
         <div class="form-group"><label class="form-label">详细描述</label><textarea class="form-textarea" id="new-desc" rows="3"></textarea></div>
+        <div class="form-group"><label class="form-label">附件图片</label><div id="new-images"></div></div>
       </div>
-      <div class="modal-footer"><button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button><button class="btn btn-primary" onclick="submitNewTicket()">创建工单</button></div>
+      <div class="modal-footer"><button class="btn btn-default" onclick="closeModalWithCleanup(this)">取消</button><button class="btn btn-primary" onclick="submitNewTicket()">创建工单</button></div>
     </div>`;
   document.body.appendChild(modal);
+  __pendingImages = [];
+  initImageUpload('new-images');
   const smartInput = document.getElementById('smart-input');
   smartInput.addEventListener('input', debounce(() => {
     const parsed = parseTicketInput(smartInput.value);
@@ -1305,7 +1406,8 @@ window.submitNewTicket = async () => {
     const id = 'TK' + String(Date.now()).slice(-6);
     await createTicketAsync({
       id, title, customerId, engineerId, status: 'pending', priority, category, description,
-      createdAt: now, updatedAt: now, dueDate: due, creatorId: getCurrentUser().id, comments: []
+      images: __pendingImages.map(x => x.base64),
+      createdAt: now, updatedAt: now, dueDate: due, creatorId: (getCurrentUser() || {}).id, comments: []
     });
     addReminder(id, engineerId, `您有一个新工单被指派：${title}`);
     notify('创建成功', `工单 ${id} 已创建`, 'success');
@@ -1477,7 +1579,8 @@ route('ticket/([^/]+)', (id) => {
                 <div class="form-group"><label class="form-label">分类</label><div>${escapeHtml(ticket.category)}</div></div>
                 <div class="form-group"><label class="form-label">截止日期</label><div class="${overdue?'text-danger font-bold':''}">${formatDate(ticket.dueDate)}</div></div>
               </div>
-              <div class="form-group"><label class="form-label">问题描述</label><div style="background:#f5f5f5;padding:12px;border-radius:var(--radius);">${escapeHtml(ticket.description)}</div></div>
+              <div class="form-group"><label class="form-label">问题描述</label><div style="background:#f5f5f5;padding:12px;border-radius:var(--radius);white-space:pre-wrap;">${escapeHtml(ticket.description)}</div></div>
+              ${(ticket.images && ticket.images.length) ? `<div class="form-group"><label class="form-label">附件图片</label><div style="display:flex;gap:8px;flex-wrap:wrap;">${ticket.images.map(img => `<a href="${img}" target="_blank"><img src="${img}" style="max-width:200px;max-height:150px;border-radius:var(--radius);border:1px solid var(--border);cursor:zoom-in;"></a>`).join('')}</div></div>` : ''}
             </div>
           </div>
           <div class="card mt-4">
@@ -1485,11 +1588,12 @@ route('ticket/([^/]+)', (id) => {
             <div class="card-body">
               <div class="timeline">
                 <div class="timeline-item"><div class="timeline-dot blue"></div><div class="timeline-time">${formatDate(ticket.createdAt)}</div><div class="timeline-content">工单创建</div></div>
-                ${(ticket.comments || []).map(c => `<div class="timeline-item"><div class="timeline-dot green"></div><div class="timeline-time">${formatDate(c.createdAt)} - ${escapeHtml(c.userName)}</div><div class="timeline-content">${escapeHtml(c.content)}</div></div>`).join('')}
+                ${(ticket.comments || []).map(c => `<div class="timeline-item"><div class="timeline-dot green"></div><div class="timeline-time">${formatDate(c.createdAt)} - ${escapeHtml(c.userName)}</div><div class="timeline-content">${escapeHtml(c.content)}${(c.images && c.images.length) ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">${c.images.map(img => `<a href="${img}" target="_blank"><img src="${img}" style="max-width:160px;max-height:120px;border-radius:var(--radius);border:1px solid var(--border);"></a>`).join('')}</div>` : ''}</div></div>`).join('')}
               </div>
               ${ticket.status !== 'resolved' ? `
               <div class="mt-4">
                 <textarea class="form-textarea" id="comment-input" rows="2" placeholder="添加处理记录..."></textarea>
+                <div id="comment-images"></div>
                 <div class="text-right mt-2"><button class="btn btn-primary btn-sm" onclick="addComment('${ticket.id}')">提交记录</button></div>
               </div>` : ''}
             </div>
@@ -1525,6 +1629,12 @@ route('ticket/([^/]+)', (id) => {
         </div>
       </div>`;
   });
+  // 初始化评论区图片上传
+  setTimeout(() => {
+    __pendingImages = [];
+    const imgContainer = document.getElementById('comment-images');
+    if (imgContainer) initImageUpload('comment-images');
+  }, 50);
 });
 
 window.resolveTicket = async (id) => {
@@ -1538,9 +1648,10 @@ window.resolveTicket = async (id) => {
 };
 window.addComment = async (id) => {
   const content = document.getElementById('comment-input').value.trim();
-  if (!content) return;
+  if (!content && !__pendingImages.length) return;
   try {
-    await addTicketComment(id, { content });
+    await addTicketComment(id, { content, images: __pendingImages.map(x => x.base64) });
+    __pendingImages = [];
     notify('记录已添加', '', 'success');
     navigate('ticket/' + id);
   } catch (e) {
