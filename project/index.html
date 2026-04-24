@@ -1245,6 +1245,11 @@ route('dashboard', () => {
   });
 });
 
+window.goTicketsWithFilter = (filter) => {
+  __dashboardFilter = filter;
+  navigate('tickets');
+};
+
 function getMyTickets() {
   const uid = (getCurrentUser() || {}).userId;
   return getTickets().filter(t => t.engineerId === uid || isAdmin()).sort((a,b) => new Date(b.createdAt)-new Date(a.createdAt));
@@ -1263,6 +1268,12 @@ route('tickets', () => {
   if (!getCurrentUser()) return navigate('login');
   renderLayout(container => {
     let filterStatus = '', filterPriority = '', search = '';
+    const dashFilter = window.__dashboardFilter;
+    if (dashFilter) {
+      if (dashFilter === 'high') filterPriority = 'high';
+      else filterStatus = dashFilter;
+      window.__dashboardFilter = '';
+    }
     const renderList = () => {
       let list = getTickets();
       if (filterStatus) list = list.filter(t => t.status === filterStatus);
@@ -1291,8 +1302,8 @@ route('tickets', () => {
       <div class="search-bar">
         <div class="search-input"><input type="text" id="ticket-search" placeholder="搜索工单号或标题..."></div>
         <div class="filter-group">
-          <select class="form-select" id="filter-status" style="width:120px"><option value="">全部状态</option><option value="pending">待处理</option><option value="processing">处理中</option><option value="resolved">已解决</option></select>
-          <select class="form-select" id="filter-priority" style="width:120px"><option value="">全部优先级</option><option value="high">高</option><option value="medium">中</option><option value="low">低</option></select>
+          <select class="form-select" id="filter-status" style="width:120px"><option value="">全部状态</option><option value="pending" ${filterStatus==='pending'?'selected':''}>待处理</option><option value="processing" ${filterStatus==='processing'?'selected':''}>处理中</option><option value="resolved" ${filterStatus==='resolved'?'selected':''}>已解决</option></select>
+          <select class="form-select" id="filter-priority" style="width:120px"><option value="">全部优先级</option><option value="high" ${filterPriority==='high'?'selected':''}>高</option><option value="medium" ${filterPriority==='medium'?'selected':''}>中</option><option value="low" ${filterPriority==='low'?'selected':''}>低</option></select>
           <button class="btn btn-primary" onclick="openCreateTicketModal()">+ 新建工单</button>
         </div>
       </div>
