@@ -132,6 +132,7 @@ input, textarea, select { font-family: inherit; font-size: 1rem; }
 .tag-orange { background: var(--warning-light); color: var(--warning); }
 .tag-red { background: var(--danger-light); color: var(--danger); }
 .tag-gray { background: #f5f5f5; color: var(--text-muted); }
+.tag-purple { background: #f3e8ff; color: #7c3aed; }
 
 /* ===== Status ===== */
 .status { display: inline-flex; align-items: center; gap: 4px; }
@@ -1250,9 +1251,10 @@ route('dashboard', () => {
     const total = tickets.length;
     const pending = tickets.filter(t => t.status === 'pending').length;
     const processing = tickets.filter(t => t.status === 'processing').length;
+    const waiting = tickets.filter(t => t.status === 'waiting').length;
     const resolved = tickets.filter(t => t.status === 'resolved').length;
-    const highPriority = tickets.filter(t => t.priority === 'high' && t.status !== 'resolved').length;
-    const overdue = tickets.filter(t => t.status !== 'resolved' && new Date(t.dueDate) < new Date()).length;
+    const highPriority = tickets.filter(t => t.priority === 'high' && t.status !== 'resolved' && t.status !== 'closed').length;
+    const overdue = tickets.filter(t => t.status !== 'resolved' && t.status !== 'closed' && new Date(t.dueDate) < new Date()).length;
 
     container.innerHTML = `
       <h1 class="page-title">📊 仪表盘</h1>
@@ -1260,6 +1262,7 @@ route('dashboard', () => {
         <div class="stat-card" style="cursor:pointer" onclick="goTicketsWithFilter('')"><div class="stat-icon blue">🎫</div><div><div class="stat-value">${total}</div><div class="stat-label">全部工单</div></div></div>
         <div class="stat-card" style="cursor:pointer" onclick="goTicketsWithFilter('pending')"><div class="stat-icon orange">⏳</div><div><div class="stat-value">${pending}</div><div class="stat-label">待处理</div></div></div>
         <div class="stat-card" style="cursor:pointer" onclick="goTicketsWithFilter('processing')"><div class="stat-icon cyan">🔄</div><div><div class="stat-value">${processing}</div><div class="stat-label">处理中</div></div></div>
+        <div class="stat-card" style="cursor:pointer" onclick="goTicketsWithFilter('waiting')"><div class="stat-icon blue">⏸️</div><div><div class="stat-value">${waiting}</div><div class="stat-label">等待客户回复</div></div></div>
         <div class="stat-card" style="cursor:pointer" onclick="goTicketsWithFilter('resolved')"><div class="stat-icon green">✅</div><div><div class="stat-value">${resolved}</div><div class="stat-label">已解决</div></div></div>
         <div class="stat-card" style="cursor:pointer" onclick="goTicketsWithFilter('high')"><div class="stat-icon red">🔥</div><div><div class="stat-value">${highPriority}</div><div class="stat-label">高优先级</div></div></div>
         ${isAdminUser ? `<div class="stat-card"><div class="stat-icon blue">👥</div><div><div class="stat-value">${customers.length}</div><div class="stat-label">客户数量</div></div></div>` : ''}
@@ -1301,8 +1304,8 @@ route('dashboard', () => {
         <div class="card-body">
           <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px,1fr)); gap: 16px;">
             ${users.filter(u => u.role === 'engineer').map(u => {
-              const engTickets = tickets.filter(t => t.engineerId === u.id && t.status !== 'resolved');
-              return `<div style="background:#f5f5f5; padding:16px; border-radius:var(--radius);"><div class="font-bold">${u.name}</div><div class="text-muted font-sm">${u.email}</div><div class="mt-2">处理中: <span class="text-primary font-bold">${engTickets.filter(t=>t.status==='processing').length}</span> | 待处理: <span class="text-warning font-bold">${engTickets.filter(t=>t.status==='pending').length}</span></div></div>`;
+              const engTickets = tickets.filter(t => t.engineerId === u.id && t.status !== 'resolved' && t.status !== 'closed');
+              return `<div style="background:#f5f5f5; padding:16px; border-radius:var(--radius);"><div class="font-bold">${u.name}</div><div class="text-muted font-sm">${u.email}</div><div class="mt-2">处理中: <span class="text-primary font-bold">${engTickets.filter(t=>t.status==='processing').length}</span> | 等待回复: <span class="text-primary font-bold">${engTickets.filter(t=>t.status==='waiting').length}</span> | 待处理: <span class="text-warning font-bold">${engTickets.filter(t=>t.status==='pending').length}</span></div></div>`;
             }).join('')}
           </div>
         </div>
@@ -1321,7 +1324,7 @@ function getMyTickets() {
   return getTickets().filter(t => t.engineerId === uid || isAdmin()).sort((a,b) => new Date(b.createdAt)-new Date(a.createdAt));
 }
 function statusTag(s) {
-  const map = { pending: '<span class="tag tag-orange">待处理</span>', processing: '<span class="tag tag-blue">处理中</span>', resolved: '<span class="tag tag-green">已解决</span>', closed: '<span class="tag tag-gray">已关闭</span>' };
+  const map = { pending: '<span class="tag tag-orange">待处理</span>', processing: '<span class="tag tag-blue">处理中</span>', waiting: '<span class="tag tag-purple">等待客户回复</span>', resolved: '<span class="tag tag-green">已解决</span>', closed: '<span class="tag tag-gray">已关闭</span>' };
   return map[s] || s;
 }
 function priorityTag(p) {
@@ -1350,7 +1353,7 @@ route('tickets', () => {
       if (!tbody) return;
       tbody.innerHTML = list.map(t => {
         const c = getCustomers().find(x => x.id === t.customerId);
-        const overdue = t.status !== 'resolved' && new Date(t.dueDate) < new Date();
+        const overdue = t.status !== 'resolved' && t.status !== 'closed' && new Date(t.dueDate) < new Date();
         return `<tr>
           <td style="cursor:pointer" onclick="navigate('ticket/${t.id}')"><span class="font-bold">${t.id}</span>${overdue?' <span class="tag tag-red">逾期</span>':''}</td>
           <td style="cursor:pointer" onclick="navigate('ticket/${t.id}')">${escapeHtml(t.title)}</td>
@@ -1368,7 +1371,7 @@ route('tickets', () => {
       <div class="search-bar">
         <div class="search-input"><input type="text" id="ticket-search" placeholder="搜索工单号或标题..."></div>
         <div class="filter-group">
-          <select class="form-select" id="filter-status" style="width:120px"><option value="">全部状态</option><option value="pending" ${filterStatus==='pending'?'selected':''}>待处理</option><option value="processing" ${filterStatus==='processing'?'selected':''}>处理中</option><option value="resolved" ${filterStatus==='resolved'?'selected':''}>已解决</option></select>
+          <select class="form-select" id="filter-status" style="width:120px"><option value="">全部状态</option><option value="pending" ${filterStatus==='pending'?'selected':''}>待处理</option><option value="processing" ${filterStatus==='processing'?'selected':''}>处理中</option><option value="waiting" ${filterStatus==='waiting'?'selected':''}>等待客户回复</option><option value="resolved" ${filterStatus==='resolved'?'selected':''}>已解决</option></select>
           <select class="form-select" id="filter-priority" style="width:120px"><option value="">全部优先级</option><option value="high" ${filterPriority==='high'?'selected':''}>高</option><option value="medium" ${filterPriority==='medium'?'selected':''}>中</option><option value="low" ${filterPriority==='low'?'selected':''}>低</option></select>
           <button class="btn btn-primary" onclick="openCreateTicketModal()">+ 新建工单</button>
         </div>
@@ -1592,7 +1595,8 @@ window.openEditTicketModal = (id) => {
     <div class="modal-body">
       <div class="form-group"><label class="form-label">标题 <span class="required">*</span></label><input type="text" id="edit-title" class="form-input" value="${escapeHtml(t.title)}"></div>
       <div class="form-row"><div class="form-group"><label class="form-label">客户</label><select class="form-select" id="edit-customer">${getCustomers().map(c => `<option value="${c.id}" ${c.id===t.customerId?'selected':''}>${escapeHtml(c.name)}</option>`).join('')}</select></div><div class="form-group"><label class="form-label">负责人</label><select class="form-select" id="edit-engineer">${getUsers().filter(u=>u.role==='engineer').map(u => `<option value="${u.id}" ${u.id===t.engineerId?'selected':''}>${escapeHtml(u.name)}</option>`).join('')}</select></div></div>
-      <div class="form-row"><div class="form-group"><label class="form-label">优先级</label><select class="form-select" id="edit-priority"><option value="low" ${t.priority==='low'?'selected':''}>低</option><option value="medium" ${t.priority==='medium'?'selected':''}>中</option><option value="high" ${t.priority==='high'?'selected':''}>高</option></select></div><div class="form-group"><label class="form-label">分类</label><select class="form-select" id="edit-category"><option value="硬件故障" ${t.category==='硬件故障'?'selected':''}>硬件故障</option><option value="网络问题" ${t.category==='网络问题'?'selected':''}>网络问题</option><option value="系统故障" ${t.category==='系统故障'?'selected':''}>系统故障</option><option value="软件问题" ${t.category==='软件问题'?'selected':''}>软件问题</option><option value="性能问题" ${t.category==='性能问题'?'selected':''}>性能问题</option><option value="配置变更" ${t.category==='配置变更'?'selected':''}>配置变更</option><option value="存储问题" ${t.category==='存储问题'?'selected':''}>存储问题</option><option value="其他" ${t.category==='其他'?'selected':''}>其他</option></select></div></div>
+      <div class="form-row"><div class="form-group"><label class="form-label">状态</label><select class="form-select" id="edit-status"><option value="pending" ${t.status==='pending'?'selected':''}>待处理</option><option value="processing" ${t.status==='processing'?'selected':''}>处理中</option><option value="waiting" ${t.status==='waiting'?'selected':''}>等待客户回复</option><option value="resolved" ${t.status==='resolved'?'selected':''}>已解决</option><option value="closed" ${t.status==='closed'?'selected':''}>已关闭</option></select></div><div class="form-group"><label class="form-label">优先级</label><select class="form-select" id="edit-priority"><option value="low" ${t.priority==='low'?'selected':''}>低</option><option value="medium" ${t.priority==='medium'?'selected':''}>中</option><option value="high" ${t.priority==='high'?'selected':''}>高</option></select></div></div>
+      <div class="form-group"><label class="form-label">分类</label><select class="form-select" id="edit-category"><option value="硬件故障" ${t.category==='硬件故障'?'selected':''}>硬件故障</option><option value="网络问题" ${t.category==='网络问题'?'selected':''}>网络问题</option><option value="系统故障" ${t.category==='系统故障'?'selected':''}>系统故障</option><option value="软件问题" ${t.category==='软件问题'?'selected':''}>软件问题</option><option value="性能问题" ${t.category==='性能问题'?'selected':''}>性能问题</option><option value="配置变更" ${t.category==='配置变更'?'selected':''}>配置变更</option><option value="存储问题" ${t.category==='存储问题'?'selected':''}>存储问题</option><option value="其他" ${t.category==='其他'?'selected':''}>其他</option></select></div>
       <div class="form-group"><label class="form-label">截止日期</label><input type="datetime-local" id="edit-due" class="form-input" value="${t.dueDate ? t.dueDate.slice(0,16) : ''}"></div>
       <div class="form-group"><label class="form-label">详细描述</label><textarea class="form-textarea" id="edit-desc" rows="3">${escapeHtml(t.description || '')}</textarea></div>
     </div>
@@ -1604,13 +1608,14 @@ window.submitEditTicket = async (id) => {
   const title = document.getElementById('edit-title').value.trim();
   const customerId = document.getElementById('edit-customer').value;
   const engineerId = document.getElementById('edit-engineer').value;
+  const status = document.getElementById('edit-status').value;
   const priority = document.getElementById('edit-priority').value;
   const category = document.getElementById('edit-category').value;
   const dueDate = document.getElementById('edit-due').value;
   const description = document.getElementById('edit-desc').value.trim();
   if (!title) { notify('请填写标题', '', 'warning'); return; }
   try {
-    const fields = { title, customerId, engineerId, priority, category, description };
+    const fields = { title, customerId, engineerId, status, priority, category, description };
     if (dueDate) fields.dueDate = new Date(dueDate).toISOString();
     await saveTicketUpdate(id, fields);
     notify('保存成功', '', 'success');
@@ -1644,14 +1649,18 @@ route('ticket/([^/]+)', (id) => {
     const creator = getUsers().find(u => u.id === ticket.creatorId);
     const isCreator = ticket.creatorId === (getCurrentUser() || {}).id;
     const canEdit = isAdmin() || ticket.engineerId === getCurrentUser().userId || isCreator;
-    const canUrge = ticket.status !== 'resolved' && (isAdmin() || ticket.engineerId === getCurrentUser().userId || isCreator);
-    const overdue = ticket.status !== 'resolved' && new Date(ticket.dueDate) < new Date();
+    const canUrge = ticket.status !== 'resolved' && ticket.status !== 'closed' && (isAdmin() || ticket.engineerId === getCurrentUser().userId || isCreator);
+    const overdue = ticket.status !== 'resolved' && ticket.status !== 'closed' && new Date(ticket.dueDate) < new Date();
     container.innerHTML = `
       <div class="flex flex-between flex-center mb-4">
         <h1 class="page-title" style="margin:0">🎫 ${ticket.id} ${escapeHtml(ticket.title)}</h1>
         <div class="btn-group">
           ${canEdit ? `<button class="btn btn-primary btn-sm" onclick="openEditTicketModal('${ticket.id}')">✏️ 编辑</button>` : ''}
-          ${canEdit && ticket.status !== 'resolved' ? `<button class="btn btn-success btn-sm" onclick="resolveTicket('${ticket.id}')">✅ 标记解决</button>` : ''}
+          ${canEdit && ticket.status === 'pending' ? `<button class="btn btn-primary btn-sm" onclick="startProcessing('${ticket.id}')">▶️ 开始处理</button>` : ''}
+          ${canEdit && ticket.status === 'processing' ? `<button class="btn btn-warning btn-sm" onclick="waitForCustomer('${ticket.id}')">⏸️ 等待客户回复</button>` : ''}
+          ${canEdit && ticket.status === 'waiting' ? `<button class="btn btn-primary btn-sm" onclick="resumeProcessing('${ticket.id}')">▶️ 继续处理</button>` : ''}
+          ${canEdit && (ticket.status === 'processing' || ticket.status === 'waiting') ? `<button class="btn btn-success btn-sm" onclick="resolveTicket('${ticket.id}')">✅ 标记解决</button>` : ''}
+          ${canEdit && ticket.status === 'resolved' ? `<button class="btn btn-default btn-sm" onclick="closeTicket('${ticket.id}')">🔒 关闭工单</button>` : ''}
           ${isAdmin() ? `<button class="btn btn-warning btn-sm" onclick="openTransferModal('${ticket.id}')">🔄 转交</button>` : ''}
           ${canUrge ? `<button class="btn btn-danger btn-sm" onclick="openUrgeModal('${ticket.id}')">🔔 催办</button>` : ''}
           <button class="btn btn-default btn-sm" onclick="navigate('tickets')">返回列表</button>
@@ -1681,7 +1690,7 @@ route('ticket/([^/]+)', (id) => {
                 <div class="timeline-item"><div class="timeline-dot blue"></div><div class="timeline-time">${formatDate(ticket.createdAt)}</div><div class="timeline-content">工单创建</div></div>
                 ${(ticket.comments || []).map(c => `<div class="timeline-item"><div class="timeline-dot green"></div><div class="timeline-time">${formatDate(c.createdAt)} - ${escapeHtml(c.userName)}</div><div class="timeline-content">${escapeHtml(c.content)}${(c.images && c.images.length) ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">${c.images.map(img => `<img src="${img}" onclick="openImageLightbox('${img}')" style="max-width:160px;max-height:120px;border-radius:var(--radius);border:1px solid var(--border);cursor:zoom-in;transition:transform .2s;" onmouseover="this.style.transform='scale(1.03)'" onmouseout="this.style.transform='scale(1)'">`).join('')}</div>` : ''}</div></div>`).join('')}
               </div>
-              ${ticket.status !== 'resolved' ? `
+              ${ticket.status !== 'resolved' && ticket.status !== 'closed' ? `
               <div class="mt-4">
                 <textarea class="form-textarea" id="comment-input" rows="2" placeholder="添加处理记录..."></textarea>
                 <div id="comment-images"></div>
@@ -1741,6 +1750,42 @@ window.resolveTicket = async (id) => {
   try {
     await saveTicketUpdate(id, { status: 'resolved', updatedAt: new Date().toISOString() });
     notify('工单已解决', `${id} 已标记为已解决`, 'success');
+    navigate('ticket/' + id);
+  } catch (e) {
+    notify('操作失败', e.message, 'error');
+  }
+};
+window.startProcessing = async (id) => {
+  try {
+    await saveTicketUpdate(id, { status: 'processing', updatedAt: new Date().toISOString() });
+    notify('开始处理', `${id} 已开始处理`, 'success');
+    navigate('ticket/' + id);
+  } catch (e) {
+    notify('操作失败', e.message, 'error');
+  }
+};
+window.waitForCustomer = async (id) => {
+  try {
+    await saveTicketUpdate(id, { status: 'waiting', updatedAt: new Date().toISOString() });
+    notify('等待客户回复', `${id} 已标记为等待客户回复`, 'success');
+    navigate('ticket/' + id);
+  } catch (e) {
+    notify('操作失败', e.message, 'error');
+  }
+};
+window.resumeProcessing = async (id) => {
+  try {
+    await saveTicketUpdate(id, { status: 'processing', updatedAt: new Date().toISOString() });
+    notify('继续处理', `${id} 已恢复处理中`, 'success');
+    navigate('ticket/' + id);
+  } catch (e) {
+    notify('操作失败', e.message, 'error');
+  }
+};
+window.closeTicket = async (id) => {
+  try {
+    await saveTicketUpdate(id, { status: 'closed', updatedAt: new Date().toISOString() });
+    notify('工单已关闭', `${id} 已关闭`, 'success');
     navigate('ticket/' + id);
   } catch (e) {
     notify('操作失败', e.message, 'error');
@@ -2141,11 +2186,13 @@ route('admin/stats', () => {
             <div style="display:flex; gap: 8px; margin-bottom: 12px;">
               <div style="flex:${statusCounts.pending}; background:var(--warning); height:24px; border-radius:4px 0 0 4px;" title="待处理"></div>
               <div style="flex:${statusCounts.processing}; background:var(--primary); height:24px;" title="处理中"></div>
+              <div style="flex:${statusCounts.waiting || 0}; background:#7c3aed; height:24px;" title="等待客户回复"></div>
               <div style="flex:${statusCounts.resolved}; background:var(--success); height:24px; border-radius:0 4px 4px 0;" title="已解决"></div>
             </div>
             <div class="flex flex-center gap-2">
               <span class="tag tag-orange">待处理 ${statusCounts.pending}</span>
               <span class="tag tag-blue">处理中 ${statusCounts.processing}</span>
+              <span class="tag tag-purple">等待回复 ${statusCounts.waiting || 0}</span>
               <span class="tag tag-green">已解决 ${statusCounts.resolved}</span>
             </div>
           </div>
