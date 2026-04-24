@@ -477,6 +477,31 @@ input, textarea, select { font-family: inherit; font-size: 1rem; }
 <script>
 // ===================== 工具函数 =====================
 const generateId = () => Date.now().toString(36) + Math.random().toString(36).substr(2, 6);
+
+const debounce = (fn, delay) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), delay); }; };
+
+window.doSmartParse = () => {
+  const smartInput = document.getElementById('smart-input');
+  if (!smartInput) return;
+  const text = smartInput.value.trim();
+  if (!text) { notify('请先输入问题描述', '', 'warning'); return; }
+  const parsed = parseTicketInput(text);
+  if (parsed.title) document.getElementById('new-title').value = parsed.title;
+  if (parsed.customerId) {
+    const c = getCustomers().find(x => x.id === parsed.customerId);
+    if (c) {
+      document.getElementById('new-customer-id').value = c.id;
+      document.getElementById('new-customer-search').value = c.name;
+    }
+  }
+  if (parsed.priority) document.getElementById('new-priority').value = parsed.priority;
+  if (parsed.category) document.getElementById('new-category').value = parsed.category;
+  if (parsed.description) document.getElementById('new-desc').value = parsed.description;
+  if (parsed.engineerId && document.getElementById('new-engineer')) {
+    document.getElementById('new-engineer').value = parsed.engineerId;
+  }
+  notify('解析完成', '已自动填充识别到的字段', 'success');
+};
 const formatDate = (d, fmt = 'yyyy-MM-dd HH:mm') => {
   if (!d) return '-';
   const date = typeof d === 'string' ? new Date(d) : d;
@@ -1329,7 +1354,10 @@ window.openCreateTicketModal = () => {
       <div class="modal-body">
         <div class="smart-input-wrap">
           <textarea class="smart-input" id="smart-input" rows="3" placeholder="用自然语言描述问题，例如：科技创新公司的服务器连不上了，很紧急..."></textarea>
-          <div class="smart-hint">💡 <strong>智能识别</strong>：系统会自动识别客户、优先级和分类</div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;">
+            <div class="smart-hint">💡 <strong>智能识别</strong>：系统会自动识别客户、优先级和分类</div>
+            <button class="btn btn-sm btn-primary" onclick="doSmartParse()">🔮 智能解析</button>
+          </div>
         </div>
         <hr style="margin:16px 0; border:none; border-top:1px solid var(--border-light);">
         <div class="form-group"><label class="form-label">标题 <span class="required">*</span></label><input type="text" id="new-title" class="form-input"></div>
