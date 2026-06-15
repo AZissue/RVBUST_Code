@@ -81,7 +81,12 @@ class CustomGLViewWidget(gl.GLViewWidget):
         elev = np.radians(self.opts.get('elevation', 30))
         azim = np.radians(self.opts.get('azimuth', 45))
         dist = float(self.opts.get('distance', 100))
-        ctr = np.array(self.opts.get('center', pg.Vector(0, 0, 0)), dtype=np.float64)
+        center = self.opts.get('center', pg.Vector(0, 0, 0))
+        # pyqtgraph 在某些版本中会把 center 存为 QVector3D，不能直接传给 np.array
+        if hasattr(center, 'x') and callable(getattr(center, 'x', None)):
+            ctr = np.array([center.x(), center.y(), center.z()], dtype=np.float64)
+        else:
+            ctr = np.array(center, dtype=np.float64)
         # 视线方向：摄像机 → 中心
         view_dir = np.array([
             -np.cos(elev) * np.sin(azim),
