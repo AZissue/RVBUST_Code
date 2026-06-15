@@ -1,0 +1,19 @@
+{
+  "save_base_dir": "D:\\AnotherCode\\MyHandEyeTools\\data",
+  "eye_in_hand": true,
+  "marker_type": false,
+  "window_geometry": {
+    "x": 2074,
+    "y": 24,
+    "width": 1440,
+    "height": 810
+  },
+  "camera_params": {
+    "exposure_time_2d": 99,
+    "exposure_time_3d": 10,
+    "gain_2d": 17.878999710083008,
+    "gain_3d": 0.0,
+    "gamma_2d": 1.0,
+    "gamma_3d": 1.0
+  }
+}

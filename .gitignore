@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE
+.idea/
+
+# Runtime
+logs/
+MvFGSdkLog/
+
+# User calibration data (large .ply files)
+data/
+
+# OS
+.DS_Store
+Thumbs.db
