@@ -129,7 +129,7 @@ class StitchPanel(QWidget):
         # 自动参数估计依据（只读说明，小字体灰色）
         self.lbl_auto_notes = QLabel("")
         self.lbl_auto_notes.setWordWrap(True)
-        self.lbl_auto_notes.setStyleSheet("color: #888888; font-size: 8pt;")
+        self.lbl_auto_notes.setStyleSheet("color: #8B8D98; font-size: 8pt;")
         self.lbl_auto_notes.hide()  # 无内容时不占位
         res_lo.addWidget(self.lbl_auto_notes)
         lo.addWidget(self.grp_result)
@@ -218,7 +218,7 @@ class StitchPanel(QWidget):
     def set_points_alert(self, alert: bool):
         """后处理过滤过激时把点数标红，正常时恢复默认样式。"""
         self.lbl_points.setStyleSheet(
-            "color: #e53935; font-weight: bold;" if alert else "")
+            "color: #DC2626; font-weight: bold;" if alert else "")
 
     # ------------------------------------------------------------------
     # 结果显示

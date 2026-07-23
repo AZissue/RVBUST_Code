@@ -68,7 +68,7 @@ class AspectRatioLabel(QLabel):
         super().__init__(parent)
         self._ratio = ratio
         self.setAlignment(Qt.AlignCenter)
-        self.setStyleSheet("background-color: #1a1a1a; border: 1px solid #3a3a3a;")
+        self.setStyleSheet("background-color: #1A1A20; border: 1px solid #2A2A34;")
         self._pixmap: Optional[QPixmap] = None
         self._markers: List[Dict] = []   # [{'x','y','code', 'valid_3d'}]
         self._marker_radius = 6
@@ -166,7 +166,7 @@ class CameraPreviewCard(QFrame):
         self.setObjectName("cameraCard")
         self.setFrameShape(QFrame.StyledPanel)
         self.setStyleSheet(
-            "QFrame#cameraCard { background-color: #2a2a2a; border: 1px solid #4a4a4a; "
+            "QFrame#cameraCard { background-color: #1A1A20; border: 1px solid #2A2A34; "
             "border-radius: 6px; }"
         )
         lo = QVBoxLayout(self)
