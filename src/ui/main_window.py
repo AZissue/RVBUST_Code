@@ -875,10 +875,12 @@ class MainWindow(QMainWindow):
                     frame.board_pose = br.get('T_board_in_cam')
                     frame.board_pattern = br.get('pattern_size')
                     frame.board_pattern_name = br.get('pattern_name')
+                    frame.board_rms_mm = float(br.get('rms_mm', 0.0))
                 else:
                     frame.board_pose = None
                     frame.board_pattern = None
                     frame.board_pattern_name = None
+                    frame.board_rms_mm = 0.0
             total += len(markers)
             card = self.cards.get(cid)
             if card is not None:
@@ -937,8 +939,8 @@ class MainWindow(QMainWindow):
             pattern_name=frame_ref.board_pattern_name or "unknown",
             inlier_count=frame_ref.marker_count,
             total_pairs=frame_ref.marker_count,
-            rms_ref_mm=getattr(frame_ref, 'board_rms_mm', 0.0),
-            rms_cam_mm=getattr(frame_cam, 'board_rms_mm', 0.0),
+            rms_ref_mm=frame_ref.board_rms_mm,
+            rms_cam_mm=frame_cam.board_rms_mm,
         )
         if result.get('success'):
             self._log(f"[SUCCESS] 标定板位姿法 {cam_id}→{ref_id}: "
@@ -1066,6 +1068,8 @@ class MainWindow(QMainWindow):
                       "请确保两个视角拍摄同一块固定标定板")
         else:
             self._log("[INFO] 标记物类型切换为：旋转编码圆")
+        self._log("[INFO] 已清空当前标定结果与多帧缓存；"
+                  "如有已保存的标定文件（.json），请确认与当前标记物类型兼容后再加载")
 
     def _on_save_calibration(self):
         if not self.calibration_engine.pair_results:

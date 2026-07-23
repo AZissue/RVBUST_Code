@@ -88,6 +88,8 @@ class CalibBoardDetector:
 
         # 1. 2D 检测（自动尝试多种规格 + 多种 gamma，提升不同曝光/对比度下的鲁棒性）
         gray = self._to_gray(image_np)
+        h, w = gray.shape[:2]
+        self._blob_detector = self._create_blob_detector(h, w)
         det = self._detect_pattern_robust(gray)
         if det is None:
             return self._fail("未能检测到任何支持规格的非对称圆标定板")
@@ -199,16 +201,22 @@ class CalibBoardDetector:
         return cv2.LUT(image.astype(np.uint8), table)
 
     @staticmethod
-    def _create_blob_detector() -> cv2.SimpleBlobDetector:
-        """创建 SimpleBlobDetector，适配非对称圆标定板。"""
+    def _create_blob_detector(img_h: int = 0, img_w: int = 0) -> cv2.SimpleBlobDetector:
+        """创建 SimpleBlobDetector，根据图像尺寸动态调整面积阈值。"""
         params = cv2.SimpleBlobDetector_Params()
         params.filterByArea = True
         params.filterByCircularity = True
         params.filterByConvexity = False
         params.filterByInertia = False
         params.filterByColor = True
-        params.minArea = 50
-        params.maxArea = 50000
+        if img_h > 0 and img_w > 0:
+            diag = np.sqrt(img_h ** 2 + img_w ** 2)
+            scale = diag / 1000.0
+            params.minArea = max(10, int(50 * scale))
+            params.maxArea = min(100000, int(50000 * scale))
+        else:
+            params.minArea = 50
+            params.maxArea = 50000
         params.minCircularity = 0.5
         params.minInertiaRatio = 0.01
         params.minRepeatability = 2
@@ -239,17 +247,17 @@ class CalibBoardDetector:
     def _detect_pattern(self, image: np.ndarray) -> Optional[Tuple[np.ndarray, Dict]]:
         """依次尝试支持的规格，返回第一个成功检测到的 (centers_2d, spec)。
 
-        注意：OpenCV findCirclesGrid 的 patternSize 参数为 (points_per_row, rows)，
-        对非对称网格实际成功参数为 (rows, cols)（按本项目的 objp 排列）。
+        patternSize 遵循 OpenCV 约定：(cols, rows)，其中 cols 为每行圆点数，
+        rows 为行数。findCirclesGrid 返回的圆心按行优先排列。
         """
         # 优先尝试大规格（圆心数多），降低局部误识别风险
         specs = sorted(self.board_specs, key=lambda s: s['cols'] * s['rows'], reverse=True)
         for spec in specs:
-            rows, cols = spec['rows'], spec['cols']
+            cols, rows = spec['cols'], spec['rows']
             found, centers = cv2.findCirclesGrid(
                 image,
-                (rows, cols),
-                flags=cv2.CALIB_CB_ASYMMETRIC_GRID | cv2.CALIB_CB_CLUSTERING | cv2.CALIB_CB_FAST_CHECK,
+                (cols, rows),
+                flags=cv2.CALIB_CB_ASYMMETRIC_GRID | cv2.CALIB_CB_CLUSTERING,
                 blobDetector=self._blob_detector,
             )
             if found and centers is not None and len(centers) == cols * rows:
@@ -347,24 +355,21 @@ class CalibBoardDetector:
 
     @staticmethod
     def _build_object_points(spec: Dict) -> np.ndarray:
-        """构造标定板理论圆心坐标（mm）。
+        """构造标定板理论圆心坐标（mm），行优先排列，与 findCirclesGrid 输出顺序一致。
 
         非对称圆排列：相邻列在 y 方向有半格偏移。
-        顺序与 OpenCV findCirclesGrid 返回的 centers 一致：
-          - 列优先，从右到左（x 从大到小）；
-          - 每列内从上到下（y 从小到大，因图像 y 向下为正）。
         坐标系：x 向右，y 向下，z = 0。
         """
         cols = spec['cols']
         rows = spec['rows']
         d = float(spec['spacing_mm'])
 
-        obj_pts = np.zeros((cols * rows, 3), dtype=np.float64)
-        for k, j in enumerate(range(cols - 1, -1, -1)):  # 列：从右到左
-            for i in range(rows):                         # 行：从上到下
-                idx = k * rows + i
-                x = j * d
-                y = (i + 0.5 * (j % 2)) * d
+        obj_pts = np.zeros((rows * cols, 3), dtype=np.float64)
+        for j in range(rows):           # 外层 = 行（row-major）
+            for i in range(cols):       # 内层 = 列
+                idx = j * cols + i
+                x = i * d
+                y = (j + 0.5 * (i % 2)) * d
                 obj_pts[idx] = [x, y, 0.0]
         return obj_pts
 

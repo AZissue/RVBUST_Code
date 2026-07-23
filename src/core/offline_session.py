@@ -198,6 +198,7 @@ class OfflineSession:
                         board_pose=np.asarray(bp_list, dtype=np.float64) if bp_list is not None else None,
                         board_pattern=tuple(bp_tuple) if bp_tuple is not None else None,
                         board_pattern_name=entry.get("board_pattern_name"),
+                        board_rms_mm=float(entry.get("board_rms_mm", 0.0)),
                     )
                     img_path = os.path.join(frame_dir, f"{cam_id}.png")
                     if os.path.exists(img_path):
@@ -256,10 +257,12 @@ class OfflineSession:
                         frame.board_pose = br.get('T_board_in_cam')
                         frame.board_pattern = br.get('pattern_size')
                         frame.board_pattern_name = br.get('pattern_name')
+                        frame.board_rms_mm = float(br.get('rms_mm', 0.0))
                     else:
                         frame.board_pose = None
                         frame.board_pattern = None
                         frame.board_pattern_name = None
+                        frame.board_rms_mm = 0.0
                 cam_results.append(markers)
                 self._write_back_markers(frame)
             results[cam_id] = cam_results
@@ -285,11 +288,13 @@ class OfflineSession:
                 entry["board_pose"] = board_pose_entry
                 entry["board_pattern"] = board_pattern_entry
                 entry["board_pattern_name"] = frame.board_pattern_name
+                entry["board_rms_mm"] = float(frame.board_rms_mm)
             else:
                 meta["markers"] = frame.markers
                 meta["board_pose"] = board_pose_entry
                 meta["board_pattern"] = board_pattern_entry
                 meta["board_pattern_name"] = frame.board_pattern_name
+                meta["board_rms_mm"] = float(frame.board_rms_mm)
             with open(meta_path, 'w', encoding='utf-8') as f:
                 json.dump(meta, f, ensure_ascii=False, indent=2)
         except Exception as e:
