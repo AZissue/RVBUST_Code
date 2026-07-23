@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.ai_completion/
+
+# Project data
+offline_data/
+*.log
+MvSDKLog/
+
+# IDE
+.vscode/
+.idea/
+
+# Backups
+backup_*/
+
+# Calibration results (user-generated)
+calibration.json
+
+# Screenshots / visual assets
+*.png
+*.jpg
+*.jpeg
