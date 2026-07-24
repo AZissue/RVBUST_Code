@@ -247,16 +247,17 @@ class CalibBoardDetector:
     def _detect_pattern(self, image: np.ndarray) -> Optional[Tuple[np.ndarray, Dict]]:
         """依次尝试支持的规格，返回第一个成功检测到的 (centers_2d, spec)。
 
-        patternSize 遵循 OpenCV 约定：(cols, rows)，其中 cols 为每行圆点数，
-        rows 为行数。findCirclesGrid 返回的圆心按行优先排列。
+        注意：OpenCV findCirclesGrid 的 patternSize 参数名义上是 (points_per_row, rows)，
+        但对本项目使用的非对称网格实际成功参数为 (rows, cols)（与 _build_object_points
+        的排列一致）。因此代码中传入 (rows, cols)。
         """
         # 优先尝试大规格（圆心数多），降低局部误识别风险
         specs = sorted(self.board_specs, key=lambda s: s['cols'] * s['rows'], reverse=True)
         for spec in specs:
-            cols, rows = spec['cols'], spec['rows']
+            rows, cols = spec['rows'], spec['cols']
             found, centers = cv2.findCirclesGrid(
                 image,
-                (cols, rows),
+                (rows, cols),
                 flags=cv2.CALIB_CB_ASYMMETRIC_GRID | cv2.CALIB_CB_CLUSTERING,
                 blobDetector=self._blob_detector,
             )
@@ -355,9 +356,10 @@ class CalibBoardDetector:
 
     @staticmethod
     def _build_object_points(spec: Dict) -> np.ndarray:
-        """构造标定板理论圆心坐标（mm），行优先排列，与 findCirclesGrid 输出顺序一致。
+        """构造标定板理论圆心坐标（mm），列优先排列，与 findCirclesGrid 输出顺序一致。
 
-        非对称圆排列：相邻列在 y 方向有半格偏移。
+        OpenCV findCirclesGrid（非对称网格，patternSize=(rows, cols)）返回的圆心
+        顺序为：从右到左逐列，每列内从上到下。相邻列在 y 方向有半格偏移。
         坐标系：x 向右，y 向下，z = 0。
         """
         cols = spec['cols']
@@ -365,11 +367,11 @@ class CalibBoardDetector:
         d = float(spec['spacing_mm'])
 
         obj_pts = np.zeros((rows * cols, 3), dtype=np.float64)
-        for j in range(rows):           # 外层 = 行（row-major）
-            for i in range(cols):       # 内层 = 列
-                idx = j * cols + i
-                x = i * d
-                y = (j + 0.5 * (i % 2)) * d
+        for k, j in enumerate(range(cols - 1, -1, -1)):  # 列：从右到左
+            for i in range(rows):                         # 行：从上到下
+                idx = k * rows + i
+                x = j * d
+                y = (i + 0.5 * (j % 2)) * d
                 obj_pts[idx] = [x, y, 0.0]
         return obj_pts
 

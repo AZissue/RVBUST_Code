@@ -85,7 +85,7 @@ class CalibrationPanel(QWidget):
         lo.addWidget(self.grp_ref)
 
         # ---- 标记物类型 ----
-        self.grp_marker = make_group_box("marker", "🏷 标记物类型")
+        self.grp_marker = make_group_box("marker_type", "🏷 标记物类型")
         marker_outer = QVBoxLayout(self.grp_marker)
         apply_group_icon(self.grp_marker)
         marker_lo = QHBoxLayout()

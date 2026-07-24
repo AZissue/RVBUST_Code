@@ -94,7 +94,7 @@ def apply_icon(widget, name: str, size: int = 16):
 
 # 分组框图标标题行中标题文字的样式（与 STYLESHEET 中 QGroupBox::title 一致）
 _GROUP_TITLE_STYLE = (
-    "color: #4fc3f7; font-weight: bold; font-size: 9pt; "
+    "color: #2979FF; font-weight: bold; font-size: 9pt; "
     "background: transparent; border: none;"
 )
 

@@ -250,7 +250,7 @@ QGroupBox::title {
     subcontrol-origin: margin;
     left: 8px;
     padding: 0 4px;
-    color: #EA580C;
+    color: #2979FF;
     font-size: 9pt;
 }
 
@@ -267,8 +267,8 @@ QPushButton {
 QPushButton:hover { background-color: #2E2E38; border-color: #3E3E4C; }
 QPushButton:pressed { background-color: #3E3E4C; }
 QPushButton:disabled { background-color: #1A1A20; color: #5C5E6A; border-color: #2A2A34; }
-QPushButton#primaryButton { background-color: #EA580C; border-color: #C2410C; }
-QPushButton#primaryButton:hover { background-color: #C2410C; }
+QPushButton#primaryButton { background-color: #2979FF; border-color: #1565C0; }
+QPushButton#primaryButton:hover { background-color: #1565C0; }
 QPushButton#dangerButton { background-color: #DC2626; border-color: #B91C1C; }
 QPushButton#dangerButton:hover { background-color: #B91C1C; }
 QPushButton#successButton { background-color: #16A34A; border-color: #15803D; }
@@ -284,7 +284,7 @@ QLineEdit {
     min-height: 20px;
 }
 QLineEdit:focus {
-    border: 1px solid #EA580C;
+    border: 1px solid #2979FF;
 }
 QTextEdit {
     background-color: #1A1A20;
@@ -339,7 +339,7 @@ QComboBox::drop-down { border: none; }
 QComboBox QAbstractItemView {
     background-color: #24242C;
     color: #F0F0F5;
-    selection-background-color: #EA580C;
+    selection-background-color: #2979FF;
 }
 
 QListWidget {
@@ -349,7 +349,7 @@ QListWidget {
     font-size: 9pt;
 }
 QListWidget::item { padding: 4px; }
-QListWidget::item:selected { background-color: #EA580C; }
+QListWidget::item:selected { background-color: #2979FF; }
 
 QTabWidget::pane { border: 1px solid #2A2A34; border-radius: 6px; }
 QTabBar::tab {
@@ -361,7 +361,7 @@ QTabBar::tab {
     padding: 6px 14px;
     color: #8B8D98;
 }
-QTabBar::tab:selected { background-color: #24242C; color: #EA580C; }
+QTabBar::tab:selected { background-color: #24242C; color: #2979FF; }
 
 QSplitter::handle { background-color: #2A2A34; }
 QSplitter::handle:horizontal { width: 4px; }
@@ -428,6 +428,10 @@ class MainWindow(QMainWindow):
         self._last_stitch_input_points = 0         # 最近一次在线拼接的原始点数（过滤保护）
         self._capture_timer = QTimer(self)
         self._capture_timer.timeout.connect(self._on_capture_all)
+        # 当前相机（取景）持续 2D 预览定时器
+        self._preview_timer = QTimer(self)
+        self._preview_timer.timeout.connect(self._on_preview_tick)
+        self._preview_camera_id: Optional[str] = None
 
         self._setup_ui()
         self._connect_signals()
@@ -774,6 +778,31 @@ class MainWindow(QMainWindow):
         self._log(f"[INFO] 拍摄完成: {len(frames)} 台相机 "
                   f"(帧号 {frames[next(iter(frames))].frame_id})")
 
+    def _on_preview_toggled(self, camera_id: str, active: bool):
+        """当前相机卡片「预览/停止预览」按钮切换：启动或停止持续 2D 预览定时器。"""
+        if active:
+            self._preview_camera_id = camera_id
+            self._preview_timer.start(150)  # 约 6~7 fps，流畅且不过载
+            self._log(f"[INFO] 相机 {camera_id} 持续 2D 预览已启动")
+        else:
+            self._stop_physical_preview()
+
+    def _on_preview_tick(self):
+        """持续 2D 预览定时器：每 150ms 刷新一次当前相机画面。"""
+        if self._preview_camera_id is None:
+            return
+        self._on_preview_physical(self._preview_camera_id)
+
+    def _stop_physical_preview(self):
+        """停止当前相机的持续 2D 预览（3D 拍摄前应先调用，避免冲突）。"""
+        if self._preview_timer.isActive():
+            self._preview_timer.stop()
+            self._log("[INFO] 持续 2D 预览已暂停")
+        card = self.cards.get(self.PHYSICAL_ID)
+        if card is not None and card.is_preview_active():
+            card.stop_preview()
+        self._preview_camera_id = None
+
     def _on_preview_physical(self, camera_id: str):
         """当前相机（取景）的 2D 预览：只调用 Capture2D 更新画面，不保存为站位。"""
         frame = self.camera_manager.capture_2d_preview(camera_id)
@@ -788,7 +817,9 @@ class MainWindow(QMainWindow):
         card = self.cards.get(camera_id)
         if card is not None:
             card.update_frame(frame, frame.markers)
-        self._log(f"[INFO] 相机 {camera_id} 2D 预览已刷新")
+        # 持续预览模式下减少日志刷屏，只在首次/失败时打印
+        if not self._preview_timer.isActive():
+            self._log(f"[INFO] 相机 {camera_id} 2D 预览已刷新")
 
     def _on_capture_single(self, camera_id: str):
         """单拍指定相机。"""
@@ -1426,8 +1457,11 @@ class MainWindow(QMainWindow):
             # 当前相机按钮只做 2D 预览（Capture2D），不拍摄点云，便于调整站位
             card.set_capture_button_text("👁 预览", "preview")
             card.capture_requested.connect(self._on_preview_physical)
+            card.preview_toggled.connect(self._on_preview_toggled)
             card.disconnect_requested.connect(self._on_station_disconnect)
             self.cards[self.PHYSICAL_ID] = card
+        # 每次连接都确保当前相机卡片是预览模式
+        card.set_preview_mode(True, icon_name="preview")
 
         ok, msg = self.camera_manager.connect(self.PHYSICAL_ID, device_index)
         card.set_connected(ok)
@@ -1442,6 +1476,7 @@ class MainWindow(QMainWindow):
 
     def _on_station_disconnect(self):
         """站位模式：断开物理相机并移除取景卡片（站位卡片与帧保留）。"""
+        self._stop_physical_preview()
         self.camera_manager.remove_camera(self.PHYSICAL_ID)
         if self._physical_frame is not None:
             try:
@@ -1460,6 +1495,8 @@ class MainWindow(QMainWindow):
 
     def _on_capture_station(self):
         """站位模式：拍摄站位 → 立即存盘 → 中央网格新增站位卡片。"""
+        # 3D 拍摄前暂停持续 2D 预览，避免 Capture2D / Capture 冲突
+        self._stop_physical_preview()
         station_id, msg = self.station_manager.capture_station(self.PHYSICAL_ID)
         if station_id is None:
             self._log(f"[WARN] 站位拍摄失败: {msg}")

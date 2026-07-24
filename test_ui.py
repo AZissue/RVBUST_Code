@@ -483,7 +483,7 @@ print("  lbl_auto_notes 依据显示 / 隐藏通过")
 
 # 过滤保护标红 / 恢复
 panel9.set_points_alert(True)
-assert "e53935" in panel9.lbl_points.styleSheet(), "过激时应标红"
+assert "dc2626" in panel9.lbl_points.styleSheet().lower(), "过激时应标红"
 panel9.set_points_alert(False)
 assert panel9.lbl_points.styleSheet() == "", "正常时应恢复默认样式"
 print("  点数标红 / 恢复通过")

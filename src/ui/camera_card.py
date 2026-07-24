@@ -149,14 +149,19 @@ class AspectRatioLabel(QLabel):
 class CameraPreviewCard(QFrame):
     """单相机预览卡片：2D 预览 + 状态标签 + 连接/拍摄按钮 + 标记叠加。"""
 
-    capture_requested = Signal(str)      # camera_id
-    disconnect_requested = Signal(str)   # camera_id
+    capture_requested = Signal(str)          # camera_id
+    disconnect_requested = Signal(str)       # camera_id
+    preview_toggled = Signal(str, bool)      # camera_id, active（持续 2D 预览）
 
     def __init__(self, camera_id: str, parent=None):
         super().__init__(parent)
         self.camera_id = camera_id
         self._connected = False
         self._capture_count = 0
+        self._is_preview_mode = False    # True：按钮为「预览/停止预览」持续 2D
+        self._preview_active = False     # 当前是否正在持续预览
+        self._preview_icon_name = "preview"
+        self._capture_icon_name = "capture"
         self._setup_ui()
 
     # ------------------------------------------------------------------
@@ -181,7 +186,7 @@ class CameraPreviewCard(QFrame):
         self.lbl_icon.hide()  # 无图标文件时隐藏，标题保持 emoji 兜底
         title_lo.addWidget(self.lbl_icon)
         self.lbl_title = QLabel()
-        self.lbl_title.setStyleSheet("font-weight: bold; color: #4fc3f7; font-size: 10pt;")
+        self.lbl_title.setStyleSheet("font-weight: bold; color: #2979FF; font-size: 10pt;")
         title_lo.addWidget(self.lbl_title)
         title_lo.addStretch(1)
 
@@ -216,7 +221,7 @@ class CameraPreviewCard(QFrame):
         self.btn_capture = QPushButton(icon_text("capture", "📸 拍摄"))
         self.btn_capture.setObjectName("primaryButton")
         self.btn_capture.setEnabled(False)
-        self.btn_capture.clicked.connect(lambda: self.capture_requested.emit(self.camera_id))
+        self.btn_capture.clicked.connect(self._on_capture_button_clicked)
         apply_icon(self.btn_capture, "capture")
         btn_lo.addWidget(self.btn_capture)
 
@@ -300,6 +305,46 @@ class CameraPreviewCard(QFrame):
         """修改底部拍摄按钮的文本与图标（Phase 5 把当前相机按钮改为「预览」）。"""
         self.btn_capture.setText(icon_text(icon_name, text))
         apply_icon(self.btn_capture, icon_name)
+
+    def set_preview_mode(self, enabled: bool, icon_name: str = "preview"):
+        """把底部按钮设为持续 2D 预览模式：点击开始预览，再点击停止预览。"""
+        self._is_preview_mode = enabled
+        self._preview_icon_name = icon_name
+        self._update_preview_button()
+
+    def is_preview_active(self) -> bool:
+        """当前是否处于持续 2D 预览中。"""
+        return self._is_preview_mode and self._preview_active
+
+    def stop_preview(self):
+        """外部调用停止持续预览并更新按钮显示。"""
+        if self._is_preview_mode and self._preview_active:
+            self._preview_active = False
+            self._update_preview_button()
+
+    def _on_capture_button_clicked(self):
+        """处理底部拍摄/预览按钮点击。"""
+        if not self._is_preview_mode:
+            self.capture_requested.emit(self.camera_id)
+            return
+        self._preview_active = not self._preview_active
+        self._update_preview_button()
+        self.preview_toggled.emit(self.camera_id, self._preview_active)
+
+    def _update_preview_button(self):
+        """根据预览状态更新按钮文本与图标。"""
+        if not self._is_preview_mode:
+            self.set_capture_button_text("📸 拍摄", self._capture_icon_name)
+            return
+        if self._preview_active:
+            self.btn_capture.setObjectName("dangerButton")
+            self.set_capture_button_text("⏹ 停止预览", self._preview_icon_name)
+        else:
+            self.btn_capture.setObjectName("primaryButton")
+            self.set_capture_button_text("👁 预览", self._preview_icon_name)
+        # 重新应用样式
+        self.btn_capture.style().unpolish(self.btn_capture)
+        self.btn_capture.style().polish(self.btn_capture)
 
     # ------------------------------------------------------------------
     # 内部

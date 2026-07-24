@@ -104,8 +104,9 @@ class StationPanel(QWidget):
         apply_icon(self.btn_capture, "capture", size=20)
         cap_lo.addWidget(self.btn_capture)
 
-        self.btn_new_session = QPushButton("🆕 新会话（清空站位重新开始）")
+        self.btn_new_session = QPushButton(icon_text("new_session", "🆕 新会话（清空站位重新开始）"))
         self.btn_new_session.clicked.connect(self.new_session_requested.emit)
+        apply_icon(self.btn_new_session, "new_session")
         cap_lo.addWidget(self.btn_new_session)
 
         self.lbl_session = QLabel("会话: （首次拍摄自动创建）")
