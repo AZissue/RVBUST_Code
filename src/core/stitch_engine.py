@@ -100,6 +100,8 @@ class StitchEngine:
         logs.insert(0, f"合并 {n_merged}/{len(frames)} 台相机, 原始点数: {len(merged.points)}")
         if processor is not None:
             merged, stats = processor.process(merged)
+            if 'invalid_removed' in stats:
+                logs.append(f"剔除无效点: {stats['invalid_removed']}")
             if 'after_crop' in stats:
                 logs.append(f"裁切后: {stats['after_crop']}")
             if 'after_downsample' in stats:

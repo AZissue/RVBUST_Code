@@ -566,6 +566,37 @@ assert n_remain > n_mm * 0.5, \
 print(f"  [OK] 全流程: {n_mm:,} → {n_remain:,} 点"
       f"（保留 {n_remain / n_mm * 100:.1f}%，不会全滤掉）")
 
+# 10f. 含无效点（NaN/Inf/零点）的真实 RVC 场景回归：
+#      auto_tune 不得被污染，process 不得坍缩全滤掉
+pts_rvc = np.asarray(pcd_mm.points).copy()
+n_nan = int(n_mm * 0.15)          # 模拟 RVC pointmap 15% 无效像素
+pts_nan = np.full((n_nan, 3), np.nan)
+pts_nan[: n_nan // 3] = 0.0       # 部分设备用 (0,0,0) 表示无效
+pts_nan[n_nan // 3: n_nan // 2] = np.inf
+pts_rvc = np.vstack([pts_rvc, pts_nan])
+pcd_rvc = o3d.geometry.PointCloud()
+pcd_rvc.points = o3d.utility.Vector3dVector(pts_rvc)
+params_rvc = proc10.auto_tune(pcd_rvc, target_points=50_000)
+assert np.isfinite(params_rvc['avg_spacing_mm']), \
+    f"含无效点时平均点距必须为有限值: {params_rvc['avg_spacing_mm']}"
+assert abs(params_rvc['avg_spacing_mm'] - s_mm) < s_mm * 0.2, \
+    f"剔除无效点后点距 {params_rvc['avg_spacing_mm']:.3f} 应接近 {s_mm:.3f}"
+assert abs(params_rvc['estimated_points'] - 50_000) < 50_000 * 0.3, \
+    f"含无效点时预估点数 {params_rvc['estimated_points']:,} 应接近目标（±30%）"
+assert any("无效点" in t for t in params_rvc['notes']), "notes 应说明剔除了无效点"
+proc_rvc = PointCloudProcessor()
+for k, v in params_rvc.items():
+    if hasattr(proc_rvc, k):
+        setattr(proc_rvc, k, v)
+result_rvc, stats_rvc = proc_rvc.process(pcd_rvc)
+assert stats_rvc.get('invalid_removed') >= n_nan, \
+    f"process 应至少剔除 {n_nan:,} 个无效点: {stats_rvc}"
+n_remain_rvc = len(result_rvc.points)
+assert abs(n_remain_rvc - 50_000) < 50_000 * 0.3, \
+    f"含无效点场景处理后应接近目标 50,000 点而非坍缩: 剩余 {n_remain_rvc:,}"
+print(f"  [OK] 含 {n_nan:,} 个无效点(NaN/Inf/零): 点距 {params_rvc['avg_spacing_mm']:.3f}mm, "
+      f"剔除后处理剩余 {n_remain_rvc:,} 点，不再坍缩")
+
 # ------------------------------------------------------------------
 # 11. 非对称圆标定板检测 + 位姿法标定
 # ------------------------------------------------------------------

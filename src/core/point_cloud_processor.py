@@ -21,6 +21,27 @@ if TYPE_CHECKING:
 class PointCloudProcessor:
     """点云后处理器：裁切 + 下采样 + 滤波。"""
 
+    @staticmethod
+    def _filter_valid(pcd: 'o3d.geometry.PointCloud'):
+        """剔除非有限点（NaN/Inf）与全零点，返回 (有效点云, 剔除数)。
+
+        RVC pointmap 的无效像素以 NaN 保留在 PLY 中（3D 查看器在渲染层
+        屏蔽它们以维持 2D-3D 索引对应）。若直接送入后处理：
+          - NaN 点使 voxel_down_sample 全部坍缩到 1 个体素 → 1 个点；
+          - KDTree 最近邻距离被 NaN/零点污染，auto_tune 点距估计失真；
+          - min/max/percentile 统计被 NaN 污染。
+        因此后处理与参数估计前必须先剔除。
+        """
+        import numpy as np
+        pts = np.asarray(pcd.points)
+        mask = np.isfinite(pts).all(axis=1) & (np.abs(pts).sum(axis=1) > 0.0)
+        n_invalid = int((~mask).sum())
+        if n_invalid == 0:
+            return pcd, 0
+        indices = np.where(mask)[0]
+        return pcd.select_by_index(indices), n_invalid
+
+
     def __init__(self):
         self.voxel_size = 0.5  # mm
         self.enable_voxel_downsample = False
@@ -33,8 +54,10 @@ class PointCloudProcessor:
 
     def process(self, pcd: 'o3d.geometry.PointCloud') -> 'o3d.geometry.PointCloud':
         """按配置顺序处理点云，返回 (结果点云, 统计信息)。"""
-        result = pcd
+        result, n_invalid = self._filter_valid(pcd)
         stats = {"input_points": len(pcd.points)}
+        if n_invalid > 0:
+            stats["invalid_removed"] = n_invalid
 
         # 1. 中心裁切
         if self.crop_mode == "aabb":
@@ -126,10 +149,13 @@ class PointCloudProcessor:
         import open3d as o3d
 
         notes = []
+        pcd, n_invalid = self._filter_valid(pcd)
+        if n_invalid > 0:
+            notes.append(f"已剔除 {n_invalid:,} 个无效点（NaN/Inf/零点）后再估计")
         pts = np.asarray(pcd.points)
         n = int(pts.shape[0])
         if n < 10:
-            raise ValueError(f"点云点数过少（{n}），无法自动估计参数")
+            raise ValueError(f"点云有效点数过少（{n}），无法自动估计参数")
 
         # ---- 1. 单位检测（按包围盒对角线量级）----
         min_b = pts.min(axis=0)
