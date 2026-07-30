@@ -37,6 +37,17 @@ from core.frame_data import FrameData
 app.setStyleSheet(STYLESHEET)
 
 
+def wait_workers(win, timeout=120):
+    """等待主窗口后台 WorkerThread 全部完成（耗时操作已改为 QThread 异步执行）。"""
+    import time
+    deadline = time.time() + timeout
+    while getattr(win, '_workers', None):
+        assert time.time() < deadline, "后台任务超时未完成"
+        app.processEvents()
+        time.sleep(0.005)
+    app.processEvents()
+
+
 def make_markers(pts: np.ndarray, code_offset: int = 0):
     """由 Nx3 点数组构造编码圆 markers 列表（含 2D 坐标供叠加显示）。"""
     return [
@@ -70,12 +81,13 @@ def make_synthetic_image(seed: int = 0) -> np.ndarray:
 # ------------------------------------------------------------------
 print("\n[1] UI 实例化测试（offscreen，无相机）")
 window = MainWindow()
-assert window.camera_panel is not None
+assert window.device_panel is not None
+assert window.capture_panel is not None
 assert window.calibration_panel is not None
 assert window.stitch_panel is not None
 assert window.viewer_3d is not None
 assert len(window.cards) == 0, "初始应无相机卡片"
-assert not window.camera_panel.btn_capture_all.isEnabled(), "无相机时拍摄按钮应禁用"
+assert not window.capture_panel.btn_capture_all.isEnabled(), "无相机时拍摄按钮应禁用"
 print("  主窗口 / 三面板 / 3D 查看器实例化成功")
 print("  [OK] 无相机环境启动不崩溃，拍摄按钮已禁用")
 
@@ -86,7 +98,7 @@ print("\n[2] 模拟添加 3 台相机")
 window._on_add_cameras([0, 1, 2])  # 无真实设备：连接失败但卡片照常生成
 assert len(window.cards) == 3, f"应有 3 个卡片，实际 {len(window.cards)}"
 assert window.grid_layout.count() == 3, f"网格应有 3 个卡片，实际 {window.grid_layout.count()}"
-assert window.camera_panel.list_cameras.count() == 3, "左面板相机列表应有 3 项"
+assert window.device_panel.list_cameras.count() == 3, "左面板相机列表应有 3 项"
 assert window.calibration_panel.combo_ref.count() == 3, "参考相机下拉应有 3 项"
 cam_ids = list(window.cards.keys())
 print(f"  相机 ID: {cam_ids}")
@@ -138,6 +150,7 @@ for cid in (cam_ids[1], cam_ids[2]):
 # 走面板信号路径：标定所有 pair（cam0 为参考）
 assert window.calibration_panel.get_reference() == cam_ids[0]
 window.calibration_panel._on_calibrate_all()
+wait_workers(window)  # 标定已改后台执行，等待结果回填面板
 
 table = window.calibration_panel.table_pairs
 assert table.rowCount() == 2, f"结果表应有 2 行，实际 {table.rowCount()}"
@@ -168,6 +181,7 @@ assert "2" in window.calibration_panel.lbl_frames.text(), "累积帧数应为 2"
 window._on_add_frame()
 assert "2" in window.calibration_panel.lbl_frames.text(), "重复数据应跳过，帧数仍为 2"
 window._on_calibrate_multi()
+wait_workers(window)  # 多帧标定已改后台执行
 assert window.calibration_panel.table_pairs.rowCount() == 2
 # 多帧结果内点列应带帧数信息，如 "32/32 (2帧)"
 cell = window.calibration_panel.table_pairs.item(0, 3).text()
@@ -200,6 +214,7 @@ for i, cid in enumerate(cam_ids):
     window.frames[cid] = frame
 
 window._on_stitch()
+wait_workers(window)  # 拼接已改后台执行
 assert window.viewer_3d._pcd_merged is not None, "3D 查看器应收到合并点云"
 n_merged = len(window.viewer_3d._pcd_merged.points)
 assert n_merged == 6000, f"合并点数应为 6000，实际 {n_merged}"
@@ -316,7 +331,8 @@ print("  [OK] 3D 查看器工具栏功能全部通过")
 print("\n[8] 图标系统测试")
 from ui.icons import (icons_dir, has_icon, get_icon, icon_text, apply_icon,
                       reload_icons, strip_emoji)
-from ui.panels.camera_panel import CameraPanel
+from ui.panels.device_panel import DevicePanel
+from ui.panels.capture_panel import CapturePanel
 from PySide6.QtCore import QSize
 from PySide6.QtGui import QPixmap, QColor
 from PySide6.QtWidgets import QPushButton
@@ -335,19 +351,23 @@ assert icon_text("__missing_icon__", "📸 拍摄") == "📸 拍摄", "无文件
 print("  兜底：缺失图标名返回空 QIcon / 原文本")
 
 # 8.2b 项目自带图标已生效：文本剥离 emoji + 图标非空（assets/icons/ 已随项目提供）
-assert window.camera_panel.btn_capture_all.text() == "拍摄所有相机（同步软触发）"
-assert not window.camera_panel.btn_capture_all.icon().isNull()
+assert window.capture_panel.btn_capture_all.text() == "同步拍摄（所有相机同时触发）"
+assert not window.capture_panel.btn_capture_all.icon().isNull()
+assert window.capture_panel.btn_capture_seq.text() == "分开拍摄（相机依次触发）"
+assert not window.capture_panel.btn_capture_seq.icon().isNull()
 assert window.station_panel.btn_capture.text() == "拍摄站位"
 assert not window.station_panel.btn_capture.icon().isNull()
-assert window.left_tabs.tabText(0) == "多相机"
+assert window.left_tabs.tabText(0) == "设备管理"
 assert not window.left_tabs.tabIcon(0).isNull()
-assert window.right_tabs.tabText(0) == "标定"
+assert window.right_tabs.tabText(0) == "采集"
 assert not window.right_tabs.tabIcon(0).isNull()
+assert window.right_tabs.tabText(1) == "标定"
+assert not window.right_tabs.tabIcon(1).isNull()
 assert window.viewer_3d.btn_maximize.text() == "最大化"
 assert not window.viewer_3d.btn_maximize.icon().isNull()
-assert window.cards[cam_ids[0]].btn_capture.text() == "拍摄"
+assert window.cards[cam_ids[0]].btn_capture.text() == "预览"
 # 新实例化面板同样应用自带图标
-_p = CameraPanel()
+_p = DevicePanel()
 assert _p.btn_refresh.text() == "查找设备"
 assert not _p.btn_refresh.icon().isNull()
 _p.deleteLater()
@@ -388,10 +408,10 @@ from PySide6.QtWidgets import QVBoxLayout, QLabel
 # 有图标文件（assets/icons/ 已随项目提供 13 个分组图标）：
 # group.title() 为空，布局顶部有图标 QLabel + 剥离 emoji 的标题文字
 GROUP_CASES = [
-    (window.camera_panel.grp_devices, "设备列表"),
-    (window.camera_panel.grp_list, "已添加相机"),
-    (window.camera_panel.grp_capture, "采集控制"),
-    (window.camera_panel.grp_offline, "离线会话"),
+    (window.device_panel.grp_devices, "设备列表"),
+    (window.device_panel.grp_list, "已添加相机"),
+    (window.capture_panel.grp_capture, "采集控制"),
+    (window.capture_panel.grp_offline, "离线会话"),
     (window.station_panel.grp_cam, "物理相机"),
     (window.station_panel.grp_cap, "站位采集"),
     (window.station_panel.grp_list, "站位列表"),

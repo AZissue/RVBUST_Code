@@ -125,7 +125,16 @@ class CalibBoardDetector:
         if valid_mask.sum() < 3:
             return self._fail(f"有效 3D 圆心不足: {valid_mask.sum()}/3")
 
-        # 4. 求解标定板位姿
+        # 4. 自动估计标定板间距（从 3D 圆心最近邻距离中位数估计，避免手动输入 spacing_mm 错误）
+        estimated_spacing = self._estimate_spacing_mm(centers_3d, valid_mask)
+        if estimated_spacing is not None and estimated_spacing > 0:
+            logger.info(f"自动估计标定板间距: {estimated_spacing:.2f} mm "
+                        f"(规格默认 {spec['spacing_mm']:.2f} mm)")
+            # 用估计值覆盖规格中的 spacing_mm
+            spec = dict(spec)
+            spec['spacing_mm'] = estimated_spacing
+
+        # 5. 求解标定板位姿
         obj_pts = self._build_object_points(spec)
         T_board_in_cam, rms_mm = self._solve_board_pose(obj_pts, centers_3d, spec)
         if T_board_in_cam is None:
@@ -247,9 +256,9 @@ class CalibBoardDetector:
     def _detect_pattern(self, image: np.ndarray) -> Optional[Tuple[np.ndarray, Dict]]:
         """依次尝试支持的规格，返回第一个成功检测到的 (centers_2d, spec)。
 
-        注意：OpenCV findCirclesGrid 的 patternSize 参数名义上是 (points_per_row, rows)，
-        但对本项目使用的非对称网格实际成功参数为 (rows, cols)（与 _build_object_points
-        的排列一致）。因此代码中传入 (rows, cols)。
+        OpenCV findCirclesGrid 的 patternSize 为 (points_per_row, points_per_colum)。
+        对非对称网格，本项目标定板为 rows 行 × cols 列，patternSize 传 (rows, cols)。
+        返回的圆心按行优先排列（从左到右、从上到下）。
         """
         # 优先尝试大规格（圆心数多），降低局部误识别风险
         specs = sorted(self.board_specs, key=lambda s: s['cols'] * s['rows'], reverse=True)
@@ -353,6 +362,38 @@ class CalibBoardDetector:
             centers_3d[i] = val
 
         return centers_3d
+
+    @staticmethod
+    def _estimate_spacing_mm(centers_3d: np.ndarray,
+                             valid_mask: np.ndarray) -> Optional[float]:
+        """从 3D 圆心数据自动估计相邻圆心间距（mm）。
+
+        方法：
+          1. 取有效 3D 圆心；
+          2. 计算每个点到其他所有点的欧氏距离；
+          3. 取每个点的最近邻距离；
+          4. 用所有最近邻距离的中位数作为 spacing_mm 估计。
+
+        同行/同列相邻圆心距离约等于 spacing_mm，对角线距离更远，
+        因此最近邻距离的中位数能较好估计真实间距。
+        """
+        pts = centers_3d[valid_mask]
+        if len(pts) < 2:
+            return None
+        # 计算距离矩阵（向量化）
+        diff = pts[:, None, :] - pts[None, :, :]
+        dists = np.linalg.norm(diff, axis=2)
+        # 排除自身距离（对角线为 0）
+        np.fill_diagonal(dists, np.inf)
+        # 每个点的最近邻距离
+        nn_dists = np.min(dists, axis=1)
+        # 中位数作为 spacing_mm 估计
+        spacing = float(np.median(nn_dists))
+        # 合理性检查：间距应在 1mm ~ 500mm 之间
+        if spacing < 1.0 or spacing > 500.0:
+            logger.warning(f"自动估计间距 {spacing:.2f} mm 超出合理范围，使用规格默认值")
+            return None
+        return spacing
 
     @staticmethod
     def _build_object_points(spec: Dict) -> np.ndarray:

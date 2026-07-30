@@ -1,11 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-相机管理面板（CameraPanel）—— 左面板。
+采集控制面板（CapturePanel）—— 右面板 Tab。
 
 功能：
-  - 设备列表：QListWidget 显示枚举到的相机（SN + 型号），支持多选；
-  - 添加相机：选中设备 →「添加选中相机」→ 通知主窗口动态生成 CameraPreviewCard；
-  - 相机卡片容器：QScrollArea + QVBoxLayout（卡片由主窗口创建后挂入）；
   - 采集控制：拍摄所有相机 / 连续拍摄（间隔定时）/ 拍摄参数应用；
   - 离线会话：保存当前帧到会话 / 保存会话 / 加载会话 / 批量检测 / 批量标定。
 
@@ -26,14 +23,11 @@ from PySide6.QtWidgets import (
 from ..icons import icon_text, apply_icon, make_group_box, apply_group_icon
 
 
-class CameraPanel(QWidget):
-    """相机管理 + 采集控制面板。"""
+class CapturePanel(QWidget):
+    """采集控制 + 离线会话面板。"""
 
-    refresh_devices_requested = Signal()          # 查找设备
-    cameras_added = Signal(list)                  # 选中的设备索引列表
-    camera_remove_requested = Signal(str)         # 移除已添加相机 camera_id
-    auto_configure_network_requested = Signal(list)  # 对指定设备索引自动配置 IP（空列表=所有）
-    capture_all_requested = Signal()              # 拍摄所有相机
+    capture_all_requested = Signal()              # 拍摄所有相机（同步软触发）
+    capture_sequential_requested = Signal()       # 分开拍摄所有相机（串行触发）
     continuous_capture_toggled = Signal(bool, int)  # (开启, 间隔ms)
     capture_params_changed = Signal(dict)         # 拍摄参数
     save_frame_to_session_requested = Signal()    # 保存当前帧到会话
@@ -54,63 +48,22 @@ class CameraPanel(QWidget):
         lo.setContentsMargins(4, 4, 4, 4)
         lo.setSpacing(6)
 
-        # ---- 设备列表 ----
-        self.grp_devices = make_group_box("device_list", "📷 设备列表")
-        dev_lo = QVBoxLayout(self.grp_devices)
-        apply_group_icon(self.grp_devices)
-
-        self.device_list = QListWidget()
-        self.device_list.setSelectionMode(QAbstractItemView.MultiSelection)
-        self.device_list.setMaximumHeight(140)
-        dev_lo.addWidget(self.device_list)
-
-        dev_btn_lo = QHBoxLayout()
-        self.btn_refresh = QPushButton(icon_text("search", "🔍 查找设备"))
-        self.btn_refresh.setObjectName("primaryButton")
-        self.btn_refresh.clicked.connect(self.refresh_devices_requested.emit)
-        apply_icon(self.btn_refresh, "search")
-        dev_btn_lo.addWidget(self.btn_refresh)
-
-        self.btn_add = QPushButton(icon_text("add", "➕ 添加选中相机"))
-        self.btn_add.setObjectName("successButton")
-        self.btn_add.clicked.connect(self._on_add_selected)
-        apply_icon(self.btn_add, "add")
-        dev_btn_lo.addWidget(self.btn_add)
-        dev_lo.addLayout(dev_btn_lo)
-
-        self.btn_auto_ip = QPushButton(icon_text("network", "⚡ 自动配置 IP"))
-        self.btn_auto_ip.setObjectName("primaryButton")
-        self.btn_auto_ip.setEnabled(False)
-        self.btn_auto_ip.setToolTip("对选中的网口相机一键配置 IP；未选中则对所有网口相机配置")
-        self.btn_auto_ip.clicked.connect(self._on_auto_configure_network)
-        apply_icon(self.btn_auto_ip, "network")
-        dev_lo.addWidget(self.btn_auto_ip)
-        lo.addWidget(self.grp_devices)
-
-        # ---- 已添加相机（紧凑列表，卡片在中央网格）----
-        self.grp_list = make_group_box("added_cameras", "🎛 已添加相机")
-        list_lo = QVBoxLayout(self.grp_list)
-        apply_group_icon(self.grp_list)
-        self.list_cameras = QListWidget()
-        self.list_cameras.setSelectionMode(QAbstractItemView.SingleSelection)
-        list_lo.addWidget(self.list_cameras)
-        self.btn_remove = QPushButton(icon_text("disconnect", "✖ 移除选中相机"))
-        self.btn_remove.setObjectName("dangerButton")
-        self.btn_remove.clicked.connect(self._on_remove_selected)
-        apply_icon(self.btn_remove, "disconnect")
-        list_lo.addWidget(self.btn_remove)
-        lo.addWidget(self.grp_list, 1)
-
         # ---- 采集控制 ----
         self.grp_capture = make_group_box("camera", "📸 采集控制")
         cap_lo = QVBoxLayout(self.grp_capture)
         apply_group_icon(self.grp_capture)
 
-        self.btn_capture_all = QPushButton(icon_text("capture", "📸 拍摄所有相机（同步软触发）"))
+        self.btn_capture_all = QPushButton(icon_text("capture", "📸 同步拍摄（所有相机同时触发）"))
         self.btn_capture_all.setObjectName("primaryButton")
         self.btn_capture_all.clicked.connect(self.capture_all_requested.emit)
         apply_icon(self.btn_capture_all, "capture", size=20)
         cap_lo.addWidget(self.btn_capture_all)
+
+        self.btn_capture_seq = QPushButton(icon_text("capture", "⏭ 分开拍摄（相机依次触发）"))
+        self.btn_capture_seq.setObjectName("primaryButton")
+        self.btn_capture_seq.clicked.connect(self.capture_sequential_requested.emit)
+        apply_icon(self.btn_capture_seq, "capture", size=20)
+        cap_lo.addWidget(self.btn_capture_seq)
 
         cont_lo = QHBoxLayout()
         self.btn_continuous = QPushButton("▶ 连续拍摄")
@@ -187,65 +140,7 @@ class CameraPanel(QWidget):
         self.lbl_session.setWordWrap(True)
         off_lo.addWidget(self.lbl_session)
         lo.addWidget(self.grp_offline)
-
-    # ------------------------------------------------------------------
-    # 设备列表
-    # ------------------------------------------------------------------
-    def set_devices(self, device_descs: List[str]):
-        """填充枚举到的设备列表（每项携带索引）。"""
-        self.device_list.clear()
-        for i, desc in enumerate(device_descs):
-            item = QListWidgetItem(f"[{i}] {desc}")
-            item.setData(Qt.UserRole, i)
-            self.device_list.addItem(item)
-
-    def device_count(self) -> int:
-        return self.device_list.count()
-
-    def _on_add_selected(self):
-        indices = [it.data(Qt.UserRole) for it in self.device_list.selectedItems()]
-        if indices:
-            self.cameras_added.emit(sorted(indices))
-
-    def _on_auto_configure_network(self):
-        """发送自动配置 IP 请求：选中设备索引，未选中则空列表（表示全部）。"""
-        indices = [it.data(Qt.UserRole) for it in self.device_list.selectedItems()]
-        self.auto_configure_network_requested.emit(sorted(indices))
-
-    def set_auto_configure_enabled(self, enabled: bool):
-        """有网口设备时启用自动配置 IP 按钮。"""
-        self.btn_auto_ip.setEnabled(enabled)
-
-    # ------------------------------------------------------------------
-    # 已添加相机列表（预览卡片在中央网格，此处为紧凑管理列表）
-    # ------------------------------------------------------------------
-    def add_camera_entry(self, camera_id: str, desc: str = ""):
-        text = f"{camera_id}  {desc}" if desc else camera_id
-        item = QListWidgetItem(text)
-        item.setData(Qt.UserRole, camera_id)
-        self.list_cameras.addItem(item)
-
-    def remove_camera_entry(self, camera_id: str):
-        for i in range(self.list_cameras.count()):
-            if self.list_cameras.item(i).data(Qt.UserRole) == camera_id:
-                self.list_cameras.takeItem(i)
-                return
-
-    def update_camera_entry(self, camera_id: str, desc: str):
-        for i in range(self.list_cameras.count()):
-            if self.list_cameras.item(i).data(Qt.UserRole) == camera_id:
-                self.list_cameras.item(i).setText(f"{camera_id}  {desc}")
-                return
-
-    @property
-    def camera_ids(self) -> List[str]:
-        return [self.list_cameras.item(i).data(Qt.UserRole)
-                for i in range(self.list_cameras.count())]
-
-    def _on_remove_selected(self):
-        item = self.list_cameras.currentItem()
-        if item is not None:
-            self.camera_remove_requested.emit(item.data(Qt.UserRole))
+        lo.addStretch(1)
 
     # ------------------------------------------------------------------
     # 采集控制
@@ -274,6 +169,7 @@ class CameraPanel(QWidget):
     def set_capture_enabled(self, enabled: bool):
         """无已连接相机时禁用拍摄按钮。"""
         self.btn_capture_all.setEnabled(enabled)
+        self.btn_capture_seq.setEnabled(enabled)
         self.btn_continuous.setEnabled(enabled)
         self.btn_apply_params.setEnabled(enabled)
 

@@ -216,13 +216,13 @@ class CameraPreviewCard(QFrame):
         self.lbl_info.setAlignment(Qt.AlignCenter)
         lo.addWidget(self.lbl_info)
 
-        # 按钮行：拍摄 / 断开
+        # 按钮行：预览 / 断开
         btn_lo = QHBoxLayout()
-        self.btn_capture = QPushButton(icon_text("capture", "📸 拍摄"))
+        self.btn_capture = QPushButton(icon_text("preview", "👁 预览"))
         self.btn_capture.setObjectName("primaryButton")
         self.btn_capture.setEnabled(False)
         self.btn_capture.clicked.connect(self._on_capture_button_clicked)
-        apply_icon(self.btn_capture, "capture")
+        apply_icon(self.btn_capture, "preview")
         btn_lo.addWidget(self.btn_capture)
 
         self.btn_disconnect = QPushButton(icon_text("disconnect", "✖ 断开"))

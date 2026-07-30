@@ -642,7 +642,8 @@ oy = (img_size[1] - (4 - 0.5) * spacing) // 2
 img_pts = []
 cam_pts = []
 z_cam = 500.0
-for j in range(11 - 1, -1, -1):  # 列：从右到左，与 OpenCV / objp 一致
+# 列优先：从右到左 11 列，每列从上到下 4 行（与 OpenCV 返回顺序一致）
+for j in range(11 - 1, -1, -1):  # 列：从右到左
     for i in range(4):            # 行：从上到下
         x_img = ox + j * spacing
         y_img = oy + (i + 0.5 * (j % 2)) * spacing

@@ -28,6 +28,17 @@ except ImportError:
     RVC = None  # 无 SDK 环境：连接/拍摄一律返回失败
 
 
+def _decode_network_bytes(b):
+    """把 GetNetworkConfig 返回的 bytes 解码为字符串（去除尾空）。"""
+    if b is None:
+        return ""
+    try:
+        s = b.decode("ascii", errors="ignore").split("\x00")[0]
+        return (s or "").strip()
+    except Exception:
+        return ""
+
+
 # ---------------------------------------------------------------------------
 # 单相机控制器（轻量封装，N 台直接实例化）
 # ---------------------------------------------------------------------------
@@ -410,6 +421,132 @@ class CameraManager:
         """断开所有相机。"""
         for cam in self._cameras.values():
             cam.disconnect()
+
+    # ------------------------------------------------------------------
+    # 网口相机网络配置
+    # ------------------------------------------------------------------
+    def find_gige_devices(self) -> list:
+        """仅枚举 GigE 网口相机。无 SDK 环境返回空列表。"""
+        if RVC is None:
+            return []
+        try:
+            ret, devices = RVC.SystemListDevices(RVC.SystemListDeviceTypeEnum.GigE)
+            return devices if devices else []
+        except Exception as e:
+            logger.warning(f"枚举 GigE 设备失败: {e}")
+            return []
+
+    def get_device_network_config(self, device_index: int,
+                                  network_device=RVC.NetworkDevice.NetworkDevice_LightMachine
+                                  if RVC is not None else None) -> Tuple[bool, dict, str]:
+        """获取指定 GigE 设备的网络配置。
+
+        Returns:
+            (success, config_dict, message)
+            config_dict 含: type('DHCP'/'STATIC'), ip, netmask, gateway, status(0=OK...)
+        """
+        if RVC is None:
+            return False, {}, "PyRVC 未安装"
+        devices = self.find_gige_devices()
+        if device_index >= len(devices):
+            return False, {}, f"GigE 设备索引 {device_index} 越界"
+        dev = devices[device_index]
+        try:
+            net_type, ip_b, nm_b, gw_b, status = dev.GetNetworkConfig(network_device)
+            ip = _decode_network_bytes(ip_b)
+            nm = _decode_network_bytes(nm_b)
+            gw = _decode_network_bytes(gw_b)
+            cfg = {
+                'type': 'STATIC' if net_type == RVC.NetworkType.NetworkType_STATIC else 'DHCP',
+                'ip': ip,
+                'netmask': nm,
+                'gateway': gw,
+                'status': int(status),
+            }
+            return True, cfg, "获取成功"
+        except Exception as e:
+            return False, {}, f"获取网络配置失败: {e}"
+
+    def auto_configure_network(self, device_indices: Optional[List[int]] = None
+                               ) -> List[Tuple[int, bool, str]]:
+        """对指定设备一键自动配置 IP（仅 GigE 设备生效，USB 设备自动跳过）。
+
+        Args:
+            device_indices: find_devices() 返回的索引列表（可能包含 USB + GigE 混合）；
+                            None 或空列表表示所有 GigE 设备。
+
+        Returns:
+            结果列表，每项为 (device_index, success, message)。
+        """
+        if RVC is None:
+            return [(-1, False, "PyRVC 未安装")]
+
+        # 枚举所有设备，建立 GigE 设备索引映射
+        all_devices = self.find_devices()
+        gige_devices = self.find_gige_devices()
+        if not gige_devices:
+            return [(-1, False, "未找到 GigE 设备")]
+
+        # 构建 all_devices 索引 → gige_devices 索引的映射（通过 SN 匹配）
+        gige_sn_to_idx = {}
+        for gidx, dev in enumerate(gige_devices):
+            try:
+                ok, info = dev.GetDeviceInfo()
+                if ok:
+                    gige_sn_to_idx[getattr(info, 'sn', '')] = gidx
+            except Exception:
+                pass
+
+        all_sn_to_gige_idx = {}
+        for aidx, dev in enumerate(all_devices):
+            try:
+                ok, info = dev.GetDeviceInfo()
+                if ok:
+                    sn = getattr(info, 'sn', '')
+                    if sn in gige_sn_to_idx:
+                        all_sn_to_gige_idx[aidx] = gige_sn_to_idx[sn]
+            except Exception:
+                pass
+
+        # 确定要处理的目标（all_devices 索引）
+        if device_indices:
+            targets = device_indices
+        else:
+            targets = list(all_sn_to_gige_idx.keys())
+
+        results: List[Tuple[int, bool, str]] = []
+        for aidx in targets:
+            if aidx < 0 or aidx >= len(all_devices):
+                results.append((aidx, False, f"索引 {aidx} 越界"))
+                continue
+            gidx = all_sn_to_gige_idx.get(aidx)
+            if gidx is None:
+                # USB 设备或其他非 GigE 设备，跳过并提示
+                try:
+                    ok, info = all_devices[aidx].GetDeviceInfo()
+                    name = getattr(info, 'name', '?') if ok else '?'
+                    sn = getattr(info, 'sn', '?') if ok else '?'
+                except Exception:
+                    name, sn = '?', '?'
+                results.append((aidx, False, f"{name} (SN:{sn}) 非 GigE 设备，跳过 IP 配置"))
+                continue
+
+            dev = gige_devices[gidx]
+            try:
+                ok, info = dev.GetDeviceInfo()
+                sn = getattr(info, 'sn', '?') if ok else '?'
+            except Exception:
+                sn = '?'
+            try:
+                ret = dev.AutoConfigureNetwork()
+                if ret == 0:
+                    results.append((aidx, True, f"SN:{sn} 自动配置 IP 成功"))
+                else:
+                    err = RVC.GetLastErrorMessage() if hasattr(RVC, 'GetLastErrorMessage') else ""
+                    results.append((aidx, False, f"SN:{sn} 自动配置 IP 失败 (code={ret}) {err}"))
+            except Exception as e:
+                results.append((aidx, False, f"SN:{sn} 自动配置异常: {e}"))
+        return results
 
     # ------------------------------------------------------------------
     # 拍摄（软触发）

@@ -154,9 +154,19 @@ class CalibrationPanel(QWidget):
         self.table_pairs = QTableWidget(0, 6)
         self.table_pairs.setHorizontalHeaderLabels(
             ["Pair", "RMS(mm)", "平均(mm)", "内点数", "内点率", "质量"])
-        self.table_pairs.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        # 前 5 列按内容自适应，最后一列“质量”拉伸占满剩余空间，避免全部 Stretch 导致列宽过窄
+        header = self.table_pairs.horizontalHeader()
+        for col in range(5):
+            header.setSectionResizeMode(col, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(5, QHeaderView.Stretch)
+        # 设置最小列宽保证 RMS/平均/内点率数字不被压缩
+        self.table_pairs.setColumnWidth(1, 80)
+        self.table_pairs.setColumnWidth(2, 80)
+        self.table_pairs.setColumnWidth(4, 70)
         self.table_pairs.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table_pairs.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table_pairs.setMinimumHeight(120)
+        self.table_pairs.verticalHeader().setDefaultSectionSize(28)
         self.table_pairs.itemSelectionChanged.connect(self._on_pair_selected)
         res_lo.addWidget(self.table_pairs)
         lo.addWidget(self.grp_result, 1)
@@ -167,9 +177,11 @@ class CalibrationPanel(QWidget):
         apply_group_icon(self.grp_matrix)
         self.table_matrix = QTableWidget(4, 4)
         self.table_matrix.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.table_matrix.verticalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table_matrix.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
+        self.table_matrix.verticalHeader().setDefaultSectionSize(28)
         self.table_matrix.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.table_matrix.setMaximumHeight(160)
+        self.table_matrix.setMinimumHeight(145)
+        self.table_matrix.setMaximumHeight(180)
         mat_lo.addWidget(self.table_matrix)
         lo.addWidget(self.grp_matrix)
 

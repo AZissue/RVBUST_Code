@@ -46,6 +46,17 @@ app.setStyleSheet(STYLESHEET)
 # ------------------------------------------------------------------
 # 工具函数
 # ------------------------------------------------------------------
+def wait_workers(win, timeout=300):
+    """等待主窗口后台 WorkerThread 全部完成（耗时操作已改为 QThread 异步执行）。"""
+    import time
+    deadline = time.time() + timeout
+    while getattr(win, '_workers', None):
+        assert time.time() < deadline, "后台任务超时未完成"
+        app.processEvents()
+        time.sleep(0.005)
+    app.processEvents()
+
+
 def rotz(deg: float) -> np.ndarray:
     a = np.radians(deg)
     return np.array([[np.cos(a), -np.sin(a), 0],
@@ -150,7 +161,7 @@ print("\n[1] 模拟 3 相机连接")
 window = MainWindow()
 window._on_add_cameras([0, 1, 2])  # 无真实设备：连接失败但卡片照常生成
 assert list(window.cards.keys()) == CAM_IDS, f"相机卡片异常: {list(window.cards.keys())}"
-assert not window.camera_panel.btn_save_frame.isEnabled(), "拍摄前保存帧按钮应禁用"
+assert not window.capture_panel.btn_save_frame.isEnabled(), "拍摄前保存帧按钮应禁用"
 print(f"  相机 ID: {CAM_IDS}（无真实设备，卡片已生成）")
 print("  [OK] 3 相机模拟连接通过")
 
@@ -175,7 +186,7 @@ for i in range(N_CAPTURES):
         window._store_frame(cid, frame)
     # 每拍完一组立即保存到会话（模拟真实工作流）
     window._on_save_frame_to_session()
-assert window.camera_panel.btn_save_frame.isEnabled(), "拍摄后保存帧按钮应启用"
+assert window.capture_panel.btn_save_frame.isEnabled(), "拍摄后保存帧按钮应启用"
 print(f"  {N_CAPTURES} 拍 × {len(CAM_IDS)} 相机已拍摄并保存")
 
 print("\n[3] 校验离线会话目录结构")
@@ -224,6 +235,7 @@ for cid, frames in loaded.items():
         table[os.path.normpath(f.offline_pointmap_path)] = markers_truth[(f.frame_id, cid)]
 window.marker_detector = FakeDetector(table)
 window._on_batch_detect()
+wait_workers(window)  # 批量检测已改后台执行
 for cid, frames in loaded.items():
     for f in frames:
         assert len(f.markers) == N_MARKERS, \
@@ -241,6 +253,7 @@ print("  [OK] 批量检测通过（结果已回写帧 meta.json）")
 print("\n[6] 批量标定会话（多帧平均）")
 assert window.calibration_panel.get_reference() == REF_ID
 window._on_batch_calibrate()
+wait_workers(window)  # 批量标定已改后台执行
 engine = window.calibration_engine
 assert len(engine.pair_results) == 2, f"应有 2 对标定结果: {list(engine.pair_results.keys())}"
 for cid in ("cam1", "cam2"):
@@ -268,6 +281,7 @@ print("  [OK] 批量标定通过（多帧平均精度满足要求）")
 # ------------------------------------------------------------------
 print("\n[7] 批量拼接会话")
 window._on_stitch_session()
+wait_workers(window)  # 批量拼接已改后台执行
 merged = window.viewer_3d._pcd_merged
 assert merged is not None, "3D 查看器应收到批量拼接点云"
 expect_pts = N_CAPTURES * len(CAM_IDS) * N_OBJ_PTS

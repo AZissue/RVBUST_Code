@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import os
 import time
-import hashlib
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -25,7 +24,7 @@ from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QPushButton, QLabel, QTabWidget, QScrollArea, QTextEdit,
-    QMessageBox, QFileDialog, QSplitter, QSizePolicy,
+    QMessageBox, QFileDialog, QSplitter, QSizePolicy, QDockWidget,
 )
 
 from core.camera_manager import CameraManager, SingleCameraController
@@ -40,8 +39,11 @@ from core.utils import logger
 
 from .camera_card import CameraPreviewCard
 from .viewer_3d import EmbeddedPointCloudViewer
+from .loading_overlay import LoadingOverlay
+from .worker_thread import WorkerThread
 from .icons import get_icon, has_icon, icon_text, apply_icon
-from .panels.camera_panel import CameraPanel
+from .panels.device_panel import DevicePanel
+from .panels.capture_panel import CapturePanel
 from .panels.calibration_panel import CalibrationPanel
 from .panels.stitch_panel import StitchPanel
 from .panels.station_panel import StationPanel, station_label
@@ -178,6 +180,15 @@ class CollapsibleLogPanel(QWidget):
 
     def _toggle(self):
         self._expanded = not self._expanded
+        self.content.setVisible(self._expanded)
+        self.btn_toggle.setText("▼ 日志" if self._expanded else "▶ 日志")
+        self.toggled.emit(self._expanded)
+
+    def set_expanded(self, expanded: bool):
+        """外部控制折叠/展开状态（不重复发信号）。"""
+        if self._expanded == expanded:
+            return
+        self._expanded = expanded
         self.content.setVisible(self._expanded)
         self.btn_toggle.setText("▼ 日志" if self._expanded else "▶ 日志")
         self.toggled.emit(self._expanded)
@@ -426,6 +437,7 @@ class MainWindow(QMainWindow):
         self._process_params: dict = {}            # 拼接后处理参数（面板信号更新）
         self._last_merged_pcd = None               # 最近一次拼接结果（自动参数数据源）
         self._last_stitch_input_points = 0         # 最近一次在线拼接的原始点数（过滤保护）
+        self._workers: List[WorkerThread] = []     # 运行中的后台任务（测试可据此等待）
         self._capture_timer = QTimer(self)
         self._capture_timer.timeout.connect(self._on_capture_all)
         # 当前相机（取景）持续 2D 预览定时器
@@ -454,16 +466,14 @@ class MainWindow(QMainWindow):
         # 主三栏（水平分割）
         main_splitter = QSplitter(Qt.Horizontal)
 
-        # 左：相机面板（Tab1 多相机 / Tab2 单相机站位）
-        # Tab1 内容较高（minimumSizeHint ~920px），套 QScrollArea 压低最小高度，
-        # 否则底部日志的垂直 QSplitter 会把 minimumSizeHint 当硬下限而无法拖动
+        # 左：设备管理（Tab1）/ 单相机站位（Tab2）
         self.left_tabs = QTabWidget()
-        self.camera_panel = CameraPanel()
+        self.device_panel = DevicePanel()
         self.station_panel = StationPanel()
-        cam_scroll = QScrollArea()
-        cam_scroll.setWidgetResizable(True)
-        cam_scroll.setWidget(self.camera_panel)
-        self.left_tabs.addTab(cam_scroll, icon_text("multicam", "🎥 多相机"))
+        dev_scroll = QScrollArea()
+        dev_scroll.setWidgetResizable(True)
+        dev_scroll.setWidget(self.device_panel)
+        self.left_tabs.addTab(dev_scroll, icon_text("multicam", "🎥 设备管理"))
         self.left_tabs.addTab(self.station_panel, icon_text("station", "📍 单相机站位"))
         if has_icon("multicam"):
             self.left_tabs.setTabIcon(0, get_icon("multicam"))
@@ -495,38 +505,85 @@ class MainWindow(QMainWindow):
         self._viewer_expanded_sizes = None
         self.viewer_3d.collapse_toggled.connect(self._on_viewer_collapse_toggled)
 
-        # 右：标定 / 拼接 Tab
+        # 右：采集 / 标定 / 拼接 Tab（内容较高，套 QScrollArea 防压缩重叠）
         self.right_tabs = QTabWidget()
+        self.capture_panel = CapturePanel()
         self.calibration_panel = CalibrationPanel()
         self.stitch_panel = StitchPanel()
-        self.right_tabs.addTab(self.calibration_panel, icon_text("calibrate", "📐 标定"))
-        self.right_tabs.addTab(self.stitch_panel, icon_text("link", "🔗 拼接"))
+        cap_scroll = QScrollArea()
+        cap_scroll.setWidgetResizable(True)
+        cap_scroll.setWidget(self.capture_panel)
+        cal_scroll = QScrollArea()
+        cal_scroll.setWidgetResizable(True)
+        cal_scroll.setWidget(self.calibration_panel)
+        st_scroll = QScrollArea()
+        st_scroll.setWidgetResizable(True)
+        st_scroll.setWidget(self.stitch_panel)
+        self.right_tabs.addTab(cap_scroll, icon_text("capture", "📸 采集"))
+        self.right_tabs.addTab(cal_scroll, icon_text("calibrate", "📐 标定"))
+        self.right_tabs.addTab(st_scroll, icon_text("link", "🔗 拼接"))
+        if has_icon("capture"):
+            self.right_tabs.setTabIcon(0, get_icon("capture"))
         if has_icon("calibrate"):
-            self.right_tabs.setTabIcon(0, get_icon("calibrate"))
+            self.right_tabs.setTabIcon(1, get_icon("calibrate"))
         if has_icon("link"):
-            self.right_tabs.setTabIcon(1, get_icon("link"))
+            self.right_tabs.setTabIcon(2, get_icon("link"))
         self.right_tabs.setMinimumWidth(380)
         main_splitter.addWidget(self.right_tabs)
 
-        # 左 350 / 中 1100（中央加宽，3D 区更大）/ 右 400
-        main_splitter.setSizes([350, 1100, 400])
+        # 左 350 / 中 1100（中央加宽，3D 区更大）/ 右 380
+        main_splitter.setSizes([350, 1100, 380])
         main_splitter.setCollapsible(0, False)
 
         # 底部：可折叠日志面板（与主三栏垂直 QSplitter，高度可拖动，无硬上限）
         self.log_panel = CollapsibleLogPanel()
-        self.log_panel.setMinimumHeight(30)
+        # 展开时最小 200（标题栏 28 + 提示区约 100 + 日志区约 70）
+        self.log_panel.setMinimumHeight(200)
 
         self.outer_splitter = QSplitter(Qt.Vertical)
         self.outer_splitter.addWidget(main_splitter)
         self.outer_splitter.addWidget(self.log_panel)
-        self.outer_splitter.setSizes([780, 160])
+        # 主区 700 / 日志区 200：初始足够显示标题栏 + 2~3 行日志，折叠/展开由按钮控制
+        self.outer_splitter.setSizes([700, 200])
+        self.outer_splitter.setStretchFactor(0, 1)
+        self.outer_splitter.setStretchFactor(1, 0)
         root_lo.addWidget(self.outer_splitter)
 
         # 日志折叠 = 最小化到底部标题栏：释放空间给主内容区，展开时恢复原高度
         self._log_expanded_sizes = None
         self.log_panel.toggled.connect(self._on_log_toggled)
 
+        # 全局加载遮罩（耗时操作期间阻止其他操作）
+        self._loading = LoadingOverlay(self)
+
         self.statusBar().showMessage("就绪")
+
+    def _show_loading(self, text: str = "处理中，请稍候..."):
+        """显示全局加载遮罩。"""
+        self._loading.show_message(text)
+
+    def _hide_loading(self):
+        """隐藏全局加载遮罩。"""
+        self._loading.hide_overlay()
+
+    def _run_background(self, work, on_done) -> WorkerThread:
+        """后台执行 work()，完成后主线程回调 on_done(result, error)。
+
+        线程约束：work 在 WorkerThread 中运行，禁止操作任何 UI（QWidget），
+        只做计算并以返回值带出数据；on_done 经 finished 信号跨线程排队到
+        主线程执行，负责日志与 UI 更新。
+        """
+        worker = WorkerThread(work)
+        self._workers.append(worker)
+
+        def _done(result, error):
+            if worker in self._workers:
+                self._workers.remove(worker)
+            on_done(result, error)
+
+        worker.finished.connect(_done)
+        worker.start()
+        return worker
 
     def _on_log_toggled(self, expanded: bool):
         """日志折叠时把垂直 Splitter 压到只剩标题栏（最小化到底部栏），
@@ -535,11 +592,13 @@ class MainWindow(QMainWindow):
         if not expanded:
             # 记录当前高度分配，折叠为标题栏高度
             self._log_expanded_sizes = self.outer_splitter.sizes()
+            self.log_panel.setMinimumHeight(header_h)
             self.log_panel.setMaximumHeight(header_h)
             total = sum(self._log_expanded_sizes)
             self.outer_splitter.setSizes([total - header_h, header_h])
         else:
             # 解除高度限制并恢复
+            self.log_panel.setMinimumHeight(200)
             self.log_panel.setMaximumHeight(16777215)  # QWIDGETSIZE_MAX
             if self._log_expanded_sizes:
                 self.outer_splitter.setSizes(self._log_expanded_sizes)
@@ -571,18 +630,22 @@ class MainWindow(QMainWindow):
         # 左侧 Tab 切换同步标定面板
         self.left_tabs.currentChanged.connect(self._on_left_tab_changed)
 
-        p = self.camera_panel
+        p = self.device_panel
         p.refresh_devices_requested.connect(self._on_refresh_devices)
         p.cameras_added.connect(self._on_add_cameras)
         p.camera_remove_requested.connect(self._on_remove_camera)
-        p.capture_all_requested.connect(self._on_capture_all)
-        p.continuous_capture_toggled.connect(self._on_continuous_toggled)
-        p.capture_params_changed.connect(self._on_capture_params)
-        p.save_frame_to_session_requested.connect(self._on_save_frame_to_session)
-        p.save_session_requested.connect(self._on_save_session)
-        p.load_session_requested.connect(self._on_load_session)
-        p.batch_detect_requested.connect(self._on_batch_detect)
-        p.batch_calibrate_requested.connect(self._on_batch_calibrate)
+        p.auto_configure_network_requested.connect(self._on_auto_configure_network)
+
+        cp = self.capture_panel
+        cp.capture_all_requested.connect(self._on_capture_all)
+        cp.capture_sequential_requested.connect(self._on_capture_sequential)
+        cp.continuous_capture_toggled.connect(self._on_continuous_toggled)
+        cp.capture_params_changed.connect(self._on_capture_params)
+        cp.save_frame_to_session_requested.connect(self._on_save_frame_to_session)
+        cp.save_session_requested.connect(self._on_save_session)
+        cp.load_session_requested.connect(self._on_load_session)
+        cp.batch_detect_requested.connect(self._on_batch_detect)
+        cp.batch_calibrate_requested.connect(self._on_batch_calibrate)
 
         st = self.station_panel
         st.refresh_devices_requested.connect(self._on_station_refresh_devices)
@@ -645,9 +708,12 @@ class MainWindow(QMainWindow):
         try:
             descs = self._enumerate_devices()
             self._device_descs = descs
-            self.camera_panel.set_devices(descs)
+            self.device_panel.set_devices(descs)
+            # 有 GigE 设备时才启用自动配置 IP 按钮
+            gige_count = len(self.camera_manager.find_gige_devices())
+            self.device_panel.set_auto_configure_enabled(gige_count > 0)
             if descs:
-                self._log(f"[INFO] 查找到 {len(descs)} 台设备: {'; '.join(descs)}")
+                self._log(f"[INFO] 查找到 {len(descs)} 台设备（含 {gige_count} 台 GigE）: {'; '.join(descs)}")
                 self.log_panel.set_status(f"查找到 {len(descs)} 台设备，可多选添加")
             else:
                 self._log("[WARN] 未找到任何设备（检查连接或 SDK）")
@@ -655,40 +721,100 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self._log(f"[ERROR] 查找设备失败: {e}")
 
+    def _on_auto_configure_network(self, device_indices: List[int]):
+        """一键自动配置 GigE 相机 IP。"""
+        targets = device_indices if device_indices else None
+        target_desc = f"选中 {len(device_indices)} 台" if device_indices else "所有 GigE"
+        self._log(f"[INFO] 开始对 {target_desc} 设备进行自动 IP 配置...")
+        self._show_loading("正在自动配置相机 IP...")
+
+        def _work():
+            return self.camera_manager.auto_configure_network(targets)
+
+        def _on_done(results, error):
+            self._hide_loading()
+            if error:
+                self._log(f"[ERROR] 自动配置 IP 失败: {error}")
+                return
+            any_ok = False
+            for idx, ok, msg in results:
+                level = "SUCCESS" if ok else "WARN"
+                self._log(f"[{level}] [{idx}] {msg}")
+                any_ok = any_ok or ok
+            if any_ok:
+                # 自动配置后设备 IP 可能变化，需要重新枚举
+                self._log("[INFO] IP 配置完成，3 秒后重新枚举设备...")
+                QTimer.singleShot(3000, self._on_refresh_devices)
+
+        self._run_background(_work, _on_done)
+
     def _on_add_cameras(self, device_indices: List[int]):
-        """添加选中设备为新相机：注册 + 连接 + 生成预览卡片。"""
+        """添加选中设备为新相机：注册 + 后台连接 + 生成预览卡片。"""
+        if not device_indices:
+            return
+        self._show_loading(f"正在连接 {len(device_indices)} 台相机...")
+        self._pending_camera_cards = []
+
+        # 先创建卡片（主线程），连接放后台
         for idx in device_indices:
-            # 预检：同一物理设备不能重复添加（索引级快速检查）
             holder = self.camera_manager.is_device_index_connected(idx)
             if holder is not None:
                 self._log(f"[WARN] 设备 [{idx}] 已被相机 {holder} 连接，"
                           "同一台物理相机不能重复添加，已跳过")
                 continue
-
             camera_id = self._next_camera_id()
             if not self.camera_manager.add_camera(camera_id):
                 continue
-
-            # 创建卡片（无论连接成功与否，便于离线查看 / 重试）
             card = CameraPreviewCard(camera_id)
             card.capture_requested.connect(self._on_capture_single)
             card.disconnect_requested.connect(self._on_remove_camera)
+            card._is_preview_mode = True
+            card._update_preview_button()
+            card.preview_toggled.connect(self._on_preview_toggled)
             self.cards[camera_id] = card
+            self._pending_camera_cards.append((camera_id, idx, card))
+            # 先添加到设备列表（状态待连接后更新）
+            self.device_panel.add_camera_entry(camera_id, "连接中...")
 
-            # 尝试连接
-            ok, msg = self.camera_manager.connect(camera_id, idx)
-            if ok:
-                card.set_connected(True)
-                self._log(f"[SUCCESS] 相机 {camera_id} 已连接: {msg}")
-                self.camera_panel.add_camera_entry(camera_id, msg)
-            else:
-                card.set_connected(False)
-                self._log(f"[WARN] 相机 {camera_id} 连接失败: {msg}")
-                self.camera_panel.add_camera_entry(camera_id, f"连接失败({msg})")
-
+        # 先更新布局（让卡片立即可见），连接结果后更新状态
         self._relayout_grid()
         self._sync_camera_lists()
         self._update_capture_enabled()
+
+        if not self._pending_camera_cards:
+            self._hide_loading()
+            return
+
+        # 后台逐台连接
+        def _connect_all():
+            results = []
+            for camera_id, idx, card in self._pending_camera_cards:
+                ok, msg = self.camera_manager.connect(camera_id, idx)
+                results.append((camera_id, idx, card, ok, msg))
+            return results
+
+        def _on_connect_done(results, error):
+            self._hide_loading()
+            if error:
+                self._log(f"[ERROR] 连接相机异常: {error}")
+                return
+            for camera_id, idx, card, ok, msg in results:
+                if ok:
+                    card.set_connected(True)
+                    self._log(f"[SUCCESS] 相机 {camera_id} 已连接: {msg}")
+                    self.device_panel.update_camera_entry(camera_id, msg)
+                else:
+                    card.set_connected(False)
+                    self._log(f"[WARN] 相机 {camera_id} 连接失败: {msg}")
+                    self.device_panel.update_camera_entry(camera_id, f"连接失败({msg})")
+            self._pending_camera_cards = []
+            # 连接完成后刷新拍摄按钮启用状态
+            self._update_capture_enabled()
+
+        from .worker_thread import WorkerThread
+        self._connect_worker = WorkerThread(_connect_all)
+        self._connect_worker.finished.connect(_on_connect_done)
+        self._connect_worker.start()
 
     def _next_camera_id(self) -> str:
         while True:
@@ -707,7 +833,7 @@ class MainWindow(QMainWindow):
         if card is not None:
             self.grid_layout.removeWidget(card)
             card.deleteLater()
-        self.camera_panel.remove_camera_entry(camera_id)
+        self.device_panel.remove_camera_entry(camera_id)
         self.viewer_3d.remove_camera(camera_id)
         self._relayout_grid()
         self._sync_camera_lists()
@@ -757,11 +883,11 @@ class MainWindow(QMainWindow):
 
     def _update_capture_enabled(self):
         has_connected = len(self.camera_manager.get_connected_ids()) > 0
-        self.camera_panel.set_capture_enabled(has_connected)
+        self.capture_panel.set_capture_enabled(has_connected)
         self.station_panel.set_capture_enabled(
             self.camera_manager.is_connected(self.PHYSICAL_ID))
         if not has_connected:
-            self.camera_panel.stop_continuous()
+            self.capture_panel.stop_continuous()
             self._capture_timer.stop()
 
     # ==================================================================
@@ -776,6 +902,29 @@ class MainWindow(QMainWindow):
         for cid, frame in frames.items():
             self._store_frame(cid, frame)
         self._log(f"[INFO] 拍摄完成: {len(frames)} 台相机 "
+                  f"(帧号 {frames[next(iter(frames))].frame_id})")
+
+    def _on_capture_sequential(self):
+        """分开拍摄所有已连接相机（串行触发，一台拍完再拍下一台）。"""
+        camera_ids = self.camera_manager.get_connected_ids()
+        if not camera_ids:
+            self._log("[WARN] 无已连接相机，无法分开拍摄")
+            return
+        self._log(f"[INFO] 开始分开拍摄 {len(camera_ids)} 台相机...")
+        frames = {}
+        for cid in camera_ids:
+            frame = self.camera_manager.capture(cid)
+            if frame is None:
+                self._log(f"[WARN] 相机 {cid} 拍摄失败，已跳过")
+                continue
+            frames[cid] = frame
+            self._log(f"[INFO] 相机 {cid} 拍摄完成")
+        if not frames:
+            self._log("[WARN] 分开拍摄失败：全部相机拍摄失败")
+            return
+        for cid, frame in frames.items():
+            self._store_frame(cid, frame)
+        self._log(f"[SUCCESS] 分开拍摄完成: {len(frames)}/{len(camera_ids)} 台相机成功 "
                   f"(帧号 {frames[next(iter(frames))].frame_id})")
 
     def _on_preview_toggled(self, camera_id: str, active: bool):
@@ -850,13 +999,20 @@ class MainWindow(QMainWindow):
         card = self.cards.get(camera_id)
         if card is not None:
             card.update_captured(frame, frame.markers)
-        self.camera_panel.set_save_frame_enabled(True)
+        self.capture_panel.set_save_frame_enabled(True)
+        # 单拍后自动在 3D 查看器中显示该相机点云（可选查看，不影响拼接流程）
+        try:
+            pcd = frame.load_pointcloud_o3d()
+            if pcd is not None and len(pcd.points) > 0:
+                self.viewer_3d.set_pointcloud(camera_id, pcd)
+        except Exception as e:
+            logger.warning(f"单拍点云加载到 3D 查看器失败: {e}")
 
     def _on_continuous_toggled(self, checked: bool, interval_ms: int):
         if checked:
             if not self.camera_manager.get_connected_ids():
                 self._log("[WARN] 无已连接相机，无法连续拍摄")
-                self.camera_panel.stop_continuous()
+                self.capture_panel.stop_continuous()
                 return
             self._capture_timer.start(interval_ms)
             self._log(f"[INFO] 连续拍摄已启动（间隔 {interval_ms} ms）")
@@ -892,44 +1048,73 @@ class MainWindow(QMainWindow):
         if not self.frames:
             self._log("[WARN] 无帧数据，请先拍摄")
             return
-        total = 0
         board_mode = getattr(self.marker_detector, 'is_board_mode', lambda: False)()
-        for cid, frame in self.frames.items():
-            markers = self.marker_detector.detect_3d(
-                frame.image_np,
-                pointmap=frame.pointmap,
-                rvc_image=frame.rvc_image,
-                offline_ply_path=frame.offline_pointmap_path,
-            )
-            frame.markers = markers
-            # 标定板模式：缓存位姿与规格到 FrameData
-            if board_mode:
-                br = self.marker_detector.last_board_result
-                if br is not None and br.get('success'):
-                    frame.board_pose = br.get('T_board_in_cam')
-                    frame.board_pattern = br.get('pattern_size')
-                    frame.board_pattern_name = br.get('pattern_name')
-                    frame.board_rms_mm = float(br.get('rms_mm', 0.0))
-                else:
-                    frame.board_pose = None
-                    frame.board_pattern = None
-                    frame.board_pattern_name = None
-                    frame.board_rms_mm = 0.0
-            total += len(markers)
-            card = self.cards.get(cid)
-            if card is not None:
-                card.update_frame(frame, markers)
-            if board_mode:
-                if frame.board_pattern_name:
-                    self._log(f"[INFO] 相机 {cid}: 检测到 {frame.board_pattern_name} 标定板，"
-                              f"{len(markers)} 个圆心")
-                else:
+        self._show_loading("正在检测标记...")
+
+        def _work():
+            # 后台只做检测计算；帧数据回写与卡片更新在主线程 _on_done 完成
+            results = []
+            for cid, frame in self.frames.items():
+                markers = self.marker_detector.detect_3d(
+                    frame.image_np,
+                    pointmap=frame.pointmap,
+                    rvc_image=frame.rvc_image,
+                    offline_ply_path=frame.offline_pointmap_path,
+                )
+                board_info = None
+                if board_mode:
                     br = self.marker_detector.last_board_result
-                    reason = br.get('message') if br else "未知原因"
-                    self._log(f"[WARN] 相机 {cid}: 标定板检测失败（{reason}）")
-            else:
-                self._log(f"[INFO] 相机 {cid}: 检测到 {len(markers)} 个编码圆（含 3D）")
-        self.log_panel.set_status(f"标记检测完成，共 {total} 个")
+                    if br is not None and br.get('success'):
+                        board_info = {
+                            'pose': br.get('T_board_in_cam'),
+                            'pattern': br.get('pattern_size'),
+                            'pattern_name': br.get('pattern_name'),
+                            'rms_mm': float(br.get('rms_mm', 0.0)),
+                        }
+                    else:
+                        board_info = {'fail_message': br.get('message') if br else "未知原因"}
+                results.append((cid, markers, board_info))
+            return results
+
+        def _on_done(results, error):
+            self._hide_loading()
+            if error:
+                self._log(f"[ERROR] 标记检测异常: {error}")
+                return
+            total = 0
+            for cid, markers, board_info in results:
+                frame = self.frames.get(cid)
+                if frame is None:
+                    continue
+                frame.markers = markers
+                # 标定板模式：缓存位姿与规格到 FrameData
+                if board_mode:
+                    if board_info and 'pose' in board_info:
+                        frame.board_pose = board_info['pose']
+                        frame.board_pattern = board_info['pattern']
+                        frame.board_pattern_name = board_info['pattern_name']
+                        frame.board_rms_mm = board_info['rms_mm']
+                    else:
+                        frame.board_pose = None
+                        frame.board_pattern = None
+                        frame.board_pattern_name = None
+                        frame.board_rms_mm = 0.0
+                total += len(markers)
+                card = self.cards.get(cid)
+                if card is not None:
+                    card.update_frame(frame, markers)
+                if board_mode:
+                    if frame.board_pattern_name:
+                        self._log(f"[INFO] 相机 {cid}: 检测到 {frame.board_pattern_name} 标定板，"
+                                  f"{len(markers)} 个圆心")
+                    else:
+                        reason = board_info.get('fail_message') if board_info else "未知原因"
+                        self._log(f"[WARN] 相机 {cid}: 标定板检测失败（{reason}）")
+                else:
+                    self._log(f"[INFO] 相机 {cid}: 检测到 {len(markers)} 个编码圆（含 3D）")
+            self.log_panel.set_status(f"标记检测完成，共 {total} 个")
+
+        self._run_background(_work, _on_done)
 
     def _on_calibrate_pair(self, ref_id: str, cam_id: str):
         """单帧标定一对相机（cam→ref），根据当前标记物类型自动分发。"""
@@ -939,50 +1124,55 @@ class MainWindow(QMainWindow):
             self._log(f"[WARN] 标定 {cam_id}→{ref_id}: 缺少帧数据，请先拍摄")
             return
 
-        if getattr(self.marker_detector, 'is_board_mode', lambda: False)():
-            self._on_calibrate_pair_board_pose(ref_id, cam_id, frame_ref, frame_cam)
-            return
-
-        if not frame_ref.markers or not frame_cam.markers:
+        board_mode = getattr(self.marker_detector, 'is_board_mode', lambda: False)()
+        if board_mode:
+            # 标定板位姿法：双视角拍同一块固定标定板求 cam→ref 外参
+            if frame_ref.board_pose is None or frame_cam.board_pose is None:
+                self._log(f"[WARN] 标定 {cam_id}→{ref_id}: 缺少标定板位姿，请先检测标记")
+                return
+            if frame_ref.board_pattern_name != frame_cam.board_pattern_name:
+                self._log(f"[WARN] 标定 {cam_id}→{ref_id}: 两个视角识别到的标定板规格不一致 "
+                          f"({frame_ref.board_pattern_name} vs {frame_cam.board_pattern_name})")
+                return
+        elif not frame_ref.markers or not frame_cam.markers:
             self._log(f"[WARN] 标定 {cam_id}→{ref_id}: 缺少标记数据，请先检测标记")
             return
-        result = self.calibration_engine.calibrate_pair(
-            ref_id, cam_id, frame_ref.markers, frame_cam.markers,
-            ransac_threshold=RANSAC_THRESHOLD_MM)
-        if result.get('success'):
-            self._log(f"[SUCCESS] 标定 {cam_id}→{ref_id}: "
-                      f"RMS {result['rms_mm']:.4f} mm, "
-                      f"内点 {result['inlier_count']}/{result['total_pairs']}")
-        else:
-            self._log(f"[ERROR] 标定 {cam_id}→{ref_id} 失败: {result.get('message')}")
-        self.calibration_panel.update_results(self.calibration_engine.pair_results)
+        self._show_loading(f"正在标定 {cam_id}→{ref_id}...")
 
-    def _on_calibrate_pair_board_pose(self, ref_id: str, cam_id: str,
-                                      frame_ref: 'FrameData', frame_cam: 'FrameData'):
-        """标定板位姿法：双视角拍同一块固定标定板求 cam→ref 外参。"""
-        if frame_ref.board_pose is None or frame_cam.board_pose is None:
-            self._log(f"[WARN] 标定 {cam_id}→{ref_id}: 缺少标定板位姿，请先检测标记")
-            return
-        if frame_ref.board_pattern_name != frame_cam.board_pattern_name:
-            self._log(f"[WARN] 标定 {cam_id}→{ref_id}: 两个视角识别到的标定板规格不一致 "
-                      f"({frame_ref.board_pattern_name} vs {frame_cam.board_pattern_name})")
-            return
-        result = self.calibration_engine.calibrate_pair_by_board_pose(
-            ref_id, cam_id,
-            frame_ref.board_pose, frame_cam.board_pose,
-            pattern_name=frame_ref.board_pattern_name or "unknown",
-            inlier_count=frame_ref.marker_count,
-            total_pairs=frame_ref.marker_count,
-            rms_ref_mm=frame_ref.board_rms_mm,
-            rms_cam_mm=frame_cam.board_rms_mm,
-        )
-        if result.get('success'):
-            self._log(f"[SUCCESS] 标定板位姿法 {cam_id}→{ref_id}: "
-                      f"规格 {result.get('board_pattern_name')}, "
-                      f"RMS {result['rms_mm']:.4f} mm")
-        else:
-            self._log(f"[ERROR] 标定 {cam_id}→{ref_id} 失败: {result.get('message')}")
-        self.calibration_panel.update_results(self.calibration_engine.pair_results)
+        def _work():
+            if board_mode:
+                return self.calibration_engine.calibrate_pair_by_board_pose(
+                    ref_id, cam_id,
+                    frame_ref.board_pose, frame_cam.board_pose,
+                    pattern_name=frame_ref.board_pattern_name or "unknown",
+                    inlier_count=frame_ref.marker_count,
+                    total_pairs=frame_ref.marker_count,
+                    rms_ref_mm=frame_ref.board_rms_mm,
+                    rms_cam_mm=frame_cam.board_rms_mm,
+                )
+            return self.calibration_engine.calibrate_pair(
+                ref_id, cam_id, frame_ref.markers, frame_cam.markers,
+                ransac_threshold=RANSAC_THRESHOLD_MM)
+
+        def _on_done(result, error):
+            self._hide_loading()
+            if error:
+                self._log(f"[ERROR] 标定 {cam_id}→{ref_id} 异常: {error}")
+                return
+            if result.get('success'):
+                if board_mode:
+                    self._log(f"[SUCCESS] 标定板位姿法 {cam_id}→{ref_id}: "
+                              f"规格 {result.get('board_pattern_name')}, "
+                              f"RMS {result['rms_mm']:.4f} mm")
+                else:
+                    self._log(f"[SUCCESS] 标定 {cam_id}→{ref_id}: "
+                              f"RMS {result['rms_mm']:.4f} mm, "
+                              f"内点 {result['inlier_count']}/{result['total_pairs']}")
+            else:
+                self._log(f"[ERROR] 标定 {cam_id}→{ref_id} 失败: {result.get('message')}")
+            self.calibration_panel.update_results(self.calibration_engine.pair_results)
+
+        self._run_background(_work, _on_done)
 
     def _on_pair_selected(self, ref_id: str, cam_id: str):
         """结果表选中某对 pair：有离群标记时在日志提示其 code（便于排查坏标记）。"""
@@ -996,15 +1186,36 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _markers_fingerprint(markers: list):
-        """标记数据快速指纹：排序后的 code 元组 + 坐标数组 bytes hash。
+        """标记数据快速指纹：排序后的 code 元组 + 3D 坐标数组。
 
-        用于判断两组编码圆检测结果是否完全相同（站位模式静态数据重复累积防护）。
+        用于判断两组编码圆检测结果是否近似相同（站位模式静态数据重复累积防护）。
+        返回的坐标用于后续距离比较，不再使用 MD5（MD5 对微小噪声/抖动过于敏感）。
         """
         ordered = sorted(markers, key=lambda m: m['code'])
         codes = tuple(m['code'] for m in ordered)
         coords = np.array([[m['x_3d'], m['y_3d'], m['z_3d']] for m in ordered],
                           dtype=np.float64)
-        return codes, hashlib.md5(coords.tobytes()).hexdigest()
+        return codes, coords
+
+    def _same_markers(self, markers_a: list, markers_b: list,
+                      dist_tol_mm: float = 0.1) -> bool:
+        """判断两组标记是否可视为同一组静态数据。
+
+        条件：
+          1. 标记数量相同；
+          2. code 集合完全一致（按顺序）；
+          3. 对应 3D 点距离均 < dist_tol_mm。
+        """
+        if len(markers_a) != len(markers_b):
+            return False
+        codes_a, coords_a = self._markers_fingerprint(markers_a)
+        codes_b, coords_b = self._markers_fingerprint(markers_b)
+        if codes_a != codes_b:
+            return False
+        if len(coords_a) == 0:
+            return True
+        dists = np.linalg.norm(coords_a - coords_b, axis=1)
+        return bool(np.all(dists < dist_tol_mm))
 
     def _on_add_frame(self):
         """把当前帧标记累积到多帧缓存（每个非参考相机一组）。
@@ -1027,12 +1238,12 @@ class MainWindow(QMainWindow):
             frame_ref = self.frames.get(ref_id)
             if frame_ref is None or not frame_ref.markers or not frame.markers:
                 continue
-            # 与缓存中最后一组比较指纹，完全相同则跳过
+            # 与缓存中最后一组比较指纹，近似相同则跳过（避免轻微噪声导致重复累积）
             cache = self.calibration_engine._multi_frame_data.get((ref_id, cid), [])
             if cache:
                 last_ref, last_cam = cache[-1]
-                if (self._markers_fingerprint(last_ref) == self._markers_fingerprint(frame_ref.markers)
-                        and self._markers_fingerprint(last_cam) == self._markers_fingerprint(frame.markers)):
+                if (self._same_markers(last_ref, frame_ref.markers)
+                        and self._same_markers(last_cam, frame.markers)):
                     skipped += 1
                     continue
             self.calibration_engine.add_frame_data(
@@ -1061,19 +1272,34 @@ class MainWindow(QMainWindow):
         if not ref_id:
             self._log("[WARN] 请先选择参考相机")
             return
-        n_ok = 0
-        for cid in self.calibration_panel.other_camera_ids():
-            result = self.calibration_engine.calibrate_multi_frame(
-                ref_id, cid, ransac_threshold=RANSAC_THRESHOLD_MM)
-            if result.get('success'):
-                n_ok += 1
-                self._log(f"[SUCCESS] 多帧标定 {cid}→{ref_id}: "
-                          f"RMS {result['rms_mm']:.4f} mm "
-                          f"({result.get('valid_frames', 1)} 帧)")
-            else:
-                self._log(f"[ERROR] 多帧标定 {cid}→{ref_id} 失败: {result.get('message')}")
-        if n_ok:
-            self.calibration_panel.update_results(self.calibration_engine.pair_results)
+        cam_ids = self.calibration_panel.other_camera_ids()
+        self._show_loading("正在多帧平均标定...")
+
+        def _work():
+            results = {}
+            for cid in cam_ids:
+                results[cid] = self.calibration_engine.calibrate_multi_frame(
+                    ref_id, cid, ransac_threshold=RANSAC_THRESHOLD_MM)
+            return results
+
+        def _on_done(results, error):
+            self._hide_loading()
+            if error:
+                self._log(f"[ERROR] 多帧标定异常: {error}")
+                return
+            n_ok = 0
+            for cid, result in results.items():
+                if result.get('success'):
+                    n_ok += 1
+                    self._log(f"[SUCCESS] 多帧标定 {cid}→{ref_id}: "
+                              f"RMS {result['rms_mm']:.4f} mm "
+                              f"({result.get('valid_frames', 1)} 帧)")
+                else:
+                    self._log(f"[ERROR] 多帧标定 {cid}→{ref_id} 失败: {result.get('message')}")
+            if n_ok:
+                self.calibration_panel.update_results(self.calibration_engine.pair_results)
+
+        self._run_background(_work, _on_done)
 
     def _on_clear_frames(self):
         self.calibration_engine.clear_frame_data()
@@ -1147,28 +1373,26 @@ class MainWindow(QMainWindow):
                 setattr(processor, key, value)
         return processor
 
-    def _do_stitch(self):
-        """执行拼接，返回 (merged_pcd, elapsed_ms) 或 (None, 0)。"""
+    def _check_stitch_ready(self) -> Optional[str]:
+        """在线拼接前置校验，返回参考相机 ID 或 None（校验失败已记录日志）。"""
         if not self.frames:
             self._log("[WARN] 无帧数据，请先拍摄")
-            return None, 0.0
+            return None
         ref_id = (self.calibration_engine.reference_id
                   or self.calibration_panel.get_reference())
         if not ref_id:
             self._log("[WARN] 请先选择参考相机")
-            return None, 0.0
+            return None
+        return ref_id
+
+    def _stitch_compute(self, ref_id: str):
+        """后台拼接计算（不操作 UI），返回 (merged_pcd, msg, elapsed_ms)。"""
         t0 = time.perf_counter()
         merged, msg = self.stitch_engine.stitch(
             self.frames, self.calibration_engine, ref_id,
             processor=self._build_processor())
         elapsed_ms = (time.perf_counter() - t0) * 1000.0
-        for line in msg.splitlines():
-            self._log(f"[INFO] {line}")
-        self._last_stitch_input_points = self._parse_input_points(msg)
-        if merged is None:
-            self._log("[ERROR] 拼接失败（是否已完成标定？）")
-            return None, elapsed_ms
-        return merged, elapsed_ms
+        return merged, msg, elapsed_ms
 
     @staticmethod
     def _parse_input_points(msg: str) -> int:
@@ -1191,85 +1415,144 @@ class MainWindow(QMainWindow):
     def _on_auto_params(self):
         """自动设置后处理参数：基于最近拼接结果（否则当前帧临时合并）估计。"""
         pcd = self._last_merged_pcd
-        source = "最近一次拼接结果"
-        if pcd is None or len(pcd.points) == 0:
-            # 无拼接结果：当前各帧临时合并（无标定时简单合并，不做变换）
-            if not self.frames:
-                self._log("[WARN] 请先拍摄或拼接点云，再使用「自动设置参数」")
+        use_last = pcd is not None and len(pcd.points) > 0
+        if not use_last and not self.frames:
+            self._log("[WARN] 请先拍摄或拼接点云，再使用「自动设置参数」")
+            return
+        self._show_loading("正在自动估计后处理参数...")
+
+        def _work():
+            if use_last:
+                src_pcd, source = self._last_merged_pcd, "最近一次拼接结果"
+            else:
+                # 无拼接结果：当前各帧临时合并（无标定时简单合并，不做变换）
+                import open3d as o3d
+                src_pcd = o3d.geometry.PointCloud()
+                n_loaded = 0
+                for cid, frame in self.frames.items():
+                    try:
+                        sub = frame.load_pointcloud_o3d()
+                    except Exception:
+                        sub = None
+                    if sub is not None and len(sub.points) > 0:
+                        src_pcd += sub
+                        n_loaded += 1
+                if n_loaded == 0:
+                    return None, None, 0
+                source = f"当前 {n_loaded} 台相机帧临时合并（未变换）"
+            params = PointCloudProcessor().auto_tune(src_pcd)
+            return params, source, len(src_pcd.points)
+
+        def _on_done(result, error):
+            self._hide_loading()
+            if error:
+                self._log(f"[ERROR] 自动参数估计失败: {error}")
                 return
-            import open3d as o3d
-            pcd = o3d.geometry.PointCloud()
-            n_loaded = 0
-            for cid, frame in self.frames.items():
-                try:
-                    sub = frame.load_pointcloud_o3d()
-                except Exception:
-                    sub = None
-                if sub is not None and len(sub.points) > 0:
-                    pcd += sub
-                    n_loaded += 1
-            if n_loaded == 0:
+            params, source, n_points = result
+            if params is None:
                 self._log("[WARN] 当前帧无可用点云，请先拍摄或拼接点云")
                 return
-            source = f"当前 {n_loaded} 台相机帧临时合并（未变换）"
-        self._log(f"[INFO] 自动设置参数：基于{source}"
-                  f"（{len(pcd.points):,} 点），正在估计…")
-        try:
-            params = PointCloudProcessor().auto_tune(pcd)
-        except Exception as e:
-            self._log(f"[ERROR] 自动参数估计失败: {e}")
-            return
-        self.stitch_panel.set_process_params(params)
-        self.stitch_panel.set_auto_notes(params.get('notes', []))
-        voxel_txt = (f"{params['voxel_size']:.2f}mm"
-                     if params['enable_voxel_downsample'] else "关闭")
-        self._log(f"[SUCCESS] 自动参数已应用: 单位={params['unit']}, "
-                  f"点距≈{params['avg_spacing_mm']:.3f}mm, "
-                  f"裁切={params['crop_mode']}(比例 {params['crop_ratio']:.2f}), "
-                  f"体素={voxel_txt}, "
-                  f"离群点 std={params['outlier_std_ratio']}, "
-                  f"预估点数 {params['estimated_points']:,}")
+            self._log(f"[INFO] 自动设置参数：基于{source}（{n_points:,} 点）")
+            self.stitch_panel.set_process_params(params)
+            self.stitch_panel.set_auto_notes(params.get('notes', []))
+            voxel_txt = (f"{params['voxel_size']:.2f}mm"
+                         if params['enable_voxel_downsample'] else "关闭")
+            self._log(f"[SUCCESS] 自动参数已应用: 单位={params['unit']}, "
+                      f"点距≈{params['avg_spacing_mm']:.3f}mm, "
+                      f"裁切={params['crop_mode']}(比例 {params['crop_ratio']:.2f}), "
+                      f"体素={voxel_txt}, "
+                      f"离群点 std={params['outlier_std_ratio']}, "
+                      f"预估点数 {params['estimated_points']:,}")
+
+        self._run_background(_work, _on_done)
 
     def _on_stitch(self):
-        merged, elapsed_ms = self._do_stitch()
-        if merged is None:
+        ref_id = self._check_stitch_ready()
+        if ref_id is None:
             return
-        # 各路点云 → 3D 查看器（叠加模式可对比）
-        for cid, frame in self.frames.items():
-            try:
-                pcd = frame.load_pointcloud_o3d()
-                if pcd is not None and len(pcd.points) > 0:
-                    self.viewer_3d.set_pointcloud(cid, pcd)
-            except Exception as e:
-                self._log(f"[WARN] 相机 {cid} 点云加载失败: {e}")
-        self.viewer_3d.set_pointcloud_merged(merged)
-        self._last_merged_pcd = merged
-        self.stitch_panel.set_result(len(merged.points), elapsed_ms)
-        self._check_over_filtering(len(merged.points),
-                                   self._last_stitch_input_points)
-        self._log(f"[SUCCESS] 拼接完成: {len(merged.points):,} 点, 耗时 {elapsed_ms:.1f} ms")
+        self._show_loading("正在拼接点云...")
+
+        def _work():
+            merged, msg, elapsed_ms = self._stitch_compute(ref_id)
+            # 各路原始点云也在后台加载（IO 密集），主线程只负责显示
+            per_cam, load_errors = {}, []
+            if merged is not None:
+                for cid, frame in self.frames.items():
+                    try:
+                        pcd = frame.load_pointcloud_o3d()
+                        if pcd is not None and len(pcd.points) > 0:
+                            per_cam[cid] = pcd
+                    except Exception as e:
+                        load_errors.append((cid, str(e)))
+            return merged, msg, elapsed_ms, per_cam, load_errors
+
+        def _on_done(result, error):
+            self._hide_loading()
+            if error:
+                self._log(f"[ERROR] 拼接异常: {error}")
+                return
+            merged, msg, elapsed_ms, per_cam, load_errors = result
+            for line in msg.splitlines():
+                self._log(f"[INFO] {line}")
+            self._last_stitch_input_points = self._parse_input_points(msg)
+            if merged is None:
+                self._log("[ERROR] 拼接失败（是否已完成标定？）")
+                return
+            # 各路点云 → 3D 查看器（叠加模式可对比）
+            for cid, pcd in per_cam.items():
+                self.viewer_3d.set_pointcloud(cid, pcd)
+            for cid, err in load_errors:
+                self._log(f"[WARN] 相机 {cid} 点云加载失败: {err}")
+            self.viewer_3d.set_pointcloud_merged(merged)
+            self._last_merged_pcd = merged
+            self.stitch_panel.set_result(len(merged.points), elapsed_ms)
+            self._check_over_filtering(len(merged.points),
+                                       self._last_stitch_input_points)
+            self._log(f"[SUCCESS] 拼接完成: {len(merged.points):,} 点, 耗时 {elapsed_ms:.1f} ms")
+
+        self._run_background(_work, _on_done)
 
     def _on_stitch_save(self):
-        merged, elapsed_ms = self._do_stitch()
-        if merged is None:
+        ref_id = self._check_stitch_ready()
+        if ref_id is None:
             return
-        path, _ = QFileDialog.getSaveFileName(
-            self, "保存拼接点云", "stitched.ply", "PLY 文件 (*.ply)")
-        if not path:
-            return
-        try:
-            import open3d as o3d
-            if o3d.io.write_point_cloud(path, merged):
-                self.viewer_3d.set_pointcloud_merged(merged)
-                self._last_merged_pcd = merged
-                self.stitch_panel.set_result(len(merged.points), elapsed_ms, path)
-                self._check_over_filtering(len(merged.points),
-                                           self._last_stitch_input_points)
-                self._log(f"[SUCCESS] 拼接点云已保存: {path} ({len(merged.points):,} 点)")
-            else:
-                self._log(f"[ERROR] PLY 写入失败: {path}")
-        except Exception as e:
-            self._log(f"[ERROR] 保存 PLY 异常: {e}")
+        self._show_loading("正在拼接点云...")
+
+        def _work():
+            return self._stitch_compute(ref_id)
+
+        def _on_done(result, error):
+            self._hide_loading()
+            if error:
+                self._log(f"[ERROR] 拼接异常: {error}")
+                return
+            merged, msg, elapsed_ms = result
+            for line in msg.splitlines():
+                self._log(f"[INFO] {line}")
+            self._last_stitch_input_points = self._parse_input_points(msg)
+            if merged is None:
+                self._log("[ERROR] 拼接失败（是否已完成标定？）")
+                return
+            # 文件对话框必须主线程执行
+            path, _ = QFileDialog.getSaveFileName(
+                self, "保存拼接点云", "stitched.ply", "PLY 文件 (*.ply)")
+            if not path:
+                return
+            try:
+                import open3d as o3d
+                if o3d.io.write_point_cloud(path, merged):
+                    self.viewer_3d.set_pointcloud_merged(merged)
+                    self._last_merged_pcd = merged
+                    self.stitch_panel.set_result(len(merged.points), elapsed_ms, path)
+                    self._check_over_filtering(len(merged.points),
+                                               self._last_stitch_input_points)
+                    self._log(f"[SUCCESS] 拼接点云已保存: {path} ({len(merged.points):,} 点)")
+                else:
+                    self._log(f"[ERROR] PLY 写入失败: {path}")
+            except Exception as e:
+                self._log(f"[ERROR] 保存 PLY 异常: {e}")
+
+        self._run_background(_work, _on_done)
 
     # ==================================================================
     # 离线会话
@@ -1282,7 +1565,7 @@ class MainWindow(QMainWindow):
             card.capture_requested.connect(self._on_capture_single)
             card.disconnect_requested.connect(self._on_remove_camera)
             self.cards[camera_id] = card
-            self.camera_panel.add_camera_entry(camera_id, desc)
+            self.device_panel.add_camera_entry(camera_id, desc)
             self._relayout_grid()
             self._sync_camera_lists()
         return card
@@ -1301,8 +1584,8 @@ class MainWindow(QMainWindow):
         for cid, frame in self.frames.items():
             frame.frame_id = self._session_capture_seq
             self.offline_session.add_frame(cid, frame)
-        self.camera_panel.set_session_path(self.offline_session.session_dir)
-        self.camera_panel.set_batch_enabled(True)
+        self.capture_panel.set_session_path(self.offline_session.session_dir)
+        self.capture_panel.set_batch_enabled(True)
         self._log(f"[SUCCESS] 第 {self._session_capture_seq} 拍已保存到会话 "
                   f"({len(self.frames)} 台相机)")
 
@@ -1312,7 +1595,7 @@ class MainWindow(QMainWindow):
             self._log("[WARN] 会话未创建，请先「保存当前帧到会话」或「加载会话」")
             return
         path = self.offline_session.save_all()
-        self.camera_panel.set_session_path(path)
+        self.capture_panel.set_session_path(path)
         self._log(f"[SUCCESS] 会话已保存: {path}")
 
     def _on_load_session(self):
@@ -1344,8 +1627,8 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 self._log(f"[WARN] 相机 {cid} 预览更新失败: {e}")
         self._sync_camera_lists()
-        self.camera_panel.set_session_path(self.offline_session.session_dir)
-        self.camera_panel.set_batch_enabled(True)
+        self.capture_panel.set_session_path(self.offline_session.session_dir)
+        self.capture_panel.set_batch_enabled(True)
         n = sum(len(v) for v in frames_map.values())
         self._log(f"[SUCCESS] 会话已加载: {path} "
                   f"({len(frames_map)} 台相机, {n} 帧)")
@@ -1357,22 +1640,34 @@ class MainWindow(QMainWindow):
         if not self.offline_session.frames:
             self._log("[WARN] 无会话帧数据，请先加载会话")
             return
-        results = self.offline_session.detect_all(self.marker_detector)
-        total = sum(len(m) for per_cam in results.values() for m in per_cam)
-        for cid, per_cam in results.items():
-            self._log(f"[INFO] 批量检测 {cid}: {[len(m) for m in per_cam]} 个/帧")
-        # 最新帧检测结果同步到卡片
-        for cid, frame in self.offline_session.latest_frames().items():
-            card = self.cards.get(cid)
-            if card is not None:
-                try:
-                    card.update_frame(frame, frame.markers)
-                except Exception:
-                    pass
-            if cid in self.frames:
-                self.frames[cid].markers = frame.markers
-        self.log_panel.set_status(f"批量检测完成，共 {total} 个标记")
-        self._log(f"[SUCCESS] 批量检测完成: {total} 个标记")
+        self._show_loading("正在批量检测标记...")
+
+        def _work():
+            # detect_all 会把检测结果写回会话帧的 markers（数据层，非 UI）
+            return self.offline_session.detect_all(self.marker_detector)
+
+        def _on_done(results, error):
+            self._hide_loading()
+            if error:
+                self._log(f"[ERROR] 批量检测异常: {error}")
+                return
+            total = sum(len(m) for per_cam in results.values() for m in per_cam)
+            for cid, per_cam in results.items():
+                self._log(f"[INFO] 批量检测 {cid}: {[len(m) for m in per_cam]} 个/帧")
+            # 最新帧检测结果同步到卡片
+            for cid, frame in self.offline_session.latest_frames().items():
+                card = self.cards.get(cid)
+                if card is not None:
+                    try:
+                        card.update_frame(frame, frame.markers)
+                    except Exception:
+                        pass
+                if cid in self.frames:
+                    self.frames[cid].markers = frame.markers
+            self.log_panel.set_status(f"批量检测完成，共 {total} 个标记")
+            self._log(f"[SUCCESS] 批量检测完成: {total} 个标记")
+
+        self._run_background(_work, _on_done)
 
     def _on_batch_calibrate(self):
         """批量标定：会话全部帧累积 + 多帧平均（所有非参考相机）。"""
@@ -1387,22 +1682,33 @@ class MainWindow(QMainWindow):
         if not self.offline_session.frames:
             self._log("[WARN] 无会话帧数据，请先加载会话")
             return
-        results = self.offline_session.calibrate_multi(
-            self.calibration_engine, ref_id, ransac_threshold=RANSAC_THRESHOLD_MM)
-        n_ok = 0
-        for cid, res in results.items():
-            if res.get('success'):
-                n_ok += 1
-                self._log(f"[SUCCESS] 批量标定 {cid}→{ref_id}: "
-                          f"RMS {res['rms_mm']:.4f} mm "
-                          f"({res.get('valid_frames', 1)} 帧)")
-            else:
-                self._log(f"[ERROR] 批量标定 {cid}→{ref_id} 失败: {res.get('message')}")
-        if n_ok:
-            self.calibration_engine.set_reference(ref_id)
-            self.viewer_3d.set_reference(ref_id)
-            self.calibration_panel.update_results(self.calibration_engine.pair_results)
-            self.log_panel.set_status(f"批量标定完成: {n_ok}/{len(results)} 对成功")
+        self._show_loading("正在批量标定会话...")
+
+        def _work():
+            return self.offline_session.calibrate_multi(
+                self.calibration_engine, ref_id, ransac_threshold=RANSAC_THRESHOLD_MM)
+
+        def _on_done(results, error):
+            self._hide_loading()
+            if error:
+                self._log(f"[ERROR] 批量标定异常: {error}")
+                return
+            n_ok = 0
+            for cid, res in results.items():
+                if res.get('success'):
+                    n_ok += 1
+                    self._log(f"[SUCCESS] 批量标定 {cid}→{ref_id}: "
+                              f"RMS {res['rms_mm']:.4f} mm "
+                              f"({res.get('valid_frames', 1)} 帧)")
+                else:
+                    self._log(f"[ERROR] 批量标定 {cid}→{ref_id} 失败: {res.get('message')}")
+            if n_ok:
+                self.calibration_engine.set_reference(ref_id)
+                self.viewer_3d.set_reference(ref_id)
+                self.calibration_panel.update_results(self.calibration_engine.pair_results)
+                self.log_panel.set_status(f"批量标定完成: {n_ok}/{len(results)} 对成功")
+
+        self._run_background(_work, _on_done)
 
     def _on_stitch_session(self):
         """批量拼接离线会话（全部帧对合并到参考坐标系）。"""
@@ -1414,23 +1720,36 @@ class MainWindow(QMainWindow):
         if not ref_id:
             self._log("[WARN] 请先选择参考相机")
             return
-        t0 = time.perf_counter()
-        merged, msg = self.offline_session.stitch_all(
-            self.stitch_engine, self.calibration_engine, ref_id,
-            processor=self._build_processor())
-        elapsed_ms = (time.perf_counter() - t0) * 1000.0
-        for line in msg.splitlines():
-            self._log(f"[INFO] {line}")
-        if merged is None:
-            self._log("[ERROR] 批量拼接失败（是否已完成批量标定？）")
-            return
-        self.viewer_3d.set_pointcloud_merged(merged)
-        self._last_merged_pcd = merged
-        self.stitch_panel.set_result(len(merged.points), elapsed_ms)
-        self._check_over_filtering(len(merged.points),
-                                   self._parse_input_points(msg))
-        self._log(f"[SUCCESS] 批量拼接完成: {len(merged.points):,} 点, "
-                  f"耗时 {elapsed_ms:.1f} ms")
+        self._show_loading("正在批量拼接会话...")
+
+        def _work():
+            t0 = time.perf_counter()
+            merged, msg = self.offline_session.stitch_all(
+                self.stitch_engine, self.calibration_engine, ref_id,
+                processor=self._build_processor())
+            elapsed_ms = (time.perf_counter() - t0) * 1000.0
+            return merged, msg, elapsed_ms
+
+        def _on_done(result, error):
+            self._hide_loading()
+            if error:
+                self._log(f"[ERROR] 批量拼接异常: {error}")
+                return
+            merged, msg, elapsed_ms = result
+            for line in msg.splitlines():
+                self._log(f"[INFO] {line}")
+            if merged is None:
+                self._log("[ERROR] 批量拼接失败（是否已完成批量标定？）")
+                return
+            self.viewer_3d.set_pointcloud_merged(merged)
+            self._last_merged_pcd = merged
+            self.stitch_panel.set_result(len(merged.points), elapsed_ms)
+            self._check_over_filtering(len(merged.points),
+                                       self._parse_input_points(msg))
+            self._log(f"[SUCCESS] 批量拼接完成: {len(merged.points):,} 点, "
+                      f"耗时 {elapsed_ms:.1f} ms")
+
+        self._run_background(_work, _on_done)
 
     # ==================================================================
     # 单相机多站位模式（Phase 5）
@@ -1604,10 +1923,20 @@ class MainWindow(QMainWindow):
         self._log(f"[SUCCESS] 站位新会话已创建: {path}")
 
     # ==================================================================
-    # 关闭
+    # 窗口事件
     # ==================================================================
+    def resizeEvent(self, event):
+        """窗口 resize 时同步调整加载遮罩大小。"""
+        super().resizeEvent(event)
+        if hasattr(self, '_loading'):
+            self._loading.resize(self.size())
+
     def closeEvent(self, event):
         self._capture_timer.stop()
+        # 等待后台任务结束，避免 finished 信号投递到已销毁窗口
+        for worker in list(self._workers):
+            worker.wait()
+        self._workers.clear()
         for frame in self.frames.values():
             try:
                 frame.release()

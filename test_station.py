@@ -47,6 +47,17 @@ app.setStyleSheet(STYLESHEET)
 # ------------------------------------------------------------------
 # 工具函数（与 test_integration.py 相同的合成数据方法）
 # ------------------------------------------------------------------
+def wait_workers(win, timeout=300):
+    """等待主窗口后台 WorkerThread 全部完成（耗时操作已改为 QThread 异步执行）。"""
+    import time
+    deadline = time.time() + timeout
+    while getattr(win, '_workers', None):
+        assert time.time() < deadline, "后台任务超时未完成"
+        app.processEvents()
+        time.sleep(0.005)
+    app.processEvents()
+
+
 def rotz(deg: float) -> np.ndarray:
     a = np.radians(deg)
     return np.array([[np.cos(a), -np.sin(a), 0],
@@ -290,6 +301,7 @@ for sid, frame in window2.station_manager.get_frames().items():
     table[os.path.normpath(frame.offline_pointmap_path)] = markers_truth[sid]
 window2.marker_detector = FakeDetector(table)
 window2._on_detect_markers()
+wait_workers(window2)  # 标记检测已改后台执行
 for sid in STATION_IDS:
     assert len(window2.frames[sid].markers) == N_MARKERS, \
         f"{sid} 标记数异常: {len(window2.frames[sid].markers)}"
@@ -300,6 +312,7 @@ print(f"  3 个站位各检测到 {N_MARKERS} 个编码圆（叠加已上卡）"
 # 标定（station_1 为 ref，2 对 pair）
 assert window2.calibration_panel.get_reference() == REF_ID
 window2.calibration_panel._on_calibrate_all()
+wait_workers(window2)  # 标定已改后台执行，等待结果回填面板
 engine = window2.calibration_engine
 assert len(engine.pair_results) == 2, f"应有 2 对标定结果: {list(engine.pair_results.keys())}"
 for sid in ("station_2", "station_3"):
@@ -315,6 +328,7 @@ assert window2.calibration_panel.table_pairs.rowCount() == 2
 
 # 拼接
 window2._on_stitch()
+wait_workers(window2)  # 拼接已改后台执行
 merged = window2.viewer_3d._pcd_merged
 assert merged is not None, "3D 查看器应收到拼接点云"
 assert len(merged.points) == 3 * N_OBJ_PTS, \
