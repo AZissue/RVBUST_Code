@@ -10,8 +10,12 @@ core 模块可独立测试：python test_core.py；UI 测试：python test_ui.py
 import os
 import sys
 
-# 保证 src 包可导入
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
+# 保证 src 包可导入（兼容开发环境与 PyInstaller 打包环境）
+if getattr(sys, 'frozen', False):
+    # PyInstaller 打包后，src 已作为包被包含，无需额外添加路径
+    pass
+else:
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
 
 
 def main():

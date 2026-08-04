@@ -89,6 +89,83 @@ def _nice_step(raw: float) -> float:
 
 
 # =========================================================================
+# AxesIndicatorWidget —— 角落 2D 坐标轴指示器（类似 Blender/CloudCompare）
+# =========================================================================
+class AxesIndicatorWidget(QWidget):
+    """在 3D 窗口角落绘制 2D 坐标轴指示器，显示当前视角方向。
+
+    特点：
+      - 始终悬浮在窗口角落，不被点云遮挡；
+      - 红绿蓝三色箭头对应 XYZ 轴；
+      - 箭头方向随相机旋转实时更新。
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(64, 64)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.setStyleSheet("background: transparent;")
+        self._rotation_x = 30.0
+        self._rotation_y = -45.0
+
+    def set_rotation(self, rx: float, ry: float):
+        """更新相机旋转角（度）。"""
+        self._rotation_x = rx
+        self._rotation_y = ry
+        self.update()
+
+    def paintEvent(self, event):
+        from PySide6.QtGui import QPainter, QPen, QBrush, QColor, QFont
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        cx, cy = self.width() / 2, self.height() / 2
+        R = 20  # 指示器半径
+
+        # 绘制背景圆
+        painter.setBrush(QBrush(QColor(30, 30, 34, 180)))
+        painter.setPen(QPen(QColor(60, 60, 66, 200), 1))
+        painter.drawEllipse(int(cx - R - 4), int(cy - R - 4), int((R + 4) * 2), int((R + 4) * 2))
+
+        # 计算各轴在屏幕上的投影方向（简化：根据旋转角计算 2D 投影）
+        import math
+        rx = math.radians(self._rotation_x)
+        ry = math.radians(self._rotation_y)
+
+        # X 轴（红）：初始指向右，受 ry 旋转影响
+        x_dx = math.cos(ry) * R
+        x_dy = math.sin(ry) * math.sin(rx) * R
+        # Y 轴（绿）：初始指向上（屏幕下），受 rx 旋转影响
+        y_dx = -math.sin(ry) * R * 0.5
+        y_dy = -math.cos(rx) * R
+        # Z 轴（蓝）：初始指向外（屏幕外），投影为垂直方向
+        z_dx = math.sin(ry) * math.cos(rx) * R * 0.5
+        z_dy = -math.sin(rx) * R
+
+        # 绘制 X 轴（红）
+        painter.setPen(QPen(QColor(255, 60, 60), 2.5))
+        painter.drawLine(int(cx), int(cy), int(cx + x_dx), int(cy + x_dy))
+        painter.setBrush(QBrush(QColor(255, 60, 60)))
+        painter.drawEllipse(int(cx + x_dx - 3), int(cy + x_dy - 3), 6, 6)
+
+        # 绘制 Y 轴（绿）
+        painter.setPen(QPen(QColor(60, 255, 60), 2.5))
+        painter.drawLine(int(cx), int(cy), int(cx + y_dx), int(cy + y_dy))
+        painter.setBrush(QBrush(QColor(60, 255, 60)))
+        painter.drawEllipse(int(cx + y_dx - 3), int(cy + y_dy - 3), 6, 6)
+
+        # 绘制 Z 轴（蓝）
+        painter.setPen(QPen(QColor(80, 140, 255), 2.5))
+        painter.drawLine(int(cx), int(cy), int(cx + z_dx), int(cy + z_dy))
+        painter.setBrush(QBrush(QColor(80, 140, 255)))
+        painter.drawEllipse(int(cx + z_dx - 3), int(cy + z_dy - 3), 6, 6)
+
+        # 中心点
+        painter.setBrush(QBrush(QColor(200, 200, 200)))
+        painter.drawEllipse(int(cx - 2), int(cy - 2), 4, 4)
+
+
+# =========================================================================
 # PointCloudViewer —— 基于 QOpenGLWidget + PyOpenGL
 # =========================================================================
 class PointCloudViewer(QOpenGLWidget):
@@ -144,7 +221,7 @@ class PointCloudViewer(QOpenGLWidget):
         # 渲染选项（仅改标志，不重建点云 VBO）
         self._point_size = 1.0
         self._bg_color = BG_DARK
-        self._show_axes = True
+        self._show_axes = False   # 3D 坐标轴已改为角落 2D 指示器，默认关闭
         self._show_grid = True
         self._overlay_text = ""
 
@@ -158,6 +235,11 @@ class PointCloudViewer(QOpenGLWidget):
         self._overlay_label.setAttribute(Qt.WA_TransparentForMouseEvents)
         self._overlay_label.move(10, 10)
         self._overlay_label.hide()
+
+        # 角落 2D 坐标轴指示器（始终显示，不被点云遮挡）
+        self._axes_indicator = AxesIndicatorWidget(self)
+        self._axes_indicator.move(10, self.height() - 74)
+        self._axes_indicator.show()
 
         self.setMinimumSize(400, 260)
 
@@ -316,17 +398,37 @@ class PointCloudViewer(QOpenGLWidget):
     def _build_reference_lines(self):
         """生成坐标轴 (6 顶点) + 网格地面线段顶点（居中坐标系），numpy 向量化。"""
         c = self.centroid.astype(np.float64)
-        origin = -c                                   # 世界原点在居中坐标系中的位置
-        axis_len = self._extent * 0.2                 # 包围盒对角线 ~20%
-        axes_pos = np.array([
-            origin, origin + [axis_len, 0, 0],        # X 红
-            origin, origin + [0, axis_len, 0],        # Y 绿
-            origin, origin + [0, 0, axis_len],        # Z 蓝
-        ], dtype=np.float32)
+        # 坐标轴原点放在点云质心上方（悬浮显示，避免被网格/点云遮挡）
+        origin = -c + np.array([0, 0, self._extent * 0.2], dtype=np.float64)
+        axis_len = self._extent * 0.4                 # 包围盒对角线 ~40%，让坐标轴更明显
+        arrow_len = axis_len * 0.15                   # 箭头长度
+
+        # 坐标轴主线 + 末端箭头（每个轴 2 条箭头线段）
+        axes_lines = [
+            # X 轴（红）
+            (origin, origin + [axis_len, 0, 0]),
+            (origin + [axis_len, 0, 0], origin + [axis_len - arrow_len, arrow_len * 0.5, 0]),
+            (origin + [axis_len, 0, 0], origin + [axis_len - arrow_len, -arrow_len * 0.5, 0]),
+            # Y 轴（绿）
+            (origin, origin + [0, axis_len, 0]),
+            (origin + [0, axis_len, 0], origin + [arrow_len * 0.5, axis_len - arrow_len, 0]),
+            (origin + [0, axis_len, 0], origin + [-arrow_len * 0.5, axis_len - arrow_len, 0]),
+            # Z 轴（蓝）
+            (origin, origin + [0, 0, axis_len]),
+            (origin + [0, 0, axis_len], origin + [0, arrow_len * 0.5, axis_len - arrow_len]),
+            (origin + [0, 0, axis_len], origin + [0, -arrow_len * 0.5, axis_len - arrow_len]),
+        ]
+        axes_pos = np.array(axes_lines, dtype=np.float32).reshape(-1, 3)
         axes_col = np.array([
-            [1.0, 0.25, 0.25], [1.0, 0.25, 0.25],
-            [0.30, 1.0, 0.30], [0.30, 1.0, 0.30],
-            [0.35, 0.55, 1.0], [0.35, 0.55, 1.0],
+            [1.0, 0.15, 0.15], [1.0, 0.15, 0.15],     # X 主线亮红
+            [1.0, 0.15, 0.15], [1.0, 0.15, 0.15],     # X 箭头
+            [1.0, 0.15, 0.15], [1.0, 0.15, 0.15],
+            [0.15, 1.0, 0.15], [0.15, 1.0, 0.15],     # Y 主线亮绿
+            [0.15, 1.0, 0.15], [0.15, 1.0, 0.15],     # Y 箭头
+            [0.15, 1.0, 0.15], [0.15, 1.0, 0.15],
+            [0.25, 0.60, 1.0], [0.25, 0.60, 1.0],     # Z 主线亮蓝
+            [0.25, 0.60, 1.0], [0.25, 0.60, 1.0],     # Z 箭头
+            [0.25, 0.60, 1.0], [0.25, 0.60, 1.0],
         ], dtype=np.float32)
 
         # 网格：点云 Z 最低点处，XY 以点云质心为中心，10×10 格
@@ -440,6 +542,11 @@ class PointCloudViewer(QOpenGLWidget):
             from OpenGL import GL
             GL.glViewport(0, 0, w, h)
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # 保持坐标轴指示器在左下角
+        self._axes_indicator.move(10, self.height() - 74)
+
     # ------------------------------------------------------------------
     # 鼠标交互
     # ------------------------------------------------------------------
@@ -448,10 +555,29 @@ class PointCloudViewer(QOpenGLWidget):
 
     def mouseMoveEvent(self, event):
         self.camera.drag(event.pos(), event.buttons())
+        self._axes_indicator.set_rotation(self.camera.rotation_x, self.camera.rotation_y)
         self.update()
 
     def mouseReleaseEvent(self, event):
         self.camera.end_drag()
+
+    def mouseDoubleClickEvent(self, event):
+        """双击滚轮（中键）：重新选择旋转中心到点击位置。"""
+        if event.button() == Qt.MiddleButton:
+            self._set_rotation_center(event.pos())
+        event.accept()
+
+    def _set_rotation_center(self, pos):
+        """把旋转中心设置到鼠标点击的 3D 位置（简化：平移相机使点击处居中）。"""
+        # 将屏幕坐标转换为归一化设备坐标，估算点击处在视图中的偏移
+        w, h = max(self.width(), 1), max(self.height(), 1)
+        nx = (2.0 * pos.x()) / w - 1.0
+        ny = 1.0 - (2.0 * pos.y()) / h
+        # 根据当前缩放和距离估算平移量，使点击处移到视野中心
+        pan_scale = self.camera._distance / self.camera.zoom * 0.5
+        self.camera.pan_x -= nx * pan_scale
+        self.camera.pan_y -= ny * pan_scale
+        self.update()
 
     def wheelEvent(self, event):
         delta = event.angleDelta().y()
@@ -463,7 +589,7 @@ class PointCloudViewer(QOpenGLWidget):
 
 
 class _ArcBallCamera:
-    """ArcBall 相机控制器（左键旋转 / 中键平移 / 滚轮缩放）。"""
+    """ArcBall 相机控制器（左键旋转 / 右键平移 / 滚轮缩放 / 双击滚轮设中心）。"""
 
     # 视角预设：(rotation_x, rotation_y)
     PRESETS = {
@@ -511,8 +637,9 @@ class _ArcBallCamera:
             # 仅防止长时间拖拽后数值无限累积，视觉效果不变（旋转是周期的）
             self.rotation_x = (self.rotation_x + 180.0) % 360.0 - 180.0
             self.rotation_y = (self.rotation_y + 180.0) % 360.0 - 180.0
-        elif buttons == Qt.MiddleButton:
-            sens = self._pan_sensitivity * self._distance
+        elif buttons == Qt.RightButton:
+            # 平移灵敏度随缩放自适应：zoom 越大（放大），视野越小，平移越慢
+            sens = self._pan_sensitivity * self._distance / max(self.zoom, 0.01)
             self.pan_x += dx * sens
             self.pan_y -= dy * sens
 

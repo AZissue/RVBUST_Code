@@ -24,3 +24,6 @@ calibration.json
 *.png
 *.jpg
 *.jpeg
+build/
+dist/
+data/

@@ -19,7 +19,9 @@ UI 图标管理器（assets/icons/ 自定义图标加载）。
 
 from __future__ import annotations
 
+import os
 import re
+import sys
 from pathlib import Path
 
 from PySide6.QtCore import QSize
@@ -40,7 +42,15 @@ _LEADING_EMOJI_RE = re.compile(r"^[^\w]+")
 
 
 def icons_dir() -> Path:
-    """返回 assets/icons 目录路径（从 src/ui/icons.py 上溯两级到项目根）。"""
+    """返回 assets/icons 目录路径（兼容开发环境与 PyInstaller 打包环境）。"""
+    if getattr(sys, 'frozen', False):
+        # PyInstaller 打包后，assets 在 exe 同级 _internal 目录中
+        base = Path(sys.executable).parent
+        internal = base / "_internal" / "assets" / "icons"
+        if internal.is_dir():
+            return internal
+        return base / "assets" / "icons"
+    # 开发环境：从 src/ui/icons.py 上溯两级到项目根
     return Path(__file__).resolve().parents[2] / "assets" / "icons"
 
 
