@@ -159,8 +159,9 @@ class MainWindowShell(QMainWindow):
         self._log_dock.setMinimumWidth(340)
         self._log_dock.hide()
 
-        # ===== 加载遮罩 =====
-        self._overlay = LoadingOverlay(central)
+        # ===== 加载遮罩（覆盖整个主窗口，而非仅 central widget） =====
+        self._overlay = LoadingOverlay(self)
+        self._overlay.hide()
 
     def _build_toolbar(self) -> QWidget:
         bar = QWidget()
@@ -400,4 +401,4 @@ class MainWindowShell(QMainWindow):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if hasattr(self, "_overlay") and self._overlay.isVisible():
-            self._overlay.resize(self.centralWidget().size())
+            self._overlay.resize(self.size())
