@@ -328,6 +328,20 @@ class CameraManager:
                     pass
 
     # ------------------------------------------------------------------
+    # 设备枚举（供网络配置等功能使用）
+    # ------------------------------------------------------------------
+    def find_devices(self) -> list:
+        """枚举所有 RVC 设备（USB + GigE）。无 SDK 环境返回空列表。"""
+        if RVC is None:
+            return []
+        try:
+            ret, devices = RVC.SystemListDevices(RVC.SystemListDeviceTypeEnum.All)
+            return devices if devices else []
+        except Exception as e:
+            logger.warning(f"枚举设备失败: {e}")
+            return []
+
+    # ------------------------------------------------------------------
     # 相机增删
     # ------------------------------------------------------------------
     def add_camera(self, camera_id: str) -> bool:
