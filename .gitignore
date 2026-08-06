@@ -27,3 +27,4 @@ calibration.json
 build/
 dist/
 data/
+meta.json
