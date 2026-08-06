@@ -40,6 +40,7 @@ python src/ui_v2/run_shell.py
 src/ui_v2/
 ├── __init__.py
 ├── theme.py                      # 设计 token（深色工业风 + RVC 红）+ 全局 QSS
+├── icons.py                      # 手绘线性 SVG 图标库（28 枚，单色可着色，无外部文件）
 ├── launcher_dialog.py            # 启动小窗：模式卡片 + 设备管理 + 数量规则门控
 ├── main_window.py                # 主窗口框架：功能栏 + QStackedWidget + 状态栏 + 日志 dock
 ├── run_shell.py                  # 离线演示入口（mock 设备 + mock 流程回调）
@@ -137,6 +138,8 @@ UI 只呈现不编造文案。
       底部常驻「已接 N 机位 | 累计误差 | 平均单步误差」
 - [x] 术语隔离：B 区文案只有「机位/重合度/链/误差」，无标定术语
 - [x] 视觉规范：深色工业风 + RVC 红 #E53935，统一 theme.py QSS，8px 间距 / 6px 圆角
+- [x] 图标系统：`icons.py` 手绘线性 SVG（24×24 / 1.8px 圆角描边 / 单色可着色），
+      全部 emoji 已替换；`pixmap()/icon()/apply()` 接口，2x 超采样渲染带缓存
 - [x] 离线可启动：不导入 core / PyRVC / OpenGL
 
 ## 七、下一步（接入顺序建议）

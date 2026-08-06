@@ -120,7 +120,7 @@ def main():
     win.show_loading("测试")
     win.hide_loading()
 
-    print("\n全部冒烟检查通过 ✓")
+    print("\n全部冒烟检查通过 [PASS]")
     return 0
 
 

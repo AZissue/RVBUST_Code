@@ -26,6 +26,7 @@ from ..theme import (
     ACCENT, BG_CARD, BG_PANEL, BORDER, STATUS_ERR, STATUS_OK,
     TEXT_MUTED, TEXT_PRIMARY, TEXT_SECONDARY,
 )
+from .. import icons as ui_icons
 
 FRAME_KIND_STYLE = {
     # 帧分区标签色：标定帧 / 扫描帧 互不覆盖
@@ -58,7 +59,11 @@ class CameraCard(QFrame):
 
         # 标题行：相机名 + 帧分区标签
         title_row = QHBoxLayout()
-        self._name = QLabel(f"📷 {camera_id}")
+        cam_icon = QLabel()
+        cam_icon.setPixmap(ui_icons.pixmap("camera", TEXT_SECONDARY, 13))
+        cam_icon.setFixedSize(16, 16)
+        title_row.addWidget(cam_icon)
+        self._name = QLabel(camera_id)
         self._name.setStyleSheet(
             f"font-weight: 600; color: {TEXT_PRIMARY};")
         title_row.addWidget(self._name)
@@ -136,14 +141,14 @@ class CameraCard(QFrame):
         """帧分区标签：'标定帧' / '扫描帧' / None。"""
         if kind in FRAME_KIND_STYLE:
             color, text = FRAME_KIND_STYLE[kind]
-            self._kind.setText(f"◈ {text}")
+            self._kind.setText(text)
             self._kind.setStyleSheet(
                 f"color: {color}; font-size: 10px; font-weight: 600;")
         else:
             self._kind.setText("")
 
     def set_title(self, title: str):
-        self._name.setText(f"📷 {title}")
+        self._name.setText(title)
 
     def mousePressEvent(self, event):
         self.clicked.emit(self.camera_id)

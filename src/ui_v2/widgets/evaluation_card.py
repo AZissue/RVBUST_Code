@@ -105,8 +105,7 @@ class EvaluationCard(QFrame):
         self._level = level if level in _LEVEL_STYLE else "idle"
         color = _LEVEL_STYLE.get(self._level)
         if color:
-            dot = {"ok": "🟢", "warn": "🟡", "fail": "🔴"}[self._level]
-            self._suggestion.setText(f"{dot} {suggestion}")
+            self._suggestion.setText(f"● {suggestion}")
             self._suggestion.setStyleSheet(
                 f"color: {color}; font-size: 12px; font-weight: 600;")
         else:

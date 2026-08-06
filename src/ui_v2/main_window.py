@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 
 from .launcher_dialog import LauncherDialog
 from .theme import ACCENT, STATUS_OK, TEXT_MUTED, TEXT_SECONDARY
+from . import icons as ui_icons
 from .widgets import LoadingOverlay, LogPanel
 from .widgets.device_table import DeviceInfo
 from .workspaces import MobileChainWorkspace, MultiCamWorkspace
@@ -167,14 +168,18 @@ class MainWindowShell(QMainWindow):
         lo.setSpacing(4)
 
         self._btn_devices = QToolButton()
-        self._btn_devices.setText("⚙ 设备管理")
+        self._btn_devices.setText("设备管理")
         self._btn_devices.setToolTip("重新选择模式与设备")
+        self._btn_devices.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        ui_icons.apply(self._btn_devices, "gear", TEXT_SECONDARY, 15)
         self._btn_devices.clicked.connect(self.open_device_manager)
         lo.addWidget(self._btn_devices)
 
         self._btn_mode = QToolButton()
         self._btn_mode.setText("模式：多相机外参标定 ▾")
         self._btn_mode.setToolTip("点击回到启动小窗切换模式")
+        self._btn_mode.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        ui_icons.apply(self._btn_mode, "swap", TEXT_SECONDARY, 15)
         self._btn_mode.clicked.connect(self.open_device_manager)
         lo.addWidget(self._btn_mode)
 
@@ -183,30 +188,40 @@ class MainWindowShell(QMainWindow):
         lo.addWidget(sep1)
 
         btn_save = QToolButton()
-        btn_save.setText("💾 保存会话")
+        btn_save.setText("保存会话")
+        btn_save.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        ui_icons.apply(btn_save, "save", TEXT_SECONDARY, 15)
         btn_save.clicked.connect(self.save_session_requested)
         lo.addWidget(btn_save)
 
         btn_open = QToolButton()
-        btn_open.setText("📂 打开会话")
+        btn_open.setText("打开会话")
+        btn_open.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        ui_icons.apply(btn_open, "folder_open", TEXT_SECONDARY, 15)
         btn_open.clicked.connect(self.open_session_requested)
         lo.addWidget(btn_open)
 
         btn_post = QToolButton()
-        btn_post.setText("🧹 后处理")
+        btn_post.setText("后处理")
+        btn_post.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        ui_icons.apply(btn_post, "filter", TEXT_SECONDARY, 15)
         btn_post.clicked.connect(self._open_postprocess)
         lo.addWidget(btn_post)
 
         lo.addStretch(1)
 
         self._btn_log = QToolButton()
-        self._btn_log.setText("📋 日志")
+        self._btn_log.setText("日志")
         self._btn_log.setCheckable(True)
+        self._btn_log.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        ui_icons.apply(self._btn_log, "terminal", TEXT_SECONDARY, 15)
         self._btn_log.toggled.connect(self._log_dock_toggle)
         lo.addWidget(self._btn_log)
 
         btn_help = QToolButton()
-        btn_help.setText("❓ 帮助")
+        btn_help.setText("帮助")
+        btn_help.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        ui_icons.apply(btn_help, "help", TEXT_SECONDARY, 15)
         btn_help.clicked.connect(self._show_help)
         lo.addWidget(btn_help)
 

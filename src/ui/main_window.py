@@ -623,17 +623,12 @@ class MainWindow(QMainWindow):
 
         if index == 2:  # 移动链式拼接
             self.page_stack.setCurrentIndex(1)
-            self.wizard_bar.hide()
             # 初始化移动链式工作流
             if self.mobile_chain_workflow.get_state() == "idle":
                 self.mobile_chain_view.set_preview_text("请连接相机并开始拍摄")
                 self.mobile_chain_view.set_3d_text("未加载点云")
         else:  # 多相机 / 单相机站位
             self.page_stack.setCurrentIndex(0)
-            if index == 0:  # 多相机模式显示步骤条
-                self.wizard_bar.show()
-            else:  # 单相机站位隐藏步骤条
-                self.wizard_bar.hide()
 
     def _show_loading(self, text: str = "处理中，请稍候..."):
         """显示全局加载遮罩。"""

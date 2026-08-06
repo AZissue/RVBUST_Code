@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..theme import BG_PANEL, BORDER, TEXT_MUTED, TEXT_SECONDARY
+from .. import icons as ui_icons
 
 
 class ViewerPanel(QFrame):
@@ -53,9 +54,13 @@ class ViewerPanel(QFrame):
         bar.setContentsMargins(10, 6, 10, 6)
         bar.setSpacing(6)
 
-        self._title_label = QLabel(f"🧊 {title}")
+        self._title_label = QLabel(title)
         self._title_label.setStyleSheet(
             f"font-weight: 600; color: {TEXT_SECONDARY};")
+        title_icon = QLabel()
+        title_icon.setPixmap(ui_icons.pixmap("cube", TEXT_SECONDARY, 15))
+        title_icon.setFixedSize(18, 18)
+        bar.addWidget(title_icon)
         bar.addWidget(self._title_label)
         bar.addStretch(1)
 
@@ -64,12 +69,15 @@ class ViewerPanel(QFrame):
         self._display_combo.setFixedWidth(100)
         bar.addWidget(self._display_combo)
 
-        for text, slot in (
-            ("⟳ 重置视角", self.reset_view),
-            ("⛶ 最大化", lambda: self.viewer_message.emit("最大化（接口预留）")),
+        for text, icon_name, slot in (
+            ("重置视角", "reset_view", self.reset_view),
+            ("最大化", "maximize",
+             lambda: self.viewer_message.emit("最大化（接口预留）")),
         ):
             btn = QToolButton()
             btn.setText(text)
+            btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+            ui_icons.apply(btn, icon_name, TEXT_SECONDARY, 14)
             btn.clicked.connect(slot)
             bar.addWidget(btn)
         root.addLayout(bar)

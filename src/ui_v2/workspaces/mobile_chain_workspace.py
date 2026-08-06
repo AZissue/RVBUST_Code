@@ -30,7 +30,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout, QLabel, QPushButton, QSplitter, QVBoxLayout, QWidget,
 )
 
-from ..theme import STATUS_ERR, STATUS_OK, STATUS_WARN, TEXT_MUTED
+from ..theme import STATUS_ERR, STATUS_OK, STATUS_WARN, TEXT_MUTED, TEXT_SECONDARY
+from .. import icons as ui_icons
 from ..widgets import (
     EvaluationCard, LiveViewPanel, StationNodeData, StationTimeline, ViewerPanel,
 )
@@ -123,30 +124,35 @@ class MobileChainWorkspace(QWidget):
         actions = QVBoxLayout()
         actions.setSpacing(6)
 
-        self._btn_capture = QPushButton("📷 拍摄机位")
+        self._btn_capture = QPushButton("拍摄机位")
         self._btn_capture.setObjectName("bigAction")
+        ui_icons.apply(self._btn_capture, "camera", "#FFFFFF", 20)
         self._btn_capture.clicked.connect(self.capture_station_requested)
         actions.addWidget(self._btn_capture)
 
         row = QHBoxLayout()
         row.setSpacing(6)
-        self._btn_undo = QPushButton("↩ 撤销上一步")
+        self._btn_undo = QPushButton("撤销上一步")
+        ui_icons.apply(self._btn_undo, "undo", TEXT_SECONDARY, 14)
         self._btn_undo.clicked.connect(self.undo_requested)
         row.addWidget(self._btn_undo)
-        self._btn_recapture = QPushButton("🗑 重拍当前")
+        self._btn_recapture = QPushButton("重拍当前")
         self._btn_recapture.setObjectName("danger")
+        ui_icons.apply(self._btn_recapture, "refresh", STATUS_ERR, 14)
         self._btn_recapture.clicked.connect(
             lambda: self.recapture_requested.emit(-1))
         row.addWidget(self._btn_recapture)
         actions.addLayout(row)
 
-        self._btn_save = QPushButton("💾 保存拼接数据")
+        self._btn_save = QPushButton("保存拼接数据")
+        ui_icons.apply(self._btn_save, "save", TEXT_SECONDARY, 14)
         self._btn_save.clicked.connect(self.save_requested)
         actions.addWidget(self._btn_save)
 
         # 选中节点的删除入口（点击时间线节点后可用）
         self._btn_delete_node = QPushButton("删除选中机位（后续链自动重算）")
         self._btn_delete_node.setObjectName("danger")
+        ui_icons.apply(self._btn_delete_node, "trash", STATUS_ERR, 14)
         self._btn_delete_node.setEnabled(False)
         self._btn_delete_node.clicked.connect(self._on_delete_selected)
         actions.addWidget(self._btn_delete_node)

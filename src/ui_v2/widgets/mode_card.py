@@ -11,6 +11,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout
 
+from .. import icons as ui_icons
 from ..theme import (
     ACCENT, ACCENT_DIM, BG_CARD, BORDER, TEXT_PRIMARY, TEXT_SECONDARY,
 )
@@ -21,17 +22,17 @@ class ModeCard(QFrame):
 
     clicked = Signal()
 
-    def __init__(self, icon: str, title: str, desc: str, parent=None):
+    def __init__(self, icon_name: str, title: str, desc: str, parent=None):
         super().__init__(parent)
         self._checked = False
+        self._icon_name = icon_name
 
         lo = QHBoxLayout(self)
         lo.setContentsMargins(14, 12, 14, 12)
         lo.setSpacing(12)
 
-        self._icon = QLabel(icon)
-        self._icon.setStyleSheet("font-size: 28px;")
-        self._icon.setFixedWidth(36)
+        self._icon = QLabel()
+        self._icon.setFixedSize(32, 32)
         self._icon.setAlignment(Qt.AlignCenter)
         lo.addWidget(self._icon)
 
@@ -61,6 +62,9 @@ class ModeCard(QFrame):
 
     def setChecked(self, checked: bool):
         self._checked = checked
+        # 选中态：图标着 RVC 红；未选中：次要文本色
+        icon_color = ACCENT if checked else TEXT_SECONDARY
+        self._icon.setPixmap(ui_icons.pixmap(self._icon_name, icon_color, 28))
         if checked:
             self.setStyleSheet(
                 f"ModeCard {{ background-color: {ACCENT_DIM};"

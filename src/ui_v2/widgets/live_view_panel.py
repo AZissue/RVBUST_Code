@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 from ..theme import (
     ACCENT, BG_PANEL, BORDER, STATUS_OK, TEXT_MUTED, TEXT_SECONDARY,
 )
+from .. import icons as ui_icons
 
 # 一个标记的叠加描述：(x, y, code, shared)
 #   x, y    归一化坐标 0~1（相对画面）
@@ -58,7 +59,11 @@ class LiveViewPanel(QFrame):
         # ---- 顶部条：标题 + 自动/手动开关 ----
         bar = QHBoxLayout()
         bar.setContentsMargins(10, 6, 10, 6)
-        title = QLabel("📷 实时取景（自动检测）")
+        video_icon = QLabel()
+        video_icon.setPixmap(ui_icons.pixmap("video", TEXT_SECONDARY, 15))
+        video_icon.setFixedSize(18, 18)
+        bar.addWidget(video_icon)
+        title = QLabel("实时取景（自动检测）")
         title.setStyleSheet(f"font-weight: 600; color: {TEXT_SECONDARY};")
         bar.addWidget(title)
         bar.addStretch(1)

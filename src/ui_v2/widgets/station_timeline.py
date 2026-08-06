@@ -26,6 +26,7 @@ from ..theme import (
     STATUS_ERR, STATUS_OK, STATUS_WARN,
     TEXT_MUTED, TEXT_PRIMARY, TEXT_SECONDARY,
 )
+from .. import icons as ui_icons
 
 # 节点状态色标
 STATUS_STYLE = {
@@ -83,8 +84,9 @@ class StationNode(QFrame):
 
         # 失败机位：内嵌重拍按钮
         if data.status == "fail":
-            self._btn_recapture = QPushButton("↻ 重拍")
+            self._btn_recapture = QPushButton("重拍")
             self._btn_recapture.setObjectName("danger")
+            ui_icons.apply(self._btn_recapture, "refresh", STATUS_ERR, 13)
             self._btn_recapture.clicked.connect(
                 lambda: self.recapture_clicked.emit(self._data.index))
             lo.addWidget(self._btn_recapture)
@@ -154,10 +156,11 @@ class StationTimeline(QScrollArea):
         self._vbox.addStretch(1)
 
         # 闭环提示按钮（默认隐藏，检测到与早期机位共视时显示）
-        self._btn_loop = QPushButton("🔁 发现闭环，可优化全局精度")
+        self._btn_loop = QPushButton("发现闭环，可优化全局精度")
         self._btn_loop.setStyleSheet(
             f"border: 1px solid {STATUS_WARN}; color: {STATUS_WARN};"
             "background: transparent; font-weight: 600;")
+        ui_icons.apply(self._btn_loop, "loop", STATUS_WARN, 14)
         self._btn_loop.clicked.connect(self.loop_closure_requested)
         self._btn_loop.hide()
         self._vbox.addWidget(self._btn_loop)

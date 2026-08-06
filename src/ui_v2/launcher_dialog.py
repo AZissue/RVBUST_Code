@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 from .theme import (
     ACCENT, STATUS_OK, TEXT_MUTED, TEXT_SECONDARY,
 )
+from . import icons as ui_icons
 from .widgets import DeviceInfo, DeviceTable, ModeCard
 
 
@@ -101,14 +102,14 @@ class LauncherDialog(QDialog):
         left.addWidget(mode_label)
 
         self.card_multi = ModeCard(
-            "🎥", "多相机外参标定",
+            "camera_multi", "多相机外参标定",
             "多台相机固定安装，先标定外参，后撤板扫描拼接")
         self.card_multi.clicked.connect(
             lambda: self._set_mode(self.MODE_MULTI_CAM))
         left.addWidget(self.card_multi)
 
         self.card_mobile = ModeCard(
-            "🔗", "单相机移动拼接",
+            "chain", "单相机移动拼接",
             "一台相机移动拍摄，自动检测标记物，边走边拼")
         self.card_mobile.clicked.connect(
             lambda: self._set_mode(self.MODE_MOBILE_CHAIN))
@@ -132,23 +133,30 @@ class LauncherDialog(QDialog):
         # 搜索行
         search_row = QHBoxLayout()
         self._search_edit = QLineEdit()
-        self._search_edit.setPlaceholderText("🔍 搜索 型号 / IP / 序列号")
+        self._search_edit.setPlaceholderText("搜索 型号 / IP / 序列号")
+        self._search_edit.setClearButtonEnabled(True)
+        self._search_edit.addAction(
+            ui_icons.icon("search", TEXT_SECONDARY, 15),
+            QLineEdit.LeadingPosition)
         self._search_edit.textChanged.connect(self._on_filter)
         search_row.addWidget(self._search_edit, 1)
-        self._btn_refresh = QPushButton("↻ 刷新")
+        self._btn_refresh = QPushButton("刷新")
         self._btn_refresh.setToolTip("重新枚举设备")
+        ui_icons.apply(self._btn_refresh, "refresh", TEXT_SECONDARY, 15)
         self._btn_refresh.clicked.connect(self.refresh_requested)
         search_row.addWidget(self._btn_refresh)
         right.addLayout(search_row)
 
         # 网络操作行
         net_row = QHBoxLayout()
-        self._btn_auto_ip = QPushButton("⚡ 自动设置IP")
+        self._btn_auto_ip = QPushButton("自动设置IP")
         self._btn_auto_ip.setToolTip("为勾选设备自动配置网络（参考 AutoConfigureNetwork）")
+        ui_icons.apply(self._btn_auto_ip, "bolt", TEXT_SECONDARY, 15)
         self._btn_auto_ip.clicked.connect(self._on_auto_ip)
         net_row.addWidget(self._btn_auto_ip)
         self._btn_net_cfg = QPushButton("网络配置…")
         self._btn_net_cfg.setToolTip("GigE 相机网卡选择 + 静态 IP")
+        ui_icons.apply(self._btn_net_cfg, "network", TEXT_SECONDARY, 15)
         self._btn_net_cfg.clicked.connect(self.network_config_requested)
         net_row.addWidget(self._btn_net_cfg)
         net_row.addStretch(1)
@@ -179,9 +187,10 @@ class LauncherDialog(QDialog):
         self._btn_cancel.clicked.connect(self.reject)
         bottom.addWidget(self._btn_cancel)
 
-        self._btn_connect = QPushButton("连接设备 →")
+        self._btn_connect = QPushButton("连接设备")
         self._btn_connect.setObjectName("primary")
         self._btn_connect.setMinimumWidth(140)
+        ui_icons.apply(self._btn_connect, "arrow_right", "#FFFFFF", 15)
         self._btn_connect.clicked.connect(self._on_connect)
         bottom.addWidget(self._btn_connect)
         root.addLayout(bottom)

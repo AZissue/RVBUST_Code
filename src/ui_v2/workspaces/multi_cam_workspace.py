@@ -34,6 +34,7 @@ from ..theme import (
     ACCENT_DIM, STATUS_ERR, STATUS_OK, STATUS_WARN,
     TEXT_MUTED, TEXT_PRIMARY, TEXT_SECONDARY,
 )
+from .. import icons as ui_icons
 from ..widgets import CameraGrid, StepBar, ViewerPanel
 from ..widgets.device_table import DeviceInfo
 
@@ -136,9 +137,10 @@ class MultiCamWorkspace(QWidget):
         sync_row.addStretch(1)
         cap_lo.addLayout(sync_row)
 
-        self._btn_capture = QPushButton("📸 拍摄标定帧")
+        self._btn_capture = QPushButton("拍摄标定帧")
         self._btn_capture.setObjectName("primary")
         self._btn_capture.setMinimumHeight(34)
+        ui_icons.apply(self._btn_capture, "camera", "#FFFFFF", 16)
         self._btn_capture.clicked.connect(self._on_capture)
         cap_lo.addWidget(self._btn_capture)
 
@@ -196,15 +198,17 @@ class MultiCamWorkspace(QWidget):
         det_row.addWidget(self._detect_combo, 1)
         lo.addLayout(det_row)
 
-        self._btn_detect = QPushButton("🔍 检测标记物")
+        self._btn_detect = QPushButton("检测标记物")
         self._btn_detect.setObjectName("primary")
+        ui_icons.apply(self._btn_detect, "detect", "#FFFFFF", 15)
         self._btn_detect.clicked.connect(
             lambda: self.detect_requested.emit(
                 self._detect_combo.currentData()))
         lo.addWidget(self._btn_detect)
 
-        self._btn_calibrate = QPushButton("📐 计算外参")
+        self._btn_calibrate = QPushButton("计算外参")
         self._btn_calibrate.setObjectName("primary")
+        ui_icons.apply(self._btn_calibrate, "calibrate", "#FFFFFF", 15)
         self._btn_calibrate.clicked.connect(self.calibrate_requested)
         lo.addWidget(self._btn_calibrate)
 
@@ -238,10 +242,12 @@ class MultiCamWorkspace(QWidget):
 
         # 外参存取
         ext_row = QHBoxLayout()
-        self._btn_save_ext = QPushButton("💾 保存外参")
+        self._btn_save_ext = QPushButton("保存外参")
+        ui_icons.apply(self._btn_save_ext, "save", TEXT_SECONDARY, 14)
         self._btn_save_ext.clicked.connect(self.save_extrinsics_requested)
         ext_row.addWidget(self._btn_save_ext)
-        self._btn_load_ext = QPushButton("📂 加载外参")
+        self._btn_load_ext = QPushButton("加载外参")
+        ui_icons.apply(self._btn_load_ext, "folder_open", TEXT_SECONDARY, 14)
         self._btn_load_ext.clicked.connect(self.load_extrinsics_requested)
         ext_row.addWidget(self._btn_load_ext)
         lo.addLayout(ext_row)
@@ -258,14 +264,18 @@ class MultiCamWorkspace(QWidget):
         self._lock_banner.setStyleSheet(
             f"QFrame {{ background-color: {ACCENT_DIM};"
             f" border: 1px solid #E53935; border-radius: 6px; }}")
-        banner_lo = QVBoxLayout(self._lock_banner)
+        banner_lo = QHBoxLayout(self._lock_banner)
         banner_lo.setContentsMargins(10, 8, 10, 8)
+        lock_icon = QLabel()
+        lock_icon.setPixmap(ui_icons.pixmap("lock", "#E53935", 18))
+        lock_icon.setFixedSize(22, 22)
+        banner_lo.addWidget(lock_icon, 0, Qt.AlignTop)
         self._banner_label = QLabel(
-            "🔒 外参已锁定 — 请移除标定板后开始扫描，拍摄期间请勿移动相机")
+            "外参已锁定 — 请移除标定板后开始扫描，拍摄期间请勿移动相机")
         self._banner_label.setWordWrap(True)
         self._banner_label.setStyleSheet(
             f"color: {TEXT_PRIMARY}; font-size: 12px; font-weight: 600;")
-        banner_lo.addWidget(self._banner_label)
+        banner_lo.addWidget(self._banner_label, 1)
         lo.addWidget(self._lock_banner)
 
         # 断线重连警告（默认隐藏）
@@ -277,14 +287,16 @@ class MultiCamWorkspace(QWidget):
         self._recalib_warn.hide()
         lo.addWidget(self._recalib_warn)
 
-        self._btn_scan_capture = QPushButton("📸 拍摄扫描帧")
+        self._btn_scan_capture = QPushButton("拍摄扫描帧")
         self._btn_scan_capture.setObjectName("primary")
         self._btn_scan_capture.setMinimumHeight(34)
+        ui_icons.apply(self._btn_scan_capture, "camera", "#FFFFFF", 16)
         self._btn_scan_capture.clicked.connect(self.capture_scan_requested)
         lo.addWidget(self._btn_scan_capture)
 
-        self._btn_stitch_save = QPushButton("🧩 拼接并保存")
+        self._btn_stitch_save = QPushButton("拼接并保存")
         self._btn_stitch_save.setObjectName("primary")
+        ui_icons.apply(self._btn_stitch_save, "stitch", "#FFFFFF", 15)
         self._btn_stitch_save.clicked.connect(self.stitch_save_requested)
         lo.addWidget(self._btn_stitch_save)
 
@@ -297,6 +309,7 @@ class MultiCamWorkspace(QWidget):
         self._batch_spin.setSuffix(" 次")
         batch_row.addWidget(self._batch_spin)
         self._btn_batch = QPushButton("批量拼接保存")
+        ui_icons.apply(self._btn_batch, "layers", TEXT_SECONDARY, 14)
         self._btn_batch.clicked.connect(
             lambda: self.batch_scan_requested.emit(self._batch_spin.value()))
         batch_row.addWidget(self._btn_batch)
@@ -405,8 +418,8 @@ class MultiCamWorkspace(QWidget):
         self._score_bar.setValue(max(0, min(100, score)))
         self._result_table.setRowCount(len(pairs))
         level_style = {
-            "ok": (STATUS_OK, "优 🟢"), "warn": (STATUS_WARN, "良 🟡"),
-            "fail": (STATUS_ERR, "差 🔴"),
+            "ok": (STATUS_OK, "● 优"), "warn": (STATUS_WARN, "● 良"),
+            "fail": (STATUS_ERR, "● 差"),
         }
         for row, p in enumerate(pairs):
             color, text = level_style.get(p.get("level", "ok"),
