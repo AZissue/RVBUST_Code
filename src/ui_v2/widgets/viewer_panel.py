@@ -1,37 +1,26 @@
 # -*- coding: utf-8 -*-
 """
-ui_v2.widgets.viewer_panel —— 3D 拼接预览占位面板。
+ui_v2.widgets.viewer_panel —— 3D 拼接预览面板。
 
-空壳阶段不引入 OpenGL / open3d，以占位面板呈现布局与工具栏，
-**公共方法与现有 ``src/ui/viewer_3d.py`` 的 EmbeddedPointCloudViewer 对齐**，
-正式接入时整体替换为真实组件即可（工作区只调用本接口，不感知实现）。
-
-对齐接口（stub）：
-  set_pointcloud(camera_id, pcd)      按相机分色叠加一路点云
-  set_pointcloud_merged(pcd)          设置拼接合并结果
-  remove_camera(camera_id)            移除一路点云
-  clear_all()                         清空
-  reset_view() / set_view_preset(s) / set_point_size(n)
+直接包装 ``src/ui/viewer_3d.py`` 的 ``EmbeddedPointCloudViewer``，
+保持 ui_v2 的公共接口不变，工作区无需感知底层实现。
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import (
-    QComboBox, QFrame, QHBoxLayout, QLabel, QToolButton, QVBoxLayout,
-)
+from PySide6.QtCore import Signal
+from PySide6.QtWidgets import QFrame, QVBoxLayout
 
-from ..theme import BG_PANEL, BORDER, TEXT_MUTED, TEXT_SECONDARY
-from .. import icons as ui_icons
+from ui.viewer_3d import EmbeddedPointCloudViewer
 
 
 class ViewerPanel(QFrame):
-    """3D 查看器占位（接口预留）。
+    """3D 点云查看器面板（真实渲染）。
 
     信号：
-        viewer_message(str)  占位操作说明（正式组件接入后由 status_changed 替代）。
+        viewer_message(str)  渲染器状态/错误信息。
     """
 
     viewer_message = Signal(str)
@@ -39,89 +28,50 @@ class ViewerPanel(QFrame):
     def __init__(self, title: str = "3D 拼接预览", parent=None):
         super().__init__(parent)
         self._title = title
-        self._camera_ids: list = []
-
-        self.setStyleSheet(
-            f"ViewerPanel {{ background-color: {BG_PANEL};"
-            f" border: 1px solid {BORDER}; border-radius: 6px; }}")
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # ---- 顶部工具条（与真实查看器工具栏布局保持一致） ----
-        bar = QHBoxLayout()
-        bar.setContentsMargins(10, 6, 10, 6)
-        bar.setSpacing(6)
+        self._viewer = EmbeddedPointCloudViewer(self)
+        self._viewer.status_changed.connect(self.viewer_message.emit)
+        root.addWidget(self._viewer, 1)
 
-        self._title_label = QLabel(title)
-        self._title_label.setStyleSheet(
-            f"font-weight: 600; color: {TEXT_SECONDARY};")
-        title_icon = QLabel()
-        title_icon.setPixmap(ui_icons.pixmap("cube", TEXT_SECONDARY, 15))
-        title_icon.setFixedSize(18, 18)
-        bar.addWidget(title_icon)
-        bar.addWidget(self._title_label)
-        bar.addStretch(1)
+    def viewer(self) -> EmbeddedPointCloudViewer:
+        """返回底层 3D 查看器实例（高级操作使用）。"""
+        return self._viewer
 
-        self._display_combo = QComboBox()
-        self._display_combo.addItems(["全部叠加", "合并结果"])
-        self._display_combo.setFixedWidth(100)
-        bar.addWidget(self._display_combo)
-
-        for text, icon_name, slot in (
-            ("重置视角", "reset_view", self.reset_view),
-            ("最大化", "maximize",
-             lambda: self.viewer_message.emit("最大化（接口预留）")),
-        ):
-            btn = QToolButton()
-            btn.setText(text)
-            btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-            ui_icons.apply(btn, icon_name, TEXT_SECONDARY, 14)
-            btn.clicked.connect(slot)
-            bar.addWidget(btn)
-        root.addLayout(bar)
-
-        # ---- 中央占位区 ----
-        self._canvas = QLabel(
-            "3D 拼接预览区\n\n（接口预留：正式接入时替换为\n"
-            "EmbeddedPointCloudViewer / viewer_3d）")
-        self._canvas.setAlignment(Qt.AlignCenter)
-        self._canvas.setStyleSheet(
-            f"color: {TEXT_MUTED}; font-size: 13px; line-height: 160%;")
-        root.addWidget(self._canvas, 1)
-
-    # ------------------------------------------------------------ 公共接口（stub）
+    # ------------------------------------------------------------ 公共接口（转发）
     def set_pointcloud(self, camera_id: str, pcd: Any):
-        """按相机分色叠加一路点云。
-
-        # TODO(BACKEND): 接入 EmbeddedPointCloudViewer.set_pointcloud
-        """
-        if camera_id not in self._camera_ids:
-            self._camera_ids.append(camera_id)
-        self.viewer_message.emit(
-            f"[3D] 更新点云 {camera_id}（当前 {len(self._camera_ids)} 路，接口预留）")
+        """按相机分色叠加一路点云。"""
+        self._viewer.set_pointcloud(camera_id, pcd)
 
     def set_pointcloud_merged(self, pcd: Any):
-        """设置拼接合并结果。
-
-        # TODO(BACKEND): 接入 EmbeddedPointCloudViewer.set_pointcloud_merged
-        """
-        self.viewer_message.emit("[3D] 更新合并点云（接口预留）")
+        """设置拼接合并结果。"""
+        self._viewer.set_pointcloud_merged(pcd)
 
     def remove_camera(self, camera_id: str):
-        if camera_id in self._camera_ids:
-            self._camera_ids.remove(camera_id)
+        self._viewer.remove_camera(camera_id)
 
     def clear_all(self):
-        self._camera_ids.clear()
-        self.viewer_message.emit("[3D] 已清空（接口预留）")
+        self._viewer.clear_all()
 
     def reset_view(self):
-        self.viewer_message.emit("[3D] 重置视角（接口预留）")
+        self._viewer.reset_view()
 
     def set_view_preset(self, name: str):
-        self.viewer_message.emit(f"[3D] 视角预设 {name}（接口预留）")
+        self._viewer.set_view_preset(name)
 
     def set_point_size(self, size: int):
-        self.viewer_message.emit(f"[3D] 点大小 {size}（接口预留）")
+        self._viewer.set_point_size(size)
+
+    def set_reference(self, camera_id: Optional[str]):
+        """设置参考相机（参考相机点云显示为白色）。"""
+        self._viewer.set_reference(camera_id)
+
+    def set_highlight(self, camera_id: str, indices: Optional[list] = None):
+        """高亮指定相机的部分点。"""
+        self._viewer.set_highlight(camera_id, indices)
+
+    def clear_highlight(self):
+        self._viewer.clear_highlight()

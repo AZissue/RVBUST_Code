@@ -35,7 +35,6 @@ def main():
     # 使用 ui_v2 主题
     from ui_v2 import GLOBAL_QSS, LauncherDialog, MainWindowShell
     from ui_v2.backend_bridge import BackendBridge
-    from ui_v2.widgets.device_table import DeviceInfo
     app.setStyleSheet(GLOBAL_QSS)
 
     # 1. 显示启动小窗
@@ -49,24 +48,7 @@ def main():
     # 连接启动小窗信号
     def on_refresh():
         """刷新设备列表。"""
-        from core.camera_manager import SingleCameraController
-        probe = SingleCameraController("probe")
-        devices = probe.find_devices()
-        device_infos = []
-        for i, dev in enumerate(devices):
-            try:
-                ret, info = dev.GetDeviceInfo()
-                if ret:
-                    device_infos.append(DeviceInfo(
-                        model=info.name,
-                        serial=info.sn,
-                        ip=getattr(info, 'ip', ''),
-                        online=True,
-                        backend_ref=i,  # 设备索引
-                    ))
-            except Exception:
-                pass
-        launcher.set_devices(device_infos)
+        launcher.set_devices(bridge.enumerate_devices())
 
     def on_connect(mode: str, devices: list):
         """连接设备。"""

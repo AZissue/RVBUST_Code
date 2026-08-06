@@ -22,6 +22,9 @@ from PySide6.QtWidgets import (
     QFrame, QGridLayout, QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget,
 )
 
+from core.frame_data import FrameData
+from ui.camera_card import AspectRatioLabel, numpy_to_qpixmap
+
 from ..theme import (
     ACCENT, BG_CARD, BG_PANEL, BORDER, STATUS_ERR, STATUS_OK,
     TEXT_MUTED, TEXT_PRIMARY, TEXT_SECONDARY,
@@ -73,13 +76,9 @@ class CameraCard(QFrame):
         title_row.addWidget(self._kind)
         lo.addLayout(title_row)
 
-        # 缩略图占位（16:9）
-        self._thumb = QLabel("无画面\n（等待拍摄）")
-        self._thumb.setAlignment(Qt.AlignCenter)
+        # 缩略图占位（4:3，与旧 UI 预览卡片一致）
+        self._thumb = AspectRatioLabel(ratio=4.0 / 3.0)
         self._thumb.setMinimumSize(160, 90)
-        self._thumb.setStyleSheet(
-            f"background-color: {BG_PANEL}; border: 1px dashed {BORDER};"
-            f" border-radius: 4px; color: {TEXT_MUTED}; font-size: 11px;")
         lo.addWidget(self._thumb, 1)
 
         # 底部角标行：标记数 + 共视状态
@@ -97,16 +96,20 @@ class CameraCard(QFrame):
 
     # ------------------------------------------------------------ 公共接口
     def set_thumbnail(self, pixmap: Optional[QPixmap]):
-        """刷新缩略图（拍摄完成后调用）。
-
-        # TODO(BACKEND): 由 FrameData 渲染 QPixmap 后传入
-        （复用 camera_card.numpy_to_qpixmap + 标记叠加）。
-        """
+        """刷新缩略图（拍摄完成后调用）。"""
         if pixmap is None:
-            self._thumb.setText("无画面\n（等待拍摄）")
+            self._thumb.clear_image()
             return
-        self._thumb.setPixmap(pixmap.scaled(
-            self._thumb.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        self._thumb.setPixmap(pixmap)
+
+    def set_frame(self, frame: Optional[FrameData], markers: Optional[list] = None):
+        """由 FrameData 更新缩略图与标记叠加。"""
+        if frame is None or frame.image_np is None:
+            self._thumb.clear_image()
+            return
+        pixmap = numpy_to_qpixmap(frame.image_np)
+        self._thumb.setPixmap(pixmap)
+        self._thumb.set_markers(markers if markers is not None else frame.markers)
 
     def set_marker_count(self, count: Optional[int]):
         """更新标记数量角标。"""
@@ -196,3 +199,28 @@ class CameraGrid(QScrollArea):
 
     def camera_ids(self) -> List[str]:
         return list(self._cards.keys())
+
+    def set_frame(self, camera_id: str, frame: Optional[FrameData],
+                  markers: Optional[list] = None):
+        """更新指定相机卡片的帧与标记叠加。"""
+        card = self._cards.get(camera_id)
+        if card is not None:
+            card.set_frame(frame, markers)
+
+    def set_marker_count(self, camera_id: str, count: Optional[int]):
+        """更新指定相机卡片的标记数量角标。"""
+        card = self._cards.get(camera_id)
+        if card is not None:
+            card.set_marker_count(count)
+
+    def set_covis_status(self, camera_id: str, ok: Optional[bool]):
+        """更新指定相机卡片的共视状态角标。"""
+        card = self._cards.get(camera_id)
+        if card is not None:
+            card.set_covis_status(ok)
+
+    def set_frame_kind(self, camera_id: str, kind: Optional[str]):
+        """更新指定相机卡片的帧分区标签。"""
+        card = self._cards.get(camera_id)
+        if card is not None:
+            card.set_frame_kind(kind)

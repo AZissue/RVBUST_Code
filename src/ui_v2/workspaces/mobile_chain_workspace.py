@@ -45,8 +45,10 @@ class MobileChainWorkspace(QWidget):
 
     # ---------------------------------------------------------------- 信号（接口预留）
     capture_station_requested = Signal()
-    """拍摄机位（主操作）。拍完自动走 检测→匹配→评估→入链 全流程。
-    # TODO(BACKEND): 移动链式工作流，帧即存盘（StationManager）"""
+    """拍摄机位（主操作）。拍完自动走 检测→匹配→评估→入链 全流程。"""
+
+    preview_toggled = Signal(bool)
+    """实时取景开关（True=开始预览，False=停止）。"""
 
     undo_requested = Signal()
     """撤销上一步（防误操作兜底）。"""
@@ -124,6 +126,13 @@ class MobileChainWorkspace(QWidget):
         actions = QVBoxLayout()
         actions.setSpacing(6)
 
+        self._btn_preview = QPushButton("开始取景")
+        self._btn_preview.setCheckable(True)
+        self._btn_preview.setObjectName("bigAction")
+        ui_icons.apply(self._btn_preview, "video", TEXT_SECONDARY, 18)
+        self._btn_preview.toggled.connect(self._on_preview_toggled)
+        actions.addWidget(self._btn_preview)
+
         self._btn_capture = QPushButton("拍摄机位")
         self._btn_capture.setObjectName("bigAction")
         ui_icons.apply(self._btn_capture, "camera", "#FFFFFF", 20)
@@ -191,6 +200,19 @@ class MobileChainWorkspace(QWidget):
 
     def current_state(self) -> str:
         return self._state
+
+    def live_view(self) -> LiveViewPanel:
+        """实时取景面板（预览帧回填入口）。"""
+        return self._live_view
+
+    def viewer(self) -> ViewerPanel:
+        """3D 拼接预览组件。"""
+        return self._viewer
+
+    # ------------------------------------------------------------ 内部
+    def _on_preview_toggled(self, checked: bool):
+        self._btn_preview.setText("停止取景" if checked else "开始取景")
+        self.preview_toggled.emit(checked)
 
     # ------------------------------------------------------------ 后端回填接口（stub 文档）
     def set_devices(self, devices: List[DeviceInfo]):

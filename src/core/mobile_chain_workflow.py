@@ -162,23 +162,59 @@ class MobileChainWorkflow(WorkflowBase):
         logger.info(f"机位 {station_id} 配准成功: {msg}")
         return True, msg, evaluation
 
+    def _remove_station_from_chain(self, station_id: str) -> bool:
+        """从链中删除指定机位及其关联边（内部工具方法）。"""
+        if self._chain_stitcher is None or station_id not in self._chain_stitcher.nodes:
+            return False
+        if station_id == self._chain_stitcher._reference_id:
+            return False
+        self._chain_stitcher.nodes.pop(station_id, None)
+        self._chain_stitcher.edges = [
+            e for e in self._chain_stitcher.edges
+            if e.from_id != station_id and e.to_id != station_id
+        ]
+        self._station_manager.remove_station(station_id)
+        return True
+
     def undo_last_station(self) -> Tuple[bool, str]:
         """撤销上一机位（删除并重新配准）。"""
         if self._chain_stitcher is None or not self._chain_stitcher.nodes:
             return False, "无机位可撤销"
-        # 获取最后一个机位
         last_id = list(self._chain_stitcher.nodes.keys())[-1]
         if last_id == self._chain_stitcher._reference_id:
             return False, "不能撤销参考机位"
-        # 删除节点和边
-        self._chain_stitcher.nodes.pop(last_id, None)
-        self._chain_stitcher.edges = [
-            e for e in self._chain_stitcher.edges
-            if e.from_id != last_id and e.to_id != last_id
-        ]
-        self._station_manager.remove_station(last_id)
-        logger.info(f"已撤销机位 {last_id}")
-        return True, f"已撤销机位 {last_id}"
+        if self._remove_station_from_chain(last_id):
+            logger.info(f"已撤销机位 {last_id}")
+            return True, f"已撤销机位 {last_id}"
+        return False, f"撤销机位 {last_id} 失败"
+
+    def delete_station(self, station_id: str) -> Tuple[bool, str]:
+        """删除指定机位（后续链自动重算）。"""
+        if self._chain_stitcher is None or station_id not in self._chain_stitcher.nodes:
+            return False, "指定机位不存在"
+        if station_id == self._chain_stitcher._reference_id:
+            return False, "不能删除参考机位"
+        if self._remove_station_from_chain(station_id):
+            logger.info(f"已删除机位 {station_id}")
+            return True, f"已删除机位 {station_id}"
+        return False, f"删除机位 {station_id} 失败"
+
+    def recapture_station(self, station_id: str) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
+        """重拍指定机位：用当前相机位置替换该机位数据并重新配准。
+
+        流程：删除旧机位 → 拍摄新机位（生成新 station_id）→ 配准入链。
+        调用方需确保相机已移动到该机位对应位置。
+        """
+        if self._state != self.STATE_CHAINING and self._state != self.STATE_READY:
+            return False, "当前不在链式拼接状态", None
+        if self._chain_stitcher is None or station_id not in self._chain_stitcher.nodes:
+            return False, "指定机位不存在", None
+        if station_id == self._chain_stitcher._reference_id:
+            return False, "不能重拍参考机位", None
+        # 删除旧机位
+        self._remove_station_from_chain(station_id)
+        # 拍摄并配准新机位
+        return self.capture_station()
 
     def optimize_global(self) -> Tuple[bool, str]:
         """执行全局 BA 优化（消除累积漂移）。"""

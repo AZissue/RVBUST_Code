@@ -451,6 +451,10 @@ class MultiCamWorkspace(QWidget):
         """3D 预览组件（拼接结果回填入口）。"""
         return self._viewer
 
+    def camera_grid(self) -> CameraGrid:
+        """相机取景网格（拍摄/检测后帧回填入口）。"""
+        return self._camera_grid
+
     # ------------------------------------------------------------ 内部
     def _on_capture(self):
         self.capture_requested.emit(self._rb_sync.isChecked())
