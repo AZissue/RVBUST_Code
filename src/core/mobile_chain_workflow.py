@@ -109,7 +109,7 @@ class MobileChainWorkflow(WorkflowBase):
             (success, message, evaluation)
             evaluation: 配准评估结果（共视标记数/内点率/RMS/建议动作）
         """
-        if self._state != self.STATE_CHAINING:
+        if self._state not in (self.STATE_CHAINING, self.STATE_READY):
             return False, "当前不在链式拼接状态", None
 
         # 拍摄并存盘（模式 B 只有一台物理相机）
@@ -178,6 +178,9 @@ class MobileChainWorkflow(WorkflowBase):
             if e.from_id != station_id and e.to_id != station_id
         ]
         self._station_manager.remove_station(station_id)
+        # 机位少于 3 个时回到 chaining 状态
+        if len(self._chain_stitcher.nodes) < 3:
+            self._state = self.STATE_CHAINING
         return True
 
     def undo_last_station(self) -> Tuple[bool, str]:
