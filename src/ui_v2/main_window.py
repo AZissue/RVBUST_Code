@@ -151,10 +151,12 @@ class MainWindowShell(QMainWindow):
 
         # ===== 日志停靠面板（右侧，默认隐藏，「日志」按钮 toggle） =====
         self._log_panel = LogPanel()
+        self._log_panel.setMinimumWidth(320)
         self._log_dock = QDockWidget("日志", self)
         self._log_dock.setWidget(self._log_panel)
         self._log_dock.setAllowedAreas(Qt.RightDockWidgetArea | Qt.LeftDockWidgetArea)
         self.addDockWidget(Qt.RightDockWidgetArea, self._log_dock)
+        self._log_dock.setMinimumWidth(340)
         self._log_dock.hide()
 
         # ===== 加载遮罩 =====

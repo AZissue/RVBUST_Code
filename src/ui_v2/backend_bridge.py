@@ -175,6 +175,10 @@ class BackendBridge(QObject):
             # 切换工作区
             self.shell.set_mode(mode, devices)
             self._current_mode = mode
+            # 模式 B 需要初始化链式拼接会话
+            if mode == LauncherDialog.MODE_MOBILE_CHAIN:
+                ok, msg = self.mobile_workflow.start_chaining()
+                self.shell.log(msg, "success" if ok else "warn")
 
         self._run_background(_connect, _done)
 

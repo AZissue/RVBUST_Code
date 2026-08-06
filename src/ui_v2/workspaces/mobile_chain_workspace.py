@@ -100,8 +100,8 @@ class MobileChainWorkspace(QWidget):
         self._timeline.loop_closure_requested.connect(self.optimize_requested)
         body.addWidget(self._timeline)
 
-        # ---- 中央：上实时取景 / 下 3D 预览 ----
-        center_split = QSplitter(Qt.Vertical)
+        # ---- 中央：左实时取景 / 右 3D 预览（水平布局，便于边拍边看） ----
+        center_split = QSplitter(Qt.Horizontal)
         self._live_view = LiveViewPanel()
         self._live_view.mode_toggled.connect(self.auto_mode_changed)
         center_split.addWidget(self._live_view)
@@ -112,6 +112,7 @@ class MobileChainWorkspace(QWidget):
         center_split.addWidget(self._viewer)
         center_split.setStretchFactor(0, 1)
         center_split.setStretchFactor(1, 1)
+        center_split.setSizes([600, 600])
         body.addWidget(center_split, 1)
 
         root.addLayout(body, 1)
