@@ -65,6 +65,9 @@ class MobileChainWorkspace(QWidget):
     optimize_requested = Signal()
     """闭环全局优化（弹出优化前后误差对比由后端结果回填）。"""
 
+    station_selected = Signal(int)
+    """时间线中选中某个机位节点（供后端刷新 2D 预览）。"""
+
     auto_mode_changed = Signal(bool)
     """自动/手动模式切换（默认自动；手动才显示手动标定面板兜底）。"""
 
@@ -331,6 +334,7 @@ class MobileChainWorkspace(QWidget):
     def _on_node_selected(self, index: int):
         self._selected_node = index
         self._btn_delete_node.setEnabled(self._state not in ("capturing", "evaluating"))
+        self.station_selected.emit(index)
 
     def _on_delete_selected(self):
         if self._selected_node is not None:

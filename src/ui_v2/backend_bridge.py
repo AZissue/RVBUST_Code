@@ -117,6 +117,7 @@ class BackendBridge(QObject):
         ws.delete_station_requested.connect(self._on_mobile_delete_station)
         ws.optimize_requested.connect(self._on_mobile_optimize)
         ws.save_requested.connect(self._on_mobile_save)
+        ws.station_selected.connect(self._on_mobile_station_selected)
 
     def _wire_main_window(self):
         """接线主窗口。"""
@@ -423,6 +424,44 @@ class BackendBridge(QObject):
             ws._btn_preview.setChecked(True)
         logger.info(f"已恢复 2D 预览: {camera_id}")
 
+    def _update_mobile_live_view(self, station_id: str):
+        """把指定机位的 2D 图像与检测标记刷新到 LiveViewPanel。"""
+        sm = self.mobile_workflow.station_manager
+        if sm is None:
+            return
+        frame = sm.get_frame(station_id)
+        if frame is None or frame.image_np is None:
+            return
+        pixmap = numpy_to_qpixmap(frame.image_np)
+        if pixmap is None:
+            return
+        ws = self.shell.workspace_mobile()
+        ws.live_view().set_frame(pixmap)
+        # 标记叠加（归一化坐标）
+        h, w = frame.image_np.shape[:2]
+        if h > 0 and w > 0:
+            markers = [
+                (m.get('x_2d', m.get('x', 0)) / w,
+                 m.get('y_2d', m.get('y', 0)) / h,
+                 int(m.get('code', 0)),
+                 False)
+                for m in frame.markers
+            ]
+            ws.live_view().set_detection_overlay(markers)
+
+    def _refresh_mobile_live_view_to_latest(self):
+        """刷新 LiveViewPanel 为最新机位（撤销/删除后调用）。"""
+        sm = self.mobile_workflow.station_manager
+        if sm is None:
+            return
+        station_ids = sm.get_station_ids()
+        if not station_ids:
+            ws = self.shell.workspace_mobile()
+            ws.live_view().set_frame(None)
+            ws.live_view().set_detection_overlay([])
+            return
+        self._update_mobile_live_view(station_ids[-1])
+
     def _on_mobile_capture_station(self):
         """拍摄机位（自动配准）。"""
         preview_cam = self._pause_2d_preview()
@@ -445,6 +484,10 @@ class BackendBridge(QObject):
                     'ok' if evaluation.get('success') else 'fail',
                     evaluation.get('suggestion', ''),
                 )
+                # 拍摄成功后把当前帧显示到 2D 实时取景区
+                station_id = evaluation.get('station_id')
+                if station_id:
+                    self._update_mobile_live_view(station_id)
             if ok:
                 self.shell.log(f"机位配准成功: {msg}", "success")
                 # 刷新 3D 拼接
@@ -459,7 +502,9 @@ class BackendBridge(QObject):
         """撤销上一机位。"""
         ok, msg = self.mobile_workflow.undo_last_station()
         self.shell.log(msg, "info" if ok else "warn")
-        self.shell.workspace_mobile().on_undo_done()
+        if ok:
+            self.shell.workspace_mobile().on_undo_done()
+            self._refresh_mobile_live_view_to_latest()
 
     def _on_mobile_recapture(self, index: int):
         """重拍指定机位。"""
@@ -486,6 +531,9 @@ class BackendBridge(QObject):
                     'ok' if evaluation.get('success') else 'fail',
                     evaluation.get('suggestion', ''),
                 )
+                station_id = evaluation.get('station_id')
+                if station_id:
+                    self._update_mobile_live_view(station_id)
             if ok:
                 self.shell.log(f"重拍成功: {msg}", "success")
                 merged = self.mobile_workflow.get_merged_pointcloud()
@@ -504,9 +552,15 @@ class BackendBridge(QObject):
         if ok:
             ws = self.shell.workspace_mobile()
             ws.on_undo_done()
+            self._refresh_mobile_live_view_to_latest()
             merged = self.mobile_workflow.get_merged_pointcloud()
             if merged is not None:
                 ws.viewer().set_pointcloud_merged(merged)
+
+    def _on_mobile_station_selected(self, index: int):
+        """时间线选中机位：在 2D 实时取景区显示该机位图像。"""
+        station_id = f"station_{index}"
+        self._update_mobile_live_view(station_id)
 
     def _on_mobile_optimize(self):
         """全局优化。"""

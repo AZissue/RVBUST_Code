@@ -96,6 +96,7 @@ class ChainStitcher:
         )
         if not markers:
             return False, "未检测到标记物，请调整机位或光照", None
+        frame.markers = markers
 
         station_id = frame.camera_name
         node = ChainNode(station_id=station_id, frame=frame, markers=markers)
