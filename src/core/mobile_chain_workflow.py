@@ -122,7 +122,7 @@ class MobileChainWorkflow(WorkflowBase):
             return False, f"拍摄失败: {msg}", None
 
         # 获取帧数据
-        frame = self._station_manager.get_station_frame(station_id)
+        frame = self._station_manager.get_frame(station_id)
         if frame is None:
             return False, "获取帧数据失败", None
 
