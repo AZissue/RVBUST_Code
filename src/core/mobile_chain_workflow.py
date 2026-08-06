@@ -112,10 +112,14 @@ class MobileChainWorkflow(WorkflowBase):
         if self._state != self.STATE_CHAINING:
             return False, "当前不在链式拼接状态", None
 
-        # 拍摄并存盘
-        station_id = self._station_manager.capture_station()
+        # 拍摄并存盘（模式 B 只有一台物理相机）
+        connected = self.camera_manager.get_connected_ids()
+        if not connected:
+            return False, "没有已连接相机", None
+        camera_id = connected[0]
+        station_id, msg = self._station_manager.capture_station(camera_id)
         if station_id is None:
-            return False, "拍摄失败", None
+            return False, f"拍摄失败: {msg}", None
 
         # 获取帧数据
         frame = self._station_manager.get_station_frame(station_id)
