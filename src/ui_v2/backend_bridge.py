@@ -187,11 +187,13 @@ class BackendBridge(QObject):
     # ------------------------------------------------------------------
     def _on_multi_capture(self, sync: bool):
         """拍摄标定帧。"""
+        preview_cam = self._pause_2d_preview()
         self.shell.show_loading("正在拍摄标定帧...")
         def _work():
             return self.camera_manager.capture_all(sync=sync)
         def _done(frames, error):
             self.shell.hide_loading()
+            self._resume_2d_preview(preview_cam)
             if error:
                 self.shell.log(f"拍摄失败: {error}", "error")
                 return
@@ -300,11 +302,13 @@ class BackendBridge(QObject):
 
     def _on_multi_capture_scan(self):
         """拍摄扫描帧。"""
+        preview_cam = self._pause_2d_preview()
         self.shell.show_loading("正在拍摄扫描帧...")
         def _work():
             return self.camera_manager.capture_all(sync=True)
         def _done(frames, error):
             self.shell.hide_loading()
+            self._resume_2d_preview(preview_cam)
             if error:
                 self.shell.log(f"扫描拍摄失败: {error}", "error")
                 return
@@ -387,13 +391,47 @@ class BackendBridge(QObject):
         if pixmap is not None:
             self.shell.workspace_mobile().live_view().set_frame(pixmap)
 
+    def _pause_2d_preview(self) -> Optional[str]:
+        """暂停持续 2D 预览，返回之前正在预览的 camera_id（如无则 None）。
+
+        RVC SDK 不允许同一 X2/X1 句柄上并发执行 Capture2D 与 Capture（3D）：
+        M2600C 等三目相机的彩色 Extra 相机处于 2D 预览流时，直接调用 3D 拍摄
+        会导致驱动状态冲突/崩溃。所有 3D 拍摄入口必须先调用本方法。
+        """
+        if not self._preview_timer.isActive():
+            return None
+        camera_id = self._preview_camera_id
+        self._preview_timer.stop()
+        # 同步 UI 按钮状态（避免用户以为预览仍在运行）
+        ws = self.shell.workspace_mobile()
+        if ws._btn_preview.isChecked():
+            ws._btn_preview.setChecked(False)
+        logger.info(f"已暂停 2D 预览（准备 3D 拍摄）: {camera_id}")
+        return camera_id
+
+    def _resume_2d_preview(self, camera_id: Optional[str]):
+        """恢复之前暂停的 2D 预览。"""
+        if camera_id is None:
+            return
+        connected = self.camera_manager.get_connected_ids()
+        if camera_id not in connected:
+            return
+        self._preview_camera_id = camera_id
+        self._preview_timer.start(100)
+        ws = self.shell.workspace_mobile()
+        if not ws._btn_preview.isChecked():
+            ws._btn_preview.setChecked(True)
+        logger.info(f"已恢复 2D 预览: {camera_id}")
+
     def _on_mobile_capture_station(self):
         """拍摄机位（自动配准）。"""
+        preview_cam = self._pause_2d_preview()
         self.shell.show_loading("正在拍摄机位...")
         def _work():
             return self.mobile_workflow.capture_station()
         def _done(result, error):
             self.shell.hide_loading()
+            self._resume_2d_preview(preview_cam)
             if error:
                 self.shell.log(f"拍摄异常: {error}", "error")
                 return
@@ -425,6 +463,7 @@ class BackendBridge(QObject):
 
     def _on_mobile_recapture(self, index: int):
         """重拍指定机位。"""
+        preview_cam = self._pause_2d_preview()
         station_id = f"station_{index}"
         self.shell.show_loading(f"正在重拍 {station_id}...")
 
@@ -433,6 +472,7 @@ class BackendBridge(QObject):
 
         def _done(result, error):
             self.shell.hide_loading()
+            self._resume_2d_preview(preview_cam)
             if error:
                 self.shell.log(f"重拍异常: {error}", "error")
                 return

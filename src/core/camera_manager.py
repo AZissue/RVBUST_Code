@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple
+import threading
 
 import numpy as np
 
@@ -57,6 +58,7 @@ class SingleCameraController:
         self.device_index = None      # 连接的设备索引（防重复占用）
         self.sn = None                # 设备 SN（防重复占用，索引可能因枚举顺序变化）
         self.line_scan_detected = False  # 连接时检测到线扫模式（已自动改面阵）
+        self._capture_lock = threading.RLock()  # 串行化 2D/3D 拍摄，避免 SDK 句柄并发冲突
 
     def find_devices(self) -> list:
         if RVC is None:
@@ -187,50 +189,52 @@ class SingleCameraController:
         """
         if not self.is_connected or not self.camera:
             return None, "相机未连接"
-        try:
-            opts = self.current_options
-            if self.camera_type == "X2":
-                ret = (self.camera.Capture2D(self.camera_id, opts)
-                       if opts is not None else self.camera.Capture2D(self.camera_id))
-            else:
-                ret = (self.camera.Capture2D(opts)
-                       if opts is not None else self.camera.Capture2D())
-            if not ret:
-                return None, f"2D 预览失败: {RVC.GetLastErrorMessage()}"
+        with self._capture_lock:
+            try:
+                opts = self.current_options
+                if self.camera_type == "X2":
+                    ret = (self.camera.Capture2D(self.camera_id, opts)
+                           if opts is not None else self.camera.Capture2D(self.camera_id))
+                else:
+                    ret = (self.camera.Capture2D(opts)
+                           if opts is not None else self.camera.Capture2D())
+                if not ret:
+                    return None, f"2D 预览失败: {RVC.GetLastErrorMessage()}"
 
-            img = self.camera.GetImage(self.camera_id) if self.camera_type == "X2" else self.camera.GetImage()
-            if img is None:
-                return None, "获取图像失败"
+                img = self.camera.GetImage(self.camera_id) if self.camera_type == "X2" else self.camera.GetImage()
+                if img is None:
+                    return None, "获取图像失败"
 
-            image_np = np.array(img, copy=True)
-            return image_np, "success"
-        except Exception as e:
-            logger.error(f"2D 预览异常: {e}")
-            return None, f"异常: {e}"
+                image_np = np.array(img, copy=True)
+                return image_np, "success"
+            except Exception as e:
+                logger.error(f"2D 预览异常: {e}")
+                return None, f"异常: {e}"
 
     def capture_3d(self, options=None) -> Tuple[Optional[np.ndarray], Optional['RVC.PointMap'], Optional['RVC.Image'], str]:
         if not self.is_connected or not self.camera:
             return None, None, None, "相机未连接"
-        try:
-            # 默认用无参 Capture()：直接按相机内部参数拍摄（SDK 推荐方式，
-            # 兼容 M 系列线扫模式）；仅当显式传入参数时才 Capture(opts)
-            if options is not None:
-                ret = self.camera.Capture(options)
-            else:
-                ret = self.camera.Capture()
-            if not ret:
-                return None, None, None, f"拍摄失败: {RVC.GetLastErrorMessage()}"
+        with self._capture_lock:
+            try:
+                # 默认用无参 Capture()：直接按相机内部参数拍摄（SDK 推荐方式，
+                # 兼容 M 系列线扫模式）；仅当显式传入参数时才 Capture(opts)
+                if options is not None:
+                    ret = self.camera.Capture(options)
+                else:
+                    ret = self.camera.Capture()
+                if not ret:
+                    return None, None, None, f"拍摄失败: {RVC.GetLastErrorMessage()}"
 
-            img = self.camera.GetImage(self.camera_id) if self.camera_type == "X2" else self.camera.GetImage()
-            pm = self.camera.GetPointMap()
-            if img is None or pm is None:
-                return None, None, None, "获取图像/点云失败"
+                img = self.camera.GetImage(self.camera_id) if self.camera_type == "X2" else self.camera.GetImage()
+                pm = self.camera.GetPointMap()
+                if img is None or pm is None:
+                    return None, None, None, "获取图像/点云失败"
 
-            image_np = np.array(img, copy=True)
-            return image_np, pm.Clone(), img.Clone(), "success"
-        except Exception as e:
-            logger.error(f"拍摄异常: {e}")
-            return None, None, None, f"异常: {e}"
+                image_np = np.array(img, copy=True)
+                return image_np, pm.Clone(), img.Clone(), "success"
+            except Exception as e:
+                logger.error(f"拍摄异常: {e}")
+                return None, None, None, f"异常: {e}"
 
     def get_capture_options(self):
         if not self.is_connected:

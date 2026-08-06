@@ -974,6 +974,7 @@ class MainWindow(QMainWindow):
     # ==================================================================
     def _on_capture_all(self):
         """拍摄所有已连接相机（软触发同步）。"""
+        self._stop_physical_preview()  # 3D 拍摄前停止 2D 预览，避免 SDK 冲突
         frames = self.camera_manager.capture_all(sync=True)
         if not frames:
             self._log("[WARN] 拍摄失败：无已连接相机或全部拍摄失败")
@@ -985,6 +986,7 @@ class MainWindow(QMainWindow):
 
     def _on_capture_sequential(self):
         """分开拍摄所有已连接相机（串行触发，一台拍完再拍下一台）。"""
+        self._stop_physical_preview()  # 3D 拍摄前停止 2D 预览，避免 SDK 冲突
         camera_ids = self.camera_manager.get_connected_ids()
         if not camera_ids:
             self._log("[WARN] 无已连接相机，无法分开拍摄")
@@ -1026,7 +1028,7 @@ class MainWindow(QMainWindow):
         if self._preview_timer.isActive():
             self._preview_timer.stop()
             self._log("[INFO] 持续 2D 预览已暂停")
-        card = self.cards.get(self.PHYSICAL_ID)
+        card = self.cards.get(self._preview_camera_id)
         if card is not None and card.is_preview_active():
             card.stop_preview()
         self._preview_camera_id = None
@@ -1051,6 +1053,7 @@ class MainWindow(QMainWindow):
 
     def _on_capture_single(self, camera_id: str):
         """单拍指定相机。"""
+        self._stop_physical_preview()  # 3D 拍摄前停止 2D 预览，避免 SDK 冲突
         frame = self.camera_manager.capture(camera_id)
         if frame is None:
             self._log(f"[WARN] 相机 {camera_id} 拍摄失败（未连接？）")
@@ -2009,6 +2012,8 @@ class MainWindow(QMainWindow):
         if not self.camera_manager.get_connected_ids():
             self._log("[WARN] 无已连接相机，无法拍摄机位")
             return
+        # 3D 拍摄前停止 2D 预览，避免 SDK 冲突
+        self._stop_physical_preview()
         # 启动链式拼接（如果还没启动）
         if self.mobile_chain_workflow.get_state() == "idle":
             ok, msg = self.mobile_chain_workflow.start_chaining()
