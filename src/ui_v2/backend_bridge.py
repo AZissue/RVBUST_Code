@@ -68,6 +68,9 @@ class BackendBridge(QObject):
         self._preview_timer.timeout.connect(self._on_preview_tick)
         self._preview_camera_id: Optional[str] = None
 
+        # 后台任务引用保护：防止 QThread 运行期间被 Python GC 销毁
+        self._workers: List[WorkerThread] = []
+
         # 初始化 RVC 系统
         ok, msg = self.camera_manager.initialize()
         if ok:
@@ -607,9 +610,23 @@ class BackendBridge(QObject):
         """后台执行 work()，完成后主线程回调 on_done(result, error)。"""
         from ui.worker_thread import WorkerThread
         worker = WorkerThread(work)
-        worker.finished.connect(on_done)
+        self._workers.append(worker)
+
+        def _wrapped_done(result, error):
+            if worker in self._workers:
+                self._workers.remove(worker)
+            on_done(result, error)
+
+        worker.finished.connect(_wrapped_done)
         worker.start()
 
     def cleanup(self):
         """清理资源（关闭窗口时调用）。"""
+        # 停止实时取景
+        self._preview_timer.stop()
+        # 等待所有后台任务结束，避免 QThread 运行期间被销毁
+        for worker in list(self._workers):
+            if worker.isRunning():
+                worker.wait(3000)
+        self._workers.clear()
         self.camera_manager.shutdown()
