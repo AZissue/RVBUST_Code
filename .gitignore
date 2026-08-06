@@ -4,6 +4,7 @@ __pycache__/
 *.pyo
 .pytest_cache/
 .ai_completion/
+.venv-uiv2/
 
 # Project data
 offline_data/

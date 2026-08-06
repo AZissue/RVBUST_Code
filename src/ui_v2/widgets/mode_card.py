@@ -1,0 +1,77 @@
+# -*- coding: utf-8 -*-
+"""
+ui_v2.widgets.mode_card —— 启动小窗的工作模式选择卡片。
+
+两张卡片上下排列（多相机外参标定 / 单相机移动拼接），
+自绘可选中卡片，选中态 RVC 红边框 + 淡红底色。
+"""
+
+from __future__ import annotations
+
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout
+
+from ..theme import (
+    ACCENT, ACCENT_DIM, BG_CARD, BORDER, TEXT_PRIMARY, TEXT_SECONDARY,
+)
+
+
+class ModeCard(QFrame):
+    """可选中的模式卡片（图标 + 模式名 + 一句话说明）。"""
+
+    clicked = Signal()
+
+    def __init__(self, icon: str, title: str, desc: str, parent=None):
+        super().__init__(parent)
+        self._checked = False
+
+        lo = QHBoxLayout(self)
+        lo.setContentsMargins(14, 12, 14, 12)
+        lo.setSpacing(12)
+
+        self._icon = QLabel(icon)
+        self._icon.setStyleSheet("font-size: 28px;")
+        self._icon.setFixedWidth(36)
+        self._icon.setAlignment(Qt.AlignCenter)
+        lo.addWidget(self._icon)
+
+        text_col = QVBoxLayout()
+        text_col.setSpacing(4)
+        self._title = QLabel(title)
+        self._title.setStyleSheet(
+            f"font-size: 14px; font-weight: 700; color: {TEXT_PRIMARY};")
+        text_col.addWidget(self._title)
+        self._desc = QLabel(desc)
+        self._desc.setWordWrap(True)
+        self._desc.setStyleSheet(f"font-size: 11px; color: {TEXT_SECONDARY};")
+        text_col.addWidget(self._desc)
+        lo.addLayout(text_col, 1)
+
+        # 选中圆点指示
+        self._dot = QLabel("●")
+        self._dot.setFixedWidth(18)
+        self._dot.setAlignment(Qt.AlignCenter)
+        lo.addWidget(self._dot)
+
+        self.setCursor(Qt.PointingHandCursor)
+        self.setChecked(False)
+
+    def is_checked(self) -> bool:
+        return self._checked
+
+    def setChecked(self, checked: bool):
+        self._checked = checked
+        if checked:
+            self.setStyleSheet(
+                f"ModeCard {{ background-color: {ACCENT_DIM};"
+                f" border: 2px solid {ACCENT}; border-radius: 8px; }}")
+            self._dot.setStyleSheet(f"color: {ACCENT}; font-size: 14px;")
+        else:
+            self.setStyleSheet(
+                f"ModeCard {{ background-color: {BG_CARD};"
+                f" border: 1px solid {BORDER}; border-radius: 8px; }}")
+            self._dot.setStyleSheet("color: #3A3D46; font-size: 14px;")
+
+    def mousePressEvent(self, event):
+        self.clicked.emit()
+        super().mousePressEvent(event)
