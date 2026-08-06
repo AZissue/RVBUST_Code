@@ -60,8 +60,10 @@ class LoadingOverlay(QWidget):
         self._base_text = text.rstrip(".")
         self._dots = 0
         self._label.setText(self._base_text)
-        if self.parentWidget():
-            self.resize(self.parentWidget().size())
+        parent = self.parentWidget()
+        if parent:
+            # 覆盖父窗口整个区域（QMainWindow 也包含 dock、工具栏等）
+            self.setGeometry(0, 0, parent.width(), parent.height())
         self.show()
         self.raise_()
         self._timer.start(400)

@@ -401,4 +401,4 @@ class MainWindowShell(QMainWindow):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if hasattr(self, "_overlay") and self._overlay.isVisible():
-            self._overlay.resize(self.size())
+            self._overlay.setGeometry(0, 0, self.width(), self.height())
