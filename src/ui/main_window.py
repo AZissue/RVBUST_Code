@@ -47,6 +47,8 @@ from .panels.capture_panel import CapturePanel
 from .panels.calibration_panel import CalibrationPanel
 from .panels.stitch_panel import StitchPanel
 from .panels.station_panel import StationPanel, station_label
+from .workflows.mobile_chain_view import MobileChainView
+from core.mobile_chain_workflow import MobileChainWorkflow
 
 # RANSAC 内点阈值：检测的 3D 坐标来自 SaveWithImage(Millimeter)，单位 mm
 RANSAC_THRESHOLD_MM = 2.0
@@ -426,6 +428,9 @@ class MainWindow(QMainWindow):
         self.stitch_engine = StitchEngine()
         self.offline_session = OfflineSession()
         self.station_manager = StationManager(self.camera_manager)
+        self.mobile_chain_workflow = MobileChainWorkflow(
+            self.camera_manager, self.marker_detector,
+            self.calibration_engine, self.stitch_engine)
 
         # ---- 状态 ----
         self.frames: Dict[str, FrameData] = {}      # camera_id/station_id → 最新帧
@@ -466,19 +471,23 @@ class MainWindow(QMainWindow):
         # 主三栏（水平分割）
         main_splitter = QSplitter(Qt.Horizontal)
 
-        # 左：设备管理（Tab1）/ 单相机站位（Tab2）
+        # 左：设备管理（Tab1）/ 单相机站位（Tab2）/ 移动链式（Tab3）
         self.left_tabs = QTabWidget()
         self.device_panel = DevicePanel()
         self.station_panel = StationPanel()
+        self.mobile_chain_view = MobileChainView()
         dev_scroll = QScrollArea()
         dev_scroll.setWidgetResizable(True)
         dev_scroll.setWidget(self.device_panel)
         self.left_tabs.addTab(dev_scroll, icon_text("multicam", "🎥 设备管理"))
         self.left_tabs.addTab(self.station_panel, icon_text("station", "📍 单相机站位"))
+        self.left_tabs.addTab(self.mobile_chain_view, icon_text("link", "🔗 移动链式"))
         if has_icon("multicam"):
             self.left_tabs.setTabIcon(0, get_icon("multicam"))
         if has_icon("station"):
             self.left_tabs.setTabIcon(1, get_icon("station"))
+        if has_icon("link"):
+            self.left_tabs.setTabIcon(2, get_icon("link"))
         self.left_tabs.setFixedWidth(350)
         main_splitter.addWidget(self.left_tabs)
 
@@ -655,6 +664,13 @@ class MainWindow(QMainWindow):
         st.station_removed.connect(self._on_remove_station)
         st.stations_cleared.connect(self._on_clear_stations)
         st.new_session_requested.connect(self._on_new_station_session)
+
+        # 移动链式拼接视图
+        mc = self.mobile_chain_view
+        mc.capture_station_requested.connect(self._on_mobile_capture_station)
+        mc.undo_station_requested.connect(self._on_mobile_undo_station)
+        mc.optimize_global_requested.connect(self._on_mobile_optimize_global)
+        mc.save_session_requested.connect(self._on_mobile_save_session)
 
         c = self.calibration_panel
         c.detect_requested.connect(self._on_detect_markers)
@@ -1921,6 +1937,81 @@ class MainWindow(QMainWindow):
         path = self.station_manager.new_session()
         self.station_panel.set_session_path(path)
         self._log(f"[SUCCESS] 站位新会话已创建: {path}")
+
+    # ==================================================================
+    # 移动链式拼接（功能二）
+    # ==================================================================
+    def _on_mobile_capture_station(self):
+        """拍摄当前机位并自动配准（移动链式拼接）。"""
+        if not self.camera_manager.get_connected_ids():
+            self._log("[WARN] 无已连接相机，无法拍摄机位")
+            return
+        # 启动链式拼接（如果还没启动）
+        if self.mobile_chain_workflow.get_state() == "idle":
+            ok, msg = self.mobile_chain_workflow.start_chaining()
+            if not ok:
+                self._log(f"[ERROR] 启动链式拼接失败: {msg}")
+                return
+            self._log(f"[INFO] {msg}")
+
+        # 拍摄并配准
+        ok, msg, evaluation = self.mobile_chain_workflow.capture_station()
+        if evaluation:
+            self.mobile_chain_view.update_evaluation(evaluation)
+            station_id = evaluation.get('station_id')
+            if station_id:
+                # 更新时间线
+                stations = self.mobile_chain_workflow.get_station_list()
+                for s in stations:
+                    if s['station_id'] == station_id:
+                        quality = "good" if evaluation.get('success') else "poor"
+                        self.mobile_chain_view.add_station_to_timeline(
+                            station_id, s['n_markers'], s['cum_rms_mm'], quality)
+                        break
+        if ok:
+            self._log(f"[SUCCESS] {msg}")
+            # 刷新 3D 拼接视图
+            merged = self.mobile_chain_workflow.get_merged_pointcloud()
+            if merged is not None:
+                self.viewer_3d.set_pointcloud_merged(merged)
+                self.mobile_chain_view.set_3d_text(f"已拼接 {len(merged.points)} 点")
+        else:
+            self._log(f"[WARN] {msg}")
+
+    def _on_mobile_undo_station(self):
+        """撤销上一机位（移动链式拼接）。"""
+        ok, msg = self.mobile_chain_workflow.undo_last_station()
+        self._log(f"[INFO] {msg}")
+        # 刷新 3D 拼接视图
+        merged = self.mobile_chain_workflow.get_merged_pointcloud()
+        if merged is not None:
+            self.viewer_3d.set_pointcloud_merged(merged)
+
+    def _on_mobile_optimize_global(self):
+        """执行全局 BA 优化（移动链式拼接）。"""
+        ok, msg = self.mobile_chain_workflow.optimize_global()
+        self._log(f"[INFO] {msg}")
+        # 刷新 3D 拼接视图
+        merged = self.mobile_chain_workflow.get_merged_pointcloud()
+        if merged is not None:
+            self.viewer_3d.set_pointcloud_merged(merged)
+
+    def _on_mobile_save_session(self):
+        """保存移动链式拼接会话。"""
+        report = self.mobile_chain_workflow.get_error_report()
+        if not report:
+            self._log("[WARN] 无会话数据可保存")
+            return
+        # 保存到会话目录
+        session_dir = self.mobile_chain_workflow.session_dir
+        if session_dir:
+            import json
+            report_path = os.path.join(session_dir, "error_report.json")
+            with open(report_path, 'w', encoding='utf-8') as f:
+                json.dump(report, f, ensure_ascii=False, indent=2)
+            self._log(f"[SUCCESS] 会话已保存: {session_dir}")
+        else:
+            self._log("[WARN] 无会话目录，请先开始链式拼接")
 
     # ==================================================================
     # 窗口事件
