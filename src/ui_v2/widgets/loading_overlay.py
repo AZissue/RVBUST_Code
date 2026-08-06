@@ -14,11 +14,11 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
 
-from ..theme import TEXT_PRIMARY
+from ..theme import ACCENT, BG_PANEL, TEXT_PRIMARY
 
 
 class LoadingOverlay(QWidget):
-    """加载提示：不遮挡父窗口，仅在中央显示当前操作文字（带点点动画）。"""
+    """加载提示：背景不遮挡父窗口，中央显示带框面板的操作文字。"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -27,17 +27,27 @@ class LoadingOverlay(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
 
-        self._label = QLabel("处理中...", self)
+        # 中央醒目面板
+        container = QWidget(self)
+        container.setStyleSheet(
+            f"background-color: {BG_PANEL}; border: 2px solid {ACCENT};"
+            "border-radius: 10px; padding: 20px;"
+        )
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(30, 24, 30, 24)
+
+        self._label = QLabel("处理中...")
         self._label.setStyleSheet(
             f"color: {TEXT_PRIMARY}; font-size: 15px; font-weight: 700;"
             "background-color: transparent;"
         )
         self._label.setAlignment(Qt.AlignCenter)
+        container_layout.addWidget(self._label)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.addStretch(1)
-        root.addWidget(self._label, 0, Qt.AlignCenter)
+        root.addWidget(container, 0, Qt.AlignCenter)
         root.addStretch(1)
 
         self._timer = QTimer(self)

@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 
 
 class LoadingOverlay(QWidget):
-    """加载提示：不遮挡父窗口，仅在中央显示当前操作文字（带点点动画）。"""
+    """加载提示：背景不遮挡父窗口，中央显示带框面板的操作文字。"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -27,17 +27,27 @@ class LoadingOverlay(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
 
-        self.label = QLabel("处理中...", self)
+        # 中央醒目面板
+        container = QWidget(self)
+        container.setStyleSheet(
+            "background-color: #1E1F24; border: 2px solid #2979FF; "
+            "border-radius: 10px; padding: 20px;"
+        )
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(30, 24, 30, 24)
+
+        self.label = QLabel("处理中...")
         self.label.setStyleSheet(
             "color: #E8EAED; font-size: 14pt; font-weight: bold;"
             "background-color: transparent;"
         )
         self.label.setAlignment(Qt.AlignCenter)
+        container_layout.addWidget(self.label)
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.addStretch(1)
-        main_layout.addWidget(self.label, 0, Qt.AlignCenter)
+        main_layout.addWidget(container, 0, Qt.AlignCenter)
         main_layout.addStretch(1)
 
         # 循环点动画定时器
