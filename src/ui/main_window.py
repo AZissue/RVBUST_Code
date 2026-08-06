@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QPushButton, QLabel, QTabWidget, QScrollArea, QTextEdit,
     QMessageBox, QFileDialog, QSplitter, QSizePolicy, QDockWidget,
+    QStackedWidget,
 )
 
 from core.camera_manager import CameraManager, SingleCameraController
@@ -468,32 +469,27 @@ class MainWindow(QMainWindow):
         root_lo.setContentsMargins(4, 4, 4, 0)
         root_lo.setSpacing(4)
 
-        # 主三栏（水平分割）
-        main_splitter = QSplitter(Qt.Horizontal)
+        # 主三栏（水平分割）—— 多相机/单相机站位模式共享
+        self.main_splitter = QSplitter(Qt.Horizontal)
 
-        # 左：设备管理（Tab1）/ 单相机站位（Tab2）/ 移动链式（Tab3）
+        # 左：设备管理 / 单相机站位
         self.left_tabs = QTabWidget()
         self.device_panel = DevicePanel()
         self.station_panel = StationPanel()
-        self.mobile_chain_view = MobileChainView()
         dev_scroll = QScrollArea()
         dev_scroll.setWidgetResizable(True)
         dev_scroll.setWidget(self.device_panel)
         self.left_tabs.addTab(dev_scroll, icon_text("multicam", "🎥 设备管理"))
         self.left_tabs.addTab(self.station_panel, icon_text("station", "📍 单相机站位"))
-        self.left_tabs.addTab(self.mobile_chain_view, icon_text("link", "🔗 移动链式"))
         if has_icon("multicam"):
             self.left_tabs.setTabIcon(0, get_icon("multicam"))
         if has_icon("station"):
             self.left_tabs.setTabIcon(1, get_icon("station"))
-        if has_icon("link"):
-            self.left_tabs.setTabIcon(2, get_icon("link"))
         self.left_tabs.setFixedWidth(350)
-        main_splitter.addWidget(self.left_tabs)
+        self.main_splitter.addWidget(self.left_tabs)
 
-        # 中：卡片网格 + 3D 查看器（垂直分割，折叠/最大化由查看器工具栏控制）
+        # 中：卡片网格 + 3D 查看器
         self.center_splitter = QSplitter(Qt.Vertical)
-
         self.grid_scroll = QScrollArea()
         self.grid_scroll.setWidgetResizable(True)
         self.grid_container = QWidget()
@@ -503,18 +499,15 @@ class MainWindow(QMainWindow):
         self.grid_scroll.setWidget(self.grid_container)
         self.center_splitter.addWidget(self.grid_scroll)
 
-        # 3D 查看器（顶部工具栏含折叠 / 着色 / 视角 / 最大化等）
         self.viewer_3d = EmbeddedPointCloudViewer()
         self.center_splitter.addWidget(self.viewer_3d)
-        # 默认 3D 区占大头（卡片仅作取景/标记确认，3D 才是主要观察区）
         self.center_splitter.setSizes([350, 650])
-        main_splitter.addWidget(self.center_splitter)
+        self.main_splitter.addWidget(self.center_splitter)
 
-        # 3D 折叠 = 最小化到工具栏：释放空间给卡片区，展开恢复原高度
         self._viewer_expanded_sizes = None
         self.viewer_3d.collapse_toggled.connect(self._on_viewer_collapse_toggled)
 
-        # 右：采集 / 标定 / 拼接 Tab（内容较高，套 QScrollArea 防压缩重叠）
+        # 右：采集 / 标定 / 拼接 Tab
         self.right_tabs = QTabWidget()
         self.capture_panel = CapturePanel()
         self.calibration_panel = CalibrationPanel()
@@ -538,25 +531,53 @@ class MainWindow(QMainWindow):
         if has_icon("link"):
             self.right_tabs.setTabIcon(2, get_icon("link"))
         self.right_tabs.setMinimumWidth(380)
-        main_splitter.addWidget(self.right_tabs)
+        self.main_splitter.addWidget(self.right_tabs)
 
-        # 左 350 / 中 1100（中央加宽，3D 区更大）/ 右 380
-        main_splitter.setSizes([350, 1100, 380])
-        main_splitter.setCollapsible(0, False)
+        self.main_splitter.setSizes([350, 1100, 380])
+        self.main_splitter.setCollapsible(0, False)
 
-        # 底部：可折叠日志面板（与主三栏垂直 QSplitter，高度可拖动，无硬上限）
+        # 页面容器（QStackedWidget 管理整页切换）
+        self.page_stack = QStackedWidget()
+
+        # 页面 0：多相机/单相机站位模式（三栏布局 + 顶部步骤条）
+        self.page_workspace = QWidget()
+        workspace_lo = QVBoxLayout(self.page_workspace)
+        workspace_lo.setContentsMargins(0, 0, 0, 0)
+        workspace_lo.setSpacing(4)
+
+        # 顶部：向导式步骤条（多相机模式显示，其他模式隐藏）
+        from .widgets.wizard_step_bar import WizardStepBar
+        self.wizard_bar = WizardStepBar([
+            "连接相机", "拍摄标定", "检测标记", "标定外参", "扫描场景", "拼接保存"
+        ])
+        workspace_lo.addWidget(self.wizard_bar)
+        workspace_lo.addWidget(self.main_splitter, 1)
+        self.page_stack.addWidget(self.page_workspace)
+
+        # 页面 1：移动链式拼接模式（整页新布局）
+        self.page_mobile_chain = QWidget()
+        page2_lo = QVBoxLayout(self.page_mobile_chain)
+        page2_lo.setContentsMargins(0, 0, 0, 0)
+        page2_lo.setSpacing(4)
+        self.mobile_chain_view = MobileChainView()
+        page2_lo.addWidget(self.mobile_chain_view, 1)
+        self.page_stack.addWidget(self.page_mobile_chain)
+
+        root_lo.addWidget(self.page_stack)
+
+        # 底部：可折叠日志面板
         self.log_panel = CollapsibleLogPanel()
-        # 展开时最小 200（标题栏 28 + 提示区约 100 + 日志区约 70）
         self.log_panel.setMinimumHeight(200)
-
         self.outer_splitter = QSplitter(Qt.Vertical)
-        self.outer_splitter.addWidget(main_splitter)
+        self.outer_splitter.addWidget(self.page_stack)
         self.outer_splitter.addWidget(self.log_panel)
-        # 主区 700 / 日志区 200：初始足够显示标题栏 + 2~3 行日志，折叠/展开由按钮控制
         self.outer_splitter.setSizes([700, 200])
         self.outer_splitter.setStretchFactor(0, 1)
         self.outer_splitter.setStretchFactor(1, 0)
         root_lo.addWidget(self.outer_splitter)
+
+        # 模式切换信号：左侧面板 Tab 切换时更新 UI 布局
+        self.left_tabs.currentChanged.connect(self._on_mode_changed)
 
         # 日志折叠 = 最小化到底部标题栏：释放空间给主内容区，展开时恢复原高度
         self._log_expanded_sizes = None
@@ -566,6 +587,25 @@ class MainWindow(QMainWindow):
         self._loading = LoadingOverlay(self)
 
         self.statusBar().showMessage("就绪")
+
+    def _on_mode_changed(self, index: int):
+        """模式切换时的处理（left_tabs 索引：0=多相机，1=单相机站位，2=移动链式）。"""
+        mode_names = ["多相机标定", "单相机站位", "移动链式拼接"]
+        self._log(f"[INFO] 切换到 {mode_names[index]} 模式")
+
+        if index == 2:  # 移动链式拼接
+            self.page_stack.setCurrentIndex(1)
+            self.wizard_bar.hide()
+            # 初始化移动链式工作流
+            if self.mobile_chain_workflow.get_state() == "idle":
+                self.mobile_chain_view.set_preview_text("请连接相机并开始拍摄")
+                self.mobile_chain_view.set_3d_text("未加载点云")
+        else:  # 多相机 / 单相机站位
+            self.page_stack.setCurrentIndex(0)
+            if index == 0:  # 多相机模式显示步骤条
+                self.wizard_bar.show()
+            else:  # 单相机站位隐藏步骤条
+                self.wizard_bar.hide()
 
     def _show_loading(self, text: str = "处理中，请稍候..."):
         """显示全局加载遮罩。"""
