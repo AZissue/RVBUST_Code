@@ -70,8 +70,6 @@ class CollapsibleLogPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._expanded = True
-        self._tips_visible = True      # 提示区可见状态（btn_tips 切换）
-        self._tips_sizes = None        # 收起前的 splitter 尺寸（展开时恢复）
         self._setup_ui()
 
     def _setup_ui(self):
@@ -107,17 +105,6 @@ class CollapsibleLogPanel(QWidget):
         self.btn_toggle.clicked.connect(self._toggle)
         header_lo.addWidget(self.btn_toggle)
 
-        # 提示区收起 / 展开按钮（样式与 btn_toggle 一致）
-        self.btn_tips = QPushButton("◀ 提示")
-        self.btn_tips.setStyleSheet(
-            "QPushButton { background: transparent; border: none; color: #8B8D98; "
-            "font-size: 9pt; font-weight: bold; padding: 2px 4px; }"
-            "QPushButton:hover { color: #F0F0F5; }"
-        )
-        self.btn_tips.setMaximumWidth(60)
-        self.btn_tips.clicked.connect(self._toggle_tips)
-        header_lo.addWidget(self.btn_tips)
-
         self.lbl_status = QLabel("就绪 | 请先查找并添加设备")
         self.lbl_status.setStyleSheet("color: #aaaaaa; font-size: 9pt;")
         header_lo.addWidget(self.lbl_status, 1)
@@ -134,37 +121,11 @@ class CollapsibleLogPanel(QWidget):
         header_lo.addWidget(self.btn_clear)
         lo.addWidget(self.header)
 
-        # 内容区：左 操作提示 | 右 日志（水平 QSplitter，宽度可拖动）
+        # 内容区：只保留日志（操作提示已删除）
         self.content = QWidget()
         content_lo = QVBoxLayout(self.content)
         content_lo.setContentsMargins(0, 0, 0, 0)
         content_lo.setSpacing(0)
-
-        self.splitter = QSplitter(Qt.Horizontal)
-
-        self.tips_edit = QTextEdit()
-        self.tips_edit.setReadOnly(True)
-        self.tips_edit.setMinimumWidth(0)
-        self.tips_edit.setStyleSheet(
-            "background-color: #0F0F13; color: #8B8D98; "
-            "border: none; border-right: 1px solid #2A2A34; "
-            "font-size: 8pt; font-family: 'Geist', 'Inter', 'Microsoft YaHei', 'Segoe UI', system-ui, sans-serif;"
-            "padding: 6px;"
-        )
-        self.tips_edit.setText(
-            "操作流程：\n"
-            "多相机：查找设备→添加→摆放标定板→\n"
-            "  拍摄→检测标记→标定 pair→拼接\n"
-            "站位：连接相机→逐站位移动拍摄→\n"
-            "  检测→标定(默认参考站位1)→拼接\n"
-            "提高精度：移动标定板换姿态，拍多轮\n"
-            "  后「累积当前帧」→「多帧标定」\n"
-            "后处理：参数过激会滤光点云，点\n"
-            "  「✨自动设置参数」按数据估计\n"
-            "离线：拍摄→存会话→加载→批量\n"
-            "  检测/标定/拼接"
-        )
-        self.splitter.addWidget(self.tips_edit)
 
         self.log_content = QTextEdit()
         self.log_content.setReadOnly(True)
@@ -174,11 +135,7 @@ class CollapsibleLogPanel(QWidget):
             "font-family: 'JetBrains Mono', 'Consolas', monospace; font-size: 9pt; "
             "border: none; padding: 6px;"
         )
-        self.splitter.addWidget(self.log_content)
-        self.splitter.setStretchFactor(0, 0)
-        self.splitter.setStretchFactor(1, 1)
-        self.splitter.setSizes([240, 760])
-        content_lo.addWidget(self.splitter)
+        content_lo.addWidget(self.log_content)
         lo.addWidget(self.content, 1)
 
     def _toggle(self):
@@ -195,18 +152,6 @@ class CollapsibleLogPanel(QWidget):
         self.content.setVisible(self._expanded)
         self.btn_toggle.setText("▼ 日志" if self._expanded else "▶ 日志")
         self.toggled.emit(self._expanded)
-
-    def _toggle_tips(self):
-        """收起 / 展开操作提示区：收起后日志占满全宽，展开恢复之前的位置。"""
-        self._tips_visible = not self._tips_visible
-        if not self._tips_visible:
-            self._tips_sizes = self.splitter.sizes()
-            self.tips_edit.hide()
-        else:
-            self.tips_edit.show()
-            if self._tips_sizes and len(self._tips_sizes) == 2 and self._tips_sizes[0] > 0:
-                self.splitter.setSizes(self._tips_sizes)
-        self.btn_tips.setText("◀ 提示" if self._tips_visible else "▶ 提示")
 
     def append(self, text: str):
         """追加日志，自动识别级别并着色前缀。"""
@@ -469,26 +414,16 @@ class MainWindow(QMainWindow):
         root_lo.setContentsMargins(4, 4, 4, 0)
         root_lo.setSpacing(4)
 
+        # 顶部：功能栏（返回启动窗口 / 设备管理 / 模式切换）
+        self._create_top_toolbar(root_lo)
+
         # 主三栏（水平分割）—— 多相机/单相机站位模式共享
         self.main_splitter = QSplitter(Qt.Horizontal)
 
-        # 左：设备管理 / 单相机站位
-        self.left_tabs = QTabWidget()
-        self.device_panel = DevicePanel()
-        self.station_panel = StationPanel()
-        dev_scroll = QScrollArea()
-        dev_scroll.setWidgetResizable(True)
-        dev_scroll.setWidget(self.device_panel)
-        self.left_tabs.addTab(dev_scroll, icon_text("multicam", "🎥 设备管理"))
-        self.left_tabs.addTab(self.station_panel, icon_text("station", "📍 单相机站位"))
-        if has_icon("multicam"):
-            self.left_tabs.setTabIcon(0, get_icon("multicam"))
-        if has_icon("station"):
-            self.left_tabs.setTabIcon(1, get_icon("station"))
-        self.left_tabs.setFixedWidth(350)
-        self.main_splitter.addWidget(self.left_tabs)
+        # 左：相机采集栏（已连接相机卡片 + 单独控制拍摄 + 2D 参数）
+        self._create_camera_panel()
 
-        # 中：卡片网格 + 3D 查看器
+        # 中：数据预览窗口（卡片网格 + 3D 查看器，维持现状）
         self.center_splitter = QSplitter(Qt.Vertical)
         self.grid_scroll = QScrollArea()
         self.grid_scroll.setWidgetResizable(True)
@@ -507,7 +442,7 @@ class MainWindow(QMainWindow):
         self._viewer_expanded_sizes = None
         self.viewer_3d.collapse_toggled.connect(self._on_viewer_collapse_toggled)
 
-        # 右：采集 / 标定 / 拼接 Tab
+        # 右：检测标记物标定和拼接功能（维持现有 UI）
         self.right_tabs = QTabWidget()
         self.capture_panel = CapturePanel()
         self.calibration_panel = CalibrationPanel()
@@ -538,21 +473,7 @@ class MainWindow(QMainWindow):
 
         # 页面容器（QStackedWidget 管理整页切换）
         self.page_stack = QStackedWidget()
-
-        # 页面 0：多相机/单相机站位模式（三栏布局 + 顶部步骤条）
-        self.page_workspace = QWidget()
-        workspace_lo = QVBoxLayout(self.page_workspace)
-        workspace_lo.setContentsMargins(0, 0, 0, 0)
-        workspace_lo.setSpacing(4)
-
-        # 顶部：向导式步骤条（多相机模式显示，其他模式隐藏）
-        from .widgets.wizard_step_bar import WizardStepBar
-        self.wizard_bar = WizardStepBar([
-            "连接相机", "拍摄标定", "检测标记", "标定外参", "扫描场景", "拼接保存"
-        ])
-        workspace_lo.addWidget(self.wizard_bar)
-        workspace_lo.addWidget(self.main_splitter, 1)
-        self.page_stack.addWidget(self.page_workspace)
+        self.page_stack.addWidget(self.main_splitter)  # 页面 0：多相机/单相机站位
 
         # 页面 1：移动链式拼接模式（整页新布局）
         self.page_mobile_chain = QWidget()
@@ -565,7 +486,7 @@ class MainWindow(QMainWindow):
 
         root_lo.addWidget(self.page_stack)
 
-        # 底部：可折叠日志面板
+        # 底部：可折叠日志面板（只输出 log，操作提示已删除）
         self.log_panel = CollapsibleLogPanel()
         self.log_panel.setMinimumHeight(200)
         self.outer_splitter = QSplitter(Qt.Vertical)
@@ -587,6 +508,113 @@ class MainWindow(QMainWindow):
         self._loading = LoadingOverlay(self)
 
         self.statusBar().showMessage("就绪")
+
+    def _create_top_toolbar(self, root_lo):
+        """创建顶部功能栏（返回启动窗口 / 设备管理 / 模式切换）。"""
+        toolbar = QWidget()
+        toolbar.setFixedHeight(36)
+        toolbar.setStyleSheet("background-color: #1A1A20; border-bottom: 1px solid #2A2A34;")
+        tb_lo = QHBoxLayout(toolbar)
+        tb_lo.setContentsMargins(8, 4, 8, 4)
+        tb_lo.setSpacing(8)
+
+        # 返回启动窗口
+        self.btn_back_launcher = QPushButton("← 返回模式选择")
+        self.btn_back_launcher.setStyleSheet(
+            "QPushButton { background: transparent; border: none; color: #8B8D98; "
+            "font-size: 9pt; padding: 4px 8px; }"
+            "QPushButton:hover { color: #F0F0F5; }"
+        )
+        self.btn_back_launcher.clicked.connect(self._on_back_to_launcher)
+        tb_lo.addWidget(self.btn_back_launcher)
+
+        tb_lo.addStretch(1)
+
+        # 设备管理按钮
+        self.btn_device_manager = QPushButton("🎥 设备管理")
+        self.btn_device_manager.setStyleSheet(
+            "QPushButton { background: transparent; border: none; color: #8B8D98; "
+            "font-size: 9pt; padding: 4px 8px; }"
+            "QPushButton:hover { color: #F0F0F5; }"
+        )
+        self.btn_device_manager.clicked.connect(lambda: self.left_tabs.setCurrentIndex(0))
+        tb_lo.addWidget(self.btn_device_manager)
+
+        # 模式切换按钮
+        self.btn_mode_multi = QPushButton("🎥 多相机")
+        self.btn_mode_multi.setCheckable(True)
+        self.btn_mode_multi.setChecked(True)
+        self.btn_mode_multi.setStyleSheet(
+            "QPushButton { background: transparent; border: none; color: #8B8D98; "
+            "font-size: 9pt; padding: 4px 8px; }"
+            "QPushButton:hover { color: #F0F0F5; }"
+            "QPushButton:checked { color: #2979FF; font-weight: bold; }"
+        )
+        self.btn_mode_multi.clicked.connect(lambda: self.left_tabs.setCurrentIndex(0))
+        tb_lo.addWidget(self.btn_mode_multi)
+
+        self.btn_mode_station = QPushButton("📍 单相机站位")
+        self.btn_mode_station.setCheckable(True)
+        self.btn_mode_station.setStyleSheet(
+            "QPushButton { background: transparent; border: none; color: #8B8D98; "
+            "font-size: 9pt; padding: 4px 8px; }"
+            "QPushButton:hover { color: #F0F0F5; }"
+            "QPushButton:checked { color: #2979FF; font-weight: bold; }"
+        )
+        self.btn_mode_station.clicked.connect(lambda: self.left_tabs.setCurrentIndex(1))
+        tb_lo.addWidget(self.btn_mode_station)
+
+        self.btn_mode_chain = QPushButton("🔗 移动链式")
+        self.btn_mode_chain.setCheckable(True)
+        self.btn_mode_chain.setStyleSheet(
+            "QPushButton { background: transparent; border: none; color: #8B8D98; "
+            "font-size: 9pt; padding: 4px 8px; }"
+            "QPushButton:hover { color: #F0F0F5; }"
+            "QPushButton:checked { color: #2979FF; font-weight: bold; }"
+        )
+        self.btn_mode_chain.clicked.connect(lambda: self.left_tabs.setCurrentIndex(2))
+        tb_lo.addWidget(self.btn_mode_chain)
+
+        root_lo.addWidget(toolbar)
+
+    def _create_camera_panel(self):
+        """创建左侧相机采集栏（已连接相机卡片 + 单独控制拍摄 + 2D 参数）。"""
+        self.left_tabs = QTabWidget()
+
+        # 相机采集栏（设备管理 + 相机卡片）
+        self.device_panel = DevicePanel()
+        dev_scroll = QScrollArea()
+        dev_scroll.setWidgetResizable(True)
+        dev_scroll.setWidget(self.device_panel)
+        self.left_tabs.addTab(dev_scroll, icon_text("multicam", "🎥 相机采集"))
+
+        # 单相机站位（保留）
+        self.station_panel = StationPanel()
+        self.left_tabs.addTab(self.station_panel, icon_text("station", "📍 单相机站位"))
+
+        # 移动链式（保留）
+        self.left_tabs.addTab(QWidget(), icon_text("link", "🔗 移动链式"))
+
+        if has_icon("multicam"):
+            self.left_tabs.setTabIcon(0, get_icon("multicam"))
+        if has_icon("station"):
+            self.left_tabs.setTabIcon(1, get_icon("station"))
+        if has_icon("link"):
+            self.left_tabs.setTabIcon(2, get_icon("link"))
+        self.left_tabs.setFixedWidth(350)
+        self.main_splitter.addWidget(self.left_tabs)
+
+    def _on_back_to_launcher(self):
+        """返回启动小窗口重新选择模式和设备。"""
+        from .launcher_window import LauncherWindow
+        launcher = LauncherWindow(self)
+        launcher.search_requested.connect(self._on_refresh_devices)
+        launcher.connect_requested.connect(
+            lambda indices: (self._on_add_cameras(indices), launcher.accept()))
+        launcher.auto_ip_requested.connect(
+            lambda: self._on_auto_configure_network(launcher.selected_devices()))
+        launcher.set_devices(self._device_descs)
+        launcher.exec()
 
     def _on_mode_changed(self, index: int):
         """模式切换时的处理（left_tabs 索引：0=多相机，1=单相机站位，2=移动链式）。"""

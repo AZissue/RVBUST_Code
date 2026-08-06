@@ -357,7 +357,7 @@ assert window.capture_panel.btn_capture_seq.text() == "分开拍摄（相机依�
 assert not window.capture_panel.btn_capture_seq.icon().isNull()
 assert window.station_panel.btn_capture.text() == "拍摄站位"
 assert not window.station_panel.btn_capture.icon().isNull()
-assert window.left_tabs.tabText(0) == "设备管理"
+assert window.left_tabs.tabText(0) == "相机采集"
 assert not window.left_tabs.tabIcon(0).isNull()
 assert window.right_tabs.tabText(0) == "采集"
 assert not window.right_tabs.tabIcon(0).isNull()
@@ -518,29 +518,10 @@ from PySide6.QtWidgets import QSplitter
 
 lp = window.log_panel
 
-# 内容区为水平 QSplitter：左提示 / 右日志
-assert isinstance(lp.splitter, QSplitter), "日志面板内容区应为 QSplitter"
-assert lp.splitter.orientation() == Qt.Horizontal
-assert lp.splitter.widget(0) is lp.tips_edit, "splitter 第 0 项应为 tips_edit"
-assert lp.splitter.widget(1) is lp.log_content, "splitter 第 1 项应为 log_content"
-assert lp.tips_edit.minimumWidth() == 0, "tips_edit 不应再有固定 240px 宽"
-assert lp.tips_edit.maximumWidth() > 240, "tips_edit 宽度不应被固定"
-print("  内容区 QSplitter(提示|日志) 结构正确，tips 固定宽度已移除")
-
-# 提示收起 / 展开按钮行为
-assert hasattr(lp, 'btn_tips'), "缺少 btn_tips 收起提示按钮"
-assert lp.btn_tips.text() == "◀ 提示"
-assert not lp.tips_edit.isHidden(), "初始提示区应可见"
-lp.btn_tips.click()
-assert lp.tips_edit.isHidden(), "收起后 tips_edit 应隐藏"
-assert not lp.log_content.isHidden(), "收起后日志区应仍可见"
-assert lp.btn_tips.text() == "▶ 提示"
-assert lp._tips_sizes is not None, "收起时应记忆 splitter 位置"
-lp.btn_tips.click()
-assert not lp.tips_edit.isHidden(), "展开后 tips_edit 应恢复可见"
-assert lp.btn_tips.text() == "◀ 提示"
-assert lp.splitter.sizes()[0] > 0, "展开后提示区宽度应恢复"
-print("  btn_tips 收起/展开：隐藏、占满、恢复位置均正确")
+# 内容区只保留日志（操作提示已删除）
+assert lp.log_content is not None, "日志内容区应存在"
+assert lp.log_content.isReadOnly(), "日志内容区应为只读"
+print("  内容区只保留日志（操作提示已删除）")
 
 # 日志整体折叠（▼ 日志）不受影响
 lp.btn_toggle.click()
