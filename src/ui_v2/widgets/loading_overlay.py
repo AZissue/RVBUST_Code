@@ -14,35 +14,30 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
 
-from ..theme import ACCENT, BG_PANEL, TEXT_PRIMARY
+from ..theme import TEXT_PRIMARY
 
 
 class LoadingOverlay(QWidget):
-    """覆盖父窗口的半透明加载遮罩。"""
+    """加载提示：不遮挡父窗口，仅在中央显示当前操作文字（带点点动画）。"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setAttribute(Qt.WA_StyledBackground, True)
-        self.setStyleSheet("background-color: rgba(0, 0, 0, 160);")
+        # 透明背景，不拦截鼠标事件
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
 
-        container = QWidget(self)
-        container.setStyleSheet(
-            f"background-color: {BG_PANEL}; border: 2px solid {ACCENT};"
-            "border-radius: 10px; padding: 20px;"
-        )
-        lay = QVBoxLayout(container)
-        lay.setContentsMargins(30, 24, 30, 24)
-
-        self._label = QLabel("处理中...")
+        self._label = QLabel("处理中...", self)
         self._label.setStyleSheet(
-            f"color: {TEXT_PRIMARY}; font-size: 15px; font-weight: 700;")
+            f"color: {TEXT_PRIMARY}; font-size: 15px; font-weight: 700;"
+            "background-color: transparent;"
+        )
         self._label.setAlignment(Qt.AlignCenter)
-        lay.addWidget(self._label)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.addStretch(1)
-        root.addWidget(container, 0, Qt.AlignCenter)
+        root.addWidget(self._label, 0, Qt.AlignCenter)
         root.addStretch(1)
 
         self._timer = QTimer(self)
@@ -62,7 +57,7 @@ class LoadingOverlay(QWidget):
         self._label.setText(self._base_text)
         parent = self.parentWidget()
         if parent:
-            # 覆盖父窗口整个区域（QMainWindow 也包含 dock、工具栏等）
+            # 居中显示，不覆盖整个窗口
             self.setGeometry(0, 0, parent.width(), parent.height())
         self.show()
         self.raise_()

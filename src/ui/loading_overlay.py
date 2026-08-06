@@ -18,34 +18,26 @@ from PySide6.QtWidgets import (
 
 
 class LoadingOverlay(QWidget):
-    """全局加载遮罩层。"""
+    """加载提示：不遮挡父窗口，仅在中央显示当前操作文字（带点点动画）。"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setAttribute(Qt.WA_StyledBackground, True)
-        self.setStyleSheet("background-color: rgba(0, 0, 0, 160);")
-        self.setWindowFlags(Qt.FramelessWindowHint)
+        # 透明背景，不拦截鼠标事件
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
 
-        # 中央容器
-        container = QWidget(self)
-        container.setStyleSheet(
-            "background-color: #1E1F24; border: 2px solid #2979FF; "
-            "border-radius: 10px; padding: 20px;"
-        )
-        layout = QVBoxLayout(container)
-        layout.setContentsMargins(30, 24, 30, 24)
-
-        self.label = QLabel("处理中...")
+        self.label = QLabel("处理中...", self)
         self.label.setStyleSheet(
             "color: #E8EAED; font-size: 14pt; font-weight: bold;"
+            "background-color: transparent;"
         )
         self.label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self.label)
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.addStretch(1)
-        main_layout.addWidget(container, 0, Qt.AlignCenter)
+        main_layout.addWidget(self.label, 0, Qt.AlignCenter)
         main_layout.addStretch(1)
 
         # 循环点动画定时器
@@ -63,7 +55,7 @@ class LoadingOverlay(QWidget):
         self.label.setText(f"{self._base_text}{dots}")
 
     def show_message(self, text: str = "处理中..."):
-        """显示遮罩并刷新 UI（同步耗时操作前调用）。"""
+        """在中央显示操作文字并刷新 UI（同步耗时操作前调用）。"""
         # 去掉用户传入文本末尾的点，由动画统一控制
         self._base_text = text.rstrip(".")
         self._dots_count = 0
@@ -76,7 +68,7 @@ class LoadingOverlay(QWidget):
         QApplication.processEvents()
 
     def hide_overlay(self):
-        """隐藏遮罩并恢复交互。"""
+        """隐藏提示。"""
         self._anim_timer.stop()
         self.hide()
         QApplication.processEvents()
