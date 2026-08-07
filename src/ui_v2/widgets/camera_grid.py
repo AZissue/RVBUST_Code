@@ -54,7 +54,7 @@ class CameraCard(QFrame):
         self.setStyleSheet(
             f"CameraCard {{ background-color: {BG_CARD};"
             f" border: 1px solid {BORDER}; border-radius: 6px; }}")
-        self.setMinimumHeight(150)
+        self.setFixedSize(340, 240)
 
         lo = QVBoxLayout(self)
         lo.setContentsMargins(6, 6, 6, 6)
@@ -76,10 +76,10 @@ class CameraCard(QFrame):
         title_row.addWidget(self._kind)
         lo.addLayout(title_row)
 
-        # 缩略图占位（4:3，与旧 UI 预览卡片一致）
+        # 缩略图占位（4:3，固定大小，不随 3D 窗口拖动而改变）
         self._thumb = AspectRatioLabel(ratio=4.0 / 3.0)
-        self._thumb.setMinimumSize(160, 90)
-        lo.addWidget(self._thumb, 1)
+        self._thumb.setFixedSize(320, 180)
+        lo.addWidget(self._thumb)
 
         # 底部角标行：标记数 + 共视状态
         badge_row = QHBoxLayout()

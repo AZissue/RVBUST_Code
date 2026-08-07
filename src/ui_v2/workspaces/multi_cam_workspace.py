@@ -25,7 +25,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QComboBox, QFrame, QGroupBox, QHBoxLayout, QLabel, QListWidget,
-    QProgressBar, QPushButton, QRadioButton, QSpinBox, QSplitter,
+    QProgressBar, QPushButton, QRadioButton, QSpinBox,
     QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView,
     QVBoxLayout, QWidget,
 )
@@ -158,17 +158,14 @@ class MultiCamWorkspace(QWidget):
         left_widget.setFixedWidth(220)
         body.addWidget(left_widget)
 
-        # ---- 中央：相机网格 + 3D 预览（上下分割） ----
-        center_split = QSplitter(Qt.Vertical)
+        # ---- 中央：相机网格（占满中央；3D 预览由主窗口以浮动面板托管） ----
         self._camera_grid = CameraGrid()
-        center_split.addWidget(self._camera_grid)
+        body.addWidget(self._camera_grid, 1)
+
+        # 3D 预览组件保留引用，供主窗口取走并放入浮动面板
         self._viewer = ViewerPanel("3D 拼接预览")
         self._viewer.viewer_message.connect(
             lambda m: self.log_message.emit(m, "info"))
-        center_split.addWidget(self._viewer)
-        center_split.setStretchFactor(0, 3)
-        center_split.setStretchFactor(1, 2)
-        body.addWidget(center_split, 1)
 
         # ---- 右面板：标定 / 扫描 Tab ----
         right_widget = QWidget()

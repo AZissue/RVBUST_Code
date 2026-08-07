@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 from .launcher_dialog import LauncherDialog
 from .theme import ACCENT, STATUS_OK, TEXT_MUTED, TEXT_SECONDARY
 from . import icons as ui_icons
-from .widgets import FloatingLogPanel, LoadingOverlay
+from .widgets import FloatingContainer, FloatingLogPanel, LoadingOverlay
 from .widgets.device_table import DeviceInfo
 from .workspaces import MobileChainWorkspace, MultiCamWorkspace
 
@@ -156,6 +156,11 @@ class MainWindowShell(QMainWindow):
         self._log_panel.closed.connect(self._on_log_panel_closed)
         self._log_panel.hide()
 
+        # ===== 浮动 3D 预览面板（多相机模式下显示，可拖拽/折叠/关闭） =====
+        self._viewer_dock = FloatingContainer("3D 拼接预览", self)
+        self._viewer_dock.set_widget(self._ws_multi.viewer())
+        self._viewer_dock.hide()
+
         # ===== 加载遮罩（覆盖整个主窗口，而非仅 central widget） =====
         self._overlay = LoadingOverlay(self)
         self._overlay.hide()
@@ -266,11 +271,15 @@ class MainWindowShell(QMainWindow):
             self._ws_multi.set_devices(devices)
             self._ws_multi.set_state("connected" if devices else "idle")
             self._btn_mode.setText("模式：多相机外参标定 ▾")
+            self._viewer_dock.show()
+            self._viewer_dock.raise_()
+            self._position_viewer_dock()
         else:
             self._stack.setCurrentWidget(self._ws_mobile)
             self._ws_mobile.set_devices(devices)
             self._ws_mobile.set_state("connected" if devices else "idle")
             self._btn_mode.setText("模式：单相机移动拼接 ▾")
+            self._viewer_dock.hide()
 
         self._refresh_statusbar()
         self.log(f"已进入「{LauncherDialog.MODE_NAMES[mode]}」工作区"
@@ -392,6 +401,19 @@ class MainWindowShell(QMainWindow):
         y = max(toolbar_h + margin, y)
         self._log_panel.move(x, y)
 
+    def _position_viewer_dock(self):
+        """把浮动 3D 预览面板定位到主窗口底部右侧（不挤压中央相机网格）。"""
+        margin = 8
+        panel_w = self._viewer_dock.width()
+        panel_h = self._viewer_dock.height()
+        toolbar_h = self._toolbar.height() if self._toolbar else 42
+        status_h = self._statusbar.height() if self._statusbar else 28
+        x = self.width() - panel_w - margin
+        y = self.height() - panel_h - status_h - margin
+        x = max(margin, x)
+        y = max(toolbar_h + margin, y)
+        self._viewer_dock.move(x, y)
+
     def _open_postprocess(self):
         dialog = _PostProcessDialog(self)
         if dialog.exec() == QDialog.Accepted:
@@ -433,3 +455,5 @@ class MainWindowShell(QMainWindow):
             self._overlay.setGeometry(0, 0, self.width(), self.height())
         if hasattr(self, "_log_panel") and self._log_panel.isVisible():
             self._position_log_panel()
+        if hasattr(self, "_viewer_dock") and self._viewer_dock.isVisible():
+            self._position_viewer_dock()

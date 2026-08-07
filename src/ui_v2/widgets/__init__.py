@@ -12,6 +12,7 @@ from .camera_grid import CameraCard, CameraGrid
 from .station_timeline import StationNodeData, StationTimeline
 from .evaluation_card import EvaluationCard
 from .live_view_panel import LiveViewPanel, MarkerOverlay
+from .floating_container import FloatingContainer
 
 __all__ = [
     "StepBar", "LoadingOverlay", "ModeCard",
@@ -19,4 +20,5 @@ __all__ = [
     "ViewerPanel", "CameraCard", "CameraGrid",
     "StationNodeData", "StationTimeline",
     "EvaluationCard", "LiveViewPanel", "MarkerOverlay",
+    "FloatingContainer",
 ]
