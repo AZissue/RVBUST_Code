@@ -2057,8 +2057,10 @@ class MainWindow(QMainWindow):
 
     def _on_mobile_optimize_global(self):
         """执行全局 BA 优化（移动链式拼接）。"""
-        ok, msg = self.mobile_chain_workflow.optimize_global()
+        ok, msg, before_mm, after_mm = self.mobile_chain_workflow.optimize_global()
         self._log(f"[INFO] {msg}")
+        if ok:
+            self._log(f"[INFO] 全局优化: 误差 {before_mm:.3f}mm -> {after_mm:.3f}mm")
         # 刷新 3D 拼接视图
         merged = self.mobile_chain_workflow.get_merged_pointcloud()
         if merged is not None:

@@ -223,18 +223,49 @@ class MobileChainWorkflow(WorkflowBase):
         # 拍摄并配准新机位
         return self.capture_station()
 
-    def optimize_global(self) -> Tuple[bool, str]:
-        """执行全局 BA 优化（消除累积漂移）。"""
+    def optimize_global(self) -> Tuple[bool, str, float, float]:
+        """执行全局 BA 优化（消除累积漂移）。
+
+        Returns:
+            (success, message, before_mm, after_mm)
+            before_mm / after_mm: 优化前后位姿图边平均平移残差（mm）。
+        """
         if self._chain_stitcher is None or len(self._chain_stitcher.nodes) < 3:
-            return False, "机位不足，无法全局优化"
+            return False, "机位不足，无法全局优化", 0.0, 0.0
         ref_id = self._chain_stitcher._reference_id
+
+        # 优化前：用当前 BFS/树状位姿计算边平移残差
+        initial_poses = {sid: node.T_world for sid, node in
+                         self._chain_stitcher.nodes.items()}
+        before_mm = self._mean_translation_residual(initial_poses)
+
         optimized = self._chain_stitcher.pose_graph.optimize_global_ba(ref_id)
         # 更新所有节点的世界变换
         for sid, T in optimized.items():
             if sid in self._chain_stitcher.nodes:
                 self._chain_stitcher.nodes[sid].T_world = T
-        logger.info(f"全局 BA 优化完成，锚点 {ref_id}")
-        return True, f"全局优化完成，锚点 {ref_id}"
+
+        after_mm = self._mean_translation_residual(optimized)
+        logger.info(f"全局 BA 优化完成，锚点 {ref_id}, "
+                    f"残差 {before_mm:.3f}mm -> {after_mm:.3f}mm")
+        return True, f"全局优化完成，锚点 {ref_id}", before_mm, after_mm
+
+    def _mean_translation_residual(self, poses: Dict[str, np.ndarray]) -> float:
+        """计算当前位姿下所有边的平均平移残差（mm）。"""
+        if self._chain_stitcher is None or not self._chain_stitcher.edges:
+            return 0.0
+        total = 0.0
+        count = 0
+        for edge in self._chain_stitcher.edges:
+            T_from = poses.get(edge.from_id)
+            T_to = poses.get(edge.to_id)
+            if T_from is None or T_to is None:
+                continue
+            T_pred = np.linalg.inv(T_to) @ T_from
+            T_err = np.linalg.inv(edge.T) @ T_pred
+            total += float(np.linalg.norm(T_err[:3, 3]))
+            count += 1
+        return total / count if count > 0 else 0.0
 
     def get_merged_pointcloud(self, processor=None):
         """获取当前拼接点云。"""
@@ -246,7 +277,10 @@ class MobileChainWorkflow(WorkflowBase):
         """生成误差报告。"""
         if self._chain_stitcher is None:
             return {}
-        return self._chain_stitcher.get_error_report()
+        report = self._chain_stitcher.get_error_report()
+        if self._station_manager is not None:
+            report['session_dir'] = self._station_manager.session_dir
+        return report
 
     def get_station_list(self) -> List[Dict[str, Any]]:
         """获取机位列表（时间线显示用）。"""

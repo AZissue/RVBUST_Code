@@ -44,6 +44,7 @@ def main():
     main_window = MainWindowShell()
     bridge = BackendBridge(main_window)
     bridge.wire_all()
+    main_window.set_backend_bridge(bridge)
 
     # 连接启动小窗信号
     def on_refresh():

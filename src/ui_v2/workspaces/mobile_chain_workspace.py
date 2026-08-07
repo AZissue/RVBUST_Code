@@ -256,8 +256,6 @@ class MobileChainWorkspace(QWidget):
 
         if level in ("ok", "warn"):
             self._station_count += 1
-            if rms_mm is not None:
-                self._total_error_mm += rms_mm
             self._timeline.add_station(StationNodeData(
                 index=self._station_count,
                 shared_markers=shared_markers,
@@ -265,10 +263,10 @@ class MobileChainWorkspace(QWidget):
                 rms_mm=rms_mm,
                 status=level,
             ))
-            self._refresh_stats()
+            self._recompute_stats()
         # fail：拒绝入链，等待重拍（评估卡片已显示红色建议）
-        # 入链/评估后刷新按钮门控（撤销、重拍、保存等跟随机位数量）
-        self.set_state(self._state)
+        # 入链/评估后回到可拍摄状态，按钮门控跟随机位数量
+        self.set_state("chaining")
 
     def on_loop_closure_detected(self):
         """检测到链末尾与早期机位共视：显示闭环优化入口。"""
@@ -291,8 +289,30 @@ class MobileChainWorkspace(QWidget):
             self._timeline.remove_station(self._station_count)
             self._station_count -= 1
         self._eval_card.reset()
-        self._refresh_stats()
+        self._recompute_stats()
         self.set_state(self._state)
+
+    def on_recapture_done(
+        self,
+        index: int,
+        shared_markers: int,
+        inlier_ratio: float,
+        rms_mm: Optional[float],
+        level: str,
+        suggestion: str,
+    ):
+        """重拍完成：替换指定索引节点数据并刷新统计。"""
+        self._timeline.update_station(StationNodeData(
+            index=index,
+            shared_markers=shared_markers,
+            overlap_ratio=inlier_ratio,
+            rms_mm=rms_mm,
+            status=level,
+        ))
+        self._eval_card.set_evaluation(
+            shared_markers, inlier_ratio, rms_mm, level, suggestion)
+        self._recompute_stats()
+        self.set_state("chaining")
 
     def reset_session(self):
         """新会话：清空链 / 评估 / 统计。"""
@@ -311,6 +331,16 @@ class MobileChainWorkspace(QWidget):
         return self._live_view
 
     # ------------------------------------------------------------ 内部
+    def _recompute_stats(self):
+        """根据时间线节点重新计算累计误差与机位数（撤销/删除/重拍后调用）。"""
+        total = 0.0
+        for node in self._timeline._nodes:
+            if node._data.rms_mm is not None:
+                total += node._data.rms_mm
+        self._station_count = len(self._timeline._nodes)
+        self._total_error_mm = total
+        self._refresh_stats()
+
     def _refresh_stats(self):
         """底部常驻统计：已接 N 机位 | 累计误差 | 平均单步误差（超阈值变红）。"""
         n = self._station_count

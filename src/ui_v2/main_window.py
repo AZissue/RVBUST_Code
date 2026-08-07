@@ -30,6 +30,10 @@ from .widgets import FloatingLogPanel, LoadingOverlay
 from .widgets.device_table import DeviceInfo
 from .workspaces import MobileChainWorkspace, MultiCamWorkspace
 
+if False:
+    # 仅类型提示，避免循环导入
+    from .backend_bridge import BackendBridge
+
 
 class _PostProcessDialog(QDialog):
     """后处理参数面板（两模式共用）：裁切范围 / 下采样 / 离群点滤波。
@@ -118,6 +122,7 @@ class MainWindowShell(QMainWindow):
         self._mode = LauncherDialog.MODE_MULTI_CAM
         self._devices: List[DeviceInfo] = []
         self._dirty = False  # 有未保存的标定/会话数据
+        self._backend_bridge: Optional['BackendBridge'] = None
 
         self._setup_ui()
 
@@ -285,6 +290,10 @@ class MainWindowShell(QMainWindow):
     def workspace_mobile(self) -> MobileChainWorkspace:
         return self._ws_mobile
 
+    def set_backend_bridge(self, bridge: 'BackendBridge'):
+        """设置后端桥接器引用（用于设备枚举等 core 操作）。"""
+        self._backend_bridge = bridge
+
     # ------------------------------------------------------------ 设备管理（回小窗）
     def open_device_manager(self):
         """重新打开启动小窗：回填当前模式与已连接设备。
@@ -295,11 +304,21 @@ class MainWindowShell(QMainWindow):
             return
 
         dialog = LauncherDialog(self)
+
+        # 如有 backend_bridge，先真实枚举设备，再恢复当前勾选状态
+        if self._backend_bridge is not None:
+            devices = self._backend_bridge.enumerate_devices()
+            dialog.set_devices(devices)
         dialog.restore_state(self._mode, self._devices)
 
-        # 小窗内操作转发给后端（接口预留）
-        dialog.refresh_requested.connect(
-            lambda: self.log("刷新设备列表（接口预留：SDK SystemListDevices）", "info"))
+        # 小窗内操作转发给后端
+        def _do_refresh():
+            if self._backend_bridge is not None:
+                dialog.set_devices(self._backend_bridge.enumerate_devices())
+            else:
+                self.log("刷新设备列表（backend_bridge 未设置）", "warn")
+
+        dialog.refresh_requested.connect(_do_refresh)
         dialog.auto_ip_requested.connect(
             lambda devs: self.log(f"自动设置 IP ×{len(devs)}（接口预留）", "info"))
 

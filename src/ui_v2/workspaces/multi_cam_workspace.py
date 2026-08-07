@@ -377,10 +377,11 @@ class MultiCamWorkspace(QWidget):
         self._device_list.clear()
         self._ref_combo.blockSignals(True)
         self._ref_combo.clear()
-        for d in devices:
+        for i, d in enumerate(devices):
             self._device_list.addItem(
                 f"{'●' if d.online else '○'} {d.model}  {d.ip}")
-            self._ref_combo.addItem(f"{d.model} ({d.serial})", d.serial)
+            cam_id = f"cam{i}"
+            self._ref_combo.addItem(f"{d.model} ({d.serial})", cam_id)
         self._ref_combo.blockSignals(False)
         self._camera_grid.set_cameras(
             [f"cam{i}" for i in range(len(devices))])

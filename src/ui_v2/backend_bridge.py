@@ -104,6 +104,7 @@ class BackendBridge(QObject):
         ws.load_extrinsics_requested.connect(self._on_multi_load_extrinsics)
         ws.capture_scan_requested.connect(self._on_multi_capture_scan)
         ws.stitch_save_requested.connect(self._on_multi_stitch_save)
+        ws.batch_scan_requested.connect(self._on_multi_batch_scan)
         ws.reference_changed.connect(self._on_multi_reference_changed)
         ws.step_back_requested.connect(self._on_multi_step_back)
 
@@ -176,8 +177,15 @@ class BackendBridge(QObject):
             # 切换工作区
             self.shell.set_mode(mode, devices)
             self._current_mode = mode
-            # 模式 B 需要初始化链式拼接会话
-            if mode == LauncherDialog.MODE_MOBILE_CHAIN:
+            if mode == LauncherDialog.MODE_MULTI_CAM:
+                # 模式 A：启动标定阶段并同步参考相机下拉
+                reference_id = results[0][0] if results else "cam0"
+                ok, msg = self.fixed_workflow.start_calibration(reference_id)
+                self.shell.log(msg, "success" if ok else "warn")
+                self._on_multi_reference_changed(reference_id)
+                self.shell.workspace_multi().set_state("connected")
+            elif mode == LauncherDialog.MODE_MOBILE_CHAIN:
+                # 模式 B 需要初始化链式拼接会话
                 ok, msg = self.mobile_workflow.start_chaining()
                 self.shell.log(msg, "success" if ok else "warn")
 
@@ -202,9 +210,16 @@ class BackendBridge(QObject):
                 self.shell.log("拍摄失败：无已连接相机", "warn")
                 return
             # 更新工作流标定帧
-            for cid, frame in frames.items():
-                self.fixed_workflow.add_calibration_frame(frame)
             ws = self.shell.workspace_multi()
+            all_ok = True
+            for cid, frame in frames.items():
+                ok, msg = self.fixed_workflow.add_calibration_frame(frame)
+                if not ok:
+                    all_ok = False
+                    self.shell.log(f"添加标定帧失败 ({cid}): {msg}", "warn")
+            if not all_ok:
+                self.shell.log("部分标定帧未加入工作流，请检查状态", "warn")
+                return
             # 更新各相机卡片预览
             for cid, frame in frames.items():
                 ws.camera_grid().set_frame(cid, frame)
@@ -275,9 +290,15 @@ class BackendBridge(QObject):
             ws.viewer().set_reference(self.calibration_engine.reference_id)
             ws.on_calibrate_done(pairs, score, ok)
             if ok:
-                ws.set_state("calibrated")
-                self.shell.log(f"标定完成: {msg}", "success")
+                ok_scan, msg_scan = self.fixed_workflow.start_scanning()
+                if ok_scan:
+                    ws.set_state("locked")
+                    self.shell.log(f"标定完成: {msg} | {msg_scan}", "success")
+                else:
+                    ws.set_state("calibrated")
+                    self.shell.log(f"标定完成但无法进入扫描: {msg_scan}", "warn")
             else:
+                ws.set_state("calibrated")
                 self.shell.log(f"标定质量不达标: {msg}", "warn")
         self._run_background(_work, _done)
 
@@ -314,11 +335,19 @@ class BackendBridge(QObject):
                 self.shell.log(f"扫描拍摄失败: {error}", "error")
                 return
             ws = self.shell.workspace_multi()
+            all_ok = True
             for cid, frame in frames.items():
-                self.fixed_workflow.add_scan_frame(frame)
-                ws.camera_grid().set_frame(cid, frame)
-                ws.camera_grid().set_frame_kind(cid, "扫描帧")
-            self.shell.log(f"扫描帧拍摄完成: {len(frames)} 台相机", "success")
+                ok, msg = self.fixed_workflow.add_scan_frame(frame)
+                if ok:
+                    ws.camera_grid().set_frame(cid, frame)
+                    ws.camera_grid().set_frame_kind(cid, "扫描帧")
+                else:
+                    all_ok = False
+                    self.shell.log(f"添加扫描帧失败 ({cid}): {msg}", "warn")
+            if all_ok:
+                self.shell.log(f"扫描帧拍摄完成: {len(frames)} 台相机", "success")
+            else:
+                self.shell.log("部分扫描帧未加入工作流", "warn")
         self._run_background(_work, _done)
 
     def _on_multi_stitch_save(self):
@@ -338,7 +367,7 @@ class BackendBridge(QObject):
                 ws = self.shell.workspace_multi()
                 ws.viewer().set_pointcloud_merged(merged)
                 self.shell.log(f"拼接完成: {len(merged.points)} 点", "success")
-                # 保存
+                # 在主线程弹窗保存
                 from PySide6.QtWidgets import QFileDialog
                 path, _ = QFileDialog.getSaveFileName(
                     self.shell, "保存点云", "merged.ply", "PLY 文件 (*.ply)")
@@ -348,6 +377,46 @@ class BackendBridge(QObject):
                     self.shell.log(f"点云已保存: {path}", "success")
             else:
                 self.shell.log(f"拼接失败: {msg}", "error")
+        self._run_background(_work, _done)
+
+    def _on_multi_batch_scan(self, n: int):
+        """批量拼接保存：连续拍摄 n 次扫描帧并拼接保存。"""
+        preview_cam = self._pause_2d_preview()
+        self.shell.show_loading(f"批量扫描拼接 ({n} 次)...")
+
+        def _work():
+            saved_paths = []
+            for i in range(n):
+                frames = self.camera_manager.capture_all(sync=True)
+                if not frames:
+                    return False, f"第 {i+1}/{n} 次拍摄失败：无已连接相机", saved_paths
+                for cid, frame in frames.items():
+                    ok, msg = self.fixed_workflow.add_scan_frame(frame)
+                    if not ok:
+                        return False, f"第 {i+1}/{n} 次添加扫描帧失败 ({cid}): {msg}", saved_paths
+                ok, msg, merged = self.fixed_workflow.stitch()
+                if not ok or merged is None:
+                    return False, f"第 {i+1}/{n} 次拼接失败: {msg}", saved_paths
+                import open3d as o3d
+                path = os.path.join(
+                    os.path.abspath("offline_data"),
+                    f"batch_scan_{i+1:03d}.ply")
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                o3d.io.write_point_cloud(path, merged)
+                saved_paths.append(path)
+            return True, f"批量扫描完成，共保存 {len(saved_paths)} 帧", saved_paths
+
+        def _done(result, error):
+            self.shell.hide_loading()
+            self._resume_2d_preview(preview_cam)
+            if error:
+                self.shell.log(f"批量扫描异常: {error}", "error")
+                return
+            ok, msg, paths = result
+            self.shell.log(msg, "success" if ok else "error")
+            if paths:
+                self.shell.log(f"保存路径: {paths[0]} 等", "info")
+
         self._run_background(_work, _done)
 
     def _on_multi_reference_changed(self, camera_id: str):
@@ -462,9 +531,29 @@ class BackendBridge(QObject):
             return
         self._update_mobile_live_view(station_ids[-1])
 
+    def _station_id_from_timeline_index(self, index: int) -> Tuple[Optional[str], int]:
+        """把时间线索引映射为后端真实的 station_id。
+
+        index 为 1-based 时间线索引；-1 表示当前/最新机位。
+        返回 (station_id, timeline_index)。station_id 为 None 表示不存在。
+        """
+        stations = self.mobile_workflow.get_station_list()
+        n = len(stations)
+        if n == 0:
+            return None, index
+        if index == -1:
+            timeline_index = n
+        elif 1 <= index <= n:
+            timeline_index = index
+        else:
+            return None, index
+        return stations[timeline_index - 1]['station_id'], timeline_index
+
     def _on_mobile_capture_station(self):
         """拍摄机位（自动配准）。"""
         preview_cam = self._pause_2d_preview()
+        ws = self.shell.workspace_mobile()
+        ws.set_state("capturing")
         self.shell.show_loading("正在拍摄机位...")
         def _work():
             return self.mobile_workflow.capture_station()
@@ -472,10 +561,10 @@ class BackendBridge(QObject):
             self.shell.hide_loading()
             self._resume_2d_preview(preview_cam)
             if error:
+                ws.set_state("chaining")
                 self.shell.log(f"拍摄异常: {error}", "error")
                 return
             ok, msg, evaluation = result
-            ws = self.shell.workspace_mobile()
             if evaluation:
                 ws.on_evaluation_done(
                     evaluation.get('common_markers', 0),
@@ -488,6 +577,8 @@ class BackendBridge(QObject):
                 station_id = evaluation.get('station_id')
                 if station_id:
                     self._update_mobile_live_view(station_id)
+            else:
+                ws.set_state("chaining")
             if ok:
                 self.shell.log(f"机位配准成功: {msg}", "success")
                 # 刷新 3D 拼接
@@ -507,10 +598,19 @@ class BackendBridge(QObject):
             self._refresh_mobile_live_view_to_latest()
 
     def _on_mobile_recapture(self, index: int):
-        """重拍指定机位。"""
+        """重拍指定机位（index 为时间线索引，-1 表示当前/最新机位）。"""
         preview_cam = self._pause_2d_preview()
-        station_id = f"station_{index}"
-        self.shell.show_loading(f"正在重拍 {station_id}...")
+        ws = self.shell.workspace_mobile()
+
+        # 时间线索引 → 后端机位 ID（考虑拍废删除导致的错位）
+        station_id, timeline_index = self._station_id_from_timeline_index(index)
+        if station_id is None:
+            self._resume_2d_preview(preview_cam)
+            self.shell.log("重拍失败: 指定机位不存在", "warn")
+            return
+
+        ws.set_state("capturing")
+        self.shell.show_loading(f"正在重拍 #{timeline_index}...")
 
         def _work():
             return self.mobile_workflow.recapture_station(station_id)
@@ -519,21 +619,24 @@ class BackendBridge(QObject):
             self.shell.hide_loading()
             self._resume_2d_preview(preview_cam)
             if error:
+                ws.set_state("chaining")
                 self.shell.log(f"重拍异常: {error}", "error")
                 return
             ok, msg, evaluation = result
-            ws = self.shell.workspace_mobile()
             if evaluation:
-                ws.on_evaluation_done(
+                ws.on_recapture_done(
+                    timeline_index,
                     evaluation.get('common_markers', 0),
                     evaluation.get('inlier_ratio', 0.0),
                     evaluation.get('rms_mm'),
                     'ok' if evaluation.get('success') else 'fail',
                     evaluation.get('suggestion', ''),
                 )
-                station_id = evaluation.get('station_id')
-                if station_id:
-                    self._update_mobile_live_view(station_id)
+                new_station_id = evaluation.get('station_id')
+                if new_station_id:
+                    self._update_mobile_live_view(new_station_id)
+            else:
+                ws.set_state("chaining")
             if ok:
                 self.shell.log(f"重拍成功: {msg}", "success")
                 merged = self.mobile_workflow.get_merged_pointcloud()
@@ -545,8 +648,11 @@ class BackendBridge(QObject):
         self._run_background(_work, _done)
 
     def _on_mobile_delete_station(self, index: int):
-        """删除指定机位。"""
-        station_id = f"station_{index}"
+        """删除指定机位（index 为时间线索引）。"""
+        station_id, _ = self._station_id_from_timeline_index(index)
+        if station_id is None:
+            self.shell.log("删除失败: 指定机位不存在", "warn")
+            return
         ok, msg = self.mobile_workflow.delete_station(station_id)
         self.shell.log(msg, "success" if ok else "warn")
         if ok:
@@ -559,7 +665,9 @@ class BackendBridge(QObject):
 
     def _on_mobile_station_selected(self, index: int):
         """时间线选中机位：在 2D 实时取景区显示该机位图像。"""
-        station_id = f"station_{index}"
+        station_id, _ = self._station_id_from_timeline_index(index)
+        if station_id is None:
+            return
         self._update_mobile_live_view(station_id)
 
     def _on_mobile_optimize(self):
@@ -572,20 +680,62 @@ class BackendBridge(QObject):
             if error:
                 self.shell.log(f"优化异常: {error}", "error")
                 return
-            ok, msg = result
+            ok, msg, before_mm, after_mm = result
             self.shell.log(msg, "success" if ok else "warn")
             if ok:
                 ws = self.shell.workspace_mobile()
-                ws.on_optimize_done(0.0, 0.0)  # TODO: 传入实际误差
+                ws.on_optimize_done(before_mm, after_mm)
+                # 刷新 3D 拼接
+                merged = self.mobile_workflow.get_merged_pointcloud()
+                if merged is not None:
+                    ws.viewer().set_pointcloud_merged(merged)
         self._run_background(_work, _done)
 
     def _on_mobile_save(self):
-        """保存拼接数据。"""
-        report = self.mobile_workflow.get_error_report()
-        if report:
-            self.shell.log(f"会话已保存: {report.get('n_nodes', 0)} 机位", "success")
-        else:
-            self.shell.log("无会话数据可保存", "warn")
+        """保存拼接数据：合并点云 PLY + 误差报告 JSON。"""
+        self.shell.show_loading("正在保存拼接数据...")
+
+        def _work():
+            report = self.mobile_workflow.get_error_report()
+            if not report:
+                return False, "无机位数据可保存", None
+            session_dir = report.get('session_dir')
+            if not session_dir:
+                return False, "会话目录未知，无法保存", None
+            os.makedirs(session_dir, exist_ok=True)
+
+            merged = self.mobile_workflow.get_merged_pointcloud()
+            ply_path = os.path.join(session_dir, "merged.ply")
+            if merged is not None:
+                import open3d as o3d
+                o3d.io.write_point_cloud(ply_path, merged)
+            else:
+                ply_path = None
+
+            json_path = os.path.join(session_dir, "error_report.json")
+            import json
+            with open(json_path, "w", encoding="utf-8") as f:
+                json.dump(report, f, ensure_ascii=False, indent=2)
+
+            return True, f"会话已保存: {session_dir}", {
+                "session_dir": session_dir,
+                "ply_path": ply_path,
+                "json_path": json_path,
+            }
+
+        def _done(result, error):
+            self.shell.hide_loading()
+            if error:
+                self.shell.log(f"保存失败: {error}", "error")
+                return
+            ok, msg, paths = result
+            self.shell.log(msg, "success" if ok else "warn")
+            if ok and paths:
+                if paths.get("ply_path"):
+                    self.shell.log(f"点云: {paths['ply_path']}", "info")
+                self.shell.log(f"报告: {paths['json_path']}", "info")
+
+        self._run_background(_work, _done)
 
     # ------------------------------------------------------------------
     # 主窗口

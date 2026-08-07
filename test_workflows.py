@@ -206,6 +206,66 @@ print(f"  误差报告: {report['n_nodes']} 节点, {report['n_edges']} 边")
 print("  [OK] MobileChainWorkflow 链式拼接流程正常")
 
 # ------------------------------------------------------------------
+# [2b] 模式 B 状态一致性回归（P1-1~P1-6）
+# ------------------------------------------------------------------
+print("\n[2b] 模式 B 状态一致性回归测试")
+
+cam_mgr3, marker_det3, calib_eng3, stitch_eng3 = make_workflow_components()
+workflow3 = MobileChainWorkflow(cam_mgr3, marker_det3, calib_eng3, stitch_eng3)
+workflow3.start_chaining()
+
+# mock detect_3d 按预设队列返回 markers，便于控制重拍场景
+detect_queue = []
+def mock_detect3(*args, **kwargs):
+    return detect_queue.pop(0)
+workflow3.marker_detector.detect_3d = mock_detect3
+
+# mock 相机（返回空标记帧，具体标记由 detect_3d 队列注入）
+cam_mgr3.get_connected_ids = lambda: ['physical']
+cam_mgr3.capture = lambda cam: make_frame('physical', world_pts, [])
+
+# 拍 3 个机位（走 capture_station，StationManager 与 ChainStitcher 同步）
+detect_queue.extend([station_markers[0], station_markers[1], station_markers[2]])
+for i in range(3):
+    ok, msg, evaluation = workflow3.capture_station()
+    assert ok, f"机位 {i+1} 拍摄/配准失败: {msg}"
+
+original_ids = [s['station_id'] for s in workflow3.get_station_list()]
+assert original_ids == ['station_1', 'station_2', 'station_3']
+
+# P1-2: get_station_list 顺序与时间线索引 1-based 对应
+stations = workflow3.get_station_list()
+for idx, s in enumerate(stations, start=1):
+    assert s['station_id'] == original_ids[idx - 1]
+
+# P1-6: optimize_global 返回优化前后误差（需至少 3 个机位）
+ok, msg, before_mm, after_mm = workflow3.optimize_global()
+assert ok, f"全局优化失败: {msg}"
+assert isinstance(before_mm, float) and isinstance(after_mm, float)
+assert before_mm >= 0 and after_mm >= 0
+print(f"  全局优化残差: {before_mm:.6f}mm -> {after_mm:.6f}mm")
+
+# P1-5: _remove_station_from_chain 正确删除节点与关联边
+removed = workflow3._remove_station_from_chain('station_2')
+assert removed, "删除机位 2 失败"
+assert 'station_2' not in workflow3._chain_stitcher.nodes
+assert not any(e.from_id == 'station_2' or e.to_id == 'station_2'
+               for e in workflow3._chain_stitcher.edges)
+print(f"  删除机位 2 后列表: {[s['station_id'] for s in workflow3.get_station_list()]}")
+
+# P1-1 / P1-3: 重拍链尾机位，用 station_2 的标记模拟相机回到 station_2 位置
+detect_queue.append(station_markers[1])
+ok, msg, evaluation = workflow3.recapture_station('station_3')
+# station_3 是链尾，可重拍；重拍后仍应保持 2 个节点（替换 station_3）
+assert ok, f"重拍失败: {msg}"
+assert evaluation is not None
+new_ids = [s['station_id'] for s in workflow3.get_station_list()]
+assert len(new_ids) == 2, f"重拍后节点数应为 2，实际 {len(new_ids)}"
+print(f"  重拍 station_3 后列表: {new_ids}")
+
+print("  [OK] 模式 B 状态一致性回归通过")
+
+# ------------------------------------------------------------------
 # [3] SessionManager 统一会话创建与加载
 # ------------------------------------------------------------------
 print("\n[3] SessionManager 统一会话创建与加载测试")
