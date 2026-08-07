@@ -1,0 +1,6 @@
+# RVC SDK Python 绑定（PyPI 无此包，需从 SDK 离线安装）
+# 安装方式（conda rvc 环境已预装示例）：
+#   pip install "D:\Program Files\RVBUST\RVC\RVCSDK\Python"
+# 或安装对应 cp310 的离线 wheel：
+#   pip install PyRVC-*.whl
+PyRVC

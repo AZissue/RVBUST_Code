@@ -139,7 +139,22 @@ assert ok, f"拼接失败: {msg}"
 assert merged is not None
 print(f"  拼接点数: {len(merged.points)}")
 
-print("  [OK] FixedMultiCamWorkflow 标定→扫描状态机正常")
+# 保存/加载标定结果（覆盖模式 A "保存" 链路）
+import tempfile, json
+with tempfile.TemporaryDirectory() as tmp:
+    calib_path = os.path.join(tmp, "calibration.json")
+    ok, msg = workflow.save_calibration(calib_path)
+    assert ok, f"保存标定失败: {msg}"
+    assert os.path.exists(calib_path)
+    # 重新加载并验证锁定状态
+    workflow2 = FixedMultiCamWorkflow(
+        CameraManager(), MarkerDetector(), CalibrationEngine(), StitchEngine())
+    ok, msg = workflow2.load_calibration(calib_path)
+    assert ok, f"加载标定失败: {msg}"
+    assert workflow2.is_calibration_locked
+    print(f"  标定保存/加载: {calib_path}")
+
+print("  [OK] FixedMultiCamWorkflow 标定→扫描→保存链路正常")
 
 # ------------------------------------------------------------------
 # [2] MobileChainWorkflow 链式拼接流程
