@@ -24,6 +24,8 @@ class ViewerPanel(QFrame):
     """
 
     viewer_message = Signal(str)
+    collapse_toggled = Signal(bool)
+    """3D 查看器折叠/展开信号（True=展开，False=折叠）。"""
 
     def __init__(self, title: str = "3D 拼接预览", parent=None):
         super().__init__(parent)
@@ -35,6 +37,7 @@ class ViewerPanel(QFrame):
 
         self._viewer = EmbeddedPointCloudViewer(self)
         self._viewer.status_changed.connect(self.viewer_message.emit)
+        self._viewer.collapse_toggled.connect(self.collapse_toggled.emit)
         root.addWidget(self._viewer, 1)
 
     def viewer(self) -> EmbeddedPointCloudViewer:

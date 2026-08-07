@@ -25,7 +25,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QComboBox, QFrame, QGroupBox, QHBoxLayout, QLabel, QListWidget,
-    QProgressBar, QPushButton, QRadioButton, QSpinBox,
+    QProgressBar, QPushButton, QRadioButton, QSpinBox, QSplitter,
     QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView,
     QVBoxLayout, QWidget,
 )
@@ -158,14 +158,22 @@ class MultiCamWorkspace(QWidget):
         left_widget.setFixedWidth(220)
         body.addWidget(left_widget)
 
-        # ---- 中央：相机网格（占满中央；3D 预览由主窗口以浮动面板托管） ----
+        # ---- 中央：相机网格 + 3D 预览（垂直 splitter，参考旧版 MainWindow） ----
+        # cam 卡片固定大小，网格用滚动区承载；3D 在下方，可折叠到底部
+        center_split = QSplitter(Qt.Vertical)
         self._camera_grid = CameraGrid()
-        body.addWidget(self._camera_grid, 1)
-
-        # 3D 预览组件保留引用，供主窗口取走并放入浮动面板
+        center_split.addWidget(self._camera_grid)
         self._viewer = ViewerPanel("3D 拼接预览")
         self._viewer.viewer_message.connect(
             lambda m: self.log_message.emit(m, "info"))
+        self._viewer.collapse_toggled.connect(self._on_viewer_collapse_toggled)
+        center_split.addWidget(self._viewer)
+        center_split.setSizes([350, 650])
+        center_split.setStretchFactor(0, 0)
+        center_split.setStretchFactor(1, 1)
+        body.addWidget(center_split, 1)
+
+        self._viewer_expanded_sizes = None
 
         # ---- 右面板：标定 / 扫描 Tab ----
         right_widget = QWidget()
@@ -459,3 +467,19 @@ class MultiCamWorkspace(QWidget):
     def _on_step_back(self, index: int):
         """已完成步骤点击回退（仅发请求，实际回退由工作流确认）。"""
         self.step_back_requested.emit(index)
+
+    def _on_viewer_collapse_toggled(self, expanded: bool):
+        """3D 查看器折叠/展开：折叠时压到只剩工具栏，展开时恢复。"""
+        center_split = self._viewer.parentWidget()
+        if not isinstance(center_split, QSplitter):
+            return
+        toolbar_h = 40  # 3D 查看器顶部工具栏高度（约 34px + 间距）
+        if not expanded:
+            self._viewer_expanded_sizes = center_split.sizes()
+            self._viewer.setMaximumHeight(toolbar_h)
+            total = sum(center_split.sizes())
+            center_split.setSizes([total - toolbar_h, toolbar_h])
+        else:
+            self._viewer.setMaximumHeight(16777215)
+            if self._viewer_expanded_sizes:
+                center_split.setSizes(self._viewer_expanded_sizes)
