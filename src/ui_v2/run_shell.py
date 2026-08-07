@@ -174,8 +174,6 @@ def main() -> int:
         lambda: launcher.set_devices(make_mock_devices()))
     launcher.auto_ip_requested.connect(
         lambda devs: win.log(f"自动设置 IP ×{len(devs)}（接口预留）", "info"))
-    launcher.network_config_requested.connect(
-        lambda: win.log("网络配置对话框（接口预留）", "info"))
 
     def on_connect(mode: str, devices: list):
         launcher.accept()

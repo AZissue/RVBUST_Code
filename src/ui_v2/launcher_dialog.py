@@ -306,7 +306,7 @@ class LauncherDialog(QDialog):
     def set_busy(self, busy: bool, text: str = ""):
         """连接/枚举进行中：禁用操作按钮（加载遮罩由主窗口统一控制）。"""
         for btn in (self._btn_connect, self._btn_refresh,
-                    self._btn_auto_ip, self._btn_net_cfg):
+                    self._btn_auto_ip, self._btn_add_test):
             btn.setEnabled(not busy)
         if not busy:
             self._refresh_connect_state()
