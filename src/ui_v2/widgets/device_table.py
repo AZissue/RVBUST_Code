@@ -44,11 +44,14 @@ class DeviceTable(QTableWidget):
     checked_changed = Signal(list)  # List[DeviceInfo]，当前勾选项变化时发射
 
     COLS = ("", "型号", "序列号", "IP 地址", "状态")
+    COL_IP = 3
+    COL_STATUS = 4
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._devices: List[DeviceInfo] = []
         self._filter_text = ""
+        self._show_ip_status = True  # 动态控制 IP/状态列显示
 
         self.setColumnCount(len(self.COLS))
         self.setHorizontalHeaderLabels(self.COLS)
@@ -71,9 +74,17 @@ class DeviceTable(QTableWidget):
 
     # ------------------------------------------------------------ 公共接口
     def set_devices(self, devices: List[DeviceInfo]):
-        """填充设备列表（在线在前，其余按枚举顺序）。"""
+        """填充设备列表（在线在前，其余按枚举顺序）。
+
+        如果所有设备都没有有效 IP（如 USB 相机），则隐藏 IP/状态列，
+        避免显示无意义的 "—" 和固定 "在线"。
+        """
         self._devices = sorted(
             devices, key=lambda d: (not d.online,))  # 稳定排序：在线优先
+        has_ip = any(bool(d.ip and d.ip.strip()) for d in self._devices)
+        self._show_ip_status = has_ip
+        self.setColumnHidden(self.COL_IP, not has_ip)
+        self.setColumnHidden(self.COL_STATUS, not has_ip)
         self._rebuild()
 
     def devices(self) -> List[DeviceInfo]:
@@ -99,10 +110,12 @@ class DeviceTable(QTableWidget):
 
     def set_device_online(self, serial: str, online: bool):
         """更新单台设备在线状态（断线/重连提示用）。"""
+        if not self._show_ip_status:
+            return
         for row, dev in enumerate(self._devices):
             if dev.serial == serial:
                 dev.online = online
-                item = self.item(row, 4)
+                item = self.item(row, self.COL_STATUS)
                 if item:
                     item.setText("● 在线" if online else "○ 离线")
                     item.setForeground(
@@ -121,12 +134,12 @@ class DeviceTable(QTableWidget):
 
             self.setItem(row, 1, QTableWidgetItem(dev.model or "—"))
             self.setItem(row, 2, QTableWidgetItem(dev.serial or "—"))
-            self.setItem(row, 3, QTableWidgetItem(dev.ip or "—"))
-
-            status = QTableWidgetItem("● 在线" if dev.online else "○ 离线")
-            status.setForeground(self._status_brush(dev.online))
-            status.setTextAlignment(Qt.AlignCenter)
-            self.setItem(row, 4, status)
+            if self._show_ip_status:
+                self.setItem(row, self.COL_IP, QTableWidgetItem(dev.ip or "—"))
+                status = QTableWidgetItem("● 在线" if dev.online else "○ 离线")
+                status.setForeground(self._status_brush(dev.online))
+                status.setTextAlignment(Qt.AlignCenter)
+                self.setItem(row, self.COL_STATUS, status)
         self.blockSignals(False)
         self.apply_filter(self._filter_text)
 
