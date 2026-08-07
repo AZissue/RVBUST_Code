@@ -134,6 +134,12 @@ class AspectRatioLabel(QLabel):
                 painter.drawText(QPointF(dx + self._marker_radius + 2, dy - self._marker_radius - 2),
                                  str(m.get('code', '')))
 
+    def heightForWidth(self, width: int) -> int:
+        return int(width / self._ratio)
+
+    def hasHeightForWidth(self) -> bool:
+        return True
+
     def minimumSizeHint(self):
         h = 200
         return QSize(int(h * self._ratio), h)

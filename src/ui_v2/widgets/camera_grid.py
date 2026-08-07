@@ -20,7 +20,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPixmap, QResizeEvent
 from PySide6.QtWidgets import (
     QFrame, QGridLayout, QHBoxLayout, QLabel, QScrollArea,
-    QVBoxLayout, QWidget,
+    QSizePolicy, QVBoxLayout, QWidget,
 )
 
 from core.frame_data import FrameData
@@ -55,7 +55,8 @@ class CameraCard(QFrame):
         self.setStyleSheet(
             f"CameraCard {{ background-color: {BG_CARD};"
             f" border: 1px solid {BORDER}; border-radius: 6px; }}")
-        self.setFixedSize(340, 240)
+        self.setMinimumSize(320, 240)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         lo = QVBoxLayout(self)
         lo.setContentsMargins(6, 6, 6, 6)
@@ -77,10 +78,12 @@ class CameraCard(QFrame):
         title_row.addWidget(self._kind)
         lo.addLayout(title_row)
 
-        # 缩略图占位（4:3，固定大小，不随 3D 窗口拖动而改变）
+        # 缩略图占位（4:3，宽度随卡片水平铺满，保持比例）
         self._thumb = AspectRatioLabel(ratio=4.0 / 3.0)
-        self._thumb.setFixedSize(320, 180)
-        lo.addWidget(self._thumb)
+        self._thumb.setMinimumSize(280, 180)
+        self._thumb.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Expanding)
+        lo.addWidget(self._thumb, 1)
 
         # 底部角标行：标记数 + 共视状态
         badge_row = QHBoxLayout()
@@ -184,7 +187,7 @@ class CameraGrid(QScrollArea):
         self._grid.setContentsMargins(4, 4, 4, 4)
         self._grid.setSpacing(self.H_SPACING)
         self._grid.setVerticalSpacing(self.V_SPACING)
-        self._grid.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
+        self._grid.setAlignment(Qt.AlignTop | Qt.AlignLeft)
         self.setWidget(self._container)
 
     # ------------------------------------------------------------ 公共接口
@@ -205,13 +208,13 @@ class CameraGrid(QScrollArea):
         self._relayout()
 
     def _relayout(self):
-        """根据当前 viewport 宽度计算列数并重新排布卡片。"""
+        """根据当前 viewport 宽度计算列数并重新排布卡片，列宽水平铺满。"""
         n = len(self._cards)
         if n == 0:
             return
 
         viewport_w = self.viewport().width()
-        # 每个卡片占用宽度 = 卡片宽 + 水平间距
+        # 每个卡片最小占用宽度 = 卡片最小宽 + 水平间距
         col_unit = self.CARD_WIDTH + self.H_SPACING
         cols = max(1, viewport_w // col_unit)
         cols = min(cols, n)
@@ -219,9 +222,15 @@ class CameraGrid(QScrollArea):
         # 清空布局
         for card in self._cards.values():
             self._grid.removeWidget(card)
+        # 重置列拉伸（先清零，再为当前列数设置均分）
+        for c in range(self._grid.columnCount()):
+            self._grid.setColumnStretch(c, 0)
         # 重新按行添加
         for i, card in enumerate(self._cards.values()):
             self._grid.addWidget(card, i // cols, i % cols)
+        # 当前使用的列均分可用宽度
+        for c in range(cols):
+            self._grid.setColumnStretch(c, 1)
 
     def card(self, camera_id: str) -> Optional[CameraCard]:
         return self._cards.get(camera_id)
