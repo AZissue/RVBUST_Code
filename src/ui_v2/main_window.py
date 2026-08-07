@@ -399,12 +399,21 @@ class MainWindowShell(QMainWindow):
             self.log(f"后处理参数已应用（接口预留）：{dialog.params()}", "info")
 
     def _show_help(self):
+        from version import get_version
         QMessageBox.information(
             self, "关于 RVC 拼接工作站",
-            "RVC 拼接工作站（UI 空壳 v2）\n\n"
-            "· 多相机外参标定：固定多相机 → 标定外参 → 撤板扫描拼接\n"
-            "· 单相机移动拼接：边走边拍，自动检测标记物，链式增量拼接\n\n"
-            "详细操作说明见 docs/ 设计文档。")
+            f"RVC 拼接工作站  {get_version()}\n\n"
+            "【多相机外参标定】\n"
+            "  1. 固定安装 2 台及以上 RVC 相机\n"
+            "  2. 拍摄标定板/编码圆，检测标记物\n"
+            "  3. 计算相机间外参（pair RMS、内点率）\n"
+            "  4. 外参锁定后撤掉标定板，扫描并拼接点云\n\n"
+            "【单相机移动拼接】\n"
+            "  1. 连接 1 台 RVC 相机\n"
+            "  2. 开始取景，移动相机到不同机位\n"
+            "  3. 逐个拍摄机位，自动检测标记物并增量配准\n"
+            "  4. 重合度不足时重拍，支持撤销/删除/全局优化\n\n"
+            "提示：无真实多机环境时，可在启动小窗点击『+ 测试设备』临时添加虚拟相机。")
 
     def closeEvent(self, event):
         """主窗口关闭即退出程序；会话未保存时弹确认。"""
