@@ -144,7 +144,7 @@ class LauncherDialog(QDialog):
 
         # TODO(TEMP): 临时添加两台测试设备，便于无真实多机环境时进入主界面排查问题
         self._btn_add_test = QPushButton("+ 测试设备")
-        self._btn_add_test.setToolTip("临时添加 2 台测试相机（TEST-A / TEST-B）")
+        self._btn_add_test.setToolTip("临时添加 4 台测试相机（TEST-A ~ TEST-D），方便查看多机布局")
         self._btn_add_test.clicked.connect(self._on_add_test_devices)
         search_row.addWidget(self._btn_add_test)
 
@@ -255,11 +255,13 @@ class LauncherDialog(QDialog):
         self._table.apply_filter(text)
 
     def _on_add_test_devices(self):
-        """临时：向设备表追加两台测试相机，方便进入主界面检查。"""
+        """临时：向设备表追加四台测试相机，方便查看多机布局效果。"""
         existing = self._table.devices()
         test_devices = [
             DeviceInfo(model="TEST-A", serial="SN_TEST_A", online=True),
             DeviceInfo(model="TEST-B", serial="SN_TEST_B", online=True),
+            DeviceInfo(model="TEST-C", serial="SN_TEST_C", online=True),
+            DeviceInfo(model="TEST-D", serial="SN_TEST_D", online=True),
         ]
         # 避免重复添加
         existing_serials = {d.serial for d in existing}

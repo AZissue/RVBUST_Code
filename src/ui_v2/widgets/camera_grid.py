@@ -17,9 +17,10 @@ from __future__ import annotations
 from typing import Dict, List, Optional
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QPixmap, QResizeEvent
 from PySide6.QtWidgets import (
-    QFrame, QGridLayout, QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget,
+    QFrame, QGridLayout, QHBoxLayout, QLabel, QScrollArea,
+    QVBoxLayout, QWidget,
 )
 
 from core.frame_data import FrameData
@@ -159,13 +160,17 @@ class CameraCard(QFrame):
 
 
 class CameraGrid(QScrollArea):
-    """相机卡片网格（自动换行，N 台相机自适应）。
+    """相机卡片网格（响应式列数，N 台相机水平平铺）。
 
     信号：
         card_clicked(str)  点击某张卡片。
     """
 
     card_clicked = Signal(str)
+    CARD_WIDTH = 340
+    CARD_HEIGHT = 240
+    H_SPACING = 8
+    V_SPACING = 8
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -177,7 +182,9 @@ class CameraGrid(QScrollArea):
         self._container = QWidget()
         self._grid = QGridLayout(self._container)
         self._grid.setContentsMargins(4, 4, 4, 4)
-        self._grid.setSpacing(8)
+        self._grid.setSpacing(self.H_SPACING)
+        self._grid.setVerticalSpacing(self.V_SPACING)
+        self._grid.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
         self.setWidget(self._container)
 
     # ------------------------------------------------------------ 公共接口
@@ -187,11 +194,33 @@ class CameraGrid(QScrollArea):
             card.deleteLater()
         self._cards.clear()
 
-        cols = max(1, min(3, len(camera_ids)))  # 1~3 列自适应
-        for i, cid in enumerate(camera_ids):
+        for cid in camera_ids:
             card = CameraCard(cid)
             card.clicked.connect(self.card_clicked)
             self._cards[cid] = card
+        self._relayout()
+
+    def resizeEvent(self, event: QResizeEvent):
+        super().resizeEvent(event)
+        self._relayout()
+
+    def _relayout(self):
+        """根据当前 viewport 宽度计算列数并重新排布卡片。"""
+        n = len(self._cards)
+        if n == 0:
+            return
+
+        viewport_w = self.viewport().width()
+        # 每个卡片占用宽度 = 卡片宽 + 水平间距
+        col_unit = self.CARD_WIDTH + self.H_SPACING
+        cols = max(1, viewport_w // col_unit)
+        cols = min(cols, n)
+
+        # 清空布局
+        for card in self._cards.values():
+            self._grid.removeWidget(card)
+        # 重新按行添加
+        for i, card in enumerate(self._cards.values()):
             self._grid.addWidget(card, i // cols, i % cols)
 
     def card(self, camera_id: str) -> Optional[CameraCard]:
