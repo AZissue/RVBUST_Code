@@ -86,10 +86,8 @@ class CalibBoardDetector:
         if image_np is None:
             return self._fail("图像为 None")
 
-        # 1. 2D 检测（自动尝试多种规格 + 多种 gamma，提升不同曝光/对比度下的鲁棒性）
+        # 1. 2D 检测（自动尝试多种规格 + 多种 gamma + 两种配色，提升不同曝光/对比度下的鲁棒性）
         gray = self._to_gray(image_np)
-        h, w = gray.shape[:2]
-        self._blob_detector = self._create_blob_detector(h, w)
         det = self._detect_pattern_robust(gray)
         if det is None:
             return self._fail("未能检测到任何支持规格的非对称圆标定板")
@@ -210,7 +208,8 @@ class CalibBoardDetector:
         return cv2.LUT(image.astype(np.uint8), table)
 
     @staticmethod
-    def _create_blob_detector(img_h: int = 0, img_w: int = 0) -> cv2.SimpleBlobDetector:
+    def _create_blob_detector(img_h: int = 0, img_w: int = 0,
+                              blob_color: int = 255) -> cv2.SimpleBlobDetector:
         """创建 SimpleBlobDetector，根据图像尺寸动态调整面积阈值。"""
         params = cv2.SimpleBlobDetector_Params()
         params.filterByArea = True
@@ -233,27 +232,34 @@ class CalibBoardDetector:
         params.minThreshold = 10
         params.maxThreshold = 250
         params.thresholdStep = 10
-        params.blobColor = 255
+        params.blobColor = blob_color
         return cv2.SimpleBlobDetector_create(params)
 
     def _detect_pattern_robust(self, gray: np.ndarray,
                                gammas: Tuple[float, ...] = (2.5, 1.0, 1.5, 2.0, 3.0)
                                ) -> Optional[Tuple[np.ndarray, Dict]]:
-        """依次尝试多种 gamma 与多种规格，返回第一个成功检测到的 (centers_2d, spec)。
+        """依次尝试多种 gamma、两种 blobColor（白圆/黑圆）与多种规格，
+        返回第一个成功检测到的 (centers_2d, spec)。
 
         不同光照 / 曝光下，固定 gamma 可能过强或过弱：
           - gamma=2.5 对正常曝光图像可提升低对比度圆点；
           - gamma=1.0 对已经高对比度的图像更稳定（避免过曝/失真）。
+        同时兼容白底黑圆（blobColor=0）与黑底白圆（blobColor=255）两种标定板配色。
         """
-        for gamma in gammas:
-            adjusted = self._adjust_gamma(gray, gamma)
-            det = self._detect_pattern(adjusted)
-            if det is not None:
-                logger.info(f"标定板 2D 检测成功: gamma={gamma}, 规格={det[1]['name']}")
-                return det
+        h, w = gray.shape[:2]
+        for blob_color in (255, 0):
+            blob_detector = self._create_blob_detector(h, w, blob_color=blob_color)
+            for gamma in gammas:
+                adjusted = self._adjust_gamma(gray, gamma)
+                det = self._detect_pattern(adjusted, blob_detector)
+                if det is not None:
+                    logger.info(f"标定板 2D 检测成功: gamma={gamma}, "
+                                f"blobColor={blob_color}, 规格={det[1]['name']}")
+                    return det
         return None
 
-    def _detect_pattern(self, image: np.ndarray) -> Optional[Tuple[np.ndarray, Dict]]:
+    def _detect_pattern(self, image: np.ndarray,
+                        blob_detector: cv2.SimpleBlobDetector) -> Optional[Tuple[np.ndarray, Dict]]:
         """依次尝试支持的规格，返回第一个成功检测到的 (centers_2d, spec)。
 
         OpenCV findCirclesGrid 的 patternSize 为 (points_per_row, points_per_colum)。
@@ -268,7 +274,7 @@ class CalibBoardDetector:
                 image,
                 (rows, cols),
                 flags=cv2.CALIB_CB_ASYMMETRIC_GRID | cv2.CALIB_CB_CLUSTERING,
-                blobDetector=self._blob_detector,
+                blobDetector=blob_detector,
             )
             if found and centers is not None and len(centers) == cols * rows:
                 centers = centers.reshape(-1, 2)

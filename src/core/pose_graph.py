@@ -239,8 +239,12 @@ class PoseGraph:
         except np.linalg.LinAlgError:
             logger.warning(f"边 ({from_id}, {to_id}) 变换矩阵不可逆，已跳过")
             return
-        self._adjacency.setdefault(from_id, []).append((to_id, T_inv))
-        self._adjacency.setdefault(to_id, []).append((from_id, T))
+        # 邻接表语义：从当前节点出发走到邻居节点所需的单步变换。
+        # add_edge(from, to, T) 表示 p_to = T @ p_from，因此：
+        #   - 从 from 走到 to 取 T
+        #   - 从 to 走回 from 取 T_inv
+        self._adjacency.setdefault(from_id, []).append((to_id, T))
+        self._adjacency.setdefault(to_id, []).append((from_id, T_inv))
         # 如果节点不存在，自动添加
         if from_id not in self.nodes:
             self.add_node(from_id)
@@ -320,10 +324,11 @@ class PoseGraph:
         if n_params == 0:
             return {reference_id: np.eye(4, dtype=np.float64)}
 
-        # 初始值：从当前 BFS 复合结果提取
+        # 初始值：用 BFS 生成树计算每个节点到参考系的位姿，避免 eye(4) 初值导致 LM 发散
+        initial_poses = self._bfs_spanning_tree(reference_id)
         x0 = np.zeros(n_params, dtype=np.float64)
         for nid, idx in node_to_idx.items():
-            T = self.nodes.get(nid, np.eye(4, dtype=np.float64))
+            T = initial_poses.get(nid, self.nodes.get(nid, np.eye(4, dtype=np.float64)))
             x0[idx*6:(idx+1)*6] = self._se3_log(T)
 
         # 构建残差函数

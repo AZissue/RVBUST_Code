@@ -338,6 +338,28 @@ assert np.allclose(global_T["cam2"], T_2to1, atol=1e-9)
 assert np.allclose(global_T["cam3"], np.linalg.inv(T_1to3), atol=1e-9)
 print("  [OK] optimize_global: BFS 生成树输出各相机到锚点的变换")
 
+# 7f. PoseGraph 类：add_edge 方向已知真值验证（修复 P0-1 后必须保留）
+print("\n[7f] PoseGraph 类 add_edge 方向已知真值验证")
+from core.pose_graph import PoseGraph
+
+pg_gt = PoseGraph()
+T_b2a = np.eye(4)
+T_b2a[:3, :3] = np.eye(3)
+T_b2a[:3, 3] = np.array([50.0, 20.0, 0.0])
+pg_gt.add_edge("a", "b", T_b2a)  # a→b 的相对位姿
+
+T_query = pg_gt.get_transform("a", "b")
+assert np.allclose(T_query[:3, 3], [50.0, 20.0, 0.0], atol=1e-9), \
+    f"a→b 平移真值应为 [50,20,0], 实际 {T_query[:3, 3]}"
+# 点变换验证：p_b = T @ p_a
+p_a = np.array([[1.0, 2.0, 3.0]])
+p_b = (T_query @ np.hstack([p_a, np.ones((1, 1))]).T).T[:, :3]
+assert np.allclose(p_b, p_a + [50.0, 20.0, 0.0], atol=1e-9), "点变换方向错误"
+
+T_query_inv = pg_gt.get_transform("b", "a")
+assert np.allclose(T_query_inv, np.linalg.inv(T_b2a), atol=1e-9), "反向应互为逆矩阵"
+print("  [OK] add_edge 方向正确：a→b=[50,20,0]，点变换与反向互逆均成立")
+
 # ------------------------------------------------------------------
 # 8. StitchEngine：3 相机拼接 / 空点云跳过 / 体素下采样
 # ------------------------------------------------------------------
@@ -618,6 +640,21 @@ def _draw_board_image(img_size, img_pts, radius=12):
     return img
 
 
+def _draw_board_image_black_circles(img_size, img_pts, radius=12):
+    """绘制白底黑圆标定板图像（行业默认配色，P0-3 修复后必须支持）。"""
+    img = np.full((img_size[1], img_size[0]), 255, dtype=np.uint8)
+    for pt in img_pts:
+        cx, cy = int(round(pt[0])), int(round(pt[1]))
+        cv2.circle(img, (cx, cy), radius, 0, -1)
+    img = cv2.GaussianBlur(img, (5, 5), 1.5)
+    Y, X = np.ogrid[:img_size[1], :img_size[0]]
+    gradient = (X / img_size[0] * 30 + Y / img_size[1] * 30).astype(np.uint8)
+    img = cv2.subtract(img, gradient)
+    noise = np.random.normal(0, 10, img.shape).astype(np.int16)
+    img = np.clip(img.astype(np.int16) + noise, 0, 255).astype(np.uint8)
+    return img
+
+
 def _write_ply_full(path, points):
     """写完整 PLY（保留 NaN 以维持像素索引映射）。"""
     with open(path, 'w') as f:
@@ -675,6 +712,21 @@ assert result['pattern_name'] == "4x11"
 assert len(result['markers']) == 44
 assert result['rms_mm'] < 0.1, f"标定板位姿 RMS 过大: {result['rms_mm']}"
 print(f"  [OK] 4x11 标定板检测成功，RMS {result['rms_mm']:.4f} mm")
+
+# 11b. 白底黑圆标准标定板检测（P0-3 修复后必须支持）
+print("\n[11b] 白底黑圆标定板检测")
+img_bw = _draw_board_image_black_circles(img_size, img_pts)
+fd2, ply_path2 = tempfile.mkstemp(suffix=".ply")
+os.close(fd2)
+_write_ply_full(ply_path2, points)
+result_bw = detector.detect(img_bw, offline_ply_path=ply_path2)
+os.unlink(ply_path2)
+
+assert result_bw['success'], f"白底黑圆标定板检测失败: {result_bw['message']}"
+assert result_bw['pattern_name'] == "4x11"
+assert len(result_bw['markers']) == 44, f"圆心数应为 44, 实际 {len(result_bw['markers'])}"
+assert result_bw['rms_mm'] < 0.1, f"白底黑圆位姿 RMS 过大: {result_bw['rms_mm']}"
+print(f"  [OK] 白底黑圆 4x11 标定板检测成功，RMS {result_bw['rms_mm']:.4f} mm")
 
 # 位姿法标定 pair：两个视角拍同一块板
 R_rel = rotz(15)

@@ -122,11 +122,15 @@ class ChainStitcher:
                 best_edge = edge
 
         if best_edge is None:
+            # 配准失败：清理已加入的当前节点，避免残留影响后续匹配
+            self.nodes.pop(station_id, None)
             return False, f"未找到足够共有标记（需 ≥{self.min_common_markers}），请减小移动距离", None
 
         # 4. 评估质量
         ok, quality_msg = self._evaluate_edge(best_edge)
         if not ok:
+            # 评估失败：清理已加入的当前节点
+            self.nodes.pop(station_id, None)
             return False, quality_msg, None
 
         # 5. 加入位姿图

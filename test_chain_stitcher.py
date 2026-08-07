@@ -83,10 +83,10 @@ station_poses = [
 ]
 
 # 每个机位看到的标记（世界点变换到机位坐标系）
+# p_station = T_station_in_world @ p_world，其中 T 为世界→机位的位姿
 station_markers = []
 for i, T in enumerate(station_poses):
-    T_inv = np.linalg.inv(T)
-    cam_pts = (T_inv[:3, :3] @ world_pts.T + T_inv[:3, 3:4]).T
+    cam_pts = (T[:3, :3] @ world_pts.T + T[:3, 3:4]).T
     station_markers.append(make_markers(cam_pts))
 
 # 用 ChainStitcher 逐帧添加
@@ -226,9 +226,56 @@ assert '共有标记不足' in msg or '未找到足够共有标记' in msg
 print("  [OK] 配准质量门限生效")
 
 # ------------------------------------------------------------------
-# [5] PoseGraph 增量边添加与变换查询
+# [5] 配准失败残留节点清理 + 重拍成功（P0-2）
 # ------------------------------------------------------------------
-print("\n[5] PoseGraph 增量边添加与变换查询测试")
+print("\n[5] 配准失败残留节点清理 + 重拍成功测试")
+
+stitcher3 = ChainStitcher(
+    marker_detector=MarkerDetector(),
+    calibration_engine=CalibrationEngine(),
+    stitch_engine=StitchEngine(),
+    min_common_markers=6,
+    min_inlier_ratio=0.7,
+    max_rms_mm=2.0,
+)
+current_markers3 = [None]
+def mock_detect3(*args, **kwargs):
+    return current_markers3[0]
+stitcher3.marker_detector.detect_3d = mock_detect3
+
+# 首帧成功
+current_markers3[0] = station_markers[0]
+frame_s1 = make_frame('station_1', world_pts, station_markers[0])
+ok, msg, _ = stitcher3.add_frame(frame_s1)
+assert ok, f"首帧应成功: {msg}"
+
+# 第二帧配准失败：只给 5 个标记（不足 min_common_markers=6）
+current_markers3[0] = station_markers[1][:5]
+frame_s2_bad = make_frame('station_2', world_pts, station_markers[1][:5])
+ok, msg, _ = stitcher3.add_frame(frame_s2_bad)
+assert not ok, "标记不足时应拒绝"
+assert 'station_2' not in stitcher3.nodes, "失败节点应被清理，不能残留"
+
+# 再次拍摄 station_2，使用完整标记，应成功
+current_markers3[0] = station_markers[1]
+frame_s2_good = make_frame('station_2', world_pts, station_markers[1])
+ok, msg, _ = stitcher3.add_frame(frame_s2_good)
+assert ok, f"重拍应成功: {msg}"
+assert 'station_2' in stitcher3.nodes, "成功节点应保留"
+assert len(stitcher3.nodes) == 2, f"应只有 2 个节点，实际 {len(stitcher3.nodes)}"
+
+T_s2 = stitcher3.pose_graph.get_transform('station_2', 'station_1')
+T_expected = np.linalg.inv(station_poses[1])
+err = np.abs(T_s2 - T_expected).max()
+print(f"  失败清理后重拍成功，station_2→station_1 变换误差: {err:.6f}")
+assert err < 0.01, f"重拍后变换误差过大: {err}"
+
+print("  [OK] 配准失败节点已清理，重拍不崩溃且结果正确")
+
+# ------------------------------------------------------------------
+# [6] PoseGraph 增量边添加与变换查询
+# ------------------------------------------------------------------
+print("\n[6] PoseGraph 增量边添加与变换查询测试")
 
 pg2 = PoseGraph()
 pg2.add_node('A', np.eye(4))
