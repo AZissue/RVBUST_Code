@@ -18,7 +18,7 @@ from typing import List, Optional
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QDialog, QDockWidget, QDoubleSpinBox, QFormLayout, QHBoxLayout,
+    QDialog, QDoubleSpinBox, QFormLayout, QHBoxLayout,
     QLabel, QMainWindow, QMessageBox, QPushButton, QSpinBox,
     QStackedWidget, QToolButton, QVBoxLayout, QWidget,
 )
@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 from .launcher_dialog import LauncherDialog
 from .theme import ACCENT, STATUS_OK, TEXT_MUTED, TEXT_SECONDARY
 from . import icons as ui_icons
-from .widgets import LoadingOverlay, LogPanel
+from .widgets import FloatingLogPanel, LoadingOverlay
 from .widgets.device_table import DeviceInfo
 from .workspaces import MobileChainWorkspace, MultiCamWorkspace
 
@@ -130,7 +130,8 @@ class MainWindowShell(QMainWindow):
         self.setCentralWidget(central)
 
         # ===== 顶部功能栏 =====
-        root.addWidget(self._build_toolbar())
+        self._toolbar = self._build_toolbar()
+        root.addWidget(self._toolbar)
 
         # ===== 中央双工作区 =====
         self._stack = QStackedWidget()
@@ -147,17 +148,13 @@ class MainWindowShell(QMainWindow):
         root.addWidget(self._stack, 1)
 
         # ===== 底部状态栏 =====
-        root.addWidget(self._build_statusbar())
+        self._statusbar = self._build_statusbar()
+        root.addWidget(self._statusbar)
 
-        # ===== 日志停靠面板（右侧，默认隐藏，「日志」按钮 toggle） =====
-        self._log_panel = LogPanel()
-        self._log_panel.setMinimumWidth(320)
-        self._log_dock = QDockWidget("日志", self)
-        self._log_dock.setWidget(self._log_panel)
-        self._log_dock.setAllowedAreas(Qt.RightDockWidgetArea | Qt.LeftDockWidgetArea)
-        self.addDockWidget(Qt.RightDockWidgetArea, self._log_dock)
-        self._log_dock.setMinimumWidth(340)
-        self._log_dock.hide()
+        # ===== 浮动日志面板（叠加层，默认隐藏，「日志」按钮 toggle） =====
+        self._log_panel = FloatingLogPanel(self)
+        self._log_panel.closed.connect(self._on_log_panel_closed)
+        self._log_panel.hide()
 
         # ===== 加载遮罩（覆盖整个主窗口，而非仅 central widget） =====
         self._overlay = LoadingOverlay(self)
@@ -305,8 +302,6 @@ class MainWindowShell(QMainWindow):
             lambda: self.log("刷新设备列表（接口预留：SDK SystemListDevices）", "info"))
         dialog.auto_ip_requested.connect(
             lambda devs: self.log(f"自动设置 IP ×{len(devs)}（接口预留）", "info"))
-        dialog.network_config_requested.connect(
-            lambda: self.log("打开网络配置对话框（接口预留）", "info"))
 
         connected = {"mode": None, "devices": []}
 
@@ -370,7 +365,32 @@ class MainWindowShell(QMainWindow):
         self._st_hint.setText(text)
 
     def _log_dock_toggle(self, checked: bool):
-        self._log_dock.setVisible(checked)
+        if checked:
+            self._position_log_panel()
+            self._log_panel.show()
+            self._log_panel.raise_()
+        else:
+            self._log_panel.hide()
+
+    def _on_log_panel_closed(self):
+        """用户点击日志面板关闭按钮：隐藏面板并取消顶部日志按钮勾选。"""
+        self._btn_log.setChecked(False)
+        self._log_panel.hide()
+
+    def _position_log_panel(self):
+        """把浮动日志面板定位到主窗口右侧偏下（不挤占顶部工具栏）。"""
+        margin = 8
+        panel_w = self._log_panel.width()
+        panel_h = self._log_panel.height()
+        x = self.width() - panel_w - margin
+        # 避开顶部工具栏和底部状态栏
+        toolbar_h = self._toolbar.height() if self._toolbar else 42
+        status_h = self._statusbar.height() if self._statusbar else 28
+        y = self.height() - panel_h - status_h - margin
+        # 确保不超出窗口
+        x = max(margin, x)
+        y = max(toolbar_h + margin, y)
+        self._log_panel.move(x, y)
 
     def _open_postprocess(self):
         dialog = _PostProcessDialog(self)
@@ -402,3 +422,5 @@ class MainWindowShell(QMainWindow):
         super().resizeEvent(event)
         if hasattr(self, "_overlay") and self._overlay.isVisible():
             self._overlay.setGeometry(0, 0, self.width(), self.height())
+        if hasattr(self, "_log_panel") and self._log_panel.isVisible():
+            self._position_log_panel()

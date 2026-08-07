@@ -6,6 +6,7 @@ from .loading_overlay import LoadingOverlay
 from .mode_card import ModeCard
 from .device_table import DeviceInfo, DeviceTable
 from .log_panel import LogPanel
+from .floating_log_panel import FloatingLogPanel
 from .viewer_panel import ViewerPanel
 from .camera_grid import CameraCard, CameraGrid
 from .station_timeline import StationNodeData, StationTimeline
@@ -14,7 +15,7 @@ from .live_view_panel import LiveViewPanel, MarkerOverlay
 
 __all__ = [
     "StepBar", "LoadingOverlay", "ModeCard",
-    "DeviceInfo", "DeviceTable", "LogPanel",
+    "DeviceInfo", "DeviceTable", "LogPanel", "FloatingLogPanel",
     "ViewerPanel", "CameraCard", "CameraGrid",
     "StationNodeData", "StationTimeline",
     "EvaluationCard", "LiveViewPanel", "MarkerOverlay",

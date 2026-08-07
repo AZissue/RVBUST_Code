@@ -15,7 +15,6 @@ ui_v2.launcher_dialog —— 启动小窗（重构版，空壳）。
 接口预留（信号全部由主窗口/后端连接）：
   refresh_requested()              重新枚举设备（SDK SystemListDevices）
   auto_ip_requested(list)          自动设置 IP（勾选设备列表）
-  network_config_requested()       网络配置对话框（GigE 网卡选择）
   connect_requested(str, list)     连接设备（模式, DeviceInfo 列表）
 """
 
@@ -53,9 +52,6 @@ class LauncherDialog(QDialog):
 
     auto_ip_requested = Signal(list)
     """自动设置 IP（参数为勾选设备）。"""
-
-    network_config_requested = Signal()
-    """网络配置对话框（GigE 网卡选择 + 静态 IP）。"""
 
     connect_requested = Signal(str, list)
     """连接设备：(mode, List[DeviceInfo])。全部成功后由调用方 accept() 本对话框。"""
@@ -161,11 +157,6 @@ class LauncherDialog(QDialog):
         ui_icons.apply(self._btn_auto_ip, "bolt", TEXT_SECONDARY, 15)
         self._btn_auto_ip.clicked.connect(self._on_auto_ip)
         net_row.addWidget(self._btn_auto_ip)
-        self._btn_net_cfg = QPushButton("网络配置…")
-        self._btn_net_cfg.setToolTip("GigE 相机网卡选择 + 静态 IP")
-        ui_icons.apply(self._btn_net_cfg, "network", TEXT_SECONDARY, 15)
-        self._btn_net_cfg.clicked.connect(self.network_config_requested)
-        net_row.addWidget(self._btn_net_cfg)
         net_row.addStretch(1)
         right.addLayout(net_row)
 
