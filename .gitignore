@@ -1,0 +1,49 @@
+# 构建产物
+build/
+out/
+cmake-build-*/
+
+# Visual Studio
+.vs/
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+*.suo
+*.user
+*.userosscache
+*.db
+*.opendb
+*.ipch/
+
+# 编译输出
+*.exe
+*.dll
+*.lib
+*.pdb
+*.obj
+*.ilk
+*.exp
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+compile_commands.json
+CTestTestfile.cmake
+_deps/
+
+# 巨型第三方依赖（需自行本地编译/安装）
+third_party/VTK-build/
+third_party/VTK-install/
+third_party/VTK-src/
+
+# 测试/日志
+*.log
+test_cloud.ply
+*.cache
+
+# 操作系统
+.DS_Store
+Thumbs.db
