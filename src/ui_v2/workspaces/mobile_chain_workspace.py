@@ -27,7 +27,7 @@ from typing import List, Optional
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QHBoxLayout, QLabel, QPushButton, QSplitter, QVBoxLayout, QWidget,
+    QHBoxLayout, QLabel, QPushButton, QSizePolicy, QSplitter, QVBoxLayout, QWidget,
 )
 
 from ..theme import STATUS_ERR, STATUS_OK, STATUS_WARN, TEXT_MUTED, TEXT_SECONDARY
@@ -106,10 +106,16 @@ class MobileChainWorkspace(QWidget):
         # ---- 中央：左实时取景 / 右 3D 预览（水平布局，便于边拍边看） ----
         center_split = QSplitter(Qt.Horizontal)
         self._live_view = LiveViewPanel()
+        self._live_view.setMinimumWidth(420)
+        self._live_view.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._live_view.mode_toggled.connect(self.auto_mode_changed)
         center_split.addWidget(self._live_view)
 
         self._viewer = ViewerPanel("实时 3D 拼接预览（按机位分色）")
+        self._viewer.setMinimumWidth(420)
+        self._viewer.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._viewer.viewer_message.connect(
             lambda m: self.log_message.emit(m, "info"))
         center_split.addWidget(self._viewer)
@@ -238,7 +244,7 @@ class MobileChainWorkspace(QWidget):
         """
         self._live_view.set_detection_overlay(markers)
 
-    def on_evaluation_done(
+    def set_evaluation(
         self,
         shared_markers: int,
         inlier_ratio: float,
@@ -246,13 +252,25 @@ class MobileChainWorkspace(QWidget):
         level: str,
         suggestion: str,
     ):
+        """仅更新评估卡片（不修改时间线）。用于重拍/删除后刷新当前评估。"""
+        self._eval_card.set_evaluation(
+            shared_markers, inlier_ratio, rms_mm, level, suggestion)
+
+    def on_evaluation_done(
+        self,
+        shared_markers: int,
+        inlier_ratio: float,
+        rms_mm: Optional[float],
+        level: str,
+        suggestion: str,
+        backend_ref: object = None,
+    ):
         """评估完成：更新评估卡片；通过/谨慎时同步入链时间线节点。
 
         level: ok / warn / fail（🟢/🟡/🔴）
         fail 时拒绝入链（不追加节点）。
         """
-        self._eval_card.set_evaluation(
-            shared_markers, inlier_ratio, rms_mm, level, suggestion)
+        self.set_evaluation(shared_markers, inlier_ratio, rms_mm, level, suggestion)
 
         if level in ("ok", "warn"):
             self._station_count += 1
@@ -262,6 +280,7 @@ class MobileChainWorkspace(QWidget):
                 overlap_ratio=inlier_ratio,
                 rms_mm=rms_mm,
                 status=level,
+                backend_ref=backend_ref,
             ))
             self._recompute_stats()
         # fail：拒绝入链，等待重拍（评估卡片已显示红色建议）
@@ -300,6 +319,7 @@ class MobileChainWorkspace(QWidget):
         rms_mm: Optional[float],
         level: str,
         suggestion: str,
+        backend_ref: object = None,
     ):
         """重拍完成：替换指定索引节点数据并刷新统计。"""
         self._timeline.update_station(StationNodeData(
@@ -308,6 +328,7 @@ class MobileChainWorkspace(QWidget):
             overlap_ratio=inlier_ratio,
             rms_mm=rms_mm,
             status=level,
+            backend_ref=backend_ref,
         ))
         self._eval_card.set_evaluation(
             shared_markers, inlier_ratio, rms_mm, level, suggestion)
@@ -322,6 +343,33 @@ class MobileChainWorkspace(QWidget):
         self._eval_card.reset()
         self._refresh_stats()
         self.set_state(self._state)
+
+    def set_stations(self, evaluations: List[Dict]):
+        """根据后端当前机位列表重建时间线（删除/重排后调用）。"""
+        self._timeline.clear()
+        self._station_count = 0
+        self._total_error_mm = 0.0
+        self._selected_node = None
+        for ev in evaluations:
+            self._station_count += 1
+            self._timeline.add_station(StationNodeData(
+                index=self._station_count,
+                shared_markers=ev.get('shared_markers', 0),
+                overlap_ratio=ev.get('inlier_ratio', 0.0),
+                rms_mm=ev.get('rms_mm'),
+                status=ev.get('status', 'ok'),
+                backend_ref=ev.get('station_id'),
+            ))
+        self._recompute_stats()
+        self.set_state(self._state)
+
+    def get_station_id(self, index: int) -> Optional[str]:
+        """由时间线索引获取后端 station_id（backend_ref）。"""
+        for node in self._timeline._nodes:
+            if node._data.index == index:
+                ref = node._data.backend_ref
+                return ref if isinstance(ref, str) else None
+        return None
 
     def viewer(self) -> ViewerPanel:
         """3D 预览组件（增量拼接刷新入口，按机位分色）。"""

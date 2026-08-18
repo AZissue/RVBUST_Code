@@ -19,15 +19,16 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from ..theme import (
-    ACCENT, BG_CARD, BG_PANEL, BORDER, STATUS_OK, TEXT_MUTED, TEXT_SECONDARY,
+    ACCENT, ACCENT_DIM, BG_CARD, BG_PANEL, STATUS_OK, TEXT_MUTED,
+    TEXT_SECONDARY,
 )
 
 _STATE_STYLE = {
-    # state: (frame_bg, border, num_color, title_color)
-    "done": (BG_CARD, STATUS_OK, STATUS_OK, STATUS_OK),
-    "current": (BG_CARD, ACCENT, ACCENT, ACCENT),
-    "pending": (BG_PANEL, BORDER, TEXT_SECONDARY, TEXT_SECONDARY),
-    "disabled": (BG_PANEL, "#2B2E37", TEXT_MUTED, TEXT_MUTED),
+    # state: (frame_bg, num_color, title_color)
+    "done": (BG_CARD, STATUS_OK, STATUS_OK),
+    "current": (ACCENT_DIM, ACCENT, ACCENT),
+    "pending": (BG_PANEL, TEXT_SECONDARY, TEXT_SECONDARY),
+    "disabled": (BG_PANEL, TEXT_MUTED, TEXT_MUTED),
 }
 
 
@@ -39,11 +40,12 @@ class _StepItem(QFrame):
     def __init__(self, index: int, title: str, parent=None):
         super().__init__(parent)
         self._index = index
+        self._raw_title = title
         self._state = "pending"
 
         lo = QVBoxLayout(self)
-        lo.setContentsMargins(10, 6, 10, 6)
-        lo.setSpacing(2)
+        lo.setContentsMargins(12, 8, 12, 8)
+        lo.setSpacing(3)
 
         self._num = QLabel(f"{index + 1:02d}")
         self._num.setAlignment(Qt.AlignCenter)
@@ -53,23 +55,26 @@ class _StepItem(QFrame):
         self._title.setAlignment(Qt.AlignCenter)
         lo.addWidget(self._title)
 
-        self.setMinimumWidth(92)
+        self.setMinimumWidth(100)
         self.set_state("pending")
 
     def set_state(self, state: str):
         """pending / current / done / disabled。"""
         self._state = state
-        bg, border, num_c, title_c = _STATE_STYLE[state]
-        weight = "700" if state == "current" else "400"
-        bw = "2px" if state == "current" else "1px"
+        bg, num_c, title_c = _STATE_STYLE[state]
+        weight = "700" if state == "current" else "500" if state == "done" else "400"
+        # 用背景色区分步骤状态，无实色边框
         self.setStyleSheet(
-            f"_StepItem {{ background-color: {bg}; border: {bw} solid {border};"
+            f"_StepItem {{ background-color: {bg}; border: none;"
             f" border-radius: 6px; }}"
         )
         self._num.setStyleSheet(
-            f"font-size: 15px; font-weight: 700; color: {num_c};")
+            f"font-size: 16px; font-weight: 700; color: {num_c};")
+        # 已完成步骤在标题前加 ✓，已完成路径一眼可辨
+        display_title = f"✓ {self._raw_title}" if state == "done" else self._raw_title
+        self._title.setText(display_title)
         self._title.setStyleSheet(
-            f"font-size: 11px; font-weight: {weight}; color: {title_c};")
+            f"font-size: 12px; font-weight: {weight}; color: {title_c};")
         self.setCursor(
             Qt.PointingHandCursor if state == "done" else Qt.ArrowCursor)
 
@@ -92,12 +97,13 @@ class StepBar(QWidget):
     def __init__(self, steps: List[str], parent=None):
         super().__init__(parent)
         self._items: List[_StepItem] = []
+        self._arrows: List[QLabel] = []
         self._enabled: List[bool] = [True] * len(steps)
         self._current = 0
 
         lo = QHBoxLayout(self)
-        lo.setContentsMargins(4, 2, 4, 2)
-        lo.setSpacing(6)
+        lo.setContentsMargins(6, 4, 6, 4)
+        lo.setSpacing(8)
 
         for i, title in enumerate(steps):
             item = _StepItem(i, title)
@@ -106,8 +112,8 @@ class StepBar(QWidget):
             lo.addWidget(item)
             if i < len(steps) - 1:
                 arrow = QLabel("→")
-                arrow.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 14px;")
                 arrow.setAlignment(Qt.AlignCenter)
+                self._arrows.append(arrow)
                 lo.addWidget(arrow)
         lo.addStretch(1)
         self._refresh()
@@ -144,3 +150,17 @@ class StepBar(QWidget):
                 item.set_state("current")
             else:
                 item.set_state("pending")
+
+        # 箭头颜色跟随进度：已完成路径绿色，当前步出口红色，未到达灰色
+        for i, arrow in enumerate(self._arrows):
+            if i < self._current:
+                color = STATUS_OK
+                size = "14px"
+            elif i == self._current:
+                color = ACCENT
+                size = "16px"
+            else:
+                color = TEXT_MUTED
+                size = "14px"
+            arrow.setStyleSheet(
+                f"color: {color}; font-size: {size}; font-weight: 600;")

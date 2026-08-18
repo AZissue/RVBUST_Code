@@ -109,11 +109,11 @@ class StationNode(QFrame):
         if self._selected:
             self.setStyleSheet(
                 f"StationNode {{ background-color: {ACCENT_DIM};"
-                f" border: 2px solid {ACCENT}; border-radius: 6px; }}")
+                f" border: none; border-radius: 6px; }}")
         else:
             self.setStyleSheet(
                 f"StationNode {{ background-color: {BG_CARD};"
-                f" border: 1px solid {BORDER}; border-radius: 6px; }}")
+                f" border: none; border-radius: 6px; }}")
 
     def mousePressEvent(self, event):
         self.clicked.emit(self._data.index)

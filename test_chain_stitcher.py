@@ -298,6 +298,59 @@ assert err < 1e-6, f"复合关系不成立: {err}"
 
 print("  [OK] PoseGraph 增量边添加与变换查询正常")
 
+# ------------------------------------------------------------------
+# [7] 删除中间机位后继续拍摄（P0-1 回归）
+# ------------------------------------------------------------------
+print("\n[7] 删除中间机位后继续拍摄回归测试")
+
+stitcher4 = ChainStitcher(
+    marker_detector=MarkerDetector(),
+    calibration_engine=CalibrationEngine(),
+    stitch_engine=StitchEngine(),
+    min_common_markers=6,
+    min_inlier_ratio=0.7,
+    max_rms_mm=2.0,
+)
+
+# 覆盖 detect_3d
+current_markers4 = [None]
+def mock_detect4(*args, **kwargs):
+    return current_markers4[0]
+stitcher4.marker_detector.detect_3d = mock_detect4
+
+# 添加 4 个机位
+for i in range(4):
+    current_markers4[0] = station_markers[i]
+    frame = make_frame(f"station_{i+1}", world_pts, station_markers[i])
+    ok, msg, _ = stitcher4.add_frame(frame)
+    assert ok, f"机位 {i+1} 添加失败: {msg}"
+
+assert len(stitcher4.nodes) == 4, f"初始应 4 个节点，实际 {len(stitcher4.nodes)}"
+
+# 删除中间机位 station_2
+removed = stitcher4.remove_node('station_2')
+assert 'station_2' in removed, "station_2 应被删除"
+assert len(stitcher4.nodes) >= 1, "参考机位应保留"
+assert stitcher4._reference_id == 'station_1', "参考机位应保持 station_1"
+
+# 关键：继续添加新机位 station_5 不应崩溃
+current_markers4[0] = station_markers[4]
+frame_s5 = make_frame('station_5', world_pts, station_markers[4])
+ok, msg, _ = stitcher4.add_frame(frame_s5)
+assert ok, f"删除中间机位后继续拍摄应成功: {msg}"
+assert 'station_5' in stitcher4.nodes, "station_5 应已成功入链"
+
+# 验证剩余节点都能从参考系到达
+for sid in stitcher4.nodes:
+    if sid == stitcher4._reference_id:
+        continue
+    T = stitcher4.pose_graph.get_transform(sid, stitcher4._reference_id)
+    assert T is not None, f"机位 {sid} 无法到达参考系"
+
+print(f"  删除 station_2 后节点: {list(stitcher4.nodes.keys())}")
+print(f"  继续拍摄 station_5 后节点: {list(stitcher4.nodes.keys())}")
+print("  [OK] 删除中间机位后继续拍摄不崩溃，位姿图保持连通")
+
 print("\n" + "=" * 60)
 print("[OK] 全部 ChainStitcher 测试通过")
 print("=" * 60)

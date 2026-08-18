@@ -18,13 +18,13 @@ from typing import List, Optional
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QDialog, QDoubleSpinBox, QFormLayout, QHBoxLayout,
+    QDialog, QDoubleSpinBox, QFormLayout, QFrame, QHBoxLayout,
     QLabel, QMainWindow, QMessageBox, QPushButton, QSpinBox,
     QStackedWidget, QToolButton, QVBoxLayout, QWidget,
 )
 
 from .launcher_dialog import LauncherDialog
-from .theme import ACCENT, STATUS_OK, TEXT_MUTED, TEXT_SECONDARY
+from .theme import ACCENT, ACCENT_DIM, BG_CARD, BORDER, STATUS_OK, STATUS_WARN, TEXT_MUTED, TEXT_SECONDARY
 from . import icons as ui_icons
 from .widgets import FloatingLogPanel, LoadingOverlay
 from .widgets.device_table import DeviceInfo
@@ -53,12 +53,14 @@ class _PostProcessDialog(QDialog):
 
         self._crop_radius = QDoubleSpinBox()
         self._crop_radius.setRange(0, 100000)
+        self._crop_radius.setValue(0)
         self._crop_radius.setSuffix(" mm")
         self._crop_radius.setSpecialValueText("不裁切")
         form.addRow("裁切半径:", self._crop_radius)
 
         self._voxel = QDoubleSpinBox()
         self._voxel.setRange(0, 100)
+        self._voxel.setValue(0)
         self._voxel.setDecimals(2)
         self._voxel.setSuffix(" mm")
         self._voxel.setSpecialValueText("不下采样")
@@ -66,7 +68,7 @@ class _PostProcessDialog(QDialog):
 
         self._outlier_nb = QSpinBox()
         self._outlier_nb.setRange(0, 100)
-        self._outlier_nb.setValue(20)
+        self._outlier_nb.setValue(0)
         self._outlier_nb.setSpecialValueText("关闭滤波")
         form.addRow("离群点邻域:", self._outlier_nb)
 
@@ -236,26 +238,59 @@ class MainWindowShell(QMainWindow):
         bar = QWidget()
         bar.setStyleSheet("background-color: #26272E; border-top: 1px solid #3A3D46;")
         lo = QHBoxLayout(bar)
-        lo.setContentsMargins(10, 4, 10, 4)
-        lo.setSpacing(14)
+        lo.setContentsMargins(10, 5, 10, 5)
+        lo.setSpacing(10)
+
+        # ---- 左侧状态组：模式徽章 | 设备 | 状态点 ----
+        left_group = QFrame()
+        left_group.setStyleSheet(
+            f"QFrame {{ background-color: {BG_CARD}; border: none;"
+            f" border-radius: 6px; }}"
+        )
+        left_lo = QHBoxLayout(left_group)
+        left_lo.setContentsMargins(8, 3, 8, 3)
+        left_lo.setSpacing(8)
 
         self._st_mode = QLabel()
-        self._st_mode.setStyleSheet(f"color: {ACCENT}; font-weight: 700;")
-        lo.addWidget(self._st_mode)
+        self._st_mode.setStyleSheet(
+            f"background-color: {ACCENT_DIM}; color: {ACCENT};"
+            f" border: none; border-radius: 10px;"
+            f" padding: 1px 8px; font-weight: 700;")
+        left_lo.addWidget(self._st_mode)
+
+        sep = QFrame()
+        sep.setFixedWidth(1)
+        sep.setStyleSheet(f"background-color: {BORDER};")
+        left_lo.addWidget(sep)
 
         self._st_devices = QLabel("设备 —")
         self._st_devices.setStyleSheet(f"color: {TEXT_SECONDARY};")
-        lo.addWidget(self._st_devices)
+        left_lo.addWidget(self._st_devices)
+
+        self._st_state_dot = QLabel("●")
+        self._st_state_dot.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 10px;")
+        left_lo.addWidget(self._st_state_dot)
 
         self._st_step = QLabel("待机")
         self._st_step.setStyleSheet(f"color: {TEXT_SECONDARY};")
-        lo.addWidget(self._st_step)
+        left_lo.addWidget(self._st_step)
 
+        lo.addWidget(left_group)
         lo.addStretch(1)
+
+        # ---- 右侧提示组：最近一条日志/操作建议 ----
+        right_group = QFrame()
+        right_group.setStyleSheet(
+            f"QFrame {{ background-color: {BG_CARD}; border: none;"
+            f" border-radius: 6px; }}"
+        )
+        right_lo = QHBoxLayout(right_group)
+        right_lo.setContentsMargins(8, 3, 8, 3)
 
         self._st_hint = QLabel("")
         self._st_hint.setStyleSheet(f"color: {TEXT_MUTED};")
-        lo.addWidget(self._st_hint)
+        right_lo.addWidget(self._st_hint)
+        lo.addWidget(right_group, 1)
 
         self._refresh_statusbar()
         return bar
@@ -373,12 +408,25 @@ class MainWindowShell(QMainWindow):
     # ------------------------------------------------------------ 内部
     def _refresh_statusbar(self):
         mode_name = LauncherDialog.MODE_NAMES.get(self._mode, self._mode)
-        self._st_mode.setText(f"模式：{mode_name}")
+        self._st_mode.setText(mode_name)
         online = sum(1 for d in self._devices if d.online)
-        self._st_devices.setText(f"设备在线 {online}/{len(self._devices)}")
+        total = len(self._devices)
+        self._st_devices.setText(f"设备 {online}/{total} 在线")
+
         ws = (self._ws_multi if self._mode == LauncherDialog.MODE_MULTI_CAM
               else self._ws_mobile)
-        self._st_step.setText(f"当前状态：{ws.current_state()}")
+        state = ws.current_state()
+        self._st_step.setText(state)
+
+        # 状态点颜色：在线/工作流推进为绿色，idle/异常为灰色/黄色
+        if state in ("connected", "captured", "detected", "calibrated", "locked"):
+            dot_color = STATUS_OK
+        elif state == "idle":
+            dot_color = TEXT_MUTED
+        else:
+            dot_color = STATUS_WARN
+        self._st_state_dot.setStyleSheet(
+            f"color: {dot_color}; font-size: 10px;")
 
     def _on_chain_stats(self, text: str):
         self._st_hint.setText(text)

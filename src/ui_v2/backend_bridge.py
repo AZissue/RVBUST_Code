@@ -16,7 +16,9 @@ ui_v2.backend_bridge —— ui_v2 空壳与现有 core 模块的桥接器。
 from __future__ import annotations
 
 import os
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
+
+import numpy as np
 
 from PySide6.QtCore import QObject, QTimer
 from PySide6.QtGui import QPixmap
@@ -30,6 +32,7 @@ from core.calibration_engine import CalibrationEngine
 from core.stitch_engine import StitchEngine
 from core.point_cloud_processor import PointCloudProcessor
 from core.offline_session import OfflineSession
+from core.frame_data import FrameData
 from core.utils import logger
 from ui.camera_card import numpy_to_qpixmap
 
@@ -67,6 +70,11 @@ class BackendBridge(QObject):
         self._preview_timer = QTimer(self)
         self._preview_timer.timeout.connect(self._on_preview_tick)
         self._preview_camera_id: Optional[str] = None
+
+        # 模式 A 单相机卡片 2D 预览定时器
+        self._card_preview_timer = QTimer(self)
+        self._card_preview_timer.timeout.connect(self._on_card_preview_tick)
+        self._card_preview_active: Set[str] = set()
 
         # 后台任务引用保护：防止 QThread 运行期间被 Python GC 销毁
         self._workers: List[WorkerThread] = []
@@ -107,6 +115,9 @@ class BackendBridge(QObject):
         ws.batch_scan_requested.connect(self._on_multi_batch_scan)
         ws.reference_changed.connect(self._on_multi_reference_changed)
         ws.step_back_requested.connect(self._on_multi_step_back)
+        ws.card_preview_toggled.connect(self._on_card_preview_toggled)
+        ws.card_capture_requested.connect(self._on_card_capture)
+        ws.card_detect_requested.connect(self._on_card_detect)
 
     def _wire_mobile_chain_workspace(self):
         """接线模式 B（单相机移动链式）。"""
@@ -150,16 +161,25 @@ class BackendBridge(QObject):
     def _on_device_manager_reopened(self, mode: str, devices: List[DeviceInfo]):
         """设备管理小窗确认：断开旧设备 → 连接新设备 → 切换工作区。"""
         self.shell.show_loading("正在连接设备...")
-        # 断开旧设备
-        self.camera_manager.disconnect_all()
+        # 清空旧相机注册表（避免多次进入设备管理后 camera_id 递增错乱）
+        self.camera_manager.clear()
+
+        # 区分真实设备与测试/虚拟设备
+        real_devices = [d for d in devices if isinstance(d.backend_ref, int)]
+        test_devices = [d for d in devices if not isinstance(d.backend_ref, int)]
+        ordered_devices = real_devices + test_devices
 
         # 连接新设备
         def _connect():
             results = []
-            for dev in devices:
-                idx = dev.backend_ref if isinstance(dev.backend_ref, int) else 0
+            for dev in ordered_devices:
                 camera_id = f"cam{len(self.camera_manager.camera_ids)}"
                 self.camera_manager.add_camera(camera_id)
+                if dev in test_devices:
+                    # 测试设备仅占用 camera_id，不连接真实相机
+                    results.append((camera_id, False, "测试设备（仅布局）"))
+                    continue
+                idx = dev.backend_ref  # type: ignore[union-attr]
                 ok, msg = self.camera_manager.connect(camera_id, idx)
                 results.append((camera_id, ok, msg))
             return results
@@ -175,11 +195,13 @@ class BackendBridge(QObject):
                 self.shell.log(f"相机 {cid}: {msg}", level)
             self.shell.log(f"设备连接完成: {ok_count}/{len(results)} 台成功", "info")
             # 切换工作区
-            self.shell.set_mode(mode, devices)
+            self.shell.set_mode(mode, ordered_devices)
             self._current_mode = mode
             if mode == LauncherDialog.MODE_MULTI_CAM:
                 # 模式 A：启动标定阶段并同步参考相机下拉
-                reference_id = results[0][0] if results else "cam0"
+                # 参考相机选第一台真实连接成功的相机，fallback 到 cam0
+                reference_id = next(
+                    (cid for cid, ok, _ in results if ok), "cam0")
                 ok, msg = self.fixed_workflow.start_calibration(reference_id)
                 self.shell.log(msg, "success" if ok else "warn")
                 self._on_multi_reference_changed(reference_id)
@@ -195,14 +217,31 @@ class BackendBridge(QObject):
     # 模式 A（多相机外参标定）
     # ------------------------------------------------------------------
     def _on_multi_capture(self, sync: bool):
-        """拍摄标定帧。"""
+        """拍摄标定帧；若已处于扫描/锁定阶段，则先重置为重新标定。"""
+        ws = self.shell.workspace_multi()
+
+        # locked 状态下点击「重新标定」：先回到标定阶段并清空旧结果
+        if ws.current_state() == "locked":
+            ref_id = self.calibration_engine.reference_id or ws.current_reference_id() or "cam0"
+            ok, msg = self.fixed_workflow.start_calibration(ref_id)
+            if not ok:
+                self.shell.log(f"重新标定失败: {msg}", "error")
+                return
+            ws.clear_calibration_results()
+            ws.viewer().clear_all()
+            ws.viewer().set_reference(None)
+            ws.set_state("connected")
+            self.shell.log("已回到标定阶段，请重新拍摄标定帧", "info")
+
         preview_cam = self._pause_2d_preview()
+        active_cards = self._pause_card_preview()
         self.shell.show_loading("正在拍摄标定帧...")
         def _work():
             return self.camera_manager.capture_all(sync=sync)
         def _done(frames, error):
             self.shell.hide_loading()
             self._resume_2d_preview(preview_cam)
+            self._resume_card_preview(active_cards)
             if error:
                 self.shell.log(f"拍摄失败: {error}", "error")
                 return
@@ -225,23 +264,40 @@ class BackendBridge(QObject):
                 ws.camera_grid().set_frame(cid, frame)
             ws.on_capture_done()
             ws.set_state("captured")
+            self.shell.set_dirty(True)
             self.shell.log(f"拍摄完成: {len(frames)} 台相机", "success")
         self._run_background(_work, _done)
 
     def _on_multi_detect(self, method: str):
-        """检测标记物。"""
+        """检测标记物（多相机并行，缩短总耗时）。"""
+        self.marker_detector.set_marker_type(self._map_detect_method(method))
         self.shell.show_loading("正在检测标记物...")
+
+        def _detect_one(cid_frame):
+            cid, frame = cid_frame
+            markers = self.marker_detector.detect_3d(
+                frame.image_np,
+                pointmap=frame.pointmap,
+                rvc_image=frame.rvc_image,
+                offline_ply_path=frame.offline_pointmap_path,
+            )
+            frame.markers = markers
+            return cid, len(markers)
+
         def _work():
+            frames = list(self.fixed_workflow.frames_calib.items())
+            if len(frames) <= 1:
+                marker_counts = {}
+                for cid, frame in frames:
+                    cid_out, count = _detect_one((cid, frame))
+                    marker_counts[cid_out] = count
+                return marker_counts
+            from concurrent.futures import ThreadPoolExecutor
             marker_counts = {}
-            for cid, frame in self.fixed_workflow.frames_calib.items():
-                markers = self.marker_detector.detect_3d(
-                    frame.image_np,
-                    pointmap=frame.pointmap,
-                    rvc_image=frame.rvc_image,
-                    offline_ply_path=frame.offline_pointmap_path,
-                )
-                frame.markers = markers
-                marker_counts[cid] = len(markers)
+            max_workers = min(len(frames), 4)
+            with ThreadPoolExecutor(max_workers=max_workers) as exe:
+                for cid, count in exe.map(_detect_one, frames):
+                    marker_counts[cid] = count
             return marker_counts
         def _done(marker_counts, error):
             self.shell.hide_loading()
@@ -259,6 +315,7 @@ class BackendBridge(QObject):
                     grid.set_frame(cid, frame, frame.markers)
             ws.on_detect_done(marker_counts)
             ws.set_state("detected")
+            self.shell.set_dirty(True)
             total = sum(marker_counts.values())
             self.shell.log(f"检测完成: 共 {total} 个标记", "success")
         self._run_background(_work, _done)
@@ -284,11 +341,19 @@ class BackendBridge(QObject):
                 self.shell.log(f"标定异常: {error}", "error")
                 return
             ok, msg, pairs = result
-            score = 100 if ok else 50
+            # 质量评分：基于最大 RMS 与最小内点率加权，0~100
+            if not ok or not pairs:
+                score = 0
+            else:
+                max_rms = max(p['rms_mm'] for p in pairs)
+                min_inlier = min(p['inlier_ratio'] for p in pairs)
+                rms_score = max(0.0, 100.0 - max_rms * 25.0)
+                score = int(min(100.0, rms_score * (0.5 + 0.5 * min_inlier)))
             ws = self.shell.workspace_multi()
             # 设置参考相机，viewer 中参考相机显示为白色
             ws.viewer().set_reference(self.calibration_engine.reference_id)
             ws.on_calibrate_done(pairs, score, ok)
+            self.shell.set_dirty(True)
             if ok:
                 ok_scan, msg_scan = self.fixed_workflow.start_scanning()
                 if ok_scan:
@@ -312,25 +377,54 @@ class BackendBridge(QObject):
             self.shell.log(msg, "success" if ok else "error")
 
     def _on_multi_load_extrinsics(self):
-        """加载外参。"""
+        """加载外参并直接进入扫描阶段。"""
         from PySide6.QtWidgets import QFileDialog
         path, _ = QFileDialog.getOpenFileName(
             self.shell, "加载外参", "", "JSON 文件 (*.json)")
-        if path:
-            ok, msg = self.fixed_workflow.load_calibration(path)
-            self.shell.log(msg, "success" if ok else "error")
-            if ok:
-                self.shell.workspace_multi().set_state("locked")
+        if not path:
+            return
+        ok, msg = self.fixed_workflow.load_calibration(path)
+        self.shell.log(msg, "success" if ok else "error")
+        if not ok:
+            return
+
+        ws = self.shell.workspace_multi()
+        ref_id = self.fixed_workflow.reference_id
+        ws.viewer().set_reference(ref_id)
+
+        # 回填标定结果表格，使用户知道加载了哪些 pair
+        pairs = []
+        for (ref, cam), res in self.calibration_engine.pair_results.items():
+            if res.get('success'):
+                pairs.append({
+                    'pair': f"{cam}→{ref}",
+                    'rms_mm': res['rms_mm'],
+                    'inlier_ratio': res['inlier_ratio'],
+                    'level': 'ok' if res['rms_mm'] < 0.5 else 'warn' if res['rms_mm'] < 1.5 else 'fail',
+                })
+        ws.on_calibrate_done(pairs, score=100, quality_passed=True)
+
+        ok_scan, msg_scan = self.fixed_workflow.start_scanning()
+        if ok_scan:
+            ws.set_state("locked")
+            self.shell.set_dirty(True)
+            self.shell.log(f"外参已加载并进入扫描阶段: {msg_scan}", "success")
+        else:
+            ws.set_state("calibrated")
+            self.shell.set_dirty(True)
+            self.shell.log(f"外参已加载但无法进入扫描: {msg_scan}", "warn")
 
     def _on_multi_capture_scan(self):
         """拍摄扫描帧。"""
         preview_cam = self._pause_2d_preview()
+        active_cards = self._pause_card_preview()
         self.shell.show_loading("正在拍摄扫描帧...")
         def _work():
             return self.camera_manager.capture_all(sync=True)
         def _done(frames, error):
             self.shell.hide_loading()
             self._resume_2d_preview(preview_cam)
+            self._resume_card_preview(active_cards)
             if error:
                 self.shell.log(f"扫描拍摄失败: {error}", "error")
                 return
@@ -345,6 +439,7 @@ class BackendBridge(QObject):
                     all_ok = False
                     self.shell.log(f"添加扫描帧失败 ({cid}): {msg}", "warn")
             if all_ok:
+                self.shell.set_dirty(True)
                 self.shell.log(f"扫描帧拍摄完成: {len(frames)} 台相机", "success")
             else:
                 self.shell.log("部分扫描帧未加入工作流", "warn")
@@ -382,6 +477,7 @@ class BackendBridge(QObject):
     def _on_multi_batch_scan(self, n: int):
         """批量拼接保存：连续拍摄 n 次扫描帧并拼接保存。"""
         preview_cam = self._pause_2d_preview()
+        active_cards = self._pause_card_preview()
         self.shell.show_loading(f"批量扫描拼接 ({n} 次)...")
 
         def _work():
@@ -409,10 +505,13 @@ class BackendBridge(QObject):
         def _done(result, error):
             self.shell.hide_loading()
             self._resume_2d_preview(preview_cam)
+            self._resume_card_preview(active_cards)
             if error:
                 self.shell.log(f"批量扫描异常: {error}", "error")
                 return
             ok, msg, paths = result
+            if ok:
+                self.shell.set_dirty(True)
             self.shell.log(msg, "success" if ok else "error")
             if paths:
                 self.shell.log(f"保存路径: {paths[0]} 等", "info")
@@ -420,15 +519,271 @@ class BackendBridge(QObject):
         self._run_background(_work, _done)
 
     def _on_multi_reference_changed(self, camera_id: str):
-        """参考相机变更。"""
+        """参考相机变更。
+
+        若已标定/扫描阶段切换参考相机，历史标定/扫描数据会失效，需要重置
+        工作流并清空 UI 结果，提示用户重新拍摄。
+        """
+        ws = self.shell.workspace_multi()
+        state = self.fixed_workflow.get_state()
+        if state in (self.fixed_workflow.STATE_CALIBRATING,
+                     self.fixed_workflow.STATE_CALIBRATED,
+                     self.fixed_workflow.STATE_SCANNING):
+            self.fixed_workflow.reset()
+            ok, msg = self.fixed_workflow.start_calibration(camera_id)
+            if not ok:
+                self.shell.log(f"切换参考相机失败: {msg}", "error")
+                return
+            ws.clear_calibration_results()
+            ws.viewer().clear_all()
+            ws.set_state("connected")
+            self.shell.log(
+                f"参考相机已切换为 {camera_id}，历史标定/扫描数据已清空，"
+                "请重新拍摄标定帧", "info")
+        else:
+            self.shell.log(f"参考相机: {camera_id}", "info")
         self.calibration_engine.reference_id = camera_id
-        self.shell.workspace_multi().viewer().set_reference(camera_id)
-        self.shell.log(f"参考相机: {camera_id}", "info")
+        ws.viewer().set_reference(camera_id)
 
     def _on_multi_step_back(self, index: int):
         """步骤回退。"""
         self.shell.log(f"步骤回退到: {index}", "info")
         # TODO: 根据步骤索引重置工作流状态
+
+    def _on_card_preview_toggled(self, camera_id: str, enabled: bool):
+        """单相机卡片 2D 预览开关。多卡同时预览时自动降频以减轻 SDK 负担。"""
+        if enabled:
+            if not self.camera_manager.is_connected(camera_id):
+                self.shell.log(f"相机 {camera_id} 未连接，无法预览", "warn")
+                self._set_card_preview_checked(camera_id, False)
+                return
+            self._card_preview_active.add(camera_id)
+            # 多卡预览时自动降频：>2 卡 → 5fps，否则 10fps
+            interval = 200 if len(self._card_preview_active) > 2 else 100
+            if not self._card_preview_timer.isActive():
+                self._card_preview_timer.start(interval)
+            elif self._card_preview_timer.interval() != interval:
+                self._card_preview_timer.setInterval(interval)
+            self.shell.log(f"开始 2D 预览: {camera_id}", "info")
+        else:
+            self._card_preview_active.discard(camera_id)
+            if not self._card_preview_active:
+                self._card_preview_timer.stop()
+            else:
+                interval = 200 if len(self._card_preview_active) > 2 else 100
+                self._card_preview_timer.setInterval(interval)
+            self.shell.log(f"停止 2D 预览: {camera_id}", "info")
+
+    def _on_card_preview_tick(self):
+        """刷新所有处于 2D 预览状态的相机卡片。"""
+        ws = self.shell.workspace_multi()
+        for camera_id in list(self._card_preview_active):
+            try:
+                if not self.camera_manager.is_connected(camera_id):
+                    self._card_preview_active.discard(camera_id)
+                    self._set_card_preview_checked(camera_id, False)
+                    continue
+                frame = self.camera_manager.capture_2d_preview(camera_id)
+                if frame is not None and frame.image_np is not None:
+                    ws.camera_grid().set_frame(camera_id, frame)
+            except Exception as e:
+                logger.warning(f"2D 预览刷新异常 ({camera_id}): {e}")
+
+    def _set_card_preview_checked(self, camera_id: str, checked: bool):
+        """同步卡片上 2D 预览按钮的勾选状态。"""
+        ws = self.shell.workspace_multi()
+        card = ws.camera_grid().card(camera_id)
+        if card is not None:
+            card.set_preview_checked(checked)
+
+    def _pause_card_preview(self) -> Set[str]:
+        """暂停所有卡片 2D 预览，返回之前处于预览状态的 camera_id 集合。"""
+        active = set(self._card_preview_active)
+        if active:
+            self._card_preview_timer.stop()
+            self._card_preview_active.clear()
+            for cid in active:
+                self._set_card_preview_checked(cid, False)
+            logger.info(f"已暂停卡片 2D 预览: {active}")
+        return active
+
+    def _resume_card_preview(self, active: Set[str]):
+        """恢复之前暂停的卡片 2D 预览。"""
+        if not active:
+            return
+        for cid in active:
+            if self.camera_manager.is_connected(cid):
+                self._card_preview_active.add(cid)
+                self._set_card_preview_checked(cid, True)
+        if self._card_preview_active:
+            interval = 200 if len(self._card_preview_active) > 2 else 100
+            self._card_preview_timer.start(interval)
+            logger.info(f"已恢复卡片 2D 预览: {self._card_preview_active}")
+
+    def _on_card_capture(self, camera_id: str):
+        """单相机卡片 3D 拍摄。
+
+        注意：RVC SDK 同一相机句柄上 2D 预览与 3D 拍摄互斥，拍摄前必须
+        停止所有 2D 预览（卡片预览定时器 + 移动工作站预览定时器），拍摄
+        结束后恢复其他相机的预览。
+        """
+        if not self.camera_manager.is_connected(camera_id):
+            self.shell.log(f"拍摄失败: 相机 {camera_id} 未连接", "warn")
+            return
+
+        # 1. 停止卡片 2D 预览
+        was_card_preview_active = camera_id in self._card_preview_active
+        if was_card_preview_active:
+            self._card_preview_active.discard(camera_id)
+            self._set_card_preview_checked(camera_id, False)
+        # 即使本机未开预览，也暂停整个卡片预览定时器，防止并发 2D/3D 冲突
+        card_timer_was_running = self._card_preview_timer.isActive()
+        if card_timer_was_running:
+            self._card_preview_timer.stop()
+
+        # 2. 暂停移动工作站实时取景（若正在运行）
+        mobile_preview_cam = self._pause_2d_preview()
+
+        self.shell.show_loading(f"正在拍摄 {camera_id}...")
+
+        def _work():
+            return self.camera_manager.capture(camera_id)
+
+        def _done(frame, error):
+            self.shell.hide_loading()
+            # 恢复移动工作站预览
+            self._resume_2d_preview(mobile_preview_cam)
+            # 恢复其他相机的卡片预览
+            if self._card_preview_active and card_timer_was_running:
+                self._card_preview_timer.start(200 if len(self._card_preview_active) > 2 else 100)
+
+            if error:
+                self.shell.log(f"拍摄失败 ({camera_id}): {error}", "error")
+                return
+            if frame is None:
+                self.shell.log(f"拍摄失败 ({camera_id}): 无数据", "warn")
+                return
+            ws = self.shell.workspace_multi()
+            ok, msg = self.fixed_workflow.add_calibration_frame(frame)
+            if not ok:
+                self.shell.log(f"添加标定帧失败 ({camera_id}): {msg}", "warn")
+            ws.camera_grid().set_frame(camera_id, frame)
+            ws.camera_grid().set_frame_kind(camera_id, "标定帧")
+            # 把单相机点云刷新到 3D 查看器（叠加显示）
+            try:
+                pcd = frame.load_pointcloud_o3d()
+                if pcd is not None and len(pcd.points) > 0:
+                    pts_arr = np.asarray(pcd.points)
+                    n_total = len(pts_arr)
+                    n_invalid = int((~np.isfinite(pts_arr).all(axis=1)).sum())
+                    ws.viewer().set_pointcloud(camera_id, pcd)
+                    self.shell.log(
+                        f"点云已加载 ({camera_id}): {n_total} 点"
+                        f"{f' (含 {n_invalid} 个无效点)' if n_invalid else ''}",
+                        "info")
+                else:
+                    self.shell.log(f"点云为空 ({camera_id})", "warn")
+            except Exception as e:
+                self.shell.log(f"加载点云失败 ({camera_id}): {e}", "warn")
+            # 如果已有标定帧，允许继续检测/计算，但不自动推进状态
+            if ws.current_state() == "connected":
+                ws.set_state("captured")
+            self.shell.set_dirty(True)
+            self.shell.log(f"拍摄完成 ({camera_id})", "success")
+
+        self._run_background(_work, _done)
+
+    def _on_card_detect(self, camera_id: str):
+        """单相机卡片检测标记物。"""
+        ws = self.shell.workspace_multi()
+        card = ws.camera_grid().card(camera_id)
+        if card is None:
+            return
+        frame = card.current_frame()
+
+        # 若当前只有 2D 预览帧（无点云），先拍摄 3D 帧再检测
+        if frame is None or frame.pointmap is None:
+            self.shell.log(f"{camera_id} 无 3D 帧，先执行 3D 拍摄再检测", "info")
+            self._capture_then_detect(camera_id)
+            return
+
+        self._run_detect_on_frame(camera_id, frame)
+
+    def _capture_then_detect(self, camera_id: str):
+        """先 3D 拍摄再对单相机卡片执行检测。"""
+        if not self.camera_manager.is_connected(camera_id):
+            self.shell.log(f"检测失败: 相机 {camera_id} 未连接", "warn")
+            return
+        # 停止该卡 2D 预览
+        if camera_id in self._card_preview_active:
+            self._card_preview_active.discard(camera_id)
+            self._set_card_preview_checked(camera_id, False)
+            if not self._card_preview_active:
+                self._card_preview_timer.stop()
+
+        self.shell.show_loading(f"正在拍摄并检测 {camera_id}...")
+
+        def _work():
+            return self.camera_manager.capture(camera_id)
+
+        def _done(frame, error):
+            self.shell.hide_loading()
+            if error:
+                self.shell.log(f"拍摄失败 ({camera_id}): {error}", "error")
+                return
+            if frame is None:
+                self.shell.log(f"拍摄失败 ({camera_id}): 无数据", "warn")
+                return
+            ws = self.shell.workspace_multi()
+            ok, msg = self.fixed_workflow.add_calibration_frame(frame)
+            if not ok:
+                self.shell.log(f"添加标定帧失败 ({camera_id}): {msg}", "warn")
+            ws.camera_grid().set_frame(camera_id, frame)
+            ws.camera_grid().set_frame_kind(camera_id, "标定帧")
+            if ws.current_state() == "connected":
+                ws.set_state("captured")
+            self.shell.set_dirty(True)
+            self._run_detect_on_frame(camera_id, frame)
+
+        self._run_background(_work, _done)
+
+    def _run_detect_on_frame(self, camera_id: str, frame: FrameData):
+        """对已有 3D 帧执行标记物检测并回填 UI。"""
+        ws = self.shell.workspace_multi()
+        method = ws.current_detect_method()
+        self.marker_detector.set_marker_type(self._map_detect_method(method))
+
+        self.shell.show_loading(f"正在检测 {camera_id}...")
+
+        def _work():
+            markers = self.marker_detector.detect_3d(
+                frame.image_np,
+                pointmap=frame.pointmap,
+                rvc_image=frame.rvc_image,
+                offline_ply_path=frame.offline_pointmap_path,
+            )
+            return markers
+
+        def _done(markers, error):
+            self.shell.hide_loading()
+            if error:
+                self.shell.log(f"检测失败 ({camera_id}): {error}", "error")
+                return
+            frame.markers = markers
+            count = len(markers)
+            grid = ws.camera_grid()
+            grid.set_frame(camera_id, frame, markers)
+            grid.set_marker_count(camera_id, count)
+            grid.set_covis_status(camera_id, count > 0)
+            self.shell.log(f"检测完成 ({camera_id}): {count} 个标记", "success")
+
+        self._run_background(_work, _done)
+
+    def _map_detect_method(self, method: str) -> str:
+        """把 UI 检测方式映射到 MarkerDetector 内部类型。"""
+        if method == "calib_board":
+            return "asymmetric_grid"
+        return method or "coded_circle"
 
     # ------------------------------------------------------------------
     # 模式 B（单相机移动链式）
@@ -454,12 +809,15 @@ class BackendBridge(QObject):
         """定时抓取 2D 预览帧并更新 LiveViewPanel。"""
         if self._preview_camera_id is None:
             return
-        frame = self.camera_manager.capture_2d_preview(self._preview_camera_id)
-        if frame is None or frame.image_np is None:
-            return
-        pixmap = numpy_to_qpixmap(frame.image_np)
-        if pixmap is not None:
-            self.shell.workspace_mobile().live_view().set_frame(pixmap)
+        try:
+            frame = self.camera_manager.capture_2d_preview(self._preview_camera_id)
+            if frame is None or frame.image_np is None:
+                return
+            pixmap = numpy_to_qpixmap(frame.image_np)
+            if pixmap is not None:
+                self.shell.workspace_mobile().live_view().set_frame(pixmap)
+        except Exception as e:
+            logger.warning(f"实时取景异常 ({self._preview_camera_id}): {e}")
 
     def _pause_2d_preview(self) -> Optional[str]:
         """暂停持续 2D 预览，返回之前正在预览的 camera_id（如无则 None）。
@@ -518,6 +876,42 @@ class BackendBridge(QObject):
             ]
             ws.live_view().set_detection_overlay(markers)
 
+    def _refresh_mobile_frame_to_ui(self, frame: FrameData):
+        """把任意 FrameData 的 2D 图像与 3D 点云刷新到模式 B UI。
+
+        用于配准失败帧：该帧已从 station_manager 删除，但 evaluation 中仍附带，
+        需要直接由 frame 刷新，而不是通过 station_id 查询。
+        """
+        if frame is None or frame.image_np is None:
+            return
+        ws = self.shell.workspace_mobile()
+
+        # 2D 画面
+        pixmap = numpy_to_qpixmap(frame.image_np)
+        if pixmap is not None:
+            ws.live_view().set_frame(pixmap)
+        # 标记叠加（归一化坐标）
+        h, w = frame.image_np.shape[:2]
+        if h > 0 and w > 0:
+            markers = [
+                (m.get('x_2d', m.get('x', 0)) / w,
+                 m.get('y_2d', m.get('y', 0)) / h,
+                 int(m.get('code', 0)),
+                 False)
+                for m in frame.markers
+            ]
+            ws.live_view().set_detection_overlay(markers)
+
+        # 3D 点云（单帧预览）
+        try:
+            pcd = frame.load_pointcloud_o3d()
+            if pcd is not None and len(pcd.points) > 0:
+                ws.viewer().set_pointcloud_merged(pcd)
+                self.shell.log(
+                    f"单帧点云已加载: {len(pcd.points)} 点", "info")
+        except Exception as e:
+            self.shell.log(f"加载单帧点云失败: {e}", "warn")
+
     def _refresh_mobile_live_view_to_latest(self):
         """刷新 LiveViewPanel 为最新机位（撤销/删除后调用）。"""
         sm = self.mobile_workflow.station_manager
@@ -537,6 +931,7 @@ class BackendBridge(QObject):
         index 为 1-based 时间线索引；-1 表示当前/最新机位。
         返回 (station_id, timeline_index)。station_id 为 None 表示不存在。
         """
+        ws = self.shell.workspace_mobile()
         stations = self.mobile_workflow.get_station_list()
         n = len(stations)
         if n == 0:
@@ -547,7 +942,11 @@ class BackendBridge(QObject):
             timeline_index = index
         else:
             return None, index
-        return stations[timeline_index - 1]['station_id'], timeline_index
+        # 优先用时间线节点上保存的 backend_ref，失败再按列表顺序回退
+        station_id = ws.get_station_id(timeline_index)
+        if station_id is None and stations:
+            station_id = stations[timeline_index - 1].get('station_id')
+        return station_id, timeline_index
 
     def _on_mobile_capture_station(self):
         """拍摄机位（自动配准）。"""
@@ -556,7 +955,13 @@ class BackendBridge(QObject):
         ws.set_state("capturing")
         self.shell.show_loading("正在拍摄机位...")
         def _work():
-            return self.mobile_workflow.capture_station()
+            ok, msg, evaluation = self.mobile_workflow.capture_station()
+            # 拼接合并是耗时操作，放到后台线程执行
+            merged = None
+            if ok:
+                merged = self.mobile_workflow.get_merged_pointcloud()
+            return ok, msg, evaluation, merged
+
         def _done(result, error):
             self.shell.hide_loading()
             self._resume_2d_preview(preview_cam)
@@ -564,7 +969,7 @@ class BackendBridge(QObject):
                 ws.set_state("chaining")
                 self.shell.log(f"拍摄异常: {error}", "error")
                 return
-            ok, msg, evaluation = result
+            ok, msg, evaluation, merged = result
             if evaluation:
                 ws.on_evaluation_done(
                     evaluation.get('common_markers', 0),
@@ -572,17 +977,22 @@ class BackendBridge(QObject):
                     evaluation.get('rms_mm'),
                     'ok' if evaluation.get('success') else 'fail',
                     evaluation.get('suggestion', ''),
+                    backend_ref=evaluation.get('station_id'),
                 )
-                # 拍摄成功后把当前帧显示到 2D 实时取景区
+                # 无论配准成败，都先把当前帧的 2D/3D 数据显示出来
+                # （失败帧已从 station_manager 删除， evaluation 中附带 frame）
+                frame = evaluation.get('frame')
                 station_id = evaluation.get('station_id')
-                if station_id:
+                if frame is not None:
+                    self._refresh_mobile_frame_to_ui(frame)
+                elif station_id:
                     self._update_mobile_live_view(station_id)
             else:
                 ws.set_state("chaining")
             if ok:
                 self.shell.log(f"机位配准成功: {msg}", "success")
-                # 刷新 3D 拼接
-                merged = self.mobile_workflow.get_merged_pointcloud()
+                self.shell.set_dirty(True)
+                # 刷新 3D 拼接（已在后台计算好）
                 if merged is not None:
                     ws.viewer().set_pointcloud_merged(merged)
             else:
@@ -590,12 +1000,32 @@ class BackendBridge(QObject):
         self._run_background(_work, _done)
 
     def _on_mobile_undo(self):
-        """撤销上一机位。"""
-        ok, msg = self.mobile_workflow.undo_last_station()
-        self.shell.log(msg, "info" if ok else "warn")
-        if ok:
-            self.shell.workspace_mobile().on_undo_done()
-            self._refresh_mobile_live_view_to_latest()
+        """撤销上一机位（合并点云在后台计算）。"""
+        ws = self.shell.workspace_mobile()
+        self.shell.show_loading("正在撤销...")
+
+        def _work():
+            ok, msg = self.mobile_workflow.undo_last_station()
+            merged = None
+            if ok:
+                merged = self.mobile_workflow.get_merged_pointcloud()
+            return ok, msg, merged
+
+        def _done(result, error):
+            self.shell.hide_loading()
+            if error:
+                self.shell.log(f"撤销异常: {error}", "error")
+                return
+            ok, msg, merged = result
+            self.shell.log(msg, "info" if ok else "warn")
+            if ok:
+                self.shell.set_dirty(True)
+                ws.on_undo_done()
+                self._refresh_mobile_live_view_to_latest()
+                if merged is not None:
+                    ws.viewer().set_pointcloud_merged(merged)
+
+        self._run_background(_work, _done)
 
     def _on_mobile_recapture(self, index: int):
         """重拍指定机位（index 为时间线索引，-1 表示当前/最新机位）。"""
@@ -609,11 +1039,42 @@ class BackendBridge(QObject):
             self.shell.log("重拍失败: 指定机位不存在", "warn")
             return
 
+        # 若目标为已固定的参考机位，先询问是否重置整条链并重新拍摄
+        reset_for_reference = False
+        if (self.mobile_workflow._chain_stitcher is not None and
+                station_id == self.mobile_workflow._chain_stitcher._reference_id and
+                len(self.mobile_workflow._chain_stitcher.nodes) > 1):
+            reply = QMessageBox.question(
+                self.shell, "重拍参考机位",
+                "参考机位已固定，重拍将清空整条链并回到初始状态。\n是否继续？",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No)
+            if reply != QMessageBox.Yes:
+                self._resume_2d_preview(preview_cam)
+                self.shell.log("已取消重拍参考机位", "info")
+                return
+            ok, msg = self.mobile_workflow.reset_chain()
+            if not ok:
+                self._resume_2d_preview(preview_cam)
+                self.shell.log(f"重拍失败: {msg}", "warn")
+                return
+            ws.reset_session()
+            reset_for_reference = True
+            timeline_index = 1  # 重置后拍摄的是新的 #1
+
         ws.set_state("capturing")
         self.shell.show_loading(f"正在重拍 #{timeline_index}...")
 
         def _work():
-            return self.mobile_workflow.recapture_station(station_id)
+            if reset_for_reference:
+                ok, msg, evaluation = self.mobile_workflow.capture_station()
+            else:
+                ok, msg, evaluation = self.mobile_workflow.recapture_station(station_id)
+            # 拼接合并是耗时操作，放到后台线程执行
+            merged = None
+            if ok:
+                merged = self.mobile_workflow.get_merged_pointcloud()
+            return ok, msg, evaluation, merged
 
         def _done(result, error):
             self.shell.hide_loading()
@@ -622,24 +1083,43 @@ class BackendBridge(QObject):
                 ws.set_state("chaining")
                 self.shell.log(f"重拍异常: {error}", "error")
                 return
-            ok, msg, evaluation = result
+            ok, msg, evaluation, merged = result
             if evaluation:
-                ws.on_recapture_done(
-                    timeline_index,
-                    evaluation.get('common_markers', 0),
-                    evaluation.get('inlier_ratio', 0.0),
-                    evaluation.get('rms_mm'),
-                    'ok' if evaluation.get('success') else 'fail',
-                    evaluation.get('suggestion', ''),
-                )
+                level = 'ok' if evaluation.get('success') else 'fail'
+                if reset_for_reference:
+                    # 重置后按新机位入链
+                    ws.on_evaluation_done(
+                        evaluation.get('common_markers', 0),
+                        evaluation.get('inlier_ratio', 0.0),
+                        evaluation.get('rms_mm'),
+                        level,
+                        evaluation.get('suggestion', ''),
+                        backend_ref=evaluation.get('station_id'),
+                    )
+                else:
+                    # 非参考机位重拍会删除旧机位并在链尾插入新机位，
+                    # 直接用后端机位列表重建时间线，避免索引错位
+                    ws.set_stations(self.mobile_workflow.get_station_evaluations())
+                    ws.set_evaluation(
+                        evaluation.get('common_markers', 0),
+                        evaluation.get('inlier_ratio', 0.0),
+                        evaluation.get('rms_mm'),
+                        level,
+                        evaluation.get('suggestion', ''),
+                    )
+                # 无论重拍成败，都先刷新当前帧 2D/3D
+                frame = evaluation.get('frame')
                 new_station_id = evaluation.get('station_id')
-                if new_station_id:
+                if frame is not None:
+                    self._refresh_mobile_frame_to_ui(frame)
+                elif new_station_id:
                     self._update_mobile_live_view(new_station_id)
             else:
                 ws.set_state("chaining")
             if ok:
                 self.shell.log(f"重拍成功: {msg}", "success")
-                merged = self.mobile_workflow.get_merged_pointcloud()
+                self.shell.set_dirty(True)
+                # 刷新 3D 拼接（已在后台计算好）
                 if merged is not None:
                     ws.viewer().set_pointcloud_merged(merged)
             else:
@@ -653,15 +1133,45 @@ class BackendBridge(QObject):
         if station_id is None:
             self.shell.log("删除失败: 指定机位不存在", "warn")
             return
+
         ok, msg = self.mobile_workflow.delete_station(station_id)
+        # 参考机位已固定：需要二次确认是否重置整条链
+        if not ok and "参考机位已固定" in msg:
+            reply = QMessageBox.question(
+                self.shell, "删除参考机位",
+                "参考机位已固定，删除将清空整条链并回到初始状态。\n是否继续？",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No)
+            if reply != QMessageBox.Yes:
+                self.shell.log("已取消删除参考机位", "info")
+                return
+            ok, msg = self.mobile_workflow.reset_chain()
+
         self.shell.log(msg, "success" if ok else "warn")
-        if ok:
-            ws = self.shell.workspace_mobile()
-            ws.on_undo_done()
-            self._refresh_mobile_live_view_to_latest()
-            merged = self.mobile_workflow.get_merged_pointcloud()
+        if not ok:
+            return
+        self.shell.set_dirty(True)
+        ws = self.shell.workspace_mobile()
+        # 按后端当前机位列表重建时间线，避免误清整条链
+        evaluations = self.mobile_workflow.get_station_evaluations()
+        ws.set_stations(evaluations)
+        self._refresh_mobile_live_view_to_latest()
+
+        # 拼接合并是耗时操作，放到后台线程执行
+        self.shell.show_loading("正在刷新拼接点云...")
+
+        def _work():
+            return self.mobile_workflow.get_merged_pointcloud()
+
+        def _done(merged, error):
+            self.shell.hide_loading()
+            if error:
+                self.shell.log(f"刷新点云失败: {error}", "error")
+                return
             if merged is not None:
                 ws.viewer().set_pointcloud_merged(merged)
+
+        self._run_background(_work, _done)
 
     def _on_mobile_station_selected(self, index: int):
         """时间线选中机位：在 2D 实时取景区显示该机位图像。"""
@@ -671,22 +1181,28 @@ class BackendBridge(QObject):
         self._update_mobile_live_view(station_id)
 
     def _on_mobile_optimize(self):
-        """全局优化。"""
+        """全局优化（拼接合并点云在后台计算）。"""
         self.shell.show_loading("正在全局优化...")
         def _work():
-            return self.mobile_workflow.optimize_global()
+            ok, msg, before_mm, after_mm = self.mobile_workflow.optimize_global()
+            # 拼接合并是耗时操作，放到后台线程执行
+            merged = None
+            if ok:
+                merged = self.mobile_workflow.get_merged_pointcloud()
+            return ok, msg, before_mm, after_mm, merged
+
         def _done(result, error):
             self.shell.hide_loading()
             if error:
                 self.shell.log(f"优化异常: {error}", "error")
                 return
-            ok, msg, before_mm, after_mm = result
+            ok, msg, before_mm, after_mm, merged = result
             self.shell.log(msg, "success" if ok else "warn")
             if ok:
+                self.shell.set_dirty(True)
                 ws = self.shell.workspace_mobile()
                 ws.on_optimize_done(before_mm, after_mm)
-                # 刷新 3D 拼接
-                merged = self.mobile_workflow.get_merged_pointcloud()
+                # 刷新 3D 拼接（已在后台计算好）
                 if merged is not None:
                     ws.viewer().set_pointcloud_merged(merged)
         self._run_background(_work, _done)
@@ -826,7 +1342,7 @@ class BackendBridge(QObject):
             for cid, frame in latest.items():
                 self.fixed_workflow.add_calibration_frame(frame)
             ws = self.shell.workspace_multi()
-            ws.camera_grid().set_cameras(list(latest.keys()))
+            ws.reset_camera_grid(list(latest.keys()), enable_controls=False)
             for cid, frame in latest.items():
                 ws.camera_grid().set_frame(cid, frame, frame.markers)
             ws.set_state("captured")
@@ -872,6 +1388,8 @@ class BackendBridge(QObject):
         """清理资源（关闭窗口时调用）。"""
         # 停止实时取景
         self._preview_timer.stop()
+        self._card_preview_timer.stop()
+        self._card_preview_active.clear()
         # 等待所有后台任务结束，避免 QThread 运行期间被销毁
         for worker in list(self._workers):
             if worker.isRunning():

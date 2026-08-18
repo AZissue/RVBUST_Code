@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RVC 拼接工作站 · Web UI</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['"Fira Sans"', 'system-ui', 'sans-serif'],
+            mono: ['"Fira Code"', 'monospace'],
+          },
+          colors: {
+            bg: '#0F172A',
+            panel: '#1B2336',
+            card: 'rgba(27, 35, 54, 0.72)',
+            border: 'rgba(71, 85, 105, 0.55)',
+            accent: '#22C55E',
+            muted: '#94A3B8',
+          }
+        }
+      }
+    }
+  </script>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="bg-bg text-slate-100 font-sans antialiased selection:bg-accent/30 selection:text-white">
+
+  <!-- 顶部导航 -->
+  <nav class="fixed top-0 left-0 right-0 z-50 nav-glass border-b border-border">
+    <div class="max-w-[1600px] mx-auto px-6 h-16 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-lg bg-accent/10 border border-accent/30 flex items-center justify-center">
+          <i data-lucide="box" class="w-5 h-5 text-accent"></i>
+        </div>
+        <div>
+          <h1 class="font-bold text-lg tracking-tight">RVC 拼接工作站</h1>
+          <p class="text-[11px] text-muted font-mono uppercase tracking-wider">Multi-Camera Calibration</p>
+        </div>
+      </div>
+
+      <div class="hidden md:flex items-center gap-1 bg-black/20 rounded-lg p-1 border border-border">
+        <a href="#dashboard" class="nav-link active px-4 py-1.5 rounded-md text-sm font-medium transition-all">控制台</a>
+        <a href="#devices" class="nav-link px-4 py-1.5 rounded-md text-sm font-medium text-muted hover:text-white transition-all">设备</a>
+        <a href="#calibration" class="nav-link px-4 py-1.5 rounded-md text-sm font-medium text-muted hover:text-white transition-all">标定</a>
+        <a href="#logs" class="nav-link px-4 py-1.5 rounded-md text-sm font-medium text-muted hover:text-white transition-all">日志</a>
+      </div>
+
+      <div class="flex items-center gap-3">
+        <span class="hidden sm:flex items-center gap-2 text-xs text-muted bg-black/20 px-3 py-1.5 rounded-full border border-border">
+          <span class="w-1.5 h-1.5 rounded-full bg-accent animate-pulse"></span>
+          系统在线
+        </span>
+        <button class="btn-primary text-sm px-4 py-2 rounded-lg font-semibold flex items-center gap-2">
+          <i data-lucide="play" class="w-4 h-4"></i>
+          开始标定
+        </button>
+      </div>
+    </div>
+  </nav>
+
+  <!-- 主内容 -->
+  <main class="pt-24 pb-16 px-4 sm:px-6 max-w-[1600px] mx-auto space-y-6">
+
+    <!-- Hero + 状态 -->
+    <section id="dashboard" class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div class="lg:col-span-2 glass-card rounded-2xl p-8 relative overflow-hidden">
+        <div class="absolute top-0 right-0 w-96 h-96 bg-accent/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/3"></div>
+        <div class="relative z-10">
+          <div class="flex items-center gap-3 mb-4">
+            <span class="px-3 py-1 rounded-full text-xs font-semibold bg-accent/10 text-accent border border-accent/20">v2.0 Web Console</span>
+            <span class="px-3 py-1 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">Beta</span>
+          </div>
+          <h2 class="text-4xl sm:text-5xl font-bold mb-4 tracking-tight">
+            多相机外参标定<br>
+            <span class="text-transparent bg-clip-text bg-gradient-to-r from-accent to-emerald-300">实时点云融合</span>
+          </h2>
+          <p class="text-muted text-lg max-w-2xl mb-8 leading-relaxed">
+            统一管理任意数量 RVC 相机，自动检测编码圆标记物，星型/链式拓扑标定，
+            实时拼接预览与质量门禁。
+          </p>
+          <div class="flex flex-wrap gap-3">
+            <button class="btn-primary px-6 py-3 rounded-xl font-semibold flex items-center gap-2" onclick="simulateCapture()">
+              <i data-lucide="camera" class="w-5 h-5"></i>
+              拍摄标定帧
+            </button>
+            <button class="btn-secondary px-6 py-3 rounded-xl font-semibold flex items-center gap-2">
+              <i data-lucide="folder-open" class="w-5 h-5"></i>
+              加载会话
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="glass-card rounded-2xl p-6 flex flex-col justify-between">
+        <div>
+          <h3 class="text-sm font-semibold text-muted uppercase tracking-wider mb-4">实时状态</h3>
+          <div class="space-y-4">
+            <div class="flex items-center justify-between p-3 rounded-xl bg-black/20 border border-border">
+              <span class="text-sm text-muted">在线相机</span>
+              <span class="text-2xl font-bold font-mono text-accent" id="online-cams">3/4</span>
+            </div>
+            <div class="flex items-center justify-between p-3 rounded-xl bg-black/20 border border-border">
+              <span class="text-sm text-muted">标定进度</span>
+              <span class="text-2xl font-bold font-mono" id="calib-progress">75%</span>
+            </div>
+            <div class="flex items-center justify-between p-3 rounded-xl bg-black/20 border border-border">
+              <span class="text-sm text-muted">系统负载</span>
+              <span class="text-2xl font-bold font-mono">12%</span>
+            </div>
+          </div>
+        </div>
+        <div class="mt-6 pt-6 border-t border-border">
+          <div class="flex items-center gap-2 text-xs text-muted">
+            <i data-lucide="clock" class="w-3.5 h-3.5"></i>
+            最后更新: <span id="last-update" class="font-mono">--:--:--</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- KPI 指标 -->
+    <section class="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div class="metric-card p-5 rounded-xl">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-xs text-muted uppercase tracking-wider">已连接相机</span>
+          <i data-lucide="video" class="w-4 h-4 text-accent"></i>
+        </div>
+        <div class="text-3xl font-bold font-mono">3</div>
+        <div class="text-xs text-accent mt-1">+1 台离线</div>
+      </div>
+      <div class="metric-card p-5 rounded-xl">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-xs text-muted uppercase tracking-wider">标定 Pair</span>
+          <i data-lucide="git-compare" class="w-4 h-4 text-blue-400"></i>
+        </div>
+        <div class="text-3xl font-bold font-mono">6</div>
+        <div class="text-xs text-muted mt-1">星型拓扑</div>
+      </div>
+      <div class="metric-card p-5 rounded-xl">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-xs text-muted uppercase tracking-wider">平均 RMS</span>
+          <i data-lucide="target" class="w-4 h-4 text-amber-400"></i>
+        </div>
+        <div class="text-3xl font-bold font-mono">0.32<span class="text-base text-muted">mm</span></div>
+        <div class="text-xs text-amber-400 mt-1">良</div>
+      </div>
+      <div class="metric-card p-5 rounded-xl">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-xs text-muted uppercase tracking-wider">合并点数</span>
+          <i data-lucide="layers" class="w-4 h-4 text-purple-400"></i>
+        </div>
+        <div class="text-3xl font-bold font-mono">128.5<span class="text-base text-muted">k</span></div>
+        <div class="text-xs text-muted mt-1">最后一次拼接</div>
+      </div>
+    </section>
+
+    <!-- 主工作区 -->
+    <section id="devices" class="grid grid-cols-1 xl:grid-cols-3 gap-6">
+      <!-- 相机网格 -->
+      <div class="xl:col-span-2 glass-card rounded-2xl p-6">
+        <div class="flex items-center justify-between mb-6">
+          <div>
+            <h3 class="text-lg font-bold">相机取景网格</h3>
+            <p class="text-sm text-muted">点击卡片查看详情或执行单相机操作</p>
+          </div>
+          <div class="flex gap-2">
+            <button class="btn-icon" title="同步拍摄" onclick="simulateCapture()">
+              <i data-lucide="aperture" class="w-4 h-4"></i>
+            </button>
+            <button class="btn-icon" title="2D 预览">
+              <i data-lucide="eye" class="w-4 h-4"></i>
+            </button>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4" id="camera-grid">
+          <!-- 相机卡片由 JS 生成 -->
+        </div>
+      </div>
+
+      <!-- 右侧控制面板 -->
+      <div id="calibration" class="space-y-6">
+        <!-- 标定结果 -->
+        <div class="glass-card rounded-2xl p-6">
+          <h3 class="text-lg font-bold mb-4">标定结果</h3>
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="text-left text-muted border-b border-border">
+                  <th class="pb-3 font-medium">Pair</th>
+                  <th class="pb-3 font-medium text-right">RMS</th>
+                  <th class="pb-3 font-medium text-right">状态</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-border" id="calib-table">
+                <tr>
+                  <td class="py-3 font-mono text-xs">cam1→cam0</td>
+                  <td class="py-3 text-right font-mono">0.25mm</td>
+                  <td class="py-3 text-right"><span class="status-badge ok">优</span></td>
+                </tr>
+                <tr>
+                  <td class="py-3 font-mono text-xs">cam2→cam0</td>
+                  <td class="py-3 text-right font-mono">0.38mm</td>
+                  <td class="py-3 text-right"><span class="status-badge warn">良</span></td>
+                </tr>
+                <tr>
+                  <td class="py-3 font-mono text-xs">cam3→cam0</td>
+                  <td class="py-3 text-right font-mono">0.52mm</td>
+                  <td class="py-3 text-right"><span class="status-badge warn">良</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="mt-4 pt-4 border-t border-border">
+            <div class="flex items-center justify-between text-sm mb-2">
+              <span class="text-muted">质量评分</span>
+              <span class="font-bold text-accent">85%</span>
+            </div>
+            <div class="h-2 rounded-full bg-black/30 overflow-hidden">
+              <div class="h-full w-[85%] bg-gradient-to-r from-accent to-emerald-300 rounded-full"></div>
+            </div>
+            <p class="text-xs text-accent mt-2">✓ 质量门禁通过，可进入扫描阶段</p>
+          </div>
+        </div>
+
+        <!-- 3D 预览占位 -->
+        <div class="glass-card rounded-2xl p-6">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="text-lg font-bold">3D 拼接预览</h3>
+            <span class="text-xs text-muted bg-black/20 px-2 py-1 rounded border border-border">WebGL</span>
+          </div>
+          <div class="aspect-video rounded-xl bg-black/30 border border-border flex flex-col items-center justify-center relative overflow-hidden">
+            <div class="absolute inset-0 grid grid-cols-[repeat(20,minmax(0,1fr))] grid-rows-[repeat(12,minmax(0,1fr))] opacity-10">
+              <div class="col-span-full row-span-full" style="background-image: linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px); background-size: 40px 40px;"></div>
+            </div>
+            <div class="relative z-10 text-center">
+              <div class="w-16 h-16 mx-auto mb-4 rounded-2xl bg-accent/10 border border-accent/30 flex items-center justify-center">
+                <i data-lucide="box" class="w-8 h-8 text-accent"></i>
+              </div>
+              <p class="text-muted text-sm">点云渲染区域</p>
+              <p class="text-xs text-muted mt-1">实际接入时加载 Open3D / Three.js</p>
+            </div>
+          </div>
+          <div class="flex gap-2 mt-4">
+            <button class="btn-icon flex-1 justify-center" title="重置视角">
+              <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+            </button>
+            <button class="btn-icon flex-1 justify-center" title="切换着色">
+              <i data-lucide="palette" class="w-4 h-4"></i>
+            </button>
+            <button class="btn-icon flex-1 justify-center" title="最大化">
+              <i data-lucide="maximize" class="w-4 h-4"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 底部日志 -->
+    <section id="logs" class="glass-card rounded-2xl p-6">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-lg font-bold">系统日志</h3>
+        <div class="flex gap-2">
+          <button class="btn-icon" onclick="clearLogs()">
+            <i data-lucide="trash-2" class="w-4 h-4"></i>
+          </button>
+          <button class="btn-icon">
+            <i data-lucide="download" class="w-4 h-4"></i>
+          </button>
+        </div>
+      </div>
+      <div class="font-mono text-xs rounded-xl bg-black/40 border border-border p-4 h-48 overflow-y-auto space-y-2" id="log-panel">
+        <div class="text-muted">[10:32:15] 系统初始化完成，等待设备连接...</div>
+        <div class="text-accent">[10:32:18] 3 台相机已连接</div>
+        <div class="text-blue-400">[10:32:20] 参考相机设置为 cam0</div>
+        <div class="text-amber-400">[10:32:25] 标定进度 75%，建议补拍 cam3</div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Toast 通知 -->
+  <div id="toast-container" class="fixed bottom-6 right-6 z-50 flex flex-col gap-3 pointer-events-none"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

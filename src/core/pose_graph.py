@@ -231,14 +231,15 @@ class PoseGraph:
         T = np.asarray(T, dtype=np.float64)
         if T.shape != (4, 4):
             raise ValueError(f"边变换矩阵必须是 4x4，实际 {T.shape}")
-        edge = PoseEdge(from_id, to_id, T, rms_mm, inlier_ratio, common_markers)
-        self.edges.append(edge)
-        # 更新邻接表（无向）
+        # 先求逆，避免不可逆时留下幽灵边
         try:
             T_inv = np.linalg.inv(T)
         except np.linalg.LinAlgError:
             logger.warning(f"边 ({from_id}, {to_id}) 变换矩阵不可逆，已跳过")
             return
+        edge = PoseEdge(from_id, to_id, T, rms_mm, inlier_ratio, common_markers)
+        self.edges.append(edge)
+        # 更新邻接表（无向）
         # 邻接表语义：从当前节点出发走到邻居节点所需的单步变换。
         # add_edge(from, to, T) 表示 p_to = T @ p_from，因此：
         #   - 从 from 走到 to 取 T
@@ -294,6 +295,41 @@ class PoseGraph:
                (edge.from_id == to_id and edge.to_id == from_id):
                 return edge
         return None
+
+    def remove_edge(self, from_id: str, to_id: str):
+        """移除指定两个节点之间的边（含两个方向）并更新邻接表。"""
+        self.edges = [
+            e for e in self.edges
+            if not ((e.from_id == from_id and e.to_id == to_id) or
+                    (e.from_id == to_id and e.to_id == from_id))
+        ]
+        # 重建这两个节点在邻接表中的条目
+        for node_id in (from_id, to_id):
+            if node_id not in self._adjacency:
+                continue
+            self._adjacency[node_id] = [
+                (n, t) for n, t in self._adjacency[node_id]
+                if n != (to_id if node_id == from_id else from_id)
+            ]
+            if not self._adjacency[node_id]:
+                del self._adjacency[node_id]
+
+    def remove_node(self, node_id: str):
+        """移除节点及其所有关联边。"""
+        self.nodes.pop(node_id, None)
+        # 移除所有与该节点相关的边
+        self.edges = [e for e in self.edges
+                      if e.from_id != node_id and e.to_id != node_id]
+        if node_id in self._adjacency:
+            neighbors = [n for n, _ in self._adjacency[node_id]]
+            del self._adjacency[node_id]
+            for n in neighbors:
+                if n in self._adjacency:
+                    self._adjacency[n] = [
+                        (x, t) for x, t in self._adjacency[n] if x != node_id
+                    ]
+                    if not self._adjacency[n]:
+                        del self._adjacency[n]
 
     # ------------------------------------------------------------------
     # 全局优化（BA）

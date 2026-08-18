@@ -32,7 +32,7 @@ class FloatingContainer(QFrame):
         self.setWindowFlags(Qt.FramelessWindowHint)
         self.setStyleSheet(
             f"FloatingContainer {{ background-color: {BG_PANEL}; "
-            f"border: 1px solid {BORDER}; border-radius: 6px; }}"
+            f"border: none; border-radius: 6px; }}"
         )
 
         root = QVBoxLayout(self)

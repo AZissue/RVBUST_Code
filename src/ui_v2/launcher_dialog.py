@@ -24,12 +24,12 @@ from typing import List, Optional
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QApplication, QDialog, QHBoxLayout, QLabel, QLineEdit,
+    QApplication, QDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QVBoxLayout,
 )
 
 from .theme import (
-    ACCENT, STATUS_OK, TEXT_MUTED, TEXT_SECONDARY,
+    ACCENT, BG_CARD, BORDER, STATUS_OK, TEXT_MUTED, TEXT_SECONDARY,
 )
 from . import icons as ui_icons
 from .widgets import DeviceInfo, DeviceTable, ModeCard
@@ -68,6 +68,22 @@ class LauncherDialog(QDialog):
         self._center_on_screen()
 
     # ------------------------------------------------------------ UI 搭建
+    def _panel_card(self, title: str) -> tuple[QFrame, QVBoxLayout]:
+        """启动小窗用的圆角卡片容器。"""
+        card = QFrame()
+        card.setStyleSheet(
+            f"QFrame {{ background-color: {BG_CARD}; border: 1px solid {BORDER};"
+            f" border-radius: 8px; }}"
+        )
+        lo = QVBoxLayout(card)
+        lo.setContentsMargins(14, 12, 14, 12)
+        lo.setSpacing(10)
+        if title:
+            lbl = QLabel(title)
+            lbl.setObjectName("sectionTitle")
+            lo.addWidget(lbl)
+        return card, lo
+
     def _setup_ui(self):
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 14, 16, 14)
@@ -77,26 +93,21 @@ class LauncherDialog(QDialog):
         head = QHBoxLayout()
         title = QLabel("RVC 拼接工作站")
         title.setObjectName("sectionTitle")
-        title.setStyleSheet("font-size: 17px; font-weight: 700;")
+        title.setStyleSheet("font-size: 18px; font-weight: 700;")
         head.addWidget(title)
         head.addStretch(1)
         logo = QLabel("RVC")
         logo.setStyleSheet(
-            f"color: {ACCENT}; font-size: 17px; font-weight: 800;")
+            f"color: {ACCENT}; font-size: 18px; font-weight: 800;")
         head.addWidget(logo)
         root.addLayout(head)
 
-        # ===== 主区域（左右分栏） =====
+        # ===== 主区域（左右卡片） =====
         main = QHBoxLayout()
         main.setSpacing(14)
 
         # ---- 左侧：工作模式 ----
-        left = QVBoxLayout()
-        left.setSpacing(10)
-        mode_label = QLabel("① 工作模式")
-        mode_label.setObjectName("sectionTitle")
-        left.addWidget(mode_label)
-
+        left_card, left = self._panel_card("工作模式")
         self.card_multi = ModeCard(
             "camera_multi", "多相机外参标定",
             "多台相机固定安装，先标定外参，后撤板扫描拼接")
@@ -114,20 +125,17 @@ class LauncherDialog(QDialog):
         self._mode_desc = QLabel()
         self._mode_desc.setWordWrap(True)
         self._mode_desc.setStyleSheet(
-            f"color: {TEXT_SECONDARY}; font-size: 11px; padding: 4px 2px;")
+            f"color: {TEXT_SECONDARY}; font-size: 12px; padding: 4px 2px;")
         left.addWidget(self._mode_desc)
         left.addStretch(1)
-        main.addLayout(left, 2)
+        main.addWidget(left_card, 2)
 
         # ---- 右侧：设备管理 ----
-        right = QVBoxLayout()
-        right.setSpacing(8)
-        dev_label = QLabel("② 设备管理")
-        dev_label.setObjectName("sectionTitle")
-        right.addWidget(dev_label)
+        right_card, right = self._panel_card("设备管理")
 
         # 搜索行
         search_row = QHBoxLayout()
+        search_row.setSpacing(8)
         self._search_edit = QLineEdit()
         self._search_edit.setPlaceholderText("搜索 型号 / IP / 序列号")
         self._search_edit.setClearButtonEnabled(True)
@@ -136,24 +144,27 @@ class LauncherDialog(QDialog):
             QLineEdit.LeadingPosition)
         self._search_edit.textChanged.connect(self._on_filter)
         search_row.addWidget(self._search_edit, 1)
+
         self._btn_refresh = QPushButton("刷新")
+        self._btn_refresh.setObjectName("secondary")
         self._btn_refresh.setToolTip("重新枚举设备")
         ui_icons.apply(self._btn_refresh, "refresh", TEXT_SECONDARY, 15)
         self._btn_refresh.clicked.connect(self.refresh_requested)
         search_row.addWidget(self._btn_refresh)
 
-        # TODO(TEMP): 临时添加两台测试设备，便于无真实多机环境时进入主界面排查问题
-        self._btn_add_test = QPushButton("+ 测试设备")
-        self._btn_add_test.setToolTip("临时添加 4 台测试相机（TEST-A ~ TEST-D），方便查看多机布局")
+        # TODO(TEMP): 临时添加测试设备，便于无真实多机环境时进入主界面排查问题
+        self._btn_add_test = QPushButton("+ 测试")
+        self._btn_add_test.setObjectName("secondary")
+        self._btn_add_test.setToolTip("临时添加 4 台测试相机（TEST-A ~ TEST-D）")
         self._btn_add_test.clicked.connect(self._on_add_test_devices)
         search_row.addWidget(self._btn_add_test)
-
         right.addLayout(search_row)
 
         # 网络操作行
         net_row = QHBoxLayout()
-        self._btn_auto_ip = QPushButton("自动设置IP")
-        self._btn_auto_ip.setToolTip("为勾选设备自动配置网络（参考 AutoConfigureNetwork）")
+        self._btn_auto_ip = QPushButton("自动设置 IP")
+        self._btn_auto_ip.setObjectName("secondary")
+        self._btn_auto_ip.setToolTip("为勾选设备自动配置网络")
         ui_icons.apply(self._btn_auto_ip, "bolt", TEXT_SECONDARY, 15)
         self._btn_auto_ip.clicked.connect(self._on_auto_ip)
         net_row.addWidget(self._btn_auto_ip)
@@ -164,31 +175,45 @@ class LauncherDialog(QDialog):
         self._table = DeviceTable()
         self._table.checked_changed.connect(self._on_checked_changed)
         right.addWidget(self._table, 1)
-
-        # 底部模式-数量提示
-        self._rule_hint = QLabel()
-        self._rule_hint.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 11px;")
-        right.addWidget(self._rule_hint)
-        main.addLayout(right, 3)
+        main.addWidget(right_card, 3)
 
         root.addLayout(main, 1)
 
-        # ===== 底部按钮行 =====
+        # ===== 底部状态栏 + 按钮行 =====
+        status_card = QFrame()
+        status_card.setStyleSheet(
+            f"QFrame {{ background-color: {BG_CARD}; border: 1px solid {BORDER};"
+            f" border-radius: 6px; }}"
+        )
+        status_lo = QHBoxLayout(status_card)
+        status_lo.setContentsMargins(10, 6, 10, 6)
+        status_lo.setSpacing(10)
+
+        self._selection_label = QLabel("未选择设备")
+        self._selection_label.setStyleSheet(
+            f"color: {TEXT_MUTED}; font-size: 12px;")
+        status_lo.addWidget(self._selection_label)
+        status_lo.addStretch(1)
+
+        self._rule_hint = QLabel()
+        self._rule_hint.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 12px;")
+        status_lo.addWidget(self._rule_hint)
+        root.addWidget(status_card)
+
         bottom = QHBoxLayout()
-        self._selection_label = QLabel()
-        self._selection_label.setStyleSheet("font-size: 12px;")
-        bottom.addWidget(self._selection_label)
         bottom.addStretch(1)
 
         self._btn_cancel = QPushButton("取消")
+        self._btn_cancel.setObjectName("secondary")
         self._btn_cancel.setMinimumWidth(100)
         self._btn_cancel.clicked.connect(self.reject)
         bottom.addWidget(self._btn_cancel)
 
-        self._btn_connect = QPushButton("连接设备")
+        self._btn_connect = QPushButton("  连接设备")
         self._btn_connect.setObjectName("primary")
         self._btn_connect.setMinimumWidth(140)
-        ui_icons.apply(self._btn_connect, "arrow_right", "#FFFFFF", 15)
+        self._btn_connect.setMinimumHeight(34)
+        ui_icons.apply(self._btn_connect, "arrow_right", "#FFFFFF", 16)
         self._btn_connect.clicked.connect(self._on_connect)
         bottom.addWidget(self._btn_connect)
         root.addLayout(bottom)

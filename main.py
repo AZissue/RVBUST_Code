@@ -71,10 +71,8 @@ def main():
     if launcher.exec() != QDialog.Accepted:
         return 0
 
-    # 2. 根据选中的模式设置主窗口
+    # 2. 设置主窗口标题（工作区切换已由 _on_device_manager_reopened 完成）
     mode = launcher.selected_mode()
-    devices = launcher.selected_devices()
-    main_window.set_mode(mode, devices)
     main_window.setWindowTitle(
         f"RVC 拼接工作站 — {LauncherDialog.MODE_NAMES[mode]} {get_version()}")
     main_window.show()

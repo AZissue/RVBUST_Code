@@ -17,9 +17,9 @@ from __future__ import annotations
 from typing import List, Optional, Sequence, Tuple
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QPixmap, QResizeEvent
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QToolButton, QVBoxLayout,
+    QFrame, QHBoxLayout, QLabel, QSizePolicy, QToolButton, QVBoxLayout,
 )
 
 from ..theme import (
@@ -32,6 +32,63 @@ from .. import icons as ui_icons
 #   code    编码圆 code 号
 #   shared  是否为与上一机位的共有标记（蓝圈高亮）
 MarkerOverlay = Tuple[float, float, int, bool]
+
+
+class _CoverLabel(QLabel):
+    """自适应铺满的 2D 预览标签（background-size: cover，居中裁剪）。
+
+    在 QLabel 原生绘制基础上，保留原始 pixmap，每次尺寸变化时按 cover
+    模式缩放到当前控件尺寸再交给 QLabel 居中显示，避免自定义 paintEvent
+    与样式表/高分屏绘制冲突。
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._orig_pixmap: Optional[QPixmap] = None
+        self.setAlignment(Qt.AlignCenter)
+        self.setScaledContents(False)
+        self.setStyleSheet(f"background-color: {BG_PANEL}; border: none;")
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setMinimumHeight(220)
+
+    def setPixmap(self, pixmap: Optional[QPixmap]):  # noqa: N802
+        self._orig_pixmap = pixmap
+        self._refresh_scaled()
+
+    def clear(self):
+        self._orig_pixmap = None
+        super().setPixmap(QPixmap())
+
+    def setText(self, text: str):
+        """占位提示：无实时帧时显示检测统计。"""
+        self._orig_pixmap = None
+        super().setPixmap(QPixmap())
+        super().setText(text)
+
+    def resizeEvent(self, event: QResizeEvent):
+        super().resizeEvent(event)
+        self._refresh_scaled()
+
+    def _refresh_scaled(self):
+        if self._orig_pixmap is None or self._orig_pixmap.isNull():
+            return
+        wgt_w, wgt_h = self.width(), self.height()
+        if wgt_w <= 0 or wgt_h <= 0:
+            return
+        pm_w, pm_h = self._orig_pixmap.width(), self._orig_pixmap.height()
+        if pm_w <= 0 or pm_h <= 0:
+            return
+        # cover 缩放：取宽高比中较大的缩放因子，让图像填满控件
+        scale = max(wgt_w / pm_w, wgt_h / pm_h)
+        target_w = int(pm_w * scale)
+        target_h = int(pm_h * scale)
+        # 使用 Smooth 插值，按高分屏 DPR 自动处理
+        scaled = self._orig_pixmap.scaled(
+            target_w, target_h,
+            Qt.KeepAspectRatio,
+            Qt.SmoothTransformation,
+        )
+        super().setPixmap(scaled)
 
 
 class LiveViewPanel(QFrame):
@@ -47,10 +104,11 @@ class LiveViewPanel(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._auto_mode = True
+        self._current_pixmap: Optional[QPixmap] = None
 
         self.setStyleSheet(
             f"LiveViewPanel {{ background-color: {BG_PANEL};"
-            f" border: 1px solid {BORDER}; border-radius: 6px; }}")
+            f" border: none; border-radius: 6px; }}")
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -84,11 +142,7 @@ class LiveViewPanel(QFrame):
         root.addLayout(bar)
 
         # ---- 画面占位区 ----
-        self._canvas = QLabel("实时画面区\n\n（接口预留：拍摄后自动叠加\n"
-                              "绿框编码圆 + 共有标记蓝圈引导）")
-        self._canvas.setAlignment(Qt.AlignCenter)
-        self._canvas.setMinimumHeight(220)
-        self._canvas.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 13px;")
+        self._canvas = _CoverLabel()
         root.addWidget(self._canvas, 1)
 
         # ---- 底部提示条：共有标记引导 ----
@@ -105,11 +159,12 @@ class LiveViewPanel(QFrame):
 
         # TODO(BACKEND): 相机帧 → QPixmap（复用 camera_card.numpy_to_qpixmap）
         """
-        if pixmap is None:
-            self._canvas.setText("实时画面区\n\n（接口预留）")
-            return
-        self._canvas.setPixmap(pixmap.scaled(
-            self._canvas.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        self._current_pixmap = pixmap
+        self._canvas.setPixmap(pixmap)
+
+    def _refresh_frame(self):
+        """按当前画布尺寸重新缩放帧（窗口最大化/拉伸时铺满）。"""
+        self._canvas.setPixmap(self._current_pixmap)
 
     def set_detection_overlay(self, markers: Sequence[MarkerOverlay]):
         """叠加检测结果（拍摄后由工作流自动检测并调用，无手动检测入口）。
@@ -118,7 +173,12 @@ class LiveViewPanel(QFrame):
         """
         total = len(markers)
         shared = sum(1 for m in markers if m[3])
-        if total:
+        # 若当前无图像，先用占位文字提示检测数量；有图像时保留画面，
+        # 仅通过底部 guide 显示统计，避免 setText 把已拍摄的 2D 图像覆盖掉。
+        if not total:
+            self._guide.hide()
+            return
+        if self._current_pixmap is None or self._current_pixmap.isNull():
             self._canvas.setText(
                 f"实时画面区（占位）\n\n检测到 {total} 个编码圆，"
                 f"其中共有标记 {shared} 个")
@@ -128,7 +188,8 @@ class LiveViewPanel(QFrame):
                 "保持这些区域在视野内可提高重合度")
             self._guide.show()
         else:
-            self._guide.hide()
+            self._guide.setText(f"检测到 {total} 个编码圆")
+            self._guide.show()
 
     def clear_overlay(self):
         """清空叠加（移动相机/重拍时调用）。"""
@@ -138,6 +199,10 @@ class LiveViewPanel(QFrame):
         return self._auto_mode
 
     # ------------------------------------------------------------ 内部
+    def resizeEvent(self, event: QResizeEvent):
+        super().resizeEvent(event)
+        self._refresh_frame()
+
     def _on_mode_toggled(self, checked: bool):
         self._auto_mode = checked
         self._mode_btn.setText("自动 ▾" if checked else "手动 ▾")

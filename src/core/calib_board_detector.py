@@ -132,17 +132,23 @@ class CalibBoardDetector:
             spec = dict(spec)
             spec['spacing_mm'] = estimated_spacing
 
-        # 5. 求解标定板位姿
+        # 5. 求解标定板位姿（尝试多种排列，兼容板子旋转 180° 等情况）
         obj_pts = self._build_object_points(spec)
-        T_board_in_cam, rms_mm = self._solve_board_pose(obj_pts, centers_3d, spec)
+        T_board_in_cam, rms_mm, best_perm = self._solve_board_pose_robust(
+            obj_pts, centers_3d, spec)
         if T_board_in_cam is None:
             return self._fail("标定板位姿求解失败")
+        max_rms = min(2.0, max(0.5, 0.05 * float(spec['spacing_mm'])))
+        if rms_mm > max_rms:
+            return self._fail(
+                f"标定板位姿 RMS 超标: {rms_mm:.2f} mm (阈值 {max_rms:.2f} mm)")
 
-        # 5. 构造 markers（与现有 MarkerDetector 输出兼容）
+        # 6. 构造 markers（code 统一为标定板物理索引，保证多相机/多角度下可匹配）
         markers = []
-        for i, (pt2, pt3) in enumerate(zip(centers_2d, centers_3d)):
+        for img_idx, (pt2, pt3) in enumerate(zip(centers_2d, centers_3d)):
+            code = int(best_perm[img_idx])
             markers.append({
-                'code': i,                       # OpenCV 返回的顺序索引
+                'code': code,                    # 标定板物理圆心索引
                 'x': float(pt2[0]),
                 'y': float(pt2[1]),
                 'x_2d': float(pt2[0]),
@@ -199,13 +205,21 @@ class CalibBoardDetector:
 
     @staticmethod
     def _adjust_gamma(image: np.ndarray, gamma: float) -> np.ndarray:
-        """Gamma 校正。"""
+        """Gamma 校正。先归一化为 uint8，避免浮点图像直接截断。"""
         if gamma <= 0 or abs(gamma - 1.0) < 1e-6:
             return image.copy()
+        # 统一转 uint8：[0,1] 浮点放大 255；其他范围先 clip
+        if image.dtype != np.uint8:
+            if image.max() <= 1.0 + 1e-6:
+                img_u8 = (image * 255.0).clip(0, 255).astype(np.uint8)
+            else:
+                img_u8 = image.clip(0, 255).astype(np.uint8)
+        else:
+            img_u8 = image
         inv_gamma = 1.0 / gamma
         table = (np.arange(256) / 255.0) ** inv_gamma * 255
         table = table.clip(0, 255).astype(np.uint8)
-        return cv2.LUT(image.astype(np.uint8), table)
+        return cv2.LUT(img_u8, table)
 
     @staticmethod
     def _create_blob_detector(img_h: int = 0, img_w: int = 0,
@@ -461,3 +475,40 @@ class CalibBoardDetector:
         rms = float(np.sqrt(np.mean(errs ** 2)))
 
         return T, rms
+
+    @staticmethod
+    def _solve_board_pose_robust(object_points: np.ndarray,
+                                 image_points: np.ndarray,
+                                 spec: Dict) -> Tuple[Optional[np.ndarray], float, Optional[np.ndarray]]:
+        """尝试多种标定板排列，取 RMS 最小者。
+
+        OpenCV findCirclesGrid 的输出顺序会随板子旋转 180° 而整体翻转。
+        通过尝试 identity / rot180 / 左右翻 / 上下翻四种排列并比较 RMS，
+        可在不依赖固定朝向的情况下得到正确位姿。
+        返回: (T_board_in_cam, rms_mm, permutation)
+        """
+        N = len(object_points)
+        if N == 0:
+            return None, float('inf'), None
+
+        xs = object_points[:, 0]
+        ys = object_points[:, 1]
+        candidates = [
+            ("normal", np.arange(N)),
+            ("rot180", np.arange(N)[::-1]),
+            ("flip_h", np.lexsort((ys, xs))),
+            ("flip_v", np.lexsort((-ys, xs))),
+        ]
+
+        best: Optional[Tuple[str, np.ndarray, np.ndarray, float]] = None
+        for label, perm in candidates:
+            T, rms = CalibBoardDetector._solve_board_pose(
+                object_points[perm], image_points, spec)
+            if T is None:
+                continue
+            if best is None or rms < best[3]:
+                best = (label, perm, T, rms)
+
+        if best is None:
+            return None, float('inf'), None
+        return best[2], best[3], best[1]

@@ -440,6 +440,11 @@ class CameraManager:
         for cam in self._cameras.values():
             cam.disconnect()
 
+    def clear(self):
+        """断开并移除所有已注册相机，恢复到初始空状态。"""
+        self.disconnect_all()
+        self._cameras.clear()
+
     # ------------------------------------------------------------------
     # 网口相机网络配置
     # ------------------------------------------------------------------
@@ -582,21 +587,29 @@ class CameraManager:
         return FrameData(frame_id=self._frame_counter, camera_name=camera_id,
                          image_np=img, pointmap=None, rvc_image=None)
 
-    def capture(self, camera_id: str, options=None) -> Optional[FrameData]:
-        """软触发单拍指定相机，成功返回 FrameData，失败返回 None。"""
+    def capture(self, camera_id: str, options=None,
+                frame_id: Optional[int] = None) -> Optional[FrameData]:
+        """软触发单拍指定相机，成功返回 FrameData，失败返回 None。
+
+        frame_id 为 None 时自动递增全局帧号；capture_all 会显式传入同一帧号，
+        保证同步拍摄时各相机 frame_id 一致。
+        """
         cam = self._cameras.get(camera_id)
         if cam is None or not cam.is_connected:
             logger.warning(f"capture: 相机 {camera_id} 未连接")
             return None
+        if frame_id is None:
+            self._frame_counter += 1
+            frame_id = self._frame_counter
         img, pm, rvc_img, msg = cam.capture_3d(options)
         if img is None:
             logger.error(f"capture {camera_id} 失败: {msg}")
             return None
-        return FrameData(frame_id=self._frame_counter, camera_name=camera_id,
+        return FrameData(frame_id=frame_id, camera_name=camera_id,
                          image_np=img, pointmap=pm, rvc_image=rvc_img)
 
     def capture_all(self, camera_ids: Optional[List[str]] = None,
-                    sync: bool = True) -> Dict[str, FrameData]:
+                    sync: bool = True, options=None) -> Dict[str, FrameData]:
         """拍摄多台相机，返回 {camera_id: FrameData}（仅含成功的相机）。
 
         sync=True ：尽量同时触发——循环快速依次软触发（RVC 软触发本身是
@@ -607,9 +620,10 @@ class CameraManager:
         if camera_ids is None:
             camera_ids = self.get_connected_ids()
         self._frame_counter += 1
+        current_id = self._frame_counter
         frames: Dict[str, FrameData] = {}
         for cid in camera_ids:
-            frame = self.capture(cid)
+            frame = self.capture(cid, options=options, frame_id=current_id)
             if frame is not None:
                 frames[cid] = frame
         return frames

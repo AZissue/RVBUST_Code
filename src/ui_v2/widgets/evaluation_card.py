@@ -129,5 +129,5 @@ class EvaluationCard(QFrame):
         color = _LEVEL_STYLE.get(self._level, BORDER)
         self.setStyleSheet(
             f"EvaluationCard {{ background-color: {BG_CARD};"
-            f" border: 1px solid {color}; border-left: 4px solid {color};"
+            f" border: none; border-left: 4px solid {color};"
             f" border-radius: 6px; }}")

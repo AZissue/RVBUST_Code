@@ -1,7 +1,7 @@
 # ui_v2 —— 拼接软件新 UI 空壳
 
 > 日期：2026-08-06
-> 依据：《拼接软件UI重设计-AI提示词.md》+《docs/ui_redesign_v2.md》
+> 依据：`../../docs/拼接软件UI重设计-AI提示词.md` + `../../docs/ui_redesign_v2.md`
 > 定位：**纯 UI 层空壳**，接口全部留出，可完全离线运行（无相机 / 无 PyRVC / 无 OpenGL）。
 
 ---

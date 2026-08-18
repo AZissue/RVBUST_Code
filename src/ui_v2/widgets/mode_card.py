@@ -68,13 +68,13 @@ class ModeCard(QFrame):
         if checked:
             self.setStyleSheet(
                 f"ModeCard {{ background-color: {ACCENT_DIM};"
-                f" border: 2px solid {ACCENT}; border-radius: 8px; }}")
+                f" border: none; border-radius: 8px; }}")
             self._dot.setStyleSheet(f"color: {ACCENT}; font-size: 14px;")
         else:
             self.setStyleSheet(
                 f"ModeCard {{ background-color: {BG_CARD};"
-                f" border: 1px solid {BORDER}; border-radius: 8px; }}")
-            self._dot.setStyleSheet("color: #3A3D46; font-size: 14px;")
+                f" border: none; border-radius: 8px; }}")
+            self._dot.setStyleSheet("color: transparent; font-size: 14px;")
 
     def mousePressEvent(self, event):
         self.clicked.emit()

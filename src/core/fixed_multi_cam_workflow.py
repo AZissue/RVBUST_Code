@@ -90,8 +90,18 @@ class FixedMultiCamWorkflow(WorkflowBase):
     # 标定阶段
     # ------------------------------------------------------------------
     def start_calibration(self, reference_id: str) -> Tuple[bool, str]:
-        """开始标定阶段：设置参考相机，进入标定状态。"""
-        if self._state not in (self.STATE_IDLE, self.STATE_CALIBRATED):
+        """开始标定阶段：设置参考相机，进入标定状态。
+
+        支持从扫描阶段回到标定阶段重新标定（相机移动后需要重新标定）。
+        """
+        if self._state == self.STATE_SCANNING:
+            # 扫描阶段重新标定：清空历史标定/扫描数据，但保持相机连接
+            self._frames_calib.clear()
+            self._frames_scan.clear()
+            self._calibration_locked = False
+            self.calibration_engine.pair_results.clear()
+            logger.info("从扫描阶段回到标定阶段，已清空历史标定/扫描数据")
+        elif self._state not in (self.STATE_IDLE, self.STATE_CALIBRATED):
             return False, f"当前状态 {self._state} 不允许重新标定"
         self._reference_id = reference_id
         self._state = self.STATE_CALIBRATING
@@ -122,6 +132,19 @@ class FixedMultiCamWorkflow(WorkflowBase):
                 offline_ply_path=frame.offline_pointmap_path,
             )
             frame.markers = markers
+            # 标定板模式：缓存位姿与规格，供位姿法标定使用
+            if self.marker_detector.is_board_mode():
+                br = self.marker_detector.last_board_result
+                if br is not None and br.get('success'):
+                    frame.board_pose = br.get('T_board_in_cam')
+                    frame.board_pattern = br.get('pattern_size')
+                    frame.board_pattern_name = br.get('pattern_name')
+                    frame.board_rms_mm = float(br.get('rms_mm', 0.0))
+                else:
+                    frame.board_pose = None
+                    frame.board_pattern = None
+                    frame.board_pattern_name = None
+                    frame.board_rms_mm = 0.0
             total += len(markers)
             logger.info(f"相机 {cid}: 检测到 {len(markers)} 个标记")
         return True, f"标记检测完成，共 {total} 个"

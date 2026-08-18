@@ -26,6 +26,8 @@ class ViewerPanel(QFrame):
     viewer_message = Signal(str)
     collapse_toggled = Signal(bool)
     """3D 查看器折叠/展开信号（True=展开，False=折叠）。"""
+    maximize_toggled = Signal(bool)
+    """3D 查看器最大化/恢复信号（True=最大化，False=恢复）。"""
 
     def __init__(self, title: str = "3D 拼接预览", parent=None):
         super().__init__(parent)
@@ -38,6 +40,7 @@ class ViewerPanel(QFrame):
         self._viewer = EmbeddedPointCloudViewer(self)
         self._viewer.status_changed.connect(self.viewer_message.emit)
         self._viewer.collapse_toggled.connect(self.collapse_toggled.emit)
+        self._viewer.maximize_toggled.connect(self.maximize_toggled.emit)
         root.addWidget(self._viewer, 1)
 
     def viewer(self) -> EmbeddedPointCloudViewer:
@@ -78,3 +81,15 @@ class ViewerPanel(QFrame):
 
     def clear_highlight(self):
         self._viewer.clear_highlight()
+
+    def is_collapsed(self) -> bool:
+        """返回 3D 查看区域当前是否处于折叠状态。"""
+        return self._viewer.is_collapsed()
+
+    def set_collapsed(self, collapsed: bool):
+        """外部设置折叠状态。"""
+        self._viewer.set_collapsed(collapsed)
+
+    def set_maximized(self, on: bool):
+        """外部同步最大化按钮勾选状态。"""
+        self._viewer.set_maximized(on)

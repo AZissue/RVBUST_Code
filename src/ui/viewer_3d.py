@@ -35,6 +35,8 @@ from typing import Dict, List, Optional
 
 import numpy as np
 
+import open3d as o3d
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QMatrix4x4
 from PySide6.QtWidgets import (
@@ -685,6 +687,11 @@ class EmbeddedPointCloudViewer(QWidget):
     MODE_OVERLAY = "__overlay__"   # 全部叠加
     MODE_MERGED = "__merged__"     # 合并结果
 
+    # 单帧点云超过该阈值时先降采样再上传 VBO，保留原始 open3d 对象用于保存 PLY
+    MAX_RENDER_POINTS = 1_500_000
+    # 体素降采样最大体素尺寸（mm），防止大场景 AABB 过大时把有效点过度塌缩
+    MAX_RENDER_VOXEL_MM = 3.0
+
     COLOR_STATION = "station"      # 按站位着色（默认）
     COLOR_HEIGHT = "height"        # 按高度着色（jet）
     COLOR_GRAY = "gray"            # 灰度
@@ -936,6 +943,14 @@ class EmbeddedPointCloudViewer(QWidget):
         if self.btn_maximize.isChecked() != bool(on):
             self.btn_maximize.setChecked(bool(on))
 
+    def is_collapsed(self) -> bool:
+        """返回 3D 查看区域当前是否处于折叠状态（仅工具栏可见）。"""
+        return not self.viewer_container.isVisible()
+
+    def set_collapsed(self, collapsed: bool):
+        """外部设置折叠状态（会触发 collapse_toggled 信号）。"""
+        self.btn_collapse.setChecked(not collapsed)
+
     # ------------------------------------------------------------------
     # 工具栏槽函数
     # ------------------------------------------------------------------
@@ -1008,8 +1023,77 @@ class EmbeddedPointCloudViewer(QWidget):
             self._show_single(mode)
 
     @staticmethod
-    def _pcd_to_arrays(pcd, default_color: tuple):
-        """open3d 点云 → (points float32, colors float32)。"""
+    def _downsample_pcd(pcd, target_count: int):
+        """将 open3d 点云降采样到约 target_count 点，优先体素采样保留结构，
+        失败或仍超阈值时回退到均匀采样。保留颜色/法线。
+
+        关键点：
+          1. 先剔除 NaN/Inf 点得到"干净"点云，避免 open3d 在含无效点的输入上
+             产出异常结果；
+          2. 体素尺寸上限锁定到 MAX_RENDER_VOXEL_MM，防止大场景 AABB 过大时
+             把有效点过度塌缩成稀疏点云。
+        """
+        n = len(pcd.points)
+        if n <= target_count:
+            return pcd
+        try:
+            pts = np.asarray(pcd.points)
+            colors = np.asarray(pcd.colors) if pcd.has_colors() else None
+            # 1. 只保留有效点
+            valid_mask = np.isfinite(pts).all(axis=1)
+            n_valid = int(valid_mask.sum())
+            if n_valid == 0:
+                raise ValueError("无有效点，无法体素降采样")
+            clean = o3d.geometry.PointCloud()
+            clean.points = o3d.utility.Vector3dVector(pts[valid_mask])
+            if colors is not None and len(colors) == n:
+                clean.colors = o3d.utility.Vector3dVector(colors[valid_mask])
+            if pcd.has_normals():
+                normals = np.asarray(pcd.normals)
+                if len(normals) == n:
+                    clean.normals = o3d.utility.Vector3dVector(normals[valid_mask])
+
+            # 2. 在干净点云上估计体素尺寸，并加硬上限
+            valid_pts = pts[valid_mask]
+            min_b = valid_pts.min(axis=0)
+            max_b = valid_pts.max(axis=0)
+            extent = max_b - min_b
+            if not np.isfinite(extent).all() or (extent <= 0).any():
+                raise ValueError("AABB 异常，回退均匀采样")
+            volume = max(float(extent.prod()), 1e-12)
+            voxel_size = max((volume / target_count) ** (1.0 / 3.0), 1e-6)
+            max_voxel = float(EmbeddedPointCloudViewer.MAX_RENDER_VOXEL_MM)
+            # 体素尺寸上限：硬上限 + 不超过最小边长的 1/10
+            voxel_size = min(voxel_size, max_voxel, float(extent.min()) / 10.0)
+            voxel_size = max(voxel_size, 1e-6)
+
+            logger.info(
+                f"3D 查看器降采样: 输入 {n} 点(有效 {n_valid}), "
+                f"AABB [{extent[0]:.1f}, {extent[1]:.1f}, {extent[2]:.1f}] mm, "
+                f"体素 {voxel_size:.3f} mm, 目标 {target_count} 点")
+
+            # 3. 体素降采样
+            ds = clean.voxel_down_sample(voxel_size=voxel_size)
+            # 若体素采样后仍超阈值，再均匀采样兜底
+            if len(ds.points) > target_count:
+                k = max(1, int(np.ceil(len(ds.points) / target_count)))
+                ds = ds.uniform_down_sample(every_k_points=k)
+            logger.info(f"3D 查看器降采样结果: {len(ds.points)} 点")
+            return ds if len(ds.points) > 0 else clean
+        except Exception:
+            # 任何异常都回退到均匀采样（在原始云上）
+            logger.warning("3D 查看器体素降采样失败，回退均匀采样", exc_info=True)
+            k = max(1, int(np.ceil(n / target_count)))
+            return pcd.uniform_down_sample(every_k_points=k)
+
+    @classmethod
+    def _pcd_to_arrays(cls, pcd, default_color: tuple, max_points: Optional[int] = None):
+        """open3d 点云 → (points float32, colors float32)。
+
+        若指定 max_points 且点数超过阈值，先对渲染副本降采样，原始点云对象不变。
+        """
+        if max_points is not None and len(pcd.points) > max_points:
+            pcd = cls._downsample_pcd(pcd, max_points)
         points = np.asarray(pcd.points, dtype=np.float32)
         if pcd.has_colors():
             colors = np.asarray(pcd.colors, dtype=np.float32)
@@ -1096,7 +1180,8 @@ class EmbeddedPointCloudViewer(QWidget):
             if self._viewer:
                 self._viewer.clear()
             return
-        points, colors = self._pcd_to_arrays(pcd, self._color_for(camera_id))
+        points, colors = self._pcd_to_arrays(
+            pcd, self._color_for(camera_id), max_points=self.MAX_RENDER_POINTS)
         self._load_to_viewer(points, colors, f"{camera_id} 相机点云",
                              highlight=self._highlights.get(camera_id))
 
@@ -1107,7 +1192,8 @@ class EmbeddedPointCloudViewer(QWidget):
             if self._viewer:
                 self._viewer.clear()
             return
-        points, colors = self._pcd_to_arrays(pcd, COLOR_MERGED)
+        points, colors = self._pcd_to_arrays(
+            pcd, COLOR_MERGED, max_points=self.MAX_RENDER_POINTS)
         self._load_to_viewer(points, colors, "拼接点云")
 
     def _show_overlay(self):
@@ -1117,7 +1203,8 @@ class EmbeddedPointCloudViewer(QWidget):
             pcd = self._pcds.get(cid)
             if pcd is None or len(pcd.points) == 0:
                 continue
-            points, colors = self._pcd_to_arrays(pcd, self._color_for(cid))
+            points, colors = self._pcd_to_arrays(
+                pcd, self._color_for(cid), max_points=self.MAX_RENDER_POINTS)
             all_points.append(points)
             all_colors.append(colors)
         if not all_points:

@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..theme import (
-    ACCENT_DIM, STATUS_ERR, STATUS_OK, STATUS_WARN,
+    ACCENT, ACCENT_DIM, BG_CARD, BORDER, STATUS_ERR, STATUS_OK, STATUS_WARN,
     TEXT_MUTED, TEXT_PRIMARY, TEXT_SECONDARY,
 )
 from .. import icons as ui_icons
@@ -86,6 +86,16 @@ class MultiCamWorkspace(QWidget):
 
     step_back_requested = Signal(int)
     """步骤条回退请求。"""
+
+    # ---- 单相机卡片控制（新增） ----
+    card_preview_toggled = Signal(str, bool)
+    """某张相机卡片 2D 预览开关（camera_id, enabled）。"""
+
+    card_capture_requested = Signal(str)
+    """某张相机卡片 3D 拍摄（camera_id）。"""
+
+    card_detect_requested = Signal(str)
+    """某张相机卡片检测标记物（camera_id）。"""
 
     log_message = Signal(str, str)
     """工作区日志（message, level）。"""
@@ -147,80 +157,105 @@ class MultiCamWorkspace(QWidget):
         ref_row = QHBoxLayout()
         ref_row.addWidget(QLabel("参考相机:"))
         self._ref_combo = QComboBox()
-        self._ref_combo.currentTextChanged.connect(self.reference_changed)
+        self._ref_combo.currentIndexChanged.connect(
+            lambda idx: self.reference_changed.emit(self._ref_combo.currentData())
+        )
         ref_row.addWidget(self._ref_combo, 1)
         cap_lo.addLayout(ref_row)
         left.addWidget(cap_group)
         left.addStretch(1)
 
-        left_widget = QWidget()
-        left_widget.setLayout(left)
-        left_widget.setFixedWidth(220)
-        body.addWidget(left_widget)
+        self._left_widget = QWidget()
+        self._left_widget.setLayout(left)
+        self._left_widget.setFixedWidth(220)
+        body.addWidget(self._left_widget)
 
         # ---- 中央：相机网格 + 3D 预览（垂直 splitter，参考旧版 MainWindow） ----
         # cam 卡片固定大小，网格用滚动区承载；3D 在下方，可折叠到底部
-        center_split = QSplitter(Qt.Vertical)
+        self._center_split = QSplitter(Qt.Vertical)
         self._camera_grid = CameraGrid()
-        center_split.addWidget(self._camera_grid)
+        self._center_split.addWidget(self._camera_grid)
         self._viewer = ViewerPanel("3D 拼接预览")
         self._viewer.viewer_message.connect(
             lambda m: self.log_message.emit(m, "info"))
         self._viewer.collapse_toggled.connect(self._on_viewer_collapse_toggled)
-        center_split.addWidget(self._viewer)
-        center_split.setSizes([350, 650])
-        center_split.setStretchFactor(0, 0)
-        center_split.setStretchFactor(1, 1)
-        body.addWidget(center_split, 1)
+        self._viewer.maximize_toggled.connect(self._on_viewer_maximize_toggled)
+        self._center_split.addWidget(self._viewer)
+        self._center_split.setSizes([350, 650])
+        self._center_split.setStretchFactor(0, 0)
+        self._center_split.setStretchFactor(1, 1)
+        body.addWidget(self._center_split, 1)
 
         self._viewer_expanded_sizes = None
+        self._viewer_maximized = False
+        self._pre_maximize_sizes = None
 
         # ---- 右面板：标定 / 扫描 Tab ----
-        right_widget = QWidget()
-        right_widget.setFixedWidth(300)
-        right_lo = QVBoxLayout(right_widget)
+        self._right_widget = QWidget()
+        self._right_widget.setFixedWidth(300)
+        right_lo = QVBoxLayout(self._right_widget)
         right_lo.setContentsMargins(0, 0, 0, 0)
         self._tabs = QTabWidget()
         self._tabs.addTab(self._build_calib_tab(), "③ 标定")
         self._tabs.addTab(self._build_scan_tab(), "扫描")
         right_lo.addWidget(self._tabs)
-        body.addWidget(right_widget)
+        body.addWidget(self._right_widget)
 
         root.addLayout(body, 1)
+
+    def _section_card(self, title: str) -> tuple[QFrame, QVBoxLayout]:
+        """右侧面板分组卡片：带标题的圆角卡片。"""
+        card = QFrame()
+        card.setStyleSheet(
+            f"QFrame {{ background-color: {BG_CARD}; border: none;"
+            f" border-radius: 6px; }}"
+        )
+        lo = QVBoxLayout(card)
+        lo.setContentsMargins(10, 8, 10, 10)
+        lo.setSpacing(8)
+        if title:
+            lbl = QLabel(title)
+            lbl.setObjectName("sectionTitle")
+            lo.addWidget(lbl)
+        return card, lo
 
     def _build_calib_tab(self) -> QWidget:
         tab = QWidget()
         lo = QVBoxLayout(tab)
-        lo.setContentsMargins(8, 8, 8, 8)
-        lo.setSpacing(8)
+        lo.setContentsMargins(10, 10, 10, 10)
+        lo.setSpacing(10)
 
-        # 检测方式 + 检测按钮
+        # ---- 检测配置 ----
+        det_card, det_lo = self._section_card("检测配置")
         det_row = QHBoxLayout()
         det_row.addWidget(QLabel("检测方式:"))
         self._detect_combo = QComboBox()
         self._detect_combo.addItem("编码圆", "coded_circle")
         self._detect_combo.addItem("标定板", "calib_board")
         det_row.addWidget(self._detect_combo, 1)
-        lo.addLayout(det_row)
+        det_lo.addLayout(det_row)
 
-        self._btn_detect = QPushButton("检测标记物")
+        self._btn_detect = QPushButton("  检测标记物")
         self._btn_detect.setObjectName("primary")
-        ui_icons.apply(self._btn_detect, "detect", "#FFFFFF", 15)
+        self._btn_detect.setMinimumHeight(36)
+        ui_icons.apply(self._btn_detect, "detect", "#FFFFFF", 16)
         self._btn_detect.clicked.connect(
-            lambda: self.detect_requested.emit(
-                self._detect_combo.currentData()))
-        lo.addWidget(self._btn_detect)
+            lambda: self.detect_requested.emit(self._detect_combo.currentData()))
+        det_lo.addWidget(self._btn_detect)
+        lo.addWidget(det_card)
 
-        self._btn_calibrate = QPushButton("计算外参")
+        # ---- 标定动作 ----
+        cal_card, cal_lo = self._section_card("标定动作")
+        self._btn_calibrate = QPushButton("  计算外参")
         self._btn_calibrate.setObjectName("primary")
-        ui_icons.apply(self._btn_calibrate, "calibrate", "#FFFFFF", 15)
+        self._btn_calibrate.setMinimumHeight(36)
+        ui_icons.apply(self._btn_calibrate, "calibrate", "#FFFFFF", 16)
         self._btn_calibrate.clicked.connect(self.calibrate_requested)
-        lo.addWidget(self._btn_calibrate)
+        cal_lo.addWidget(self._btn_calibrate)
+        lo.addWidget(cal_card)
 
-        # 标定结果表格：pair | RMS(mm) | 内点率 | 状态
-        result_label = QLabel("标定结果")
-        result_label.setObjectName("sectionTitle")
-        lo.addWidget(result_label)
+        # ---- 标定结果 ----
+        res_card, res_lo = self._section_card("标定结果")
         self._result_table = QTableWidget(0, 4)
         self._result_table.setHorizontalHeaderLabels(
             ["pair", "RMS(mm)", "内点率", "状态"])
@@ -228,51 +263,61 @@ class MultiCamWorkspace(QWidget):
         self._result_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self._result_table.horizontalHeader().setSectionResizeMode(
             QHeaderView.Stretch)
-        self._result_table.setMinimumHeight(130)
-        lo.addWidget(self._result_table, 1)
+        self._result_table.setMinimumHeight(120)
+        res_lo.addWidget(self._result_table, 1)
+        lo.addWidget(res_card, 1)
 
-        # 质量评分条 + 门禁提示
+        # ---- 质量门禁 ----
+        gate_card, gate_lo = self._section_card("质量门禁")
         score_row = QHBoxLayout()
         score_row.addWidget(QLabel("质量评分:"))
         self._score_bar = QProgressBar()
         self._score_bar.setRange(0, 100)
         self._score_bar.setValue(0)
         score_row.addWidget(self._score_bar, 1)
-        lo.addLayout(score_row)
+        gate_lo.addLayout(score_row)
 
-        self._gate_hint = QLabel("质量门禁：任一 pair 未达标时禁止进入扫描")
+        self._gate_hint = QLabel("任一 pair 未达标时禁止进入扫描")
         self._gate_hint.setWordWrap(True)
-        self._gate_hint.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 11px;")
-        lo.addWidget(self._gate_hint)
+        self._gate_hint.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 12px;")
+        gate_lo.addWidget(self._gate_hint)
+        lo.addWidget(gate_card)
 
-        # 外参存取
+        # ---- 外参存取 ----
+        ext_card, ext_lo = self._section_card("外参存取")
         ext_row = QHBoxLayout()
+        ext_row.setSpacing(8)
         self._btn_save_ext = QPushButton("保存外参")
+        self._btn_save_ext.setObjectName("secondary")
+        self._btn_save_ext.setMinimumHeight(32)
         ui_icons.apply(self._btn_save_ext, "save", TEXT_SECONDARY, 14)
         self._btn_save_ext.clicked.connect(self.save_extrinsics_requested)
         ext_row.addWidget(self._btn_save_ext)
         self._btn_load_ext = QPushButton("加载外参")
+        self._btn_load_ext.setObjectName("secondary")
+        self._btn_load_ext.setMinimumHeight(32)
         ui_icons.apply(self._btn_load_ext, "folder_open", TEXT_SECONDARY, 14)
         self._btn_load_ext.clicked.connect(self.load_extrinsics_requested)
         ext_row.addWidget(self._btn_load_ext)
-        lo.addLayout(ext_row)
+        ext_lo.addLayout(ext_row)
+        lo.addWidget(ext_card)
         return tab
 
     def _build_scan_tab(self) -> QWidget:
         tab = QWidget()
         lo = QVBoxLayout(tab)
-        lo.setContentsMargins(8, 8, 8, 8)
-        lo.setSpacing(8)
+        lo.setContentsMargins(10, 10, 10, 10)
+        lo.setSpacing(10)
 
-        # 撤板提醒横幅
+        # 撤板提醒横幅（用主色而非硬编码红色）
         self._lock_banner = QFrame()
         self._lock_banner.setStyleSheet(
             f"QFrame {{ background-color: {ACCENT_DIM};"
-            f" border: 1px solid #E53935; border-radius: 6px; }}")
+            f" border: none; border-radius: 6px; }}")
         banner_lo = QHBoxLayout(self._lock_banner)
         banner_lo.setContentsMargins(10, 8, 10, 8)
         lock_icon = QLabel()
-        lock_icon.setPixmap(ui_icons.pixmap("lock", "#E53935", 18))
+        lock_icon.setPixmap(ui_icons.pixmap("lock", ACCENT, 18))
         lock_icon.setFixedSize(22, 22)
         banner_lo.addWidget(lock_icon, 0, Qt.AlignTop)
         self._banner_label = QLabel(
@@ -288,24 +333,29 @@ class MultiCamWorkspace(QWidget):
             "⚠ 检测到相机断线重连，外参可能失效，请重新标定")
         self._recalib_warn.setWordWrap(True)
         self._recalib_warn.setStyleSheet(
-            f"color: {STATUS_WARN}; font-size: 11px; font-weight: 600;")
+            f"color: {STATUS_WARN}; font-size: 12px; font-weight: 600;")
         self._recalib_warn.hide()
         lo.addWidget(self._recalib_warn)
 
-        self._btn_scan_capture = QPushButton("拍摄扫描帧")
+        # ---- 扫描拍摄 ----
+        scan_card, scan_lo = self._section_card("扫描拍摄")
+        self._btn_scan_capture = QPushButton("  拍摄扫描帧")
         self._btn_scan_capture.setObjectName("primary")
-        self._btn_scan_capture.setMinimumHeight(34)
+        self._btn_scan_capture.setMinimumHeight(36)
         ui_icons.apply(self._btn_scan_capture, "camera", "#FFFFFF", 16)
         self._btn_scan_capture.clicked.connect(self.capture_scan_requested)
-        lo.addWidget(self._btn_scan_capture)
+        scan_lo.addWidget(self._btn_scan_capture)
 
-        self._btn_stitch_save = QPushButton("拼接并保存")
+        self._btn_stitch_save = QPushButton("  拼接并保存")
         self._btn_stitch_save.setObjectName("primary")
-        ui_icons.apply(self._btn_stitch_save, "stitch", "#FFFFFF", 15)
+        self._btn_stitch_save.setMinimumHeight(36)
+        ui_icons.apply(self._btn_stitch_save, "stitch", "#FFFFFF", 16)
         self._btn_stitch_save.clicked.connect(self.stitch_save_requested)
-        lo.addWidget(self._btn_stitch_save)
+        scan_lo.addWidget(self._btn_stitch_save)
+        lo.addWidget(scan_card)
 
-        # 批量拍摄（产线巡检）
+        # ---- 批量拼接（产线巡检） ----
+        batch_card, batch_lo = self._section_card("批量拼接")
         batch_row = QHBoxLayout()
         batch_row.addWidget(QLabel("连续拍摄:"))
         self._batch_spin = QSpinBox()
@@ -314,11 +364,14 @@ class MultiCamWorkspace(QWidget):
         self._batch_spin.setSuffix(" 次")
         batch_row.addWidget(self._batch_spin)
         self._btn_batch = QPushButton("批量拼接保存")
+        self._btn_batch.setObjectName("secondary")
+        self._btn_batch.setMinimumHeight(32)
         ui_icons.apply(self._btn_batch, "layers", TEXT_SECONDARY, 14)
         self._btn_batch.clicked.connect(
             lambda: self.batch_scan_requested.emit(self._batch_spin.value()))
         batch_row.addWidget(self._btn_batch)
-        lo.addLayout(batch_row)
+        batch_lo.addLayout(batch_row)
+        lo.addWidget(batch_card)
 
         lo.addStretch(1)
         return tab
@@ -348,7 +401,9 @@ class MultiCamWorkspace(QWidget):
         locked = state == "locked"
 
         # 拍摄控制
-        self._btn_capture.setEnabled(connected and not locked)
+        # locked 状态下允许点击「重新标定」，返回标定阶段
+        self._btn_capture.setEnabled(connected)
+        self._btn_capture.setText("重新标定" if locked else "拍摄标定帧")
         self._rb_sync.setEnabled(connected and not locked)
         self._rb_async.setEnabled(connected and not locked)
         self._ref_combo.setEnabled(connected and not locked)
@@ -377,14 +432,59 @@ class MultiCamWorkspace(QWidget):
         self._device_list.clear()
         self._ref_combo.blockSignals(True)
         self._ref_combo.clear()
+        titles: Dict[str, str] = {}
         for i, d in enumerate(devices):
             self._device_list.addItem(
                 f"{'●' if d.online else '○'} {d.model}  {d.ip}")
             cam_id = f"cam{i}"
-            self._ref_combo.addItem(f"{d.model} ({d.serial})", cam_id)
+            title = f"{d.model} ({d.serial})"
+            titles[cam_id] = title
+            # 参考相机只能选择真实设备（测试设备 backend_ref 非 int）
+            if isinstance(d.backend_ref, int):
+                self._ref_combo.addItem(title, cam_id)
         self._ref_combo.blockSignals(False)
-        self._camera_grid.set_cameras(
-            [f"cam{i}" for i in range(len(devices))])
+
+        test_cam_ids = {
+            f"cam{i}" for i, d in enumerate(devices)
+            if not isinstance(d.backend_ref, int)
+        }
+        self.reset_camera_grid(
+            [f"cam{i}" for i in range(len(devices))],
+            titles=titles,
+            enable_controls=True,
+            disabled_controls=test_cam_ids,
+        )
+
+    def reset_camera_grid(
+        self,
+        camera_ids: List[str],
+        titles: Optional[Dict[str, str]] = None,
+        enable_controls: bool = False,
+        disabled_controls: Optional[set] = None,
+    ):
+        """重建相机网格并连接单机控制信号。
+
+        连接真实设备时由 ``set_devices`` 调用；加载离线会话时由
+        ``BackendBridge`` 直接调用。
+        """
+        disabled_controls = disabled_controls or set()
+        self._camera_grid.set_cameras(camera_ids, titles=titles)
+        for cid in camera_ids:
+            card = self._camera_grid.card(cid)
+            if card is None:
+                continue
+            card.preview_toggled.connect(self.card_preview_toggled)
+            card.capture_requested.connect(self.card_capture_requested)
+            card.detect_requested.connect(self.card_detect_requested)
+            card.set_controls_enabled(enable_controls and cid not in disabled_controls)
+
+    def current_detect_method(self) -> str:
+        """返回当前标定 Tab 选中的检测方式（'coded_circle' | 'calib_board'）。"""
+        return self._detect_combo.currentData() or "coded_circle"
+
+    def current_reference_id(self) -> Optional[str]:
+        """返回当前参考相机下拉选中的 camera_id。"""
+        return self._ref_combo.currentData()
 
     def on_capture_done(self, thumbnails: Optional[Dict[str, object]] = None):
         """拍摄完成回填（标定帧缩略图 + 帧分区标签）。
@@ -453,6 +553,21 @@ class MultiCamWorkspace(QWidget):
         """相机断线重连后提示「外参可能失效，请重新标定」。"""
         self._recalib_warn.show()
 
+    def clear_calibration_results(self):
+        """清空标定结果表格、质量评分与门禁提示（重新标定时调用）。"""
+        self._quality_passed = False
+        self._score_bar.setValue(0)
+        self._result_table.setRowCount(0)
+        self._gate_hint.setText("质量门禁：任一 pair 未达标时禁止进入扫描")
+        self._gate_hint.setStyleSheet(
+            f"color: {TEXT_MUTED}; font-size: 11px;")
+        for cid in self._camera_grid.camera_ids():
+            card = self._camera_grid.card(cid)
+            if card:
+                card.set_marker_count(None)
+                card.set_covis_status(None)
+                card.set_frame_kind(None)
+
     def viewer(self) -> ViewerPanel:
         """3D 预览组件（拼接结果回填入口）。"""
         return self._viewer
@@ -471,16 +586,37 @@ class MultiCamWorkspace(QWidget):
 
     def _on_viewer_collapse_toggled(self, expanded: bool):
         """3D 查看器折叠/展开：折叠时压到只剩工具栏，展开时恢复。"""
-        center_split = self._viewer.parentWidget()
-        if not isinstance(center_split, QSplitter):
-            return
-        toolbar_h = 40  # 3D 查看器顶部工具栏高度（约 34px + 间距）
         if not expanded:
-            self._viewer_expanded_sizes = center_split.sizes()
-            self._viewer.setMaximumHeight(toolbar_h)
-            total = sum(center_split.sizes())
-            center_split.setSizes([total - toolbar_h, toolbar_h])
+            self._viewer_expanded_sizes = self._center_split.sizes()
+            self._viewer.setMaximumHeight(40)  # 3D 查看器顶部工具栏高度（约 34px + 间距）
+            total = sum(self._center_split.sizes())
+            self._center_split.setSizes([total - 40, 40])
         else:
             self._viewer.setMaximumHeight(16777215)
             if self._viewer_expanded_sizes:
-                center_split.setSizes(self._viewer_expanded_sizes)
+                self._center_split.setSizes(self._viewer_expanded_sizes)
+
+    def _on_viewer_maximize_toggled(self, maximized: bool):
+        """3D 查看器最大化/恢复：隐藏/恢复左右面板与相机卡片区。"""
+        self._viewer_maximized = maximized
+        if maximized:
+            # 若当前处于折叠状态，先展开再最大化
+            if self._viewer.is_collapsed():
+                self._viewer.set_collapsed(False)
+                # 展开会触发 _on_viewer_collapse_toggled，下轮事件循环再执行最大化
+                from PySide6.QtCore import QTimer
+                QTimer.singleShot(0, lambda: self._on_viewer_maximize_toggled(True))
+                return
+            self._pre_maximize_sizes = self._center_split.sizes()
+            self._left_widget.hide()
+            self._right_widget.hide()
+            self._camera_grid.hide()
+            self._center_split.setSizes([0, 1])
+        else:
+            self._left_widget.show()
+            self._right_widget.show()
+            self._camera_grid.show()
+            if self._pre_maximize_sizes:
+                self._center_split.setSizes(self._pre_maximize_sizes)
+            else:
+                self._center_split.setSizes([350, 650])

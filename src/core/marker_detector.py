@@ -134,9 +134,9 @@ class MarkerDetector:
             logger.info(f"图像 uint16 → uint8 转换")
         elif image.dtype != np.uint8:
             if image.max() <= 1.0:
-                image = (image * 255).astype(np.uint8)
+                image = (image * 255).clip(0, 255).astype(np.uint8)
             else:
-                image = image.astype(np.uint8)
+                image = image.clip(0, 255).astype(np.uint8)
             logger.info(f"图像 {image.dtype} → uint8 转换")
 
         # 确保值范围正确：仅对仍在 [0,1] 区间的浮点图像做归一化缩放
@@ -235,26 +235,23 @@ class MarkerDetector:
                 if len(valid_pts) > 0:
                     logger.info(f"点云范围: X[{valid_pts[:,0].min():.1f}, {valid_pts[:,0].max():.1f}] Y[{valid_pts[:,1].min():.1f}, {valid_pts[:,1].max():.1f}] Z[{valid_pts[:,2].min():.1f}, {valid_pts[:,2].max():.1f}]")
 
+            # 使用双线性插值提取 3D 坐标（与标定板检测器保持一致）
+            centers_2d = np.array([[m['x'], m['y']] for m in markers_2d], dtype=np.float64)
+            centers_3d = CalibBoardDetector._extract_centers_3d(centers_2d, points, (w, h))
+
             markers_3d = []
-            for m in markers_2d:
-                x, y = int(m['x']), int(m['y'])
-                if 0 <= x < w and 0 <= y < h:
-                    idx = y * w + x
-                    if idx < len(points):
-                        pt = points[idx]
-                        if np.isfinite(pt).all():
-                            markers_3d.append({
-                                'code': m['code'],
-                                'x_2d': m['x'],
-                                'y_2d': m['y'],
-                                'x_3d': float(pt[0]),
-                                'y_3d': float(pt[1]),
-                                'z_3d': float(pt[2]),
-                            })
-                        else:
-                            logger.warning(f"编码圆 code={m['code']} at ({x},{y}) 对应点无效: {pt}")
-                    else:
-                        logger.warning(f"编码圆 code={m['code']} at ({x},{y}) 索引越界: idx={idx} >= {len(points)}")
+            for m, pt in zip(markers_2d, centers_3d):
+                if np.isfinite(pt).all():
+                    markers_3d.append({
+                        'code': m['code'],
+                        'x_2d': m['x'],
+                        'y_2d': m['y'],
+                        'x_3d': float(pt[0]),
+                        'y_3d': float(pt[1]),
+                        'z_3d': float(pt[2]),
+                    })
+                else:
+                    logger.warning(f"编码圆 code={m['code']} at ({m['x']:.1f},{m['y']:.1f}) 对应点无效")
             logger.info(f"3D 有效编码圆: {len(markers_3d)}/{len(markers_2d)}")
             return markers_3d
         except Exception as e:

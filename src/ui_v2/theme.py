@@ -2,7 +2,7 @@
 """
 ui_v2.theme —— 设计系统常量 + 全局 QSS。
 
-视觉规范（《拼接软件UI重设计-AI提示词.md》第七节）：
+视觉规范（《docs/拼接软件UI重设计-AI提示词.md》第七节）：
   - 深色工业风；
   - 底色 #1E1F24 / 面板 #26272E / 卡片 #2E3038 / 边框 #3A3D46；
   - 主强调色 RVC 品牌红 #E53935（按钮 / 选中态）；
@@ -11,24 +11,24 @@ ui_v2.theme —— 设计系统常量 + 全局 QSS。
 """
 
 # ---------------------------------------------------------------- 色彩 token
-BG_WINDOW = "#1E1F24"     # 窗口底色
-BG_PANEL = "#26272E"      # 面板底色
-BG_CARD = "#2E3038"       # 卡片底色
-BG_INPUT = "#1E1F24"      # 输入框底色
-BORDER = "#3A3D46"        # 边框
-BORDER_HOVER = "#4A4E59"  # 悬停边框
+BG_WINDOW = "#1A1D23"     # 窗口底色：偏冷蓝灰，减少沉闷
+BG_PANEL = "#23272F"      # 面板底色
+BG_CARD = "#2B3039"       # 卡片底色：与面板形成明显层次
+BG_INPUT = "transparent"  # 输入框无底色，完全融入父容器
+BORDER = "#3D4350"        # 边框：冷灰蓝，更柔和
+BORDER_HOVER = "#4D535F"  # 悬停边框
 
-ACCENT = "#E53935"        # RVC 品牌红（主强调）
-ACCENT_HOVER = "#EF5350"
-ACCENT_PRESSED = "#C62828"
-ACCENT_DIM = "rgba(229, 57, 53, 0.16)"   # 选中态底色
+ACCENT = "#D32F2F"        # RVC 品牌红（主强调）—— 降饱和，减少视觉疲劳
+ACCENT_HOVER = "#E57373"
+ACCENT_PRESSED = "#B71C1C"
+ACCENT_DIM = "rgba(211, 47, 47, 0.16)"   # 选中态底色
 
 TEXT_PRIMARY = "#E8EAED"
 TEXT_SECONDARY = "#9AA0A8"
 TEXT_MUTED = "#5F6368"
 
 STATUS_OK = "#4CAF50"     # 绿
-STATUS_WARN = "#FFC107"   # 黄
+STATUS_WARN = "#FFB300"   # 黄 —— 提高深色背景对比度
 STATUS_ERR = "#F44336"    # 红
 
 RADIUS = "6px"
@@ -49,13 +49,13 @@ QWidget {{
     background-color: {BG_WINDOW};
     color: {TEXT_PRIMARY};
     font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
-    font-size: 12px;
+    font-size: 13px;
 }}
 QLabel {{ background: transparent; }}
 QLabel#dimLabel {{ color: {TEXT_SECONDARY}; }}
-QLabel#mutedLabel {{ color: {TEXT_MUTED}; font-size: 11px; }}
+QLabel#mutedLabel {{ color: {TEXT_MUTED}; font-size: 12px; }}
 QLabel#sectionTitle {{
-    font-size: 13px; font-weight: 600; color: {TEXT_PRIMARY};
+    font-size: 14px; font-weight: 600; color: {TEXT_PRIMARY};
     padding: 2px 0;
 }}
 
@@ -64,9 +64,9 @@ QPushButton {{
     background-color: {BG_CARD};
     border: 1px solid {BORDER};
     border-radius: {RADIUS};
-    padding: 6px 14px;
+    padding: 7px 16px;
     color: {TEXT_PRIMARY};
-    min-height: 22px;
+    min-height: 28px;
 }}
 QPushButton:hover {{ background-color: #363943; border-color: {BORDER_HOVER}; }}
 QPushButton:pressed {{ background-color: #3E424E; }}
@@ -89,9 +89,20 @@ QPushButton#danger {{
 }}
 QPushButton#danger:hover {{ background-color: rgba(244, 67, 54, 0.12); }}
 
+QPushButton#secondary {{
+    background: transparent; border-color: {BORDER}; color: {TEXT_SECONDARY};
+}}
+QPushButton#secondary:hover {{
+    background-color: {BG_CARD}; border-color: {BORDER_HOVER}; color: {TEXT_PRIMARY};
+}}
+QPushButton#secondary:pressed {{ background-color: #3E424E; }}
+QPushButton#secondary:disabled {{
+    background: transparent; color: {TEXT_MUTED}; border-color: #2E313A;
+}}
+
 QPushButton#bigAction {{
     background-color: {ACCENT}; border-color: {ACCENT}; color: #FFFFFF;
-    font-size: 15px; font-weight: 700; padding: 10px 22px; min-height: 40px;
+    font-size: 16px; font-weight: 700; padding: 12px 24px; min-height: 44px;
 }}
 QPushButton#bigAction:hover {{ background-color: {ACCENT_HOVER}; }}
 QPushButton#bigAction:pressed {{ background-color: {ACCENT_PRESSED}; }}
@@ -102,7 +113,7 @@ QPushButton#bigAction:disabled {{
 /* ============ 工具按钮 ============ */
 QToolButton {{
     background: transparent; border: 1px solid transparent;
-    border-radius: {RADIUS}; padding: 5px 10px; color: {TEXT_SECONDARY};
+    border-radius: {RADIUS}; padding: 6px 12px; color: {TEXT_SECONDARY};
 }}
 QToolButton:hover {{ background-color: {BG_CARD}; color: {TEXT_PRIMARY}; }}
 QToolButton:checked {{
@@ -115,11 +126,11 @@ QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {{
     background-color: {BG_INPUT};
     border: 1px solid {BORDER};
     border-radius: {RADIUS};
-    padding: 4px 8px;
-    min-height: 22px;
+    padding: 5px 10px;
+    min-height: 26px;
 }}
 QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {{
-    border-color: {ACCENT};
+    border: 1px solid {ACCENT};
 }}
 QComboBox::drop-down {{ border: none; width: 22px; }}
 QComboBox QAbstractItemView {{

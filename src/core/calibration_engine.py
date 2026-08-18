@@ -83,13 +83,21 @@ class CalibrationEngine:
 
     @staticmethod
     def _match_markers(markers_ref: List[Dict], markers_cam: List[Dict]) -> Tuple[List, np.ndarray, np.ndarray]:
-        """按 code 匹配两组编码圆，返回 (common_codes, pts_ref, pts_cam)。"""
+        """按 code 匹配两组编码圆，过滤 NaN/Inf 点后返回 (common_codes, pts_ref, pts_cam)。"""
         dict_ref = {m['code']: m for m in markers_ref}
         dict_cam = {m['code']: m for m in markers_cam}
-        common_codes = sorted(set(dict_ref.keys()) & set(dict_cam.keys()))
-        pts_ref = np.array([[dict_ref[c]['x_3d'], dict_ref[c]['y_3d'], dict_ref[c]['z_3d']] for c in common_codes])
-        pts_cam = np.array([[dict_cam[c]['x_3d'], dict_cam[c]['y_3d'], dict_cam[c]['z_3d']] for c in common_codes])
-        return common_codes, pts_ref, pts_cam
+        raw_common_codes = sorted(set(dict_ref.keys()) & set(dict_cam.keys()))
+        common_codes = []
+        pts_ref = []
+        pts_cam = []
+        for c in raw_common_codes:
+            p_ref = np.array([dict_ref[c]['x_3d'], dict_ref[c]['y_3d'], dict_ref[c]['z_3d']], dtype=np.float64)
+            p_cam = np.array([dict_cam[c]['x_3d'], dict_cam[c]['y_3d'], dict_cam[c]['z_3d']], dtype=np.float64)
+            if np.isfinite(p_ref).all() and np.isfinite(p_cam).all():
+                common_codes.append(c)
+                pts_ref.append(p_ref)
+                pts_cam.append(p_cam)
+        return common_codes, np.array(pts_ref, dtype=np.float64), np.array(pts_cam, dtype=np.float64)
 
     # ------------------------------------------------------------------
     # 单帧标定一对相机（RANSAC + 内点 refine）
@@ -100,7 +108,7 @@ class CalibrationEngine:
         cam_id: str,
         markers_ref: List[Dict],
         markers_cam: List[Dict],
-        ransac_threshold: float = 0.002,
+        ransac_threshold: float = 2.0,
         min_pairs: int = 3,
     ) -> dict:
         """单帧标定一对相机：求 cam→ref 的刚性变换 T。
@@ -316,7 +324,7 @@ class CalibrationEngine:
         self,
         ref_id: str,
         cam_id: str,
-        ransac_threshold: float = 0.002,
+        ransac_threshold: float = 2.0,
         min_pairs: int = 3,
     ) -> dict:
         """使用多帧缓存数据分别标定，然后对变换取平均（四元数平均 + 平移平均）。
@@ -330,6 +338,9 @@ class CalibrationEngine:
         frames = self._multi_frame_data.get(key, [])
         if len(frames) == 0:
             return {'success': False, 'message': "无多帧数据"}
+
+        # 清除旧结果，避免本次全部失败时仍显示上一次标定结果
+        self.pair_results.pop(key, None)
 
         Ts = []
         all_rms = []

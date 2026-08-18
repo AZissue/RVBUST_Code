@@ -44,8 +44,9 @@ def numpy_to_qpixmap(img: np.ndarray) -> Optional[QPixmap]:
             qimg = QImage(buf.data, w, h, w, QImage.Format_Grayscale8)
         elif img.ndim == 3 and img.shape[2] == 3:
             h, w, _ = img.shape
-            rgb = np.ascontiguousarray(img[:, :, ::-1])  # BGR → RGB
-            qimg = QImage(rgb.data, w, h, w * 3, QImage.Format_RGB888)
+            buf = np.ascontiguousarray(img)
+            # PyRVC 图像通常为 BGR，直接用 BGR888 避免一次 RGB 翻转拷贝
+            qimg = QImage(buf.data, w, h, w * 3, QImage.Format_BGR888)
         elif img.ndim == 3 and img.shape[2] == 4:
             h, w, _ = img.shape
             buf = np.ascontiguousarray(img)
@@ -62,7 +63,13 @@ def numpy_to_qpixmap(img: np.ndarray) -> Optional[QPixmap]:
 # 保持宽高比的预览标签（从 DualCameraFusion 抽取，标记叠加增强为绿圈+code）
 # ---------------------------------------------------------------------------
 class AspectRatioLabel(QLabel):
-    """保持固定宽高比的 QLabel，图像居中显示不被拉伸，支持编码圆标记叠加。"""
+    """保持固定宽高比的 QLabel，图像居中显示不被拉伸，支持编码圆标记叠加。
+
+    性能优化：
+      - 标记层缓存到与原始图像等尺寸的 QPixmap，resize 时只需缩放缓存层，
+        避免每次重绘都遍历所有标记；
+      - 无标记或图像为空时跳过 painter 创建。
+    """
 
     def __init__(self, ratio=4.0 / 3.0, parent=None):
         super().__init__(parent)
@@ -71,29 +78,66 @@ class AspectRatioLabel(QLabel):
         self.setStyleSheet("background-color: #1A1A20; border: 1px solid #2A2A34;")
         self._pixmap: Optional[QPixmap] = None
         self._markers: List[Dict] = []   # [{'x','y','code', 'valid_3d'}]
-        self._marker_radius = 6
+        self._marker_radius = 4
+        self._overlay_pixmap: Optional[QPixmap] = None
+        self._font = QFont("Consolas", 8)
+        self._font.setBold(True)
 
     def set_markers(self, markers: List[Dict]):
         """markers: 编码圆列表，元素含 x/y（原图坐标）、code、可选 valid_3d。"""
         self._markers = markers or []
+        self._render_overlay()
         self.update()
 
     def clear_markers(self):
         self._markers = []
+        self._overlay_pixmap = None
         self.update()
 
     def setPixmap(self, pixmap):  # noqa: N802（保持 Qt 接口名）
         self._pixmap = pixmap
+        self._render_overlay()
         self.update()
 
     def clear_image(self):
         self._pixmap = None
         self._markers = []
+        self._overlay_pixmap = None
         self.update()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.update()
+
+    def _render_overlay(self):
+        """把标记预渲染到与原始图像等尺寸的透明缓存层。"""
+        if self._pixmap is None or self._pixmap.isNull() or not self._markers:
+            self._overlay_pixmap = None
+            return
+        pw, ph = self._pixmap.width(), self._pixmap.height()
+        overlay = QPixmap(pw, ph)
+        overlay.fill(Qt.transparent)
+        painter = QPainter(overlay)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setFont(self._font)
+        for m in self._markers:
+            dx = float(m['x']) * pw
+            dy = float(m['y']) * ph
+            marker_type = m.get('marker_type', 'coded')
+            if marker_type == 'board':
+                color = QColor(60, 160, 255)
+            else:
+                has_3d = m.get('valid_3d', True)
+                color = QColor(0, 230, 80) if has_3d else QColor(255, 200, 40)
+            painter.setPen(QPen(color, 2))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawEllipse(QPointF(dx, dy), self._marker_radius, self._marker_radius)
+            painter.setPen(QPen(color, 1))
+            painter.drawText(
+                QPointF(dx + self._marker_radius + 2, dy - self._marker_radius - 2),
+                str(m.get('code', '')))
+        painter.end()
+        self._overlay_pixmap = overlay
 
     def paintEvent(self, event):
         super().paintEvent(event)
@@ -109,30 +153,10 @@ class AspectRatioLabel(QLabel):
         sw, sh = int(pw * scale), int(ph * scale)
         x, y = (lw - sw) // 2, (lh - sh) // 2
         painter = QPainter(self)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform)
         painter.drawPixmap(x, y, sw, sh, self._pixmap)
-
-        # 标记叠加：
-        #   - 编码圆：绿圈 + code 文字（无 3D 的用黄色区分）
-        #   - 标定板圆心：蓝圈 + 索引
-        if self._markers:
-            font = QFont("Consolas", 9)
-            font.setBold(True)
-            painter.setFont(font)
-            for m in self._markers:
-                dx = x + m['x'] * scale
-                dy = y + m['y'] * scale
-                marker_type = m.get('marker_type', 'coded')
-                if marker_type == 'board':
-                    color = QColor(60, 160, 255)
-                else:
-                    has_3d = m.get('valid_3d', True)
-                    color = QColor(0, 230, 80) if has_3d else QColor(255, 200, 40)
-                painter.setPen(QPen(color, 2))
-                painter.setBrush(Qt.NoBrush)
-                painter.drawEllipse(QPointF(dx, dy), self._marker_radius, self._marker_radius)
-                painter.setPen(QPen(color, 1))
-                painter.drawText(QPointF(dx + self._marker_radius + 2, dy - self._marker_radius - 2),
-                                 str(m.get('code', '')))
+        if self._overlay_pixmap is not None and not self._overlay_pixmap.isNull():
+            painter.drawPixmap(x, y, sw, sh, self._overlay_pixmap)
 
     def heightForWidth(self, width: int) -> int:
         return int(width / self._ratio)
@@ -253,22 +277,23 @@ class CameraPreviewCard(QFrame):
 
             markers = markers if markers is not None else frame_data.markers
             is_board = frame_data.board_pattern_name is not None
+            h, w = frame_data.image_np.shape[:2] if frame_data.image_np is not None else (0, 0)
             overlay = []
             n_3d = 0
             for m in markers:
-                x = m.get('x_2d', m.get('x', 0))
-                y = m.get('y_2d', m.get('y', 0))
+                x = m.get('x_2d', m.get('x', 0.0))
+                y = m.get('y_2d', m.get('y', 0.0))
                 has_3d = 'x_3d' in m
                 n_3d += 1 if has_3d else 0
                 overlay.append({
-                    'x': x, 'y': y,
+                    'x': float(x) / w if w > 0 else 0.0,
+                    'y': float(y) / h if h > 0 else 0.0,
                     'code': m.get('code', '?'),
                     'valid_3d': has_3d,
                     'marker_type': 'board' if is_board else 'coded',
                 })
             self.preview.set_markers(overlay)
 
-            h, w = frame_data.image_np.shape[:2] if frame_data.image_np is not None else (0, 0)
             self.lbl_info.setText(f"分辨率: {w}×{h} | 拍摄: {self._capture_count}")
             if is_board:
                 self.lbl_markers.setText(f"标定板: {frame_data.board_pattern_name} | 圆心: {len(markers)}")
