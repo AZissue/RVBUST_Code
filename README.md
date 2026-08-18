@@ -13,6 +13,7 @@
 | `master` | **CRM_New（早期版）** | Node.js + 纯 HTML/JS | CRM 系统初代原型，单文件前端 + Express 后端 + JSON 数据库 |
 | `CodedCircleRegistration_v2` | **编码圆拼接工具 v2** | Python + PySide6 + Open3D + RVC SDK | 基于 RVC 深度相机的编码圆点云拼接系统，支持多帧自动配准与彩色融合 |
 | `hand-eye-tools` | **手眼标定数据采集助手** | Python + PyQt5 + Open3D + RVC SDK | 基于 RVC X2 相机的手眼标定数据采集 GUI 工具，支持眼在手外/眼在手上 × 标记物/TCP 戳点四种模式，导出 HandEyeManager 兼容格式 |
+| `rvc-vision-studio` | **RvcVisionStudio** | C++ / Qt6 + QtNodes + PCL / VTK | 拖拽式零代码 3D 点云流程编排与测量平台，支持 ROI 框选、几何拟合、尺寸测量、多视窗与异步执行引擎 |
 
 ---
 
@@ -33,6 +34,9 @@ git checkout CodedCircleRegistration_v2
 
 # 手眼标定数据采集助手
 git checkout hand-eye-tools
+
+# RvcVisionStudio（拖拽式零代码点云测量平台）
+git checkout rvc-vision-studio
 ```
 
 ---
