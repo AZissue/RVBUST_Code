@@ -73,6 +73,9 @@ MainWindow::MainWindow(QWidget* parent)
     setWindowFlags(Qt::Window | Qt::FramelessWindowHint);
     setAttribute(Qt::WA_TranslucentBackground, false);
 
+    // 外层无边框窗口必须显式背景色，否则 Windows 可能在非客户区/标题栏边缘露出系统白边
+    setStyleSheet(QStringLiteral("background: %1; border: none;").arg(Theme::Color::Surface1));
+
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(0);
@@ -102,9 +105,7 @@ MainWindow::MainWindow(QWidget* parent)
             showMaximized();
         updateMaximizeButton();
     });
-    connect(closeBtn, &QToolButton::clicked, this, []() {
-        QApplication::quit();
-    });
+    connect(closeBtn, &QToolButton::clicked, this, &QWidget::close);
 
     titleLayout->addWidget(titleLabel_);
     titleLayout->addStretch();
@@ -118,6 +119,7 @@ MainWindow::MainWindow(QWidget* parent)
     inner_ = new QMainWindow(this);
     inner_->setWindowFlags(Qt::Widget);
     inner_->setObjectName(QStringLiteral("innerMainWindow"));
+    inner_->setContentsMargins(0, 0, 0, 0);
     root->addWidget(inner_, 1);
 
     setupWorkspace(inner_);
@@ -318,8 +320,11 @@ bool MainWindow::nativeEvent(const QByteArray& eventType, void* message, qintptr
                 *result = HTRIGHT;
             else if (titleBar_ && titleBar_->geometry().contains(pos)) {
                 // 标题栏：按钮区域保持 HTCLIENT，其余可拖动
-                // childAt 需要 MainWindow 本地坐标（pos），不能用屏幕坐标 x/y
+                // childAt 需要 MainWindow 本地坐标（pos），不能用屏幕坐标 x/y。
+                // 按钮内部可能有子控件（label/icon），需向上查找直到 QToolButton。
                 QWidget* child = childAt(pos);
+                while (child && child != this && !qobject_cast<QToolButton*>(child))
+                    child = child->parentWidget();
                 if (qobject_cast<QToolButton*>(child))
                     *result = HTCLIENT;
                 else

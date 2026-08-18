@@ -78,9 +78,9 @@ QString appStyleSheet()
     qss += QStringLiteral(
         // ---- 基础 ----
         "QMainWindow, QDialog { background: %1; color: %2; }"
-        "QMainWindow#innerMainWindow { border: none; }"
+        "QMainWindow#innerMainWindow { background: %5; border: none; }"
         "QWidget { color: %2; font-family: \"%3\"; }"
-        "#titleBar { background: %5; border-bottom: 1px solid %6; }"
+        "#titleBar { background: %5; border: none; border-bottom: 1px solid %6; }"
         "#titleLabel { color: %2; font-size: 12px; font-weight: 500; }"
         "QToolButton[class=\"title-button\"] { background: transparent; color: %4; border: none; border-radius: 0; font-size: 14px; font-family: \"Segoe UI\", \"Microsoft YaHei\", sans-serif; }"
         "QToolButton[class=\"title-button\"]:hover { background: %7; color: %2; }"
@@ -92,15 +92,15 @@ QString appStyleSheet()
         "QDockWidget::close-button, QDockWidget::float-button { background: transparent; border: none; padding: 2px; }"
         "QDockWidget::close-button:hover, QDockWidget::float-button:hover { background: %7; }"
         // ---- 菜单栏 / 菜单 ----
-        "QMenuBar { background: %1; color: %2; border-bottom: 1px solid %6; }"
-        "QMenuBar::item { padding: 4px 8px; background: transparent; }"
+        "QMenuBar { background: %5; color: %2; border: none; border-bottom: 1px solid %6; padding: 0px; }"
+        "QMenuBar::item { padding: 4px 8px; background: transparent; margin: 0px; }"
         "QMenuBar::item:selected { background: %7; }"
         "QMenu { background: %5; color: %2; border: 1px solid %6; padding: 4px; }"
         "QMenu::item { padding: 4px 24px 4px 12px; }"
         "QMenu::item:selected { background: %7; }"
         "QMenu::separator { height: 1px; background: %6; margin: 4px 8px; }"
         // ---- 工具栏 ----
-        "QToolBar { background: %1; border-bottom: 1px solid %6; spacing: 4px; padding: 4px; }"
+        "QToolBar { background: %5; border: none; border-bottom: 1px solid %6; spacing: 4px; padding: 4px; }"
         "QToolBar::separator { width: 1px; background: %6; margin: 2px 4px; }"
         // ---- 按钮三层级：Secondary 默认 / Primary（琥珀，每区域至多一个）/ Ghost ----
         "QPushButton { background: %7; color: %2; border: 1px solid %6; border-radius: 6px; padding: 8px 16px; font-family: \"%3\"; }"
