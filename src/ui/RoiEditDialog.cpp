@@ -7,6 +7,7 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QPushButton>
 #include <QStackedWidget>
 #include <QVBoxLayout>
 
@@ -25,6 +26,8 @@ RoiEditDialog::RoiEditDialog(ModuleBase* module, PointCloud cloud, QWidget* pare
     resize(720, 640);
 
     auto* layout = new QVBoxLayout(this);
+    layout->setContentsMargins(12, 12, 12, 12);
+    layout->setSpacing(12);
 
     // ---- 模式选择 ----
     auto* modeLayout = new QHBoxLayout;
@@ -52,7 +55,10 @@ RoiEditDialog::RoiEditDialog(ModuleBase* module, PointCloud cloud, QWidget* pare
 
     // ---- 参数编辑 ----
     auto* paramGroup = new QGroupBox(QStringLiteral("ROI 范围（米）"), this);
+    paramGroup->setObjectName(QStringLiteral("roiParamGroup"));
     auto* form = new QFormLayout(paramGroup);
+    form->setContentsMargins(0, 8, 0, 0);
+    form->setSpacing(8);
 
     auto makeSpin = [this]() {
         auto* spin = new QDoubleSpinBox(this);
@@ -82,6 +88,9 @@ RoiEditDialog::RoiEditDialog(ModuleBase* module, PointCloud cloud, QWidget* pare
 
     // ---- 按钮 ----
     buttons_ = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
+    if (QPushButton* okBtn = buttons_->button(QDialogButtonBox::Ok)) {
+        okBtn->setProperty("class", "primary");
+    }
     connect(buttons_, &QDialogButtonBox::accepted, this, &RoiEditDialog::accept);
     connect(buttons_, &QDialogButtonBox::rejected, this, &QDialog::reject);
     layout->addWidget(buttons_);

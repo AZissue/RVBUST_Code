@@ -174,6 +174,9 @@ QString appStyleSheet()
         "QLabel { background: transparent; }"
         "QGroupBox { border: 1px solid %6; border-radius: 6px; margin-top: 12px; padding-top: 8px; }"
         "QGroupBox::title { subcontrol-origin: margin; left: 8px; color: %4; }"
+        // ROI 弹窗参数组：去掉边框，标题改 caption 样式
+        "QGroupBox#roiParamGroup { border: none; margin-top: 12px; padding-top: 0px; }"
+        "QGroupBox#roiParamGroup::title { subcontrol-origin: margin; left: 0px; top: -2px; color: %4; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; }"
         // ---- 流程画布（QtNodes GraphicsView）----
         "QGraphicsView { background: %1; border: none; }"
         // ---- 分隔条已在上文覆盖 ----
