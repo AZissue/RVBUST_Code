@@ -28,8 +28,7 @@
   分支（main 总览 README 已登记）；本地 master 跟踪 `origin/pointcloud-search`，
   提交后直接 `git push`。本机 GitHub 直连超时，需走代理：
   http `127.0.0.1:10809` / socks5 `127.0.0.1:10808`。
-- 上次会话结束已提交：是（ROI W/E 与体素修复已推送；本会话文档变更 PROJECT §8/§9 +
-  STATUS/PLAN 同步，推送后即同步）
+- 上次会话结束已提交：是（ROI W/E、体素修复与本会话文档约定均已推送）
 
 ## ✅ 已完成（近期；更早历史见 git）
 - [x] 2026-08-25 完成节点 I/O / 批量 / 分块 / 显示统一约定（PROJECT §8 + §9 待修清单），
