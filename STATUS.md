@@ -17,6 +17,7 @@
 
 - [x] 2026-08-25 文档体系按新模板重构：AGENTS/PROJECT/PLAN/STATUS + SESSION_PROMPTS，
   双工作区同步，git 首次文档提交（回退路线按 PLAN 各阶段）。
+- [x] 2026-08-25 删除旧备忘 PROJECT_NOTES.md（半成品备忘已被新文档体系取代）。
 - [x] 2026-08-24 阶段 8 机器人通信：RobotPose 统一接口 + ModbusTcpReader +
   独立线程 mock 单测全绿；SidePanel 通信卡默认关闭，不影响现有链路（4619dda）。
 - [x] 2026-08-24 阶段 7 标定一体化：CalibrationService（staging+位姿规范化+

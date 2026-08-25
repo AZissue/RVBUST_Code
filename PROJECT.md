@@ -119,3 +119,4 @@
 | 2026-08-24 | v2.0 需求纳入阶段 4-10（17 项） | 全项目 | AI-codex/用户确认 |
 | 2026-08-24 | 实现阶段 4/7/8（提交 4619dda） | src/tests/docs | AI-codex |
 | 2026-08-25 | 按新模板重构文档体系，新增 AGENTS.md 与 SESSION_PROMPTS.md | 文档体系 | AI-codex/用户确认 |
+| 2026-08-25 | 删除旧备忘 PROJECT_NOTES.md（已被新文档体系取代，git 历史可追溯） | 文档体系 | AI-codex/用户确认 |
