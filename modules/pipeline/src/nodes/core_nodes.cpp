@@ -11,6 +11,7 @@
 #include <Eigen/Geometry>
 
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <stdexcept>
 #include <string>
@@ -134,19 +135,17 @@ core::LengthUnit resolveUnit(const std::string& unit) {
     return core::LengthUnit::Meter;
 }
 
-std::string expandPath(const std::string& path, std::size_t index, std::size_t total) {
-    if (total <= 1) return path;
-    const std::filesystem::path p(path);
-    return (p.parent_path() / (p.stem().string() + "_" + std::to_string(index) + p.extension().string()))
-        .string();
+// Zero-padded numeric suffix (>= 3 digits): 0 -> "000", 123 -> "123".
+std::string zeroPad(std::int64_t index) {
+    std::string s = std::to_string(index);
+    if (s.size() < 3) s.insert(s.begin(), static_cast<std::string::size_type>(3 - s.size()), '0');
+    return s;
 }
 
 // Zero-padded frame identity used for batch object ids / save naming:
 // frame_000, frame_001, ... (PROJECT §8.5 / §9).
 std::string frameName(std::int64_t index) {
-    std::string s = std::to_string(index);
-    if (s.size() < 3) s.insert(s.begin(), static_cast<std::string::size_type>(3 - s.size()), '0');
-    return "frame_" + s;
+    return "frame_" + zeroPad(index);
 }
 
 }  // namespace
@@ -260,29 +259,51 @@ ObjectList SaveCloudNode::execute(const std::vector<ObjectList>& inputs, const P
                       : format == io::Format::Xyz ? ".xyz"
                       : format == io::Format::Csv ? ".csv"
                                                   : ".ply";
-    bool has_known_ext = false;
+    // Strip a known extension the user typed into the file name; the resolved
+    // format always supplies the extension (auto -> PLY).
     for (const char* e : {".pcd", ".ply", ".xyz", ".csv"}) {
-        if (file_name.size() >= 4 &&
-            file_name.compare(file_name.size() - 4, 4, e) == 0) {
-            has_known_ext = true;
+        const std::size_t elen = std::strlen(e);
+        if (file_name.size() >= elen &&
+            file_name.compare(file_name.size() - elen, elen, e) == 0) {
+            file_name.resize(file_name.size() - elen);
             break;
         }
     }
-    if (!has_known_ext) file_name += ext;
     options.format = format;
 
-    const std::filesystem::path base_path =
-        std::filesystem::path(folder) / file_name;
+    const std::filesystem::path folder_path(folder);
     std::error_code ec;
-    std::filesystem::create_directories(base_path.parent_path(), ec);
+    std::filesystem::create_directories(folder_path, ec);
     if (ec) {
         throw std::runtime_error("save_cloud: cannot create folder: " + folder);
     }
 
+    // Batch naming (PROJECT §8.5 / §9): one file per object. Frame-carrying
+    // objects (batch load names "frame_000") keep their zero-padded identity
+    // so stream/chunked/all modes produce identical names; other 1:N outputs
+    // get a zero-padded global index (batch_start + position). Multi-box
+    // objects append ".roi<label>" before the extension.
     const auto& objects = inputs[0].objects;
+    const std::int64_t base_index = context().batch_start;
+    const bool chunked = context().batch_count > 0;
     for (std::size_t i = 0; i < objects.size(); ++i) {
-        io::writePointCloud(expandPath(base_path.string(), i, objects.size()),
-                            *objects[i]->cloud, options);
+        const auto& obj = *objects[i];
+        std::string stem;
+        // Single-object runs outside a batch context keep the plain file name;
+        // chunked blocks still number every object so names stay stable across
+        // stream / chunked / all modes.
+        if (objects.size() == 1 && !chunked) {
+            stem = file_name;
+        } else if (obj.name.rfind("frame_", 0) == 0) {
+            stem = obj.name;
+        } else {
+            stem = file_name + "_" + zeroPad(base_index + static_cast<std::int64_t>(i));
+        }
+        if (obj.roi && !obj.roi->label.empty()) {
+            stem += "." + obj.roi->label;
+        }
+        const std::string out_path = (folder_path / (stem + ext)).string();
+        io::writePointCloud(out_path, *obj.cloud, options);
     }
     return inputs[0];
 }

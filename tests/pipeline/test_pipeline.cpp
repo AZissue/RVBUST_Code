@@ -977,6 +977,105 @@ int main() {
                           "cropalign: error mentions length mismatch");
     }
 
+    // ---- Save: zero-padded + multi-box naming, cross-mode consistent ----
+    {
+        const std::filesystem::path src_dir = dir / "savename_src";
+        std::filesystem::create_directories(src_dir);
+        writeTemp(src_dir, "f0.ply", makeLine(10, 0.0f));
+        writeTemp(src_dir, "f1.ply", makeLine(20, 1.0f));
+        writeTemp(src_dir, "f2.ply", makeLine(30, 2.0f));
+
+        // mode=all + save -> frame_000.ply frame_001.ply frame_002.ply
+        const std::filesystem::path out_all = dir / "savename_all";
+        Graph g;
+        auto* load = g.addNode("load_cloud");
+        g.setParam(load->id(), "folder", ParamValue{src_dir.string()});
+        g.setParam(load->id(), "mode", ParamValue{std::string("all")});
+        auto* save = g.addNode("save_cloud");
+        g.setParam(save->id(), "folder", ParamValue{out_all.string()});
+        g.setParam(save->id(), "file_name", ParamValue{std::string("cloud")});
+        g.connect(load->id(), 0, save->id(), 0);
+        failures += check(g.execute(), "savename: all-mode execute ok");
+        bool files_ok = true;
+        for (const char* n : {"frame_000.ply", "frame_001.ply", "frame_002.ply"}) {
+            files_ok = files_ok && std::filesystem::exists(out_all / n);
+        }
+        failures += check(files_ok, "savename: zero-padded frame names (all)");
+        failures += check(!std::filesystem::exists(out_all / "cloud_0.ply"),
+                          "savename: no legacy _0 suffix");
+
+        // stream (K=1) + save -> identical names across modes
+        const std::filesystem::path out_stream = dir / "savename_stream";
+        Graph g2;
+        auto* load2 = g2.addNode("load_cloud");
+        g2.setParam(load2->id(), "folder", ParamValue{src_dir.string()});
+        g2.setParam(load2->id(), "mode", ParamValue{std::string("stream")});
+        auto* save2 = g2.addNode("save_cloud");
+        g2.setParam(save2->id(), "folder", ParamValue{out_stream.string()});
+        g2.setParam(save2->id(), "file_name", ParamValue{std::string("cloud")});
+        g2.connect(load2->id(), 0, save2->id(), 0);
+        failures += check(g2.executeChunked(1), "savename: stream execute ok");
+        bool stream_ok = true;
+        for (const char* n : {"frame_000.ply", "frame_001.ply", "frame_002.ply"}) {
+            stream_ok = stream_ok && std::filesystem::exists(out_stream / n);
+        }
+        failures += check(stream_ok, "savename: zero-padded frame names (stream)");
+
+        // multi-box: frame_000.roi0.ply frame_000.roi1.ply ...
+        const std::filesystem::path out_box = dir / "savename_box";
+        Graph g3;
+        auto* load3 = g3.addNode("load_cloud");
+        g3.setParam(load3->id(), "folder", ParamValue{src_dir.string()});
+        g3.setParam(load3->id(), "mode", ParamValue{std::string("all")});
+        auto* box = g3.addNode("box_roi");
+        g3.setParam(box->id(), "box_count", ParamValue{2});
+        g3.setParam(box->id(), "boxes_json",
+                    ParamValue{std::string(
+                        R"([{"xmin":-10,"xmax":15,"ymin":-10,"ymax":10,"zmin":-10,"zmax":10},)"
+                        R"({"xmin":15,"xmax":40,"ymin":-10,"ymax":10,"zmin":-10,"zmax":10}])")});
+        auto* save3 = g3.addNode("save_cloud");
+        g3.setParam(save3->id(), "folder", ParamValue{out_box.string()});
+        g3.setParam(save3->id(), "file_name", ParamValue{std::string("cloud")});
+        g3.connect(load3->id(), 0, box->id(), 0);
+        g3.connect(box->id(), 0, save3->id(), 0);
+        failures += check(g3.execute(), "savename: multi-box execute ok");
+        bool box_ok = true;
+        for (const char* n : {"frame_000.roi0.ply", "frame_000.roi1.ply",
+                              "frame_001.roi0.ply", "frame_001.roi1.ply",
+                              "frame_002.roi0.ply", "frame_002.roi1.ply"}) {
+            box_ok = box_ok && std::filesystem::exists(out_box / n);
+        }
+        failures += check(box_ok, "savename: multi-box roi label names");
+
+        // 1:N outputs without frame ids get zero-padded global indices.
+        const std::filesystem::path out_1n = dir / "savename_1n";
+        Graph g4;
+        auto* load4 = g4.addNode("load_cloud");
+        g4.setParam(load4->id(), "path",
+                    ParamValue{writeTemp(dir, "savename_blobs.ply", makeBlobs())});
+        auto* db = g4.addNode("dbscan");
+        g4.setParam(db->id(), "eps", ParamValue{10.0});
+        g4.setParam(db->id(), "min_points", ParamValue{20});
+        auto* save4 = g4.addNode("save_cloud");
+        g4.setParam(save4->id(), "folder", ParamValue{out_1n.string()});
+        g4.setParam(save4->id(), "file_name", ParamValue{std::string("cluster")});
+        g4.connect(load4->id(), 0, db->id(), 0);
+        g4.connect(db->id(), 0, save4->id(), 0);
+        failures += check(g4.execute(), "savename: 1:N execute ok");
+        const auto* db_out = g4.output(db->id());
+        if (db_out) {
+            bool idx_ok = true;
+            for (std::size_t i = 0; i < db_out->objects.size(); ++i) {
+                std::string pad = i < 10 ? "00" : (i < 100 ? "0" : "");
+                idx_ok = idx_ok &&
+                         std::filesystem::exists(out_1n /
+                                                 ("cluster_" + pad + std::to_string(i) +
+                                                  ".ply"));
+            }
+            failures += check(idx_ok, "savename: 1:N indexed names");
+        }
+    }
+
     // ---- Solution JSON round-trip ----
     {
         Graph g;
