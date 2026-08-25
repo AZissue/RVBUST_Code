@@ -7,23 +7,29 @@
 - 当前状态：阶段 2「节点逐个完善」进行中；**当前主线：ROI BOX 节点完善**。
   基准流程「点云加载 → Box ROI → 保存点云」已跑通；ROI 交互（拖移 / 缩放 /
   旋转）、重置包围盒、显示降采样、保存“文件夹 + 文件名”均已完成。
-- 本轮：ROI 交互升级——①单面缩放启用（MoveFaces，抓面沿法向放大缩小），去掉
-  右键整体缩放（原“往哪滑都缩”）；②选中 box_roi 自动进入编辑（免再点 ROI 按钮）；
-  ③关闭米字线（OutlineFaceWires/CursorWires），外框线宽 2.0→1.2px、面透明度
-  0.15→0.06（去遮挡）。已构建 + `ctest` 6/6 全绿 + smoke + demo 冒烟通过。
-- 下一步：ROI 包围盒样式自定义——三色边框（X红/Y绿/Z蓝）+ 只留 XYZ 三轴
-  （vtkBoxWidget2 无法原生按轴分色，需叠加自定义线框/轴，待确认编辑态手柄方案）。
-- 正在进行的文件：`app/src/roi_selector.cpp`、`app/src/main_window.cpp/.h`
+- 本轮：交互统一为 RVC Manager 手感——**左键旋转、滚轮缩放、右键平移**（原来是
+  中键平移）。3D 视窗（`point_cloud_view.cpp` 新增 `CameraStylePanRight`，右键→平移、
+  滚轮缩放步进放大到 1.25/格）；ROI 包围盒（`roi_selector.cpp` 事件翻译器把右键重映射为
+  Translate）；并定位“放大后缩放/拖动变慢”根因：VTK 默认滚轮每格仅放大 ~1.9%
+  （`pow(1.1,0.2)`），缩放为恒定比例、放大后无感致“变慢”，需用更大、恒定步进。
+  已构建 + `ctest` 6/6 全绿 + smoke + demo 冒烟通过。
+- 说明：用户已**取消**“三色边框 + 只留 XYZ 三轴”样式自定义，不再做；包围盒面缩放
+  （MoveFaces）已于上一轮做好并确认方便。
+- 下一步：手动验证交互（左右滚轮键位、放大后手感）；若滚轮 1.25 太跳，可回调
+  到 1.05~1.15；若放大后“拖动”仍显慢，再考虑重写 `Pan()` 做距离无关步进。
+- 正在进行的文件：`app/src/point_cloud_view.cpp`、`app/src/roi_selector.cpp`
 - 卡点 / 风险：ROI 交互/样式为 VTK 行为，QtTest 无法断言，只能手动验证；
   核显 / 远程桌面场景必须保持显示降采样。
 - 远程协作：项目已上传 `github.com/AZissue/RVBUST_Code` 的 `pointcloud-search`
   分支（main 总览 README 已登记）；本地 master 跟踪 `origin/pointcloud-search`，
   提交后直接 `git push`。本机 GitHub 直连超时，需走代理：
   http `127.0.0.1:10809` / socks5 `127.0.0.1:10808`。
-- 上次会话结束已提交：是（已 push 到 `origin/pointcloud-search`；本轮双盒修复已提交）
+- 上次会话结束已提交：是（已 push 到 `origin/pointcloud-search`；本轮交互改造待提交）
 
 ## ✅ 已完成（近期；更早历史见 git）
 - [x] 2026-08-25 修复本地一键构建：CMake 复用 RvcVisionStudio 自编译 VTK（带 GUISupportQt）解决 PCL 1.13.0 捆绑 VTK 缺 Qt 支持问题；start.bat 自动探测本机 Qt/PCL 路径；ctest 6/6 + autoquit 冒烟通过
+- [x] 2026-08-25 交互统一为左旋/滚轮缩放/右键平移（3D 视窗 + ROI 包围盒）；滚轮步进
+  1.25/格；定位“放大后变慢”根因；构建/ctest/smoke/demo 通过
 - [x] 2026-08-25 ROI 交互升级：单面缩放(MoveFaces)、去掉右键整体缩放、选中
   box_roi 自动进入编辑、关闭米字线、外框细化(线宽 1.2px/面 0.06)；构建/ctest/smoke/demo 通过
 - [x] 2026-08-25 修复 ROI 操控“双包围盒”：box_roi 编辑态只显示 vtkBoxWidget2
@@ -41,8 +47,8 @@
   Dark、方案 JSON、多视窗
 
 ## 🚧 进行中
-- 阶段 2（主线 ROI BOX）：节点级 E2E 已补齐；本轮完成 ROI 交互升级（单面缩放 /
-  自动进入编辑 / 去米字 / 细化）；剩「三色边框 + XYZ 三轴」样式自定义 + 手动验证。
+- 阶段 2（主线 ROI BOX）：节点级 E2E 已补齐；本轮完成交互统一（左旋/滚轮缩放/右键平移）
+  + 慢速根因定位；剩手动验证交互手感。
 
 ## 🐛 已知 BUG / 问题
 | 问题 | 状态 | 备注 |

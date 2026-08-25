@@ -9,6 +9,8 @@
 #include <vtkProperty.h>
 #include <vtkRenderWindowInteractor.h>
 #include <vtkTransform.h>
+#include <vtkWidgetEvent.h>
+#include <vtkWidgetEventTranslator.h>
 #endif
 
 #include <algorithm>
@@ -165,6 +167,16 @@ void RoiSelector::setEnabled(bool on) {
     if (widget_) {
         if (on) {
             widget_->On();
+            // Match RVC Manager convention: right button pans the box (default
+            // binds right to whole-widget scale). The left button still rotates
+            // a face / moves a face handle, and the wheel still zooms.
+            auto* translator = widget_->GetEventTranslator();
+            translator->RemoveTranslation(vtkCommand::RightButtonPressEvent);
+            translator->SetTranslation(vtkCommand::RightButtonPressEvent,
+                                       vtkWidgetEvent::Translate);
+            translator->RemoveTranslation(vtkCommand::RightButtonReleaseEvent);
+            translator->SetTranslation(vtkCommand::RightButtonReleaseEvent,
+                                       vtkWidgetEvent::EndTranslate);
         } else {
             widget_->Off();
         }

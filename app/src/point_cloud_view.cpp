@@ -10,10 +10,12 @@
 #include <vtkAxesActor.h>
 #include <vtkCamera.h>
 #include <vtkCellArray.h>
+#include <vtkCommand.h>
 #include <vtkCubeSource.h>
 #include <vtkDataSetMapper.h>
 #include <vtkInteractorStyleTrackballCamera.h>
 #include <vtkNew.h>
+#include <vtkObjectFactory.h>
 #include <vtkPoints.h>
 #include <vtkPointData.h>
 #include <vtkPolyData.h>
@@ -31,6 +33,34 @@
 #include <algorithm>
 #include <cmath>
 
+namespace {
+
+// RVC Manager-style camera navigation: left button rotates, wheel zooms and the
+// *right* button pans. vtkInteractorStyleTrackballCamera defaults to middle
+// button pan and right button dolly, so remap right -> pan here.
+class CameraStylePanRight final : public vtkInteractorStyleTrackballCamera {
+public:
+    static CameraStylePanRight* New() {
+        auto* s = new CameraStylePanRight;
+        s->InitializeObjectBase();
+        return s;
+    }
+    vtkTypeMacro(CameraStylePanRight, vtkInteractorStyleTrackballCamera);
+
+    void OnRightButtonDown() override { this->OnMiddleButtonDown(); }
+    void OnRightButtonUp() override { this->OnMiddleButtonUp(); }
+
+    // A slightly bigger wheel step than the default 1.1 so zooming deep into a
+    // cloud does not feel like it needs many notches per step.
+    void OnMouseWheelForward() override { this->Dolly(1.25); }
+    void OnMouseWheelBackward() override { this->Dolly(1.0 / 1.25); }
+
+private:
+    CameraStylePanRight() = default;
+};
+
+}  // namespace
+
 namespace app {
 
 PointCloudView::PointCloudView(QWidget* parent) : QWidget(parent) {
@@ -42,7 +72,7 @@ PointCloudView::PointCloudView(QWidget* parent) : QWidget(parent) {
     renderer_ = vtkRenderer::New();
     renderer_->SetBackground(0.16, 0.16, 0.18);
     vtk_widget_->renderWindow()->AddRenderer(renderer_);
-    vtkNew<vtkInteractorStyleTrackballCamera> style;
+    vtkNew<CameraStylePanRight> style;
     vtk_widget_->renderWindow()->GetInteractor()->SetInteractorStyle(style);
     roi_selector_ = new RoiSelector(this);
     roi_selector_->attach(vtk_widget_->renderWindow()->GetInteractor());
