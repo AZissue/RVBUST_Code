@@ -28,29 +28,27 @@ if "%QT_DIR%"=="" (
 echo [PointCloudSearch] PCL_ROOT=%PCL_ROOT%
 echo [PointCloudSearch] QT_DIR=%QT_DIR%
 
-if not exist "%EXE%" (
-    echo [PointCloudSearch] Release binary not found, configuring and building...
-
-    where cmake >nul 2>nul
-    if errorlevel 1 (
-        echo [PointCloudSearch] cmake not found on PATH.
-        exit /b 1
-    )
-
-    cmake -S . -B "%BUILD_DIR%" -G "Visual Studio 18 2026" -A x64 -DPCL_ROOT="%PCL_ROOT%" -DCMAKE_PREFIX_PATH="%QT_DIR%"
-    if errorlevel 1 (
-        echo [PointCloudSearch] CMake configure failed.
-        exit /b 1
-    )
-
-    cmake --build "%BUILD_DIR%" --config Release --target pcsearch_app --parallel 8
-    if errorlevel 1 (
-        echo [PointCloudSearch] Build failed, see errors above.
-        exit /b 1
-    )
-
-    echo [PointCloudSearch] Build finished.
+where cmake >nul 2>nul
+if errorlevel 1 (
+    echo [PointCloudSearch] cmake not found on PATH.
+    exit /b 1
 )
+
+echo [PointCloudSearch] Configuring (incremental)...
+cmake -S . -B "%BUILD_DIR%" -G "Visual Studio 18 2026" -A x64 -DPCL_ROOT="%PCL_ROOT%" -DCMAKE_PREFIX_PATH="%QT_DIR%"
+if errorlevel 1 (
+    echo [PointCloudSearch] CMake configure failed.
+    exit /b 1
+)
+
+echo [PointCloudSearch] Building (incremental)...
+cmake --build "%BUILD_DIR%" --config Release --target pcsearch_app --parallel 8
+if errorlevel 1 (
+    echo [PointCloudSearch] Build failed, see errors above.
+    exit /b 1
+)
+
+echo [PointCloudSearch] Build up-to-date.
 
 if "%~1"=="" (
     start "" "%EXE%"
