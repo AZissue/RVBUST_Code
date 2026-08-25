@@ -6,17 +6,23 @@
 ## ⏭ 交接块（新会话先读这里）
 - 当前状态：阶段 2「节点逐个完善」进行中；基准流程「点云加载 → Box ROI →
   保存点云」已跑通；ROI 交互（拖移 / 缩放 / 旋转）、重置包围盒、显示降采样、
-  保存“文件夹 + 文件名”均已完成，`ctest` 6/6 全绿。
-- 下一步：用「点云加载 → 替换节点 → 保存」逐个验证平面检测 / DBSCAN /
-  欧几里得 / Z 过滤 / 体素 / 随机下采样 / ROI Crop，每个节点补单测。
-- 正在进行的文件：`modules/pipeline/src/nodes/core_nodes.cpp`、
+  保存“文件夹 + 文件名”均已完成。节点级 E2E 单测已覆盖：load→remove_invalid→
+  voxel、z_filter、box_roi+roi_crop（含旋转）、dbscan、random_downsample、
+  euclidean_cluster、plane_detect、save；`ctest` 6/6 全绿。
+- 下一步：本轮已补齐 random_downsample / euclidean_cluster / plane_detect 三个
+  节点的节点级 E2E；剩平面检测 / 聚类节点的「参数面板 + 3D 叠加显示」做手动
+  验证（无法 QtTest 模拟），并跑一次完整冒烟（demo 流程）。
+- 正在进行的文件：`tests/pipeline/test_pipeline.cpp`（本轮新增节点级 E2E）、
+  `modules/pipeline/src/nodes/core_nodes.cpp`、
   `app/src/main_window.cpp`、`params_panel.cpp`、`point_cloud_view.cpp`、
   `roi_selector.cpp`
 - 卡点 / 风险：无阻塞；注意核显 / 远程桌面场景必须保持显示降采样；ROI 交互
-  回归只能手动验证（无法 QtTest 模拟）。
+  与节点「参数面板 + 3D 显示」只能手动验证（无法 QtTest 模拟）。
 - 上次会话结束已提交：是（git 本地提交，未 push）
 
 ## ✅ 已完成（近期；更早历史见 git）
+- [x] 2026-08-25 补齐 random_downsample / euclidean_cluster / plane_detect 节点级
+  E2E 单测（走 Graph 全链路 + source_indices 溯源）；`ctest` 6/6 全绿
 - [x] 2026-08-25 项目文档按新模板迁移（AGENTS / PROJECT / PLAN / STATUS +
   docs/SESSION_PROMPTS.md）；git 初始化基线提交
 - [x] 2026-08-24 Box ROI 全套：OBB 旋转、8 角点位姿读取、重置包围盒（AABB，
@@ -28,7 +34,8 @@
   Dark、方案 JSON、多视窗
 
 ## 🚧 进行中
-- 阶段 2：逐个替换中间节点测试（平面检测 → 聚类 → Z 过滤 → 下采样 → ROI Crop）。
+- 阶段 2：节点级 E2E 已补齐（voxel / z_filter / ROI / dbscan / random / euclidean /
+  plane / save）；剩各节点的「参数面板 + 3D 显示」手动验证 + 完整冒烟。
 
 ## 🐛 已知 BUG / 问题
 | 问题 | 状态 | 备注 |

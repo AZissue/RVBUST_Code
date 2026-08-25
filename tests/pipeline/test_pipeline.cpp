@@ -381,6 +381,148 @@ int main() {
                           "dbscan: 3 clusters + 1 noise object");
     }
 
+    // ---- Random downsample node (E2E through graph) ----
+    {
+        Graph g;
+        PointCloudData c;
+        c.points.resize(500, 3);
+        for (std::int64_t i = 0; i < 500; ++i) {
+            c.points(i, 0) = static_cast<float>(i);
+            c.points(i, 1) = 0.0f;
+            c.points(i, 2) = 0.0f;
+        }
+        const std::string path = writeTemp(dir, "rand_src.ply", c);
+        auto* load = g.addNode("load_cloud");
+        g.setParam(load->id(), "path", ParamValue{path});
+        auto* rnd = g.addNode("random_downsample");
+        g.setParam(rnd->id(), "target_count", ParamValue{75});
+        g.setParam(rnd->id(), "seed", ParamValue{99});
+        g.connect(load->id(), 0, rnd->id(), 0);
+        failures += check(g.execute(), "random: execute ok");
+        const auto* out = g.output(rnd->id());
+        failures += check(out && out->objects.size() == 1 &&
+                              out->objects[0]->cloud->size() == 75,
+                          "random: count");
+        std::vector<std::int64_t> reference_map;
+        if (out && !out->objects.empty()) {
+            const auto& map = out->objects[0]->source_indices;
+            reference_map = map;
+            failures += check(static_cast<std::int64_t>(map.size()) == 75,
+                              "random: source map size");
+            bool in_range = true;
+            for (const auto& s : map) in_range = in_range && s >= 0 && s < 500;
+            failures += check(in_range, "random: source map ranges");
+        }
+
+        // Same seed reproduces the same subset (deterministic pipeline).
+        Graph g2;
+        auto* load2 = g2.addNode("load_cloud");
+        g2.setParam(load2->id(), "path", ParamValue{path});
+        auto* rnd2 = g2.addNode("random_downsample");
+        g2.setParam(rnd2->id(), "target_count", ParamValue{75});
+        g2.setParam(rnd2->id(), "seed", ParamValue{99});
+        g2.connect(load2->id(), 0, rnd2->id(), 0);
+        failures += check(g2.execute(), "random: re-run execute ok");
+        const auto* out2 = g2.output(rnd2->id());
+        failures += check(out2 && out2->objects.size() == 1 &&
+                              out2->objects[0]->source_indices ==
+                                  reference_map,
+                          "random: deterministic with fixed seed");
+    }
+
+    // ---- Euclidean clustering node (E2E through graph) ----
+    {
+        Graph g;
+        const std::string path = writeTemp(dir, "blobs_euclid.ply", makeBlobs());
+        auto* load = g.addNode("load_cloud");
+        g.setParam(load->id(), "path", ParamValue{path});
+        auto* eu = g.addNode("euclidean_cluster");
+        g.setParam(eu->id(), "tolerance", ParamValue{10.0});
+        g.setParam(eu->id(), "min_cluster_size", ParamValue{50});
+        g.connect(load->id(), 0, eu->id(), 0);
+        failures += check(g.execute(), "euclidean: execute ok");
+        const auto* out = g.output(eu->id());
+        failures += check(out && out->objects.size() == 3,
+                          "euclidean: 3 clusters (noise below min size dropped)");
+        if (out) {
+            for (const auto& obj : out->objects) {
+                failures += check(static_cast<std::int64_t>(obj->source_indices.size()) ==
+                                      obj->cloud->size(),
+                                  "euclidean: source map size == cloud size");
+                failures += check(!obj->regions.empty() &&
+                                      obj->regions[0].kind ==
+                                          pcsearch::core::Region::Kind::Cluster,
+                                  "euclidean: region kind cluster");
+                bool in_range = true;
+                for (const auto& s : obj->source_indices)
+                    in_range = in_range && s >= 0 && s < 608;
+                failures += check(in_range, "euclidean: source map ranges");
+            }
+        }
+    }
+
+    // ---- Plane detection node (E2E through graph) ----
+    {
+        Graph g;
+        constexpr int side = 50;
+        PointCloudData c;
+        c.points.resize(3LL * side * side, 3);
+        std::int64_t row = 0;
+        for (int i = 0; i < side; ++i) {
+            for (int j = 0; j < side; ++j) {
+                c.points(row, 0) = static_cast<float>(i);
+                c.points(row, 1) = static_cast<float>(j);
+                c.points(row, 2) = 0.0f;
+                ++row;
+            }
+        }
+        for (int i = 0; i < side; ++i) {
+            for (int j = 0; j < side; ++j) {
+                c.points(row, 0) = static_cast<float>(i);
+                c.points(row, 1) = 200.0f;
+                c.points(row, 2) = static_cast<float>(j);
+                ++row;
+            }
+        }
+        for (int i = 0; i < side; ++i) {
+            for (int j = 0; j < side; ++j) {
+                c.points(row, 0) = -300.0f;
+                c.points(row, 1) = static_cast<float>(i);
+                c.points(row, 2) = static_cast<float>(j);
+                ++row;
+            }
+        }
+        const std::string path = writeTemp(dir, "planes.ply", c);
+        auto* load = g.addNode("load_cloud");
+        g.setParam(load->id(), "path", ParamValue{path});
+        auto* pd = g.addNode("plane_detect");
+        g.setParam(pd->id(), "distance_threshold", ParamValue{0.5});
+        g.setParam(pd->id(), "min_inliers", ParamValue{100});
+        g.setParam(pd->id(), "max_planes", ParamValue{5});
+        g.setParam(pd->id(), "iterations", ParamValue{2000});
+        g.connect(load->id(), 0, pd->id(), 0);
+        failures += check(g.execute(), "plane: execute ok");
+        const auto* out = g.output(pd->id());
+        failures += check(out && out->objects.size() >= 3,
+                          "plane: at least 3 planes detected");
+        if (out) {
+            for (const auto& obj : out->objects) {
+                failures += check(!obj->regions.empty() &&
+                                      obj->regions[0].kind ==
+                                          pcsearch::core::Region::Kind::Plane &&
+                                      obj->regions[0].params.size() == 4,
+                                  "plane: region kind plane + params [a,b,c,d]");
+                failures += check(static_cast<std::int64_t>(obj->source_indices.size()) ==
+                                      obj->cloud->size(),
+                                  "plane: source map size == cloud size");
+                bool in_range = true;
+                for (const auto& s : obj->source_indices)
+                    in_range = in_range && s >= 0 && s < 3LL * side * side;
+                failures += check(in_range, "plane: source map ranges");
+            }
+        }
+    }
+
     // ---- Cycle detection ----
     {
         Graph g;
