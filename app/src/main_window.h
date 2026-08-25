@@ -11,6 +11,7 @@ class QMenu;
 class QStackedWidget;
 class QPushButton;
 class QThread;
+class QTimer;
 
 class QAction;
 
@@ -78,6 +79,9 @@ private:
     void rebuildPalette();
     void refreshCanvasTree();
     void routeDisplayNodes();
+    // Coalesced mid-stream display refresh: reads the runner's latest block
+    // snapshot and updates display3d layers (latest-wins, §8.7).
+    void refreshDisplayLayers();
     void updateRoiBoxPreview();
     // Show the cloud that flows INTO the selected node (its first upstream
     // output), falling back to the node's own output when it has no inputs.
@@ -111,6 +115,10 @@ private:
     std::string selected_node_id_;
     GraphRunner* runner_ = nullptr;
     QThread* runner_thread_ = nullptr;
+    QTimer* display_timer_ = nullptr;
+    // display3d node id -> viewport name it was last routed to (for stale
+    // layer cleanup when a node moves to another viewport or is deleted).
+    std::map<std::string, std::string> display_routes_;
 };
 
 }  // namespace app

@@ -2,6 +2,8 @@
 
 #include "pcsearch/core_data/object.h"
 
+#include <QString>
+#include <QStringList>
 #include <QWidget>
 
 #include <cstdint>
@@ -11,6 +13,8 @@ class QLabel;
 class QShortcut;
 
 #ifdef PCSEARCH_HAS_VTK
+#include <vtkSmartPointer.h>
+
 class QVTKOpenGLNativeWidget;
 class vtkRenderer;
 class vtkActor;
@@ -23,22 +27,65 @@ class RoiSelector;
 
 namespace app {
 
+// Display density tier (PROJECT §8.6). Low keeps the historical red line of
+// ~1.5M displayed points per object (integrated graphics / remote desktop);
+// higher tiers raise the per-object cap for stronger machines. The viewport
+// capacity budget (30M points) is enforced independently as a warning.
+enum class HardwareTier { Low, Standard, High };
+
 class PointCloudView : public QWidget {
     Q_OBJECT
 public:
     explicit PointCloudView(QWidget* parent = nullptr);
 
     // Uniform display-decimation stride for `n` points: keeps the displayed
-    // point count <= kMaxDisplayPoints (GPU-friendly on integrated graphics).
+    // point count <= the tier's per-object cap (GPU-friendly on integrated
+    // graphics). The no-tier overloads keep the historical Low default.
     static std::int64_t displayStride(std::int64_t n) {
-        return n > kMaxDisplayPoints
-                   ? (n + kMaxDisplayPoints - 1) / kMaxDisplayPoints
-                   : 1;
+        return displayStride(n, HardwareTier::Low);
     }
     static std::int64_t displayCount(std::int64_t n) {
-        const std::int64_t s = displayStride(n);
+        return displayCount(n, HardwareTier::Low);
+    }
+    // Per-object displayed-point cap for a hardware tier.
+    static std::int64_t maxDisplayPointsForTier(HardwareTier tier) {
+        switch (tier) {
+            case HardwareTier::Low: return 1500000;
+            case HardwareTier::Standard: return 3000000;
+            case HardwareTier::High: return 10000000;
+        }
+        return 1500000;
+    }
+    static std::int64_t displayStride(std::int64_t n, HardwareTier tier) {
+        const std::int64_t cap = maxDisplayPointsForTier(tier);
+        return n > cap ? (n + cap - 1) / cap : 1;
+    }
+    static std::int64_t displayCount(std::int64_t n, HardwareTier tier) {
+        const std::int64_t s = displayStride(n, tier);
         return n / s + (n % s ? 1 : 0);
     }
+    // Viewport capacity budget: total displayed points across all layers
+    // (camera ~5MP x 6 frames). Exceeding it warns instead of dropping data.
+    static constexpr std::int64_t kViewportPointBudget = 30000000;
+    // Remote-desktop sessions are treated as Low tier; local machines report
+    // Standard. The view does not auto-apply the result yet (LOD is future
+    // work), callers can query it when a tier switch UI is added.
+    static HardwareTier detectHardwareTier();
+    HardwareTier hardwareTier() const { return tier_; }
+    void setHardwareTier(HardwareTier tier) { tier_ = tier; }
+
+    // Layer for the node-selection display. routeDisplayNodes clears it on
+    // viewports that have display3d layers (display3d wins, historical UX).
+    static QString selectionLayerId() { return QStringLiteral("selection"); }
+
+    // Multi-layer display (PROJECT §8.7): one layer per display3d node.
+    // Updating an existing layer rebuilds only that layer's actors; other
+    // layers keep their data. Layer creation order = stacking order.
+    void setDisplayLayer(const QString& layer_id,
+                         const pcsearch::core::ObjectList* list);
+    void clearDisplayLayer(const QString& layer_id);
+    void clearAllDisplayLayers();
+    QStringList displayLayers() const;
 
     void showObjectList(const pcsearch::core::ObjectList* list);
     void clearView();
@@ -74,17 +121,35 @@ signals:
     void displayInfo(const QString& message);
 
 private:
-    static constexpr std::int64_t kMaxDisplayPoints = 1500000;
 #ifdef PCSEARCH_HAS_VTK
-    void clearCloudActors();
+    // Build point/color actors for `list` into `actors`; returns the number
+    // of points actually displayed (after tier-based decimation).
+    std::int64_t buildCloudActors(const pcsearch::core::ObjectList& list,
+                                  std::vector<vtkSmartPointer<vtkProp>>& actors);
+    void removeLayerActors(std::vector<vtkSmartPointer<vtkProp>>& actors);
+    void reorderActors();
+    void enforceViewportBudget();
 #endif
+    struct DisplayLayer {
+        QString id;
+        bool camera_fitted = false;
+        std::int64_t shown_points = 0;
+#ifdef PCSEARCH_HAS_VTK
+        // Smart pointers keep every actor alive across remove/re-add, so
+        // reordering layers can remove actors from the renderer (releasing
+        // its reference) and add them back without dangling pointers.
+        std::vector<vtkSmartPointer<vtkProp>> actors;
+#endif
+    };
     QLabel* placeholder_ = nullptr;
 #ifdef PCSEARCH_HAS_VTK
     QVTKOpenGLNativeWidget* vtk_widget_ = nullptr;
     vtkRenderer* renderer_ = nullptr;
     vtkActor* roi_box_actor_ = nullptr;
-    std::vector<vtkProp*> cloud_actors_;
 #endif
+    std::vector<DisplayLayer> layers_;
+    HardwareTier tier_ = HardwareTier::Low;
+    bool budget_exceeded_ = false;
     RoiSelector* roi_selector_ = nullptr;
     // W/E shortcuts enabled only while interactive ROI editing is active, so a
     // bare "w" outside editing still reaches the camera style (VTK uses 'w'

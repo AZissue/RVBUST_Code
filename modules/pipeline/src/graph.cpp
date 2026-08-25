@@ -283,7 +283,8 @@ std::int64_t Graph::batchChunkSize() const {
     return k;
 }
 
-bool Graph::executeChunked(std::int64_t chunk_size, std::atomic_bool* cancel) {
+bool Graph::executeChunked(std::int64_t chunk_size, std::atomic_bool* cancel,
+                           const BlockProgressFn& on_block) {
     if (chunk_size <= 0) chunk_size = 1;
     std::int64_t total = 0;
     for (const auto& [id, n] : nodes_) {
@@ -317,6 +318,9 @@ bool Graph::executeChunked(std::int64_t chunk_size, std::atomic_bool* cancel) {
             break;
         }
         start += chunk_size;
+        if (on_block) {
+            on_block(std::min(total, start), total);
+        }
     }
     for (const auto& [id, n] : nodes_) n->setContext(NodeContext{});
     return ok;

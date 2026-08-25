@@ -900,6 +900,19 @@ int main() {
                           "kind: any -> region allowed");
         failures += check(g.canConnect(load->id(), 0, any_sink->id(), 0),
                           "kind: cloud -> any allowed");
+
+        // Display 3D input is "any" (PROJECT §8.7): cloud, region and any
+        // outputs all connect so several display3d nodes can stack layers.
+        auto* disp = g.addNode("display3d");
+        failures += check(disp && disp->inputKind(0) == "any",
+                          "kind: display3d input kind any");
+        failures += check(g.canConnect(load->id(), 0, disp->id(), 0),
+                          "kind: cloud -> display3d allowed");
+        auto* box = g.addNode("box_roi");
+        failures += check(g.canConnect(box->id(), 1, disp->id(), 0),
+                          "kind: region -> display3d allowed");
+        failures += check(g.canConnect(any_source->id(), 0, disp->id(), 0),
+                          "kind: any -> display3d allowed");
     }
 
     std::filesystem::remove_all(dir);

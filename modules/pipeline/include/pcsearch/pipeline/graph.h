@@ -5,6 +5,7 @@
 #include "pcsearch/pipeline/registry.h"
 
 #include <atomic>
+#include <functional>
 #include <map>
 #include <set>
 #include <string>
@@ -24,6 +25,10 @@ struct NodeRunStats {
     bool executed = false;
     bool skipped = false;
 };
+
+// Called after each successful block of a chunked execution with the number
+// of processed frames and the total frame count (PROJECT §8.4 progress).
+using BlockProgressFn = std::function<void(std::int64_t done, std::int64_t total)>;
 
 class Graph {
 public:
@@ -65,7 +70,8 @@ public:
     // fail-fast on the first failing block. Results keep only the last block
     // (the display shows the block's last frame). Falls back to execute()
     // when no source reports batchEnabled().
-    bool executeChunked(std::int64_t chunk_size, std::atomic_bool* cancel = nullptr);
+    bool executeChunked(std::int64_t chunk_size, std::atomic_bool* cancel = nullptr,
+                        const BlockProgressFn& on_block = {});
     // True when any node in the graph drives chunked batch execution.
     bool batchEnabled() const;
     // Largest K requested by the graph's batch-enabled sources.

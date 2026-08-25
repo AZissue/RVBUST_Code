@@ -135,7 +135,9 @@ public:
     std::vector<ParamDef> paramDefs() const override;
     std::size_t inputCount() const override { return 1; }
     std::size_t outputCount() const override { return 0; }
-    std::vector<std::string> inputKinds() const override { return {"cloud"}; }
+    // any: display accepts cloud / region / future geometry layers so several
+    // display3d nodes can stack on one viewport (PROJECT §8.7).
+    std::vector<std::string> inputKinds() const override { return {"any"}; }
     core::ObjectList execute(const std::vector<core::ObjectList>& inputs,
                              const Params& params) override;
     void setup() override;

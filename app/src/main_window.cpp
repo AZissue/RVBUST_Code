@@ -39,11 +39,13 @@
 #include <QStackedWidget>
 #include <QTabWidget>
 #include <QThread>
+#include <QTimer>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
 #include <algorithm>
 #include <map>
+#include <set>
 
 namespace app {
 
@@ -123,6 +125,14 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(cloud_view_, &PointCloudView::displayInfo, this, &MainWindow::log);
     viewports_ = new ViewportManager(this, this);
     viewports_->setMainViewport(cloud_view_);
+
+    // latest-wins display refresh: block progress restarts a short single-shot
+    // timer, and the timeout applies only the newest block's layers. Rapid
+    // blocks coalesce into one render instead of one per frame.
+    display_timer_ = new QTimer(this);
+    display_timer_->setInterval(100);
+    display_timer_->setSingleShot(true);
+    connect(display_timer_, &QTimer::timeout, this, &MainWindow::refreshDisplayLayers);
 
     auto* find_shortcut = new QShortcut(QKeySequence::Find, this);
     connect(find_shortcut, &QShortcut::activated, toolbox_, &ToolboxWidget::focusSearch);
@@ -434,6 +444,10 @@ void MainWindow::doDeleteNode(const QString& id) {
     }
     if (!graph_.node(id.toStdString())) return;
     graph_.removeNode(id.toStdString());
+    display_routes_.erase(id.toStdString());
+    for (const QString& name : viewports_->names()) {
+        viewports_->viewport(name)->clearDisplayLayer(id);
+    }
     flow_->removeNode(id.toStdString());
     refreshCanvasTree();
     refreshOutputCombo();
@@ -710,12 +724,17 @@ void MainWindow::runGraph() {
             [this](const QString& id, double ms) {
                 log(tr("Node %1: %2 ms").arg(id).arg(ms, 0, 'f', 1));
             });
+    connect(runner_, &GraphRunner::blockProgress, this,
+            [this](int, int) {
+                if (display_timer_) display_timer_->start();
+            });
     connect(runner_, &GraphRunner::finished, this, &MainWindow::onRunFinished);
     runner_thread_->start();
     emit runRequested();
 }
 
 void MainWindow::onRunFinished(bool ok, const QString& error) {
+    if (display_timer_) display_timer_->stop();
     if (runner_thread_) {
         runner_thread_->quit();
         runner_thread_->wait();
@@ -746,6 +765,8 @@ void MainWindow::onRunFinished(bool ok, const QString& error) {
 }
 
 void MainWindow::routeDisplayNodes() {
+    std::map<std::string, std::string> next_routes;
+    std::set<std::string> selection_cleared;
     for (auto* node : graph_.nodes()) {
         if (node->type() != "display3d") continue;
         const std::string viewport_name = node->params().getString("viewport");
@@ -754,10 +775,44 @@ void MainWindow::routeDisplayNodes() {
         PointCloudView* view = viewports_->viewport(
             QString::fromStdString(viewport_name));
         if (view) {
-            view->showObjectList(out);
+            const QString node_id = QString::fromStdString(node->id());
+            const auto prev = display_routes_.find(node->id());
+            if (prev != display_routes_.end() && prev->second != viewport_name) {
+                viewports_->viewport(QString::fromStdString(prev->second))
+                    ->clearDisplayLayer(node_id);
+            }
+            // Display 3D layers are authoritative on their viewport: drop the
+            // node-selection layer once so selection and display do not stack.
+            if (selection_cleared.insert(viewport_name).second) {
+                view->clearDisplayLayer(PointCloudView::selectionLayerId());
+            }
+            view->setDisplayLayer(node_id, out);
+            next_routes[node->id()] = viewport_name;
             log(tr("Displayed %1 in viewport %2")
                     .arg(QString::fromStdString(node->id()),
                          QString::fromStdString(viewport_name)));
+        }
+    }
+    // Remove layers whose display3d node no longer exists / is no longer
+    // routed (deleted nodes are already cleaned up in doDeleteNode, this
+    // covers viewport renames and stale results).
+    for (const auto& [node_id, viewport] : display_routes_) {
+        if (!next_routes.count(node_id)) {
+            viewports_->viewport(QString::fromStdString(viewport))
+                ->clearDisplayLayer(QString::fromStdString(node_id));
+        }
+    }
+    display_routes_ = std::move(next_routes);
+}
+
+void MainWindow::refreshDisplayLayers() {
+    if (!runner_ || !running_) return;
+    for (const auto& entry : runner_->latestDisplay()) {
+        PointCloudView* view = viewports_->viewport(
+            QString::fromStdString(entry.viewport));
+        if (view) {
+            view->setDisplayLayer(QString::fromStdString(entry.node_id),
+                                  &entry.objects);
         }
     }
 }

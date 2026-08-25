@@ -34,6 +34,10 @@
 #include <algorithm>
 #include <cmath>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 namespace {
 
 // RVC Manager-style camera navigation: left button rotates, wheel zooms and the
@@ -63,6 +67,13 @@ private:
 }  // namespace
 
 namespace app {
+
+HardwareTier PointCloudView::detectHardwareTier() {
+#ifdef _WIN32
+    if (GetSystemMetrics(SM_REMOTESESSION) != 0) return HardwareTier::Low;
+#endif
+    return HardwareTier::Standard;
+}
 
 PointCloudView::PointCloudView(QWidget* parent) : QWidget(parent) {
     auto* layout = new QVBoxLayout(this);
@@ -106,8 +117,10 @@ void PointCloudView::clearView() {
 #ifdef PCSEARCH_HAS_VTK
     enableRoiEdit(false);
     hideRoiBox();
-    clearCloudActors();
+    clearAllDisplayLayers();
     vtk_widget_->renderWindow()->Render();
+#else
+    clearAllDisplayLayers();
 #endif
 }
 
@@ -242,91 +255,99 @@ void PointCloudView::frameScene() {
 #endif
 }
 
+void PointCloudView::clearAllDisplayLayers() {
+#ifdef PCSEARCH_HAS_VTK
+    for (auto& layer : layers_) removeLayerActors(layer.actors);
+#endif
+    layers_.clear();
+}
+
+void PointCloudView::clearDisplayLayer(const QString& layer_id) {
+    const auto it = std::find_if(layers_.begin(), layers_.end(),
+                                 [&](const DisplayLayer& l) { return l.id == layer_id; });
+    if (it == layers_.end()) return;
+#ifdef PCSEARCH_HAS_VTK
+    removeLayerActors(it->actors);
+#endif
+    layers_.erase(it);
+#ifdef PCSEARCH_HAS_VTK
+    reorderActors();
+    vtk_widget_->renderWindow()->Render();
+#endif
+}
+
+QStringList PointCloudView::displayLayers() const {
+    QStringList out;
+    for (const auto& layer : layers_) out << layer.id;
+    return out;
+}
+
+void PointCloudView::setDisplayLayer(const QString& layer_id,
+                                     const pcsearch::core::ObjectList* list) {
+    if (!list) {
+        clearDisplayLayer(layer_id);
+        return;
+    }
+    auto it = std::find_if(layers_.begin(), layers_.end(),
+                           [&](const DisplayLayer& l) { return l.id == layer_id; });
+    const bool is_new = it == layers_.end();
+    if (is_new) {
+        DisplayLayer layer;
+        layer.id = layer_id;
+        layers_.push_back(std::move(layer));
+        it = layers_.end() - 1;
+    }
+#ifdef PCSEARCH_HAS_VTK
+    removeLayerActors(it->actors);
+    const std::int64_t shown = buildCloudActors(*list, it->actors);
+    it->shown_points = shown;
+    reorderActors();
+    if (is_new || !it->camera_fitted) {
+        renderer_->ResetCamera();
+        renderer_->GetActiveCamera()->SetClippingRange(0.1, 1e7);
+        it->camera_fitted = true;
+    }
+    vtk_widget_->renderWindow()->Render();
+    enforceViewportBudget();
+    if (is_new && shown > 0) {
+        const std::int64_t total = [&]() {
+            std::int64_t t = 0;
+            for (const auto& obj : list->objects) t += obj->cloud->size();
+            return t;
+        }();
+        if (shown < total) {
+            emit displayInfo(tr("Display decimated: showing %1 of %2 points")
+                                 .arg(shown)
+                                 .arg(total));
+        }
+    }
+#endif
+}
+
 void PointCloudView::showObjectList(const pcsearch::core::ObjectList* list) {
 #ifdef PCSEARCH_HAS_VTK
     if (!list) {
         clearView();
         return;
     }
-    // Remove only the cloud actors we own so the interactive ROI widget (and
-    // its pickers) stay alive; RemoveAllViewProps would strip the widget's
-    // representation actors and break box dragging/scaling/rotation.
-    clearCloudActors();
-
-    bool any = false;
-    std::int64_t total_points = 0;
-    std::int64_t shown_points = 0;
+    clearAllDisplayLayers();
+    DisplayLayer layer;
+    layer.id = selectionLayerId();
     try {
-        for (const auto& obj : list->objects) {
-            const auto& cloud = *obj->cloud;
-            const std::int64_t n = cloud.size();
-            if (n <= 0) continue;
-            total_points += n;
-
-            // Display decimation: huge clouds (RVC 5MP / stitched 10M+) must
-            // not be uploaded to the GPU in full on integrated graphics or
-            // over remote desktop - building double-precision VTK arrays on
-            // the UI thread then rendering freezes the app and can crash the
-            // GL driver. Uniform stride keeps the outline while capping GPU
-            // work. The pipeline data is never modified, only the view.
-            const std::int64_t stride = displayStride(n);
-            const std::int64_t count = displayCount(n);
-            shown_points += count;
-
-            vtkNew<vtkPoints> points;
-            points->SetDataTypeToFloat();
-            points->SetNumberOfPoints(count);
-            vtkNew<vtkCellArray> verts;
-            verts->AllocateEstimate(count, 1);
-            verts->InsertNextCell(count);
-            std::int64_t out = 0;
-            for (std::int64_t i = 0; i < n; i += stride, ++out) {
-                points->SetPoint(static_cast<vtkIdType>(out), cloud.points(i, 0),
-                                 cloud.points(i, 1), cloud.points(i, 2));
-                verts->InsertCellPoint(static_cast<vtkIdType>(out));
-            }
-
-            vtkNew<vtkPolyData> poly;
-            poly->SetPoints(points);
-            poly->SetVerts(verts);
-
-            if (cloud.hasColors()) {
-                vtkNew<vtkUnsignedCharArray> colors;
-                colors->SetNumberOfComponents(3);
-                colors->SetName("RGB");
-                colors->SetNumberOfTuples(count);
-                out = 0;
-                for (std::int64_t i = 0; i < n; i += stride, ++out) {
-                    unsigned char rgb[3] = {
-                        static_cast<unsigned char>(cloud.colors(i, 0) * 255.0 + 0.5),
-                        static_cast<unsigned char>(cloud.colors(i, 1) * 255.0 + 0.5),
-                        static_cast<unsigned char>(cloud.colors(i, 2) * 255.0 + 0.5)};
-                    colors->SetTypedTuple(static_cast<vtkIdType>(out), rgb);
-                }
-                poly->GetPointData()->SetScalars(colors);
-            }
-
-            vtkNew<vtkPolyDataMapper> mapper;
-            mapper->SetInputData(poly);
-            vtkNew<vtkActor> actor;
-            actor->SetMapper(mapper);
-            if (!cloud.hasColors()) {
-                actor->GetProperty()->SetColor(obj->display_color.x(),
-                                               obj->display_color.y(),
-                                               obj->display_color.z());
-            }
-            renderer_->AddActor(actor);
-            cloud_actors_.push_back(actor);
-            any = true;
-        }
-        if (any) {
+        layer.shown_points = buildCloudActors(*list, layer.actors);
+        const std::int64_t shown = layer.shown_points;
+        if (shown > 0) {
+            layers_.push_back(std::move(layer));
             renderer_->ResetCamera();
             renderer_->GetActiveCamera()->SetClippingRange(0.1, 1e7);
         }
         vtk_widget_->renderWindow()->Render();
-        if (shown_points < total_points) {
+        enforceViewportBudget();
+        std::int64_t total_points = 0;
+        for (const auto& obj : list->objects) total_points += obj->cloud->size();
+        if (shown < total_points) {
             emit displayInfo(tr("Display decimated: showing %1 of %2 points")
-                                 .arg(shown_points)
+                                 .arg(shown)
                                  .arg(total_points));
         }
     } catch (const std::exception& e) {
@@ -339,15 +360,124 @@ void PointCloudView::showObjectList(const pcsearch::core::ObjectList* list) {
 #endif
 }
 
-void PointCloudView::clearCloudActors() {
+std::int64_t PointCloudView::buildCloudActors(
+    const pcsearch::core::ObjectList& list,
+    std::vector<vtkSmartPointer<vtkProp>>& actors) {
+#ifdef PCSEARCH_HAS_VTK
+    if (!renderer_) return 0;
+    std::int64_t shown_points = 0;
+    for (const auto& obj : list.objects) {
+        const auto& cloud = *obj->cloud;
+        const std::int64_t n = cloud.size();
+        if (n <= 0) continue;
+
+        // Display decimation: huge clouds (RVC 5MP / stitched 10M+) must
+        // not be uploaded to the GPU in full on integrated graphics or
+        // over remote desktop - building double-precision VTK arrays on
+        // the UI thread then rendering freezes the app and can crash the
+        // GL driver. Uniform stride keeps the outline while capping GPU
+        // work at the active hardware tier. The pipeline data is never
+        // modified, only the view.
+        const std::int64_t stride = displayStride(n, tier_);
+        const std::int64_t count = displayCount(n, tier_);
+        shown_points += count;
+
+        vtkNew<vtkPoints> points;
+        points->SetDataTypeToFloat();
+        points->SetNumberOfPoints(count);
+        vtkNew<vtkCellArray> verts;
+        verts->AllocateEstimate(count, 1);
+        verts->InsertNextCell(count);
+        std::int64_t out = 0;
+        for (std::int64_t i = 0; i < n; i += stride, ++out) {
+            points->SetPoint(static_cast<vtkIdType>(out), cloud.points(i, 0),
+                             cloud.points(i, 1), cloud.points(i, 2));
+            verts->InsertCellPoint(static_cast<vtkIdType>(out));
+        }
+
+        vtkNew<vtkPolyData> poly;
+        poly->SetPoints(points);
+        poly->SetVerts(verts);
+
+        if (cloud.hasColors()) {
+            vtkNew<vtkUnsignedCharArray> colors;
+            colors->SetNumberOfComponents(3);
+            colors->SetName("RGB");
+            colors->SetNumberOfTuples(count);
+            out = 0;
+            for (std::int64_t i = 0; i < n; i += stride, ++out) {
+                unsigned char rgb[3] = {
+                    static_cast<unsigned char>(cloud.colors(i, 0) * 255.0 + 0.5),
+                    static_cast<unsigned char>(cloud.colors(i, 1) * 255.0 + 0.5),
+                    static_cast<unsigned char>(cloud.colors(i, 2) * 255.0 + 0.5)};
+                colors->SetTypedTuple(static_cast<vtkIdType>(out), rgb);
+            }
+            poly->GetPointData()->SetScalars(colors);
+        }
+
+        vtkNew<vtkPolyDataMapper> mapper;
+        mapper->SetInputData(poly);
+        vtkNew<vtkActor> actor;
+        actor->SetMapper(mapper);
+        if (!cloud.hasColors()) {
+            actor->GetProperty()->SetColor(obj->display_color.x(),
+                                           obj->display_color.y(),
+                                           obj->display_color.z());
+        }
+        renderer_->AddActor(actor);
+        actors.push_back(vtkSmartPointer<vtkProp>(actor));
+    }
+    return shown_points;
+#else
+    (void)list;
+    (void)actors;
+    return 0;
+#endif
+}
+
+void PointCloudView::removeLayerActors(
+    std::vector<vtkSmartPointer<vtkProp>>& actors) {
 #ifdef PCSEARCH_HAS_VTK
     if (!renderer_) return;
-    for (vtkProp* actor : cloud_actors_) {
-        // The renderer's prop collection holds the last reference (actors were
-        // created with vtkNew), so removal unregisters and deletes them.
+    for (const auto& actor : actors) {
+        // Drop the renderer's reference only; the layer's smart pointers keep
+        // the actor alive so it can be re-added when layers are reordered.
         renderer_->RemoveViewProp(actor);
     }
-    cloud_actors_.clear();
+    actors.clear();
+#else
+    (void)actors;
+#endif
+}
+
+void PointCloudView::reorderActors() {
+#ifdef PCSEARCH_HAS_VTK
+    if (!renderer_) return;
+    // Re-add every layer actor in layer order so refreshing one layer does not
+    // move it above the others (creation order = stacking order, §8.7).
+    for (auto& layer : layers_) {
+        for (const auto& actor : layer.actors) renderer_->RemoveViewProp(actor);
+    }
+    for (auto& layer : layers_) {
+        for (const auto& actor : layer.actors) renderer_->AddViewProp(actor);
+    }
+#endif
+}
+
+void PointCloudView::enforceViewportBudget() {
+#ifdef PCSEARCH_HAS_VTK
+    std::int64_t total = 0;
+    for (const auto& layer : layers_) total += layer.shown_points;
+    if (total > kViewportPointBudget && !budget_exceeded_) {
+        budget_exceeded_ = true;
+        emit displayInfo(
+            tr("Viewport display exceeds the %1-point budget (%2 shown; "
+               "capacity warning, data is not dropped)")
+                .arg(kViewportPointBudget)
+                .arg(total));
+    } else if (total <= kViewportPointBudget) {
+        budget_exceeded_ = false;
+    }
 #endif
 }
 

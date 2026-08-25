@@ -203,6 +203,29 @@ private slots:
         QVERIFY(app::PointCloudView::displayCount(10000000) <= 1500000);
         QCOMPARE(app::PointCloudView::displayCount(1500000), 1500000);
         QCOMPARE(app::PointCloudView::displayCount(0), 0);
+
+        // Hardware tiers (PROJECT §8.6): Low keeps the historical 1.5M cap,
+        // Standard/High raise the per-object cap; the viewport capacity
+        // budget stays 30M regardless of tier.
+        QCOMPARE(app::PointCloudView::maxDisplayPointsForTier(
+                     app::HardwareTier::Low),
+                 1500000);
+        QCOMPARE(app::PointCloudView::maxDisplayPointsForTier(
+                     app::HardwareTier::Standard),
+                 3000000);
+        QCOMPARE(app::PointCloudView::maxDisplayPointsForTier(
+                     app::HardwareTier::High),
+                 10000000);
+        QCOMPARE(app::PointCloudView::displayStride(
+                     3000001, app::HardwareTier::Standard),
+                 2);
+        QCOMPARE(app::PointCloudView::displayCount(
+                     10000000, app::HardwareTier::High),
+                 10000000);
+        QCOMPARE(app::PointCloudView::displayCount(
+                     3000001, app::HardwareTier::Standard),
+                 1500001);
+        QCOMPARE(app::PointCloudView::kViewportPointBudget, 30000000);
     }
 };
 
