@@ -4,31 +4,33 @@
 > 只保留“当前快照”，不积累历史；旧条目删除即可，git 历史里仍可追溯。
 
 ## ⏭ 交接块（新会话先读这里）
-- 当前状态：阶段 2「节点逐个完善」进行中；**当前主线：ROI BOX 节点完善**。
-  基准流程「点云加载 → Box ROI → 保存点云」已跑通；ROI 交互（拖移 / 缩放 /
-  旋转）、重置包围盒、显示降采样、保存“文件夹 + 文件名”均已完成。
-- 本轮：Box ROI 编辑态新增快捷键 —— 按 **W**（work）= 可操作包围盒（拖/缩/旋转）；
-  按 **E**（end）= 不可操作（只查看点云，包围盒保留为参考叠加）。实现关键：
-  `vtkAbstractWidget::SetProcessEvents(0/1)` —— off 时包围盒仍可见但不响应鼠标，
-  相机样式接管（可自由旋转/缩放/平移云而不误触包围盒）。快捷键仅在 ROI 编辑态启用，
-  避免抢占 VTK 的 `w`（线框）切换，也不影响参数框输入。已构建 + `ctest` 6/6 全绿 +
-  smoke + demo 冒烟通过。
-- 说明：用户已**确认**“三色边框 + 只留 XYZ 三轴”不做；交互（左旋/滚轮缩放/右键平移）
-  与滚轮步进 1.25 已在上一轮完成并确认手感 OK，缩放问题告一段落。
-- 下一步（下会话，重点）：优化 Box ROI 节点的输入/输出。当前该节点输入=点云，输出=
-  点云+区域；按最初需求每个功能节点应**具备批量处理与输出能力**，需在下会话先严格讨论
-  并约定各节点的“输入/输出数据结构 + 端口类型 + 批量语义”，写入 PROJECT.md 作为后续
-  所有节点开发的统一约束。该约定适用于后续全部节点，属设计决策，实现前需用户确认。
-- 正在进行的文件：`app/src/point_cloud_view.cpp`、`app/src/roi_selector.cpp`
-- 卡点 / 风险：ROI 交互/样式为 VTK 行为，QtTest 无法断言，只能手动验证；
-  核显 / 远程桌面场景必须保持显示降采样。
+- 当前状态：阶段 2「节点逐个完善」进行中；本会话完成**节点 I/O / 批量 / 显示统一约定**
+  （PROJECT.md §8，用户逐项确认）。要点：ObjectList 载体 + cloud/region/any 端口 +
+  zip 批量语义（1:1 / 1:N / 一帧多盒 F×M 对齐）+ 分块执行（K=1 逐帧默认 / K=10 限量 /
+  K=N 全量）+ 性能内存约定（视口上限 3000 万点 = 相机 500 万 × 6 帧预留，实际密度按
+  硬件档位自适应）+ 视窗多图层显示模型（多 display3d 叠加、latest-wins、图层级增量）。
+- 上轮功能已完成并提交：Box ROI W/E 快捷键（9ada27b）等 ROI 交互工作已提交并推送
+  `origin/pointcloud-search`；ctest 6/6 + smoke/demo 通过。交互统一（左旋 / 滚轮缩放 /
+  右键平移）与滚轮步进 1.25 手感已确认；“三色边框 + 只留 XYZ 三轴”确认不做。
+- 下一步（下会话，重点）：按 PROJECT §9 待修清单实现批量语义 ——
+  ① 修 3 处不一致（box_roi region 坍缩 / roi_crop 只取第 0 个 / provenance 保留父节点）；
+  ② RoiBox 加 label + box_roi 一帧多盒；③ load_cloud 文件夹批量 + 读取模式
+  （all / chunked / stream）；④ 抽 alignInputs + 批量 E2E 单测；⑤ save 零填充命名；
+  ⑥ display3d 多图层 + latest-wins + 视口点预算。逐项提交。
+- 正在进行的文件：`modules/pipeline/src/nodes/core_nodes.cpp`、
+  `modules/pipeline/include/pcsearch/pipeline/nodes/node_utils.h`、
+  `app/src/point_cloud_view.cpp`
+- 卡点 / 风险：ROI 交互 / 多图层显示为 VTK 行为，QtTest 无法断言，只能手动验证；
+  核显 / 远程桌面必须保持显示降采样（3000 万为视口上限，实际密度按硬件档位自适应）。
 - 远程协作：项目已上传 `github.com/AZissue/RVBUST_Code` 的 `pointcloud-search`
   分支（main 总览 README 已登记）；本地 master 跟踪 `origin/pointcloud-search`，
   提交后直接 `git push`。本机 GitHub 直连超时，需走代理：
   http `127.0.0.1:10809` / socks5 `127.0.0.1:10808`。
-- 上次会话结束已提交：是（已 push 到 `origin/pointcloud-search`；本轮 W/E 快捷键待提交）
+- 上次会话结束已提交：是（本会话仅文档变更：PROJECT §8/§9 + STATUS/PLAN 同步）
 
 ## ✅ 已完成（近期；更早历史见 git）
+- [x] 2026-08-25 完成节点 I/O / 批量 / 分块 / 显示统一约定（PROJECT §8 + §9 待修清单），
+  含一帧多盒、文件夹批量读取模式、视窗多图层显示模型
 - [x] 2026-08-25 修复本地一键构建：CMake 复用 RvcVisionStudio 自编译 VTK（带 GUISupportQt）解决 PCL 1.13.0 捆绑 VTK 缺 Qt 支持问题；start.bat 自动探测本机 Qt/PCL 路径；ctest 6/6 + autoquit 冒烟通过
 - [x] 2026-08-25 Box ROI 编辑态快捷键 W/E：W=可操作包围盒、E=仅查看（SetProcessEvents
   0/1）；快捷键仅在编辑态启用；构建/ctest/smoke/demo 通过
@@ -51,8 +53,8 @@
   Dark、方案 JSON、多视窗
 
 ## 🚧 进行中
-- 阶段 2（主线 ROI BOX）：节点级 E2E 已补齐；本轮完成交互统一 + W/E 快捷键；
-  ROI 交互类需求收敛。下一步转“Box ROI 输入/输出与批量数据处理约定”的设计讨论（下会话）。
+- 阶段 2（主线 ROI BOX → 批量语义落地）：节点级 E2E 与 ROI 交互已收敛；本会话完成
+  “节点 I/O / 批量 / 显示统一约定”（PROJECT §8）。下一步按 §9 待修清单实现批量语义。
 
 ## 🐛 已知 BUG / 问题
 | 问题 | 状态 | 备注 |
@@ -84,11 +86,14 @@
 - 2026-08-18 ~ 2026-08-25 的决策已全部归档到 PROJECT.md §7 ADR 表，此处不重复。
 
 ## ▶️ 下一步任务
-- [ ] 平面检测节点 E2E（加载 → 平面检测 → 保存 / 3D），补单测
-- [ ] DBSCAN / 欧几里得聚类节点 E2E，补单测
-- [ ] Z 过滤 / 体素 / 随机下采样节点 E2E，补单测
-- [ ] ROI Crop 节点 E2E（消费 region 端口）
-- [ ] 每完成一个节点：更新交接块并本地提交
+- [ ] 按 PROJECT §9：修 box_roi region 坍缩 / roi_crop 只取第 0 个 / provenance 3 处不一致
+- [ ] RoiBox 加 label；box_roi 一帧多盒（盒列表节点级共享，输出 F×M 对齐）
+- [ ] load_cloud 文件夹批量 + 读取模式（all / chunked / stream，默认逐帧）
+- [ ] 抽 alignInputs 助手 + 各节点批量 E2E 单测（§8.8）
+- [ ] save_cloud 零填充 / 多盒命名；批量保存
+- [ ] display3d 多图层叠加 + latest-wins + 视口 3000 万点预算与硬件档位
+- [ ] 平面检测 / 聚类 / Z 过滤 / 下采样 / ROI Crop 节点按新约定补 E2E
+- [ ] 每完成一项：更新交接块并本地提交
 
 ## 📦 清理规则
 - 已完成且不再需要关注的条目，从本文件删除（git 历史可追溯）；只保留交接块、

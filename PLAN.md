@@ -49,6 +49,9 @@
   `modules/filters`、`modules/segmentation`、`modules/clustering`、
   `app/src/main_window.*`、`params_panel.*`、`point_cloud_view.*`、`roi_selector.*`
 - 步骤：
+  0. 按 PROJECT §8 统一约定落地批量语义（§9 待修清单：修 3 处不一致、RoiBox label +
+     一帧多盒、load 文件夹批量 / 读取模式、alignInputs + 批量 E2E、save 零填充、
+     display3d 多图层），逐项提交；
   1. 逐个节点跑 E2E（加载 → 该节点 → 保存 / 3D 显示），检查输出数量、索引映射、
      参数面板、3D 显示；
   2. 每个节点补单测；UI 交互按手动测试清单验证（见 STATUS.md 已知问题）；
@@ -128,8 +131,11 @@
 
 ## 当前进行到
 - 当前阶段：阶段 2（节点逐个完善）
-- 下一项任务：与 STATUS.md 交接块保持一致——继续用「点云加载 → 替换节点 →
-  保存」逐个验证平面检测 / 聚类 / Z 过滤 / 下采样 / ROI Crop，并逐节点补单测。
+- 本会话已完成：节点 I/O / 批量 / 分块 / 显示统一约定（PROJECT §8，含一帧多盒、
+  文件夹批量读取模式 K=1/10/N、视窗多图层显示模型、性能与内存目标）。
+- 下一项任务：与 STATUS.md 交接块保持一致——按 PROJECT §9 待修清单实现批量语义，
+  再继续用「点云加载 → 替换节点 → 保存」逐个验证平面检测 / 聚类 / Z 过滤 /
+  下采样 / ROI Crop，并逐节点补单测。
 
 ## 变更管理约定
 - 每完成一个阶段：**先验证结果，再更新 STATUS.md**，并把 PLAN 对应阶段标记 ✅。
