@@ -16,7 +16,11 @@
   `app/src/main_window.cpp`
 - 卡点 / 风险：双盒为 VTK renderer 内行为，QtTest 无法断言，只能手动验证；
   核显 / 远程桌面场景必须保持显示降采样。
-- 上次会话结束已提交：是（git 本地提交，未 push；本轮双盒修复已提交）
+- 远程协作：项目已上传 `github.com/AZissue/RVBUST_Code` 的 `pointcloud-search`
+  分支（main 总览 README 已登记）；本地 master 跟踪 `origin/pointcloud-search`，
+  提交后直接 `git push`。本机 GitHub 直连超时，需走代理：
+  http `127.0.0.1:10809` / socks5 `127.0.0.1:10808`。
+- 上次会话结束已提交：是（已 push 到 `origin/pointcloud-search`；本轮双盒修复已提交）
 
 ## ✅ 已完成（近期；更早历史见 git）
 - [x] 2026-08-25 修复 ROI 操控“双包围盒”：box_roi 编辑态只显示 vtkBoxWidget2
