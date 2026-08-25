@@ -57,9 +57,17 @@ def main():
         launcher.accept()
 
     def on_auto_ip(devices: list):
-        """自动配置 IP。"""
-        indices = [d.backend_ref for d in devices if isinstance(d.backend_ref, int)]
-        bridge.camera_manager.auto_configure_network(indices)
+        """自动配置 IP（后台执行，防止 UI 卡住）。"""
+        launcher.set_auto_ip_busy(True)
+
+        def on_finished(_results, _error):
+            if not launcher.isVisible():
+                return
+            launcher.set_auto_ip_busy(False)
+            # IP 可能已变化，刷新列表
+            launcher.set_devices(bridge.enumerate_devices())
+
+        bridge.auto_configure_network(devices, on_finished=on_finished)
 
     launcher.refresh_requested.connect(on_refresh)
     launcher.connect_requested.connect(on_connect)

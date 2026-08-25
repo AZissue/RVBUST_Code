@@ -180,12 +180,14 @@ QTableWidget, QTableView {{
 }}
 QHeaderView::section {{
     background-color: {BG_CARD};
-    padding: 5px 8px;
-    border: none;
-    border-right: 1px solid {BORDER};
-    border-bottom: 1px solid {BORDER};
-    color: {TEXT_SECONDARY};
+    padding: 6px 8px;
+    border: 1px solid {BORDER_HOVER};
+    border-left: none;
+    color: {TEXT_PRIMARY};
     font-weight: 600;
+}}
+QHeaderView::section:first {{
+    border-left: 1px solid {BORDER_HOVER};
 }}
 
 /* ============ Tab ============ */

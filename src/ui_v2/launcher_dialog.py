@@ -336,6 +336,16 @@ class LauncherDialog(QDialog):
         if not busy:
             self._refresh_connect_state()
 
+    def set_auto_ip_busy(self, busy: bool):
+        """自动配置 IP 进行中：禁用操作并显示 loading 文案。"""
+        for btn in (self._btn_connect, self._btn_refresh,
+                    self._btn_auto_ip, self._btn_add_test):
+            btn.setEnabled(not busy)
+        self._btn_auto_ip.setText("配置中..." if busy else "自动设置 IP")
+        # 保持图标：恢复原始图标
+        if not busy:
+            ui_icons.apply(self._btn_auto_ip, "bolt", TEXT_SECONDARY, 15)
+
     # ------------------------------------------------------------ 回填（设备管理重开时用）
     def restore_state(self, mode: str, devices: List[DeviceInfo]):
         """回填当前模式与已连接设备勾选状态。"""

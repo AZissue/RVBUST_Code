@@ -158,6 +158,34 @@ class BackendBridge(QObject):
                 pass
         return device_infos
 
+    def auto_configure_network(self, devices: List[DeviceInfo],
+                               on_finished=None):
+        """对勾选设备自动配置 IP；未勾选则对所有 GigE 设备配置（后台执行）。
+
+        Args:
+            devices: 勾选设备列表；空列表表示所有 GigE 设备。
+            on_finished: 完成回调，签名为 (results, error)，可选。
+        """
+        indices = [d.backend_ref for d in devices
+                   if isinstance(d.backend_ref, int)]
+        target_desc = f"选中 {len(indices)} 台" if indices else "所有 GigE"
+        self.shell.log(f"开始对 {target_desc} 设备进行自动 IP 配置...", "info")
+
+        def _work():
+            return self.camera_manager.auto_configure_network(indices)
+
+        def _done(results, error):
+            if error:
+                self.shell.log(f"自动配置 IP 失败: {error}", "error")
+            else:
+                for idx, ok, msg in results:
+                    level = "success" if ok else "warn"
+                    self.shell.log(f"[{idx}] {msg}", level)
+            if on_finished is not None:
+                on_finished(results, error)
+
+        self._run_background(_work, _done)
+
     def _on_device_manager_reopened(self, mode: str, devices: List[DeviceInfo]):
         """设备管理小窗确认：断开旧设备 → 连接新设备 → 切换工作区。"""
         self.shell.show_loading("正在连接设备...")

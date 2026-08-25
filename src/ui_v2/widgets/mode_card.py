@@ -3,7 +3,7 @@
 ui_v2.widgets.mode_card —— 启动小窗的工作模式选择卡片。
 
 两张卡片上下排列（多相机外参标定 / 单相机移动拼接），
-自绘可选中卡片，选中态 RVC 红边框 + 淡红底色。
+自绘可选中卡片，选中态仅保留 RVC 红边框。
 """
 
 from __future__ import annotations
@@ -67,9 +67,8 @@ class ModeCard(QFrame):
         self._icon.setPixmap(ui_icons.pixmap(self._icon_name, icon_color, 28))
         if checked:
             self.setStyleSheet(
-                f"ModeCard {{ background-color: rgba(211, 47, 47, 0.28);"
-                f" border: none; border-radius: 8px;"
-                f" border-left: 4px solid {ACCENT}; }}")
+                f"ModeCard {{ background-color: {BG_CARD};"
+                f" border: 2px solid {ACCENT}; border-radius: 8px; }}")
             self._dot.setStyleSheet(f"color: {ACCENT}; font-size: 14px;")
         else:
             self.setStyleSheet(
