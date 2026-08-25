@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -68,6 +69,42 @@ public:
         const std::vector<pcsearch::core::ObjectList>& inputs,
         const pcsearch::pipeline::Params&) override {
         return inputs.empty() ? pcsearch::core::ObjectList{} : inputs[0];
+    }
+};
+
+// Test-only sink that records the global frame index of every input object to
+// a marker file (obj_<global>.txt). Used to verify that chunked batch
+// execution visits every frame exactly once, in stable order.
+class BatchSinkNode final : public pcsearch::pipeline::Node {
+public:
+    using Node::Node;
+    std::string type() const override { return "test_batch_sink"; }
+    std::string title() const override { return "Batch Sink"; }
+    std::string category() const override { return "Test"; }
+    std::vector<pcsearch::pipeline::ParamDef> paramDefs() const override {
+        pcsearch::pipeline::ParamDef d;
+        d.name = "out_dir";
+        d.type = pcsearch::pipeline::ParamType::Directory;
+        d.label = "Out Dir";
+        d.default_value = std::string{};
+        return {d};
+    }
+    std::size_t inputCount() const override { return 1; }
+    std::vector<std::string> inputKinds() const override { return {"cloud"}; }
+    pcsearch::core::ObjectList execute(
+        const std::vector<pcsearch::core::ObjectList>& inputs,
+        const pcsearch::pipeline::Params& p) override {
+        const std::string out_dir = p.getString("out_dir");
+        for (std::size_t i = 0; i < inputs[0].objects.size(); ++i) {
+            const auto& obj = *inputs[0].objects[i];
+            const std::int64_t global =
+                context().batch_start + static_cast<std::int64_t>(i);
+            std::ofstream out(std::filesystem::path(out_dir) /
+                              ("obj_" + std::to_string(global) + ".txt"));
+            out << obj.id << "\n" << obj.cloud->frame_id << "\n"
+                << obj.cloud->size() << "\n";
+        }
+        return inputs[0];
     }
 };
 
@@ -142,6 +179,17 @@ PointCloudData makeBlobs() {
         c.points(r, 1) = nc[i][1];
         c.points(r, 2) = nc[i][2];
         ++r;
+    }
+    return c;
+}
+
+PointCloudData makeLine(std::int64_t n, float z) {
+    PointCloudData c;
+    c.points.resize(n, 3);
+    for (std::int64_t i = 0; i < n; ++i) {
+        c.points(i, 0) = static_cast<float>(i);
+        c.points(i, 1) = 0.0f;
+        c.points(i, 2) = z;
     }
     return c;
 }
@@ -572,6 +620,161 @@ int main() {
                           "save_noext: .ply appended");
     }
 
+    // ---- Batch: load_cloud folder modes + chunked engine execution ----
+    {
+        pcsearch::pipeline::NodeRegistry::instance().registerNode(
+            "test_batch_sink", "Batch Sink", "Test",
+            [] { return std::make_unique<BatchSinkNode>(std::string{}); });
+
+        const std::filesystem::path src_dir = dir / "batch_src";
+        std::filesystem::create_directories(src_dir);
+        // Natural file order must be shot_1 (10 pts), shot_2 (20), shot_10 (100).
+        writeTemp(src_dir, "shot_2.ply", makeLine(20, 2.0f));
+        writeTemp(src_dir, "shot_10.ply", makeLine(100, 10.0f));
+        writeTemp(src_dir, "shot_1.ply", makeLine(10, 1.0f));
+
+        // mode=all: whole folder in one pass, zero-padded ids, per-frame
+        // identity source maps, frame_id = file stem.
+        {
+            Graph g;
+            auto* load = g.addNode("load_cloud");
+            g.setParam(load->id(), "folder", ParamValue{src_dir.string()});
+            g.setParam(load->id(), "mode", ParamValue{std::string("all")});
+            failures += check(!g.batchEnabled(), "batch: mode=all not batch-enabled");
+            failures += check(g.execute(), "batch: all-mode execute ok");
+            const auto* out = g.output(load->id());
+            failures += check(out && out->objects.size() == 3,
+                              "batch: all-mode object count");
+            if (out && out->objects.size() == 3) {
+                const std::string expect_ids[3] = {"frame_000", "frame_001", "frame_002"};
+                const std::string expect_frames[3] = {"shot_1", "shot_2", "shot_10"};
+                const std::int64_t expect_sizes[3] = {10, 20, 100};
+                for (int i = 0; i < 3; ++i) {
+                    const auto& obj = *out->objects[i];
+                    failures += check(obj.id == expect_ids[i], "batch: all-mode id");
+                    failures += check(obj.cloud->frame_id == expect_frames[i],
+                                      "batch: all-mode frame_id");
+                    failures += check(obj.cloud->size() == expect_sizes[i],
+                                      "batch: all-mode size");
+                    failures += check(static_cast<std::int64_t>(obj.source_indices.size()) ==
+                                          obj.cloud->size(),
+                                      "batch: source map size");
+                    bool identity = true;
+                    for (std::int64_t k = 0; k < obj.cloud->size(); ++k) {
+                        identity = identity &&
+                                   obj.source_indices[static_cast<std::size_t>(k)] == k;
+                    }
+                    failures += check(identity, "batch: per-frame identity source map");
+                    failures += check(!obj.regions.empty(),
+                                      "batch: object carries regions");
+                }
+            }
+        }
+
+        // stream (K=1) with a sink: every frame visited exactly once in the
+        // same order as mode=all; only the last block's results are retained.
+        {
+            Graph g;
+            auto* load = g.addNode("load_cloud");
+            g.setParam(load->id(), "folder", ParamValue{src_dir.string()});
+            g.setParam(load->id(), "mode", ParamValue{std::string("stream")});
+            failures += check(g.batchEnabled(), "batch: stream batch-enabled");
+            failures += check(g.batchChunkSize() == 1, "batch: stream chunk size 1");
+            failures += check(load->batchTotal() == 3, "batch: total 3");
+
+            const std::filesystem::path sink_dir = dir / "batch_stream_sink";
+            std::filesystem::create_directories(sink_dir);
+            auto* sink = g.addNode("test_batch_sink");
+            g.setParam(sink->id(), "out_dir", ParamValue{sink_dir.string()});
+            g.connect(load->id(), 0, sink->id(), 0);
+
+            failures += check(g.executeChunked(1), "batch: stream execute ok");
+            const auto* out = g.output(load->id());
+            failures += check(out && out->objects.size() == 1 &&
+                                  out->objects[0]->id == "frame_002",
+                              "batch: last block kept (stream)");
+            bool all_written = true;
+            for (int i = 0; i < 3; ++i) {
+                if (!std::filesystem::exists(sink_dir / ("obj_" + std::to_string(i) + ".txt"))) {
+                    all_written = false;
+                    break;
+                }
+            }
+            failures += check(all_written, "batch: all frames streamed exactly once");
+            std::ifstream m0(sink_dir / "obj_0.txt");
+            std::string line;
+            std::getline(m0, line);
+            failures += check(line == "frame_000", "batch: sink id frame_000");
+            std::getline(m0, line);
+            failures += check(line == "shot_1", "batch: sink frame_id shot_1");
+            std::getline(m0, line);
+            failures += check(line == "10", "batch: sink size shot_1");
+        }
+
+        // chunked (K=2): one full block + one leftover frame.
+        {
+            Graph g;
+            auto* load = g.addNode("load_cloud");
+            g.setParam(load->id(), "folder", ParamValue{src_dir.string()});
+            g.setParam(load->id(), "mode", ParamValue{std::string("chunked")});
+            g.setParam(load->id(), "chunk_size", ParamValue{2});
+            failures += check(g.batchEnabled(), "batch: chunked batch-enabled");
+            failures += check(g.batchChunkSize() == 2, "batch: chunked chunk size 2");
+            failures += check(g.executeChunked(2), "batch: chunked execute ok");
+            const auto* out = g.output(load->id());
+            failures += check(out && out->objects.size() == 1 &&
+                                  out->objects[0]->id == "frame_002",
+                              "batch: chunked leftover frame kept");
+        }
+
+        // K >= total: one block, whole batch returned.
+        {
+            Graph g;
+            auto* load = g.addNode("load_cloud");
+            g.setParam(load->id(), "folder", ParamValue{src_dir.string()});
+            g.setParam(load->id(), "mode", ParamValue{std::string("stream")});
+            failures += check(g.executeChunked(10), "batch: one-block execute ok");
+            const auto* out = g.output(load->id());
+            failures += check(out && out->objects.size() == 3,
+                              "batch: one-block all frames");
+        }
+
+        // Empty folder: empty output propagates (no error), both modes.
+        {
+            const std::filesystem::path empty_dir = dir / "batch_empty";
+            std::filesystem::create_directories(empty_dir);
+            Graph g;
+            auto* load = g.addNode("load_cloud");
+            g.setParam(load->id(), "folder", ParamValue{empty_dir.string()});
+            g.setParam(load->id(), "mode", ParamValue{std::string("all")});
+            auto* save = g.addNode("save_cloud");
+            g.setParam(save->id(), "folder",
+                       ParamValue{(dir / "batch_empty_out").string()});
+            g.setParam(save->id(), "file_name", ParamValue{std::string("empty")});
+            g.connect(load->id(), 0, save->id(), 0);
+            failures += check(g.execute(), "batch: empty folder execute ok");
+            const auto* out = g.output(save->id());
+            failures += check(out && out->objects.empty(),
+                              "batch: empty propagates through save");
+            failures += check(g.executeChunked(1), "batch: empty folder chunked ok");
+        }
+
+        // Single file: never batch-enabled even when mode=stream.
+        {
+            Graph g;
+            auto* load = g.addNode("load_cloud");
+            g.setParam(load->id(), "path",
+                       ParamValue{writeTemp(src_dir, "single.ply", makeLine(7, 0.0f))});
+            g.setParam(load->id(), "mode", ParamValue{std::string("stream")});
+            failures += check(!g.batchEnabled(), "batch: single file not batch-enabled");
+            failures += check(g.execute(), "batch: single file executes");
+            const auto* out = g.output(load->id());
+            failures += check(out && out->objects.size() == 1 &&
+                                  out->objects[0]->id == "cloud",
+                              "batch: single file id cloud");
+        }
+    }
+
     // ---- Solution JSON round-trip ----
     {
         Graph g;
@@ -584,7 +787,11 @@ int main() {
         g.setParam(vox->id(), "leaf_size", ParamValue{10.0});
         g.connect(load->id(), 0, clean->id(), 0);
         g.connect(clean->id(), 0, vox->id(), 0);
-        failures += check(g.execute(), "solution: execute source ok");
+        const bool solution_exec_ok = g.execute();
+        if (!solution_exec_ok) {
+            std::cerr << "solution: lastError=" << g.lastError() << "\n";
+        }
+        failures += check(solution_exec_ok, "solution: execute source ok");
         const auto* src_out = g.output(vox->id());
         const std::int64_t src_count =
             src_out && !src_out->objects.empty() ? src_out->objects[0]->cloud->size() : -1;
@@ -604,7 +811,11 @@ int main() {
         auto* load2 = g2.node(load->id());
         failures += check(load2 && load2->params().getString("path") == path,
                           "solution: path restored");
-        failures += check(g2.execute(), "solution: loaded graph executes");
+        const bool solution_exec2_ok = g2.execute();
+        if (!solution_exec2_ok) {
+            std::cerr << "solution: reloaded lastError=" << g2.lastError() << "\n";
+        }
+        failures += check(solution_exec2_ok, "solution: loaded graph executes");
         const auto* out2 = g2.output(vox->id());
         failures += check(out2 && !out2->objects.empty() &&
                               out2->objects[0]->cloud->size() == src_count,

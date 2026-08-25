@@ -9,6 +9,20 @@
 
 namespace pcsearch::pipeline {
 
+// Transient, per-execution context injected by the engine. Source nodes
+// (load / camera) read a window of frames when chunked batch execution is
+// active; downstream nodes can use batch_start to keep cross-block naming
+// (e.g. zero-padded save files) stable.
+struct NodeContext {
+    // Global index of the first frame/object of the current block.
+    std::int64_t batch_start = 0;
+    // Number of frames/objects in the current block. 0 means "no window":
+    // source nodes read everything available.
+    std::int64_t batch_count = 0;
+    // Total number of frames/objects when known by the engine (0 = unknown).
+    std::int64_t batch_total = 0;
+};
+
 class Node {
 public:
     explicit Node(std::string id) : id_(std::move(id)) {}
@@ -33,6 +47,19 @@ public:
     // Kinds let the UI colour ports and reject mismatched connections early.
     virtual std::vector<std::string> inputKinds() const { return {}; }
     virtual std::vector<std::string> outputKinds() const { return {}; }
+
+    void setContext(NodeContext ctx) { ctx_ = std::move(ctx); }
+    const NodeContext& context() const { return ctx_; }
+
+    // Batch-source contract. The engine queries these before execution:
+    // - batchEnabled(): this node drives chunked execution (e.g. load_cloud
+    //   with a folder in stream/chunked mode). Single-file loads and
+    //   mode=all return false (everything is read in one pass).
+    // - batchChunkSize(): K (frames per block) this source wants.
+    // - batchTotal(): total frame count without reading the data (0 = unknown).
+    virtual bool batchEnabled() const { return false; }
+    virtual std::int64_t batchChunkSize() const { return 1; }
+    virtual std::int64_t batchTotal() const { return 0; }
 
     std::string inputKind(std::size_t index) const {
         const std::vector<std::string> kinds = inputKinds();
@@ -60,6 +87,7 @@ public:
 private:
     std::string id_;
     Params params_;
+    NodeContext ctx_;
 };
 
 using NodePtr = std::unique_ptr<Node>;

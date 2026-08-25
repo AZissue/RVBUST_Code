@@ -2,6 +2,8 @@
 
 #include <Eigen/Core>
 
+#include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -35,6 +37,24 @@ std::string trim(const std::string& s) {
     return s.substr(b, e - b + 1);
 }
 
+// Convert a filesystem path back to the project's UTF-8 narrow-string
+// convention (paths enter the pipeline as UTF-8; std::filesystem on Windows
+// hands out wide strings).
+std::string toUtf8(const std::filesystem::path& p) {
+#ifdef _WIN32
+    const std::wstring w = p.wstring();
+    if (w.empty()) return {};
+    const int len = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, nullptr, 0,
+                                        nullptr, nullptr);
+    if (len <= 0) return p.string();
+    std::string s(static_cast<std::size_t>(len - 1), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, s.data(), len, nullptr, nullptr);
+    return s;
+#else
+    return p.string();
+#endif
+}
+
 // On Windows, narrow std::string paths are UTF-8 in this project. Convert
 // them to wide explicitly so non-ASCII (e.g. Chinese) paths open correctly
 // instead of being mangled through the ANSI codepage.
@@ -61,6 +81,44 @@ Format formatFromPath(const std::string& path) {
     if (ext == "xyz") return Format::Xyz;
     if (ext == "csv" || ext == "txt") return Format::Csv;
     return Format::Auto;
+}
+
+// Natural (numeric-aware) comparison of two file paths: digit runs compare
+// numerically so shot_2.ply sorts before shot_10.ply. Everything else falls
+// back to a case-insensitive character comparison for deterministic order.
+bool naturalLess(const std::string& a, const std::string& b) {
+    std::size_t i = 0, j = 0;
+    while (i < a.size() && j < b.size()) {
+        const bool da = std::isdigit(static_cast<unsigned char>(a[i])) != 0;
+        const bool db = std::isdigit(static_cast<unsigned char>(b[j])) != 0;
+        if (da && db) {
+            // Skip leading zeros so "007" == "7" for ordering purposes.
+            while (i < a.size() && a[i] == '0') ++i;
+            while (j < b.size() && b[j] == '0') ++j;
+            std::size_t ai = i, bj = j;
+            while (ai < a.size() && std::isdigit(static_cast<unsigned char>(a[ai]))) ++ai;
+            while (bj < b.size() && std::isdigit(static_cast<unsigned char>(b[bj]))) ++bj;
+            const std::size_t alen = ai - i, blen = bj - j;
+            if (alen != blen) return alen < blen;
+            for (std::size_t k = 0; k < alen; ++k) {
+                if (a[i + k] != b[j + k]) return a[i + k] < b[j + k];
+            }
+            i = ai;
+            j = bj;
+        } else if (da != db) {
+            return da;  // digit runs sort before letters
+        } else {
+            const char ca = static_cast<char>(
+                std::tolower(static_cast<unsigned char>(a[i])));
+            const char cb = static_cast<char>(
+                std::tolower(static_cast<unsigned char>(b[j])));
+            if (ca != cb) return ca < cb;
+            ++i;
+            ++j;
+        }
+    }
+    // One string is a prefix of the other: the shorter one sorts first.
+    return i == a.size() && j < b.size();
 }
 
 double unitFactorFrom(LengthUnit unit) {
@@ -483,18 +541,39 @@ void writeDelimited(const std::string& path, const PointCloudData& cloud,
 
 }  // namespace
 
+std::vector<std::string> listPointCloudFiles(const std::string& folder) {
+    std::vector<std::string> out;
+    std::error_code ec;
+    const std::filesystem::path dir = utf8Path(folder);
+    if (!std::filesystem::is_directory(dir, ec)) return out;
+    std::filesystem::directory_iterator it(dir, ec), end;
+    for (; it != end && !ec; it.increment(ec)) {
+        const std::filesystem::directory_entry& entry = *it;
+        if (!entry.is_regular_file(ec) || ec) continue;
+        const std::string path = toUtf8(entry.path());
+        if (formatFromPath(path) != Format::Auto) out.push_back(path);
+    }
+    std::sort(out.begin(), out.end(), naturalLess);
+    return out;
+}
+
 core::PointCloudData readPointCloud(const std::string& path, const ReadOptions& options) {
     Format fmt = options.format;
     if (fmt == Format::Auto) fmt = formatFromPath(path);
+    core::PointCloudData cloud;
     switch (fmt) {
-        case Format::Pcd: return readPcd(path, options);
-        case Format::Ply: return readPly(path, options);
-        case Format::Xyz: return readDelimited(path, options, false);
-        case Format::Csv: return readDelimited(path, options, true);
+        case Format::Pcd: cloud = readPcd(path, options); break;
+        case Format::Ply: cloud = readPly(path, options); break;
+        case Format::Xyz: cloud = readDelimited(path, options, false); break;
+        case Format::Csv: cloud = readDelimited(path, options, true); break;
         case Format::Auto:
             throw IoError("cannot determine format from extension: " + path);
     }
-    throw IoError("unsupported format");
+    // Frame identity = file-name stem (PROJECT §8.5 / §9). Computed here with
+    // the UTF-8 -> wide conversion so non-ASCII (e.g. Chinese) file names do
+    // not go through the ANSI codepage.
+    cloud.frame_id = toUtf8(utf8Path(path).stem());
+    return cloud;
 }
 
 void writePointCloud(const std::string& path, const core::PointCloudData& cloud,

@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
 
@@ -81,6 +82,41 @@ int main() {
     wopt.target_unit = LengthUnit::Meter;
     writePointCloud(m_path, src, wopt);
     if (checkCloud(readPointCloud(m_path), "meters") != 0) ++failures;
+
+    // ---- listPointCloudFiles: natural order + extension filter ----
+    {
+        const std::filesystem::path batch = dir / "batch";
+        std::filesystem::create_directories(batch);
+        const std::vector<std::string> names = {
+            "shot_2.ply", "shot_10.ply", "shot_1.ply",
+            "scan_a.pcd", "scan_b.xyz", "data.csv",
+            "notes.txt", "readme.bin", "archive.zip"};
+        for (const auto& n : names) {
+            std::ofstream(batch / n).put('\n');
+        }
+        const auto files = pcsearch::io::listPointCloudFiles(batch.string());
+        const std::vector<std::string> expected = {
+            (batch / "data.csv").string(),
+            (batch / "notes.txt").string(),
+            (batch / "scan_a.pcd").string(),
+            (batch / "scan_b.xyz").string(),
+            (batch / "shot_1.ply").string(),
+            (batch / "shot_2.ply").string(),
+            (batch / "shot_10.ply").string(),
+        };
+        if (files != expected) {
+            std::cerr << "list: expected " << expected.size() << " files, got "
+                      << files.size() << "\n";
+            for (const auto& f : files) std::cerr << "  " << f << "\n";
+            ++failures;
+        }
+
+        const std::filesystem::path empty = dir / "batch_empty";
+        std::filesystem::create_directories(empty);
+        if (!pcsearch::io::listPointCloudFiles(empty.string()).empty()) ++failures;
+        if (!pcsearch::io::listPointCloudFiles((dir / "roundtrip.ply").string()).empty())
+            ++failures;  // a file, not a directory
+    }
 
     std::filesystem::remove_all(dir);
 

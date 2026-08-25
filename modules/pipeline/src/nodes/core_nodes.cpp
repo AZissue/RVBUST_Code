@@ -120,6 +120,11 @@ ParamDef dirParam(const std::string& name, const std::string& label) {
 // value first in the list.
 std::vector<ParamDef> makeLoadParams() {
     return {fileParam("path", "File Path"),
+            dirParam("folder", "Batch Folder"),
+            // stream = K=1 (default, one frame per graph run), chunked = K=10
+            // configurable, all = K=N (whole folder in one run).
+            enumParam("mode", "Read Mode", {"stream", "chunked", "all"}),
+            intParam("chunk_size", "Chunk Size", 10, 1, 1000000),
             enumParam("source_unit", "Source Unit", {"auto", "meter", "millimeter"})};
 }
 
@@ -135,6 +140,14 @@ std::string expandPath(const std::string& path, std::size_t index, std::size_t t
         .string();
 }
 
+// Zero-padded frame identity used for batch object ids / save naming:
+// frame_000, frame_001, ... (PROJECT §8.5 / §9).
+std::string frameName(std::int64_t index) {
+    std::string s = std::to_string(index);
+    if (s.size() < 3) s.insert(s.begin(), static_cast<std::string::size_type>(3 - s.size()), '0');
+    return "frame_" + s;
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -144,15 +157,70 @@ std::string expandPath(const std::string& path, std::size_t index, std::size_t t
 std::vector<ParamDef> LoadCloudNode::paramDefs() const { return makeLoadParams(); }
 
 ObjectList LoadCloudNode::execute(const std::vector<ObjectList>&, const Params& p) {
-    const std::string path = p.getString("path");
-    if (path.empty()) throw std::runtime_error("load_cloud: no file path set");
     io::ReadOptions options;
     const std::string unit = p.getEnum("source_unit");
     if (unit != "auto") options.source_unit = resolveUnit(unit);
+
+    const std::string folder = p.getString("folder");
+    if (!folder.empty()) {
+        // Batch folder: read the window injected by the engine, or everything
+        // when no window is active (mode=all / single pass).
+        std::vector<std::string> files = io::listPointCloudFiles(folder);
+        if (files.empty()) return {};  // empty folder -> empty output (8.3.4)
+        std::int64_t begin = 0;
+        // Windowed reads apply only when this node drives batch execution
+        // (stream/chunked mode); mode=all ignores the engine window.
+        if (batchEnabled() && context().batch_count > 0) {
+            begin = context().batch_start;
+            const std::int64_t end = std::min(
+                static_cast<std::int64_t>(files.size()),
+                begin + context().batch_count);
+            if (begin >= static_cast<std::int64_t>(files.size())) return {};
+            files = std::vector<std::string>(files.begin() + begin, files.begin() + end);
+        }
+        ObjectList out;
+        out.objects.reserve(files.size());
+        for (std::size_t i = 0; i < files.size(); ++i) {
+            const std::int64_t global = begin + static_cast<std::int64_t>(i);
+            const std::string file = files[i];
+            try {
+                core::PointCloudData cloud = io::readPointCloud(file, options);
+                const std::string fid = frameName(global);
+                auto obj = makeObject(cloud, fid, id());
+                obj->name = fid;
+                out.objects.push_back(std::move(obj));
+            } catch (const io::IoError& e) {
+                throw std::runtime_error("load_cloud: frame " + frameName(global) +
+                                         " failed: " + e.what());
+            }
+        }
+        return out;
+    }
+
+    const std::string path = p.getString("path");
+    if (path.empty()) throw std::runtime_error("load_cloud: no file path or folder set");
     core::PointCloudData cloud = io::readPointCloud(path, options);
     ObjectList out;
     out.objects.push_back(makeObject(cloud, "cloud", id()));
     return out;
+}
+
+bool LoadCloudNode::batchEnabled() const {
+    return !params().getString("folder").empty() &&
+           params().getEnum("mode") != "all";
+}
+
+std::int64_t LoadCloudNode::batchChunkSize() const {
+    if (params().getEnum("mode") != "chunked") return 1;  // stream = K=1
+    return std::max<std::int64_t>(1, params().getInt("chunk_size"));
+}
+
+std::int64_t LoadCloudNode::batchTotal() const {
+    const std::string folder = params().getString("folder");
+    if (!folder.empty()) {
+        return static_cast<std::int64_t>(io::listPointCloudFiles(folder).size());
+    }
+    return params().getString("path").empty() ? 0 : 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -168,7 +236,7 @@ std::vector<ParamDef> SaveCloudNode::paramDefs() const {
 
 ObjectList SaveCloudNode::execute(const std::vector<ObjectList>& inputs, const Params& p) {
     if (inputs.empty() || inputs[0].objects.empty()) {
-        throw std::runtime_error("save_cloud: no input objects");
+        return {};  // empty input propagates as empty output (8.3.4)
     }
     const std::string folder = p.getString("folder");
     if (folder.empty()) throw std::runtime_error("save_cloud: no output folder set");

@@ -17,6 +17,12 @@ public:
     std::vector<std::string> outputKinds() const override { return {"cloud"}; }
     core::ObjectList execute(const std::vector<core::ObjectList>& inputs,
                              const Params& params) override;
+    // Batch-source contract: a non-empty folder with mode stream/chunked
+    // drives chunked execution (PROJECT §8.4); mode=all and single files run
+    // in one pass.
+    bool batchEnabled() const override;
+    std::int64_t batchChunkSize() const override;
+    std::int64_t batchTotal() const override;
 };
 
 class SaveCloudNode final : public Node {

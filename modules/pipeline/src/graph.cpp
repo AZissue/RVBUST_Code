@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <queue>
 #include <sstream>
 #include <stdexcept>
@@ -259,6 +260,7 @@ bool Graph::execute(std::atomic_bool* cancel) {
             dirty_.erase(id);
             failed_.erase(id);
         } catch (const std::exception& e) {
+            std::fprintf(stderr, "[debug] node '%s' failed: %s\n", id.c_str(), e.what());
             failed_.insert(id);
             results_.erase(id);
             last_error_ = "node '" + id + "' failed: " + e.what();
@@ -266,6 +268,60 @@ bool Graph::execute(std::atomic_bool* cancel) {
         }
     }
     return true;
+}
+
+bool Graph::batchEnabled() const {
+    for (const auto& [id, n] : nodes_) {
+        if (n->batchEnabled()) return true;
+    }
+    return false;
+}
+
+std::int64_t Graph::batchChunkSize() const {
+    std::int64_t k = 1;
+    for (const auto& [id, n] : nodes_) {
+        if (n->batchEnabled()) k = std::max(k, n->batchChunkSize());
+    }
+    return k;
+}
+
+bool Graph::executeChunked(std::int64_t chunk_size, std::atomic_bool* cancel) {
+    if (chunk_size <= 0) chunk_size = 1;
+    std::int64_t total = 0;
+    for (const auto& [id, n] : nodes_) {
+        if (n->batchEnabled()) total = std::max(total, n->batchTotal());
+    }
+    // Nothing batchable (or an empty batch): one normal pass. Empty source
+    // lists then propagate as empty output (PROJECT §8.3.4), no error.
+    if (total <= 0) return execute(cancel);
+
+    last_error_.clear();
+    std::int64_t start = 0;
+    bool ok = true;
+    while (start < total) {
+        if (cancel && cancel->load()) {
+            last_error_ = "execution cancelled";
+            ok = false;
+            break;
+        }
+        for (const auto& [id, n] : nodes_) {
+            // Every node sees the block window: source nodes use it to read
+            // the right frames, downstream nodes use batch_start for stable
+            // cross-block naming. Nodes that are not batch sources ignore the
+            // window when they have nothing to read (see LoadCloudNode).
+            n->setContext(NodeContext{start, chunk_size, total});
+        }
+        // Wipe results and dirty state so every node re-runs for this block;
+        // after the loop only the last block's results are retained.
+        clearResults();
+        if (!execute(cancel)) {
+            ok = false;
+            break;
+        }
+        start += chunk_size;
+    }
+    for (const auto& [id, n] : nodes_) n->setContext(NodeContext{});
+    return ok;
 }
 
 const core::ObjectList* Graph::output(const std::string& node_id, int port) const {

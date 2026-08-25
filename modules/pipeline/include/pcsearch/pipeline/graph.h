@@ -60,6 +60,16 @@ public:
     // `cancel` (optional) is checked between nodes so a UI shutdown can stop
     // a long run instead of destroying the worker thread mid-execution.
     bool execute(std::atomic_bool* cancel = nullptr);
+    // Chunked batch execution: repeatedly runs the graph over windows of
+    // `chunk_size` frames from every batch-enabled source node (PROJECT §8.4),
+    // fail-fast on the first failing block. Results keep only the last block
+    // (the display shows the block's last frame). Falls back to execute()
+    // when no source reports batchEnabled().
+    bool executeChunked(std::int64_t chunk_size, std::atomic_bool* cancel = nullptr);
+    // True when any node in the graph drives chunked batch execution.
+    bool batchEnabled() const;
+    // Largest K requested by the graph's batch-enabled sources.
+    std::int64_t batchChunkSize() const;
     const core::ObjectList* output(const std::string& node_id, int port = 0) const;
     bool hasFailed(const std::string& node_id) const;
     std::string lastError() const { return last_error_; }

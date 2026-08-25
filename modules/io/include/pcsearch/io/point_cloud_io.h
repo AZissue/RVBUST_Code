@@ -3,6 +3,7 @@
 #include "pcsearch/core_data/point_cloud.h"
 
 #include <string>
+#include <vector>
 
 namespace pcsearch::io {
 
@@ -29,6 +30,12 @@ struct WriteOptions {
 // Save a point cloud file. Throws IoError on failure.
 void writePointCloud(const std::string& path, const core::PointCloudData& cloud,
                      const WriteOptions& options = {});
+
+// List supported point-cloud files (pcd/ply/xyz/csv/txt) inside `folder`,
+// sorted by file name in natural order (numeric runs compare numerically,
+// e.g. shot_2.ply < shot_10.ply). Returns an empty list when `folder` is not
+// a directory or contains no supported files. Paths are returned as UTF-8.
+std::vector<std::string> listPointCloudFiles(const std::string& folder);
 
 class IoError : public std::runtime_error {
 public:
