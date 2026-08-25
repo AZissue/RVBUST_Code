@@ -195,19 +195,24 @@
 - 多输入对齐抽公共助手（`node_utils::alignInputs`）复用，禁止各节点自写。
 
 ## 9. 按约定待修清单（实现阶段，逐项提交）
-- [ ] box_roi region 输出坍缩为 1 个对象 → 按 (帧, 盒) 输出 F×M 个，与 cloud 端口对齐
-- [ ] roi_crop 只取 region 列表第 0 个 → 按索引对齐取第 i 个
-- [ ] `transformObject / makeSubsetObject / cropObject` 的 `provenance` 保留父节点 → 改为当前节点 id
-- [ ] `RoiBox` 增加 `label` 字段；box_roi 支持一帧多盒（盒列表节点级共享）
-- [ ] load_cloud 支持文件夹批量 + 读取模式（all / chunked / stream，默认逐帧）；
+- [x] box_roi region 输出坍缩为 1 个对象 → 按 (帧, 盒) 输出 F×M 个，与 cloud 端口对齐
+- [x] roi_crop 只取 region 列表第 0 个 → 按索引对齐取第 i 个（zip + 广播）
+- [x] `transformObject / makeSubsetObject / cropObject` 的 `provenance` 保留父节点 → 改为当前节点 id
+- [x] `RoiBox` 增加 `label` 字段；box_roi 支持一帧多盒（box_count + boxes_json，
+      盒列表节点级共享；多盒交互编辑 UI 为后续工作）
+- [x] load_cloud 支持文件夹批量 + 读取模式（all / chunked / stream，默认逐帧）；
       批量读取优先二进制格式（PLY binary / PCD），并按文件名主干填充 frame_id
-- [ ] save_cloud 零填充命名与多盒命名（`frame_000.roi0.ply`）
-- [ ] 抽 `alignInputs` 助手 + 各节点批量 E2E 单测（§8.8）
+- [x] save_cloud 零填充命名与多盒命名（`frame_000.roi0.ply`），三模式命名一致
+- [x] 抽 `alignInputs` 助手 + 批量 E2E 单测（§8.8 核心链路已覆盖；
+      其余节点批量覆盖在下一步逐节点补齐）
 - [ ] 输入端口声明 optional 标志（Node API），供 roi_crop 等 optional 端口按文档化默认行为执行
-- [ ] display3d 输入端口类型改 any；多 display3d 图层叠加；latest-wins 合并渲染；视口 3000 万点预算与硬件档位
+- [x] display3d 输入端口类型改 any；多 display3d 图层叠加；latest-wins 合并渲染
+      （块快照 + 100ms 合并定时器）；视口 3000 万点预算与硬件档位
+      （LOD 密度自适应留待后续）
 
 ## 10. 变更记录
 | 日期 | 变更内容 | 影响范围 | 修改人 / 会话 |
 |---|---|---|---|
 | 2026-08-25 | 按新模板重写 AGENTS / PROJECT / PLAN / STATUS；新增 docs/SESSION_PROMPTS.md；git 初始化基线 | 全部文档 | Codex 会话 |
 | 2026-08-25 | 新增 §8 节点 I/O / 批量 / 分块 / 显示统一约定与 §9 待修清单；§2 / §6 / §7 同步补充 | PROJECT / STATUS / PLAN | Codex 会话 |
+| 2026-08-25 | §9 前 7 项批量架构落地（load 批量 + 分块执行、display3d 多图层 + latest-wins + 视口预算 + 硬件档位、一帧多盒 + provenance、save 零填充 / 多盒命名、alignInputs + 批量 E2E） | PROJECT / STATUS / PLAN | Codex 会话 |

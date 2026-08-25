@@ -16,13 +16,19 @@
   分块执行**（47bb5a6，附 74cf11d 清理临时调试输出）。IO 新增 listPointCloudFiles
   （自然排序）、Node 批处理上下文、Graph::executeChunked、save_cloud 空输入传播、
   engine_runner 接入批量执行；配套 batch/solution E2E 单测；ctest 6/6 + smoke 通过。
-- 下一步（下会话，重点）：**把「点云加载 → Box ROI → 保存点云」三节点的批量架构
-  打牢**，后续其它节点在此之上扩展。实现顺序（每项配套单测，逐项提交）：
-  ① ✅ load_cloud 文件夹批量（本轮完成）；
-  ② display3d 多图层 + latest-wins + 视口 3000 万点预算与硬件档位（3D 视窗刷新）；
-  ③ RoiBox 加 label + box_roi 一帧多盒（含配套修复：region 坍缩 / provenance 保留父节点）；
-  ④ save_cloud 零填充 / 多盒命名（点云批量保存）；
-  ⑤ roi_crop 按索引对齐 + 抽 alignInputs 助手 + 批量 E2E 单测（贯穿各步）。
+- 本轮已完成并提交（PROJECT §9 前 7 项，逐项配套单测）：
+  ① ✅ load_cloud 文件夹批量（47bb5a6）；② ✅ display3d 多图层 + latest-wins +
+  视口预算 + 硬件档位（9189417，端口改 any）；③ ✅ RoiBox.label + box_roi 一帧多盒
+  （box_count + boxes_json，F×M 对齐）+ region 坍缩 / provenance 修复（d6ece80）；
+  ④ ✅ save_cloud 零填充帧名 + 多盒命名，三模式命名一致（d98b212）；
+  ⑤ ✅ roi_crop 按索引对齐 + alignInputs 助手 + §8.8 批量 E2E（ce9323d）。
+- 下一步（下会话，重点）：
+  - §9 剩余第 8 项：输入端口 optional 标志（Node API），roi_crop 等 optional 端口
+    按文档化默认行为执行；
+  - 逐个节点按 §8.8 补批量 E2E（平面 / 聚类 / Z 过滤 / 下采样 / ROI Crop 目前仅
+    单对象或部分批量覆盖）；
+  - display3d 直播流式刷新（块进度已通）+ LOD 密度自适应（硬件档位 API 已就绪，
+    默认仍为 Low 150 万保红线）为后续优化方向。
 - 正在进行的文件：`modules/pipeline/src/nodes/core_nodes.cpp`、
   `modules/pipeline/include/pcsearch/pipeline/nodes/node_utils.h`、
   `app/src/point_cloud_view.cpp`
@@ -35,6 +41,10 @@
 - 上次会话结束已提交：是（ROI W/E、体素修复与本会话文档约定均已推送）
 
 ## ✅ 已完成（近期；更早历史见 git）
+- [x] 2026-08-25 「加载 → Box ROI → 保存」三节点批量架构：load 文件夹批量 + 读取模式 +
+  引擎分块执行；display3d 多图层 + latest-wins + 视口预算 + 硬件档位；RoiBox label +
+  一帧多盒（F×M 对齐）+ region 坍缩 / provenance 修复；save 零填充 / 多盒命名；
+  alignInputs 助手 + §8.8 批量 E2E（PROJECT §9 前 7 项）
 - [x] 2026-08-25 完成节点 I/O / 批量 / 分块 / 显示统一约定（PROJECT §8 + §9 待修清单），
   含一帧多盒、文件夹批量读取模式、视窗多图层显示模型
 - [x] 2026-08-25 修复本地一键构建：CMake 复用 RvcVisionStudio 自编译 VTK（带 GUISupportQt）解决 PCL 1.13.0 捆绑 VTK 缺 Qt 支持问题；start.bat 自动探测本机 Qt/PCL 路径；ctest 6/6 + autoquit 冒烟通过
@@ -84,6 +94,7 @@
 | Qt6_DIR 两级路径找 bin | 指向 lib/bin | Qt 6.8.3 | 是（三级） |
 | 拖拽连线 `scene->items()` 命中 | 边界不稳定 | 画布 v1 | 是（改端口距离吸附） |
 | `GetTransform` 读取盒子中心 | GetPosition = R·c 偏 | VTK 9.4 原点居中放置 | 是（改 8 角点） |
+| 多图层重排 RemoveViewProp 后再 AddViewProp | 堆损坏 0xC0000374（demo 崩溃） | VTK 9.4 vtkNew 只留 renderer 引用 | 是（图层容器改 vtkSmartPointer 自持引用） |
 | std::min/max 全量算包围盒 | NaN/Inf 污染 | RVC 点云空洞 | 是（改 allFinite） |
 | 参数默认只写 description | 实际默认 0 / 类型错 | Params v1 | 是（加 default_value） |
 | 直接销毁运行中 QThread | Qt6 fail-fast 0xC0000409 | 5M 流程中退出 | 是（加取消 + wait） |
