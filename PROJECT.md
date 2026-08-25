@@ -127,6 +127,8 @@
    - 多输出端口：同一处理单元的结果在各端口**同一次序**放置。
      box_roi：输入第 i 帧、盒列表 M 个盒 → cloud 输出与 region 输出各 F×M 个，
      下标 j = i*M + k，`cloud[j] ↔ region[j]` 严格对应，且 `cloud[j].roi == region[j].roi`。
+   - 每帧不同盒（盒数 / 位置逐帧不同）不在本次实现范围，后续通过 region 输入端口
+     按索引对齐扩展（2026-08-25 讨论结论）。
 4. **空输入与 optional**：输入端口声明是否 optional。optional 端口空 / 未连 → 节点按文档化
    默认行为执行（roi_crop 空 region = 透传）；非 optional 端口空列表 → 空传播（输出空，不报错）。
    多输入时若某输入为空而其它输入长度 >1，不适用空传播，按 8.3.2 报长度不一致。
@@ -149,6 +151,9 @@
 ### 8.5 对象派生与溯源
 - 派生对象继承父对象 `unit / source_path / frame_id / visible / display_color`；
   `source_indices` 必须重映射（`composeIndices`）。
+- `source_indices` 的索引语义：批量读取多帧时每帧是独立文件，`source_indices` 为
+  **该帧文件内行号**；帧标识由 `frame_id` / `source_path` 承担，不引入跨文件全局
+  点索引（2026-08-25 已确认）。
 - `provenance` 统一为**当前执行节点 id**（旧实现保留父节点 id 的 3 处待修，见 §9）。
 - 批量保存 = 每对象一个文件，命名 = 对象 name + 零填充序号（多盒时含盒 label）。
 
