@@ -8,9 +8,19 @@ if(NOT Qt6_FOUND)
     return()
 endif()
 
-find_package(VTK 9.4 QUIET COMPONENTS GUISupportQt InteractionStyle InteractionWidgets
-    RenderingCore RenderingOpenGL2
-    PATHS "D:/Program Files/VTK" NO_DEFAULT_PATH)
+# Prefer the self-built VTK with Qt support if available; otherwise fall back
+# to system/PCL-bundled VTK. PCLConfig may have set VTK_DIR to its own copy,
+# so we override it explicitly here.
+if(EXISTS "D:/RVC_SRC/RvcVisionStudio/third_party/VTK-install/lib/cmake/vtk-9.2")
+    set(VTK_DIR "D:/RVC_SRC/RvcVisionStudio/third_party/VTK-install/lib/cmake/vtk-9.2" CACHE PATH "" FORCE)
+endif()
+
+find_package(VTK 9.2 COMPONENTS GUISupportQt InteractionStyle InteractionWidgets
+    RenderingCore RenderingOpenGL2 QUIET
+    PATHS "D:/RVC_SRC/RvcVisionStudio/third_party/VTK-install"
+            "D:/Program Files/VTK"
+            "D:/Program Files/PCL 1.13.0/3rdParty/VTK"
+    NO_DEFAULT_PATH)
 
 add_executable(pcsearch_app
     WIN32

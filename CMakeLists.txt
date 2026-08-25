@@ -20,6 +20,17 @@ if(NOT DEFINED PCL_ROOT)
 endif()
 list(APPEND CMAKE_PREFIX_PATH "${PCL_ROOT}")
 
+# PCL all-in-one bundles VTK 9.2 without GUISupportQt. We pre-load a
+# self-built VTK with Qt support so that downstream app can use QVTKOpenGLNativeWidget.
+# If this VTK is not available, PCL's bundled copy is used and the desktop app
+# will be skipped gracefully.
+if(EXISTS "D:/RVC_SRC/RvcVisionStudio/third_party/VTK-install/lib/cmake/vtk-9.2")
+    find_package(VTK 9.2 QUIET COMPONENTS GUISupportQt InteractionStyle InteractionWidgets
+        RenderingCore RenderingOpenGL2
+        PATHS "D:/RVC_SRC/RvcVisionStudio/third_party/VTK-install"
+        NO_DEFAULT_PATH)
+endif()
+
 find_package(PCL 1.13 REQUIRED
     COMPONENTS common kdtree search sample_consensus filters segmentation)
 
