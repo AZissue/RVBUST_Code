@@ -268,7 +268,7 @@ class MainWindowShell(QMainWindow):
         left_lo.addWidget(self._st_devices)
 
         self._st_state_dot = QLabel("●")
-        self._st_state_dot.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 10px;")
+        self._st_state_dot.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 12px;")
         left_lo.addWidget(self._st_state_dot)
 
         self._st_step = QLabel("待机")
@@ -426,7 +426,7 @@ class MainWindowShell(QMainWindow):
         else:
             dot_color = STATUS_WARN
         self._st_state_dot.setStyleSheet(
-            f"color: {dot_color}; font-size: 10px;")
+            f"color: {dot_color}; font-size: 12px;")
 
     def _on_chain_stats(self, text: str):
         self._st_hint.setText(text)

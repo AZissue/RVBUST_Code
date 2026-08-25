@@ -12,9 +12,10 @@ ui_v2.widgets.floating_log_panel —— 浮动日志面板。
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton,
-    QVBoxLayout, QWidget,
+    QFrame, QGraphicsDropShadowEffect, QHBoxLayout, QLabel, QPlainTextEdit,
+    QPushButton, QVBoxLayout, QWidget,
 )
 
 from ..theme import BG_PANEL, BORDER, STATUS_ERR, STATUS_OK, STATUS_WARN, TEXT_PRIMARY, TEXT_SECONDARY
@@ -40,6 +41,12 @@ class FloatingLogPanel(QFrame):
             f"FloatingLogPanel {{ background-color: {BG_PANEL}; "
             f"border: none; border-radius: 6px; }}"
         )
+
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(20)
+        shadow.setColor(QColor(0, 0, 0, 120))
+        shadow.setOffset(0, 4)
+        self.setGraphicsEffect(shadow)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(1, 1, 1, 1)

@@ -127,7 +127,7 @@ class LiveViewPanel(QFrame):
         bar.addStretch(1)
 
         self._auto_hint = QLabel("自动检测已开启")
-        self._auto_hint.setStyleSheet(f"color: {STATUS_OK}; font-size: 11px;")
+        self._auto_hint.setStyleSheet(f"color: {STATUS_OK}; font-size: 12px;")
         bar.addWidget(self._auto_hint)
 
         self._mode_btn = QToolButton()
@@ -149,7 +149,7 @@ class LiveViewPanel(QFrame):
         self._guide = QLabel("")
         self._guide.setAlignment(Qt.AlignCenter)
         self._guide.setStyleSheet(
-            f"color: #64B5F6; font-size: 11px; padding: 4px;")
+            f"color: #64B5F6; font-size: 12px; padding: 4px;")
         self._guide.hide()
         root.addWidget(self._guide)
 
@@ -208,5 +208,5 @@ class LiveViewPanel(QFrame):
         self._mode_btn.setText("自动 ▾" if checked else "手动 ▾")
         self._auto_hint.setText("自动检测已开启" if checked else "手动模式（兜底）")
         self._auto_hint.setStyleSheet(
-            f"color: {STATUS_OK if checked else ACCENT}; font-size: 11px;")
+            f"color: {STATUS_OK if checked else ACCENT}; font-size: 12px;")
         self.mode_toggled.emit(checked)

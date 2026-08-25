@@ -404,6 +404,12 @@ class MultiCamWorkspace(QWidget):
         # locked 状态下允许点击「重新标定」，返回标定阶段
         self._btn_capture.setEnabled(connected)
         self._btn_capture.setText("重新标定" if locked else "拍摄标定帧")
+        self._btn_capture.setObjectName("danger" if locked else "primary")
+        ui_icons.apply(
+            self._btn_capture, "camera",
+            STATUS_ERR if locked else "#FFFFFF", 16)
+        self._btn_capture.style().unpolish(self._btn_capture)
+        self._btn_capture.style().polish(self._btn_capture)
         self._rb_sync.setEnabled(connected and not locked)
         self._rb_async.setEnabled(connected and not locked)
         self._ref_combo.setEnabled(connected and not locked)
@@ -542,12 +548,12 @@ class MultiCamWorkspace(QWidget):
         if quality_passed:
             self._gate_hint.setText("✓ 质量门禁通过，可进入扫描阶段")
             self._gate_hint.setStyleSheet(
-                f"color: {STATUS_OK}; font-size: 11px; font-weight: 600;")
+                f"color: {STATUS_OK}; font-size: 12px; font-weight: 600;")
         else:
             self._gate_hint.setText(
                 "✗ 任一 pair 未达标，请重拍或重新检测（扫描已禁用）")
             self._gate_hint.setStyleSheet(
-                f"color: {STATUS_ERR}; font-size: 11px; font-weight: 600;")
+                f"color: {STATUS_ERR}; font-size: 12px; font-weight: 600;")
 
     def show_recalibration_warning(self):
         """相机断线重连后提示「外参可能失效，请重新标定」。"""
@@ -560,7 +566,7 @@ class MultiCamWorkspace(QWidget):
         self._result_table.setRowCount(0)
         self._gate_hint.setText("质量门禁：任一 pair 未达标时禁止进入扫描")
         self._gate_hint.setStyleSheet(
-            f"color: {TEXT_MUTED}; font-size: 11px;")
+            f"color: {TEXT_MUTED}; font-size: 12px;")
         for cid in self._camera_grid.camera_ids():
             card = self._camera_grid.card(cid)
             if card:

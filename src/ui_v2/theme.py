@@ -14,7 +14,7 @@ ui_v2.theme —— 设计系统常量 + 全局 QSS。
 BG_WINDOW = "#1A1D23"     # 窗口底色：偏冷蓝灰，减少沉闷
 BG_PANEL = "#23272F"      # 面板底色
 BG_CARD = "#2B3039"       # 卡片底色：与面板形成明显层次
-BG_INPUT = "transparent"  # 输入框无底色，完全融入父容器
+BG_INPUT = "#1E2229"    # 输入框微底色，在无边框卡片中可辨识
 BORDER = "#3D4350"        # 边框：冷灰蓝，更柔和
 BORDER_HOVER = "#4D535F"  # 悬停边框
 
@@ -25,7 +25,7 @@ ACCENT_DIM = "rgba(211, 47, 47, 0.16)"   # 选中态底色
 
 TEXT_PRIMARY = "#E8EAED"
 TEXT_SECONDARY = "#9AA0A8"
-TEXT_MUTED = "#5F6368"
+TEXT_MUTED = "#949BA3"
 
 STATUS_OK = "#4CAF50"     # 绿
 STATUS_WARN = "#FFB300"   # 黄 —— 提高深色背景对比度
@@ -85,19 +85,32 @@ QPushButton#primary:disabled {{
 }}
 
 QPushButton#danger {{
-    background: transparent; border-color: {STATUS_ERR}; color: {STATUS_ERR};
+    background: transparent;
+    border: 1px solid {STATUS_ERR};
+    color: {STATUS_ERR};
 }}
-QPushButton#danger:hover {{ background-color: rgba(244, 67, 54, 0.12); }}
+QPushButton#danger:hover {{
+    background-color: rgba(244, 67, 54, 0.12);
+    border-color: {STATUS_ERR};
+}}
+QPushButton#danger:pressed {{ background-color: rgba(244, 67, 54, 0.20); }}
+QPushButton#danger:disabled {{
+    background: transparent; color: {TEXT_MUTED}; border-color: #2E313A;
+}}
 
 QPushButton#secondary {{
-    background: transparent; border-color: {BORDER}; color: {TEXT_SECONDARY};
+    background-color: {BG_PANEL};
+    border: 1px solid {BORDER};
+    color: {TEXT_PRIMARY};
 }}
 QPushButton#secondary:hover {{
-    background-color: {BG_CARD}; border-color: {BORDER_HOVER}; color: {TEXT_PRIMARY};
+    background-color: {BG_CARD};
+    border-color: {BORDER_HOVER};
+    color: {TEXT_PRIMARY};
 }}
 QPushButton#secondary:pressed {{ background-color: #3E424E; }}
 QPushButton#secondary:disabled {{
-    background: transparent; color: {TEXT_MUTED}; border-color: #2E313A;
+    background-color: {BG_PANEL}; color: {TEXT_MUTED}; border-color: #2E313A;
 }}
 
 QPushButton#bigAction {{
@@ -144,7 +157,7 @@ QRadioButton::indicator, QCheckBox::indicator {{ width: 14px; height: 14px; }}
 /* ============ 分组 / 卡片 ============ */
 QGroupBox {{
     background-color: {BG_PANEL};
-    border: 1px solid {BORDER};
+    border: none;
     border-radius: {RADIUS};
     margin-top: 12px;
     padding-top: 10px;
@@ -237,6 +250,6 @@ QDockWidget {{ color: {TEXT_SECONDARY}; titlebar-close-icon: none; }}
 QPlainTextEdit {{
     background-color: {BG_PANEL}; border: 1px solid {BORDER};
     border-radius: {RADIUS};
-    font-family: "Consolas", "Courier New", monospace; font-size: 11px;
+    font-family: "Consolas", "Courier New", monospace; font-size: 12px;
 }}
 """

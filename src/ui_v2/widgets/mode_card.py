@@ -44,7 +44,7 @@ class ModeCard(QFrame):
         text_col.addWidget(self._title)
         self._desc = QLabel(desc)
         self._desc.setWordWrap(True)
-        self._desc.setStyleSheet(f"font-size: 11px; color: {TEXT_SECONDARY};")
+        self._desc.setStyleSheet(f"font-size: 12px; color: {TEXT_SECONDARY};")
         text_col.addWidget(self._desc)
         lo.addLayout(text_col, 1)
 
@@ -67,8 +67,9 @@ class ModeCard(QFrame):
         self._icon.setPixmap(ui_icons.pixmap(self._icon_name, icon_color, 28))
         if checked:
             self.setStyleSheet(
-                f"ModeCard {{ background-color: {ACCENT_DIM};"
-                f" border: none; border-radius: 8px; }}")
+                f"ModeCard {{ background-color: rgba(211, 47, 47, 0.28);"
+                f" border: none; border-radius: 8px;"
+                f" border-left: 4px solid {ACCENT}; }}")
             self._dot.setStyleSheet(f"color: {ACCENT}; font-size: 14px;")
         else:
             self.setStyleSheet(

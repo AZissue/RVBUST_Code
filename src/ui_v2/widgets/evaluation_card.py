@@ -68,7 +68,7 @@ class EvaluationCard(QFrame):
         col = QVBoxLayout()
         col.setSpacing(2)
         name_lbl = QLabel(name)
-        name_lbl.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 10px;")
+        name_lbl.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 12px;")
         col.addWidget(name_lbl)
         value_lbl = QLabel(value)
         value_lbl.setStyleSheet(

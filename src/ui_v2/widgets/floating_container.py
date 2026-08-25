@@ -14,8 +14,10 @@ from __future__ import annotations
 from typing import Optional
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget,
+    QFrame, QGraphicsDropShadowEffect, QHBoxLayout, QLabel, QPushButton,
+    QVBoxLayout, QWidget,
 )
 
 from ..theme import BG_PANEL, BORDER, STATUS_ERR, TEXT_PRIMARY, TEXT_SECONDARY
@@ -34,6 +36,12 @@ class FloatingContainer(QFrame):
             f"FloatingContainer {{ background-color: {BG_PANEL}; "
             f"border: none; border-radius: 6px; }}"
         )
+
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(20)
+        shadow.setColor(QColor(0, 0, 0, 120))
+        shadow.setOffset(0, 4)
+        self.setGraphicsEffect(shadow)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(1, 1, 1, 1)

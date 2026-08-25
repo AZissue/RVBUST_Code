@@ -72,7 +72,7 @@ class LauncherDialog(QDialog):
         """启动小窗用的圆角卡片容器。"""
         card = QFrame()
         card.setStyleSheet(
-            f"QFrame {{ background-color: {BG_CARD}; border: 1px solid {BORDER};"
+            f"QFrame {{ background-color: {BG_CARD}; border: none;"
             f" border-radius: 8px; }}"
         )
         lo = QVBoxLayout(card)
@@ -182,7 +182,7 @@ class LauncherDialog(QDialog):
         # ===== 底部状态栏 + 按钮行 =====
         status_card = QFrame()
         status_card.setStyleSheet(
-            f"QFrame {{ background-color: {BG_CARD}; border: 1px solid {BORDER};"
+            f"QFrame {{ background-color: {BG_CARD}; border: none;"
             f" border-radius: 6px; }}"
         )
         status_lo = QHBoxLayout(status_card)

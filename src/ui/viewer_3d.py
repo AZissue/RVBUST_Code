@@ -738,13 +738,14 @@ class EmbeddedPointCloudViewer(QWidget):
         bar.setStyleSheet(
             "QWidget { background-color: #252525; border: 1px solid #3a3a3a; }"
             "QToolButton, QPushButton { background: transparent; border: none; "
-            "color: #cccccc; font-size: 8pt; padding: 2px 5px; min-height: 20px; }"
+            "color: #cccccc; font-size: 10pt; padding: 2px 5px; min-height: 20px; }"
+            "QToolButton { icon-size: 16px; }"
             "QToolButton:hover, QPushButton:hover { color: #ffffff; background: #3a3a3a; "
             "border-radius: 3px; }"
             "QToolButton:checked, QPushButton:checked { color: #2979FF; background: #1E3A5F; "
             "border-radius: 3px; }"
-            "QLabel { color: #888888; font-size: 8pt; background: transparent; border: none; }"
-            "QComboBox, QSpinBox { font-size: 8pt; min-height: 22px; }"
+            "QLabel { color: #888888; font-size: 10pt; background: transparent; border: none; }"
+            "QComboBox, QSpinBox { font-size: 10pt; min-height: 22px; }"
         )
         tb = QHBoxLayout(bar)
         tb.setContentsMargins(6, 2, 6, 2)

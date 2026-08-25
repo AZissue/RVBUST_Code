@@ -182,7 +182,7 @@ class MobileChainWorkspace(QWidget):
         # ---- 底部常驻统计行：已接 N 机位 | 累计误差 | 平均单步误差 ----
         self._stats_label = QLabel("已接 0 机位 ｜ 累计误差 — ｜ 平均单步误差 —")
         self._stats_label.setStyleSheet(
-            f"color: {TEXT_MUTED}; font-size: 11px; padding: 2px 4px;")
+            f"color: {TEXT_MUTED}; font-size: 12px; padding: 2px 4px;")
         root.addWidget(self._stats_label)
 
         self._selected_node: Optional[int] = None
@@ -406,7 +406,7 @@ class MobileChainWorkspace(QWidget):
                 text += "  ⚠ 建议执行全局优化"
         self._stats_label.setText(text)
         self._stats_label.setStyleSheet(
-            f"color: {color}; font-size: 11px; padding: 2px 4px;")
+            f"color: {color}; font-size: 12px; padding: 2px 4px;")
         self.chain_stats_changed.emit(text)
 
     def _on_node_selected(self, index: int):

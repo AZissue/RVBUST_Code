@@ -26,7 +26,7 @@ from ..theme import (
 _STATE_STYLE = {
     # state: (frame_bg, num_color, title_color)
     "done": (BG_CARD, STATUS_OK, STATUS_OK),
-    "current": (ACCENT_DIM, ACCENT, ACCENT),
+    "current": (ACCENT, "#FFFFFF", "#FFFFFF"),
     "pending": (BG_PANEL, TEXT_SECONDARY, TEXT_SECONDARY),
     "disabled": (BG_PANEL, TEXT_MUTED, TEXT_MUTED),
 }

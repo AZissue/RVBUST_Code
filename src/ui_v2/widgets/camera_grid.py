@@ -81,7 +81,7 @@ class CameraCard(QFrame):
         title_row.addWidget(self._name)
         title_row.addStretch(1)
         self._kind = QLabel("")
-        self._kind.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 10px;")
+        self._kind.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 12px;")
         title_row.addWidget(self._kind)
         lo.addLayout(title_row)
 
@@ -102,7 +102,7 @@ class CameraCard(QFrame):
         bottom.addStretch(1)
 
         self._covis_badge = QLabel("")
-        self._covis_badge.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 11px;")
+        self._covis_badge.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 12px;")
         bottom.addWidget(self._covis_badge)
         bottom.addSpacing(6)
 
@@ -226,11 +226,11 @@ class CameraCard(QFrame):
         elif ok:
             self._covis_badge.setText("✓ 共视正常")
             self._covis_badge.setStyleSheet(
-                f"color: {STATUS_OK}; font-size: 11px; font-weight: 600;")
+                f"color: {STATUS_OK}; font-size: 12px; font-weight: 600;")
         else:
             self._covis_badge.setText("● 未看到标定板")
             self._covis_badge.setStyleSheet(
-                f"color: {STATUS_ERR}; font-size: 11px; font-weight: 600;")
+                f"color: {STATUS_ERR}; font-size: 12px; font-weight: 600;")
 
     def set_frame_kind(self, kind: Optional[str]):
         """帧分区标签：'标定帧' / '扫描帧' / None。"""
@@ -238,7 +238,7 @@ class CameraCard(QFrame):
             color, text = FRAME_KIND_STYLE[kind]
             self._kind.setText(text)
             self._kind.setStyleSheet(
-                f"color: {color}; font-size: 10px; font-weight: 600;")
+                f"color: {color}; font-size: 12px; font-weight: 600;")
         else:
             self._kind.setText("")
 

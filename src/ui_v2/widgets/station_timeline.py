@@ -73,13 +73,13 @@ class StationNode(QFrame):
         color, status_text = STATUS_STYLE.get(data.status, STATUS_STYLE["ok"])
         self._status = QLabel(f"● {status_text}")
         self._status.setStyleSheet(
-            f"color: {color}; font-size: 11px; font-weight: 600;")
+            f"color: {color}; font-size: 12px; font-weight: 600;")
         head.addWidget(self._status)
         lo.addLayout(head)
 
         self._detail = QLabel(self._detail_text(data))
         self._detail.setStyleSheet(
-            f"color: {TEXT_SECONDARY}; font-size: 11px;")
+            f"color: {TEXT_SECONDARY}; font-size: 12px;")
         lo.addWidget(self._detail)
 
         # 失败机位：内嵌重拍按钮
@@ -169,7 +169,7 @@ class StationTimeline(QScrollArea):
         self._empty_hint = QLabel("尚未拍摄机位\n点击下方「拍摄机位」开始")
         self._empty_hint.setAlignment(Qt.AlignCenter)
         self._empty_hint.setStyleSheet(
-            f"color: {TEXT_MUTED}; font-size: 11px; padding: 12px 0;")
+            f"color: {TEXT_MUTED}; font-size: 12px; padding: 12px 0;")
         self._vbox.insertWidget(1, self._empty_hint)
 
         self.setWidget(container)
