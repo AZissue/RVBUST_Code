@@ -48,6 +48,9 @@ FilterResult removeInvalidPoints(const PointCloudData& cloud) {
     if (cloud.hasNormals()) result.cloud.normals.resize(result.cloud.size(), 3);
     result.cloud.scalar_channels.resize(cloud.scalar_channels.size());
     result.cloud.scalar_channel_names = cloud.scalar_channel_names;
+    for (std::size_t c = 0; c < cloud.scalar_channels.size(); ++c) {
+        result.cloud.scalar_channels[c].reserve(keep.size());
+    }
     for (std::size_t k = 0; k < keep.size(); ++k) {
         copyRow(cloud, keep[k], result.cloud, static_cast<std::int64_t>(k));
         for (std::size_t c = 0; c < cloud.scalar_channels.size(); ++c) {
@@ -75,6 +78,8 @@ FilterResult voxelDownsample(const PointCloudData& cloud, double leaf_size_mm,
     struct VoxelAccum {
         Eigen::Vector3d sum = Eigen::Vector3d::Zero();
         Eigen::Vector3d color_sum = Eigen::Vector3d::Zero();
+        Eigen::Vector3d normal_sum = Eigen::Vector3d::Zero();
+        std::vector<double> scalar_sums;
         std::int64_t count = 0;
         std::int64_t first_index = -1;
         Eigen::Vector3i grid_index = Eigen::Vector3i::Zero();
@@ -84,6 +89,7 @@ FilterResult voxelDownsample(const PointCloudData& cloud, double leaf_size_mm,
     std::unordered_map<std::int64_t, VoxelAccum> voxels;
     voxels.reserve(static_cast<std::size_t>(cloud.size() / 2));
 
+    const std::size_t scalar_count = cloud.scalar_channels.size();
     for (std::int64_t i = 0; i < cloud.size(); ++i) {
         const Eigen::Vector3d p = cloud.points.row(i).cast<double>();
         if (!p.allFinite()) continue;
@@ -93,15 +99,28 @@ FilterResult voxelDownsample(const PointCloudData& cloud, double leaf_size_mm,
                                  (static_cast<std::int64_t>(idx.y()) * 19349663) ^
                                  (static_cast<std::int64_t>(idx.z()) * 83492791);
         VoxelAccum& v = voxels[key];
+        if (v.count == 0) {
+            v.scalar_sums.assign(scalar_count, 0.0);
+        }
         v.grid_index = idx;
         v.sum += p;
         if (cloud.hasColors()) v.color_sum += cloud.colors.row(i).cast<double>();
+        if (cloud.hasNormals()) v.normal_sum += cloud.normals.row(i).cast<double>();
+        for (std::size_t c = 0; c < scalar_count; ++c) {
+            v.scalar_sums[c] += cloud.scalar_channels[c][static_cast<std::size_t>(i)];
+        }
         ++v.count;
         if (v.first_index < 0) v.first_index = i;
     }
 
     result.cloud.points.resize(static_cast<std::int64_t>(voxels.size()), 3);
     if (cloud.hasColors()) result.cloud.colors.resize(result.cloud.size(), 3);
+    if (cloud.hasNormals()) result.cloud.normals.resize(result.cloud.size(), 3);
+    result.cloud.scalar_channels.resize(scalar_count);
+    result.cloud.scalar_channel_names = cloud.scalar_channel_names;
+    for (std::size_t c = 0; c < scalar_count; ++c) {
+        result.cloud.scalar_channels[c].resize(voxels.size());
+    }
     result.source_indices.reserve(voxels.size());
     std::int64_t row = 0;
     for (const auto& [key, v] : voxels) {
@@ -117,6 +136,13 @@ FilterResult voxelDownsample(const PointCloudData& cloud, double leaf_size_mm,
         result.cloud.points(row, 2) = static_cast<float>(out.z());
         if (cloud.hasColors()) {
             result.cloud.colors.row(row) = (v.color_sum / static_cast<double>(v.count)).cast<float>();
+        }
+        if (cloud.hasNormals()) {
+            result.cloud.normals.row(row) = (v.normal_sum / static_cast<double>(v.count)).cast<float>();
+        }
+        for (std::size_t c = 0; c < scalar_count; ++c) {
+            result.cloud.scalar_channels[c][static_cast<std::size_t>(row)] =
+                static_cast<float>(v.scalar_sums[c] / static_cast<double>(v.count));
         }
         result.source_indices.push_back(v.first_index);
         ++row;
@@ -147,8 +173,18 @@ FilterResult randomDownsample(const PointCloudData& cloud, std::int64_t target_c
     result.cloud.points.resize(target_count, 3);
     if (cloud.hasColors()) result.cloud.colors.resize(target_count, 3);
     if (cloud.hasNormals()) result.cloud.normals.resize(target_count, 3);
+    result.cloud.scalar_channels.resize(cloud.scalar_channels.size());
+    result.cloud.scalar_channel_names = cloud.scalar_channel_names;
+    for (std::size_t c = 0; c < cloud.scalar_channels.size(); ++c) {
+        result.cloud.scalar_channels[c].resize(static_cast<std::size_t>(target_count));
+    }
     for (std::int64_t r = 0; r < target_count; ++r) {
-        copyRow(cloud, idx[static_cast<std::size_t>(r)], result.cloud, r);
+        const std::int64_t src_row = idx[static_cast<std::size_t>(r)];
+        copyRow(cloud, src_row, result.cloud, r);
+        for (std::size_t c = 0; c < cloud.scalar_channels.size(); ++c) {
+            result.cloud.scalar_channels[c][static_cast<std::size_t>(r)] =
+                cloud.scalar_channels[c][static_cast<std::size_t>(src_row)];
+        }
     }
     result.source_indices = idx;
     return result;
@@ -172,8 +208,18 @@ FilterResult filterByAxisRange(const PointCloudData& cloud, Axis axis,
     result.cloud.points.resize(static_cast<std::int64_t>(keep.size()), 3);
     if (cloud.hasColors()) result.cloud.colors.resize(result.cloud.size(), 3);
     if (cloud.hasNormals()) result.cloud.normals.resize(result.cloud.size(), 3);
+    result.cloud.scalar_channels.resize(cloud.scalar_channels.size());
+    result.cloud.scalar_channel_names = cloud.scalar_channel_names;
+    for (std::size_t c = 0; c < cloud.scalar_channels.size(); ++c) {
+        result.cloud.scalar_channels[c].resize(keep.size());
+    }
     for (std::size_t k = 0; k < keep.size(); ++k) {
-        copyRow(cloud, keep[k], result.cloud, static_cast<std::int64_t>(k));
+        const std::int64_t src_row = keep[k];
+        copyRow(cloud, src_row, result.cloud, static_cast<std::int64_t>(k));
+        for (std::size_t c = 0; c < cloud.scalar_channels.size(); ++c) {
+            result.cloud.scalar_channels[c][k] =
+                cloud.scalar_channels[c][static_cast<std::size_t>(src_row)];
+        }
     }
     result.source_indices = keep;
     return result;
