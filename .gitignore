@@ -13,6 +13,22 @@ MvFGSdkLog/
 # User calibration data (large .ply files)
 data/
 
+# Build / packaging artifacts
+build/
+dist/
+*.zip
+
+# Third-party SDK binaries (provided locally, not committed)
+third_party/
+
+# Regression samples (large files, provided locally)
+test_data/
+tests/data/
+
 # OS
 .DS_Store
 Thumbs.db
+
+# Local tool settings / stale memo (kept on disk, not tracked)
+.claude/
+PROJECT_NOTES.md

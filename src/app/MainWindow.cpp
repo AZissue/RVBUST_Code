@@ -1,0 +1,1039 @@
+#include "app/MainWindow.h"
+
+#include "logic/CameraManager.h"
+#include "logic/CalibrationService.h"
+#include "logic/CaptureFlow.h"
+#include "logic/RobotPose.h"
+#include "logic/PixelTo3DTools.h"
+#include "logic/DataManager.h"
+#include "logic/LogManager.h"
+#include "ui/TopNavBar.h"
+#include "ui/ModeSelector.h"
+#include "ui/Image2DView.h"
+#include "ui/VisSceneView.h"
+#include "ui/DataInputArea.h"
+#include "ui/ActionButtons.h"
+#include "ui/SidePanel.h"
+#include "ui/ToastOverlay.h"
+#include "ui/SettingsDialog.h"
+#include "ui/DeviceListDialog.h"
+#include "ui/ToolsPanel.h"
+
+#include "ui/Theme.h"
+
+#include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QSplitter>
+#include <QShortcut>
+#include <QMessageBox>
+#include <QDialog>
+#include <QApplication>
+#include <QCloseEvent>
+#include <QKeySequence>
+#include <QScreen>
+#include <QVariantMap>
+#include <QStringList>
+#include <QDir>
+#include <QFileInfo>
+#include <QTimer>
+#include <QtConcurrent>
+#include <vector>
+#include <array>
+#include <tuple>
+
+MainWindow::MainWindow(QWidget* parent)
+    : QMainWindow(parent)
+{
+    m_config.load();
+
+    setWindowTitle(QStringLiteral("手眼标定数据收集助手 V1.0"));
+    auto geom = m_config.windowGeometry();
+    if (geom.x() >= 0 && geom.y() >= 0)
+        setGeometry(geom);
+    else {
+        auto screenGeo = QApplication::primaryScreen()->availableGeometry();
+        int w = screenGeo.width() * 3 / 4;
+        int h = screenGeo.height() * 3 / 4;
+        resize(w, h);
+        move((screenGeo.width() - w) / 2, (screenGeo.height() - h) / 2);
+    }
+    setMinimumSize(1280, 720);
+
+    // Create owned objects
+    m_camera = new CameraManager(this);
+    m_data   = new DataManager(this);
+    m_logger = new LogManager(this);
+    m_flow   = new CaptureFlow(m_camera, m_data, this);
+    m_calibWatcher = new QFutureWatcher<CalibrationService::Result>(this);
+    connect(m_calibWatcher, &QFutureWatcher<CalibrationService::Result>::finished,
+            this, &MainWindow::onCalibrationFinished);
+
+    m_saveBaseDir = m_config.saveBaseDir();
+
+    // Portable-build fallback: on another machine the saved path (e.g. an old
+    // dev-machine directory baked into the INI) may not exist or may not be
+    // writable.  Fall back to <exe>/data (then Documents) so the green build
+    // works out of the box, and persist the correction.
+    if (!QDir().mkpath(m_saveBaseDir) || !QFileInfo(m_saveBaseDir).isWritable()) {
+        QString portable = QCoreApplication::applicationDirPath()
+                         + QStringLiteral("/data");
+        if (!QDir().mkpath(portable) || !QFileInfo(portable).isWritable())
+            portable = QDir::homePath()
+                     + QStringLiteral("/Documents/HandEyeCalibData");
+        QDir().mkpath(portable);
+        m_saveBaseDir = portable;
+        m_config.setSaveBaseDir(portable);
+        m_savePathFellBack = true;
+    }
+
+    m_camera->setParamsOnConnect(m_config.cameraParams());
+    m_flow->setErrorThreshold(m_config.caliboardErrorThreshold());
+
+    buildUi();
+    wireSignals();
+    registerShortcuts();
+
+    // Restore last mode
+    m_eyeHandMode = m_config.eyeInHand() ? EyeHandMode::EyeInHand : EyeHandMode::EyeToHand;
+    m_calibType   = m_config.markerType() ? CalibType::Marker : CalibType::TcpTouch;
+    m_markerType  = m_config.markerConcentric() ? MarkerType::ConcentricCircle : MarkerType::AsymmetricGrid;
+    m_modeSelector->setMode(
+        m_eyeHandMode == EyeHandMode::EyeInHand,
+        m_calibType == CalibType::Marker,
+        m_markerType == MarkerType::ConcentricCircle);
+
+    CalibrationMode mode;
+    mode.eyeHand = m_eyeHandMode;
+    mode.calibType = m_calibType;
+    mode.markerType = m_markerType;
+    m_flow->setMode(mode);
+
+    // Restore caliboard pattern params
+    m_caliboardW    = m_config.caliboardPatternW();
+    m_caliboardH    = m_config.caliboardPatternH();
+    m_caliboardStep = m_config.caliboardCircleStep();
+    m_modeSelector->setCaliboardParams(m_caliboardW, m_caliboardH, m_caliboardStep);
+    m_flow->setCaliboardParams(m_caliboardW, m_caliboardH, m_caliboardStep);
+    m_dataInput->updateVisibility(
+        m_eyeHandMode == EyeHandMode::EyeInHand,
+        m_calibType == CalibType::Marker);
+    resetSession();
+
+    // Delayed notice once the UI exists (event loop is not running yet here).
+    if (m_savePathFellBack) {
+        QTimer::singleShot(0, this, [this]() {
+            m_toast->showMessage(
+                QStringLiteral("原保存目录不可用，已切换到 %1").arg(m_saveBaseDir),
+                false);
+            m_logger->warning(
+                QStringLiteral("保存目录不可用，自动切换到: %1").arg(m_saveBaseDir));
+        });
+    }
+
+    // Warm up the camera system + device scan in the background so that
+    // clicking 连接 later goes straight to the device list and Open().
+    startPreScan();
+}
+
+MainWindow::~MainWindow()
+{
+    // CloseEvent already shut down camera (m_camera set to null), so this is
+    // a no-op for normal flow.  Only active on abnormal destruction.
+    if (m_camera) {
+        m_camera->stopPreview();
+        m_camera->shutdown();
+    }
+}
+
+// ── UI Construction ───────────────────────────────────────────────────
+
+void MainWindow::buildUi()
+{
+    auto* central = new QWidget(this);
+    setCentralWidget(central);
+    auto* mainLayout = new QVBoxLayout(central);
+    mainLayout->setContentsMargins(0, 24, 0, 24);
+    mainLayout->setSpacing(0);
+
+    m_topNav = new TopNavBar(this);
+    mainLayout->addWidget(m_topNav);
+
+    mainLayout->addSpacing(16);
+
+    m_modeSelector = new ModeSelector(this);
+    mainLayout->addWidget(m_modeSelector);
+
+    mainLayout->addSpacing(24);
+
+    auto* hSplitter = new QSplitter(Qt::Horizontal, this);
+    hSplitter->setStyleSheet(QStringLiteral("QSplitter::handle { background-color: %1; width: 2px; }")
+                            .arg(Theme::BORDER_DEFAULT));
+
+    auto* leftPanel = new QWidget(this);
+    auto* leftLayout = new QVBoxLayout(leftPanel);
+    leftLayout->setContentsMargins(24, 0, 24, 0);
+    leftLayout->setSpacing(12);
+
+    auto* viewRow = new QHBoxLayout();
+    m_view2d = new Image2DView(this);
+    m_view3d = new VisSceneView(this);
+    viewRow->addWidget(m_view2d, 1);
+    viewRow->addWidget(m_view3d, 1);
+    leftLayout->addLayout(viewRow, 1);
+
+    m_dataInput = new DataInputArea(this);
+    leftLayout->addWidget(m_dataInput);
+
+    m_actionButtons = new ActionButtons(this);
+    leftLayout->addWidget(m_actionButtons);
+
+    hSplitter->addWidget(leftPanel);
+
+    auto* rightPanel = new QWidget(this);
+    auto* rightLayout = new QVBoxLayout(rightPanel);
+    rightLayout->setContentsMargins(0, 0, 0, 0);
+    m_sidePanel = new SidePanel(this);
+    rightLayout->addWidget(m_sidePanel);
+    hSplitter->addWidget(rightPanel);
+
+    hSplitter->setStretchFactor(0, 3);
+    hSplitter->setStretchFactor(1, 1);
+
+    mainLayout->addWidget(hSplitter, 1);
+
+    m_toast = new ToastOverlay(this);
+
+    // Tools panel (v2.0): non-modal, created once and shown on demand.
+    m_toolsPanel = new ToolsPanel(this);
+}
+
+// ── Signal/Slot Wiring ────────────────────────────────────────────────
+
+void MainWindow::wireSignals()
+{
+    // Mode changes
+    connect(m_modeSelector, &ModeSelector::modeChanged,
+            this, &MainWindow::onModeChanged);
+    connect(m_modeSelector, &ModeSelector::caliboardParamsChanged,
+            this, &MainWindow::onCaliboardParamsChanged);
+
+    // Camera signals
+    connect(m_camera, &CameraManager::previewFrameReady, this,
+            [this](const QImage& img) { m_view2d->updateFrame(img, true); });
+    connect(m_camera, &CameraManager::previewRightFrameReady, this,
+            [this](const QImage& img) { m_view3d->showImage(img); });
+    connect(m_camera, &CameraManager::captureComplete,
+            m_flow, &CaptureFlow::onCaptureReady);
+    connect(m_camera, &CameraManager::captureComplete, this, [this]() {
+        // New frame: line-scan reverse index and the pick highlight are stale.
+        m_correspondBuilt = false;
+        if (m_pickSphereHandle >= 0) {
+            m_view3d->removeObject(m_pickSphereHandle);
+            m_pickSphereHandle = -1;
+        }
+    });
+    connect(m_view2d, &Image2DView::pixelClicked,
+            this, &MainWindow::on2dPixelPicked);
+    connect(m_camera, &CameraManager::cameraError, this,
+            [this](const QString& msg) {
+                m_logger->error(msg);
+                m_sidePanel->setTip(msg, true);
+                clearBusy();
+                m_flow->setDetectEnabled(false);
+                m_flow->setSaveEnabled(false);
+            });
+    connect(m_camera, &CameraManager::cameraConnected, this, [this]() {
+        m_topNav->setCameraStatus(true, m_camera->deviceName());
+        m_actionButtons->setCaptureEnabled(true);
+        m_actionButtons->setPreviewActive(false);
+        m_actionButtons->setPreviewEnabled(true);
+        m_logger->success(QStringLiteral("相机连接成功"));
+        clearBusy();
+    });
+    connect(m_camera, &CameraManager::cameraDisconnected, this, [this]() {
+        m_topNav->setCameraStatus(false);
+        m_view3d->hideImage();
+        m_actionButtons->setCaptureEnabled(false);
+        m_actionButtons->setPreviewActive(false);
+        m_actionButtons->setPreviewEnabled(false);
+        m_logger->info(QStringLiteral("相机已断开"));
+    });
+
+    // CaptureFlow -> UI
+    connect(m_flow, &CaptureFlow::busyChanged, this, [this](bool busy, const QString& text) {
+        if (busy) {
+            if (text.contains(QStringLiteral("识别")))
+                setBusy(text, ActionButtons::BusyTarget::Detect);
+            else
+                setBusy(text, ActionButtons::BusyTarget::Capture);
+        } else {
+            clearBusy();
+        }
+    });
+    connect(m_flow, &CaptureFlow::detectEnabledChanged,
+            m_actionButtons, &ActionButtons::setDetectEnabled);
+    connect(m_flow, &CaptureFlow::saveEnabledChanged,
+            m_actionButtons, &ActionButtons::setSaveEnabled);
+    connect(m_actionButtons, &ActionButtons::calcClicked,
+            this, &MainWindow::onCalibrate);
+    connect(m_data, &DataManager::dataChanged, this, [this]() {
+        m_actionButtons->setCalcEnabled(m_data->count() > 0);
+    });
+    // Robot communication (isolated; wiring is inert until the user connects)
+    connect(m_sidePanel, &SidePanel::robotConnectRequested,
+            this, &MainWindow::onRobotConnect);
+    connect(m_sidePanel, &SidePanel::robotDisconnectRequested,
+            this, &MainWindow::onRobotDisconnect);
+    connect(m_sidePanel, &SidePanel::robotReadRequested,
+            this, &MainWindow::onRobotRead);
+    connect(m_sidePanel, &SidePanel::robotAutoReadToggled, this,
+            [this](bool on) { m_robotAutoRead = on; });
+    connect(m_flow, &CaptureFlow::imageCaptured, this,
+            [this](const QImage& img) {
+                m_view2d->updateFrame(img);
+                // A new capture invalidates the previous detection's pickable
+                // markers until the new frame is recognized again.
+                m_view3d->setMarkerPickEnabled(false);
+                m_view3d->setSelectableMarkers({}, {});
+            });
+    connect(m_flow, &CaptureFlow::pointCloudReady, this,
+            [this](const std::vector<float>& pts, const std::vector<float>& cols) {
+                m_view3d->updatePointCloud(pts, cols);
+            });
+    connect(m_flow, &CaptureFlow::markersDisplayReady, this,
+            [this](const std::vector<std::tuple<float, float, std::string>>& overlay2d,
+                   const std::vector<std::array<float, 3>>& highlights3d,
+                   const std::vector<int>& highlightIndices) {
+                m_view2d->drawMarkers(overlay2d);
+                m_view3d->updatePointCloud(m_flow->capturedPoints());
+                m_view3d->highlightPoints(highlights3d);
+                m_view3d->setSelectableMarkers(highlights3d, highlightIndices);
+                m_view3d->setMarkerPickEnabled(true);
+            });
+    connect(m_view3d, &VisSceneView::markerPicked, this,
+            [this](int index, float x, float y, float z) {
+                auto* card = m_dataInput->card("camera_target_xyz");
+                if (!card)
+                    return;
+                card->setValue(QStringLiteral("%1 %2 %3")
+                                   .arg(x, 0, 'f', 3)
+                                   .arg(y, 0, 'f', 3)
+                                   .arg(z, 0, 'f', 3));
+                m_toast->showMessage(
+                    QStringLiteral("已选择识别点 #%1 填充相机目标点").arg(index), true);
+                m_logger->info(QStringLiteral("3D 选择识别点 #%1 填充相机目标点")
+                               .arg(index));
+            });
+    connect(m_flow, &CaptureFlow::clearMarkersRequested,
+            m_view2d, &Image2DView::clearMarkers);
+    connect(m_flow, &CaptureFlow::tipRequested,
+            m_sidePanel, &SidePanel::setTip);
+    connect(m_flow, &CaptureFlow::toastRequested, this,
+            [this](const QString& text, bool success) {
+                m_toast->showMessage(text, success);
+            });
+    connect(m_flow, &CaptureFlow::logRequested, this,
+            [this](const QString& msg, const QString& level) {
+                if (level == QLatin1String("success"))      m_logger->success(msg);
+                else if (level == QLatin1String("warning")) m_logger->warning(msg);
+                else if (level == QLatin1String("error"))   m_logger->error(msg);
+                else                                        m_logger->info(msg);
+            });
+    connect(m_flow, &CaptureFlow::autoFillCardRequested, this,
+            [this](const QString& field, const QString& value) {
+                auto* card = m_dataInput->card(field);
+                if (card) card->setValue(value);
+            });
+    connect(m_flow, &CaptureFlow::cardInvalidRequested, this,
+            [this](const QString& field) {
+                auto* card = m_dataInput->card(field);
+                if (card) card->setStatus(QStringLiteral("error"));
+            });
+
+    // Top nav
+    connect(m_topNav, &TopNavBar::connectCameraClicked,
+            this, &MainWindow::onConnectCamera);
+    connect(m_topNav, &TopNavBar::disconnectCameraClicked,
+            this, &MainWindow::onDisconnectCamera);
+    connect(m_topNav, &TopNavBar::settingsClicked,
+            this, &MainWindow::showSettingsDialog);
+    connect(m_modeSelector, &ModeSelector::toolsClicked, this, [this]() {
+        m_toolsPanel->show();
+        m_toolsPanel->raise();
+        m_toolsPanel->activateWindow();
+    });
+    connect(m_topNav, &TopNavBar::helpClicked, this, [this]() {
+        QMessageBox::about(this, QStringLiteral("关于"),
+            QStringLiteral("手眼标定数据收集助手 V1.0\n\n"
+                           "基于 RVC X1/X2 相机的手眼标定数据采集工具。\n\n"
+                           "支持眼在手上/眼在手外两种安装方式，\n"
+                           "以及标记物标定和戳点标定两种标定方法。"));
+    });
+
+    // Action buttons
+    connect(m_actionButtons, &ActionButtons::captureClicked,
+            this, &MainWindow::onCapture);
+    connect(m_actionButtons, &ActionButtons::detectClicked,
+            m_flow, &CaptureFlow::detect);
+    connect(m_actionButtons, &ActionButtons::saveClicked,
+            this, &MainWindow::saveFromCards);
+    connect(m_actionButtons, &ActionButtons::undoClicked,
+            m_flow, &CaptureFlow::undo);
+    connect(m_actionButtons, &ActionButtons::previewToggled, this,
+            [this](bool on) {
+                if (on) {
+                    m_camera->startPreview();
+                    m_actionButtons->setPreviewActive(true);
+                    m_logger->info(QStringLiteral("预览已开启"));
+                } else {
+                    m_camera->stopPreview();
+                    m_view3d->hideImage();
+                    m_actionButtons->setPreviewActive(false);
+                    m_logger->info(QStringLiteral("预览已停止"));
+                }
+            });
+
+    // Data cards
+    auto* card1 = m_dataInput->card("camera_target_xyz");
+    auto* card2 = m_dataInput->card("robot_capture_pose");
+    auto* card3 = m_dataInput->card("robot_target_xyz");
+    if (card1) connect(card1, &DataInputCard::valueChanged, this, [this](const QString& v) { onCardChanged("camera_target_xyz", v); });
+    if (card2) connect(card2, &DataInputCard::valueChanged, this, [this](const QString& v) { onCardChanged("robot_capture_pose", v); });
+    if (card3) connect(card3, &DataInputCard::valueChanged, this, [this](const QString& v) { onCardChanged("robot_target_xyz", v); });
+
+    // Data manager
+    connect(m_data, &DataManager::progressUpdated, this, [this](int cur, int /*total*/) {
+        m_topNav->updateProgress(cur);
+        m_actionButtons->setUndoEnabled(cur > 0);
+    });
+    connect(m_data, &DataManager::dataChanged, this, [this]() {
+        m_sidePanel->updateFilePreview(
+            m_eyeHandMode == EyeHandMode::EyeInHand,
+            m_calibType == CalibType::Marker,
+            m_data->allRecords());
+    });
+
+    // Log manager
+    connect(m_logger, &LogManager::logAdded, this, [](const QString&, const QString&, const QString&) {
+        // Future: display log entries in side panel
+    });
+}
+
+void MainWindow::registerShortcuts()
+{
+    auto* shortcutSave = new QShortcut(QKeySequence("Ctrl+S"), this);
+    connect(shortcutSave, &QShortcut::activated, this, &MainWindow::saveFromCards);
+
+    auto* shortcutUndo = new QShortcut(QKeySequence("Ctrl+Z"), this);
+    connect(shortcutUndo, &QShortcut::activated, m_flow, &CaptureFlow::undo);
+
+    auto* shortcutRefresh = new QShortcut(QKeySequence("F5"), this);
+    connect(shortcutRefresh, &QShortcut::activated, this, [this]() {
+        if (m_camera && m_camera->isConnected()) {
+            m_camera->stopPreview();
+            m_camera->startPreview();
+            m_logger->info(QStringLiteral("刷新预览"));
+        }
+    });
+
+    auto* shortcutFull = new QShortcut(QKeySequence("F11"), this);
+    connect(shortcutFull, &QShortcut::activated, this, [this]() {
+        if (isFullScreen()) showNormal(); else showFullScreen();
+    });
+}
+
+// ── Mode Management ───────────────────────────────────────────────────
+
+void MainWindow::onModeChanged(bool eyeInHand, bool markerType, bool concentric)
+{
+    auto newEyeHand = eyeInHand ? EyeHandMode::EyeInHand : EyeHandMode::EyeToHand;
+    auto newCalib   = markerType ? CalibType::Marker : CalibType::TcpTouch;
+    auto newMarker  = concentric ? MarkerType::ConcentricCircle : MarkerType::AsymmetricGrid;
+
+    bool typeChanged = (m_calibType != newCalib) || (m_markerType != newMarker);
+
+    // Confirm before applying — if user cancels, revert the selector
+    if (typeChanged && m_data->count() > 0) {
+        auto reply = QMessageBox::question(this, QStringLiteral("切换标定类型"),
+                                           QStringLiteral("切换标定类型将清空当前采集数据，是否继续？"));
+        if (reply != QMessageBox::Yes) {
+            m_modeSelector->blockSignals(true);
+            m_modeSelector->setMode(
+                m_eyeHandMode == EyeHandMode::EyeInHand,
+                m_calibType == CalibType::Marker,
+                m_markerType == MarkerType::ConcentricCircle);
+            m_modeSelector->blockSignals(false);
+            return;
+        }
+    }
+
+    m_eyeHandMode = newEyeHand;
+    m_calibType   = newCalib;
+    m_markerType  = newMarker;
+
+    CalibrationMode mode;
+    mode.eyeHand = m_eyeHandMode;
+    mode.calibType = m_calibType;
+    mode.markerType = m_markerType;
+    m_flow->setMode(mode);
+
+    m_dataInput->updateVisibility(eyeInHand, markerType);
+    m_sidePanel->updateFilePreview(eyeInHand, markerType, m_data->allRecords());
+
+    if (typeChanged) {
+        resetSession();
+    }
+
+    m_config.setLastMode(eyeInHand, markerType, concentric);
+
+    auto markerStr = markerType
+        ? (concentric ? QStringLiteral("同心圆") : QStringLiteral("黑底白圆"))
+        : QStringLiteral("戳点");
+    m_logger->info(QStringLiteral("模式切换: %1, %2")
+                   .arg(eyeInHand ? QStringLiteral("眼在手上") : QStringLiteral("眼在手外"))
+                   .arg(markerStr));
+}
+
+void MainWindow::onCaliboardParamsChanged(int patternW, int patternH, float circleStep)
+{
+    m_caliboardW = patternW;
+    m_caliboardH = patternH;
+    m_caliboardStep = circleStep;
+    m_flow->setCaliboardParams(patternW, patternH, circleStep);
+    m_config.setCaliboardParams(patternW, patternH, circleStep);
+}
+
+void MainWindow::resetSession()
+{
+    m_data->newSession(m_saveBaseDir, m_eyeHandMode, m_calibType);
+
+    // Session metadata (mode, caliboard spec, camera params) is recorded in
+    // the application log instead of a config.json — the calibration pipeline
+    // only needs png/ply/txt in the session directory.
+    QStringList metaParts;
+    metaParts << QStringLiteral("手眼模式=%1")
+                     .arg(m_eyeHandMode == EyeHandMode::EyeInHand
+                              ? QStringLiteral("眼在手上")
+                              : QStringLiteral("眼在手外"));
+    metaParts << QStringLiteral("标定方法=%1")
+                     .arg(m_calibType == CalibType::Marker
+                              ? QStringLiteral("标记物")
+                              : QStringLiteral("戳点"));
+    metaParts << QStringLiteral("标记物类型=%1")
+                     .arg(m_markerType == MarkerType::ConcentricCircle
+                              ? QStringLiteral("同心圆")
+                              : QStringLiteral("黑底白圆"));
+    metaParts << QStringLiteral("标定板=%1x%2 步距=%3mm")
+                     .arg(m_caliboardW).arg(m_caliboardH).arg(m_caliboardStep);
+    if (m_camera) {
+        QStringList paramParts;
+        const auto s = m_camera->currentSettings();
+        for (auto it = s.begin(); it != s.end(); ++it)
+            paramParts << QStringLiteral("%1=%2").arg(it.key()).arg(it.value());
+        if (!paramParts.isEmpty())
+            metaParts << QStringLiteral("相机参数(%1)").arg(paramParts.join(QStringLiteral(", ")));
+    }
+    m_logger->info(QStringLiteral("新建会话: %1").arg(metaParts.join(QStringLiteral(", "))));
+
+    m_view2d->clear();
+    m_view3d->clear();
+    m_topNav->updateProgress(0);
+    m_flow->setDetectEnabled(false);
+    m_flow->setSaveEnabled(false);
+    m_actionButtons->setUndoEnabled(false);
+    m_sidePanel->setTip(QStringLiteral("请移动机器人到下一个位姿并点击拍照"));
+    m_flow->reset();
+}
+
+// ── Camera ────────────────────────────────────────────────────────────
+
+void MainWindow::onConnectCamera()
+{
+    if (m_preScanning) {
+        // Startup pre-scan still running; continue automatically when done.
+        m_connectRequested = true;
+        setConnectBusy(QStringLiteral("正在搜索相机..."));
+        m_logger->info(QStringLiteral("正在搜索相机..."));
+        QApplication::processEvents();
+        return;
+    }
+    if (m_cachedDevices.empty()) {
+        setConnectBusy(QStringLiteral("正在搜索相机..."));
+        m_logger->info(QStringLiteral("正在搜索相机..."));
+        QApplication::processEvents();
+        m_camera->scanDevicesAsync([this](const std::vector<DeviceEntry>& devices) {
+            clearBusy();
+            m_cachedDevices = devices;
+            proceedWithDevices(devices);
+        });
+        return;
+    }
+    proceedWithDevices(m_cachedDevices);
+}
+
+void MainWindow::startPreScan()
+{
+    if (m_preScanning)
+        return;
+    m_preScanning = true;
+    QTimer::singleShot(0, this, [this]() {
+        // SystemInit must run on the UI thread (device objects are created
+        // here later); the enumeration itself runs in a worker.
+        m_camera->prewarmSystem();
+        m_camera->scanDevicesAsync([this](const std::vector<DeviceEntry>& devices) {
+            m_preScanning = false;
+            m_cachedDevices = devices;
+            if (m_connectRequested) {
+                m_connectRequested = false;
+                clearBusy();
+                proceedWithDevices(devices);
+            }
+        });
+    });
+}
+
+void MainWindow::proceedWithDevices(const std::vector<DeviceEntry>& devices)
+{
+    if (devices.empty()) {
+        m_toast->showMessage(QStringLiteral("未找到相机设备，请检查连接"), false);
+        return;
+    }
+
+    DeviceListDialog dlg(this, devices, [this]() { return m_camera->listDevices(); });
+    if (dlg.exec() != QDialog::Accepted)
+        return;
+
+    const QString serial = dlg.selectedSerial();
+    if (serial.isEmpty())
+        return;
+
+    // Connect synchronously on the UI thread: RVC camera objects must be
+    // created on the thread that later drives the preview (UI thread).
+    setConnectBusy(QStringLiteral("连接中..."));
+    m_logger->info(QStringLiteral("正在连接设备 %1").arg(serial));
+    QApplication::processEvents();
+
+    const bool ok = m_camera->initWithDeviceSerial(serial);
+    clearBusy();
+    if (!ok)
+        m_toast->showMessage(QStringLiteral("相机连接失败"), false);
+}
+
+void MainWindow::onDisconnectCamera()
+{
+    m_actionButtons->setCaptureEnabled(false);
+    m_camera->shutdown();
+    m_logger->info(QStringLiteral("相机已断开"));
+}
+
+// ── Workflow (UI choreography) ────────────────────────────────────────
+
+void MainWindow::onCapture()
+{
+    if (!m_camera->isConnected()) {
+        m_toast->showMessage(QStringLiteral("请先连接相机"), false);
+        return;
+    }
+    // Optional: read the robot pose right before capturing when auto-read is
+    // enabled.  This never affects the capture pipeline itself.
+    if (m_robotAutoRead && m_robotReader.isConnected()) {
+        RobotPose::Pose pose;
+        if (m_robotReader.readPose(pose) == RobotPose::Status::Ok) {
+            auto* card = m_dataInput->card(QStringLiteral("robot_capture_pose"));
+            if (card) {
+                card->setValue(QStringLiteral("%1 %2 %3 %4 %5 %6")
+                    .arg(pose.xyz[0], 0, 'f', 3)
+                    .arg(pose.xyz[1], 0, 'f', 3)
+                    .arg(pose.xyz[2], 0, 'f', 3)
+                    .arg(pose.rpy[0], 0, 'f', 3)
+                    .arg(pose.rpy[1], 0, 'f', 3)
+                    .arg(pose.rpy[2], 0, 'f', 3));
+            }
+        } else {
+            m_sidePanel->setTip(
+                QStringLiteral("机器人位姿读取失败：%1")
+                    .arg(m_robotReader.lastError()),
+                true);
+        }
+    }
+    // Stop preview and hide right-camera overlay before 3D capture
+    if (m_camera->isPreviewing()) {
+        m_camera->stopPreview();
+        m_actionButtons->setPreviewActive(false);
+    }
+    m_view3d->hideImage();
+    m_flow->beginCapture();
+}
+
+void MainWindow::saveFromCards()
+{
+    auto* card1 = m_dataInput->card("camera_target_xyz");
+    auto* card2 = m_dataInput->card("robot_capture_pose");
+    auto* card3 = m_dataInput->card("robot_target_xyz");
+
+    m_flow->save(card1 ? card1->value() : QString(),
+                 card2 ? card2->value() : QString(),
+                 card3 ? card3->value() : QString());
+}
+
+void MainWindow::on2dPixelPicked(int x, int y)
+{
+    if (!m_camera->isConnected()) {
+        m_toast->showMessage(QStringLiteral("请先连接相机并拍照后再点击取点"), false);
+        return;
+    }
+
+    std::vector<double> grid;
+    int gw = 0, gh = 0;
+    if (!m_camera->lastGrid(grid, gw, gh)) {
+        m_toast->showMessage(QStringLiteral("请先拍照采集数据"), false);
+        return;
+    }
+
+    std::array<double, 3> pt{};
+    bool ok = false;
+    if (m_camera->lastGridAligned()) {
+        std::size_t idx = 0;
+        if (PixelTo3DTools::alignedIndex(x, y, gw, gh, idx))
+            ok = PixelTo3DTools::pointAt(grid, idx, pt);
+    } else {
+        if (!m_correspondBuilt) {
+            std::vector<double> cmap;
+            int cw = 0, ch = 0;
+            if (m_camera->lastCorrespond(cmap, cw, ch)) {
+                PixelTo3DTools::buildCorrespondIndex(
+                    cmap, cw, ch, m_correspondIndex);
+                m_correspondW = cw;
+                m_correspondH = ch;
+                m_correspondBuilt = true;
+            }
+        }
+        if (m_correspondBuilt)
+            ok = PixelTo3DTools::queryIndex(
+                m_correspondIndex, m_correspondW, m_correspondH,
+                x, y, grid, pt);
+        else
+            m_toast->showMessage(
+                QStringLiteral("线扫未对齐模式下未获得对应图，无法取点"), false);
+    }
+
+    if (!ok) {
+        m_toast->showMessage(
+            QStringLiteral("该像素无有效 3D 点（背景或无效深度）"), false);
+        return;
+    }
+
+    if (m_pickSphereHandle >= 0)
+        m_view3d->removeObject(m_pickSphereHandle);
+    m_pickSphereHandle = m_view3d->addSphere(
+        { static_cast<float>(pt[0]), static_cast<float>(pt[1]),
+          static_cast<float>(pt[2]) },
+        2.0f, { 1.0f, 0.85f, 0.1f });
+
+    const QString value = QStringLiteral("%1 %2 %3")
+        .arg(pt[0], 0, 'f', 3).arg(pt[1], 0, 'f', 3).arg(pt[2], 0, 'f', 3);
+    auto* card = m_dataInput->card(QStringLiteral("camera_target_xyz"));
+    if (card)
+        card->setValue(value);
+
+    m_sidePanel->setTip(
+        QStringLiteral("像素 (%1, %2) → 3D (%3) mm，已填入相机目标点")
+            .arg(x).arg(y).arg(value),
+        false);
+    m_logger->info(
+        QStringLiteral("2D 点击取点: 像素 (%1, %2) → 3D (%3)")
+            .arg(x).arg(y).arg(value));
+}
+
+void MainWindow::onCalibrate()
+{
+    if (m_calibWatcher->isRunning())
+        return;
+    const auto records = m_data->allRecords();
+    if (records.empty()) {
+        m_toast->showMessage(QStringLiteral("请先采集并保存标定数据"), false);
+        return;
+    }
+
+    std::vector<QString> poseLines;
+    poseLines.reserve(records.size());
+    for (const auto& r : records)
+        poseLines.push_back(r.robotCapturePose);
+
+    CalibrationService::Params params;
+    params.eyeInHand = (m_eyeHandMode == EyeHandMode::EyeInHand);
+    params.markerType =
+        (m_markerType == MarkerType::ConcentricCircle) ? 1 : 0;
+
+    const QString folder = m_data->saveDir();
+    setBusy(QStringLiteral("计算中..."), ActionButtons::BusyTarget::Calc);
+    m_calibWatcher->setFuture(QtConcurrent::run([folder, poseLines, params]() {
+        return CalibrationService::calibrateMarker(folder, poseLines, params);
+    }));
+}
+
+void MainWindow::onCalibrationFinished()
+{
+    clearBusy();
+    const auto r = m_calibWatcher->result();
+    if (!r.ok) {
+        const QString msg = QStringLiteral("标定失败：%1").arg(r.error);
+        m_sidePanel->setCalibrationResult(msg);
+        m_toast->showMessage(msg, false);
+        m_logger->error(msg);
+        return;
+    }
+
+    QString text = QStringLiteral("标定成功（使用 %1 组数据）\n"
+                                  "总平均误差: %2 mm\n\n"
+                                  "4×4 矩阵（行主序）:\n")
+        .arg(r.usedCount).arg(r.totalMeanError, 0, 'f', 3);
+    for (int row = 0; row < 4; ++row) {
+        QStringList vals;
+        for (int col = 0; col < 4; ++col)
+            vals << QString::number(
+                r.matrix[static_cast<std::size_t>(row * 4 + col)], 'f', 6);
+        text += vals.join(QStringLiteral("  ")) + QLatin1Char('\n');
+    }
+
+    text += QStringLiteral("\n逐组误差:\n");
+    const std::size_t n = r.errors.size();
+    for (std::size_t i = 0; i < n; ++i) {
+        const bool failed2d = static_cast<std::size_t>(r.success2D.size()) > i
+            && r.success2D[i] != 1;
+        const bool failed3d = static_cast<std::size_t>(r.success3D.size()) > i
+            && r.success3D[i] != 1;
+        text += QStringLiteral("  第 %1 组: %2 mm%3\n")
+            .arg(i + 1).arg(r.errors[i], 0, 'f', 3)
+            .arg((failed2d || failed3d) ? QStringLiteral("（识别失败）") : QString());
+    }
+
+    m_sidePanel->setCalibrationResult(text);
+    m_sidePanel->setTip(
+        QStringLiteral("标定完成：总平均误差 %1 mm")
+            .arg(r.totalMeanError, 0, 'f', 3),
+        false);
+    m_logger->success(
+        QStringLiteral("标定完成：总平均误差 %1 mm，使用 %2 组数据")
+            .arg(r.totalMeanError, 0, 'f', 3).arg(r.usedCount));
+}
+
+void MainWindow::onRobotConnect(const QString& host, quint16 port,
+                                int format, double scale,
+                                quint8 unitId, quint16 startAddress)
+{
+    RobotPose::ModbusConfig cfg;
+    switch (format) {
+    case 1:  cfg.format = RobotPose::RegisterFormat::Int32Scaled; break;
+    case 2:  cfg.format = RobotPose::RegisterFormat::Int16Scaled; break;
+    default: cfg.format = RobotPose::RegisterFormat::Float32; break;
+    }
+    cfg.scale = scale;
+    cfg.unitId = unitId;
+    cfg.startAddress = startAddress;
+    cfg.timeoutMs = 1500;
+    m_robotReader.setConfig(cfg);
+
+    if (!m_robotReader.connect(host, port)) {
+        m_sidePanel->setRobotStatus(
+            QStringLiteral("连接失败"), true);
+        m_sidePanel->setTip(
+            QStringLiteral("机器人连接失败：%1").arg(m_robotReader.lastError()),
+            true);
+        m_logger->error(QStringLiteral("机器人连接失败：%1")
+                            .arg(m_robotReader.lastError()));
+        return;
+    }
+    m_sidePanel->setRobotConnected(true);
+    m_sidePanel->setRobotStatus(QStringLiteral("已连接"), false);
+    m_sidePanel->setTip(QStringLiteral("机器人已连接（%1:%2）").arg(host).arg(port), false);
+    m_logger->success(QStringLiteral("机器人已连接（%1:%2）").arg(host).arg(port));
+}
+
+void MainWindow::onRobotDisconnect()
+{
+    m_robotReader.disconnect();
+    m_sidePanel->setRobotConnected(false);
+    m_sidePanel->setRobotStatus(QStringLiteral("未连接"), false);
+    m_logger->info(QStringLiteral("机器人已断开"));
+}
+
+void MainWindow::onRobotRead()
+{
+    if (!m_robotReader.isConnected()) {
+        m_sidePanel->setTip(QStringLiteral("请先连接机器人"), true);
+        return;
+    }
+    RobotPose::Pose pose;
+    if (m_robotReader.readPose(pose) != RobotPose::Status::Ok) {
+        m_sidePanel->setTip(
+            QStringLiteral("机器人位姿读取失败：%1")
+                .arg(m_robotReader.lastError()),
+            true);
+        m_logger->error(QStringLiteral("机器人位姿读取失败：%1")
+                            .arg(m_robotReader.lastError()));
+        return;
+    }
+    const QString value = QStringLiteral("%1 %2 %3 %4 %5 %6")
+        .arg(pose.xyz[0], 0, 'f', 3)
+        .arg(pose.xyz[1], 0, 'f', 3)
+        .arg(pose.xyz[2], 0, 'f', 3)
+        .arg(pose.rpy[0], 0, 'f', 3)
+        .arg(pose.rpy[1], 0, 'f', 3)
+        .arg(pose.rpy[2], 0, 'f', 3);
+    auto* card = m_dataInput->card(QStringLiteral("robot_capture_pose"));
+    if (card)
+        card->setValue(value);
+    m_sidePanel->setTip(QStringLiteral("已读取机器人位姿并填入卡片"), false);
+    m_logger->info(QStringLiteral("机器人位姿读取成功: %1").arg(value));
+}
+
+// ── Card Updates ──────────────────────────────────────────────────────
+
+void MainWindow::onCardChanged(const QString& field, const QString& value)
+{
+    // Real-time format hint: calibration data must use ASCII numbers separated
+    // by spaces / English commas.  Saving is blocked separately in
+    // CaptureFlow::validateSaveInputs.
+    if (CaptureFlow::containsCjkFormatChars(value)) {
+        m_sidePanel->setTip(
+            QStringLiteral("检测到中文格式字符，请使用英文逗号或空格分隔数值"), true);
+    }
+
+    // Card edits during capture→detect→save flow are buffered in the widgets
+    // and read fresh by save(); skip updating existing records.
+    if (m_flow->hasUnsavedCapture())
+        return;
+
+    int idx = m_data->currentIndex();
+    if (idx > 0)
+        m_data->updateRecord(idx, field, value);
+}
+
+// ── State Helpers ─────────────────────────────────────────────────────
+
+void MainWindow::setBusy(const QString& text, ActionButtons::BusyTarget target)
+{
+    m_busy = true;
+    m_actionButtons->setBusy(target, text);
+    QApplication::processEvents();
+}
+
+void MainWindow::setConnectBusy(const QString& text)
+{
+    m_busy = true;
+    m_topNav->setConnectBusy(true, text);
+    QApplication::processEvents();
+}
+
+void MainWindow::clearBusy()
+{
+    m_busy = false;
+    m_topNav->setConnectBusy(false, {});
+    m_actionButtons->clearBusy();
+}
+
+// ── Settings Dialog ───────────────────────────────────────────────────
+
+void MainWindow::showSettingsDialog()
+{
+    SettingsDialog dlg(m_saveBaseDir, m_config.caliboardErrorThreshold(),
+                       m_camera, m_data, this);
+    if (dlg.exec() != QDialog::Accepted)
+        return;
+
+    m_saveBaseDir = dlg.saveBaseDir();
+    m_config.setSaveBaseDir(m_saveBaseDir);
+
+    // Caliboard accuracy warning threshold
+    const float threshold = dlg.errorThreshold();
+    m_config.setCaliboardErrorThreshold(threshold);
+    m_flow->setErrorThreshold(threshold);
+
+    // Apply camera parameter changes
+    const auto params = dlg.cameraParams();
+    for (auto it = params.begin(); it != params.end(); ++it)
+        m_camera->setParameter(it.key(), it.value().toFloat());
+
+    // Persist the full set of current values
+    QVariantMap current;
+    const auto settings = m_camera->currentSettings();
+    for (auto it = settings.begin(); it != settings.end(); ++it)
+        current[it.key()] = it.value();
+    m_config.setCameraParams(current);
+
+    // Backup restore (mode + records already restored inside DataManager)
+    if (!dlg.restoredBackupPath().isEmpty()) {
+        const auto restoredMode = m_data->mode();
+        m_eyeHandMode = restoredMode.first;
+        m_calibType   = restoredMode.second;
+
+        CalibrationMode mode;
+        mode.eyeHand = m_eyeHandMode;
+        mode.calibType = m_calibType;
+        mode.markerType = m_markerType;
+        m_flow->setMode(mode);
+
+        // Sync the selector without triggering the change-confirm flow
+        m_modeSelector->blockSignals(true);
+        m_modeSelector->setMode(
+            m_eyeHandMode == EyeHandMode::EyeInHand,
+            m_calibType == CalibType::Marker,
+            m_markerType == MarkerType::ConcentricCircle);
+        m_modeSelector->blockSignals(false);
+
+        m_dataInput->updateVisibility(
+            m_eyeHandMode == EyeHandMode::EyeInHand,
+            m_calibType == CalibType::Marker);
+        m_sidePanel->updateFilePreview(
+            m_eyeHandMode == EyeHandMode::EyeInHand,
+            m_calibType == CalibType::Marker,
+            m_data->allRecords());
+
+        m_config.setLastMode(
+            m_eyeHandMode == EyeHandMode::EyeInHand,
+            m_calibType == CalibType::Marker,
+            m_markerType == MarkerType::ConcentricCircle);
+
+        m_toast->showMessage(
+            QStringLiteral("已从备份恢复 %1 条记录").arg(m_data->count()), true);
+        m_logger->info(QStringLiteral("已从备份恢复: %1")
+                       .arg(dlg.restoredBackupPath()));
+    }
+
+    m_logger->info(QStringLiteral("设置已更新"));
+}
+
+// ── Window Events ─────────────────────────────────────────────────────
+
+void MainWindow::changeEvent(QEvent* event)
+{
+    QMainWindow::changeEvent(event);
+    if (event->type() == QEvent::WindowStateChange) {
+        if (isMinimized()) {
+            if (m_camera) m_camera->pausePreview();
+        } else if (m_camera && m_camera->isConnected()) {
+            m_camera->resumePreview();
+        }
+    }
+}
+
+void MainWindow::closeEvent(QCloseEvent* event)
+{
+    m_config.setWindowGeometry(x(), y(), width(), height());
+    m_config.save();
+    m_data->saveBackup(true);
+
+    // Shut down camera while event loop is still running.
+    // Vis is shut down later in ~VisSceneView() — Close() must NOT be
+    // called from inside closeEvent because it blocks on the OSG render
+    // thread which needs the event loop message pump to drain.
+    if (m_camera) {
+        m_camera->disconnect(this);
+        m_camera->stopPreview();
+        m_camera->shutdown();
+        m_camera = nullptr;
+    }
+
+    event->accept();
+}

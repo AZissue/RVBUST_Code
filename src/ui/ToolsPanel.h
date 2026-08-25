@@ -1,0 +1,93 @@
+#pragma once
+
+#include <QDialog>
+#include <QListWidget>
+#include <QStackedWidget>
+#include <QCheckBox>
+#include <QComboBox>
+#include <QLabel>
+#include <QLineEdit>
+#include <QPushButton>
+#include <QTextEdit>
+#include <QString>
+#include <QWidget>
+#include <QFutureWatcher>
+#include "logic/CalibrationService.h"
+
+// Non-modal tools panel (v2.0).  Left: tool list.  Right: the selected tool.
+// Tools: Euclidean distance, coordinate transform (walk-point validation).
+class ToolsPanel : public QDialog {
+    Q_OBJECT
+public:
+    explicit ToolsPanel(QWidget* parent = nullptr);
+
+private:
+    void buildUi();
+    void buildDistancePage(QStackedWidget* stack);
+    void buildPixelTo3DPage(QStackedWidget* stack);
+    void buildCalibrationPage(QStackedWidget* stack);
+    void buildTransformPage(QStackedWidget* stack);
+    void updateDistanceResult();
+    void updatePixelTo3DResult();
+    void updateCalibrationResult();
+    void onCalibrationFinished();
+    void updatePoseInputHint();
+    void updateTransformResult();
+    void refreshPixelTo3DImages();
+    void showPixelTo3DImage(int index);
+
+    QListWidget* m_toolList = nullptr;
+    QStackedWidget* m_stack = nullptr;
+
+    // Distance tool inputs
+    QLineEdit* m_p1Input = nullptr;
+    QLineEdit* m_p2Input = nullptr;
+    QComboBox* m_unitCombo = nullptr;
+    QLabel* m_resultLabel = nullptr;
+    QLabel* m_distanceHint = nullptr;
+    QPushButton* m_copyBtn = nullptr;
+    QPushButton* m_calcBtn = nullptr;
+
+    // Pixel-to-3D tool inputs (offline mode)
+    QLineEdit* m_p2dDir = nullptr;
+    QComboBox* m_p2dImageCombo = nullptr;
+    QLineEdit* m_p2dIntrinsic = nullptr;
+    QLineEdit* m_p2dExtrinsic = nullptr;
+    QLineEdit* m_p2dPixel = nullptr;
+    class Image2DView* m_p2dView = nullptr;
+    QLabel* m_p2dResult = nullptr;
+    QLabel* m_p2dHint = nullptr;
+    QPushButton* m_p2dCopyBtn = nullptr;
+    QString m_p2dResultValue;   // values only, for copy
+
+    // Hand-eye calibration tool (offline folder)
+    QLineEdit* m_calibDir = nullptr;
+    QLineEdit* m_calibPoseFile = nullptr;
+    QComboBox* m_calibEyeCombo = nullptr;
+    QComboBox* m_calibMarkerCombo = nullptr;
+    QComboBox* m_calibPoseUnitCombo = nullptr;
+    QComboBox* m_calibAngleUnitCombo = nullptr;
+    QCheckBox* m_calibAutoRemove = nullptr;
+    QTextEdit* m_calibResult = nullptr;
+    QLabel* m_calibHint = nullptr;
+    QPushButton* m_calibCalcBtn = nullptr;
+    QPushButton* m_calibCopyBtn = nullptr;
+    QFutureWatcher<CalibrationService::Result>* m_calibWatcher = nullptr;
+
+    // Coordinate-transform tool inputs (text-paste based)
+    QComboBox* m_mountCombo = nullptr;
+    QLineEdit* m_matInput = nullptr;
+    QLineEdit* m_camPointInput = nullptr;
+    QComboBox* m_camUnitCombo = nullptr;
+    QWidget* m_poseGroup = nullptr;
+    QLineEdit* m_poseInput = nullptr;
+    QComboBox* m_poseUnitCombo = nullptr;
+    QComboBox* m_poseFormatCombo = nullptr;
+    QComboBox* m_angleUnitCombo = nullptr;
+    QLabel* m_rotDescLabel = nullptr;
+    QLabel* m_transformHint = nullptr;
+    QLabel* m_transformResult = nullptr;
+    QPushButton* m_transformCalcBtn = nullptr;
+    QPushButton* m_transformCopyBtn = nullptr;
+    QString m_transformValues;  // last computed base coords (values only)
+};
