@@ -3,6 +3,7 @@
 #include "roi_selector.h"
 
 #include <QLabel>
+#include <QShortcut>
 #include <QVBoxLayout>
 
 #ifdef PCSEARCH_HAS_VTK
@@ -10,10 +11,12 @@
 #include <vtkAxesActor.h>
 #include <vtkCamera.h>
 #include <vtkCellArray.h>
+#include <vtkCommand.h>
 #include <vtkCubeSource.h>
 #include <vtkDataSetMapper.h>
 #include <vtkInteractorStyleTrackballCamera.h>
 #include <vtkNew.h>
+#include <vtkObjectFactory.h>
 #include <vtkPoints.h>
 #include <vtkPointData.h>
 #include <vtkPolyData.h>
@@ -31,6 +34,34 @@
 #include <algorithm>
 #include <cmath>
 
+namespace {
+
+// RVC Manager-style camera navigation: left button rotates, wheel zooms and the
+// *right* button pans. vtkInteractorStyleTrackballCamera defaults to middle
+// button pan and right button dolly, so remap right -> pan here.
+class CameraStylePanRight final : public vtkInteractorStyleTrackballCamera {
+public:
+    static CameraStylePanRight* New() {
+        auto* s = new CameraStylePanRight;
+        s->InitializeObjectBase();
+        return s;
+    }
+    vtkTypeMacro(CameraStylePanRight, vtkInteractorStyleTrackballCamera);
+
+    void OnRightButtonDown() override { this->OnMiddleButtonDown(); }
+    void OnRightButtonUp() override { this->OnMiddleButtonUp(); }
+
+    // A slightly bigger wheel step than the default 1.1 so zooming deep into a
+    // cloud does not feel like it needs many notches per step.
+    void OnMouseWheelForward() override { this->Dolly(1.25); }
+    void OnMouseWheelBackward() override { this->Dolly(1.0 / 1.25); }
+
+private:
+    CameraStylePanRight() = default;
+};
+
+}  // namespace
+
 namespace app {
 
 PointCloudView::PointCloudView(QWidget* parent) : QWidget(parent) {
@@ -42,10 +73,24 @@ PointCloudView::PointCloudView(QWidget* parent) : QWidget(parent) {
     renderer_ = vtkRenderer::New();
     renderer_->SetBackground(0.16, 0.16, 0.18);
     vtk_widget_->renderWindow()->AddRenderer(renderer_);
-    vtkNew<vtkInteractorStyleTrackballCamera> style;
+    vtkNew<CameraStylePanRight> style;
     vtk_widget_->renderWindow()->GetInteractor()->SetInteractorStyle(style);
     roi_selector_ = new RoiSelector(this);
     roi_selector_->attach(vtk_widget_->renderWindow()->GetInteractor());
+    // Box ROI view-only shortcut keys: W = operable (drag/scale/rotate the
+    // box), E = not operable (free camera, box stays as a reference overlay).
+    // Bound to this widget subtree so typing W/E into parameter fields is
+    // unaffected. They are no-ops unless ROI editing is active.
+    roi_box_work_shortcut_ = new QShortcut(QKeySequence(Qt::Key_W), this);
+    roi_box_work_shortcut_->setContext(Qt::WidgetWithChildrenShortcut);
+    roi_box_work_shortcut_->setEnabled(false);
+    connect(roi_box_work_shortcut_, &QShortcut::activated, this,
+            [this] { setRoiBoxOperable(true); });
+    roi_box_end_shortcut_ = new QShortcut(QKeySequence(Qt::Key_E), this);
+    roi_box_end_shortcut_->setContext(Qt::WidgetWithChildrenShortcut);
+    roi_box_end_shortcut_->setEnabled(false);
+    connect(roi_box_end_shortcut_, &QShortcut::activated, this,
+            [this] { setRoiBoxOperable(false); });
     connect(roi_selector_, &RoiSelector::roiChanged, this,
             &PointCloudView::roiEdited);
     connect(roi_selector_, &RoiSelector::roiEditFinished, this,
@@ -97,6 +142,14 @@ void PointCloudView::enableRoiEditObb(bool on, const double center[3],
             roi_selector_->setBoxObb(center[0], center[1], center[2], half[0], half[1],
                                      half[2], rot_deg[0], rot_deg[1], rot_deg[2]);
         }
+        // Entering edit mode always starts with an operable box.
+        roi_box_operable_ = true;
+        roi_selector_->setOperable(true);
+        if (roi_box_work_shortcut_) roi_box_work_shortcut_->setEnabled(true);
+        if (roi_box_end_shortcut_) roi_box_end_shortcut_->setEnabled(true);
+    } else {
+        if (roi_box_work_shortcut_) roi_box_work_shortcut_->setEnabled(false);
+        if (roi_box_end_shortcut_) roi_box_end_shortcut_->setEnabled(false);
     }
     roi_selector_->setEnabled(on);
     vtk_widget_->renderWindow()->Render();
@@ -105,6 +158,18 @@ void PointCloudView::enableRoiEditObb(bool on, const double center[3],
     (void)center;
     (void)half;
     (void)rot_deg;
+#endif
+}
+
+void PointCloudView::setRoiBoxOperable(bool on) {
+#ifdef PCSEARCH_HAS_VTK
+    if (!roi_selector_ || !roi_editing_ || on == roi_box_operable_) return;
+    roi_box_operable_ = on;
+    roi_selector_->setOperable(on);
+    emit displayInfo(on ? tr("Box ROI：按 W，已启用包围盒操作")
+                        : tr("Box ROI：按 E，已禁用包围盒操作（仅查看点云）"));
+#else
+    (void)on;
 #endif
 }
 

@@ -9,6 +9,8 @@
 #include <vtkProperty.h>
 #include <vtkRenderWindowInteractor.h>
 #include <vtkTransform.h>
+#include <vtkWidgetEvent.h>
+#include <vtkWidgetEventTranslator.h>
 #endif
 
 #include <algorithm>
@@ -121,21 +123,34 @@ void RoiSelector::attach(vtkRenderWindowInteractor* interactor) {
     rep_ = vtkBoxRepresentation::New();
     rep_->SetPlaceFactor(1.0);
     rep_->GetOutlineProperty()->SetColor(0.1, 1.0, 0.3);
-    rep_->GetOutlineProperty()->SetLineWidth(2.0);
+    // Thinner outline so the box never occludes the cloud it is framing. The
+    // previous 2.0 px looked heavy; 1.2 px is still visible without blocking.
+    rep_->GetOutlineProperty()->SetLineWidth(1.2);
     rep_->GetHandleProperty()->SetColor(0.1, 1.0, 0.3);
     rep_->GetSelectedHandleProperty()->SetColor(1.0, 0.85, 0.1);
-    rep_->GetFaceProperty()->SetOpacity(0.15);
+    // Keep faces barely-tinted so points inside are still readable.
+    rep_->GetFaceProperty()->SetOpacity(0.06);
     rep_->GetFaceProperty()->SetColor(0.1, 1.0, 0.3);
+    // Kill the "米字" clutter: outline cursor wires (center->corner) and face
+    // wires (in-face cross lines) leave only the clean box outline + handles.
+    rep_->OutlineCursorWiresOff();
+    rep_->OutlineFaceWiresOff();
 
     widget_ = vtkBoxWidget2::New();
     widget_->SetRepresentation(rep_);
     widget_->SetInteractor(interactor);
     widget_->RotationEnabledOn();
     widget_->TranslationEnabledOn();
-    widget_->ScalingEnabledOn();
-    // Body left-drag moves the box cleanly; corner handles resize, edge
-    // handles rotate.
-    widget_->MoveFacesEnabledOff();
+    // Disable the "whole widget at once" scaling (right-button drag). It was
+    // the source of "drag the box and it always shrinks no matter the direction"
+    // because right-button = uniform scale. Face/axis scaling is handled by
+    // MoveFaces below, which is the intuitive "grab a face and pull it in/out".
+    widget_->ScalingEnabledOff();
+    // Enable per-face (per-axis) scaling: grab the spherical handle on a face
+    // and drag along that face normal to enlarge/shrink that axis only.
+    widget_->MoveFacesEnabledOn();
+    // Body left-drag moves the box cleanly; a face handle rescales that axis,
+    // an edge handle rotates.
 
     auto* cb = RoiCallback::New();
     cb->selector_ = this;
@@ -152,9 +167,32 @@ void RoiSelector::setEnabled(bool on) {
     if (widget_) {
         if (on) {
             widget_->On();
+            // Entering edit mode always starts with an operable box; clears any
+            // leftover "view only" state from a previous shortcut toggle.
+            widget_->SetProcessEvents(1);
+            // Match RVC Manager convention: right button pans the box (default
+            // binds right to whole-widget scale). The left button still rotates
+            // a face / moves a face handle, and the wheel still zooms.
+            auto* translator = widget_->GetEventTranslator();
+            translator->RemoveTranslation(vtkCommand::RightButtonPressEvent);
+            translator->SetTranslation(vtkCommand::RightButtonPressEvent,
+                                       vtkWidgetEvent::Translate);
+            translator->RemoveTranslation(vtkCommand::RightButtonReleaseEvent);
+            translator->SetTranslation(vtkCommand::RightButtonReleaseEvent,
+                                       vtkWidgetEvent::EndTranslate);
         } else {
             widget_->Off();
         }
+    }
+#endif
+}
+
+void RoiSelector::setOperable(bool on) {
+#ifdef PCSEARCH_HAS_VTK
+    if (widget_) {
+        // ProcessEvents=off keeps the representation visible but makes the
+        // widget ignore every interaction event (vtkAbstractWidget.cxx:205).
+        widget_->SetProcessEvents(on ? 1 : 0);
     }
 #endif
 }

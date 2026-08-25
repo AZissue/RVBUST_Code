@@ -8,6 +8,7 @@
 #include <vector>
 
 class QLabel;
+class QShortcut;
 
 #ifdef PCSEARCH_HAS_VTK
 class QVTKOpenGLNativeWidget;
@@ -46,6 +47,11 @@ public:
     void enableRoiEdit(bool on, const double bounds[6] = nullptr);
     void enableRoiEditObb(bool on, const double center[3], const double half[3],
                           const double rot_deg[3]);
+    // While in interactive ROI editing, toggle whether the box responds to the
+    // mouse. `true` (shortcut W) lets you drag/scale/rotate the box; `false`
+    // (shortcut E) keeps the box visible for reference but lets you orbit/zoom/
+    // pan the cloud without accidentally moving it.
+    void setRoiBoxOperable(bool on);
     // Persistent wireframe box (used by Box ROI node preview / selection).
     // AABB overload keeps rotation at zero.
     void showRoiBox(double xmin, double ymin, double zmin, double xmax, double ymax,
@@ -80,10 +86,18 @@ private:
     std::vector<vtkProp*> cloud_actors_;
 #endif
     RoiSelector* roi_selector_ = nullptr;
+    // W/E shortcuts enabled only while interactive ROI editing is active, so a
+    // bare "w" outside editing still reaches the camera style (VTK uses 'w'
+    // for wire-frame) and typing into parameter fields is unaffected.
+    QShortcut* roi_box_work_shortcut_ = nullptr;
+    QShortcut* roi_box_end_shortcut_ = nullptr;
     // True while interactive ROI editing (vtkBoxWidget2) is active. When set,
     // showRoiBoxObb() skips drawing the static wireframe preview actor so the
     // scene shows only the interaction box (one box, not two).
     bool roi_editing_ = false;
+    // Current operable state of the ROI box while editing (mirrors
+    // RoiSelector::setOperable); reset to true whenever edit mode is entered.
+    bool roi_box_operable_ = true;
 };
 
 }  // namespace app

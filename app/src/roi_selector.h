@@ -25,6 +25,11 @@ public:
     void attach(vtkRenderWindowInteractor* interactor);
 #endif
     void setEnabled(bool on);
+    // Toggle whether the box responds to the mouse. When off the box stays
+    // visible (so you can still see what you are framing) but ignores all
+    // interaction events, letting the camera style drive rotate/zoom/pan even
+    // when the cursor is over the box. Used by the Box ROI view shortcut keys.
+    void setOperable(bool on);
     bool enabled() const { return enabled_; }
     // Convenience: axis-aligned box in scene units
     // (xmin,ymin,zmin,xmax,ymax,zmax order).

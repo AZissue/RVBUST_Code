@@ -69,6 +69,9 @@ private:
     void buildUi();
     void retranslateUi();
     void setEditingEnabled(bool enabled);
+    // Put the currently selected Box ROI node's box into the interactive
+    // vtkBoxWidget2 editor (auto-entered when the node is selected).
+    void enterRoiEdit();
     void refreshResults();
     void refreshOutputCombo();
     void showSelectedOutput();
