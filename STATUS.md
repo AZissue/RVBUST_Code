@@ -4,23 +4,23 @@
 > 只保留“当前快照”，不积累历史；旧条目删除即可，git 历史里仍可追溯。
 
 ## ⏭ 交接块（新会话先读这里）
-- 当前状态：阶段 2「节点逐个完善」进行中；基准流程「点云加载 → Box ROI →
-  保存点云」已跑通；ROI 交互（拖移 / 缩放 / 旋转）、重置包围盒、显示降采样、
-  保存“文件夹 + 文件名”均已完成。节点级 E2E 单测已覆盖：load→remove_invalid→
-  voxel、z_filter、box_roi+roi_crop（含旋转）、dbscan、random_downsample、
-  euclidean_cluster、plane_detect、save；`ctest` 6/6 全绿。
-- 下一步：本轮已补齐 random_downsample / euclidean_cluster / plane_detect 三个
-  节点的节点级 E2E；剩平面检测 / 聚类节点的「参数面板 + 3D 叠加显示」做手动
-  验证（无法 QtTest 模拟），并跑一次完整冒烟（demo 流程）。
-- 正在进行的文件：`tests/pipeline/test_pipeline.cpp`（本轮新增节点级 E2E）、
-  `modules/pipeline/src/nodes/core_nodes.cpp`、
-  `app/src/main_window.cpp`、`params_panel.cpp`、`point_cloud_view.cpp`、
-  `roi_selector.cpp`
-- 卡点 / 风险：无阻塞；注意核显 / 远程桌面场景必须保持显示降采样；ROI 交互
-  与节点「参数面板 + 3D 显示」只能手动验证（无法 QtTest 模拟）。
-- 上次会话结束已提交：是（git 本地提交，未 push）
+- 当前状态：阶段 2「节点逐个完善」进行中；**当前主线：ROI BOX 节点完善**。
+  基准流程「点云加载 → Box ROI → 保存点云」已跑通；ROI 交互（拖移 / 缩放 /
+  旋转）、重置包围盒、显示降采样、保存“文件夹 + 文件名”均已完成。
+- 本轮：修复 **ROI 操控时显示两个包围盒**——box_roi 进入编辑态只保留
+  vtkBoxWidget2 交互框（隐藏静态绿色 wireframe 预览框），退出编辑恢复预览。
+  已构建 + `ctest` 6/6 全绿 + smoke + demo 冒烟通过。
+- 下一步：① 手动验证 box_roi 编辑只出现一个包围盒（进 ROI 应只有带手柄的交互
+  框；关 ROI 只剩绿色线框预览）；② 按用户反馈优化「ROI 操作更方便」（待明确）。
+- 正在进行的文件：`app/src/point_cloud_view.cpp`、`point_cloud_view.h`、
+  `app/src/main_window.cpp`
+- 卡点 / 风险：双盒为 VTK renderer 内行为，QtTest 无法断言，只能手动验证；
+  核显 / 远程桌面场景必须保持显示降采样。
+- 上次会话结束已提交：是（git 本地提交，未 push；本轮双盒修复待提交）
 
 ## ✅ 已完成（近期；更早历史见 git）
+- [x] 2026-08-25 修复 ROI 操控“双包围盒”：box_roi 编辑态只显示 vtkBoxWidget2
+  交互框，隐藏静态预览框，退出编辑恢复预览；构建 / ctest / smoke / demo 通过
 - [x] 2026-08-25 补齐 random_downsample / euclidean_cluster / plane_detect 节点级
   E2E 单测（走 Graph 全链路 + source_indices 溯源）；`ctest` 6/6 全绿
 - [x] 2026-08-25 项目文档按新模板迁移（AGENTS / PROJECT / PLAN / STATUS +
@@ -34,8 +34,8 @@
   Dark、方案 JSON、多视窗
 
 ## 🚧 进行中
-- 阶段 2：节点级 E2E 已补齐（voxel / z_filter / ROI / dbscan / random / euclidean /
-  plane / save）；剩各节点的「参数面板 + 3D 显示」手动验证 + 完整冒烟。
+- 阶段 2（主线 ROI BOX）：节点级 E2E 已补齐；本轮修复 ROI 双包围盒；剩
+  「ROI 操作更方便」优化 + box_roi 编辑手动验证。
 
 ## 🐛 已知 BUG / 问题
 | 问题 | 状态 | 备注 |

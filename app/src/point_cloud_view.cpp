@@ -86,9 +86,17 @@ void PointCloudView::enableRoiEditObb(bool on, const double center[3],
                                       const double rot_deg[3]) {
 #ifdef PCSEARCH_HAS_VTK
     if (!roi_selector_) return;
-    if (on && center && half && rot_deg) {
-        roi_selector_->setBoxObb(center[0], center[1], center[2], half[0], half[1],
-                                 half[2], rot_deg[0], rot_deg[1], rot_deg[2]);
+    roi_editing_ = on;
+    if (on) {
+        // The vtkBoxWidget2 renders its own box (outline + handles + translucent
+        // faces) once enabled. The static preview actor would otherwise leave a
+        // second, overlapping box in the scene while the user drags, so hide it
+        // on entry and let the interaction box be the only visible box.
+        hideRoiBox();
+        if (center && half && rot_deg) {
+            roi_selector_->setBoxObb(center[0], center[1], center[2], half[0], half[1],
+                                     half[2], rot_deg[0], rot_deg[1], rot_deg[2]);
+        }
     }
     roi_selector_->setEnabled(on);
     vtk_widget_->renderWindow()->Render();
@@ -114,6 +122,9 @@ void PointCloudView::showRoiBoxObb(const double center[3], const double half[3],
                                    const double rot_deg[3]) {
 #ifdef PCSEARCH_HAS_VTK
     if (!renderer_) return;
+    // While interactive ROI editing is active the vtkBoxWidget2 is the only box
+    // shown; never draw the static wireframe preview on top of it.
+    if (roi_editing_) return;
     hideRoiBox();
     vtkNew<vtkCubeSource> cube;
     cube->SetCenter(0.0, 0.0, 0.0);

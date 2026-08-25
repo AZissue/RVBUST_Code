@@ -80,6 +80,10 @@ private:
     std::vector<vtkProp*> cloud_actors_;
 #endif
     RoiSelector* roi_selector_ = nullptr;
+    // True while interactive ROI editing (vtkBoxWidget2) is active. When set,
+    // showRoiBoxObb() skips drawing the static wireframe preview actor so the
+    // scene shows only the interaction box (one box, not two).
+    bool roi_editing_ = false;
 };
 
 }  // namespace app

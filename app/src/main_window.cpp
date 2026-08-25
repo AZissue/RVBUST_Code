@@ -456,6 +456,10 @@ void MainWindow::doDisconnect(const QString& from_id, int from_port, const QStri
 void MainWindow::onRoiToggle(bool on) {
     if (!on) {
         cloud_view_->enableRoiEdit(false);
+        // Re-enable the static wireframe preview box so the user still sees the
+        // current Box ROI pose after exiting edit mode (the interaction box is
+        // gone now, and updateRoiBoxPreview draws the single preview actor).
+        updateRoiBoxPreview();
         return;
     }
     pcsearch::pipeline::Node* node = graph_.node(selected_node_id_);
