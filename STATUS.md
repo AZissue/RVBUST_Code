@@ -24,6 +24,7 @@
 
 ## ✅ 已完成（近期；更早历史见 git）
 - [x] 2026-08-25 修复本地一键构建：CMake 复用 RvcVisionStudio 自编译 VTK（带 GUISupportQt）解决 PCL 1.13.0 捆绑 VTK 缺 Qt 支持问题；start.bat 自动探测本机 Qt/PCL 路径；ctest 6/6 + autoquit 冒烟通过
+- [x] 2026-08-25 修复体素下采样：改用真实三维网格坐标作 key，消除旧 scalar XOR 哈希的静默碰撞；用 computeBounds 跳过 NaN/Inf 保证 RVC 空洞点云不污染体素原点；输出按 first_index 排序保证跨平台一致；补 2 个回归测试；ctest 6/6 全绿
 - [x] 2026-08-25 修复 ROI 操控“双包围盒”：box_roi 编辑态只显示 vtkBoxWidget2
   交互框，隐藏静态预览框，退出编辑恢复预览；构建 / ctest / smoke / demo 通过
 - [x] 2026-08-25 补齐 random_downsample / euclidean_cluster / plane_detect 节点级

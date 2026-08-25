@@ -123,6 +123,90 @@ int main() {
         }
     }
 
+    // 2a) voxelDownsample must not merge voxels that collide under the old
+    // scalar XOR hash (two 5x5x5 cubes far apart, leaf 1 mm -> 250 voxels).
+    {
+        PointCloudData c;
+        c.points.resize(250, 3);
+        c.normals.resize(250, 3);
+        c.scalar_channels = {{}};
+        c.scalar_channel_names = {"id"};
+        std::int64_t r = 0;
+        const int centers[2][3] = {{0, 0, 0}, {1000, 1000, 0}};
+        for (int cube = 0; cube < 2; ++cube) {
+            for (int i = 0; i < 5; ++i) {
+                for (int j = 0; j < 5; ++j) {
+                    for (int k = 0; k < 5; ++k) {
+                        c.points(r, 0) = static_cast<float>(centers[cube][0] + i);
+                        c.points(r, 1) = static_cast<float>(centers[cube][1] + j);
+                        c.points(r, 2) = static_cast<float>(centers[cube][2] + k);
+                        c.normals.row(r) << 0.0f, 0.0f, 1.0f;
+                        c.scalar_channels[0].push_back(static_cast<float>(r));
+                        ++r;
+                    }
+                }
+            }
+        }
+        const auto vox = voxelDownsample(c, 1.0);
+        failures += check(vox.cloud.size() == 250, "voxel: distant cubes not merged");
+        if (vox.cloud.size() == 250) {
+            // Every output voxel should be inside one of the input cubes' bounds.
+            for (std::int64_t i = 0; i < vox.cloud.size(); ++i) {
+                const float x = vox.cloud.points(i, 0);
+                const float y = vox.cloud.points(i, 1);
+                const bool in_cube0 = x < 5.0f && y < 5.0f;
+                const bool in_cube1 = x > 995.0f && y > 995.0f;
+                failures += check(in_cube0 || in_cube1,
+                                  "voxel: output point stays in its source cube");
+            }
+        }
+    }
+
+    // 2b) voxelDownsample on a cloud with NaN/Inf bounds should still work on
+    // the finite points.
+    {
+        PointCloudData c;
+        c.points.resize(104, 3);
+        c.normals.resize(104, 3);
+        c.scalar_channels = {{}};
+        c.scalar_channel_names = {"id"};
+        std::int64_t r = 0;
+        // 4x5x5 finite grid.
+        for (int i = 0; i < 4; ++i) {
+            for (int j = 0; j < 5; ++j) {
+                for (int k = 0; k < 5; ++k) {
+                    c.points(r, 0) = static_cast<float>(i);
+                    c.points(r, 1) = static_cast<float>(j);
+                    c.points(r, 2) = static_cast<float>(k);
+                    c.normals.row(r) << 0.0f, 0.0f, 1.0f;
+                    c.scalar_channels[0].push_back(static_cast<float>(r));
+                    ++r;
+                }
+            }
+        }
+        // Add a few NaN/Inf points that used to poison the voxel origin.
+        for (int bad = 0; bad < 4; ++bad) {
+            c.points(r, 0) = std::nanf("");
+            c.points(r, 1) = (bad % 2 == 0)
+                                 ? std::numeric_limits<float>::infinity()
+                                 : -std::numeric_limits<float>::infinity();
+            c.points(r, 2) = 0.0f;
+            c.normals.row(r) << 0.0f, 0.0f, 0.0f;
+            c.scalar_channels[0].push_back(-1.0f);
+            ++r;
+        }
+        c.points.conservativeResize(r, 3);
+        c.normals.conservativeResize(r, 3);
+        const auto vox = voxelDownsample(c, 2.0);
+        // 4x5x5 grid, leaf 2 mm -> 2x3x3 = 18 occupied voxels.
+        failures += check(vox.cloud.size() == 18,
+                          "voxel: NaN/Inf bounds do not affect finite grid");
+        for (std::int64_t i = 0; i < vox.cloud.size(); ++i) {
+            failures += check(vox.cloud.points.row(i).allFinite(),
+                              "voxel: output remains finite");
+        }
+    }
+
     // 3) randomDownsample
     {
         PointCloudData c;
