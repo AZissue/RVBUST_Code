@@ -62,6 +62,40 @@ FilterResult removeInvalidPoints(const PointCloudData& cloud) {
     return result;
 }
 
+namespace {
+
+struct VoxelKey {
+    int x = 0;
+    int y = 0;
+    int z = 0;
+    bool operator==(const VoxelKey& other) const noexcept = default;
+};
+
+struct VoxelKeyHash {
+    std::size_t operator()(const VoxelKey& k) const noexcept {
+        // boost::hash_combine style: keep the three grid coordinates
+        // distinguishable and avoid the collisions of the old scalar XOR hash.
+        std::size_t h = static_cast<std::uint32_t>(k.x);
+        h ^= (static_cast<std::uint32_t>(k.y) + 0x9e3779b97f4a7c15ULL +
+              (h << 6) + (h >> 2));
+        h ^= (static_cast<std::uint32_t>(k.z) + 0x9e3779b97f4a7c15ULL +
+              (h << 6) + (h >> 2));
+        return h;
+    }
+};
+
+struct VoxelAccum {
+    Eigen::Vector3d sum = Eigen::Vector3d::Zero();
+    Eigen::Vector3d color_sum = Eigen::Vector3d::Zero();
+    Eigen::Vector3d normal_sum = Eigen::Vector3d::Zero();
+    std::vector<double> scalar_sums;
+    std::int64_t count = 0;
+    std::int64_t first_index = -1;
+    Eigen::Vector3i grid_index = Eigen::Vector3i::Zero();
+};
+
+}  // namespace
+
 FilterResult voxelDownsample(const PointCloudData& cloud, double leaf_size_mm,
                              VoxelMode mode) {
     FilterResult result;
@@ -75,19 +109,19 @@ FilterResult voxelDownsample(const PointCloudData& cloud, double leaf_size_mm,
         return result;
     }
 
-    struct VoxelAccum {
-        Eigen::Vector3d sum = Eigen::Vector3d::Zero();
-        Eigen::Vector3d color_sum = Eigen::Vector3d::Zero();
-        Eigen::Vector3d normal_sum = Eigen::Vector3d::Zero();
-        std::vector<double> scalar_sums;
-        std::int64_t count = 0;
-        std::int64_t first_index = -1;
-        Eigen::Vector3i grid_index = Eigen::Vector3i::Zero();
-    };
+    // Use the same finite-only bounds routine as the rest of the pipeline so
+    // that NaN/Inf holes in RVC depth maps do not poison the voxel grid origin.
+    Eigen::Vector3f min_f;
+    Eigen::Vector3f max_f;
+    if (!computeBounds(cloud, min_f, max_f)) {
+        // No finite point: return an empty cloud with the same metadata.
+        result.cloud.scalar_channel_names = cloud.scalar_channel_names;
+        return result;
+    }
 
-    Eigen::Vector3d min_b = cloud.points.colwise().minCoeff().cast<double>();
-    std::unordered_map<std::int64_t, VoxelAccum> voxels;
-    voxels.reserve(static_cast<std::size_t>(cloud.size() / 2));
+    const Eigen::Vector3d min_b = min_f.cast<double>();
+    std::unordered_map<VoxelKey, VoxelAccum, VoxelKeyHash> voxels;
+    voxels.reserve(static_cast<std::size_t>(cloud.size() / 2 + 1));
 
     const std::size_t scalar_count = cloud.scalar_channels.size();
     for (std::int64_t i = 0; i < cloud.size(); ++i) {
@@ -95,9 +129,7 @@ FilterResult voxelDownsample(const PointCloudData& cloud, double leaf_size_mm,
         if (!p.allFinite()) continue;
         const Eigen::Vector3d idx_d = (p - min_b).array() / leaf_size_mm;
         const Eigen::Vector3i idx = idx_d.cast<int>();
-        const std::int64_t key = (static_cast<std::int64_t>(idx.x()) * 73856093) ^
-                                 (static_cast<std::int64_t>(idx.y()) * 19349663) ^
-                                 (static_cast<std::int64_t>(idx.z()) * 83492791);
+        const VoxelKey key{idx.x(), idx.y(), idx.z()};
         VoxelAccum& v = voxels[key];
         if (v.count == 0) {
             v.scalar_sums.assign(scalar_count, 0.0);
@@ -122,8 +154,22 @@ FilterResult voxelDownsample(const PointCloudData& cloud, double leaf_size_mm,
         result.cloud.scalar_channels[c].resize(voxels.size());
     }
     result.source_indices.reserve(voxels.size());
+
+    // Sort by first encountered source index so output order is deterministic
+    // across runs and platforms (unordered_map iteration order is not).
+    std::vector<const std::pair<const VoxelKey, VoxelAccum>*> sorted;
+    sorted.reserve(voxels.size());
+    for (const auto& entry : voxels) {
+        sorted.push_back(&entry);
+    }
+    std::sort(sorted.begin(), sorted.end(),
+              [](const auto* a, const auto* b) {
+                  return a->second.first_index < b->second.first_index;
+              });
+
     std::int64_t row = 0;
-    for (const auto& [key, v] : voxels) {
+    for (const auto* e : sorted) {
+        const VoxelAccum& v = e->second;
         Eigen::Vector3d out;
         if (mode == VoxelMode::Centroid) {
             out = v.sum / static_cast<double>(v.count);

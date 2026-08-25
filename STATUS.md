@@ -28,12 +28,14 @@
   分支（main 总览 README 已登记）；本地 master 跟踪 `origin/pointcloud-search`，
   提交后直接 `git push`。本机 GitHub 直连超时，需走代理：
   http `127.0.0.1:10809` / socks5 `127.0.0.1:10808`。
-- 上次会话结束已提交：是（本会话仅文档变更：PROJECT §8/§9 + STATUS/PLAN 同步）
+- 上次会话结束已提交：是（ROI W/E 与体素修复已推送；本会话文档变更 PROJECT §8/§9 +
+  STATUS/PLAN 同步，推送后即同步）
 
 ## ✅ 已完成（近期；更早历史见 git）
 - [x] 2026-08-25 完成节点 I/O / 批量 / 分块 / 显示统一约定（PROJECT §8 + §9 待修清单），
   含一帧多盒、文件夹批量读取模式、视窗多图层显示模型
 - [x] 2026-08-25 修复本地一键构建：CMake 复用 RvcVisionStudio 自编译 VTK（带 GUISupportQt）解决 PCL 1.13.0 捆绑 VTK 缺 Qt 支持问题；start.bat 自动探测本机 Qt/PCL 路径；ctest 6/6 + autoquit 冒烟通过
+- [x] 2026-08-25 修复体素下采样：改用真实三维网格坐标作 key，消除旧 scalar XOR 哈希的静默碰撞；用 computeBounds 跳过 NaN/Inf 保证 RVC 空洞点云不污染体素原点；输出按 first_index 排序保证跨平台一致；补 2 个回归测试；ctest 6/6 全绿
 - [x] 2026-08-25 Box ROI 编辑态快捷键 W/E：W=可操作包围盒、E=仅查看（SetProcessEvents
   0/1）；快捷键仅在编辑态启用；构建/ctest/smoke/demo 通过
 - [x] 2026-08-25 交互统一为左旋/滚轮缩放/右键平移（3D 视窗 + ROI 包围盒）；滚轮步进
