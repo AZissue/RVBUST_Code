@@ -3,6 +3,7 @@
 #include "pcsearch/clustering/clustering.h"
 #include "pcsearch/filters/filters.h"
 #include "pcsearch/io/point_cloud_io.h"
+#include "pcsearch/pipeline/json.h"
 #include "pcsearch/pipeline/nodes/node_utils.h"
 #include "pcsearch/pipeline/registry.h"
 #include "pcsearch/segmentation/plane_detector.h"
@@ -294,7 +295,8 @@ ObjectList RemoveInvalidNode::execute(const std::vector<ObjectList>& inputs, con
     ObjectList out;
     for (const auto& obj : inputs[0].objects) {
         const FilterResult fr = filters::removeInvalidPoints(*obj->cloud);
-        out.objects.push_back(transformObject(*obj, std::move(fr.cloud), fr.source_indices));
+        out.objects.push_back(
+            transformObject(*obj, std::move(fr.cloud), fr.source_indices, id()));
     }
     return out;
 }
@@ -316,7 +318,8 @@ ObjectList VoxelDownsampleNode::execute(const std::vector<ObjectList>& inputs,
     for (const auto& obj : inputs[0].objects) {
         const FilterResult fr =
             filters::voxelDownsample(*obj->cloud, p.getDouble("leaf_size"), mode);
-        out.objects.push_back(transformObject(*obj, std::move(fr.cloud), fr.source_indices));
+        out.objects.push_back(
+            transformObject(*obj, std::move(fr.cloud), fr.source_indices, id()));
     }
     return out;
 }
@@ -336,7 +339,8 @@ ObjectList RandomDownsampleNode::execute(const std::vector<ObjectList>& inputs,
     for (const auto& obj : inputs[0].objects) {
         const FilterResult fr = filters::randomDownsample(
             *obj->cloud, p.getInt("target_count"), static_cast<unsigned>(p.getInt("seed")));
-        out.objects.push_back(transformObject(*obj, std::move(fr.cloud), fr.source_indices));
+        out.objects.push_back(
+            transformObject(*obj, std::move(fr.cloud), fr.source_indices, id()));
     }
     return out;
 }
@@ -355,7 +359,8 @@ ObjectList ZFilterNode::execute(const std::vector<ObjectList>& inputs, const Par
     for (const auto& obj : inputs[0].objects) {
         const FilterResult fr = filters::filterByAxisRange(
             *obj->cloud, filters::Axis::Z, p.getDouble("z_min"), p.getDouble("z_max"));
-        out.objects.push_back(transformObject(*obj, std::move(fr.cloud), fr.source_indices));
+        out.objects.push_back(
+            transformObject(*obj, std::move(fr.cloud), fr.source_indices, id()));
     }
     return out;
 }
@@ -369,7 +374,8 @@ namespace {
 // Keep the rows of `obj` that lie inside `box`, remap region indices to the
 // new object layout, and attach the box to the output object.
 std::shared_ptr<core::PointCloudObject> cropObject(
-    const core::PointCloudObject& obj, const core::RoiBox& box) {
+    const core::PointCloudObject& obj, const core::RoiBox& box,
+    const std::string& provenance) {
     const auto& cloud = *obj.cloud;
     const std::int64_t n = cloud.size();
     std::vector<std::int64_t> remap(static_cast<std::size_t>(n), -1);
@@ -381,11 +387,11 @@ std::shared_ptr<core::PointCloudObject> cropObject(
     }
 
     auto out = std::make_shared<core::PointCloudObject>();
-    out->id = obj.id + ".roi";
+    out->id = obj.id + "." + box.label;
     out->name = obj.name;
     out->display_color = obj.display_color;
     out->visible = obj.visible;
-    out->provenance = obj.provenance;
+    out->provenance = provenance;
     out->roi = std::make_shared<core::RoiBox>(box);
 
     auto cropped = std::make_shared<core::PointCloudData>();
@@ -423,14 +429,6 @@ std::shared_ptr<core::PointCloudObject> cropObject(
     return out;
 }
 
-ObjectList cropByRoi(const ObjectList& input, const core::RoiBox& box) {
-    ObjectList out;
-    for (const auto& obj : input.objects) {
-        out.objects.push_back(cropObject(*obj, box));
-    }
-    return out;
-}
-
 core::RoiBox boxFromParams(const Params& p) {
     core::RoiBox box;
     // xmin..zmax describe the box's extent around its center (mm). With zero
@@ -451,7 +449,105 @@ core::RoiBox boxFromParams(const Params& p) {
                         static_cast<float>(p.getDouble("rot_y")),
                         static_cast<float>(p.getDouble("rot_z"))));
     box.valid = true;
+    box.label = "roi0";
     return box;
+}
+
+// One box from a boxes_json entry. x/y/z bounds are required; rotations and
+// the label are optional (label defaults to "roi<index>").
+core::RoiBox boxFromJson(const json::Value& e, std::size_t index) {
+    auto num = [&](const char* key) -> double {
+        const json::Value* v = e.find(key);
+        if (!v || !v->isNumber()) {
+            throw std::runtime_error(std::string("boxes_json: missing numeric '") +
+                                     key + "'");
+        }
+        return v->asNumber();
+    };
+    core::RoiBox box;
+    const Eigen::Vector3f mn(static_cast<float>(num("xmin")),
+                             static_cast<float>(num("ymin")),
+                             static_cast<float>(num("zmin")));
+    const Eigen::Vector3f mx(static_cast<float>(num("xmax")),
+                             static_cast<float>(num("ymax")),
+                             static_cast<float>(num("zmax")));
+    box.min = -0.5f * (mx - mn);
+    box.max = 0.5f * (mx - mn);
+    box.center = 0.5f * (mn + mx);
+    const double rx = e.find("rot_x") && e["rot_x"].isNumber() ? e["rot_x"].asNumber() : 0.0;
+    const double ry = e.find("rot_y") && e["rot_y"].isNumber() ? e["rot_y"].asNumber() : 0.0;
+    const double rz = e.find("rot_z") && e["rot_z"].isNumber() ? e["rot_z"].asNumber() : 0.0;
+    box.orientation = eulerXYZDegToMatrix(
+        Eigen::Vector3f(static_cast<float>(rx), static_cast<float>(ry),
+                        static_cast<float>(rz)));
+    box.valid = true;
+    box.label = e.find("label") && e["label"].isString()
+                    ? e["label"].asString()
+                    : "roi" + std::to_string(index);
+    return box;
+}
+
+// Node-level box list (PROJECT §8.3.3 "盒列表节点级共享"): box_count boxes
+// from boxes_json, or the single legacy interactive box when json is empty.
+std::vector<core::RoiBox> boxesFromParams(const Params& p) {
+    const std::string json_text = p.getString("boxes_json");
+    const int count = std::max(1, p.getInt("box_count"));
+    if (json_text.empty()) {
+        if (count > 1) {
+            throw std::runtime_error(
+                "box_roi: box_count > 1 requires boxes_json (box list)");
+        }
+        return {boxFromParams(p)};
+    }
+    const json::Value v = json::Value::parse(json_text);
+    if (!v.isArray()) {
+        throw std::runtime_error("box_roi: boxes_json must be a JSON array");
+    }
+    if (v.asArray().size() != static_cast<std::size_t>(count)) {
+        throw std::runtime_error(
+            "box_roi: boxes_json entry count != box_count");
+    }
+    std::vector<core::RoiBox> boxes;
+    boxes.reserve(v.asArray().size());
+    for (std::size_t i = 0; i < v.asArray().size(); ++i) {
+        boxes.push_back(boxFromJson(v.asArray()[i], i));
+    }
+    return boxes;
+}
+
+// F x M output contract (PROJECT §8.3.3): for every input object i and every
+// box m, one cropped cloud object and one region object; cloud[j] <-> region[j]
+// with j = i*M + m, both carrying the same box.
+struct BoxCropResult {
+    ObjectList cropped;
+    ObjectList regions;
+};
+
+BoxCropResult cropByBoxes(const ObjectList& input,
+                          const std::vector<core::RoiBox>& boxes,
+                          const std::string& node_id) {
+    BoxCropResult result;
+    result.cropped.objects.reserve(input.objects.size() * boxes.size());
+    result.regions.objects.reserve(input.objects.size() * boxes.size());
+    for (const auto& obj : input.objects) {
+        for (const auto& box : boxes) {
+            result.cropped.objects.push_back(cropObject(*obj, box, node_id));
+
+            auto roi_obj = std::make_shared<core::PointCloudObject>();
+            roi_obj->id = obj->id + "." + box.label;
+            roi_obj->name = box.label;
+            roi_obj->cloud = std::make_shared<core::PointCloudData>();
+            roi_obj->cloud->unit = obj->cloud->unit;
+            roi_obj->cloud->source_path = obj->cloud->source_path;
+            roi_obj->cloud->frame_id = obj->cloud->frame_id;
+            roi_obj->roi = std::make_shared<core::RoiBox>(box);
+            roi_obj->visible = obj->visible;
+            roi_obj->display_color = obj->display_color;
+            roi_obj->provenance = node_id;
+            result.regions.objects.push_back(std::move(roi_obj));
+        }
+    }
+    return result;
 }
 
 }  // namespace
@@ -461,7 +557,8 @@ core::RoiBox boxFromParams(const Params& p) {
 // ---------------------------------------------------------------------------
 
 std::vector<ParamDef> BoxRoiNode::paramDefs() const {
-    return {doubleParam("xmin", "X Min", -100000.0, -1e9, 1e9, "mm"),
+    std::vector<ParamDef> defs = {
+            doubleParam("xmin", "X Min", -100000.0, -1e9, 1e9, "mm"),
             doubleParam("xmax", "X Max", 100000.0, -1e9, 1e9, "mm"),
             doubleParam("ymin", "Y Min", -100000.0, -1e9, 1e9, "mm"),
             doubleParam("ymax", "Y Max", 100000.0, -1e9, 1e9, "mm"),
@@ -469,32 +566,50 @@ std::vector<ParamDef> BoxRoiNode::paramDefs() const {
             doubleParam("zmax", "Z Max", 100000.0, -1e9, 1e9, "mm"),
             doubleParam("rot_x", "Rotate X (deg)", 0.0, -360.0, 360.0),
             doubleParam("rot_y", "Rotate Y (deg)", 0.0, -360.0, 360.0),
-            doubleParam("rot_z", "Rotate Z (deg)", 0.0, -360.0, 360.0)};
+            doubleParam("rot_z", "Rotate Z (deg)", 0.0, -360.0, 360.0),
+            intParam("box_count", "Box Count", 1, 1, 32),
+            stringParam("boxes_json", "Box List (JSON)")};
+    return defs;
 }
 
 std::vector<ObjectList> BoxRoiNode::executeAll(const std::vector<ObjectList>& inputs,
                                                const Params& p) {
-    const core::RoiBox box = boxFromParams(p);
-    ObjectList cropped = cropByRoi(inputs[0], box);
-
-    auto roi_obj = std::make_shared<core::PointCloudObject>();
-    roi_obj->id = id() + ".roi";
-    roi_obj->name = "roi";
-    roi_obj->cloud = std::make_shared<core::PointCloudData>();
-    roi_obj->roi = std::make_shared<core::RoiBox>(box);
-    roi_obj->provenance = id();
-    ObjectList roi_list;
-    roi_list.objects.push_back(std::move(roi_obj));
-    return {std::move(cropped), std::move(roi_list)};
+    const std::vector<core::RoiBox> boxes = boxesFromParams(p);
+    if (boxes.empty()) {
+        return {ObjectList{}, ObjectList{}};
+    }
+    BoxCropResult result = cropByBoxes(inputs[0], boxes, id());
+    return {std::move(result.cropped), std::move(result.regions)};
 }
 
 ObjectList RoiCropNode::execute(const std::vector<ObjectList>& inputs, const Params&) {
-    if (inputs.size() < 2 || inputs[1].objects.empty() ||
-        !inputs[1].objects[0]->roi || !inputs[1].objects[0]->roi->valid) {
-        // No ROI connected: pass the cloud through unchanged.
+    if (inputs.size() < 2 || inputs[1].objects.empty()) {
+        // Optional region port empty / not connected: pass clouds through.
         return inputs.empty() ? ObjectList{} : inputs[0];
     }
-    return cropByRoi(inputs[0], *inputs[1].objects[0]->roi);
+    const ObjectList& clouds = inputs[0];
+    const ObjectList& regions = inputs[1];
+    if (clouds.objects.empty()) return {};
+    // Index-aligned zip with broadcast: region list must be length 1 or equal
+    // to the cloud list (PROJECT §8.3.2).
+    if (regions.objects.size() != 1 &&
+        regions.objects.size() != clouds.objects.size()) {
+        throw std::runtime_error(
+            "roi_crop: region/cloud list length mismatch (" +
+            std::to_string(regions.objects.size()) + " vs " +
+            std::to_string(clouds.objects.size()) + ")");
+    }
+    ObjectList out;
+    out.objects.reserve(clouds.objects.size());
+    for (std::size_t i = 0; i < clouds.objects.size(); ++i) {
+        const auto& region_obj = regions.objects[regions.objects.size() == 1 ? 0 : i];
+        if (!region_obj->roi || !region_obj->roi->valid) {
+            out.objects.push_back(clouds.objects[i]);  // empty region -> passthrough
+        } else {
+            out.objects.push_back(cropObject(*clouds.objects[i], *region_obj->roi, id()));
+        }
+    }
+    return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -537,7 +652,8 @@ ObjectList PlaneDetectNode::execute(const std::vector<ObjectList>& inputs, const
         const auto planes = segmentation::detectPlanes(*obj->cloud, pp);
         for (const auto& plane : planes) {
             out.objects.push_back(makeSubsetObject(*obj, plane.indices, plane.id,
-                                                   core::Region::Kind::Plane, plane.params));
+                                                   core::Region::Kind::Plane,
+                                                   plane.params, id()));
         }
     }
     return out;
@@ -562,11 +678,13 @@ ObjectList DbscanNode::execute(const std::vector<ObjectList>& inputs, const Para
         const auto clusters = clustering::dbscan(*obj->cloud, dp, &noise);
         for (const auto& c : clusters) {
             out.objects.push_back(makeSubsetObject(*obj, c.indices, c.id,
-                                                   core::Region::Kind::Cluster));
+                                                   core::Region::Kind::Cluster,
+                                                   {}, id()));
         }
         if (!noise.empty()) {
             out.objects.push_back(
-                makeSubsetObject(*obj, noise, "noise", core::Region::Kind::Manual));
+                makeSubsetObject(*obj, noise, "noise",
+                                 core::Region::Kind::Manual, {}, id()));
         }
     }
     return out;
@@ -593,7 +711,8 @@ ObjectList EuclideanClusterNode::execute(const std::vector<ObjectList>& inputs,
         const auto clusters = clustering::euclideanClusters(*obj->cloud, ep);
         for (const auto& c : clusters) {
             out.objects.push_back(makeSubsetObject(*obj, c.indices, c.id,
-                                                   core::Region::Kind::Cluster));
+                                                   core::Region::Kind::Cluster,
+                                                   {}, id()));
         }
     }
     return out;

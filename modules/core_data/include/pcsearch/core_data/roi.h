@@ -3,6 +3,7 @@
 #include <Eigen/Core>
 
 #include <algorithm>
+#include <string>
 
 namespace pcsearch::core {
 
@@ -22,6 +23,9 @@ struct RoiBox {
     // world = orientation * local (rotation matrix, orthonormal columns).
     Eigen::Matrix3f orientation = Eigen::Matrix3f::Identity();
     bool valid = false;
+    // Stable name for one box of a multi-box set ("roi0", "roi1", ...),
+    // used to distinguish frames' boxes in outputs and save names.
+    std::string label;
 
     bool contains(const Eigen::Vector3f& p) const {
         if (!valid) return false;

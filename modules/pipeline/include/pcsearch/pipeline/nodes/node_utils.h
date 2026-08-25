@@ -50,7 +50,8 @@ inline std::shared_ptr<core::PointCloudObject> makeObject(
 // 1:1 filter helper: transform each object, keeping display metadata.
 inline std::shared_ptr<core::PointCloudObject> transformObject(
     const core::PointCloudObject& src, core::PointCloudData cloud,
-    const std::vector<std::int64_t>& local_indices) {
+    const std::vector<std::int64_t>& local_indices,
+    const std::string& provenance) {
     auto out = std::make_shared<core::PointCloudObject>();
     out->id = src.id;
     out->name = src.name;
@@ -58,7 +59,7 @@ inline std::shared_ptr<core::PointCloudObject> transformObject(
     out->source_indices = composeIndices(src, local_indices);
     out->visible = src.visible;
     out->display_color = src.display_color;
-    out->provenance = src.provenance;
+    out->provenance = provenance;
     return out;
 }
 
@@ -68,13 +69,13 @@ inline std::shared_ptr<core::PointCloudObject> transformObject(
 inline std::shared_ptr<core::PointCloudObject> makeSubsetObject(
     const core::PointCloudObject& src, const std::vector<std::int64_t>& indices,
     const std::string& label, core::Region::Kind kind = core::Region::Kind::Manual,
-    std::vector<double> params = {}) {
+    std::vector<double> params = {}, const std::string& provenance = {}) {
     auto out = std::make_shared<core::PointCloudObject>();
     out->id = src.id + "." + label;
     out->name = label;
     out->display_color = src.display_color;
     out->visible = src.visible;
-    out->provenance = src.provenance;
+    out->provenance = provenance;
 
     auto cloud = std::make_shared<core::PointCloudData>();
     cloud->unit = src.cloud->unit;
@@ -100,7 +101,7 @@ inline std::shared_ptr<core::PointCloudObject> makeSubsetObject(
     for (std::int64_t k = 0; k < static_cast<std::int64_t>(indices.size()); ++k) {
         region.indices[static_cast<std::size_t>(k)] = k;
     }
-    region.provenance = src.id;
+    region.provenance = provenance;
     out->regions.push_back(std::move(region));
 
     out->source_indices = composeIndices(src, indices);

@@ -32,3 +32,6 @@ Data/
 *.obj
 *.pdb
 *.log
+
+# ctest residue (created when ctest runs from the repo root)
+Testing/

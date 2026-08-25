@@ -775,6 +775,208 @@ int main() {
         }
     }
 
+    // ---- Multi-box box_roi: F x M cloud/region alignment + labels ----
+    {
+        const std::filesystem::path src_dir = dir / "mbbox_src";
+        std::filesystem::create_directories(src_dir);
+        writeTemp(src_dir, "f0.ply", makeLine(100, 0.0f));
+        writeTemp(src_dir, "f1.ply", makeLine(80, 5.0f));
+
+        Graph g;
+        auto* load = g.addNode("load_cloud");
+        g.setParam(load->id(), "folder", ParamValue{src_dir.string()});
+        g.setParam(load->id(), "mode", ParamValue{std::string("all")});
+        auto* box = g.addNode("box_roi");
+        g.setParam(box->id(), "box_count", ParamValue{2});
+        g.setParam(box->id(), "boxes_json",
+                   ParamValue{std::string(
+                       R"([{"xmin":-10,"xmax":49,"ymin":-10,"ymax":10,"zmin":-10,"zmax":10},)"
+                       R"({"xmin":60,"xmax":110,"ymin":-10,"ymax":10,"zmin":-10,"zmax":10}])")});
+        g.connect(load->id(), 0, box->id(), 0);
+        failures += check(g.execute(), "mbbox: execute ok");
+
+        const auto* clouds = g.output(box->id(), 0);
+        const auto* regions = g.output(box->id(), 1);
+        failures += check(clouds && regions && clouds->objects.size() == 4 &&
+                              regions->objects.size() == 4,
+                          "mbbox: F x M = 2x2 outputs");
+        if (clouds && regions && clouds->objects.size() == 4) {
+            const std::int64_t expect_counts[4] = {50, 40, 50, 20};
+            const std::string expect_ids[4] = {"frame_000.roi0", "frame_000.roi1",
+                                               "frame_001.roi0", "frame_001.roi1"};
+            const std::string expect_labels[4] = {"roi0", "roi1", "roi0", "roi1"};
+            for (int j = 0; j < 4; ++j) {
+                const auto& c = *clouds->objects[j];
+                const auto& r = *regions->objects[j];
+                failures += check(c.id == expect_ids[j], "mbbox: cloud id");
+                failures += check(r.id == expect_ids[j], "mbbox: region id");
+                failures += check(c.cloud->size() == expect_counts[j],
+                                  "mbbox: crop count");
+                failures += check(c.roi && r.roi && c.roi->label == expect_labels[j] &&
+                                      r.roi->label == expect_labels[j],
+                                  "mbbox: roi label on cloud+region");
+                failures += check(c.provenance == box->id() &&
+                                      r.provenance == box->id(),
+                                  "mbbox: provenance = box node");
+                if (c.roi && r.roi) {
+                    failures += check((c.roi->center - r.roi->center).norm() < 1e-4f &&
+                                          (c.roi->min - r.roi->min).norm() < 1e-4f &&
+                                          (c.roi->max - r.roi->max).norm() < 1e-4f,
+                                      "mbbox: cloud.roi == region.roi");
+                }
+                // Source indices map back into the per-frame file.
+                failures += check(static_cast<std::int64_t>(c.source_indices.size()) ==
+                                      c.cloud->size(),
+                                  "mbbox: source map size");
+            }
+        }
+
+        // box_count > 1 without a box list is a node-level error (fail-fast).
+        Graph g2;
+        auto* load2 = g2.addNode("load_cloud");
+        g2.setParam(load2->id(), "folder", ParamValue{src_dir.string()});
+        g2.setParam(load2->id(), "mode", ParamValue{std::string("all")});
+        auto* box2 = g2.addNode("box_roi");
+        g2.setParam(box2->id(), "box_count", ParamValue{2});
+        g2.connect(load2->id(), 0, box2->id(), 0);
+        failures += check(!g2.execute(), "mbbox: missing box list must fail");
+        failures += check(g2.lastError().find("boxes_json") != std::string::npos,
+                          "mbbox: error mentions boxes_json");
+    }
+
+    // ---- Provenance is the producing node id (PROJECT §9) ----
+    {
+        Graph g;
+        const std::string path = writeTemp(dir, "prov_src.ply", makeGridWithInvalid());
+        auto* load = g.addNode("load_cloud");
+        g.setParam(load->id(), "path", ParamValue{path});
+        auto* clean = g.addNode("remove_invalid");
+        g.connect(load->id(), 0, clean->id(), 0);
+        failures += check(g.execute(), "prov: execute ok");
+        const auto* out = g.output(clean->id());
+        failures += check(out && out->objects.size() == 1 &&
+                              out->objects[0]->provenance == clean->id(),
+                          "prov: filter object provenance = node id");
+
+        Graph g2;
+        auto* load2 = g2.addNode("load_cloud");
+        g2.setParam(load2->id(), "path", ParamValue{path});
+        auto* box = g2.addNode("box_roi");
+        g2.setParam(box->id(), "xmin", ParamValue{0.0});
+        g2.setParam(box->id(), "xmax", ParamValue{49.0});
+        g2.setParam(box->id(), "ymin", ParamValue{0.0});
+        g2.setParam(box->id(), "ymax", ParamValue{49.0});
+        g2.setParam(box->id(), "zmin", ParamValue{-1.0});
+        g2.setParam(box->id(), "zmax", ParamValue{1.0});
+        g2.connect(load2->id(), 0, box->id(), 0);
+        failures += check(g2.execute(), "prov: box execute ok");
+        const auto* cropped = g2.output(box->id(), 0);
+        const auto* regions = g2.output(box->id(), 1);
+        failures += check(cropped && regions && cropped->objects.size() == 1 &&
+                              regions->objects.size() == 1 &&
+                              cropped->objects[0]->provenance == box->id() &&
+                              regions->objects[0]->provenance == box->id() &&
+                              cropped->objects[0]->roi &&
+                              cropped->objects[0]->roi->label == "roi0" &&
+                              cropped->objects[0]->id == "cloud.roi0",
+                          "prov: box outputs provenance + roi0 label");
+
+        Graph g3;
+        auto* load3 = g3.addNode("load_cloud");
+        g3.setParam(load3->id(), "path", ParamValue{path});
+        auto* pd = g3.addNode("plane_detect");
+        g3.setParam(pd->id(), "distance_threshold", ParamValue{1.0});
+        g3.setParam(pd->id(), "min_inliers", ParamValue{50});
+        g3.setParam(pd->id(), "iterations", ParamValue{100});
+        g3.connect(load3->id(), 0, pd->id(), 0);
+        failures += check(g3.execute(), "prov: plane execute ok");
+        const auto* planes = g3.output(pd->id());
+        failures += check(planes && !planes->objects.empty() &&
+                              planes->objects[0]->provenance == pd->id() &&
+                              planes->objects[0]->regions[0].provenance == pd->id(),
+                          "prov: plane object+region provenance = node id");
+    }
+
+    // ---- roi_crop index alignment (zip + broadcast) ----
+    {
+        const std::filesystem::path src_dir = dir / "cropalign_src";
+        std::filesystem::create_directories(src_dir);
+        writeTemp(src_dir, "f0.ply", makeLine(100, 0.0f));
+        writeTemp(src_dir, "f1.ply", makeLine(80, 5.0f));
+
+        Graph g;
+        auto* load = g.addNode("load_cloud");
+        g.setParam(load->id(), "folder", ParamValue{src_dir.string()});
+        g.setParam(load->id(), "mode", ParamValue{std::string("all")});
+        auto* box = g.addNode("box_roi");
+        // One box list with two boxes; region output is 2 objects.
+        g.setParam(box->id(), "box_count", ParamValue{2});
+        g.setParam(box->id(), "boxes_json",
+                   ParamValue{std::string(
+                       R"([{"xmin":-10,"xmax":49,"ymin":-10,"ymax":10,"zmin":-10,"zmax":10},)"
+                       R"({"xmin":60,"xmax":110,"ymin":-10,"ymax":10,"zmin":-10,"zmax":10}])")});
+        auto* crop = g.addNode("roi_crop");
+        g.connect(load->id(), 0, box->id(), 0);
+        // F x M zip: crop the box_roi cloud output (4) with the box_roi
+        // region output (4), one box per cropped frame.
+        g.connect(box->id(), 0, crop->id(), 0);
+        g.connect(box->id(), 1, crop->id(), 1);
+        failures += check(g.execute(), "cropalign: execute ok");
+        const auto* out = g.output(crop->id());
+        failures += check(out && out->objects.size() == 4,
+                          "cropalign: F x M crops (2 frames x 2 boxes)");
+        if (out && out->objects.size() == 4) {
+            failures += check(out->objects[0]->cloud->size() == 50 &&
+                                  out->objects[1]->cloud->size() == 40 &&
+                                  out->objects[2]->cloud->size() == 50 &&
+                                  out->objects[3]->cloud->size() == 20,
+                              "cropalign: per-frame/per-box counts");
+        }
+
+        // Broadcast: one region applies to every frame.
+        Graph g2;
+        auto* load2 = g2.addNode("load_cloud");
+        g2.setParam(load2->id(), "folder", ParamValue{src_dir.string()});
+        g2.setParam(load2->id(), "mode", ParamValue{std::string("all")});
+        auto* box2 = g2.addNode("box_roi");
+        g2.setParam(box2->id(), "xmin", ParamValue{-10.0});
+        g2.setParam(box2->id(), "xmax", ParamValue{49.0});
+        g2.setParam(box2->id(), "ymin", ParamValue{-10.0});
+        g2.setParam(box2->id(), "ymax", ParamValue{10.0});
+        g2.setParam(box2->id(), "zmin", ParamValue{-10.0});
+        g2.setParam(box2->id(), "zmax", ParamValue{10.0});
+        auto* crop2 = g2.addNode("roi_crop");
+        g2.connect(load2->id(), 0, box2->id(), 0);
+        g2.connect(load2->id(), 0, crop2->id(), 0);
+        g2.connect(box2->id(), 1, crop2->id(), 1);
+        failures += check(g2.execute(), "cropalign: broadcast execute ok");
+        const auto* out2 = g2.output(crop2->id());
+        failures += check(out2 && out2->objects.size() == 2 &&
+                              out2->objects[0]->cloud->size() == 50 &&
+                              out2->objects[1]->cloud->size() == 50,
+                          "cropalign: one region broadcasts to all frames");
+
+        // Length mismatch (2 clouds vs 3 regions) fails with a clear error.
+        Graph g3;
+        auto* load3 = g3.addNode("load_cloud");
+        g3.setParam(load3->id(), "folder", ParamValue{src_dir.string()});
+        g3.setParam(load3->id(), "mode", ParamValue{std::string("all")});
+        auto* box3 = g3.addNode("box_roi");
+        g3.setParam(box3->id(), "box_count", ParamValue{3});
+        g3.setParam(box3->id(), "boxes_json",
+                    ParamValue{std::string(
+                        R"([{"xmin":-10,"xmax":49,"ymin":-10,"ymax":10,"zmin":-10,"zmax":10},)"
+                        R"({"xmin":60,"xmax":110,"ymin":-10,"ymax":10,"zmin":-10,"zmax":10},)"
+                        R"({"xmin":0,"xmax":20,"ymin":-10,"ymax":10,"zmin":-10,"zmax":10}])")});
+        auto* crop3 = g3.addNode("roi_crop");
+        g3.connect(load3->id(), 0, box3->id(), 0);
+        g3.connect(load3->id(), 0, crop3->id(), 0);
+        g3.connect(box3->id(), 1, crop3->id(), 1);
+        failures += check(!g3.execute(), "cropalign: length mismatch must fail");
+        failures += check(g3.lastError().find("length mismatch") != std::string::npos,
+                          "cropalign: error mentions length mismatch");
+    }
+
     // ---- Solution JSON round-trip ----
     {
         Graph g;
