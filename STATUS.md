@@ -12,9 +12,13 @@
 - 上轮功能已完成并提交：Box ROI W/E 快捷键（9ada27b）等 ROI 交互工作已提交并推送
   `origin/pointcloud-search`；ctest 6/6 + smoke/demo 通过。交互统一（左旋 / 滚轮缩放 /
   右键平移）与滚轮步进 1.25 手感已确认；“三色边框 + 只留 XYZ 三轴”确认不做。
-- 下一步（下会话，重点）：**先把「点云加载 → Box ROI → 保存点云」三节点的批量架构
+- 本轮完成并已推送：**load_cloud 文件夹批量 + 读取模式（stream/chunked/all）+ 引擎
+  分块执行**（47bb5a6，附 74cf11d 清理临时调试输出）。IO 新增 listPointCloudFiles
+  （自然排序）、Node 批处理上下文、Graph::executeChunked、save_cloud 空输入传播、
+  engine_runner 接入批量执行；配套 batch/solution E2E 单测；ctest 6/6 + smoke 通过。
+- 下一步（下会话，重点）：**把「点云加载 → Box ROI → 保存点云」三节点的批量架构
   打牢**，后续其它节点在此之上扩展。实现顺序（每项配套单测，逐项提交）：
-  ① load_cloud 文件夹批量 + 读取模式（all / chunked / stream，默认逐帧）；
+  ① ✅ load_cloud 文件夹批量（本轮完成）；
   ② display3d 多图层 + latest-wins + 视口 3000 万点预算与硬件档位（3D 视窗刷新）；
   ③ RoiBox 加 label + box_roi 一帧多盒（含配套修复：region 坍缩 / provenance 保留父节点）；
   ④ save_cloud 零填充 / 多盒命名（点云批量保存）；
