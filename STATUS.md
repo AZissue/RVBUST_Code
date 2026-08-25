@@ -70,8 +70,8 @@
   Dark、方案 JSON、多视窗
 
 ## 🚧 进行中
-- 阶段 2（主线 ROI BOX → 批量语义落地）：节点级 E2E 与 ROI 交互已收敛；本会话完成
-  “节点 I/O / 批量 / 显示统一约定”（PROJECT §8）。下一步按 §9 待修清单实现批量语义。
+- 阶段 2（主线 ROI BOX → 批量语义落地）：§9 前 7 项批量架构已完成（加载 → Box ROI →
+  保存三节点）；下一步：§9 第 8 项 optional 端口标志 + 其余节点按 §8.8 补批量 E2E。
 
 ## 🐛 已知 BUG / 问题
 | 问题 | 状态 | 备注 |
@@ -104,13 +104,14 @@
 - 2026-08-18 ~ 2026-08-25 的决策已全部归档到 PROJECT.md §7 ADR 表，此处不重复。
 
 ## ▶️ 下一步任务
-- [ ] ① load_cloud 文件夹批量 + 读取模式（all / chunked / stream，默认逐帧）
-- [ ] ② display3d 多图层叠加 + latest-wins + 视口 3000 万点预算与硬件档位（3D 视窗刷新）
-- [ ] ③ RoiBox 加 label；box_roi 一帧多盒（盒列表节点级共享，输出 F×M 对齐；配套修 region 坍缩 / provenance）
-- [ ] ④ save_cloud 零填充 / 多盒命名；点云批量保存
-- [ ] ⑤ roi_crop 按索引对齐 + 抽 alignInputs 助手 + 批量 E2E 单测（§8.8，贯穿各步）
+- [x] ① load_cloud 文件夹批量 + 读取模式（all / chunked / stream，默认逐帧）
+- [x] ② display3d 多图层叠加 + latest-wins + 视口 3000 万点预算与硬件档位（3D 视窗刷新）
+- [x] ③ RoiBox 加 label；box_roi 一帧多盒（盒列表节点级共享，输出 F×M 对齐；配套修 region 坍缩 / provenance）
+- [x] ④ save_cloud 零填充 / 多盒命名；点云批量保存
+- [x] ⑤ roi_crop 按索引对齐 + 抽 alignInputs 助手 + 批量 E2E 单测（§8.8，贯穿各步）
+- [ ] 输入端口 optional 标志（Node API，PROJECT §9 第 8 项）
 - [ ] 平面检测 / 聚类 / Z 过滤 / 下采样 / ROI Crop 节点按新约定补 E2E
-- [ ] 每完成一项：更新交接块并本地提交
+- [ ] display3d 直播流式刷新 + LOD 密度自适应（硬件档位 API 已就绪）
 
 ## 📦 清理规则
 - 已完成且不再需要关注的条目，从本文件删除（git 历史可追溯）；只保留交接块、
