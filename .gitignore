@@ -1,0 +1,31 @@
+# Build directories
+build/
+out/
+cmake-build-*/
+
+# IDE
+.vs/
+.vscode/
+*.user
+*.suo
+
+# Third-party local tools
+third_party/aqtenv/
+
+# Large local dependencies / reference material (not committed)
+third_party/qt-download/
+third_party/ref/
+third_party/vtk-build/
+third_party/vtk-src/
+third_party/*.tar.gz
+third_party/*.zip
+
+# Test data / temp
+*.ply.bak
+envcheck/
+Data/
+
+# Compile / log residue
+*.obj
+*.pdb
+*.log
