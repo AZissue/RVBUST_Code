@@ -4,10 +4,59 @@
 
 #include <cstdint>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
 namespace pcsearch::pipeline {
+
+// Zip + broadcast alignment across a node's input ports (PROJECT §8.3.2):
+// every non-empty input list must have the same length, or length 1 (which
+// broadcasts to the other ports' length). Empty lists are allowed only when
+// every other list is also empty (empty propagation, §8.3.4); an empty list
+// next to real data is a length mismatch. `k(port, i)` maps the aligned
+// position i to the object index inside that port's list (0 when broadcasting).
+struct InputAlignment {
+    std::int64_t length = 0;  // common length of the non-empty inputs
+    std::vector<std::int64_t> sizes;  // per-port object count (0 = empty)
+
+    std::int64_t k(std::size_t port, std::int64_t i) const {
+        return sizes[port] <= 1 ? 0 : i;
+    }
+};
+
+inline InputAlignment alignInputs(const std::vector<core::ObjectList>& inputs) {
+    InputAlignment a;
+    a.sizes.resize(inputs.size());
+    std::int64_t common = 0;
+    bool any_data = false;
+    for (std::size_t p = 0; p < inputs.size(); ++p) {
+        a.sizes[p] = inputs[p].objects.size();
+        any_data = any_data || a.sizes[p] > 0;
+        if (a.sizes[p] != 0 && a.sizes[p] != 1) {
+            if (common != 0 && common != a.sizes[p]) {
+                throw std::runtime_error(
+                    "input length mismatch: port " + std::to_string(p) + " has " +
+                    std::to_string(a.sizes[p]) + " objects, expected " +
+                    std::to_string(common) + " (or 1 to broadcast)");
+            }
+            common = a.sizes[p];
+        }
+    }
+    a.length = common;
+    // All ports at length 1: that is the aligned length (broadcast trivially).
+    if (a.length == 0 && any_data) a.length = 1;
+    if (a.length > 0) {
+        for (std::size_t p = 0; p < inputs.size(); ++p) {
+            if (a.sizes[p] == 0) {
+                throw std::runtime_error(
+                    "input length mismatch: port " + std::to_string(p) +
+                    " is empty while other ports carry data");
+            }
+        }
+    }
+    return a;
+}
 
 // Map local output-row indices back through the object's source map.
 inline std::vector<std::int64_t> composeIndices(

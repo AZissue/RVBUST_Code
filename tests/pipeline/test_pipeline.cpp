@@ -2,6 +2,7 @@
 #include "pcsearch/pipeline/graph.h"
 #include "pcsearch/pipeline/json.h"
 #include "pcsearch/pipeline/nodes/core_nodes.h"
+#include "pcsearch/pipeline/nodes/node_utils.h"
 #include "pcsearch/pipeline/solution.h"
 
 #include <Eigen/Core>
@@ -105,6 +106,34 @@ public:
                 << obj.cloud->size() << "\n";
         }
         return inputs[0];
+    }
+};
+
+// Test-only 3-input node that exercises the shared alignInputs helper
+// (PROJECT §8.3.2 / §8.8): outputs input port 0's objects at aligned
+// positions, so the graph-level test can observe zip/broadcast/mismatch.
+class AlignTestNode final : public pcsearch::pipeline::Node {
+public:
+    using Node::Node;
+    std::string type() const override { return "test_align"; }
+    std::string title() const override { return "Align Test"; }
+    std::string category() const override { return "Test"; }
+    std::vector<pcsearch::pipeline::ParamDef> paramDefs() const override { return {}; }
+    std::size_t inputCount() const override { return 3; }
+    std::vector<std::string> inputKinds() const override {
+        return {"cloud", "cloud", "cloud"};
+    }
+    pcsearch::core::ObjectList execute(
+        const std::vector<pcsearch::core::ObjectList>& inputs,
+        const pcsearch::pipeline::Params&) override {
+        const pcsearch::pipeline::InputAlignment aligned =
+            pcsearch::pipeline::alignInputs(inputs);
+        pcsearch::core::ObjectList out;
+        for (std::int64_t i = 0; i < aligned.length; ++i) {
+            out.objects.push_back(
+                inputs[0].objects[static_cast<std::size_t>(aligned.k(0, i))]);
+        }
+        return out;
     }
 };
 
@@ -1073,6 +1102,236 @@ int main() {
                                                   ".ply"));
             }
             failures += check(idx_ok, "savename: 1:N indexed names");
+        }
+    }
+
+    // ---- alignInputs helper (zip + broadcast + mismatch) ----
+    {
+        pcsearch::pipeline::NodeRegistry::instance().registerNode(
+            "test_align", "Align Test", "Test",
+            [] { return std::make_unique<AlignTestNode>(std::string{}); });
+
+        const std::filesystem::path two_dir = dir / "align_two";
+        std::filesystem::create_directories(two_dir);
+        writeTemp(two_dir, "a.ply", makeLine(10, 0.0f));
+        writeTemp(two_dir, "b.ply", makeLine(20, 1.0f));
+        const std::filesystem::path one_dir = dir / "align_one";
+        std::filesystem::create_directories(one_dir);
+        writeTemp(one_dir, "c.ply", makeLine(30, 2.0f));
+
+        // Zip: all three ports carry 2 objects.
+        {
+            Graph g;
+            auto* a = g.addNode("load_cloud");
+            g.setParam(a->id(), "folder", ParamValue{two_dir.string()});
+            g.setParam(a->id(), "mode", ParamValue{std::string("all")});
+            auto* b = g.addNode("load_cloud");
+            g.setParam(b->id(), "folder", ParamValue{two_dir.string()});
+            g.setParam(b->id(), "mode", ParamValue{std::string("all")});
+            auto* c = g.addNode("load_cloud");
+            g.setParam(c->id(), "folder", ParamValue{two_dir.string()});
+            g.setParam(c->id(), "mode", ParamValue{std::string("all")});
+            auto* al = g.addNode("test_align");
+            g.connect(a->id(), 0, al->id(), 0);
+            g.connect(b->id(), 0, al->id(), 1);
+            g.connect(c->id(), 0, al->id(), 2);
+            failures += check(g.execute(), "align: zip execute ok");
+            const auto* out = g.output(al->id());
+            failures += check(out && out->objects.size() == 2 &&
+                                  out->objects[0]->id == "frame_000" &&
+                                  out->objects[1]->id == "frame_001",
+                              "align: zip keeps 2 aligned objects");
+        }
+
+        // Broadcast: ports 0/2 have 2 objects, port 1 has 1.
+        {
+            Graph g;
+            auto* a = g.addNode("load_cloud");
+            g.setParam(a->id(), "folder", ParamValue{two_dir.string()});
+            g.setParam(a->id(), "mode", ParamValue{std::string("all")});
+            auto* b = g.addNode("load_cloud");
+            g.setParam(b->id(), "folder", ParamValue{one_dir.string()});
+            g.setParam(b->id(), "mode", ParamValue{std::string("all")});
+            auto* c = g.addNode("load_cloud");
+            g.setParam(c->id(), "folder", ParamValue{two_dir.string()});
+            g.setParam(c->id(), "mode", ParamValue{std::string("all")});
+            auto* al = g.addNode("test_align");
+            g.connect(a->id(), 0, al->id(), 0);
+            g.connect(b->id(), 0, al->id(), 1);
+            g.connect(c->id(), 0, al->id(), 2);
+            failures += check(g.execute(), "align: broadcast execute ok");
+            const auto* out = g.output(al->id());
+            failures += check(out && out->objects.size() == 2,
+                              "align: length-1 port broadcasts");
+        }
+
+        // Mismatch: 2 vs 3 -> node fails with a clear error.
+        {
+            Graph g;
+            auto* a = g.addNode("load_cloud");
+            g.setParam(a->id(), "folder", ParamValue{two_dir.string()});
+            g.setParam(a->id(), "mode", ParamValue{std::string("all")});
+            const std::filesystem::path three_dir = dir / "align_three";
+            std::filesystem::create_directories(three_dir);
+            writeTemp(three_dir, "a.ply", makeLine(10, 0.0f));
+            writeTemp(three_dir, "b.ply", makeLine(20, 1.0f));
+            writeTemp(three_dir, "c.ply", makeLine(30, 2.0f));
+            auto* b = g.addNode("load_cloud");
+            g.setParam(b->id(), "folder", ParamValue{three_dir.string()});
+            g.setParam(b->id(), "mode", ParamValue{std::string("all")});
+            auto* al = g.addNode("test_align");
+            g.connect(a->id(), 0, al->id(), 0);
+            g.connect(b->id(), 0, al->id(), 1);
+            failures += check(!g.execute(), "align: mismatch must fail");
+            failures += check(g.lastError().find("length mismatch") != std::string::npos,
+                              "align: error mentions length mismatch");
+        }
+
+        // Empty + data: empty folder on one port is a mismatch error.
+        {
+            Graph g;
+            auto* a = g.addNode("load_cloud");
+            g.setParam(a->id(), "folder", ParamValue{two_dir.string()});
+            g.setParam(a->id(), "mode", ParamValue{std::string("all")});
+            const std::filesystem::path empty_dir = dir / "align_empty";
+            std::filesystem::create_directories(empty_dir);
+            auto* b = g.addNode("load_cloud");
+            g.setParam(b->id(), "folder", ParamValue{empty_dir.string()});
+            g.setParam(b->id(), "mode", ParamValue{std::string("all")});
+            auto* al = g.addNode("test_align");
+            g.connect(a->id(), 0, al->id(), 0);
+            g.connect(b->id(), 0, al->id(), 1);
+            failures += check(!g.execute(), "align: empty+data must fail");
+            failures += check(g.lastError().find("empty") != std::string::npos,
+                              "align: error mentions empty port");
+        }
+
+        // All ports empty -> empty propagation, no error.
+        {
+            Graph g;
+            const std::filesystem::path empty_dir = dir / "align_empty2";
+            std::filesystem::create_directories(empty_dir);
+            auto* a = g.addNode("load_cloud");
+            g.setParam(a->id(), "folder", ParamValue{empty_dir.string()});
+            g.setParam(a->id(), "mode", ParamValue{std::string("all")});
+            auto* b = g.addNode("load_cloud");
+            g.setParam(b->id(), "folder", ParamValue{empty_dir.string()});
+            g.setParam(b->id(), "mode", ParamValue{std::string("all")});
+            auto* al = g.addNode("test_align");
+            g.connect(a->id(), 0, al->id(), 0);
+            g.connect(b->id(), 0, al->id(), 1);
+            failures += check(g.execute(), "align: all-empty execute ok");
+            const auto* out = g.output(al->id());
+            failures += check(out && out->objects.empty(),
+                              "align: all-empty propagates empty");
+        }
+    }
+
+    // ---- 1:N batch flattening is frame-major (plane_detect) ----
+    {
+        constexpr int side = 30;
+        PointCloudData two_planes;
+        two_planes.points.resize(2LL * side * side, 3);
+        std::int64_t row = 0;
+        for (int i = 0; i < side; ++i) {
+            for (int j = 0; j < side; ++j) {
+                two_planes.points(row, 0) = static_cast<float>(i);
+                two_planes.points(row, 1) = static_cast<float>(j);
+                two_planes.points(row, 2) = 0.0f;
+                ++row;
+            }
+        }
+        for (int i = 0; i < side; ++i) {
+            for (int j = 0; j < side; ++j) {
+                two_planes.points(row, 0) = static_cast<float>(i);
+                two_planes.points(row, 1) = static_cast<float>(j);
+                two_planes.points(row, 2) = 100.0f;
+                ++row;
+            }
+        }
+        const std::filesystem::path src_dir = dir / "flatten_src";
+        std::filesystem::create_directories(src_dir);
+        writeTemp(src_dir, "f0.ply", two_planes);
+        // Second frame with the same two planes at different z.
+        for (std::int64_t k = 0; k < two_planes.size(); ++k) {
+            two_planes.points(k, 2) += 200.0f;
+        }
+        writeTemp(src_dir, "f1.ply", two_planes);
+
+        Graph g;
+        auto* load = g.addNode("load_cloud");
+        g.setParam(load->id(), "folder", ParamValue{src_dir.string()});
+        g.setParam(load->id(), "mode", ParamValue{std::string("all")});
+        auto* pd = g.addNode("plane_detect");
+        g.setParam(pd->id(), "distance_threshold", ParamValue{0.5});
+        g.setParam(pd->id(), "min_inliers", ParamValue{100});
+        g.setParam(pd->id(), "max_planes", ParamValue{5});
+        g.setParam(pd->id(), "iterations", ParamValue{2000});
+        g.connect(load->id(), 0, pd->id(), 0);
+        failures += check(g.execute(), "flatten: execute ok");
+        const auto* out = g.output(pd->id());
+        failures += check(out && out->objects.size() >= 2,
+                          "flatten: at least one plane per frame");
+        if (out && out->objects.size() >= 2) {
+            // Frame-major flattening: every frame_000 object precedes every
+            // frame_001 object, and ids carry the frame prefix.
+            bool frame_major = true;
+            bool seen_frame1 = false;
+            for (const auto& obj : out->objects) {
+                const bool is_f0 = obj->id.rfind("frame_000.", 0) == 0;
+                const bool is_f1 = obj->id.rfind("frame_001.", 0) == 0;
+                if (!is_f0 && !is_f1) frame_major = false;
+                if (is_f1) seen_frame1 = true;
+                if (is_f0 && seen_frame1) frame_major = false;
+                failures += check(obj->source_indices.size() ==
+                                      static_cast<std::size_t>(obj->cloud->size()),
+                                  "flatten: source map size");
+                bool in_frame = true;
+                for (const auto& s : obj->source_indices) {
+                    in_frame = in_frame && s >= 0 && s < 2LL * side * side;
+                }
+                failures += check(in_frame, "flatten: source map in frame range");
+            }
+            failures += check(frame_major, "flatten: frame-major order");
+        }
+    }
+
+    // ---- source_indices trace through crop -> voxel ----
+    {
+        Graph g;
+        const std::string path = writeTemp(dir, "trace_src.ply", makeGridWithInvalid());
+        auto* load = g.addNode("load_cloud");
+        g.setParam(load->id(), "path", ParamValue{path});
+        auto* box = g.addNode("box_roi");
+        g.setParam(box->id(), "xmin", ParamValue{25.0});
+        g.setParam(box->id(), "xmax", ParamValue{49.0});
+        g.setParam(box->id(), "ymin", ParamValue{25.0});
+        g.setParam(box->id(), "ymax", ParamValue{49.0});
+        g.setParam(box->id(), "zmin", ParamValue{-1.0});
+        g.setParam(box->id(), "zmax", ParamValue{1.0});
+        auto* vox = g.addNode("voxel_downsample");
+        g.setParam(vox->id(), "leaf_size", ParamValue{10.0});
+        g.connect(load->id(), 0, box->id(), 0);
+        g.connect(box->id(), 0, vox->id(), 0);
+        failures += check(g.execute(), "trace: execute ok");
+        const auto* out = g.output(vox->id());
+        failures += check(out && out->objects.size() == 1 &&
+                              out->objects[0]->cloud->size() == 9,
+                          "trace: 25x25 crop -> leaf-10 voxels (9)");
+        if (out && !out->objects.empty()) {
+            const auto& map = out->objects[0]->source_indices;
+            failures += check(static_cast<std::int64_t>(map.size()) ==
+                                  out->objects[0]->cloud->size(),
+                              "trace: final source map size");
+            bool trace_ok = true;
+            for (const auto& s : map) {
+                const std::int64_t x = s % 100;
+                const std::int64_t y = s / 100;
+                trace_ok = trace_ok && s >= 0 && s < 10020 &&
+                           x >= 25 && x <= 49 && y >= 25 && y <= 49;
+            }
+            failures += check(trace_ok,
+                              "trace: source indices stay inside original crop");
         }
     }
 

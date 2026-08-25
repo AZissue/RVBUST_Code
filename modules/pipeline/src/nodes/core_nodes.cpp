@@ -611,23 +611,20 @@ ObjectList RoiCropNode::execute(const std::vector<ObjectList>& inputs, const Par
     const ObjectList& clouds = inputs[0];
     const ObjectList& regions = inputs[1];
     if (clouds.objects.empty()) return {};
-    // Index-aligned zip with broadcast: region list must be length 1 or equal
-    // to the cloud list (PROJECT §8.3.2).
-    if (regions.objects.size() != 1 &&
-        regions.objects.size() != clouds.objects.size()) {
-        throw std::runtime_error(
-            "roi_crop: region/cloud list length mismatch (" +
-            std::to_string(regions.objects.size()) + " vs " +
-            std::to_string(clouds.objects.size()) + ")");
-    }
+    // Index-aligned zip with broadcast via the shared helper (§8.3.2 / §8.8).
+    const InputAlignment aligned = alignInputs(inputs);
     ObjectList out;
-    out.objects.reserve(clouds.objects.size());
-    for (std::size_t i = 0; i < clouds.objects.size(); ++i) {
-        const auto& region_obj = regions.objects[regions.objects.size() == 1 ? 0 : i];
-        if (!region_obj->roi || !region_obj->roi->valid) {
-            out.objects.push_back(clouds.objects[i]);  // empty region -> passthrough
+    out.objects.reserve(static_cast<std::size_t>(aligned.length));
+    for (std::int64_t i = 0; i < aligned.length; ++i) {
+        const auto& region_obj = *regions.objects[static_cast<std::size_t>(aligned.k(1, i))];
+        if (!region_obj.roi || !region_obj.roi->valid) {
+            // Empty/invalid region for this slot -> passthrough.
+            out.objects.push_back(
+                clouds.objects[static_cast<std::size_t>(aligned.k(0, i))]);
         } else {
-            out.objects.push_back(cropObject(*clouds.objects[i], *region_obj->roi, id()));
+            out.objects.push_back(cropObject(
+                *clouds.objects[static_cast<std::size_t>(aligned.k(0, i))],
+                *region_obj.roi, id()));
         }
     }
     return out;
