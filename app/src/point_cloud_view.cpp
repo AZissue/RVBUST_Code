@@ -3,6 +3,7 @@
 #include "roi_selector.h"
 
 #include <QLabel>
+#include <QShortcut>
 #include <QVBoxLayout>
 
 #ifdef PCSEARCH_HAS_VTK
@@ -76,6 +77,20 @@ PointCloudView::PointCloudView(QWidget* parent) : QWidget(parent) {
     vtk_widget_->renderWindow()->GetInteractor()->SetInteractorStyle(style);
     roi_selector_ = new RoiSelector(this);
     roi_selector_->attach(vtk_widget_->renderWindow()->GetInteractor());
+    // Box ROI view-only shortcut keys: W = operable (drag/scale/rotate the
+    // box), E = not operable (free camera, box stays as a reference overlay).
+    // Bound to this widget subtree so typing W/E into parameter fields is
+    // unaffected. They are no-ops unless ROI editing is active.
+    roi_box_work_shortcut_ = new QShortcut(QKeySequence(Qt::Key_W), this);
+    roi_box_work_shortcut_->setContext(Qt::WidgetWithChildrenShortcut);
+    roi_box_work_shortcut_->setEnabled(false);
+    connect(roi_box_work_shortcut_, &QShortcut::activated, this,
+            [this] { setRoiBoxOperable(true); });
+    roi_box_end_shortcut_ = new QShortcut(QKeySequence(Qt::Key_E), this);
+    roi_box_end_shortcut_->setContext(Qt::WidgetWithChildrenShortcut);
+    roi_box_end_shortcut_->setEnabled(false);
+    connect(roi_box_end_shortcut_, &QShortcut::activated, this,
+            [this] { setRoiBoxOperable(false); });
     connect(roi_selector_, &RoiSelector::roiChanged, this,
             &PointCloudView::roiEdited);
     connect(roi_selector_, &RoiSelector::roiEditFinished, this,
@@ -127,6 +142,14 @@ void PointCloudView::enableRoiEditObb(bool on, const double center[3],
             roi_selector_->setBoxObb(center[0], center[1], center[2], half[0], half[1],
                                      half[2], rot_deg[0], rot_deg[1], rot_deg[2]);
         }
+        // Entering edit mode always starts with an operable box.
+        roi_box_operable_ = true;
+        roi_selector_->setOperable(true);
+        if (roi_box_work_shortcut_) roi_box_work_shortcut_->setEnabled(true);
+        if (roi_box_end_shortcut_) roi_box_end_shortcut_->setEnabled(true);
+    } else {
+        if (roi_box_work_shortcut_) roi_box_work_shortcut_->setEnabled(false);
+        if (roi_box_end_shortcut_) roi_box_end_shortcut_->setEnabled(false);
     }
     roi_selector_->setEnabled(on);
     vtk_widget_->renderWindow()->Render();
@@ -135,6 +158,18 @@ void PointCloudView::enableRoiEditObb(bool on, const double center[3],
     (void)center;
     (void)half;
     (void)rot_deg;
+#endif
+}
+
+void PointCloudView::setRoiBoxOperable(bool on) {
+#ifdef PCSEARCH_HAS_VTK
+    if (!roi_selector_ || !roi_editing_ || on == roi_box_operable_) return;
+    roi_box_operable_ = on;
+    roi_selector_->setOperable(on);
+    emit displayInfo(on ? tr("Box ROI：按 W，已启用包围盒操作")
+                        : tr("Box ROI：按 E，已禁用包围盒操作（仅查看点云）"));
+#else
+    (void)on;
 #endif
 }
 

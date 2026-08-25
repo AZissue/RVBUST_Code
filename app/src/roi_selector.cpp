@@ -167,6 +167,9 @@ void RoiSelector::setEnabled(bool on) {
     if (widget_) {
         if (on) {
             widget_->On();
+            // Entering edit mode always starts with an operable box; clears any
+            // leftover "view only" state from a previous shortcut toggle.
+            widget_->SetProcessEvents(1);
             // Match RVC Manager convention: right button pans the box (default
             // binds right to whole-widget scale). The left button still rotates
             // a face / moves a face handle, and the wheel still zooms.
@@ -180,6 +183,16 @@ void RoiSelector::setEnabled(bool on) {
         } else {
             widget_->Off();
         }
+    }
+#endif
+}
+
+void RoiSelector::setOperable(bool on) {
+#ifdef PCSEARCH_HAS_VTK
+    if (widget_) {
+        // ProcessEvents=off keeps the representation visible but makes the
+        // widget ignore every interaction event (vtkAbstractWidget.cxx:205).
+        widget_->SetProcessEvents(on ? 1 : 0);
     }
 #endif
 }
