@@ -12,11 +12,13 @@
 - 上轮功能已完成并提交：Box ROI W/E 快捷键（9ada27b）等 ROI 交互工作已提交并推送
   `origin/pointcloud-search`；ctest 6/6 + smoke/demo 通过。交互统一（左旋 / 滚轮缩放 /
   右键平移）与滚轮步进 1.25 手感已确认；“三色边框 + 只留 XYZ 三轴”确认不做。
-- 下一步（下会话，重点）：按 PROJECT §9 待修清单实现批量语义 ——
-  ① 修 3 处不一致（box_roi region 坍缩 / roi_crop 只取第 0 个 / provenance 保留父节点）；
-  ② RoiBox 加 label + box_roi 一帧多盒；③ load_cloud 文件夹批量 + 读取模式
-  （all / chunked / stream）；④ 抽 alignInputs + 批量 E2E 单测；⑤ save 零填充命名；
-  ⑥ display3d 多图层 + latest-wins + 视口点预算。逐项提交。
+- 下一步（下会话，重点）：**先把「点云加载 → Box ROI → 保存点云」三节点的批量架构
+  打牢**，后续其它节点在此之上扩展。实现顺序（每项配套单测，逐项提交）：
+  ① load_cloud 文件夹批量 + 读取模式（all / chunked / stream，默认逐帧）；
+  ② display3d 多图层 + latest-wins + 视口 3000 万点预算与硬件档位（3D 视窗刷新）；
+  ③ RoiBox 加 label + box_roi 一帧多盒（含配套修复：region 坍缩 / provenance 保留父节点）；
+  ④ save_cloud 零填充 / 多盒命名（点云批量保存）；
+  ⑤ roi_crop 按索引对齐 + 抽 alignInputs 助手 + 批量 E2E 单测（贯穿各步）。
 - 正在进行的文件：`modules/pipeline/src/nodes/core_nodes.cpp`、
   `modules/pipeline/include/pcsearch/pipeline/nodes/node_utils.h`、
   `app/src/point_cloud_view.cpp`
@@ -86,12 +88,11 @@
 - 2026-08-18 ~ 2026-08-25 的决策已全部归档到 PROJECT.md §7 ADR 表，此处不重复。
 
 ## ▶️ 下一步任务
-- [ ] 按 PROJECT §9：修 box_roi region 坍缩 / roi_crop 只取第 0 个 / provenance 3 处不一致
-- [ ] RoiBox 加 label；box_roi 一帧多盒（盒列表节点级共享，输出 F×M 对齐）
-- [ ] load_cloud 文件夹批量 + 读取模式（all / chunked / stream，默认逐帧）
-- [ ] 抽 alignInputs 助手 + 各节点批量 E2E 单测（§8.8）
-- [ ] save_cloud 零填充 / 多盒命名；批量保存
-- [ ] display3d 多图层叠加 + latest-wins + 视口 3000 万点预算与硬件档位
+- [ ] ① load_cloud 文件夹批量 + 读取模式（all / chunked / stream，默认逐帧）
+- [ ] ② display3d 多图层叠加 + latest-wins + 视口 3000 万点预算与硬件档位（3D 视窗刷新）
+- [ ] ③ RoiBox 加 label；box_roi 一帧多盒（盒列表节点级共享，输出 F×M 对齐；配套修 region 坍缩 / provenance）
+- [ ] ④ save_cloud 零填充 / 多盒命名；点云批量保存
+- [ ] ⑤ roi_crop 按索引对齐 + 抽 alignInputs 助手 + 批量 E2E 单测（§8.8，贯穿各步）
 - [ ] 平面检测 / 聚类 / Z 过滤 / 下采样 / ROI Crop 节点按新约定补 E2E
 - [ ] 每完成一项：更新交接块并本地提交
 

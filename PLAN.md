@@ -49,9 +49,10 @@
   `modules/filters`、`modules/segmentation`、`modules/clustering`、
   `app/src/main_window.*`、`params_panel.*`、`point_cloud_view.*`、`roi_selector.*`
 - 步骤：
-  0. 按 PROJECT §8 统一约定落地批量语义（§9 待修清单：修 3 处不一致、RoiBox label +
-     一帧多盒、load 文件夹批量 / 读取模式、alignInputs + 批量 E2E、save 零填充、
-     display3d 多图层），逐项提交；
+  0. 按 PROJECT §8 统一约定落地批量语义，**先把「加载 → Box ROI → 保存」三节点架构
+     打牢**，顺序：load 文件夹批量 / 读取模式 → display3d 多图层 + latest-wins +
+     视口预算 → RoiBox label + 一帧多盒（含 region 坍缩 / provenance 修复）→
+     save 零填充 / 多盒命名 → alignInputs + 批量 E2E（贯穿各步），逐项提交；
   1. 逐个节点跑 E2E（加载 → 该节点 → 保存 / 3D 显示），检查输出数量、索引映射、
      参数面板、3D 显示；
   2. 每个节点补单测；UI 交互按手动测试清单验证（见 STATUS.md 已知问题）；
