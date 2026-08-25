@@ -29,6 +29,5 @@ tests/data/
 .DS_Store
 Thumbs.db
 
-# Local tool settings / stale memo (kept on disk, not tracked)
+# Local tool settings (kept on disk, not tracked)
 .claude/
-PROJECT_NOTES.md
