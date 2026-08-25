@@ -7,14 +7,14 @@
 - 当前状态：阶段 2「节点逐个完善」进行中；**当前主线：ROI BOX 节点完善**。
   基准流程「点云加载 → Box ROI → 保存点云」已跑通；ROI 交互（拖移 / 缩放 /
   旋转）、重置包围盒、显示降采样、保存“文件夹 + 文件名”均已完成。
-- 本轮：修复 **ROI 操控时显示两个包围盒**——box_roi 进入编辑态只保留
-  vtkBoxWidget2 交互框（隐藏静态绿色 wireframe 预览框），退出编辑恢复预览。
-  已构建 + `ctest` 6/6 全绿 + smoke + demo 冒烟通过。
-- 下一步：① 手动验证 box_roi 编辑只出现一个包围盒（进 ROI 应只有带手柄的交互
-  框；关 ROI 只剩绿色线框预览）；② 按用户反馈优化「ROI 操作更方便」（待明确）。
-- 正在进行的文件：`app/src/point_cloud_view.cpp`、`point_cloud_view.h`、
-  `app/src/main_window.cpp`
-- 卡点 / 风险：双盒为 VTK renderer 内行为，QtTest 无法断言，只能手动验证；
+- 本轮：ROI 交互升级——①单面缩放启用（MoveFaces，抓面沿法向放大缩小），去掉
+  右键整体缩放（原“往哪滑都缩”）；②选中 box_roi 自动进入编辑（免再点 ROI 按钮）；
+  ③关闭米字线（OutlineFaceWires/CursorWires），外框线宽 2.0→1.2px、面透明度
+  0.15→0.06（去遮挡）。已构建 + `ctest` 6/6 全绿 + smoke + demo 冒烟通过。
+- 下一步：ROI 包围盒样式自定义——三色边框（X红/Y绿/Z蓝）+ 只留 XYZ 三轴
+  （vtkBoxWidget2 无法原生按轴分色，需叠加自定义线框/轴，待确认编辑态手柄方案）。
+- 正在进行的文件：`app/src/roi_selector.cpp`、`app/src/main_window.cpp/.h`
+- 卡点 / 风险：ROI 交互/样式为 VTK 行为，QtTest 无法断言，只能手动验证；
   核显 / 远程桌面场景必须保持显示降采样。
 - 远程协作：项目已上传 `github.com/AZissue/RVBUST_Code` 的 `pointcloud-search`
   分支（main 总览 README 已登记）；本地 master 跟踪 `origin/pointcloud-search`，
@@ -24,6 +24,8 @@
 
 ## ✅ 已完成（近期；更早历史见 git）
 - [x] 2026-08-25 修复本地一键构建：CMake 复用 RvcVisionStudio 自编译 VTK（带 GUISupportQt）解决 PCL 1.13.0 捆绑 VTK 缺 Qt 支持问题；start.bat 自动探测本机 Qt/PCL 路径；ctest 6/6 + autoquit 冒烟通过
+- [x] 2026-08-25 ROI 交互升级：单面缩放(MoveFaces)、去掉右键整体缩放、选中
+  box_roi 自动进入编辑、关闭米字线、外框细化(线宽 1.2px/面 0.06)；构建/ctest/smoke/demo 通过
 - [x] 2026-08-25 修复 ROI 操控“双包围盒”：box_roi 编辑态只显示 vtkBoxWidget2
   交互框，隐藏静态预览框，退出编辑恢复预览；构建 / ctest / smoke / demo 通过
 - [x] 2026-08-25 补齐 random_downsample / euclidean_cluster / plane_detect 节点级
@@ -39,8 +41,8 @@
   Dark、方案 JSON、多视窗
 
 ## 🚧 进行中
-- 阶段 2（主线 ROI BOX）：节点级 E2E 已补齐；本轮修复 ROI 双包围盒；剩
-  「ROI 操作更方便」优化 + box_roi 编辑手动验证。
+- 阶段 2（主线 ROI BOX）：节点级 E2E 已补齐；本轮完成 ROI 交互升级（单面缩放 /
+  自动进入编辑 / 去米字 / 细化）；剩「三色边框 + XYZ 三轴」样式自定义 + 手动验证。
 
 ## 🐛 已知 BUG / 问题
 | 问题 | 状态 | 备注 |

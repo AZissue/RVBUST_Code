@@ -352,6 +352,14 @@ void MainWindow::doSelectNode(const QString& id) {
     if (node && node->type() != "box_roi") {
         roi_button_->setChecked(false);
         cloud_view_->enableRoiEdit(false);
+    } else if (node && node->type() == "box_roi") {
+        // Auto-enter interactive ROI editing as soon as a Box ROI node is
+        // selected, so the user does not have to select the node and then
+        // click the ROI toolbar button each time.
+        roi_button_->blockSignals(true);
+        roi_button_->setChecked(true);
+        roi_button_->blockSignals(false);
+        enterRoiEdit();
     }
     showNodeInputCloud(selected_node_id_);
     updateRoiBoxPreview();
@@ -468,6 +476,12 @@ void MainWindow::onRoiToggle(bool on) {
         roi_button_->setChecked(false);
         return;
     }
+    enterRoiEdit();
+}
+
+void MainWindow::enterRoiEdit() {
+    pcsearch::pipeline::Node* node = graph_.node(selected_node_id_);
+    if (!node || node->type() != "box_roi") return;
     // If the box still has the default (unset) size, place it over the whole
     // input cloud so the user can see what will be cropped; otherwise keep the
     // user's current box pose (position / size / rotation).
@@ -487,9 +501,10 @@ void MainWindow::onRoiToggle(bool on) {
         if (nodeInputBounds(selected_node_id_, bounds)) {
             cloud_view_->enableRoiEdit(true, bounds);
             cloud_view_->frameScene();
-            log(tr("ROI edit enabled: left-drag the body to move, drag corner "
-                   "handles to scale, drag edge handles to rotate; wheel zooms; "
-                   "results are written back to the Box ROI node"));
+            log(tr("ROI edit enabled: left-drag the body to move, drag a face "
+                   "handle along its normal to resize that axis, drag an edge "
+                   "handle to rotate; wheel zooms; results are written back to "
+                   "the Box ROI node"));
             return;
         }
     }
@@ -501,9 +516,9 @@ void MainWindow::onRoiToggle(bool on) {
         cloud_view_->enableRoiEdit(true, bounds);
     }
     cloud_view_->frameScene();
-    log(tr("ROI edit enabled: left-drag the body to move, drag corner handles "
-           "to scale, drag edge handles to rotate; wheel zooms; results are "
-           "written back to the Box ROI node"));
+    log(tr("ROI edit enabled: left-drag the body to move, drag a face handle "
+           "along its normal to resize that axis, drag an edge handle to "
+           "rotate; wheel zooms; results are written back to the Box ROI node"));
 }
 
 void MainWindow::onRoiEdited(double cx, double cy, double cz, double hx, double hy,

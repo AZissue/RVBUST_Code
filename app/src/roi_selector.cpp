@@ -121,21 +121,34 @@ void RoiSelector::attach(vtkRenderWindowInteractor* interactor) {
     rep_ = vtkBoxRepresentation::New();
     rep_->SetPlaceFactor(1.0);
     rep_->GetOutlineProperty()->SetColor(0.1, 1.0, 0.3);
-    rep_->GetOutlineProperty()->SetLineWidth(2.0);
+    // Thinner outline so the box never occludes the cloud it is framing. The
+    // previous 2.0 px looked heavy; 1.2 px is still visible without blocking.
+    rep_->GetOutlineProperty()->SetLineWidth(1.2);
     rep_->GetHandleProperty()->SetColor(0.1, 1.0, 0.3);
     rep_->GetSelectedHandleProperty()->SetColor(1.0, 0.85, 0.1);
-    rep_->GetFaceProperty()->SetOpacity(0.15);
+    // Keep faces barely-tinted so points inside are still readable.
+    rep_->GetFaceProperty()->SetOpacity(0.06);
     rep_->GetFaceProperty()->SetColor(0.1, 1.0, 0.3);
+    // Kill the "米字" clutter: outline cursor wires (center->corner) and face
+    // wires (in-face cross lines) leave only the clean box outline + handles.
+    rep_->OutlineCursorWiresOff();
+    rep_->OutlineFaceWiresOff();
 
     widget_ = vtkBoxWidget2::New();
     widget_->SetRepresentation(rep_);
     widget_->SetInteractor(interactor);
     widget_->RotationEnabledOn();
     widget_->TranslationEnabledOn();
-    widget_->ScalingEnabledOn();
-    // Body left-drag moves the box cleanly; corner handles resize, edge
-    // handles rotate.
-    widget_->MoveFacesEnabledOff();
+    // Disable the "whole widget at once" scaling (right-button drag). It was
+    // the source of "drag the box and it always shrinks no matter the direction"
+    // because right-button = uniform scale. Face/axis scaling is handled by
+    // MoveFaces below, which is the intuitive "grab a face and pull it in/out".
+    widget_->ScalingEnabledOff();
+    // Enable per-face (per-axis) scaling: grab the spherical handle on a face
+    // and drag along that face normal to enlarge/shrink that axis only.
+    widget_->MoveFacesEnabledOn();
+    // Body left-drag moves the box cleanly; a face handle rescales that axis,
+    // an edge handle rotates.
 
     auto* cb = RoiCallback::New();
     cb->selector_ = this;
