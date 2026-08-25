@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <chrono>
-#include <cstdio>
 #include <queue>
 #include <sstream>
 #include <stdexcept>
@@ -260,7 +259,6 @@ bool Graph::execute(std::atomic_bool* cancel) {
             dirty_.erase(id);
             failed_.erase(id);
         } catch (const std::exception& e) {
-            std::fprintf(stderr, "[debug] node '%s' failed: %s\n", id.c_str(), e.what());
             failed_.insert(id);
             results_.erase(id);
             last_error_ = "node '" + id + "' failed: " + e.what();
