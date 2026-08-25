@@ -3,6 +3,9 @@ build/
 out/
 cmake-build-*/
 
+# Agent / IDE session skills (project-level skills stay local)
+.kimi-code/
+
 # IDE
 .vs/
 .vscode/
