@@ -3,5 +3,6 @@
 
 from .multi_cam_workspace import MultiCamWorkspace
 from .mobile_chain_workspace import MobileChainWorkspace
+from .turntable_workspace import TurntableWorkspace
 
-__all__ = ["MultiCamWorkspace", "MobileChainWorkspace"]
+__all__ = ["MultiCamWorkspace", "MobileChainWorkspace", "TurntableWorkspace"]

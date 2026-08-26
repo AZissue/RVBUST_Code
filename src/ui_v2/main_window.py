@@ -28,7 +28,7 @@ from .theme import ACCENT, ACCENT_DIM, BG_CARD, BORDER, STATUS_OK, STATUS_WARN, 
 from . import icons as ui_icons
 from .widgets import FloatingLogPanel, LoadingOverlay
 from .widgets.device_table import DeviceInfo
-from .workspaces import MobileChainWorkspace, MultiCamWorkspace
+from .workspaces import MobileChainWorkspace, MultiCamWorkspace, TurntableWorkspace
 
 if False:
     # 仅类型提示，避免循环导入
@@ -140,16 +140,19 @@ class MainWindowShell(QMainWindow):
         self._toolbar = self._build_toolbar()
         root.addWidget(self._toolbar)
 
-        # ===== 中央双工作区 =====
+        # ===== 中央三工作区 =====
         self._stack = QStackedWidget()
         self._ws_multi = MultiCamWorkspace()
         self._ws_mobile = MobileChainWorkspace()
+        self._ws_turntable = TurntableWorkspace()
         self._stack.addWidget(self._ws_multi)
         self._stack.addWidget(self._ws_mobile)
+        self._stack.addWidget(self._ws_turntable)
 
         # 工作区日志统一汇入日志面板与状态栏
         self._ws_multi.log_message.connect(self.log)
         self._ws_mobile.log_message.connect(self.log)
+        self._ws_turntable.log_message.connect(self.log)
         self._ws_mobile.chain_stats_changed.connect(self._on_chain_stats)
 
         root.addWidget(self._stack, 1)
@@ -306,11 +309,19 @@ class MainWindowShell(QMainWindow):
             self._ws_multi.set_devices(devices)
             self._ws_multi.set_state("connected" if devices else "idle")
             self._btn_mode.setText("模式：多相机外参标定 ▾")
-        else:
+        elif mode == LauncherDialog.MODE_MOBILE_CHAIN:
             self._stack.setCurrentWidget(self._ws_mobile)
             self._ws_mobile.set_devices(devices)
             self._ws_mobile.set_state("connected" if devices else "idle")
             self._btn_mode.setText("模式：单相机移动拼接 ▾")
+        else:
+            self._stack.setCurrentWidget(self._ws_turntable)
+            if self._backend_bridge is not None:
+                self._ws_turntable.set_camera_manager(self._backend_bridge.camera_manager)
+                self._ws_turntable.set_marker_detector(self._backend_bridge.marker_detector)
+            self._ws_turntable.set_devices(devices)
+            self._ws_turntable.set_state("connected" if devices else "idle")
+            self._btn_mode.setText("模式：转台 360° 拼接 ▾")
 
         self._refresh_statusbar()
         self.log(f"已进入「{LauncherDialog.MODE_NAMES[mode]}」工作区"
@@ -324,6 +335,9 @@ class MainWindowShell(QMainWindow):
 
     def workspace_mobile(self) -> MobileChainWorkspace:
         return self._ws_mobile
+
+    def workspace_turntable(self) -> TurntableWorkspace:
+        return self._ws_turntable
 
     def set_backend_bridge(self, bridge: 'BackendBridge'):
         """设置后端桥接器引用（用于设备枚举等 core 操作）。"""
@@ -427,8 +441,12 @@ class MainWindowShell(QMainWindow):
         total = len(self._devices)
         self._st_devices.setText(f"设备 {online}/{total} 在线")
 
-        ws = (self._ws_multi if self._mode == LauncherDialog.MODE_MULTI_CAM
-              else self._ws_mobile)
+        if self._mode == LauncherDialog.MODE_MULTI_CAM:
+            ws = self._ws_multi
+        elif self._mode == LauncherDialog.MODE_MOBILE_CHAIN:
+            ws = self._ws_mobile
+        else:
+            ws = self._ws_turntable
         state = ws.current_state()
         self._st_step.setText(state)
 

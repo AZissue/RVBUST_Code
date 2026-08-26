@@ -238,6 +238,9 @@ class BackendBridge(QObject):
                 # 模式 B 需要初始化链式拼接会话
                 ok, msg = self.mobile_workflow.start_chaining()
                 self.shell.log(msg, "success" if ok else "warn")
+            elif mode == LauncherDialog.MODE_TURNTABLE:
+                # 模式 C：转台工作区自行管理相机、采集与拼接流程
+                self.shell.workspace_turntable().set_state("connected")
 
         self._run_background(_connect, _done)
 

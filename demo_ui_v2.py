@@ -40,8 +40,13 @@ from ui_v2 import GLOBAL_QSS, LauncherDialog, MainWindowShell
 from ui_v2.widgets.device_table import DeviceInfo
 from version import get_version
 
-# 截图/演示默认模式：multi / mobile
-DEMO_MODE = LauncherDialog.MODE_MOBILE_CHAIN if "--mode=mobile" in sys.argv else LauncherDialog.MODE_MULTI_CAM
+# 截图/演示默认模式：multi / mobile / turntable
+if "--mode=turntable" in sys.argv:
+    DEMO_MODE = LauncherDialog.MODE_TURNTABLE
+elif "--mode=mobile" in sys.argv:
+    DEMO_MODE = LauncherDialog.MODE_MOBILE_CHAIN
+else:
+    DEMO_MODE = LauncherDialog.MODE_MULTI_CAM
 
 
 # ---------------------------------------------------------------------------
@@ -161,6 +166,9 @@ class MockBackendBridge:
         self._multi_state: int = 0  # 0=connected, 1=captured, 2=detected, 3=calibrated, 4=locked
         self._mobile_station_count: int = 0
         self._card_preview_active: Set[str] = set()
+        # 与真实 BackendBridge 保持接口兼容（转台模式会注入这些对象）
+        self.camera_manager = None
+        self.marker_detector = None
 
     # ------------------------------------------------------------------
     # 接线
@@ -216,10 +224,13 @@ class MockBackendBridge:
                 self.shell.workspace_multi().set_state("connected")
                 self._multi_state = 0
                 self.shell.log(f"已进入多相机模式（{len(devices)} 台设备）", "success")
-            else:
+            elif mode == LauncherDialog.MODE_MOBILE_CHAIN:
                 self.shell.workspace_mobile().set_state("connected")
                 self._mobile_station_count = 0
                 self.shell.log("已进入单相机移动拼接模式", "success")
+            else:
+                self.shell.workspace_turntable().set_state("connected")
+                self.shell.log("已进入转台 360° 拼接模式", "success")
 
         QTimer.singleShot(1200, _done)
 
@@ -620,6 +631,7 @@ def main():
         launcher._table._devices[0].checked = True
         launcher._table._devices[1].checked = True
     else:
+        # 单相机移动拼接 / 转台 360° 拼接均只需 1 台
         launcher._table._devices[0].checked = True
     launcher._refresh_connect_state()
 
@@ -666,8 +678,10 @@ def main():
         # 演示自动进入第一步：多相机模式自动拍一张，单相机模式提示取景
         if mode == LauncherDialog.MODE_MULTI_CAM:
             QTimer.singleShot(800, lambda: bridge._on_multi_capture(True))
-        else:
+        elif mode == LauncherDialog.MODE_MOBILE_CHAIN:
             main_window.log("请点击「开始取景」后拍摄机位", "info")
+        else:
+            main_window.log("转台模式：请初始化 RVC 并连接相机后开始拍摄", "info")
 
     return app.exec()
 

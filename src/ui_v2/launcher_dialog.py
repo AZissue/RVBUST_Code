@@ -40,10 +40,12 @@ class LauncherDialog(QDialog):
 
     MODE_MULTI_CAM = "multi_cam"        # 模式 A：多相机外参标定
     MODE_MOBILE_CHAIN = "mobile_chain"  # 模式 B：单相机移动拼接
+    MODE_TURNTABLE = "turntable"        # 模式 C：转台 360° 拼接
 
     MODE_NAMES = {
         MODE_MULTI_CAM: "多相机外参标定",
         MODE_MOBILE_CHAIN: "单相机移动拼接",
+        MODE_TURNTABLE: "转台 360° 拼接",
     }
 
     # ---------------------------------------------------------------- 信号（接口预留）
@@ -121,6 +123,13 @@ class LauncherDialog(QDialog):
         self.card_mobile.clicked.connect(
             lambda: self._set_mode(self.MODE_MOBILE_CHAIN))
         left.addWidget(self.card_mobile)
+
+        self.card_turntable = ModeCard(
+            "loop", "转台 360° 拼接",
+            "相机固定，手动旋转转台，自动标定角度并拼接 360° 点云")
+        self.card_turntable.clicked.connect(
+            lambda: self._set_mode(self.MODE_TURNTABLE))
+        left.addWidget(self.card_turntable)
 
         self._mode_desc = QLabel()
         self._mode_desc.setWordWrap(True)
@@ -233,15 +242,20 @@ class LauncherDialog(QDialog):
         self._mode = mode
         self.card_multi.setChecked(mode == self.MODE_MULTI_CAM)
         self.card_mobile.setChecked(mode == self.MODE_MOBILE_CHAIN)
+        self.card_turntable.setChecked(mode == self.MODE_TURNTABLE)
 
         if mode == self.MODE_MULTI_CAM:
             self._mode_desc.setText(
                 "多台相机固定安装，先标定外参（一次性），撤掉标定板后"
                 "反复扫描拼接。适合固定工位、产线巡检。")
-        else:
+        elif mode == self.MODE_MOBILE_CHAIN:
             self._mode_desc.setText(
                 "一台相机边走边拍，每帧自动检测标记物、自动配准增量拼接。"
                 "适合现场扫描、大件测量。")
+        else:
+            self._mode_desc.setText(
+                "相机固定对准转台，转台上放置物体/标记物；拍摄两帧标定转台角度后，"
+                "按固定角度手动旋转并采集，最终拼接成 360° 完整点云。")
 
         # 不同模式设备要求不同，清空多选防止残留选择误导
         self._table.clear_checks()
@@ -259,7 +273,7 @@ class LauncherDialog(QDialog):
                 hint, color = f"已选 {n} 台 / 多相机模式至少需要 2 台", ACCENT
             else:
                 hint, color = f"已选 {n} 台 ✓", STATUS_OK
-        else:
+        elif self._mode == self.MODE_MOBILE_CHAIN:
             self._rule_hint.setText("单相机移动拼接：必须且只能选中 1 台相机")
             ok = n == 1
             if n == 0:
@@ -267,6 +281,17 @@ class LauncherDialog(QDialog):
             elif n > 1:
                 hint, color = (
                     f"已选 {n} 台 / 单相机移动拼接仅支持 1 台相机，"
+                    "请取消多余选择"), ACCENT
+            else:
+                hint, color = "已选 1 台 ✓", STATUS_OK
+        else:
+            self._rule_hint.setText("转台 360° 拼接：必须且只能选中 1 台相机")
+            ok = n == 1
+            if n == 0:
+                hint, color = "未选择设备", TEXT_MUTED
+            elif n > 1:
+                hint, color = (
+                    f"已选 {n} 台 / 转台模式仅支持 1 台相机，"
                     "请取消多余选择"), ACCENT
             else:
                 hint, color = "已选 1 台 ✓", STATUS_OK
