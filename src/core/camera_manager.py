@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional, Tuple
 import threading
 
@@ -612,21 +613,32 @@ class CameraManager:
                     sync: bool = True, options=None) -> Dict[str, FrameData]:
         """拍摄多台相机，返回 {camera_id: FrameData}（仅含成功的相机）。
 
-        sync=True ：尽量同时触发——循环快速依次软触发（RVC 软触发本身是
-                    异步的，依次触发的时间差在毫秒级）；
-        sync=False：串行拍摄（一台拍完再拍下一台）。
-        当前实现两者均为快速循环触发，接口预留以便未来接入硬件同步。
+        sync=True ：使用线程并发调用各相机的软触发，尽量缩小触发时间差；
+                    真正的零时差需要硬件同步触发（RVC 外触发）。
+        sync=False：串行拍摄，一台拍完再拍下一台。
         """
         if camera_ids is None:
             camera_ids = self.get_connected_ids()
+        if not camera_ids:
+            return {}
+
         self._frame_counter += 1
         current_id = self._frame_counter
-        frames: Dict[str, FrameData] = {}
-        for cid in camera_ids:
-            frame = self.capture(cid, options=options, frame_id=current_id)
-            if frame is not None:
-                frames[cid] = frame
-        return frames
+        raw_results: Dict[str, Optional[FrameData]] = {}
+
+        if sync and len(camera_ids) > 1:
+            def _capture_one(cid: str) -> Tuple[str, Optional[FrameData]]:
+                return cid, self.capture(cid, options=options, frame_id=current_id)
+
+            with ThreadPoolExecutor(max_workers=len(camera_ids)) as executor:
+                for cid, frame in executor.map(_capture_one, camera_ids):
+                    raw_results[cid] = frame
+        else:
+            for cid in camera_ids:
+                frame = self.capture(cid, options=options, frame_id=current_id)
+                raw_results[cid] = frame
+
+        return {cid: frame for cid, frame in raw_results.items() if frame is not None}
 
     # ------------------------------------------------------------------
     # 参数
