@@ -208,6 +208,15 @@ std::vector<std::string> Graph::topologicalOrder() {
 }
 
 bool Graph::execute(std::atomic_bool* cancel) {
+    return executeImpl(cancel, nullptr);
+}
+
+bool Graph::executeThrough(const std::string& stop_at,
+                           std::atomic_bool* cancel) {
+    return executeImpl(cancel, &stop_at);
+}
+
+bool Graph::executeImpl(std::atomic_bool* cancel, const std::string* stop_at) {
     last_error_.clear();
     last_run_stats_.clear();
     const std::vector<std::string> order = topologicalOrder();
@@ -221,9 +230,11 @@ bool Graph::execute(std::atomic_bool* cancel) {
             return false;
         }
         Node* n = nodes_[id].get();
+        const bool is_stop = stop_at && id == *stop_at;
         // Already computed and not dirty.
         if (!dirty_.count(id) && results_.count(id)) {
             last_run_stats_[id].skipped = true;
+            if (is_stop) return true;
             continue;
         }
         if (failed_.count(id)) continue;
@@ -264,6 +275,7 @@ bool Graph::execute(std::atomic_bool* cancel) {
             last_error_ = "node '" + id + "' failed: " + e.what();
             return false;
         }
+        if (is_stop) return true;
     }
     return true;
 }
@@ -284,7 +296,8 @@ std::int64_t Graph::batchChunkSize() const {
 }
 
 bool Graph::executeChunked(std::int64_t chunk_size, std::atomic_bool* cancel,
-                           const BlockProgressFn& on_block) {
+                           const BlockProgressFn& on_block,
+                           const std::string* stop_at) {
     if (chunk_size <= 0) chunk_size = 1;
     std::int64_t total = 0;
     for (const auto& [id, n] : nodes_) {
@@ -297,6 +310,11 @@ bool Graph::executeChunked(std::int64_t chunk_size, std::atomic_bool* cancel,
     last_error_.clear();
     std::int64_t start = 0;
     bool ok = true;
+    // Batch-enabled source nodes accumulate every block's output so the
+    // properties panel and 3D view see all processed frames (not just the
+    // last block's). Intermediate nodes keep only the last block's results
+    // (memory: streaming peak stays bounded by K).
+    std::map<std::string, std::vector<core::ObjectList>> accumulated;
     while (start < total) {
         if (cancel && cancel->load()) {
             last_error_ = "execution cancelled";
@@ -313,14 +331,32 @@ bool Graph::executeChunked(std::int64_t chunk_size, std::atomic_bool* cancel,
         // Wipe results and dirty state so every node re-runs for this block;
         // after the loop only the last block's results are retained.
         clearResults();
-        if (!execute(cancel)) {
+        if (!executeImpl(cancel, stop_at)) {
             ok = false;
             break;
+        }
+        for (const auto& [id, n] : nodes_) {
+            if (!n->batchEnabled()) continue;
+            const auto it = results_.find(id);
+            if (it == results_.end()) continue;
+            auto& acc = accumulated[id];
+            if (acc.size() < it->second.size()) {
+                acc.resize(it->second.size());
+            }
+            for (std::size_t p = 0; p < it->second.size(); ++p) {
+                auto& dst = acc[p];
+                const auto& src = it->second[p];
+                dst.objects.insert(dst.objects.end(), src.objects.begin(),
+                                   src.objects.end());
+            }
         }
         start += chunk_size;
         if (on_block) {
             on_block(std::min(total, start), total);
         }
+    }
+    for (auto& [id, lists] : accumulated) {
+        results_[id] = std::move(lists);
     }
     for (const auto& [id, n] : nodes_) n->setContext(NodeContext{});
     return ok;

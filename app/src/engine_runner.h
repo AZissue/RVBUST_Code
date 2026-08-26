@@ -41,7 +41,10 @@ public:
     std::vector<DisplayEntry> latestDisplay() const;
 
 public slots:
-    void run();
+    // `to_selected` runs the graph only up to `stop_node` (incremental: dirty
+    // nodes are re-executed, everything upstream of the last change is
+    // skipped). `false` runs the whole graph.
+    void run(bool to_selected, const QString& stop_node);
 
 signals:
     // Emitted for each node that actually ran (not skipped), with its wall

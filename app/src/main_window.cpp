@@ -125,6 +125,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     if (run_button_) {
         connect(run_button_, &QPushButton::clicked, this, &MainWindow::runGraph);
     }
+    if (run_to_button_) {
+        connect(run_to_button_, &QPushButton::clicked, this,
+                [this] { runGraph(true); });
+    }
     if (roi_button_) {
         connect(roi_button_, &QPushButton::toggled, this, &MainWindow::onRoiToggle);
     }
@@ -199,14 +203,22 @@ void MainWindow::buildUi() {
     auto* view_box = new QWidget(central);
     auto* view_layout = new QVBoxLayout(view_box);
     auto* toolbar = new QHBoxLayout;
-    run_button_ = new QPushButton(tr("Run"), view_box);
+    run_button_ = new QPushButton(tr("Run All"), view_box);
     toolbar->addWidget(run_button_);
+    run_to_button_ = new QPushButton(tr("Run to Node"), view_box);
+    toolbar->addWidget(run_to_button_);
     roi_button_ = new QPushButton(tr("ROI"), view_box);
     roi_button_->setCheckable(true);
     toolbar->addWidget(roi_button_);
+    // Node-specific function buttons live in this reserved area (e.g. Box ROI
+    // -> 重置包围盒). Populated by updateNodeActionButtons().
+    node_action_bar_ = new QHBoxLayout;
+    node_action_bar_->setSpacing(4);
+    toolbar->addLayout(node_action_bar_);
+    toolbar->addStretch(1);
     toolbar->addWidget(new QLabel(tr("Show Output:"), view_box));
     output_combo_ = new QComboBox(view_box);
-    toolbar->addWidget(output_combo_, 1);
+    toolbar->addWidget(output_combo_);
     view_layout->addLayout(toolbar);
     cloud_view_ = new PointCloudView(view_box);
     view_layout->addWidget(cloud_view_, 1);
@@ -334,8 +346,12 @@ void MainWindow::retranslateUi() {
     help_menu_->setTitle(tr("&Help"));
     toolbox_->setSearchPlaceholder(tr("Search nodes..."));
     if (run_button_) {
-        run_button_->setText(tr("Run"));
+        run_button_->setText(tr("Run All"));
     }
+    if (run_to_button_) {
+        run_to_button_->setText(tr("Run to Node"));
+    }
+    updateNodeActionButtons();
 }
 
 void MainWindow::changeEvent(QEvent* event) {
@@ -403,6 +419,7 @@ void MainWindow::doSelectNode(const QString& id) {
         enterRoiEdit();
     }
     updateRoiBoxPreview();
+    updateNodeActionButtons();
 }
 
 bool MainWindow::nodeInputBounds(const std::string& id, double bounds[6],
@@ -483,6 +500,7 @@ void MainWindow::doDeleteNode(const QString& id) {
         cloud_view_->hideRoiBox();
         refreshPropsTree();
     }
+    updateNodeActionButtons();
     log(tr("Deleted node: %1").arg(id));
 }
 
@@ -727,13 +745,17 @@ void MainWindow::doParamChanged(const QString& node_id, const QString& name,
     }
 }
 
-void MainWindow::runGraph() {
+void MainWindow::runGraph(bool to_selected) {
     if (running_) {
         log(tr("Graph is already running"));
         return;
     }
     if (graph_.nodes().empty()) {
         log(tr("Nothing to run - add nodes first"));
+        return;
+    }
+    if (to_selected && selected_node_id_.empty()) {
+        log(tr("Select a node first, then run to node"));
         return;
     }
     running_ = true;
@@ -755,7 +777,7 @@ void MainWindow::runGraph() {
             });
     connect(runner_, &GraphRunner::finished, this, &MainWindow::onRunFinished);
     runner_thread_->start();
-    emit runRequested();
+    emit runRequested(to_selected, QString::fromStdString(selected_node_id_));
 }
 
 void MainWindow::onRunFinished(bool ok, const QString& error) {
@@ -779,6 +801,7 @@ void MainWindow::onRunFinished(bool ok, const QString& error) {
         if (selected_node_id_.empty()) showSelectedOutput();
         updateRoiBoxPreview();
         routeDisplayNodes();
+        updateNodeActionButtons();
         statusBar()->showMessage(
             tr("Drag nodes here, connect ports, press F5 to run."));
     } else {
@@ -846,6 +869,9 @@ void MainWindow::setEditingEnabled(bool enabled) {
     params_panel_->setEnabled(enabled);
     if (run_button_) {
         run_button_->setEnabled(enabled);
+    }
+    if (run_to_button_) {
+        run_to_button_->setEnabled(enabled);
     }
     if (run_action_) {
         run_action_->setEnabled(enabled);
@@ -1321,6 +1347,25 @@ void MainWindow::showSelectedOutput() {
         return;
     }
     cloud_view_->showObjectList(graph_.output(id.toStdString()));
+}
+
+void MainWindow::updateNodeActionButtons() {
+    if (!node_action_bar_) return;
+    while (node_action_bar_->count() > 0) {
+        QLayoutItem* item = node_action_bar_->takeAt(0);
+        if (QWidget* w = item->widget()) w->deleteLater();
+        delete item;
+    }
+    pcsearch::pipeline::Node* node = graph_.node(selected_node_id_);
+    if (!node || node->type() != "box_roi") return;
+    const std::string node_id = node->id();
+    auto* fit = new QPushButton(tr("Reset Bounds (Fit Input Cloud)"), this);
+    connect(fit, &QPushButton::clicked, this,
+            [this, node_id](bool) {
+                onParamsAction(QString::fromStdString(node_id),
+                               QLatin1String("fit_bounds"));
+            });
+    node_action_bar_->addWidget(fit);
 }
 
 void MainWindow::rebuildPalette() {

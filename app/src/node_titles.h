@@ -11,5 +11,6 @@ namespace app {
 QString nodeTitle(const std::string& type, bool zh);
 QString categoryTitle(const std::string& category, bool zh);
 QString paramLabel(const std::string& label, bool zh);
+QString enumValueLabel(const std::string& value, bool zh);
 
 }  // namespace app

@@ -123,13 +123,19 @@ ParamDef dirParam(const std::string& name, const std::string& label) {
 // Defaults for enum params are the first value, so put the recommended
 // value first in the list.
 std::vector<ParamDef> makeLoadParams() {
-    return {fileParam("path", "File Path"),
-            dirParam("folder", "Batch Folder"),
-            // stream = K=1 (default, one frame per graph run), chunked = K=10
-            // configurable, all = K=N (whole folder in one run).
-            enumParam("mode", "Read Mode", {"stream", "chunked", "all"}),
-            intParam("chunk_size", "Chunk Size", 10, 1, 1000000),
-            enumParam("source_unit", "Source Unit", {"auto", "meter", "millimeter"})};
+    std::vector<ParamDef> defs = {
+        fileParam("path", "File Path"),
+        dirParam("folder", "Batch Folder"),
+        // stream = K=1 (default, one frame per graph run), chunked = K=10
+        // configurable, all = K=N (whole folder in one run).
+        enumParam("mode", "Read Mode", {"stream", "chunked", "all"}),
+        intParam("chunk_size", "Chunk Size", 10, 1, 1000000),
+        enumParam("source_unit", "Source Unit", {"auto", "meter", "millimeter"})};
+    // Chunk Size only makes sense in chunked mode; the UI disables it
+    // otherwise (PROJECT §8.4).
+    defs[3].enable_when_param = "mode";
+    defs[3].enable_when_value = "chunked";
+    return defs;
 }
 
 core::LengthUnit resolveUnit(const std::string& unit) {

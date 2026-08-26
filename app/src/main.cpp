@@ -82,7 +82,7 @@ int main(int argc, char** argv) {
                          parser.value(demo_opt).toUtf8().constData());
             return 1;
         }
-        QTimer::singleShot(0, &window, &app::MainWindow::runGraph);
+        QTimer::singleShot(0, &window, [&window] { window.runGraph(); });
     }
     window.show();
     if (parser.isSet(autoquit_opt)) {

@@ -1,4 +1,5 @@
 #include "node_flow_widget.h"
+#include "node_titles.h"
 #include "params_panel.h"
 #include "point_cloud_view.h"
 
@@ -6,9 +7,11 @@
 #include "pcsearch/pipeline/nodes/core_nodes.h"
 
 #include <QImage>
+#include <QComboBox>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QSignalSpy>
+#include <QSpinBox>
 #include <QtTest/QtTest>
 
 #include <filesystem>
@@ -165,19 +168,15 @@ private slots:
         std::filesystem::remove(img);
     }
 
-    void paramsPanelResetButton() {
+    void paramsPanelHasNoNodeActionButton() {
+        // Node-specific action buttons (Box ROI reset bounds) live on the 3D
+        // viewport toolbar (MainWindow::updateNodeActionButtons), not in the
+        // params panel anymore.
         Graph g;
         auto* box = g.addNode("box_roi");
         app::ParamsPanel panel;
         panel.showNode(box);
-
-        QSignalSpy spy(&panel, &app::ParamsPanel::actionRequested);
-        auto* fit = panel.findChild<QPushButton*>();
-        QVERIFY(fit != nullptr);
-        QTest::mouseClick(fit, Qt::LeftButton);
-        QCOMPARE(spy.count(), 1);
-        QCOMPARE(spy.first().at(0).toString(), QString::fromStdString(box->id()));
-        QCOMPARE(spy.first().at(1).toString(), QStringLiteral("fit_bounds"));
+        QVERIFY(panel.findChild<QPushButton*>() == nullptr);
     }
 
     void paramsPanelLoadCloudDoesNotCrash() {
@@ -191,6 +190,41 @@ private slots:
         app::ParamsPanel panel;
         panel.showNode(load);
         QVERIFY(panel.findChild<QLineEdit*>() != nullptr);
+    }
+
+    void chunkSizeEnabledOnlyInChunkedMode() {
+        // Chunk Size is meaningless in stream/all mode; the editor must be
+        // disabled unless Read Mode == chunked (PROJECT §8.4).
+        Graph g;
+        auto* load = g.addNode("load_cloud");
+        app::ParamsPanel panel;
+        panel.showNode(load);
+        auto* chunk = panel.findChild<QSpinBox*>(QStringLiteral("chunk_size"));
+        auto* mode = panel.findChild<QComboBox*>(QStringLiteral("mode"));
+        QVERIFY(chunk != nullptr);
+        QVERIFY(mode != nullptr);
+        QVERIFY(!chunk->isEnabled());  // default mode = stream
+        mode->setCurrentIndex(1);      // chunked
+        QVERIFY(chunk->isEnabled());
+        mode->setCurrentIndex(0);      // stream
+        QVERIFY(!chunk->isEnabled());
+        mode->setCurrentIndex(2);      // all
+        QVERIFY(!chunk->isEnabled());
+    }
+
+    void paramsAreChineseByDefault() {
+        // Parameter labels and enum values render in Chinese in the default
+        // Chinese mode, including the newly added batch / multi-box params.
+        QCOMPARE(app::paramLabel("Read Mode", true), QStringLiteral("读取模式"));
+        QCOMPARE(app::paramLabel("Batch Folder", true), QStringLiteral("批量文件夹"));
+        QCOMPARE(app::paramLabel("Box Count", true), QStringLiteral("盒数量"));
+        QCOMPARE(app::enumValueLabel("stream", true), QStringLiteral("逐帧"));
+        QCOMPARE(app::enumValueLabel("chunked", true), QStringLiteral("分批"));
+        QCOMPARE(app::enumValueLabel("all", true), QStringLiteral("全部"));
+        QCOMPARE(app::enumValueLabel("auto", true), QStringLiteral("自动"));
+        // English mode keeps the raw values.
+        QCOMPARE(app::paramLabel("Read Mode", false), QStringLiteral("Read Mode"));
+        QCOMPARE(app::enumValueLabel("chunked", false), QStringLiteral("chunked"));
     }
 
     void displayDecimationCapsGpuWork() {

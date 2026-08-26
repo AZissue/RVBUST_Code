@@ -28,6 +28,12 @@ struct ParamDef {
     int imin = std::numeric_limits<int>::min();
     int imax = std::numeric_limits<int>::max();
     std::vector<std::string> enum_values;
+    // Optional editor dependency: when enable_when_param is non-empty, the
+    // UI keeps this parameter's editor disabled unless the named parameter's
+    // current value equals enable_when_value (e.g. chunk_size is editable
+    // only while mode == "chunked"). Pure UI hint, ignored by the engine.
+    std::string enable_when_param;
+    std::string enable_when_value;
 };
 
 class ParamsError : public std::runtime_error {

@@ -7,8 +7,11 @@ namespace app {
 GraphRunner::GraphRunner(pcsearch::pipeline::Graph* graph, QObject* parent)
     : QObject(parent), graph_(graph) {}
 
-void GraphRunner::run() {
+void GraphRunner::run(bool to_selected, const QString& stop_node) {
     cancel_.store(false);
+    const std::string stop = stop_node.toStdString();
+    const std::string* stop_ptr =
+        (to_selected && !stop.empty()) ? &stop : nullptr;
     bool ok = false;
     if (graph_->batchEnabled()) {
         // Chunked batch execution (PROJECT §8.4): K comes from the graph's
@@ -17,7 +20,10 @@ void GraphRunner::run() {
             captureDisplay();
             emit blockProgress(static_cast<int>(done), static_cast<int>(total));
         };
-        ok = graph_->executeChunked(graph_->batchChunkSize(), &cancel_, on_block);
+        ok = graph_->executeChunked(graph_->batchChunkSize(), &cancel_, on_block,
+                                    stop_ptr);
+    } else if (stop_ptr) {
+        ok = graph_->executeThrough(*stop_ptr, &cancel_);
     } else {
         ok = graph_->execute(&cancel_);
     }

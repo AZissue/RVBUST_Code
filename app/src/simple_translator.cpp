@@ -31,6 +31,12 @@ SimpleTranslator::SimpleTranslator() {
     map_[QStringLiteral("Results")] = QStringLiteral("结果");
     map_[QStringLiteral("Show Output:")] = QStringLiteral("显示输出:");
     map_[QStringLiteral("Run")] = QStringLiteral("运行");
+    map_[QStringLiteral("Run All")] = QStringLiteral("运行全部");
+    map_[QStringLiteral("Run to Node")] = QStringLiteral("运行到当前");
+    map_[QStringLiteral("Select a node first, then run to node")] =
+        QStringLiteral("请先选中节点，再运行到当前");
+    map_[QStringLiteral("Reset Bounds (Fit Input Cloud)")] =
+        QStringLiteral("重置包围盒（按输入点云）");
     map_[QStringLiteral("ROI")] = QStringLiteral("框选");
     map_[QStringLiteral("Search nodes...")] = QStringLiteral("搜索节点...");
     map_[QStringLiteral("Select a node")] = QStringLiteral("选择一个节点");
@@ -104,6 +110,8 @@ SimpleTranslator::SimpleTranslator() {
     map_[QStringLiteral("Reset bounds to input cloud (%1 valid points): x[%2, %3] y[%4, %5] z[%6, %7] (press F5 to recompute)")] =
         QStringLiteral("已按输入点云重置包围盒（有效点 %1）：x[%2, %3] y[%4, %5] z[%6, %7]（按 F5 重新计算）");
     map_[QStringLiteral("No parameters")] = QStringLiteral("无参数");
+    map_[QStringLiteral("Select All")] = QStringLiteral("全选");
+    map_[QStringLiteral("Clear")] = QStringLiteral("清空");
 }
 
 QString SimpleTranslator::translate(const char*, const char* sourceText, const char*, int) const {

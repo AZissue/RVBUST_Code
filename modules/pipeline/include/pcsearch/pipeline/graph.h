@@ -65,13 +65,20 @@ public:
     // `cancel` (optional) is checked between nodes so a UI shutdown can stop
     // a long run instead of destroying the worker thread mid-execution.
     bool execute(std::atomic_bool* cancel = nullptr);
+    // Like execute(), but stops after `stop_at` in topological order: nodes
+    // after it are left unexecuted (and dirty). Dirty tracking still applies,
+    // so re-running through the same node re-executes only what changed
+    // upstream (e.g. A-B-C-D-E, modify C, run through D -> only C..D runs).
+    bool executeThrough(const std::string& stop_at,
+                        std::atomic_bool* cancel = nullptr);
     // Chunked batch execution: repeatedly runs the graph over windows of
     // `chunk_size` frames from every batch-enabled source node (PROJECT §8.4),
     // fail-fast on the first failing block. Results keep only the last block
     // (the display shows the block's last frame). Falls back to execute()
     // when no source reports batchEnabled().
     bool executeChunked(std::int64_t chunk_size, std::atomic_bool* cancel = nullptr,
-                        const BlockProgressFn& on_block = {});
+                        const BlockProgressFn& on_block = {},
+                        const std::string* stop_at = nullptr);
     // True when any node in the graph drives chunked batch execution.
     bool batchEnabled() const;
     // Largest K requested by the graph's batch-enabled sources.
@@ -87,6 +94,7 @@ public:
     void clearResults();
 
 private:
+    bool executeImpl(std::atomic_bool* cancel, const std::string* stop_at);
     std::vector<std::string> topologicalOrder();
     void propagateDirty(const std::string& seed);
     static bool kindsCompatible(const std::string& out_kind,

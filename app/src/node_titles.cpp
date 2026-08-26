@@ -49,6 +49,8 @@ QString paramLabel(const std::string& label, bool zh) {
         {"Output Folder", "输出文件夹"},  {"File Name", "文件名"},
         {"Source Unit", "源单位"},       {"Format", "格式"},
         {"Output Unit", "输出单位"},     {"Leaf Size", "体素大小"},
+        {"Batch Folder", "批量文件夹"},  {"Read Mode", "读取模式"},
+        {"Chunk Size", "批大小（帧/批）"},
         {"Mode", "模式"},               {"Target Count", "目标点数"},
         {"Random Seed", "随机种子"},     {"Z Min", "Z 最小值"},
         {"Z Max", "Z 最大值"},          {"X Min", "X 最小值"},
@@ -56,12 +58,26 @@ QString paramLabel(const std::string& label, bool zh) {
         {"Y Max", "Y 最大值"},          {"Viewport", "视窗"},
         {"Rotate X (deg)", "X 旋转角"},  {"Rotate Y (deg)", "Y 旋转角"},
         {"Rotate Z (deg)", "Z 旋转角"},
+        {"Box Count", "盒数量"},
+        {"Box List (JSON)", "盒列表 (JSON)"},
+        {"Frame Filter (empty = all; e.g. 0,2)", "帧过滤（空=全部，如 0,2）"},
         {"Distance Threshold", "距离阈值"}, {"Min Inliers", "最小内点数"},
         {"Max Planes", "最大平面数"},    {"RANSAC Iterations", "RANSAC 迭代次数"},
         {"Cluster Tolerance", "聚类容差"}, {"Min Cluster Size", "最小簇大小"},
         {"Max Cluster Size", "最大簇大小"}};
     const auto it = map.find(label);
     return it == map.end() ? QString::fromStdString(label) : it->second;
+}
+
+QString enumValueLabel(const std::string& value, bool zh) {
+    if (!zh) return QString::fromStdString(value);
+    static const std::map<std::string, QString> map = {
+        {"stream", "逐帧"},   {"chunked", "分批"},  {"all", "全部"},
+        {"auto", "自动"},     {"meter", "米"},      {"millimeter", "毫米"},
+        {"centroid", "质心"}, {"center", "中心"},
+    };
+    const auto it = map.find(value);
+    return it == map.end() ? QString::fromStdString(value) : it->second;
 }
 
 }  // namespace app

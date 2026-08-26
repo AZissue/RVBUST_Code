@@ -719,9 +719,12 @@ int main() {
 
             failures += check(g.executeChunked(1), "batch: stream execute ok");
             const auto* out = g.output(load->id());
-            failures += check(out && out->objects.size() == 1 &&
-                                  out->objects[0]->id == "frame_002",
-                              "batch: last block kept (stream)");
+            // Source output accumulates every block, so the properties panel
+            // and 3D view can browse all processed frames.
+            failures += check(out && out->objects.size() == 3 &&
+                                  out->objects[0]->id == "frame_000" &&
+                                  out->objects[2]->id == "frame_002",
+                              "batch: source output accumulates all frames");
             bool all_written = true;
             for (int i = 0; i < 3; ++i) {
                 if (!std::filesystem::exists(sink_dir / ("obj_" + std::to_string(i) + ".txt"))) {
@@ -751,9 +754,10 @@ int main() {
             failures += check(g.batchChunkSize() == 2, "batch: chunked chunk size 2");
             failures += check(g.executeChunked(2), "batch: chunked execute ok");
             const auto* out = g.output(load->id());
-            failures += check(out && out->objects.size() == 1 &&
-                                  out->objects[0]->id == "frame_002",
-                              "batch: chunked leftover frame kept");
+            failures += check(out && out->objects.size() == 3 &&
+                                  out->objects[0]->id == "frame_000" &&
+                                  out->objects[2]->id == "frame_002",
+                              "batch: chunked accumulates all frames");
         }
 
         // K >= total: one block, whole batch returned.
@@ -801,6 +805,67 @@ int main() {
             failures += check(out && out->objects.size() == 1 &&
                                   out->objects[0]->id == "cloud",
                               "batch: single file id cloud");
+        }
+    }
+
+    // ---- Run-through node: incremental execution (A-B-C-D, modify C, run to D)
+    {
+        Graph g;
+        const std::string path = writeTemp(dir, "runthru_src.ply", makeGridWithInvalid());
+        auto* load = g.addNode("load_cloud");
+        g.setParam(load->id(), "path", ParamValue{path});
+        auto* z1 = g.addNode("z_filter");
+        g.setParam(z1->id(), "z_min", ParamValue{-1.0});
+        g.setParam(z1->id(), "z_max", ParamValue{1.0});
+        auto* vox = g.addNode("voxel_downsample");
+        g.setParam(vox->id(), "leaf_size", ParamValue{10.0});
+        auto* z2 = g.addNode("z_filter");
+        g.setParam(z2->id(), "z_min", ParamValue{-1.0});
+        g.setParam(z2->id(), "z_max", ParamValue{1.0});
+        auto* z3 = g.addNode("z_filter");
+        g.setParam(z3->id(), "z_min", ParamValue{-1.0});
+        g.setParam(z3->id(), "z_max", ParamValue{1.0});
+        g.connect(load->id(), 0, z1->id(), 0);
+        g.connect(z1->id(), 0, vox->id(), 0);
+        g.connect(vox->id(), 0, z2->id(), 0);
+        g.connect(z2->id(), 0, z3->id(), 0);
+
+        // First run through z2: everything upstream executes, z3 has no output.
+        failures += check(g.executeThrough(z2->id()), "runthru: execute ok");
+        failures += check(g.output(z2->id()) != nullptr,
+                          "runthru: stop node has output");
+        failures += check(g.output(z3->id()) == nullptr,
+                          "runthru: after stop node no output");
+        {
+            const auto& st = g.lastRunStats();
+            failures += check(st.count(load->id()) && st.at(load->id()).executed &&
+                                  st.count(vox->id()) && st.at(vox->id()).executed &&
+                                  st.count(z2->id()) && st.at(z2->id()).executed,
+                              "runthru: upstream executed on first run");
+        }
+
+        // Modify vox (middle), run through z2 again: only vox + z2 re-run;
+        // load and z1 are skipped (unchanged upstream).
+        g.setParam(vox->id(), "leaf_size", ParamValue{5.0});
+        failures += check(g.executeThrough(z2->id()), "runthru: incremental ok");
+        {
+            const auto& st = g.lastRunStats();
+            failures += check(st.count(load->id()) && st.at(load->id()).skipped &&
+                                  st.count(z1->id()) && st.at(z1->id()).skipped &&
+                                  st.count(vox->id()) && st.at(vox->id()).executed &&
+                                  st.count(z2->id()) && st.at(z2->id()).executed,
+                              "runthru: only changed node + downstream re-run");
+            failures += check(!st.count(z3->id()),
+                              "runthru: z3 never ran in run-to-z2");
+        }
+
+        // Extend the run to z3: z2 is clean, only z3 executes.
+        failures += check(g.executeThrough(z3->id()), "runthru: extend run ok");
+        {
+            const auto& st = g.lastRunStats();
+            failures += check(st.count(z2->id()) && st.at(z2->id()).skipped &&
+                                  st.count(z3->id()) && st.at(z3->id()).executed,
+                              "runthru: extending only runs the new node");
         }
     }
 

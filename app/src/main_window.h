@@ -5,6 +5,7 @@
 #include <QMainWindow>
 
 class QComboBox;
+class QHBoxLayout;
 class QPlainTextEdit;
 class QTreeWidget;
 class QMenu;
@@ -36,7 +37,9 @@ protected:
     void changeEvent(QEvent* event) override;
 
 public slots:
-    void runGraph();
+    // `to_selected` runs the pipeline only up to the selected node (dirty
+    // nodes re-run, upstream of the last change is skipped).
+    void runGraph(bool to_selected = false);
     void setLanguageChinese(bool chinese);
 
 private slots:
@@ -64,7 +67,7 @@ public:
     bool loadDemo(const QString& plyPath);
 
 signals:
-    void runRequested();
+    void runRequested(bool to_selected, const QString& stop_node);
 
 private:
     void buildUi();
@@ -95,6 +98,9 @@ private:
     void syncBoxRoiFilter();
     void refreshOutputCombo();
     void showSelectedOutput();
+    // Node-specific action buttons shown on the 3D viewport toolbar (e.g.
+    // Box ROI -> reset bounds). Rebuilt whenever the selected node changes.
+    void updateNodeActionButtons();
     void rebuildPalette();
     void refreshCanvasTree();
     void routeDisplayNodes();
@@ -114,7 +120,9 @@ private:
     PointCloudView* cloud_view_ = nullptr;
     QComboBox* output_combo_ = nullptr;
     QPushButton* run_button_ = nullptr;
+    QPushButton* run_to_button_ = nullptr;
     QPushButton* roi_button_ = nullptr;
+    QHBoxLayout* node_action_bar_ = nullptr;
     QAction* run_action_ = nullptr;
     QStackedWidget* canvas_stack_ = nullptr;
     QTreeWidget* canvas_tree_ = nullptr;
