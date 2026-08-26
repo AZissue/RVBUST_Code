@@ -280,7 +280,7 @@ class CodedCircleGeneratorUI(QMainWindow):
                 f"当前 N={self._params.n}，可用编码圆数量：{total} 个 | "
                 f"缩放 {self._params.scale:.2f}x | "
                 f"有效中心半径 {info['effective_radius_mm']:.2f} mm | "
-                f"预览渲染 {info['preview_codes']} 个 | "
+                f"页面排布 {info['preview_codes']} 个 | "
                 f"页面 {info['page_px'][0]}×{info['page_px'][1]} px"
             )
         except Exception as e:
