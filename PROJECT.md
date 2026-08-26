@@ -28,6 +28,7 @@
 | 2026-08-25 | 采用新项目管理文档模板（AGENTS / PROJECT / PLAN / STATUS + SESSION_PROMPTS）；git 本地提交照常、push 需明确 | 已确认 |
 | 2026-08-25 | 批量语义统一约定：单文件 + 文件夹批量读取（全量 / 限量 / 逐帧）；一帧多盒（box_roi 输出 F×M 组）；批量保存（零填充命名）；多帧同窗显示预留（模板匹配等） | 已确认 |
 | 2026-08-25 | 未来规划：批量输入 / 输出点坐标、平面、法向量、位姿等数据，程序内使用并支持保存到本地 | 规划中 |
+| 2026-08-26 | 3D 视窗 ↔ 点云属性面板联动：选中节点在属性面板展示输入/输出逐帧；选帧驱动 3D 显示（多选多显示）；ROI 与 box_roi 只作用于选中帧（frame_filter） | 已确认 |
 
 ## 3. 不可修改的核心功能（红线）
 > 以下功能无论后续如何演进都不能破坏，改动任何相关代码前先对照此清单：
@@ -216,3 +217,4 @@
 | 2026-08-25 | 按新模板重写 AGENTS / PROJECT / PLAN / STATUS；新增 docs/SESSION_PROMPTS.md；git 初始化基线 | 全部文档 | Codex 会话 |
 | 2026-08-25 | 新增 §8 节点 I/O / 批量 / 分块 / 显示统一约定与 §9 待修清单；§2 / §6 / §7 同步补充 | PROJECT / STATUS / PLAN | Codex 会话 |
 | 2026-08-25 | §9 前 7 项批量架构落地（load 批量 + 分块执行、display3d 多图层 + latest-wins + 视口预算 + 硬件档位、一帧多盒 + provenance、save 零填充 / 多盒命名、alignInputs + 批量 E2E） | PROJECT / STATUS / PLAN | Codex 会话 |
+| 2026-08-26 | 属性面板改造为选中节点的输入/输出逐帧树（多选驱动 3D）；ROI 基准按选中输入帧；box_roi 新增 frame_filter（未选中帧 1:1 透传、region 行带无效盒） | PROJECT / STATUS / PLAN | Codex 会话 |
