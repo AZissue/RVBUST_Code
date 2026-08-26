@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-from ..theme import BG_PANEL, BORDER, STATUS_ERR, TEXT_PRIMARY, TEXT_SECONDARY
+from ..theme import BG_CARD, BG_PANEL, BORDER, STATUS_ERR, TEXT_PRIMARY, TEXT_SECONDARY
 
 
 class FloatingContainer(QFrame):
@@ -60,22 +60,22 @@ class FloatingContainer(QFrame):
         title_lo.addStretch(1)
 
         self._btn_collapse = QPushButton("−")
-        self._btn_collapse.setFixedSize(22, 22)
+        self._btn_collapse.setFixedSize(24, 24)
         self._btn_collapse.setStyleSheet(
-            "QPushButton { background-color: transparent; color: " + TEXT_SECONDARY + "; "
-            "border: none; font-size: 14px; }"
-            "QPushButton:hover { color: " + TEXT_PRIMARY + "; }"
+            "QPushButton { background-color: " + BG_CARD + "; color: " + TEXT_SECONDARY + "; "
+            "border: 1px solid " + BORDER + "; border-radius: 4px; font-size: 14px; }"
+            "QPushButton:hover { background-color: " + BORDER + "; color: " + TEXT_PRIMARY + "; }"
         )
         self._btn_collapse.setToolTip("折叠")
         self._btn_collapse.clicked.connect(self._toggle_collapse)
         title_lo.addWidget(self._btn_collapse)
 
         self._btn_close = QPushButton("✕")
-        self._btn_close.setFixedSize(22, 22)
+        self._btn_close.setFixedSize(24, 24)
         self._btn_close.setStyleSheet(
-            "QPushButton { background-color: transparent; color: " + TEXT_SECONDARY + "; "
-            "border: none; font-size: 12px; }"
-            "QPushButton:hover { color: " + STATUS_ERR + "; }"
+            "QPushButton { background-color: " + BG_CARD + "; color: " + TEXT_SECONDARY + "; "
+            "border: 1px solid " + BORDER + "; border-radius: 4px; font-size: 12px; }"
+            "QPushButton:hover { background-color: " + BORDER + "; color: " + STATUS_ERR + "; }"
         )
         self._btn_close.setToolTip("关闭")
         self._btn_close.clicked.connect(self.closed.emit)

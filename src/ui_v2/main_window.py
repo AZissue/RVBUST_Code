@@ -353,9 +353,23 @@ class MainWindowShell(QMainWindow):
             else:
                 self.log("刷新设备列表（backend_bridge 未设置）", "warn")
 
+        def _do_auto_ip(devices: list):
+            if self._backend_bridge is not None:
+                dialog.set_auto_ip_busy(True)
+
+                def on_finished(_results, _error):
+                    if not dialog.isVisible():
+                        return
+                    dialog.set_auto_ip_busy(False)
+                    dialog.set_devices(self._backend_bridge.enumerate_devices())
+
+                self._backend_bridge.auto_configure_network(
+                    devices, on_finished=on_finished)
+            else:
+                self.log("自动设置 IP（backend_bridge 未设置）", "warn")
+
         dialog.refresh_requested.connect(_do_refresh)
-        dialog.auto_ip_requested.connect(
-            lambda devs: self.log(f"自动设置 IP ×{len(devs)}（接口预留）", "info"))
+        dialog.auto_ip_requested.connect(_do_auto_ip)
 
         connected = {"mode": None, "devices": []}
 
