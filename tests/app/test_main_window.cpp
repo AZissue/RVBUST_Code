@@ -1,15 +1,19 @@
 #include "main_window.h"
 #include "node_flow_widget.h"
+#include "point_cloud_view.h"
 #include "toolbox_widget.h"
 
+#include "pcsearch/core_data/object.h"
 #include "pcsearch/pipeline/nodes/core_nodes.h"
 
 #include <QApplication>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QMenu>
 #include <QStackedWidget>
 #include <QSurfaceFormat>
 #include <QTemporaryDir>
+#include <QToolButton>
 #include <QTreeWidget>
 #include <QWheelEvent>
 #include <QtTest/QtTest>
@@ -52,6 +56,11 @@ private slots:
     // while a run is in progress.
     void runToButtonRequiresSelection();
     void runButtonsShowBusyState();
+    // "Show Data Types" multi-select filter drives the 3D view flags.
+    void showDataTypesFilterDrivesView();
+    // A selection containing only ROI boxes (no points) must still produce a
+    // display layer; otherwise boxes would be invisible.
+    void boxOnlySelectionStillShowsLayer();
 
 private:
     QString writePly(QTemporaryDir& dir) const;
@@ -390,6 +399,63 @@ void MainWindowTest::runButtonsShowBusyState() {
     QCOMPARE(run_to->text(), QStringLiteral("Run to Node"));
     QVERIFY(run->isEnabled());
     QVERIFY(run_to->isEnabled());
+}
+
+void MainWindowTest::showDataTypesFilterDrivesView() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString ply = writePly(dir);
+    app::MainWindow w;
+    QVERIFY(w.loadDemo(ply));
+    w.runGraph();
+    QVERIFY(waitForRun(w));
+
+    auto* view = w.findChild<app::PointCloudView*>();
+    QVERIFY(view);
+    QVERIFY(view->cloudVisible());
+    QVERIFY(view->boxVisible());
+    QVERIFY(view->lineVisible());
+
+    // The toolbar filter button hosts a checkable menu with three entries.
+    QToolButton* button = nullptr;
+    for (QToolButton* b : w.findChildren<QToolButton*>()) {
+        if (b->menu() && b->menu()->actions().size() == 3) {
+            button = b;
+            break;
+        }
+    }
+    QVERIFY(button != nullptr);
+    const QList<QAction*> actions = button->menu()->actions();
+    for (QAction* a : actions) {
+        QVERIFY(a->isCheckable());
+        QVERIFY(a->isChecked());
+    }
+
+    // Unchecking "Point Clouds" disables cloud rendering; boxes stay on.
+    actions[0]->setChecked(false);
+    QVERIFY(!view->cloudVisible());
+    QVERIFY(view->boxVisible());
+    QVERIFY(view->lineVisible());
+    actions[0]->setChecked(true);
+    QVERIFY(view->cloudVisible());
+}
+
+void MainWindowTest::boxOnlySelectionStillShowsLayer() {
+    auto obj = std::make_shared<pcsearch::core::PointCloudObject>();
+    obj->name = "box";
+    obj->roi = std::make_shared<pcsearch::core::RoiBox>();
+    obj->roi->valid = true;
+    obj->roi->min = Eigen::Vector3f(-5.0f, -5.0f, -5.0f);
+    obj->roi->max = Eigen::Vector3f(5.0f, 5.0f, 5.0f);
+    pcsearch::core::ObjectList list;
+    list.objects.push_back(obj);
+
+    app::MainWindow w;
+    auto* view = w.findChild<app::PointCloudView*>();
+    QVERIFY(view);
+    view->showObjectList(&list);
+    QVERIFY2(view->displayLayers().contains(app::PointCloudView::selectionLayerId()),
+             "a box-only object list must still create a display layer");
 }
 
 }  // namespace

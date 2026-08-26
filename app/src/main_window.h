@@ -13,6 +13,7 @@ class QTreeWidget;
 class QMenu;
 class QStackedWidget;
 class QPushButton;
+class QToolButton;
 class QThread;
 class QTimer;
 
@@ -106,8 +107,10 @@ private:
     // Write the selected input frames into the selected Box ROI node's
     // frame_filter param (empty selection / select-all -> all frames).
     void syncBoxRoiFilter();
-    void refreshOutputCombo();
-    void showSelectedOutput();
+    void showFallbackOutput();
+    // Applies the "Show Data Types" filter to the 3D view and re-renders the
+    // current content (selection layer / display3d layers) immediately.
+    void applyDisplayTypeFilter();
     // Node-specific action buttons shown on the 3D viewport toolbar (e.g.
     // Box ROI -> reset bounds). Rebuilt whenever the selected node changes.
     void updateNodeActionButtons();
@@ -133,6 +136,10 @@ private:
     ParamsPanel* params_panel_ = nullptr;
     PointCloudView* cloud_view_ = nullptr;
     QComboBox* output_combo_ = nullptr;
+    QToolButton* show_types_button_ = nullptr;
+    QAction* show_cloud_action_ = nullptr;
+    QAction* show_box_action_ = nullptr;
+    QAction* show_line_action_ = nullptr;
     QPushButton* run_button_ = nullptr;
     QPushButton* run_to_button_ = nullptr;
     QPushButton* roi_button_ = nullptr;

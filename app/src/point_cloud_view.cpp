@@ -255,6 +255,12 @@ void PointCloudView::frameScene() {
 #endif
 }
 
+void PointCloudView::setVisibleKinds(bool cloud, bool box, bool line) {
+    cloud_visible_ = cloud;
+    box_visible_ = box;
+    line_visible_ = line;
+}
+
 void PointCloudView::clearAllDisplayLayers() {
 #ifdef PCSEARCH_HAS_VTK
     for (auto& layer : layers_) removeLayerActors(layer.actors);
@@ -336,15 +342,19 @@ void PointCloudView::showObjectList(const pcsearch::core::ObjectList* list) {
     try {
         layer.shown_points = buildCloudActors(*list, layer.actors);
         const std::int64_t shown = layer.shown_points;
-        if (shown > 0) {
+        if (shown > 0 || !layer.actors.empty()) {
             layers_.push_back(std::move(layer));
-            renderer_->ResetCamera();
-            renderer_->GetActiveCamera()->SetClippingRange(0.1, 1e7);
+            if (shown > 0) {
+                renderer_->ResetCamera();
+                renderer_->GetActiveCamera()->SetClippingRange(0.1, 1e7);
+            }
         }
         vtk_widget_->renderWindow()->Render();
         enforceViewportBudget();
         std::int64_t total_points = 0;
-        for (const auto& obj : list->objects) total_points += obj->cloud->size();
+        for (const auto& obj : list->objects) {
+            if (obj->cloud) total_points += obj->cloud->size();
+        }
         if (shown < total_points) {
             emit displayInfo(tr("Display decimated: showing %1 of %2 points")
                                  .arg(shown)
@@ -367,9 +377,11 @@ std::int64_t PointCloudView::buildCloudActors(
     if (!renderer_) return 0;
     std::int64_t shown_points = 0;
     for (const auto& obj : list.objects) {
+        // Display-type filter: clouds render only when their kind is enabled;
+        // ROI boxes are handled below.
+        if (!obj->cloud || obj->cloud->size() <= 0 || !cloud_visible_) continue;
         const auto& cloud = *obj->cloud;
         const std::int64_t n = cloud.size();
-        if (n <= 0) continue;
 
         // Display decimation: huge clouds (RVC 5MP / stitched 10M+) must
         // not be uploaded to the GPU in full on integrated graphics or
@@ -427,11 +439,57 @@ std::int64_t PointCloudView::buildCloudActors(
         renderer_->AddActor(actor);
         actors.push_back(vtkSmartPointer<vtkProp>(actor));
     }
+    // Bounding boxes (包围盒): every object-attached valid ROI box is drawn
+    // as an oriented wireframe (OBB), independently of the point cloud.
+    if (box_visible_) {
+        for (const auto& obj : list.objects) {
+            if (obj->roi && obj->roi->valid) {
+                addRoiBoxActor(*obj->roi, actors);
+            }
+        }
+    }
     return shown_points;
 #else
     (void)list;
     (void)actors;
     return 0;
+#endif
+}
+
+void PointCloudView::addRoiBoxActor(
+    const pcsearch::core::RoiBox& roi,
+    std::vector<vtkSmartPointer<vtkProp>>& actors) {
+#ifdef PCSEARCH_HAS_VTK
+    if (!renderer_) return;
+    vtkNew<vtkCubeSource> cube;
+    const Eigen::Vector3f size = roi.size();
+    cube->SetXLength(size.x());
+    cube->SetYLength(size.y());
+    cube->SetZLength(size.z());
+    // world = orientation * local + center (row-major 4x4).
+    const Eigen::Matrix3f& o = roi.orientation;
+    const double elements[16] = {
+        o(0, 0), o(0, 1), o(0, 2), 0.0,
+        o(1, 0), o(1, 1), o(1, 2), 0.0,
+        o(2, 0), o(2, 1), o(2, 2), 0.0,
+        roi.center.x(), roi.center.y(), roi.center.z(), 1.0};
+    vtkNew<vtkTransform> transform;
+    transform->SetMatrix(elements);
+    vtkNew<vtkTransformPolyDataFilter> tfilter;
+    tfilter->SetInputConnection(cube->GetOutputPort());
+    tfilter->SetTransform(transform);
+    vtkNew<vtkPolyDataMapper> mapper;
+    mapper->SetInputConnection(tfilter->GetOutputPort());
+    vtkNew<vtkActor> actor;
+    actor->SetMapper(mapper);
+    actor->GetProperty()->SetRepresentationToWireframe();
+    actor->GetProperty()->SetColor(1.0, 0.62, 0.0);
+    actor->GetProperty()->SetLineWidth(2.0);
+    renderer_->AddActor(actor);
+    actors.push_back(vtkSmartPointer<vtkProp>(actor));
+#else
+    (void)roi;
+    (void)actors;
 #endif
 }
 

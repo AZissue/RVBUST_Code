@@ -89,6 +89,13 @@ public:
 
     void showObjectList(const pcsearch::core::ObjectList* list);
     void clearView();
+    // Display-type filter ("Show Data Types"): which object kinds the view
+    // renders. Clouds are point objects; boxes are valid RoiBox wireframes;
+    // lines are reserved for future geometry. All default to visible.
+    void setVisibleKinds(bool cloud, bool box, bool line);
+    bool cloudVisible() const { return cloud_visible_; }
+    bool boxVisible() const { return box_visible_; }
+    bool lineVisible() const { return line_visible_; }
     // Toggle interactive ROI box editing. When enabled, dragging the box emits
     // roiEdited with (center, half extents, Euler angles in degrees).
     void enableRoiEdit(bool on, const double bounds[6] = nullptr);
@@ -126,6 +133,8 @@ private:
     // of points actually displayed (after tier-based decimation).
     std::int64_t buildCloudActors(const pcsearch::core::ObjectList& list,
                                   std::vector<vtkSmartPointer<vtkProp>>& actors);
+    void addRoiBoxActor(const pcsearch::core::RoiBox& roi,
+                        std::vector<vtkSmartPointer<vtkProp>>& actors);
     void removeLayerActors(std::vector<vtkSmartPointer<vtkProp>>& actors);
     void reorderActors();
     void enforceViewportBudget();
@@ -149,6 +158,9 @@ private:
 #endif
     std::vector<DisplayLayer> layers_;
     HardwareTier tier_ = HardwareTier::Low;
+    bool cloud_visible_ = true;
+    bool box_visible_ = true;
+    bool line_visible_ = true;
     bool budget_exceeded_ = false;
     RoiSelector* roi_selector_ = nullptr;
     // W/E shortcuts enabled only while interactive ROI editing is active, so a

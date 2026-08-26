@@ -41,6 +41,7 @@
 #include <QTabWidget>
 #include <QThread>
 #include <QTimer>
+#include <QToolButton>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 #include <QWheelEvent>
@@ -124,8 +125,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(params_panel_, &ParamsPanel::paramChanged, this, &MainWindow::doParamChanged);
     connect(params_panel_, &ParamsPanel::actionRequested, this,
             &MainWindow::onParamsAction);
-    connect(output_combo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
-            [this](int) { showSelectedOutput(); });
+    connect(show_cloud_action_, &QAction::toggled, this,
+            [this](bool) { applyDisplayTypeFilter(); });
+    connect(show_box_action_, &QAction::toggled, this,
+            [this](bool) { applyDisplayTypeFilter(); });
+    connect(show_line_action_, &QAction::toggled, this,
+            [this](bool) { applyDisplayTypeFilter(); });
     if (run_button_) {
         connect(run_button_, &QPushButton::clicked, this, &MainWindow::runGraph);
     }
@@ -244,9 +249,24 @@ void MainWindow::buildUi() {
     node_action_bar_->setSpacing(4);
     toolbar->addLayout(node_action_bar_);
     toolbar->addStretch(1);
-    toolbar->addWidget(new QLabel(tr("Show Output:"), view_box));
-    output_combo_ = new QComboBox(view_box);
-    toolbar->addWidget(output_combo_);
+    // "Show Data Types" multi-select filter (default all checked): clouds,
+    // bounding boxes and lines (lines reserved for future geometry).
+    toolbar->addWidget(new QLabel(tr("Show Data Types:"), view_box));
+    show_types_button_ = new QToolButton(view_box);
+    show_types_button_->setPopupMode(QToolButton::InstantPopup);
+    auto* types_menu = new QMenu(show_types_button_);
+    show_cloud_action_ = types_menu->addAction(tr("Point Clouds"));
+    show_cloud_action_->setCheckable(true);
+    show_cloud_action_->setChecked(true);
+    show_box_action_ = types_menu->addAction(tr("Bounding Boxes"));
+    show_box_action_->setCheckable(true);
+    show_box_action_->setChecked(true);
+    show_line_action_ = types_menu->addAction(tr("Lines"));
+    show_line_action_->setCheckable(true);
+    show_line_action_->setChecked(true);
+    show_types_button_->setMenu(types_menu);
+    show_types_button_->setText(tr("All"));
+    toolbar->addWidget(show_types_button_);
     view_layout->addLayout(toolbar);
     cloud_view_ = new PointCloudView(view_box);
     view_layout->addWidget(cloud_view_, 1);
@@ -536,7 +556,6 @@ void MainWindow::doDeleteNode(const QString& id) {
     }
     flow_->removeNode(id.toStdString());
     refreshCanvasTree();
-    refreshOutputCombo();
     if (selected_node_id_ == id.toStdString()) {
         selected_node_id_.clear();
         params_panel_->clearPanel();
@@ -845,10 +864,10 @@ void MainWindow::onRunFinished(bool ok, const QString& error) {
     if (ok) {
         log(tr("Graph executed successfully"));
         refreshResults(last_run_to_selected_ && !selected_node_id_.empty());
-        refreshOutputCombo();
         // With a selected node, refreshResults() already re-applied the
-        // properties selection to the 3D view; without one, show the combo.
-        if (selected_node_id_.empty()) showSelectedOutput();
+        // properties selection to the 3D view; without one, show the last
+        // node output (display3d layers take precedence on their viewports).
+        if (selected_node_id_.empty()) showFallbackOutput();
         updateRoiBoxPreview();
         routeDisplayNodes();
         updateNodeActionButtons();
@@ -1040,7 +1059,7 @@ void MainWindow::openSolution() {
         selected_node_id_.clear();
         params_panel_->clearPanel();
         refreshCanvasTree();
-        refreshOutputCombo();
+        showFallbackOutput();
         log(tr("Solution loaded: %1").arg(path));
     } catch (const std::exception& e) {
         log(QString::fromUtf8(e.what()));
@@ -1370,7 +1389,9 @@ void MainWindow::applyPropsSelection() {
             continue;
         }
         const auto& obj = list->objects[static_cast<std::size_t>(c.index)];
-        if (!obj->cloud || obj->cloud->size() <= 0) continue;
+        const bool has_cloud = obj->cloud && obj->cloud->size() > 0;
+        const bool has_box = obj->roi && obj->roi->valid;
+        if (!has_cloud && !has_box) continue;
         show.objects.push_back(obj);
     }
     if (show.objects.empty()) {
@@ -1423,25 +1444,33 @@ void MainWindow::syncBoxRoiFilter() {
     }
 }
 
-void MainWindow::refreshOutputCombo() {
-    const QString previous = output_combo_->currentData().toString();
-    output_combo_->clear();
+void MainWindow::showFallbackOutput() {
+    // No node selected: show the last node that produced output (the old
+    // "Show Output" combo's default). The view applies the type filter.
+    const pcsearch::core::ObjectList* out = nullptr;
     for (auto* node : graph_.nodes()) {
-        if (!graph_.output(node->id())) continue;
-        output_combo_->addItem(QString::fromStdString(node->id()),
-                               QString::fromStdString(node->id()));
+        if (const auto* o = graph_.output(node->id())) out = o;
     }
-    const int idx = output_combo_->findData(previous);
-    output_combo_->setCurrentIndex(idx >= 0 ? idx : output_combo_->count() - 1);
-}
-
-void MainWindow::showSelectedOutput() {
-    const QString id = output_combo_->currentData().toString();
-    if (id.isEmpty()) {
+    if (!out || out->objects.empty()) {
         cloud_view_->clearView();
         return;
     }
-    cloud_view_->showObjectList(graph_.output(id.toStdString()));
+    cloud_view_->showObjectList(out);
+}
+
+void MainWindow::applyDisplayTypeFilter() {
+    cloud_view_->setVisibleKinds(show_cloud_action_->isChecked(),
+                                 show_box_action_->isChecked(),
+                                 show_line_action_->isChecked());
+    // Re-render the current content with the new filter. display3d layers are
+    // re-routed; a selected node re-applies its properties selection; with no
+    // selection the fallback output is shown.
+    routeDisplayNodes();
+    if (!selected_node_id_.empty()) {
+        applyPropsSelection();
+    } else {
+        showFallbackOutput();
+    }
 }
 
 void MainWindow::updateNodeActionButtons() {
