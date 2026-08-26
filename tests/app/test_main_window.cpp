@@ -61,6 +61,13 @@ private slots:
     // A selection containing only ROI boxes (no points) must still produce a
     // display layer; otherwise boxes would be invisible.
     void boxOnlySelectionStillShowsLayer();
+    // The Move/Rotate tool toggles the view's transform mode.
+    void moveRotateToolTogglesViewMode();
+    // The ROI button is Box ROI node-specific: it lives in the node action
+    // area and disappears for other nodes.
+    void roiButtonOnlyForBoxRoiNode();
+    // Per-frame transforms accumulate and reset.
+    void frameTransformAppliesAndResets();
 
 private:
     QString writePly(QTemporaryDir& dir) const;
@@ -456,6 +463,77 @@ void MainWindowTest::boxOnlySelectionStillShowsLayer() {
     view->showObjectList(&list);
     QVERIFY2(view->displayLayers().contains(app::PointCloudView::selectionLayerId()),
              "a box-only object list must still create a display layer");
+}
+
+void MainWindowTest::moveRotateToolTogglesViewMode() {
+    app::MainWindow w;
+    QPushButton* tool = findButton(w, QStringLiteral("Move/Rotate"));
+    QVERIFY(tool != nullptr);
+    QVERIFY(tool->isCheckable());
+    auto* view = w.findChild<app::PointCloudView*>();
+    QVERIFY(view);
+    QVERIFY(!view->transformToolActive());
+    tool->click();
+    QVERIFY(view->transformToolActive());
+    tool->click();
+    QVERIFY(!view->transformToolActive());
+}
+
+void MainWindowTest::roiButtonOnlyForBoxRoiNode() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString ply = writePly(dir);
+    app::MainWindow w;
+    QVERIFY(w.loadDemo(ply));
+
+    auto hasRoiButton = [&w]() {
+        for (QPushButton* b : w.findChildren<QPushButton*>()) {
+            if (b->text() == QLatin1String("ROI")) return true;
+        }
+        return false;
+    };
+    QVERIFY2(hasRoiButton(), "Box ROI node selected: ROI button must exist");
+
+    QTreeWidget* canvas = canvasTree(w);
+    QVERIFY(canvas);
+    const QString load_id = canvas->topLevelItem(0)->text(0);
+    QMetaObject::invokeMethod(&w, "doSelectNode", Qt::DirectConnection,
+                              Q_ARG(QString, load_id));
+    QTest::qWait(20);
+    QVERIFY2(!hasRoiButton(),
+             "Non-Box-ROI node selected: ROI button must be gone");
+}
+
+void MainWindowTest::frameTransformAppliesAndResets() {
+    auto obj = std::make_shared<pcsearch::core::PointCloudObject>();
+    obj->name = "frame_000";
+    obj->provenance = "load";
+    obj->roi = std::make_shared<pcsearch::core::RoiBox>();
+    obj->roi->valid = true;
+    obj->roi->min = Eigen::Vector3f(-5.0f, -5.0f, -5.0f);
+    obj->roi->max = Eigen::Vector3f(5.0f, 5.0f, 5.0f);
+    pcsearch::core::ObjectList list;
+    list.objects.push_back(obj);
+
+    app::MainWindow w;
+    auto* view = w.findChild<app::PointCloudView*>();
+    QVERIFY(view);
+    view->showObjectList(&list);
+
+    std::vector<app::PointCloudView::FrameRef> targets;
+    app::PointCloudView::FrameRef ref;
+    ref.source = QStringLiteral("load");
+    ref.frame = QStringLiteral("frame_000");
+    targets.push_back(ref);
+    view->setTransformTargets(targets);
+    QCOMPARE(static_cast<int>(view->transformedFrameCount()), 0);
+
+    view->applyFrameTranslation(targets, Eigen::Vector3f(10.0f, 0.0f, 0.0f));
+    QCOMPARE(static_cast<int>(view->transformedFrameCount()), 1);
+    view->applyFrameRotation(targets, 45.0f, Eigen::Vector3f(0.0f, 0.0f, 1.0f));
+    QCOMPARE(static_cast<int>(view->transformedFrameCount()), 1);
+    view->resetFrameTransforms(targets);
+    QCOMPARE(static_cast<int>(view->transformedFrameCount()), 0);
 }
 
 }  // namespace

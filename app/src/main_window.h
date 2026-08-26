@@ -142,6 +142,8 @@ private:
     QAction* show_line_action_ = nullptr;
     QPushButton* run_button_ = nullptr;
     QPushButton* run_to_button_ = nullptr;
+    QPushButton* transform_button_ = nullptr;
+    QPushButton* reset_transform_button_ = nullptr;
     QPushButton* roi_button_ = nullptr;
     QPushButton* canvas_view_button_ = nullptr;
     QPushButton* outline_view_button_ = nullptr;

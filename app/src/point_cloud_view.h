@@ -7,6 +7,7 @@
 #include <QWidget>
 
 #include <cstdint>
+#include <map>
 #include <vector>
 
 class QLabel;
@@ -18,6 +19,7 @@ class QShortcut;
 class QVTKOpenGLNativeWidget;
 class vtkRenderer;
 class vtkActor;
+class vtkInteractorStyleTrackballCamera;
 class vtkProp;
 #endif
 
@@ -117,6 +119,37 @@ public:
     // ROI box) so the box is easy to find after a reset / edit toggle.
     void frameScene();
 
+    // ---- Per-frame display transform tool (translate / rotate) ----
+    // One frame is identified by (provenance, frame name); transforms survive
+    // re-runs within the session (re-applied by key when actors are rebuilt).
+    struct FrameRef {
+        QString source;  // producing node id (object provenance)
+        QString frame;   // object / frame name
+    };
+    // Enables the Move/Rotate tool: left-drag translates the current target
+    // frames in the camera plane, right-drag rotates them around the camera
+    // axes (through each frame's center). Off restores camera navigation.
+    void setTransformToolActive(bool on);
+    bool transformToolActive() const { return transform_tool_active_; }
+    // Frames the tool acts on (set from the properties-panel selection).
+    void setTransformTargets(const std::vector<FrameRef>& frames);
+    const std::vector<FrameRef>& transformTargets() const {
+        return transform_targets_;
+    }
+    // Incremental world-space translation (mm) applied to `frames`.
+    void applyFrameTranslation(const std::vector<FrameRef>& frames,
+                               const Eigen::Vector3f& delta);
+    // Incremental rotation (degrees) around `axis` (world space), through
+    // each frame's own center.
+    void applyFrameRotation(const std::vector<FrameRef>& frames,
+                            float angle_deg, const Eigen::Vector3f& axis);
+    void resetFrameTransforms(const std::vector<FrameRef>& frames);
+    // Number of frames carrying a non-identity transform (UI feedback/tests).
+    std::size_t transformedFrameCount() const;
+    // Internal drag helpers used by the tool's interactor style.
+    void applyDragTranslation(int dx_px, int dy_px);
+    void applyDragRotation(int dx_px, int dy_px);
+
 signals:
     // center (mm) + half extents (mm) + XYZ intrinsic Euler angles (deg).
     void roiEdited(double cx, double cy, double cz, double hx, double hy, double hz,
@@ -128,17 +161,31 @@ signals:
     void displayInfo(const QString& message);
 
 private:
+    struct FrameTransform {
+        Eigen::Vector3f translation = Eigen::Vector3f::Zero();
+        Eigen::Matrix3f rotation = Eigen::Matrix3f::Identity();
+        bool has() const {
+            return translation.squaredNorm() > 1e-12f ||
+                   !rotation.isIdentity(1e-9f);
+        }
+    };
 #ifdef PCSEARCH_HAS_VTK
     // Build point/color actors for `list` into `actors`; returns the number
     // of points actually displayed (after tier-based decimation).
     std::int64_t buildCloudActors(const pcsearch::core::ObjectList& list,
                                   std::vector<vtkSmartPointer<vtkProp>>& actors);
     void addRoiBoxActor(const pcsearch::core::RoiBox& roi,
+                        const Eigen::Vector3f& frame_center,
+                        const FrameTransform* tf,
                         std::vector<vtkSmartPointer<vtkProp>>& actors);
     void removeLayerActors(std::vector<vtkSmartPointer<vtkProp>>& actors);
     void reorderActors();
     void enforceViewportBudget();
+    void rebuildSelectionLayer();
 #endif
+    const FrameTransform* frameTransform(const QString& source,
+                                         const QString& frame) const;
+    Eigen::Vector3f frameCenter(const pcsearch::core::PointCloudObject& obj) const;
     struct DisplayLayer {
         QString id;
         bool camera_fitted = false;
@@ -155,13 +202,22 @@ private:
     QVTKOpenGLNativeWidget* vtk_widget_ = nullptr;
     vtkRenderer* renderer_ = nullptr;
     vtkActor* roi_box_actor_ = nullptr;
+    // Interactor styles: camera navigation (left-rotate/right-pan/wheel-zoom)
+    // vs the Move/Rotate tool (left-drag translate, right-drag rotate).
+    vtkSmartPointer<vtkInteractorStyleTrackballCamera> camera_style_;
+    vtkSmartPointer<vtkInteractorStyleTrackballCamera> transform_style_;
 #endif
     std::vector<DisplayLayer> layers_;
+    std::map<std::pair<QString, QString>, FrameTransform> frame_transforms_;
+    std::vector<FrameRef> transform_targets_;
+    bool transform_tool_active_ = false;
     HardwareTier tier_ = HardwareTier::Low;
     bool cloud_visible_ = true;
     bool box_visible_ = true;
     bool line_visible_ = true;
     bool budget_exceeded_ = false;
+    pcsearch::core::ObjectList last_selection_;
+    bool has_last_selection_ = false;
     RoiSelector* roi_selector_ = nullptr;
     // W/E shortcuts enabled only while interactive ROI editing is active, so a
     // bare "w" outside editing still reaches the camera style (VTK uses 'w'

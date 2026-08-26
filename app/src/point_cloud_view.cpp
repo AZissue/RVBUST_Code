@@ -1,6 +1,9 @@
 #include "point_cloud_view.h"
 
+#include "pcsearch/filters/filters.h"
 #include "roi_selector.h"
+
+#include <Eigen/Geometry>
 
 #include <QLabel>
 #include <QShortcut>
@@ -64,6 +67,82 @@ private:
     CameraStylePanRight() = default;
 };
 
+// Interactor style for the Move/Rotate tool: while at least one frame is
+// targeted, left-drag translates the frames in the camera plane and right-drag
+// rotates them around the camera axes; the wheel still zooms. With no targets
+// it falls back to the normal camera navigation.
+class TransformToolStyle final : public vtkInteractorStyleTrackballCamera {
+public:
+    static TransformToolStyle* New() {
+        auto* s = new TransformToolStyle;
+        s->InitializeObjectBase();
+        return s;
+    }
+    vtkTypeMacro(TransformToolStyle, vtkInteractorStyleTrackballCamera);
+
+    app::PointCloudView* view_ = nullptr;
+
+    void OnLeftButtonDown() override {
+        if (!view_ || view_->transformTargets().empty()) {
+            vtkInteractorStyleTrackballCamera::OnLeftButtonDown();
+            return;
+        }
+        dragging_ = true;
+        rotating_ = false;
+        GetInteractor()->GetEventPosition(last_x_, last_y_);
+        FindPokedRenderer(last_x_, last_y_);
+    }
+
+    void OnLeftButtonUp() override {
+        dragging_ = false;
+        vtkInteractorStyleTrackballCamera::OnLeftButtonUp();
+    }
+
+    void OnRightButtonDown() override {
+        if (!view_ || view_->transformTargets().empty()) {
+            vtkInteractorStyleTrackballCamera::OnRightButtonDown();
+            return;
+        }
+        rotating_ = true;
+        dragging_ = false;
+        GetInteractor()->GetEventPosition(last_x_, last_y_);
+        FindPokedRenderer(last_x_, last_y_);
+    }
+
+    void OnRightButtonUp() override {
+        rotating_ = false;
+        vtkInteractorStyleTrackballCamera::OnRightButtonUp();
+    }
+
+    void OnMouseMove() override {
+        int x = 0;
+        int y = 0;
+        GetInteractor()->GetEventPosition(x, y);
+        if (!dragging_ && !rotating_) {
+            vtkInteractorStyleTrackballCamera::OnMouseMove();
+            return;
+        }
+        const int dx = x - last_x_;
+        const int dy = y - last_y_;
+        last_x_ = x;
+        last_y_ = y;
+        if (view_) {
+            if (dragging_) view_->applyDragTranslation(dx, dy);
+            else view_->applyDragRotation(dx, dy);
+        }
+    }
+
+    void OnMouseWheelForward() override { this->Dolly(1.25); }
+    void OnMouseWheelBackward() override { this->Dolly(1.0 / 1.25); }
+
+private:
+    TransformToolStyle() = default;
+    bool dragging_ = false;
+    bool rotating_ = false;
+    int last_x_ = 0;
+    int last_y_ = 0;
+};
+
 }  // namespace
 
 namespace app {
@@ -86,6 +165,7 @@ PointCloudView::PointCloudView(QWidget* parent) : QWidget(parent) {
     vtk_widget_->renderWindow()->AddRenderer(renderer_);
     vtkNew<CameraStylePanRight> style;
     vtk_widget_->renderWindow()->GetInteractor()->SetInteractorStyle(style);
+    camera_style_ = style;
     roi_selector_ = new RoiSelector(this);
     roi_selector_->attach(vtk_widget_->renderWindow()->GetInteractor());
     // Box ROI view-only shortcut keys: W = operable (drag/scale/rotate the
@@ -261,6 +341,162 @@ void PointCloudView::setVisibleKinds(bool cloud, bool box, bool line) {
     line_visible_ = line;
 }
 
+void PointCloudView::setTransformToolActive(bool on) {
+#ifdef PCSEARCH_HAS_VTK
+    transform_tool_active_ = on;
+    if (!vtk_widget_ || !vtk_widget_->renderWindow()->GetInteractor()) return;
+    auto* interactor = vtk_widget_->renderWindow()->GetInteractor();
+    if (on) {
+        if (!transform_style_) {
+            transform_style_ = vtkSmartPointer<vtkInteractorStyleTrackballCamera>(
+                TransformToolStyle::New());
+        }
+        auto* tool = static_cast<TransformToolStyle*>(transform_style_.Get());
+        tool->view_ = this;
+        interactor->SetInteractorStyle(transform_style_);
+    } else if (camera_style_) {
+        interactor->SetInteractorStyle(camera_style_);
+    }
+#else
+    (void)on;
+#endif
+}
+
+void PointCloudView::setTransformTargets(const std::vector<FrameRef>& frames) {
+    transform_targets_ = frames;
+}
+
+const PointCloudView::FrameTransform* PointCloudView::frameTransform(
+    const QString& source, const QString& frame) const {
+    const auto it = frame_transforms_.find(std::make_pair(source, frame));
+    return it == frame_transforms_.end() ? nullptr : &it->second;
+}
+
+Eigen::Vector3f PointCloudView::frameCenter(
+    const pcsearch::core::PointCloudObject& obj) const {
+    if (obj.cloud && obj.cloud->size() > 0) {
+        Eigen::Vector3f mn = Eigen::Vector3f::Zero();
+        Eigen::Vector3f mx = Eigen::Vector3f::Zero();
+        std::int64_t valid = 0;
+        if (pcsearch::filters::computeBounds(*obj.cloud, mn, mx, &valid) &&
+            valid > 0) {
+            return 0.5f * (mn + mx);
+        }
+    }
+    if (obj.roi && obj.roi->valid) return obj.roi->center;
+    return Eigen::Vector3f::Zero();
+}
+
+void PointCloudView::applyFrameTranslation(
+    const std::vector<FrameRef>& frames, const Eigen::Vector3f& delta) {
+    if (delta.squaredNorm() < 1e-12f) return;
+    for (const FrameRef& ref : frames) {
+        auto& tf = frame_transforms_[std::make_pair(ref.source, ref.frame)];
+        tf.translation += delta;
+    }
+    rebuildSelectionLayer();
+}
+
+void PointCloudView::applyFrameRotation(
+    const std::vector<FrameRef>& frames, float angle_deg,
+    const Eigen::Vector3f& axis) {
+    if (std::abs(angle_deg) < 1e-4f) return;
+    const float rad = angle_deg * 3.14159265358979f / 180.0f;
+    const Eigen::Matrix3f r =
+        Eigen::AngleAxisf(rad, axis.normalized()).toRotationMatrix();
+    for (const FrameRef& ref : frames) {
+        auto& tf = frame_transforms_[std::make_pair(ref.source, ref.frame)];
+        tf.rotation = r * tf.rotation;
+    }
+    rebuildSelectionLayer();
+}
+
+void PointCloudView::resetFrameTransforms(const std::vector<FrameRef>& frames) {
+    for (const FrameRef& ref : frames) {
+        frame_transforms_.erase(std::make_pair(ref.source, ref.frame));
+    }
+    rebuildSelectionLayer();
+}
+
+std::size_t PointCloudView::transformedFrameCount() const {
+    std::size_t count = 0;
+    for (const auto& [key, tf] : frame_transforms_) {
+        (void)key;
+        if (tf.has()) ++count;
+    }
+    return count;
+}
+
+void PointCloudView::applyDragTranslation(int dx_px, int dy_px) {
+#ifdef PCSEARCH_HAS_VTK
+    if (!renderer_ || !renderer_->GetActiveCamera()) return;
+    auto* camera = renderer_->GetActiveCamera();
+    const double* up = camera->GetViewUp();
+    const double* dop = camera->GetDirectionOfProjection();
+    Eigen::Vector3f dir(static_cast<float>(dop[0]),
+                        static_cast<float>(dop[1]),
+                        static_cast<float>(dop[2]));
+    Eigen::Vector3f upv(static_cast<float>(up[0]),
+                        static_cast<float>(up[1]),
+                        static_cast<float>(up[2]));
+    const Eigen::Vector3f right = dir.cross(upv).normalized();
+    const int* size = renderer_->GetSize();
+    const double dist = camera->GetDistance();
+    const double vfov = camera->GetViewAngle() * 3.14159265358979 / 180.0;
+    const double scale =
+        2.0 * dist * std::tan(0.5 * vfov) / std::max(1, size[1]);
+    const Eigen::Vector3f delta =
+        right * static_cast<float>(dx_px * scale) -
+        upv * static_cast<float>(dy_px * scale);
+    applyFrameTranslation(transform_targets_, delta);
+#else
+    (void)dx_px;
+    (void)dy_px;
+#endif
+}
+
+void PointCloudView::applyDragRotation(int dx_px, int dy_px) {
+#ifdef PCSEARCH_HAS_VTK
+    if (!renderer_ || !renderer_->GetActiveCamera()) return;
+    auto* camera = renderer_->GetActiveCamera();
+    const double* up = camera->GetViewUp();
+    const double* dop = camera->GetDirectionOfProjection();
+    Eigen::Vector3f dir(static_cast<float>(dop[0]),
+                        static_cast<float>(dop[1]),
+                        static_cast<float>(dop[2]));
+    Eigen::Vector3f upv(static_cast<float>(up[0]),
+                        static_cast<float>(up[1]),
+                        static_cast<float>(up[2]));
+    const Eigen::Vector3f right = dir.cross(upv).normalized();
+    // 0.5 degree per pixel; horizontal drag rotates around the camera's up
+    // axis, vertical drag around its right axis.
+    applyFrameRotation(transform_targets_, 0.5f * dx_px, upv);
+    applyFrameRotation(transform_targets_, 0.5f * dy_px, right);
+#else
+    (void)dx_px;
+    (void)dy_px;
+#endif
+}
+
+void PointCloudView::rebuildSelectionLayer() {
+#ifdef PCSEARCH_HAS_VTK
+    if (!has_last_selection_ || !vtk_widget_) return;
+    auto it = std::find_if(layers_.begin(), layers_.end(),
+                           [&](const DisplayLayer& l) {
+                               return l.id == selectionLayerId();
+                           });
+    if (it == layers_.end()) {
+        showObjectList(&last_selection_);
+        return;
+    }
+    removeLayerActors(it->actors);
+    it->shown_points = buildCloudActors(last_selection_, it->actors);
+    reorderActors();
+    vtk_widget_->renderWindow()->Render();
+    enforceViewportBudget();
+#endif
+}
+
 void PointCloudView::clearAllDisplayLayers() {
 #ifdef PCSEARCH_HAS_VTK
     for (auto& layer : layers_) removeLayerActors(layer.actors);
@@ -336,6 +572,8 @@ void PointCloudView::showObjectList(const pcsearch::core::ObjectList* list) {
         clearView();
         return;
     }
+    last_selection_ = *list;
+    has_last_selection_ = true;
     clearAllDisplayLayers();
     DisplayLayer layer;
     layer.id = selectionLayerId();
@@ -367,6 +605,10 @@ void PointCloudView::showObjectList(const pcsearch::core::ObjectList* list) {
     }
 #else
     (void)list;
+    if (list) {
+        last_selection_ = *list;
+        has_last_selection_ = true;
+    }
 #endif
 }
 
@@ -382,6 +624,11 @@ std::int64_t PointCloudView::buildCloudActors(
         if (!obj->cloud || obj->cloud->size() <= 0 || !cloud_visible_) continue;
         const auto& cloud = *obj->cloud;
         const std::int64_t n = cloud.size();
+        const Eigen::Vector3f center = frameCenter(*obj);
+        const FrameTransform* tf =
+            frameTransform(QString::fromStdString(obj->provenance),
+                           QString::fromStdString(obj->name));
+        const bool apply_tf = tf && tf->has();
 
         // Display decimation: huge clouds (RVC 5MP / stitched 10M+) must
         // not be uploaded to the GPU in full on integrated graphics or
@@ -402,8 +649,12 @@ std::int64_t PointCloudView::buildCloudActors(
         verts->InsertNextCell(count);
         std::int64_t out = 0;
         for (std::int64_t i = 0; i < n; i += stride, ++out) {
-            points->SetPoint(static_cast<vtkIdType>(out), cloud.points(i, 0),
-                             cloud.points(i, 1), cloud.points(i, 2));
+            Eigen::Vector3f p(cloud.points(i, 0), cloud.points(i, 1),
+                              cloud.points(i, 2));
+            if (apply_tf) {
+                p = tf->rotation * (p - center) + center + tf->translation;
+            }
+            points->SetPoint(static_cast<vtkIdType>(out), p.x(), p.y(), p.z());
             verts->InsertCellPoint(static_cast<vtkIdType>(out));
         }
 
@@ -444,7 +695,11 @@ std::int64_t PointCloudView::buildCloudActors(
     if (box_visible_) {
         for (const auto& obj : list.objects) {
             if (obj->roi && obj->roi->valid) {
-                addRoiBoxActor(*obj->roi, actors);
+                const Eigen::Vector3f center = frameCenter(*obj);
+                const FrameTransform* tf =
+                    frameTransform(QString::fromStdString(obj->provenance),
+                                   QString::fromStdString(obj->name));
+                addRoiBoxActor(*obj->roi, center, tf, actors);
             }
         }
     }
@@ -457,8 +712,8 @@ std::int64_t PointCloudView::buildCloudActors(
 }
 
 void PointCloudView::addRoiBoxActor(
-    const pcsearch::core::RoiBox& roi,
-    std::vector<vtkSmartPointer<vtkProp>>& actors) {
+    const pcsearch::core::RoiBox& roi, const Eigen::Vector3f& frame_center,
+    const FrameTransform* tf, std::vector<vtkSmartPointer<vtkProp>>& actors) {
 #ifdef PCSEARCH_HAS_VTK
     if (!renderer_) return;
     vtkNew<vtkCubeSource> cube;
@@ -466,13 +721,22 @@ void PointCloudView::addRoiBoxActor(
     cube->SetXLength(size.x());
     cube->SetYLength(size.y());
     cube->SetZLength(size.z());
+    // Frame transform composes rigidly with the box pose: world = R*(p - c) +
+    // c + t applied around the box's own center, i.e. orientation' = R*Rbox
+    // and center' = R*box_center + t + c - R*c.
+    Eigen::Matrix3f o = roi.orientation;
+    Eigen::Vector3f center = roi.center;
+    if (tf && tf->has()) {
+        o = tf->rotation * roi.orientation;
+        center = tf->rotation * roi.center + tf->translation +
+                 frame_center - tf->rotation * frame_center;
+    }
     // world = orientation * local + center (row-major 4x4).
-    const Eigen::Matrix3f& o = roi.orientation;
     const double elements[16] = {
         o(0, 0), o(0, 1), o(0, 2), 0.0,
         o(1, 0), o(1, 1), o(1, 2), 0.0,
         o(2, 0), o(2, 1), o(2, 2), 0.0,
-        roi.center.x(), roi.center.y(), roi.center.z(), 1.0};
+        center.x(), center.y(), center.z(), 1.0};
     vtkNew<vtkTransform> transform;
     transform->SetMatrix(elements);
     vtkNew<vtkTransformPolyDataFilter> tfilter;
@@ -489,6 +753,8 @@ void PointCloudView::addRoiBoxActor(
     actors.push_back(vtkSmartPointer<vtkProp>(actor));
 #else
     (void)roi;
+    (void)frame_center;
+    (void)tf;
     (void)actors;
 #endif
 }

@@ -138,9 +138,17 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         connect(run_to_button_, &QPushButton::clicked, this,
                 [this] { runGraph(true); });
     }
-    if (roi_button_) {
-        connect(roi_button_, &QPushButton::toggled, this, &MainWindow::onRoiToggle);
-    }
+    connect(transform_button_, &QPushButton::toggled, this,
+            [this](bool on) {
+                cloud_view_->setTransformToolActive(on);
+                log(on ? tr("Move/Rotate tool: left-drag moves the selected "
+                            "frames, right-drag rotates them")
+                       : tr("Move/Rotate tool disabled"));
+            });
+    connect(reset_transform_button_, &QPushButton::clicked, this, [this] {
+        cloud_view_->resetFrameTransforms(cloud_view_->transformTargets());
+        log(tr("Transforms reset for the selected frames"));
+    });
     connect(cloud_view_, &PointCloudView::roiEdited, this, &MainWindow::onRoiEdited);
     connect(cloud_view_, &PointCloudView::roiEditFinished, this,
             &MainWindow::onRoiEditFinished);
@@ -240,14 +248,18 @@ void MainWindow::buildUi() {
     toolbar->addWidget(run_button_);
     run_to_button_ = new QPushButton(tr("Run to Node"), view_box);
     toolbar->addWidget(run_to_button_);
-    roi_button_ = new QPushButton(tr("ROI"), view_box);
-    roi_button_->setCheckable(true);
-    toolbar->addWidget(roi_button_);
     // Node-specific function buttons live in this reserved area (e.g. Box ROI
-    // -> 重置包围盒). Populated by updateNodeActionButtons().
+    // -> 重置包围盒 / ROI 框选). Populated by updateNodeActionButtons().
     node_action_bar_ = new QHBoxLayout;
     node_action_bar_->setSpacing(4);
     toolbar->addLayout(node_action_bar_);
+    // Per-frame Move/Rotate tool: left-drag translates the frames selected in
+    // the properties panel, right-drag rotates them (see PointCloudView).
+    transform_button_ = new QPushButton(tr("Move/Rotate"), view_box);
+    transform_button_->setCheckable(true);
+    toolbar->addWidget(transform_button_);
+    reset_transform_button_ = new QPushButton(tr("Reset Transform"), view_box);
+    toolbar->addWidget(reset_transform_button_);
     toolbar->addStretch(1);
     // "Show Data Types" multi-select filter (default all checked): clouds,
     // bounding boxes and lines (lines reserved for future geometry).
@@ -470,20 +482,21 @@ void MainWindow::doSelectNode(const QString& id) {
     // the Box ROI baseline. Must run before enterRoiEdit() so the ROI
     // interaction sees the current node's frame selection.
     refreshPropsTree();
-    if (node && node->type() != "box_roi") {
-        roi_button_->setChecked(false);
+    const bool is_box_roi = node && node->type() == "box_roi";
+    if (!is_box_roi) {
         cloud_view_->enableRoiEdit(false);
-    } else if (node && node->type() == "box_roi") {
+    }
+    updateRoiBoxPreview();
+    updateNodeActionButtons();
+    if (is_box_roi && roi_button_) {
         // Auto-enter interactive ROI editing as soon as a Box ROI node is
         // selected, so the user does not have to select the node and then
-        // click the ROI toolbar button each time.
+        // click the ROI button (which now lives in the node action area).
         roi_button_->blockSignals(true);
         roi_button_->setChecked(true);
         roi_button_->blockSignals(false);
         enterRoiEdit();
     }
-    updateRoiBoxPreview();
-    updateNodeActionButtons();
     updateRunControls();
 }
 
@@ -559,7 +572,7 @@ void MainWindow::doDeleteNode(const QString& id) {
     if (selected_node_id_ == id.toStdString()) {
         selected_node_id_.clear();
         params_panel_->clearPanel();
-        roi_button_->setChecked(false);
+        if (roi_button_) roi_button_->setChecked(false);
         cloud_view_->enableRoiEdit(false);
         cloud_view_->hideRoiBox();
         refreshPropsTree();
@@ -595,7 +608,7 @@ void MainWindow::onRoiToggle(bool on) {
     pcsearch::pipeline::Node* node = graph_.node(selected_node_id_);
     if (!node || node->type() != "box_roi") {
         log(tr("Select a Box ROI node first, then press ROI"));
-        roi_button_->setChecked(false);
+        if (roi_button_) roi_button_->setChecked(false);
         return;
     }
     enterRoiEdit();
@@ -761,10 +774,10 @@ void MainWindow::onParamsAction(const QString& node_id, const QString& action) {
     if (selected_node_id_ == node->id()) {
         params_panel_->showNode(node);
         updateRoiBoxPreview();
-        if (!roi_button_->isChecked()) {
+        if (!roi_button_ || !roi_button_->isChecked()) {
             // Auto-enter ROI 框选 so the box is visible and immediately
             // operable; onRoiToggle re-places the widget with the new params.
-            roi_button_->setChecked(true);
+            if (roi_button_) roi_button_->setChecked(true);
         } else {
             double center[3], half[3], rot[3];
             if (boxRoiObbFromNode(*node, center, half, rot)) {
@@ -797,7 +810,8 @@ void MainWindow::doParamChanged(const QString& node_id, const QString& name,
             updateRoiBoxPreview();
             // Keep the interactive box in sync when the user edits spin boxes
             // while ROI 框选 is active.
-            if (roi_button_->isChecked() && selected_node_id_ == node_id.toStdString()) {
+            if (roi_button_ && roi_button_->isChecked() &&
+                selected_node_id_ == node_id.toStdString()) {
                 double center[3], half[3], rot[3];
                 if (boxRoiObbFromNode(*n, center, half, rot)) {
                     cloud_view_->enableRoiEditObb(true, center, half, rot);
@@ -1382,6 +1396,7 @@ void MainWindow::applyPropsSelection() {
     // Output selections win; otherwise input selections drive the view.
     const std::vector<Candidate>& chosen = outputs.empty() ? inputs : outputs;
     pcsearch::core::ObjectList show;
+    std::vector<app::PointCloudView::FrameRef> targets;
     for (const Candidate& c : chosen) {
         const auto* list = graph_.output(c.node.toStdString(), c.port);
         if (!list || c.index < 0 ||
@@ -1393,7 +1408,13 @@ void MainWindow::applyPropsSelection() {
         const bool has_box = obj->roi && obj->roi->valid;
         if (!has_cloud && !has_box) continue;
         show.objects.push_back(obj);
+        app::PointCloudView::FrameRef ref;
+        ref.source = c.node;
+        ref.frame = QString::fromStdString(obj->name);
+        targets.push_back(std::move(ref));
     }
+    // The Move/Rotate tool acts on exactly the frames the selection shows.
+    cloud_view_->setTransformTargets(targets);
     if (show.objects.empty()) {
         cloud_view_->clearView();
     } else {
@@ -1475,6 +1496,9 @@ void MainWindow::applyDisplayTypeFilter() {
 
 void MainWindow::updateNodeActionButtons() {
     if (!node_action_bar_) return;
+    // The ROI button lives in this bar and is rebuilt on every selection
+    // change; drop the old pointer before the old widget is deleted.
+    roi_button_ = nullptr;
     while (node_action_bar_->count() > 0) {
         QLayoutItem* item = node_action_bar_->takeAt(0);
         if (QWidget* w = item->widget()) w->deleteLater();
@@ -1483,6 +1507,11 @@ void MainWindow::updateNodeActionButtons() {
     pcsearch::pipeline::Node* node = graph_.node(selected_node_id_);
     if (!node || node->type() != "box_roi") return;
     const std::string node_id = node->id();
+    // ROI 框选 is Box ROI node-specific: it only appears here.
+    roi_button_ = new QPushButton(tr("ROI"), this);
+    roi_button_->setCheckable(true);
+    node_action_bar_->addWidget(roi_button_);
+    connect(roi_button_, &QPushButton::toggled, this, &MainWindow::onRoiToggle);
     auto* fit = new QPushButton(tr("Reset Bounds (Fit Input Cloud)"), this);
     connect(fit, &QPushButton::clicked, this,
             [this, node_id](bool) {
