@@ -51,6 +51,15 @@ namespace app {
 
 namespace {
 
+// Roles attached to cloud-properties tree rows. Object rows carry all four;
+// group rows carry only kPropsInputRole (input vs output group).
+enum PropsRole {
+    kPropsNodeRole = Qt::UserRole,  // QString: source node id
+    kPropsPortRole,                 // int: port on the source node
+    kPropsIndexRole,                // int: object index inside the port list
+    kPropsInputRole,                // bool: true = input group
+};
+
 void applyPanelShadow(QWidget* w) {
     auto* effect = new QGraphicsDropShadowEffect(w);
     effect->setBlurRadius(18);
@@ -215,8 +224,18 @@ void MainWindow::buildUi() {
 
     auto* props_box = new QGroupBox(tr("Cloud Properties"), right_panel);
     auto* props_layout = new QVBoxLayout(props_box);
+    auto* props_toolbar = new QHBoxLayout;
+    auto* select_all_btn = new QPushButton(tr("Select All"), props_box);
+    auto* clear_sel_btn = new QPushButton(tr("Clear"), props_box);
+    props_toolbar->addWidget(select_all_btn);
+    props_toolbar->addWidget(clear_sel_btn);
+    props_toolbar->addStretch(1);
+    props_layout->addLayout(props_toolbar);
     results_tree_ = new QTreeWidget(props_box);
-    results_tree_->setHeaderLabels({tr("Node"), tr("Object"), tr("Points"), tr("Kind")});
+    results_tree_->setHeaderLabels(
+        {tr("Object"), tr("Points"), tr("Kind"), tr("Source")});
+    results_tree_->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    results_tree_->setSelectionBehavior(QAbstractItemView::SelectRows);
     props_layout->addWidget(results_tree_);
     applyPanelShadow(props_box);
     right_panel->addWidget(props_box);
@@ -224,6 +243,13 @@ void MainWindow::buildUi() {
     right_panel->setStretchFactor(1, 2);
     central->addWidget(right_panel);
     central->setStretchFactor(3, 0);
+
+    connect(results_tree_, &QTreeWidget::itemSelectionChanged, this,
+            &MainWindow::applyPropsSelection);
+    connect(select_all_btn, &QPushButton::clicked, this,
+            [this] { selectAllProps(true); });
+    connect(clear_sel_btn, &QPushButton::clicked, this,
+            [this] { selectAllProps(false); });
 
     setCentralWidget(central);
 
@@ -359,6 +385,11 @@ void MainWindow::doSelectNode(const QString& id) {
     selected_node_id_ = id.toStdString();
     pcsearch::pipeline::Node* node = graph_.node(selected_node_id_);
     params_panel_->showNode(node);
+    // Cloud-properties panel now shows this node's inputs + outputs and
+    // defaults to selecting the input frames, which drives the 3D view and
+    // the Box ROI baseline. Must run before enterRoiEdit() so the ROI
+    // interaction sees the current node's frame selection.
+    refreshPropsTree();
     if (node && node->type() != "box_roi") {
         roi_button_->setChecked(false);
         cloud_view_->enableRoiEdit(false);
@@ -371,24 +402,7 @@ void MainWindow::doSelectNode(const QString& id) {
         roi_button_->blockSignals(false);
         enterRoiEdit();
     }
-    showNodeInputCloud(selected_node_id_);
     updateRoiBoxPreview();
-}
-
-void MainWindow::showNodeInputCloud(const std::string& id) {
-    const pcsearch::core::ObjectList* shown = nullptr;
-    for (const auto& e : graph_.edges()) {
-        if (e.to_id == id) {
-            if (const auto* out = graph_.output(e.from_id, e.from_port)) {
-                shown = out;
-                break;
-            }
-        }
-    }
-    if (!shown) {
-        shown = graph_.output(id, 0);
-    }
-    cloud_view_->showObjectList(shown);
 }
 
 bool MainWindow::nodeInputBounds(const std::string& id, double bounds[6],
@@ -402,12 +416,22 @@ bool MainWindow::nodeInputBounds(const std::string& id, double bounds[6],
     std::int64_t points = 0;
     double mn[3] = {0.0, 0.0, 0.0};
     double mx[3] = {0.0, 0.0, 0.0};
+    // ROI interactions operate on the frames selected in the properties
+    // panel: when the user picked specific input frames, only those frames
+    // contribute to the box baseline (multi-select merges them). An empty
+    // selection keeps the historical "whole input" behavior.
+    const std::vector<std::int64_t> selected = selectedInputIndices(0);
     for (const auto& e : graph_.edges()) {
-        if (e.to_id != id) continue;
+        if (e.to_id != id || e.to_port != 0) continue;
         const auto* out = graph_.output(e.from_id, e.from_port);
         if (!out) continue;
-        for (const auto& obj : out->objects) {
-            const auto& c = *obj->cloud;
+        for (std::size_t i = 0; i < out->objects.size(); ++i) {
+            if (!selected.empty() &&
+                std::find(selected.begin(), selected.end(),
+                          static_cast<std::int64_t>(i)) == selected.end()) {
+                continue;
+            }
+            const auto& c = *out->objects[i]->cloud;
             Eigen::Vector3f o_mn, o_mx;
             std::int64_t valid = 0;
             if (!pcsearch::filters::computeBounds(c, o_mn, o_mx, &valid)) continue;
@@ -457,6 +481,7 @@ void MainWindow::doDeleteNode(const QString& id) {
         roi_button_->setChecked(false);
         cloud_view_->enableRoiEdit(false);
         cloud_view_->hideRoiBox();
+        refreshPropsTree();
     }
     log(tr("Deleted node: %1").arg(id));
 }
@@ -749,11 +774,9 @@ void MainWindow::onRunFinished(bool ok, const QString& error) {
         log(tr("Graph executed successfully"));
         refreshResults();
         refreshOutputCombo();
-        if (!selected_node_id_.empty()) {
-            showNodeInputCloud(selected_node_id_);
-        } else {
-            showSelectedOutput();
-        }
+        // With a selected node, refreshResults() already re-applied the
+        // properties selection to the 3D view; without one, show the combo.
+        if (selected_node_id_.empty()) showSelectedOutput();
         updateRoiBoxPreview();
         routeDisplayNodes();
         statusBar()->showMessage(
@@ -1002,24 +1025,280 @@ void MainWindow::showAbout() {
 }
 
 void MainWindow::refreshResults() {
+    refreshPropsTree();
+}
+
+namespace {
+
+QString objKindText(const pcsearch::core::PointCloudObject& obj) {
+    QString kinds;
+    for (const auto& r : obj.regions) {
+        if (!kinds.isEmpty()) kinds += ", ";
+        kinds += QString::fromStdString(r.label);
+    }
+    return kinds;
+}
+
+QTreeWidgetItem* makeObjectRow(const pcsearch::core::PointCloudObject& obj,
+                               const QString& source_node, int port, int index,
+                               bool is_input) {
+    auto* item = new QTreeWidgetItem;
+    item->setText(0, QString::fromStdString(obj.name));
+    item->setText(1, obj.cloud ? QString::number(obj.cloud->size()) : QStringLiteral("0"));
+    item->setText(2, objKindText(obj));
+    item->setText(3, source_node);
+    item->setData(0, kPropsNodeRole, source_node);
+    item->setData(0, kPropsPortRole, port);
+    item->setData(0, kPropsIndexRole, index);
+    item->setData(0, kPropsInputRole, is_input);
+    return item;
+}
+
+}  // namespace
+
+void MainWindow::refreshPropsTree() {
+    results_tree_->blockSignals(true);
     results_tree_->clear();
-    for (auto* node : graph_.nodes()) {
-        auto* node_item = new QTreeWidgetItem(results_tree_);
-        node_item->setText(0, QString::fromStdString(node->id()));
-        const auto* out = graph_.output(node->id());
-        if (!out) continue;
-        for (const auto& obj : out->objects) {
-            auto* obj_item = new QTreeWidgetItem(node_item);
-            obj_item->setText(1, QString::fromStdString(obj->name));
-            obj_item->setText(2, QString::number(obj->cloud->size()));
-            QString kinds;
-            for (const auto& r : obj->regions) {
-                if (!kinds.isEmpty()) kinds += ", ";
-                kinds += QString::fromStdString(r.label);
+    const std::string sel = selected_node_id_;
+    pcsearch::pipeline::Node* node = graph_.node(sel);
+
+    if (!node) {
+        // Nothing selected: fall back to a read-only list of every node's
+        // first output (historical behavior).
+        for (auto* n : graph_.nodes()) {
+            auto* node_item = new QTreeWidgetItem(results_tree_);
+            node_item->setText(0, QString::fromStdString(n->id()));
+            const auto* out = graph_.output(n->id());
+            if (!out) continue;
+            for (std::size_t i = 0; i < out->objects.size(); ++i) {
+                auto* obj_item = makeObjectRow(*out->objects[i],
+                                               QString::fromStdString(n->id()), 0,
+                                               static_cast<int>(i), false);
+                node_item->addChild(obj_item);
             }
-            obj_item->setText(3, kinds);
+            results_tree_->expandItem(node_item);
         }
-        results_tree_->expandItem(node_item);
+        results_tree_->blockSignals(false);
+        return;
+    }
+
+    auto* root = new QTreeWidgetItem(results_tree_);
+    root->setText(0, QString::fromStdString(sel));
+    root->setFlags(root->flags() & ~Qt::ItemIsSelectable);
+
+    // ---- Inputs: upstream edges grouped by input port ----
+    auto* in_group = new QTreeWidgetItem(root);
+    in_group->setText(0, tr("Input"));
+    in_group->setFlags(in_group->flags() & ~Qt::ItemIsSelectable);
+    in_group->setData(0, kPropsInputRole, true);
+    bool any_input = false;
+    for (std::size_t p = 0; p < node->inputCount(); ++p) {
+        const pcsearch::core::ObjectList* list = nullptr;
+        QString from_id;
+        for (const auto& e : graph_.edges()) {
+            if (e.to_id != sel || e.to_port != static_cast<int>(p)) continue;
+            from_id = QString::fromStdString(e.from_id);
+            list = graph_.output(e.from_id, e.from_port);
+            break;
+        }
+        if (!list || list->objects.empty()) continue;
+        auto* port_item = new QTreeWidgetItem(in_group);
+        port_item->setText(0, QStringLiteral("Port %1 (%2)")
+                                 .arg(static_cast<int>(p))
+                                 .arg(QString::fromStdString(node->inputKind(p))));
+        port_item->setFlags(port_item->flags() & ~Qt::ItemIsSelectable);
+        for (std::size_t i = 0; i < list->objects.size(); ++i) {
+            auto* row = makeObjectRow(*list->objects[i], from_id,
+                                      static_cast<int>(p), static_cast<int>(i), true);
+            port_item->addChild(row);
+            any_input = true;
+        }
+    }
+    if (!any_input) {
+        auto* empty = new QTreeWidgetItem(in_group);
+        empty->setText(0, tr("(no inputs)"));
+        empty->setFlags(empty->flags() & ~Qt::ItemIsSelectable);
+    }
+
+    // ---- Outputs: every output port of the selected node ----
+    auto* out_group = new QTreeWidgetItem(root);
+    out_group->setText(0, tr("Output"));
+    out_group->setFlags(out_group->flags() & ~Qt::ItemIsSelectable);
+    out_group->setData(0, kPropsInputRole, false);
+    bool any_output = false;
+    for (std::size_t p = 0; p < node->outputCount(); ++p) {
+        const auto* list = graph_.output(sel, static_cast<int>(p));
+        if (!list || list->objects.empty()) continue;
+        auto* port_item = new QTreeWidgetItem(out_group);
+        port_item->setText(0, QStringLiteral("Port %1 (%2)")
+                                  .arg(static_cast<int>(p))
+                                  .arg(QString::fromStdString(node->outputKind(p))));
+        port_item->setFlags(port_item->flags() & ~Qt::ItemIsSelectable);
+        for (std::size_t i = 0; i < list->objects.size(); ++i) {
+            auto* row = makeObjectRow(*list->objects[i],
+                                      QString::fromStdString(sel),
+                                      static_cast<int>(p), static_cast<int>(i), false);
+            port_item->addChild(row);
+            any_output = true;
+        }
+    }
+    if (!any_output) {
+        auto* empty = new QTreeWidgetItem(out_group);
+        empty->setText(0, tr("(no outputs)"));
+        empty->setFlags(empty->flags() & ~Qt::ItemIsSelectable);
+    }
+
+    results_tree_->expandAll();
+    results_tree_->blockSignals(false);
+    // Default selection drives the 3D view but must not reset a previously
+    // configured Box ROI frame filter.
+    props_sync_filter_ = false;
+    selectAllProps(true, false);
+    props_sync_filter_ = true;
+}
+
+void MainWindow::selectAllProps(bool select, bool sync_filter) {
+    // Decide the default group: inputs when the node has any, else outputs.
+    bool prefer_input = true;
+    if (select) {
+        bool has_input = false;
+        bool has_output = false;
+        for (int i = 0; i < results_tree_->topLevelItemCount(); ++i) {
+            QTreeWidgetItem* root = results_tree_->topLevelItem(i);
+            for (int g = 0; g < root->childCount(); ++g) {
+                QTreeWidgetItem* group = root->child(g);
+                const bool input_group = group->data(0, kPropsInputRole).toBool();
+                if (input_group) has_input = true;
+                else has_output = true;
+            }
+        }
+        prefer_input = has_input;
+        (void)has_output;
+    }
+
+    std::vector<QTreeWidgetItem*> object_rows;
+    for (int i = 0; i < results_tree_->topLevelItemCount(); ++i) {
+        QTreeWidgetItem* root = results_tree_->topLevelItem(i);
+        for (int g = 0; g < root->childCount(); ++g) {
+            QTreeWidgetItem* group = root->child(g);
+            const bool input_group = group->data(0, kPropsInputRole).toBool();
+            if (select && input_group != prefer_input) continue;
+            for (int c = 0; c < group->childCount(); ++c) {
+                QTreeWidgetItem* port = group->child(c);
+                for (int r = 0; r < port->childCount(); ++r) {
+                    QTreeWidgetItem* row = port->child(r);
+                    if (!row->data(0, kPropsIndexRole).isValid()) continue;
+                    object_rows.push_back(row);
+                }
+            }
+        }
+    }
+    if (select) {
+        results_tree_->clearSelection();
+        for (QTreeWidgetItem* row : object_rows) {
+            row->setSelected(true);
+        }
+        if (!object_rows.empty()) results_tree_->setCurrentItem(object_rows.front());
+    } else {
+        results_tree_->clearSelection();
+    }
+    if (!sync_filter) props_sync_filter_ = false;
+    applyPropsSelection();
+    props_sync_filter_ = true;
+}
+
+std::vector<std::int64_t> MainWindow::selectedInputIndices(int port) const {
+    std::vector<std::int64_t> out;
+    const QList<QTreeWidgetItem*> selected = results_tree_->selectedItems();
+    for (QTreeWidgetItem* item : selected) {
+        if (!item->data(0, kPropsIndexRole).isValid()) continue;
+        if (!item->data(0, kPropsInputRole).toBool()) continue;
+        if (item->data(0, kPropsPortRole).toInt() != port) continue;
+        out.push_back(item->data(0, kPropsIndexRole).toInt());
+    }
+    return out;
+}
+
+void MainWindow::applyPropsSelection() {
+    struct Candidate {
+        QString node;
+        int port = 0;
+        int index = 0;
+        bool input = false;
+    };
+    std::vector<Candidate> inputs;
+    std::vector<Candidate> outputs;
+    const QList<QTreeWidgetItem*> selected = results_tree_->selectedItems();
+    for (QTreeWidgetItem* item : selected) {
+        if (!item->data(0, kPropsIndexRole).isValid()) continue;
+        Candidate c;
+        c.node = item->data(0, kPropsNodeRole).toString();
+        c.port = item->data(0, kPropsPortRole).toInt();
+        c.index = item->data(0, kPropsIndexRole).toInt();
+        c.input = item->data(0, kPropsInputRole).toBool();
+        (c.input ? inputs : outputs).push_back(c);
+    }
+
+    // Output selections win; otherwise input selections drive the view.
+    const std::vector<Candidate>& chosen = outputs.empty() ? inputs : outputs;
+    pcsearch::core::ObjectList show;
+    for (const Candidate& c : chosen) {
+        const auto* list = graph_.output(c.node.toStdString(), c.port);
+        if (!list || c.index < 0 ||
+            static_cast<std::size_t>(c.index) >= list->objects.size()) {
+            continue;
+        }
+        const auto& obj = list->objects[static_cast<std::size_t>(c.index)];
+        if (!obj->cloud || obj->cloud->size() <= 0) continue;
+        show.objects.push_back(obj);
+    }
+    if (show.objects.empty()) {
+        cloud_view_->clearView();
+    } else {
+        cloud_view_->showObjectList(&show);
+    }
+    if (props_sync_filter_) syncBoxRoiFilter();
+    // ROI baseline follows the selected input frames (project requirement).
+    updateRoiBoxPreview();
+}
+
+void MainWindow::syncBoxRoiFilter() {
+    pcsearch::pipeline::Node* node = graph_.node(selected_node_id_);
+    if (!node || node->type() != "box_roi") return;
+    int total_input = 0;
+    for (const auto& e : graph_.edges()) {
+        if (e.to_id != selected_node_id_ || e.to_port != 0) continue;
+        if (const auto* l = graph_.output(e.from_id, e.from_port)) {
+            total_input = static_cast<int>(l->objects.size());
+        }
+        break;
+    }
+    std::vector<int> selected;
+    const QList<QTreeWidgetItem*> items = results_tree_->selectedItems();
+    for (QTreeWidgetItem* item : items) {
+        if (!item->data(0, kPropsIndexRole).isValid()) continue;
+        if (!item->data(0, kPropsInputRole).toBool()) continue;
+        if (item->data(0, kPropsPortRole).toInt() != 0) continue;
+        selected.push_back(item->data(0, kPropsIndexRole).toInt());
+    }
+    std::sort(selected.begin(), selected.end());
+    std::string filter;
+    // Proper subset only: select-all / clear keep "all frames" semantics.
+    if (!selected.empty() && static_cast<int>(selected.size()) < total_input) {
+        for (std::size_t k = 0; k < selected.size(); ++k) {
+            if (k) filter += ",";
+            filter += std::to_string(selected[k]);
+        }
+    }
+    if (filter == node->params().getString("frame_filter")) return;
+    try {
+        graph_.setParam(selected_node_id_, "frame_filter",
+                        pcsearch::pipeline::ParamValue{filter});
+        log(tr("Box ROI frame filter: %1 (press F5 to recompute)")
+                .arg(filter.empty() ? QStringLiteral("all frames")
+                                    : QString::fromStdString(filter)));
+    } catch (const std::exception& e) {
+        log(QString::fromUtf8(e.what()));
     }
 }
 

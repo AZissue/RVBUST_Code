@@ -74,6 +74,25 @@ private:
     // vtkBoxWidget2 editor (auto-entered when the node is selected).
     void enterRoiEdit();
     void refreshResults();
+    // Rebuild the cloud-properties tree for the selected node: its inputs
+    // (from upstream edges, grouped by port) and outputs (grouped by port),
+    // one row per object/frame. Falls back to all node outputs when nothing
+    // is selected. Rows are multi-selectable and drive the 3D view.
+    void refreshPropsTree();
+    // Collect the selected rows and push them to the 3D viewport: output
+    // selections win, otherwise input selections; empty selection clears the
+    // view. Also refreshes the ROI baseline (selected input frames).
+    void applyPropsSelection();
+    // Object indices of the selected input rows on input port `port`
+    // (only cloud-carrying objects), used as the Box ROI baseline.
+    std::vector<std::int64_t> selectedInputIndices(int port) const;
+    // Select / deselect every object row of the properties tree. Selecting
+    // picks the input group by default (falling back to outputs for source
+    // nodes like load_cloud, which have no inputs).
+    void selectAllProps(bool select, bool sync_filter = true);
+    // Write the selected input frames into the selected Box ROI node's
+    // frame_filter param (empty selection / select-all -> all frames).
+    void syncBoxRoiFilter();
     void refreshOutputCombo();
     void showSelectedOutput();
     void rebuildPalette();
@@ -83,10 +102,6 @@ private:
     // snapshot and updates display3d layers (latest-wins, §8.7).
     void refreshDisplayLayers();
     void updateRoiBoxPreview();
-    // Show the cloud that flows INTO the selected node (its first upstream
-    // output), falling back to the node's own output when it has no inputs.
-    // This keeps the previous node's result visible while tuning the next one.
-    void showNodeInputCloud(const std::string& id);
     bool nodeInputBounds(const std::string& id, double bounds[6],
                          std::int64_t* valid_points = nullptr) const;
     void onRunFinished(bool ok, const QString& error);
@@ -116,6 +131,9 @@ private:
     GraphRunner* runner_ = nullptr;
     QThread* runner_thread_ = nullptr;
     QTimer* display_timer_ = nullptr;
+    // False while refreshPropsTree() applies its default selection, so the
+    // Box ROI frame filter is not reset just by selecting a node.
+    bool props_sync_filter_ = true;
     // display3d node id -> viewport name it was last routed to (for stale
     // layer cleanup when a node moves to another viewport or is deleted).
     std::map<std::string, std::string> display_routes_;

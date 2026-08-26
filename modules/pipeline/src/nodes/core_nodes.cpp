@@ -10,9 +10,11 @@
 
 #include <Eigen/Geometry>
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <system_error>
@@ -536,6 +538,37 @@ std::vector<core::RoiBox> boxesFromParams(const Params& p) {
     return boxes;
 }
 
+// Frame filter from the box_roi "frame_filter" param: empty = all frames;
+// otherwise a comma/space separated list of input object indices. Invalid
+// tokens fail fast so a typo cannot silently crop nothing.
+std::vector<std::int64_t> frameFilterFromParams(const Params& p) {
+    const std::string text = p.getString("frame_filter");
+    std::vector<std::int64_t> out;
+    if (text.empty()) return out;
+    // Accept both "0,2" and "0 2" (and mixes).
+    std::string normalized = text;
+    std::replace(normalized.begin(), normalized.end(), ',', ' ');
+    std::istringstream ss(normalized);
+    std::string token;
+    while (ss >> token) {
+        long v = -1;
+        try {
+            std::size_t pos = 0;
+            v = std::stol(token, &pos);
+            if (pos != token.size() || v < 0) {
+                throw std::invalid_argument(token);
+            }
+        } catch (const std::exception&) {
+            throw std::runtime_error("box_roi: invalid frame_filter token '" +
+                                     token + "'");
+        }
+        out.push_back(v);
+    }
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
+}
+
 // F x M output contract (PROJECT §8.3.3): for every input object i and every
 // box m, one cropped cloud object and one region object; cloud[j] <-> region[j]
 // with j = i*M + m, both carrying the same box.
@@ -546,11 +579,40 @@ struct BoxCropResult {
 
 BoxCropResult cropByBoxes(const ObjectList& input,
                           const std::vector<core::RoiBox>& boxes,
-                          const std::string& node_id) {
+                          const std::string& node_id,
+                          const std::vector<std::int64_t>& frame_filter) {
     BoxCropResult result;
     result.cropped.objects.reserve(input.objects.size() * boxes.size());
     result.regions.objects.reserve(input.objects.size() * boxes.size());
-    for (const auto& obj : input.objects) {
+    const auto in_filter = [&](std::int64_t i) {
+        return frame_filter.empty() ||
+               std::binary_search(frame_filter.begin(), frame_filter.end(), i);
+    };
+    for (std::size_t i = 0; i < input.objects.size(); ++i) {
+        const auto& obj = input.objects[i];
+        if (!in_filter(static_cast<std::int64_t>(i))) {
+            // Frames not selected in the properties panel pass through
+            // unchanged (1:1 alignment); their region rows carry invalid
+            // boxes so downstream roi_crop passes them through as well.
+            result.cropped.objects.push_back(obj);
+            for (const auto& box : boxes) {
+                auto passthrough_roi = std::make_shared<core::PointCloudObject>();
+                passthrough_roi->id = obj->id + "." + box.label;
+                passthrough_roi->name = box.label;
+                passthrough_roi->cloud = std::make_shared<core::PointCloudData>();
+                passthrough_roi->cloud->unit = obj->cloud->unit;
+                passthrough_roi->cloud->source_path = obj->cloud->source_path;
+                passthrough_roi->cloud->frame_id = obj->cloud->frame_id;
+                auto invalid_box = std::make_shared<core::RoiBox>(box);
+                invalid_box->valid = false;
+                passthrough_roi->roi = invalid_box;
+                passthrough_roi->visible = obj->visible;
+                passthrough_roi->display_color = obj->display_color;
+                passthrough_roi->provenance = node_id;
+                result.regions.objects.push_back(std::move(passthrough_roi));
+            }
+            continue;
+        }
         for (const auto& box : boxes) {
             result.cropped.objects.push_back(cropObject(*obj, box, node_id));
 
@@ -589,7 +651,9 @@ std::vector<ParamDef> BoxRoiNode::paramDefs() const {
             doubleParam("rot_y", "Rotate Y (deg)", 0.0, -360.0, 360.0),
             doubleParam("rot_z", "Rotate Z (deg)", 0.0, -360.0, 360.0),
             intParam("box_count", "Box Count", 1, 1, 32),
-            stringParam("boxes_json", "Box List (JSON)")};
+            stringParam("boxes_json", "Box List (JSON)"),
+            stringParam("frame_filter",
+                        "Frame Filter (empty = all; e.g. 0,2)")};
     return defs;
 }
 
@@ -599,7 +663,8 @@ std::vector<ObjectList> BoxRoiNode::executeAll(const std::vector<ObjectList>& in
     if (boxes.empty()) {
         return {ObjectList{}, ObjectList{}};
     }
-    BoxCropResult result = cropByBoxes(inputs[0], boxes, id());
+    BoxCropResult result = cropByBoxes(inputs[0], boxes, id(),
+                                       frameFilterFromParams(p));
     return {std::move(result.cropped), std::move(result.regions)};
 }
 
