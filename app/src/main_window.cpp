@@ -58,6 +58,7 @@ enum PropsRole {
     kPropsPortRole,                 // int: port on the source node
     kPropsIndexRole,                // int: object index inside the port list
     kPropsInputRole,                // bool: true = input group
+    kPropsInputPortRole,            // int: downstream input port (input rows only)
 };
 
 void applyPanelShadow(QWidget* w) {
@@ -1066,18 +1067,31 @@ QString objKindText(const pcsearch::core::PointCloudObject& obj) {
 }
 
 QTreeWidgetItem* makeObjectRow(const pcsearch::core::PointCloudObject& obj,
-                               const QString& source_node, int port, int index,
-                               bool is_input) {
+                               const QString& source_node, int source_port,
+                               int index, bool is_input, int input_port) {
     auto* item = new QTreeWidgetItem;
     item->setText(0, QString::fromStdString(obj.name));
     item->setText(1, obj.cloud ? QString::number(obj.cloud->size()) : QStringLiteral("0"));
     item->setText(2, objKindText(obj));
     item->setText(3, source_node);
     item->setData(0, kPropsNodeRole, source_node);
-    item->setData(0, kPropsPortRole, port);
+    item->setData(0, kPropsPortRole, source_port);
     item->setData(0, kPropsIndexRole, index);
     item->setData(0, kPropsInputRole, is_input);
+    item->setData(0, kPropsInputPortRole, input_port);
     return item;
+}
+
+// True when a group actually contains object rows (the "(no inputs)"
+// placeholder row alone does not count).
+bool groupHasObjectRows(const QTreeWidgetItem* group) {
+    for (int c = 0; c < group->childCount(); ++c) {
+        const QTreeWidgetItem* port = group->child(c);
+        for (int r = 0; r < port->childCount(); ++r) {
+            if (port->child(r)->data(0, kPropsIndexRole).isValid()) return true;
+        }
+    }
+    return false;
 }
 
 }  // namespace
@@ -1099,7 +1113,7 @@ void MainWindow::refreshPropsTree() {
             for (std::size_t i = 0; i < out->objects.size(); ++i) {
                 auto* obj_item = makeObjectRow(*out->objects[i],
                                                QString::fromStdString(n->id()), 0,
-                                               static_cast<int>(i), false);
+                                               static_cast<int>(i), false, -1);
                 node_item->addChild(obj_item);
             }
             results_tree_->expandItem(node_item);
@@ -1121,9 +1135,11 @@ void MainWindow::refreshPropsTree() {
     for (std::size_t p = 0; p < node->inputCount(); ++p) {
         const pcsearch::core::ObjectList* list = nullptr;
         QString from_id;
+        int from_port = -1;
         for (const auto& e : graph_.edges()) {
             if (e.to_id != sel || e.to_port != static_cast<int>(p)) continue;
             from_id = QString::fromStdString(e.from_id);
+            from_port = e.from_port;
             list = graph_.output(e.from_id, e.from_port);
             break;
         }
@@ -1135,7 +1151,8 @@ void MainWindow::refreshPropsTree() {
         port_item->setFlags(port_item->flags() & ~Qt::ItemIsSelectable);
         for (std::size_t i = 0; i < list->objects.size(); ++i) {
             auto* row = makeObjectRow(*list->objects[i], from_id,
-                                      static_cast<int>(p), static_cast<int>(i), true);
+                                      from_port, static_cast<int>(i), true,
+                                      static_cast<int>(p));
             port_item->addChild(row);
             any_input = true;
         }
@@ -1163,7 +1180,8 @@ void MainWindow::refreshPropsTree() {
         for (std::size_t i = 0; i < list->objects.size(); ++i) {
             auto* row = makeObjectRow(*list->objects[i],
                                       QString::fromStdString(sel),
-                                      static_cast<int>(p), static_cast<int>(i), false);
+                                      static_cast<int>(p), static_cast<int>(i),
+                                      false, -1);
             port_item->addChild(row);
             any_output = true;
         }
@@ -1184,18 +1202,30 @@ void MainWindow::refreshPropsTree() {
 }
 
 void MainWindow::selectAllProps(bool select, bool sync_filter) {
-    // Decide the default group: inputs when the node has any, else outputs.
-    bool prefer_input = true;
+    // Decide the default group: inputs when the selected node actually has
+    // input object rows, otherwise outputs. Two degenerate layouts must fall
+    // back to outputs: source nodes whose input group only carries the
+    // "(no inputs)" placeholder, and the no-node-selected fallback list where
+    // object rows hang directly under the node root (no group/port layers).
+    bool prefer_input = false;
     if (select) {
         bool has_input = false;
         bool has_output = false;
         for (int i = 0; i < results_tree_->topLevelItemCount(); ++i) {
             QTreeWidgetItem* root = results_tree_->topLevelItem(i);
             for (int g = 0; g < root->childCount(); ++g) {
-                QTreeWidgetItem* group = root->child(g);
-                const bool input_group = group->data(0, kPropsInputRole).toBool();
-                if (input_group) has_input = true;
-                else has_output = true;
+                QTreeWidgetItem* child = root->child(g);
+                if (child->data(0, kPropsIndexRole).isValid()) {
+                    // Fallback list: rows directly under the node root.
+                    has_output = true;
+                    continue;
+                }
+                const bool input_group = child->data(0, kPropsInputRole).toBool();
+                if (input_group) {
+                    has_input = has_input || groupHasObjectRows(child);
+                } else {
+                    has_output = has_output || groupHasObjectRows(child);
+                }
             }
         }
         prefer_input = has_input;
@@ -1206,11 +1236,16 @@ void MainWindow::selectAllProps(bool select, bool sync_filter) {
     for (int i = 0; i < results_tree_->topLevelItemCount(); ++i) {
         QTreeWidgetItem* root = results_tree_->topLevelItem(i);
         for (int g = 0; g < root->childCount(); ++g) {
-            QTreeWidgetItem* group = root->child(g);
-            const bool input_group = group->data(0, kPropsInputRole).toBool();
+            QTreeWidgetItem* child = root->child(g);
+            if (child->data(0, kPropsIndexRole).isValid()) {
+                // Fallback layout: rows hang directly under the node root.
+                if (!select || !prefer_input) object_rows.push_back(child);
+                continue;
+            }
+            const bool input_group = child->data(0, kPropsInputRole).toBool();
             if (select && input_group != prefer_input) continue;
-            for (int c = 0; c < group->childCount(); ++c) {
-                QTreeWidgetItem* port = group->child(c);
+            for (int c = 0; c < child->childCount(); ++c) {
+                QTreeWidgetItem* port = child->child(c);
                 for (int r = 0; r < port->childCount(); ++r) {
                     QTreeWidgetItem* row = port->child(r);
                     if (!row->data(0, kPropsIndexRole).isValid()) continue;
@@ -1239,7 +1274,7 @@ std::vector<std::int64_t> MainWindow::selectedInputIndices(int port) const {
     for (QTreeWidgetItem* item : selected) {
         if (!item->data(0, kPropsIndexRole).isValid()) continue;
         if (!item->data(0, kPropsInputRole).toBool()) continue;
-        if (item->data(0, kPropsPortRole).toInt() != port) continue;
+        if (item->data(0, kPropsInputPortRole).toInt() != port) continue;
         out.push_back(item->data(0, kPropsIndexRole).toInt());
     }
     return out;
@@ -1304,7 +1339,7 @@ void MainWindow::syncBoxRoiFilter() {
     for (QTreeWidgetItem* item : items) {
         if (!item->data(0, kPropsIndexRole).isValid()) continue;
         if (!item->data(0, kPropsInputRole).toBool()) continue;
-        if (item->data(0, kPropsPortRole).toInt() != 0) continue;
+        if (item->data(0, kPropsInputPortRole).toInt() != 0) continue;
         selected.push_back(item->data(0, kPropsIndexRole).toInt());
     }
     std::sort(selected.begin(), selected.end());
