@@ -76,6 +76,10 @@ private:
     void buildUi();
     void retranslateUi();
     void setEditingEnabled(bool enabled);
+    // Keeps the run buttons' enabled state / busy label in sync with the
+    // graph state: "Run to Node" needs a selected node, both show a busy
+    // label while a run is in progress.
+    void updateRunControls();
     // Put the currently selected Box ROI node's box into the interactive
     // vtkBoxWidget2 editor (auto-entered when the node is selected).
     void enterRoiEdit();

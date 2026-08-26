@@ -120,6 +120,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(toolbox_, &ToolboxWidget::nodeActivated, this, [this](const QString& type) {
         doAddNode(type, flow_->mapToScene(flow_->viewport()->rect().center()));
     });
+    updateRunControls();
     connect(params_panel_, &ParamsPanel::paramChanged, this, &MainWindow::doParamChanged);
     connect(params_panel_, &ParamsPanel::actionRequested, this,
             &MainWindow::onParamsAction);
@@ -379,6 +380,7 @@ void MainWindow::retranslateUi() {
         run_to_button_->setText(tr("Run to Node"));
     }
     updateNodeActionButtons();
+    updateRunControls();
 }
 
 void MainWindow::changeEvent(QEvent* event) {
@@ -462,6 +464,7 @@ void MainWindow::doSelectNode(const QString& id) {
     }
     updateRoiBoxPreview();
     updateNodeActionButtons();
+    updateRunControls();
 }
 
 bool MainWindow::nodeInputBounds(const std::string& id, double bounds[6],
@@ -543,6 +546,7 @@ void MainWindow::doDeleteNode(const QString& id) {
         refreshPropsTree();
     }
     updateNodeActionButtons();
+    updateRunControls();
     log(tr("Deleted node: %1").arg(id));
 }
 
@@ -803,7 +807,9 @@ void MainWindow::runGraph(bool to_selected) {
     running_ = true;
     last_run_to_selected_ = to_selected;
     setEditingEnabled(false);
+    updateRunControls();
     statusBar()->showMessage(tr("Running graph..."));
+    log(tr("Running graph..."));
 
     runner_ = new GraphRunner(&graph_);
     runner_thread_ = new QThread(this);
@@ -834,6 +840,7 @@ void MainWindow::onRunFinished(bool ok, const QString& error) {
     runner_thread_ = nullptr;
     running_ = false;
     setEditingEnabled(true);
+    updateRunControls();
 
     if (ok) {
         log(tr("Graph executed successfully"));
@@ -910,15 +917,24 @@ void MainWindow::setEditingEnabled(bool enabled) {
     toolbox_->setEnabled(enabled);
     flow_->setEnabled(enabled);
     params_panel_->setEnabled(enabled);
+}
+
+void MainWindow::updateRunControls() {
+    const bool can_run = !running_ && !graph_.nodes().empty();
     if (run_button_) {
-        run_button_->setEnabled(enabled);
+        run_button_->setEnabled(can_run);
+        run_button_->setText(running_ ? tr("Running...") : tr("Run All"));
     }
     if (run_to_button_) {
-        run_to_button_->setEnabled(enabled);
+        const bool can_run_to = can_run && !selected_node_id_.empty();
+        run_to_button_->setEnabled(can_run_to);
+        run_to_button_->setText(running_ ? tr("Running...") : tr("Run to Node"));
+        run_to_button_->setToolTip(
+            selected_node_id_.empty()
+                ? tr("Select a node first, then run the graph up to it")
+                : tr("Run the graph up to the selected node"));
     }
-    if (run_action_) {
-        run_action_->setEnabled(enabled);
-    }
+    if (run_action_) run_action_->setEnabled(can_run);
 }
 
 void MainWindow::openCloud() {

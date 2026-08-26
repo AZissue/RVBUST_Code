@@ -48,12 +48,17 @@ private slots:
     // Zoom-out auto-switches the canvas to the read-only outline; Ctrl+wheel-up
     // over the outline (or the layout buttons) must switch back.
     void canvasZoomOutSwitchesToOutlineAndBack();
+    // Run-to-node needs a selected node; the run buttons show a busy label
+    // while a run is in progress.
+    void runToButtonRequiresSelection();
+    void runButtonsShowBusyState();
 
 private:
     QString writePly(QTemporaryDir& dir) const;
     QTreeWidget* canvasTree(app::MainWindow& w) const;
     QTreeWidget* propsTree(app::MainWindow& w) const;
     QPushButton* selectAllButton(app::MainWindow& w) const;
+    QPushButton* findButton(app::MainWindow& w, const QString& text) const;
     QPlainTextEdit* logView(app::MainWindow& w) const;
     bool waitForRun(app::MainWindow& w, int timeout_ms = 15000) const;
 };
@@ -138,6 +143,14 @@ QPushButton* MainWindowTest::selectAllButton(app::MainWindow& w) const {
         if (text == QLatin1String("Select All") || text == QString::fromUtf8("全选")) {
             return b;
         }
+    }
+    return nullptr;
+}
+
+QPushButton* MainWindowTest::findButton(app::MainWindow& w,
+                                        const QString& text) const {
+    for (QPushButton* b : w.findChildren<QPushButton*>()) {
+        if (b->text() == text) return b;
     }
     return nullptr;
 }
@@ -327,6 +340,56 @@ void MainWindowTest::canvasZoomOutSwitchesToOutlineAndBack() {
     QTest::qWait(20);
     QCOMPARE(stack->currentWidget(), static_cast<QWidget*>(flow));
     QVERIFY(toolbox->isEnabled());
+}
+
+void MainWindowTest::runToButtonRequiresSelection() {
+    app::MainWindow w;
+    QPushButton* run = findButton(w, QStringLiteral("Run All"));
+    QPushButton* run_to = findButton(w, QStringLiteral("Run to Node"));
+    QVERIFY(run != nullptr);
+    QVERIFY(run_to != nullptr);
+    QVERIFY(!run->isEnabled());    // empty graph: nothing to run
+    QVERIFY(!run_to->isEnabled());
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString ply = writePly(dir);
+    QVERIFY(w.loadDemo(ply));
+    QVERIFY(run->isEnabled());
+    QVERIFY(run_to->isEnabled());  // loadDemo selected box_roi
+
+    // Deleting the selected node clears the selection: Run All stays enabled,
+    // Run to Node must be disabled again.
+    QTreeWidget* tree = propsTree(w);
+    QVERIFY(tree);
+    QMetaObject::invokeMethod(&w, "doDeleteNode", Qt::DirectConnection,
+                              Q_ARG(QString, tree->topLevelItem(0)->text(0)));
+    QVERIFY(run->isEnabled());
+    QVERIFY(!run_to->isEnabled());
+}
+
+void MainWindowTest::runButtonsShowBusyState() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString ply = writePly(dir);
+    app::MainWindow w;
+    QVERIFY(w.loadDemo(ply));
+    QPushButton* run = findButton(w, QStringLiteral("Run All"));
+    QPushButton* run_to = findButton(w, QStringLiteral("Run to Node"));
+    QVERIFY(run != nullptr);
+    QVERIFY(run_to != nullptr);
+
+    w.runGraph();
+    QCOMPARE(run->text(), QStringLiteral("Running..."));
+    QCOMPARE(run_to->text(), QStringLiteral("Running..."));
+    QVERIFY(!run->isEnabled());
+    QVERIFY(!run_to->isEnabled());
+
+    QVERIFY(waitForRun(w));
+    QCOMPARE(run->text(), QStringLiteral("Run All"));
+    QCOMPARE(run_to->text(), QStringLiteral("Run to Node"));
+    QVERIFY(run->isEnabled());
+    QVERIFY(run_to->isEnabled());
 }
 
 }  // namespace
