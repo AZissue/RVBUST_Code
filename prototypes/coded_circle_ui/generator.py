@@ -29,6 +29,7 @@ class CodedCircleParams:
     r3_to_r0_ratio: float = 4.0
     r4_to_r0_ratio: float = 5.0
     radius_mm: float = 6.0
+    scale: float = 1.0
     page_type: str = "A4"
     dpi: int = 300
     margin_mm: float = 5.0
@@ -41,10 +42,16 @@ class CodedCircleParams:
             r3_to_r0_ratio=self.r3_to_r0_ratio,
             r4_to_r0_ratio=self.r4_to_r0_ratio,
             radius_mm=self.radius_mm,
+            scale=self.scale,
             page_type=self.page_type,
             dpi=self.dpi,
             margin_mm=self.margin_mm,
         )
+
+    @property
+    def effective_radius_mm(self) -> float:
+        """经全局缩放后的有效中心圆半径。"""
+        return self.radius_mm * self.scale
 
 
 # ---------------------------------------------------------------------------
@@ -195,7 +202,7 @@ def generate_page(
     width, height = _page_size_px(params.page_type, params.dpi)
     img = np.ones((height, width, 3), dtype=np.uint8) * 255
 
-    radius_px = _mm_to_px(params.radius_mm, params.dpi)
+    radius_px = _mm_to_px(params.effective_radius_mm, params.dpi)
     margin_px = _mm_to_px(params.margin_mm, params.dpi)
     cell = int(2 * radius_px * params.r4_to_r0_ratio)
     if cell <= 0:
@@ -234,8 +241,8 @@ def generate_preview(
     preview_params.page_type = "A6"
     img = generate_page(codes, binaries, preview_params)
 
-    scale = preview_width / img.shape[1]
-    new_h = int(img.shape[0] * scale)
+    resize_scale = preview_width / img.shape[1]
+    new_h = int(img.shape[0] * resize_scale)
     preview = cv2.resize(img, (preview_width, new_h), interpolation=cv2.INTER_AREA)
 
     info = {
@@ -243,6 +250,7 @@ def generate_preview(
         "preview_codes": len(codes),
         "page_px": (img.shape[1], img.shape[0]),
         "preview_px": (preview.shape[1], preview.shape[0]),
+        "effective_radius_mm": params.effective_radius_mm,
     }
     return preview, info
 
@@ -288,6 +296,8 @@ def save_board(
         "r3_to_r0_ratio": params.r3_to_r0_ratio,
         "r4_to_r0_ratio": params.r4_to_r0_ratio,
         "radius_mm": params.radius_mm,
+        "scale": params.scale,
+        "effective_radius_mm": params.effective_radius_mm,
         "page_type": params.page_type,
         "dpi": params.dpi,
         "margin_mm": params.margin_mm,
@@ -329,7 +339,7 @@ def _try_generate_pdf(
     ctx.set_source_rgb(1, 1, 1)
     ctx.paint()
 
-    radius_px = _mm_to_px(params.radius_mm, params.dpi)
+    radius_px = _mm_to_px(params.effective_radius_mm, params.dpi)
     margin_px = _mm_to_px(params.margin_mm, params.dpi)
     cell = int(2 * radius_px * params.r4_to_r0_ratio)
     cols = max(1, (width - 2 * margin_px) // cell)

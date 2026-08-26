@@ -141,6 +141,18 @@ class CodedCircleGeneratorUI(QMainWindow):
         self._spin_radius.valueChanged.connect(self._on_param_changed)
         lo.addLayout(self._labeled_row("中心圆半径", self._spin_radius))
 
+        self._spin_scale = QDoubleSpinBox()
+        self._spin_scale.setRange(0.2, 5.0)
+        self._spin_scale.setDecimals(2)
+        self._spin_scale.setValue(self._params.scale)
+        self._spin_scale.setSuffix(" x")
+        self._spin_scale.setToolTip(
+            "整体缩放系数：同时放大/缩小编码圆和排布间距；\n"
+            "比例参数 r1/r2/r3/r4 不变，因此不影响识别。"
+        )
+        self._spin_scale.valueChanged.connect(self._on_param_changed)
+        lo.addLayout(self._labeled_row("整体缩放", self._spin_scale))
+
         self._spin_r1 = QDoubleSpinBox()
         self._spin_r1.setRange(1.0, 10.0)
         self._spin_r1.setDecimals(2)
@@ -240,6 +252,7 @@ class CodedCircleGeneratorUI(QMainWindow):
     def _on_param_changed(self):
         self._params.n = self._spin_n.value()
         self._params.radius_mm = self._spin_radius.value()
+        self._params.scale = self._spin_scale.value()
         self._params.r1_to_r0_ratio = self._spin_r1.value()
         self._params.r2_to_r0_ratio = self._spin_r2.value()
         self._params.r3_to_r0_ratio = self._spin_r3.value()
@@ -265,6 +278,8 @@ class CodedCircleGeneratorUI(QMainWindow):
             total = info["total_codes"]
             self._info_label.setText(
                 f"当前 N={self._params.n}，可用编码圆数量：{total} 个 | "
+                f"缩放 {self._params.scale:.2f}x | "
+                f"有效中心半径 {info['effective_radius_mm']:.2f} mm | "
                 f"预览渲染 {info['preview_codes']} 个 | "
                 f"页面 {info['page_px'][0]}×{info['page_px'][1]} px"
             )
