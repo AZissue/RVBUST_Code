@@ -627,8 +627,21 @@ class CameraManager:
         raw_results: Dict[str, Optional[FrameData]] = {}
 
         if sync and len(camera_ids) > 1:
+            logger.info(
+                f"[sync-capture] frame_id={current_id} 启动并发拍摄，"
+                f"相机数={len(camera_ids)}, workers={len(camera_ids)}"
+            )
+
             def _capture_one(cid: str) -> Tuple[str, Optional[FrameData]]:
-                return cid, self.capture(cid, options=options, frame_id=current_id)
+                thread_info = f"{threading.current_thread().name}({threading.get_ident()})"
+                logger.info(f"[sync-capture] frame_id={current_id} 线程 {thread_info} 开始触发 {cid}")
+                frame = self.capture(cid, options=options, frame_id=current_id)
+                elapsed = "ok" if frame is not None else "failed"
+                logger.info(
+                    f"[sync-capture] frame_id={current_id} 线程 {thread_info} "
+                    f"完成 {cid}: {elapsed}"
+                )
+                return cid, frame
 
             with ThreadPoolExecutor(max_workers=len(camera_ids)) as executor:
                 for cid, frame in executor.map(_capture_one, camera_ids):

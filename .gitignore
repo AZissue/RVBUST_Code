@@ -21,6 +21,9 @@ backup_*/
 # Calibration results (user-generated)
 calibration.json
 
+# Generated coded circle boards
+OutputCodedCircleData/
+
 # Screenshots / visual assets
 *.png
 *.jpg
