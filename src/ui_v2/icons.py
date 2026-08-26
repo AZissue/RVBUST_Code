@@ -151,6 +151,15 @@ _BODIES = {
     # 右箭头（连接设备）
     "arrow_right":
         '<path d="M4 12h15M13.5 6.5 19 12l-5.5 5.5"/>',
+    # 关闭（X）
+    "close":
+        '<path d="M6 6l12 12M18 6l-12 12"/>',
+    # 向下折叠
+    "chevron_down":
+        '<path d="M6 9l6 6 6-6"/>',
+    # 向上展开
+    "chevron_up":
+        '<path d="M18 15l-6-6-6 6"/>',
 }
 
 ICONS = tuple(_BODIES.keys())

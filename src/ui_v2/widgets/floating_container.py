@@ -20,7 +20,11 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-from ..theme import BG_CARD, BG_PANEL, BORDER, STATUS_ERR, TEXT_PRIMARY, TEXT_SECONDARY
+from .. import icons as ui_icons
+from ..theme import (
+    BG_CARD, BG_PANEL, BORDER, BORDER_HOVER, STATUS_ERR, TEXT_PRIMARY,
+    TEXT_SECONDARY,
+)
 
 
 class FloatingContainer(QFrame):
@@ -50,32 +54,42 @@ class FloatingContainer(QFrame):
         # ---- 标题栏 ----
         self._title_bar = QFrame()
         self._title_bar.setStyleSheet(
-            f"background-color: {BG_PANEL}; border-bottom: 1px solid {BORDER};"
+            f"QFrame {{ background-color: {BG_CARD}; "
+            f"border-bottom: 1px solid {BORDER}; }}"
         )
         title_lo = QHBoxLayout(self._title_bar)
-        title_lo.setContentsMargins(6, 4, 6, 4)
-        title_lo.setSpacing(6)
+        title_lo.setContentsMargins(8, 5, 8, 5)
+        title_lo.setSpacing(8)
 
-        title_lo.addWidget(QLabel(title or "浮动面板"))
+        title_text = QLabel(title or "浮动面板")
+        title_text.setStyleSheet(
+            f"color: {TEXT_PRIMARY}; font-size: 13px; font-weight: 600;")
+        title_lo.addWidget(title_text)
         title_lo.addStretch(1)
 
-        self._btn_collapse = QPushButton("−")
+        self._btn_collapse = QPushButton()
         self._btn_collapse.setFixedSize(24, 24)
+        self._btn_collapse.setCursor(Qt.PointingHandCursor)
+        ui_icons.apply(self._btn_collapse, "chevron_down", TEXT_SECONDARY, 14)
         self._btn_collapse.setStyleSheet(
-            "QPushButton { background-color: " + BG_CARD + "; color: " + TEXT_SECONDARY + "; "
-            "border: 1px solid " + BORDER + "; border-radius: 4px; font-size: 14px; }"
-            "QPushButton:hover { background-color: " + BORDER + "; color: " + TEXT_PRIMARY + "; }"
+            "QPushButton { background-color: transparent; color: " + TEXT_SECONDARY + "; "
+            "border: 1px solid " + BORDER + "; border-radius: 4px; }"
+            "QPushButton:hover { background-color: " + BORDER_HOVER + "; color: " + TEXT_PRIMARY + "; "
+            "border-color: " + BORDER_HOVER + "; }"
         )
         self._btn_collapse.setToolTip("折叠")
         self._btn_collapse.clicked.connect(self._toggle_collapse)
         title_lo.addWidget(self._btn_collapse)
 
-        self._btn_close = QPushButton("✕")
+        self._btn_close = QPushButton()
         self._btn_close.setFixedSize(24, 24)
+        self._btn_close.setCursor(Qt.PointingHandCursor)
+        ui_icons.apply(self._btn_close, "close", TEXT_SECONDARY, 14)
         self._btn_close.setStyleSheet(
-            "QPushButton { background-color: " + BG_CARD + "; color: " + TEXT_SECONDARY + "; "
-            "border: 1px solid " + BORDER + "; border-radius: 4px; font-size: 12px; }"
-            "QPushButton:hover { background-color: " + BORDER + "; color: " + STATUS_ERR + "; }"
+            "QPushButton { background-color: transparent; color: " + TEXT_SECONDARY + "; "
+            "border: 1px solid " + BORDER + "; border-radius: 4px; }"
+            "QPushButton:hover { background-color: rgba(244, 67, 54, 0.12); "
+            "color: " + STATUS_ERR + "; border-color: " + STATUS_ERR + "; }"
         )
         self._btn_close.setToolTip("关闭")
         self._btn_close.clicked.connect(self.closed.emit)
@@ -123,13 +137,13 @@ class FloatingContainer(QFrame):
         if self._collapsed:
             self.resize(self.width(), self._normal_height)
             self._content.show()
-            self._btn_collapse.setText("−")
+            ui_icons.apply(self._btn_collapse, "chevron_down", TEXT_SECONDARY, 14)
             self._btn_collapse.setToolTip("折叠")
         else:
             self._normal_height = self.height()
             self.resize(self.width(), self._title_bar.height() + 6)
             self._content.hide()
-            self._btn_collapse.setText("+")
+            ui_icons.apply(self._btn_collapse, "chevron_up", TEXT_SECONDARY, 14)
             self._btn_collapse.setToolTip("展开")
         self._collapsed = not self._collapsed
 
