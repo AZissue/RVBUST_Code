@@ -273,7 +273,7 @@ class CodedCircleGeneratorUI(QMainWindow):
 
     def _update_preview(self):
         try:
-            preview, info = generate_preview(self._params, max_codes=6, preview_width=560)
+            preview, info = generate_preview(self._params, preview_width=560)
             self._set_preview_image(preview)
             total = info["total_codes"]
             self._info_label.setText(

@@ -224,21 +224,34 @@ def generate_page(
 
 def generate_preview(
     params: CodedCircleParams,
-    max_codes: int = 12,
     preview_width: int = 600,
+    max_preview_codes: int = 50,
 ) -> Tuple[np.ndarray, dict]:
     """生成低分辨率预览图及信息字典。
 
-    为了加速预览，使用原始 DPI 渲染一个小页面（只放少量编码圆），
-    再缩放到 preview_width。
+    为了加速预览，使用原始 DPI 渲染一个 A6 小页面，
+    并根据当前缩放自动计算能排下的编码圆数量，再缩放到 preview_width。
     """
     all_codes = generate_valid_codes(params.n)
-    codes = all_codes[:max_codes]
-    binaries = [decimal_to_binary_fixed_length(c, params.n) for c in codes]
 
-    # 用原始 dpi 渲染，但限制在 A6 大小以加速
+    # 按 A6 页面计算能排下多少个
     preview_params = params.clone()
     preview_params.page_type = "A6"
+    pw, ph = _page_size_px("A6", params.dpi)
+    radius_px = _mm_to_px(preview_params.effective_radius_mm, params.dpi)
+    margin_px = _mm_to_px(params.margin_mm, params.dpi)
+    cell = int(2 * radius_px * params.r4_to_r0_ratio)
+    if cell > 0:
+        cols = max(1, (pw - 2 * margin_px) // cell)
+        rows = max(1, (ph - 2 * margin_px) // cell)
+        fit_count = cols * rows
+    else:
+        fit_count = 1
+
+    preview_count = min(len(all_codes), fit_count, max_preview_codes)
+    codes = all_codes[:preview_count]
+    binaries = [decimal_to_binary_fixed_length(c, params.n) for c in codes]
+
     img = generate_page(codes, binaries, preview_params)
 
     resize_scale = preview_width / img.shape[1]
@@ -251,6 +264,7 @@ def generate_preview(
         "page_px": (img.shape[1], img.shape[0]),
         "preview_px": (preview.shape[1], preview.shape[0]),
         "effective_radius_mm": params.effective_radius_mm,
+        "fit_count": fit_count,
     }
     return preview, info
 
