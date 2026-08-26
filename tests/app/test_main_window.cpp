@@ -1,13 +1,17 @@
 #include "main_window.h"
+#include "node_flow_widget.h"
+#include "toolbox_widget.h"
 
 #include "pcsearch/pipeline/nodes/core_nodes.h"
 
 #include <QApplication>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QStackedWidget>
 #include <QSurfaceFormat>
 #include <QTemporaryDir>
 #include <QTreeWidget>
+#include <QWheelEvent>
 #include <QtTest/QtTest>
 
 #ifdef PCSEARCH_HAS_VTK
@@ -41,6 +45,9 @@ private slots:
     // After "run to node", the properties panel must default to the selected
     // node's outputs (the just-computed result), not its inputs.
     void runToNodeDefaultsToOutputs();
+    // Zoom-out auto-switches the canvas to the read-only outline; Ctrl+wheel-up
+    // over the outline (or the layout buttons) must switch back.
+    void canvasZoomOutSwitchesToOutlineAndBack();
 
 private:
     QString writePly(QTemporaryDir& dir) const;
@@ -94,6 +101,16 @@ QString MainWindowTest::writePly(QTemporaryDir& dir) const {
         << "0 10 0\n";
     return path;
 }
+
+namespace {
+void sendWheel(QWidget* target, int angle_delta, Qt::KeyboardModifiers mods) {
+    const QPointF pos(target->rect().center());
+    QWheelEvent ev(pos, target->mapToGlobal(pos.toPoint()), QPoint(0, 0),
+                   QPoint(0, angle_delta), Qt::NoButton, mods,
+                   Qt::NoScrollPhase, false);
+    QApplication::sendEvent(target, &ev);
+}
+}  // namespace
 
 QTreeWidget* MainWindowTest::propsTree(app::MainWindow& w) const {
     for (QTreeWidget* tree : w.findChildren<QTreeWidget*>()) {
@@ -275,6 +292,41 @@ void MainWindowTest::runToNodeDefaultsToOutputs() {
         QVERIFY2(item->text(3) == load_id,
                  "Select All must select the input group again");
     }
+}
+
+void MainWindowTest::canvasZoomOutSwitchesToOutlineAndBack() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString ply = writePly(dir);
+    app::MainWindow w;
+    QVERIFY(w.loadDemo(ply));
+
+    auto* flow = w.findChild<app::NodeFlowWidget*>();
+    QVERIFY(flow);
+    auto* stack = w.findChild<QStackedWidget*>();
+    QVERIFY(stack);
+    QCOMPARE(stack->currentWidget(), static_cast<QWidget*>(flow));
+
+    // Ctrl+wheel out far enough (10 notches of 1/1.15) to cross 0.35.
+    for (int i = 0; i < 10; ++i) {
+        sendWheel(flow->viewport(), -240, Qt::ControlModifier);
+    }
+    QTest::qWait(20);
+    QVERIFY2(stack->currentWidget() != static_cast<QWidget*>(flow),
+             "zoom-out must switch to the outline layout");
+
+    auto* toolbox = w.findChild<app::ToolboxWidget*>();
+    QVERIFY(toolbox);
+    QVERIFY2(!toolbox->isEnabled(),
+             "outline layout must be read-only (no node placement)");
+
+    // Ctrl+wheel-up over the outline returns to the canvas.
+    QTreeWidget* outline = canvasTree(w);
+    QVERIFY(outline);
+    sendWheel(outline->viewport(), 240, Qt::ControlModifier);
+    QTest::qWait(20);
+    QCOMPARE(stack->currentWidget(), static_cast<QWidget*>(flow));
+    QVERIFY(toolbox->isEnabled());
 }
 
 }  // namespace

@@ -4,7 +4,9 @@
 
 #include <QMainWindow>
 
+class QButtonGroup;
 class QComboBox;
+class QEvent;
 class QHBoxLayout;
 class QPlainTextEdit;
 class QTreeWidget;
@@ -35,6 +37,7 @@ public:
 
 protected:
     void changeEvent(QEvent* event) override;
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 public slots:
     // `to_selected` runs the pipeline only up to the selected node (dirty
@@ -104,6 +107,10 @@ private:
     // Node-specific action buttons shown on the 3D viewport toolbar (e.g.
     // Box ROI -> reset bounds). Rebuilt whenever the selected node changes.
     void updateNodeActionButtons();
+    // Switch the canvas area between the node graph (index 0) and the
+    // read-only outline list (index 1), keeping the toolbar buttons and the
+    // toolbox enabled state in sync.
+    void setCanvasLayout(int index);
     void rebuildPalette();
     void refreshCanvasTree();
     void routeDisplayNodes();
@@ -125,6 +132,8 @@ private:
     QPushButton* run_button_ = nullptr;
     QPushButton* run_to_button_ = nullptr;
     QPushButton* roi_button_ = nullptr;
+    QPushButton* canvas_view_button_ = nullptr;
+    QPushButton* outline_view_button_ = nullptr;
     QHBoxLayout* node_action_bar_ = nullptr;
     QAction* run_action_ = nullptr;
     QStackedWidget* canvas_stack_ = nullptr;
@@ -138,6 +147,7 @@ private:
     ViewportManager* viewports_ = nullptr;
 
     bool running_ = false;
+    int canvas_layout_index_ = 0;
     // True when the last run was "run to selected node" (drives the default
     // properties selection to the output group afterwards).
     bool last_run_to_selected_ = false;

@@ -17,6 +17,7 @@
 
 #include <QApplication>
 #include <QActionGroup>
+#include <QButtonGroup>
 #include <QComboBox>
 #include <QDir>
 #include <QDockWidget>
@@ -42,6 +43,7 @@
 #include <QTimer>
 #include <QTreeWidget>
 #include <QVBoxLayout>
+#include <QWheelEvent>
 
 #include <algorithm>
 #include <map>
@@ -113,7 +115,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             &MainWindow::doDisconnect);
     connect(flow_, &NodeFlowWidget::statusMessage, this, &MainWindow::log);
     connect(flow_, &NodeFlowWidget::zoomScaleChanged, this, [this](double scale) {
-        canvas_stack_->setCurrentIndex(scale < 0.35 ? 1 : 0);
+        setCanvasLayout(scale < 0.35 ? 1 : 0);
     });
     connect(toolbox_, &ToolboxWidget::nodeActivated, this, [this](const QString& type) {
         doAddNode(type, flow_->mapToScene(flow_->viewport()->rect().center()));
@@ -189,10 +191,34 @@ void MainWindow::buildUi() {
     // Column 2: canvas (node graph; auto-switches to tree view when zoomed out).
     auto* canvas_box = new QGroupBox(tr("Canvas"), central);
     auto* canvas_layout = new QVBoxLayout(canvas_box);
+    // Layout switch: Canvas (node graph) / Outline (read-only node list).
+    // Zoom-out below the threshold auto-switches to the outline; the buttons
+    // (or Ctrl+wheel-up over the outline) always allow switching back.
+    auto* canvas_switch = new QHBoxLayout;
+    canvas_view_button_ = new QPushButton(tr("Canvas"), canvas_box);
+    outline_view_button_ = new QPushButton(tr("Outline"), canvas_box);
+    auto* canvas_switch_group = new QButtonGroup(canvas_box);
+    canvas_view_button_->setCheckable(true);
+    outline_view_button_->setCheckable(true);
+    canvas_switch_group->addButton(canvas_view_button_);
+    canvas_switch_group->addButton(outline_view_button_);
+    canvas_view_button_->setChecked(true);
+    canvas_switch->addWidget(canvas_view_button_);
+    canvas_switch->addWidget(outline_view_button_);
+    canvas_switch->addStretch(1);
+    connect(canvas_view_button_, &QPushButton::clicked, this,
+            [this] { setCanvasLayout(0); });
+    connect(outline_view_button_, &QPushButton::clicked, this,
+            [this] { setCanvasLayout(1); });
+    canvas_layout->addLayout(canvas_switch);
     canvas_stack_ = new QStackedWidget(canvas_box);
     flow_ = new NodeFlowWidget(canvas_stack_);
     canvas_tree_ = new QTreeWidget(canvas_stack_);
     canvas_tree_->setHeaderLabels({tr("Node"), tr("Connections")});
+    // The outline list is read-only: no in-place edits and no node placement.
+    canvas_tree_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    canvas_tree_->setDragDropMode(QAbstractItemView::NoDragDrop);
+    canvas_tree_->viewport()->installEventFilter(this);
     canvas_stack_->addWidget(flow_);
     canvas_stack_->addWidget(canvas_tree_);
     canvas_layout->addWidget(canvas_stack_);
@@ -360,6 +386,21 @@ void MainWindow::changeEvent(QEvent* event) {
         retranslateUi();
     }
     QMainWindow::changeEvent(event);
+}
+
+bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == (canvas_tree_ ? canvas_tree_->viewport() : nullptr) &&
+        event->type() == QEvent::Wheel) {
+        auto* wheel = static_cast<QWheelEvent*>(event);
+        // Ctrl+wheel-up in the outline view means "zoom in": switch back to
+        // the canvas so the user is never stuck in the read-only list.
+        if ((wheel->modifiers() & Qt::ControlModifier) &&
+            wheel->angleDelta().y() > 0) {
+            setCanvasLayout(0);
+            return true;
+        }
+    }
+    return QMainWindow::eventFilter(watched, event);
 }
 
 void MainWindow::log(const QString& message) {
@@ -1409,6 +1450,22 @@ void MainWindow::updateNodeActionButtons() {
 void MainWindow::rebuildPalette() {
     toolbox_->populate(pcsearch::pipeline::NodeRegistry::instance().all(),
                        translator_ != nullptr);
+}
+
+void MainWindow::setCanvasLayout(int index) {
+    const int page = index == 1 ? 1 : 0;
+    if (page == canvas_layout_index_ && canvas_stack_->currentIndex() == page) {
+        return;
+    }
+    canvas_layout_index_ = page;
+    canvas_stack_->setCurrentIndex(page);
+    if (canvas_view_button_) canvas_view_button_->setChecked(page == 0);
+    if (outline_view_button_) outline_view_button_->setChecked(page == 1);
+    // The outline is read-only: no node placement while it is active.
+    if (toolbox_) toolbox_->setEnabled(page == 0);
+    if (page == 1) {
+        log(tr("Outline view is read-only; switch back to Canvas to edit the graph"));
+    }
 }
 
 void MainWindow::refreshCanvasTree() {
