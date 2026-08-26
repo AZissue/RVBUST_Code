@@ -237,6 +237,31 @@ private slots:
         QVERIFY(!chunk->isEnabled());
     }
 
+    void pathAndFolderAreMutuallyExclusive() {
+        // load_cloud's file path and batch folder are two exclusive input
+        // modes: setting one disables the other editor.
+        Graph g;
+        auto* load = g.addNode("load_cloud");
+        app::ParamsPanel panel;
+        panel.showNode(load);
+        auto* path = panel.findChild<QLineEdit*>(QStringLiteral("path"));
+        auto* folder = panel.findChild<QLineEdit*>(QStringLiteral("folder"));
+        QVERIFY(path != nullptr);
+        QVERIFY(folder != nullptr);
+        QVERIFY(path->isEnabled());
+        QVERIFY(folder->isEnabled());
+
+        path->setText("D:/cloud.ply");
+        QVERIFY(!folder->isEnabled());
+        path->setText(QString());
+        QVERIFY(folder->isEnabled());
+
+        folder->setText("D:/frames");
+        QVERIFY(!path->isEnabled());
+        folder->setText(QString());
+        QVERIFY(path->isEnabled());
+    }
+
     void paramsAreChineseByDefault() {
         // Parameter labels and enum values render in Chinese in the default
         // Chinese mode, including the newly added batch / multi-box params.

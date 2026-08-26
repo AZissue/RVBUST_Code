@@ -135,6 +135,13 @@ std::vector<ParamDef> makeLoadParams() {
     // otherwise (PROJECT §8.4).
     defs[3].enable_when_param = "mode";
     defs[3].enable_when_value = "chunked";
+    // File path and batch folder are mutually exclusive: filling one disables
+    // the other (an empty enable_when_value means "enabled only while the
+    // referenced parameter is empty").
+    defs[0].enable_when_param = "folder";
+    defs[0].enable_when_value = "";
+    defs[1].enable_when_param = "path";
+    defs[1].enable_when_value = "";
     return defs;
 }
 

@@ -220,7 +220,14 @@ void ParamsPanel::showNode(pcsearch::pipeline::Node* node) {
             }
         }
         if (editor) {
-            editor->setObjectName(QString::fromStdString(def.name));
+            // File/Directory editors are holder widgets wrapping a QLineEdit;
+            // the inner control already carries the param name. Naming the
+            // holder as well would shadow it in dependency findChild lookups
+            // and the dependency value could never be read.
+            if (def.type != pcsearch::pipeline::ParamType::File &&
+                def.type != pcsearch::pipeline::ParamType::Directory) {
+                editor->setObjectName(QString::fromStdString(def.name));
+            }
             form_->addRow(label, editor);
             entries.push_back({def, editor});
         }
