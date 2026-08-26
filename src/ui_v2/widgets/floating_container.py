@@ -68,12 +68,12 @@ class FloatingContainer(QFrame):
         title_lo.addStretch(1)
 
         self._btn_collapse = QPushButton()
-        self._btn_collapse.setFixedSize(24, 24)
+        self._btn_collapse.setFixedSize(28, 28)
         self._btn_collapse.setCursor(Qt.PointingHandCursor)
-        ui_icons.apply(self._btn_collapse, "chevron_down", TEXT_SECONDARY, 14)
+        ui_icons.apply(self._btn_collapse, "chevron_down", TEXT_SECONDARY, 16)
         self._btn_collapse.setStyleSheet(
             "QPushButton { background-color: transparent; color: " + TEXT_SECONDARY + "; "
-            "border: 1px solid " + BORDER + "; border-radius: 4px; }"
+            "border: 1px solid " + BORDER + "; border-radius: 6px; padding: 0px; }"
             "QPushButton:hover { background-color: " + BORDER_HOVER + "; color: " + TEXT_PRIMARY + "; "
             "border-color: " + BORDER_HOVER + "; }"
         )
@@ -82,12 +82,12 @@ class FloatingContainer(QFrame):
         title_lo.addWidget(self._btn_collapse)
 
         self._btn_close = QPushButton()
-        self._btn_close.setFixedSize(24, 24)
+        self._btn_close.setFixedSize(28, 28)
         self._btn_close.setCursor(Qt.PointingHandCursor)
-        ui_icons.apply(self._btn_close, "close", TEXT_SECONDARY, 14)
+        ui_icons.apply(self._btn_close, "close", TEXT_SECONDARY, 16)
         self._btn_close.setStyleSheet(
             "QPushButton { background-color: transparent; color: " + TEXT_SECONDARY + "; "
-            "border: 1px solid " + BORDER + "; border-radius: 4px; }"
+            "border: 1px solid " + BORDER + "; border-radius: 6px; padding: 0px; }"
             "QPushButton:hover { background-color: rgba(244, 67, 54, 0.12); "
             "color: " + STATUS_ERR + "; border-color: " + STATUS_ERR + "; }"
         )
@@ -137,13 +137,13 @@ class FloatingContainer(QFrame):
         if self._collapsed:
             self.resize(self.width(), self._normal_height)
             self._content.show()
-            ui_icons.apply(self._btn_collapse, "chevron_down", TEXT_SECONDARY, 14)
+            ui_icons.apply(self._btn_collapse, "chevron_down", TEXT_SECONDARY, 16)
             self._btn_collapse.setToolTip("折叠")
         else:
             self._normal_height = self.height()
             self.resize(self.width(), self._title_bar.height() + 6)
             self._content.hide()
-            ui_icons.apply(self._btn_collapse, "chevron_up", TEXT_SECONDARY, 14)
+            ui_icons.apply(self._btn_collapse, "chevron_up", TEXT_SECONDARY, 16)
             self._btn_collapse.setToolTip("展开")
         self._collapsed = not self._collapsed
 
