@@ -925,7 +925,8 @@ int main() {
             }
         }
 
-        // box_count > 1 without a box list is a node-level error (fail-fast).
+        // box_count > 1 without a box list replicates the legacy box (labels
+        // roi0/roi1), so +/- box count works without hand-editing JSON.
         Graph g2;
         auto* load2 = g2.addNode("load_cloud");
         g2.setParam(load2->id(), "folder", ParamValue{src_dir.string()});
@@ -933,9 +934,17 @@ int main() {
         auto* box2 = g2.addNode("box_roi");
         g2.setParam(box2->id(), "box_count", ParamValue{2});
         g2.connect(load2->id(), 0, box2->id(), 0);
-        failures += check(!g2.execute(), "mbbox: missing box list must fail");
-        failures += check(g2.lastError().find("boxes_json") != std::string::npos,
-                          "mbbox: error mentions boxes_json");
+        failures += check(g2.execute(), "mbbox: count>1 without json must run");
+        const auto* clouds2 = g2.output(box2->id(), 0);
+        failures += check(clouds2 && clouds2->objects.size() == 4,
+                          "mbbox: replicated boxes give F x M outputs");
+        if (clouds2 && clouds2->objects.size() == 4) {
+            failures += check(clouds2->objects[0]->roi &&
+                                  clouds2->objects[0]->roi->label == "roi0" &&
+                                  clouds2->objects[1]->roi &&
+                                  clouds2->objects[1]->roi->label == "roi1",
+                              "mbbox: replicated labels roi0/roi1");
+        }
     }
 
     // ---- box_roi processes every frame (frame_filter removed, PROJECT §9) ----

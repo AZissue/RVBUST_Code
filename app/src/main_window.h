@@ -13,6 +13,7 @@ class QTreeWidget;
 class QMenu;
 class QStackedWidget;
 class QPushButton;
+class QSpinBox;
 class QToolButton;
 class QThread;
 class QTimer;
@@ -142,6 +143,7 @@ private:
     QPushButton* transform_button_ = nullptr;
     QPushButton* reset_transform_button_ = nullptr;
     QPushButton* roi_button_ = nullptr;
+    QSpinBox* box_selector_ = nullptr;
     QPushButton* canvas_view_button_ = nullptr;
     QPushButton* outline_view_button_ = nullptr;
     QHBoxLayout* node_action_bar_ = nullptr;
@@ -158,6 +160,8 @@ private:
 
     bool running_ = false;
     int canvas_layout_index_ = 0;
+    // Active box index (0-based) for multi-box interactive ROI editing.
+    int active_box_index_ = 0;
     // True when the last run was "run to selected node" (drives the default
     // properties selection to the output group afterwards).
     bool last_run_to_selected_ = false;

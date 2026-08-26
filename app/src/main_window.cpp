@@ -35,6 +35,7 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QShortcut>
+#include <QSpinBox>
 #include <QSplitter>
 #include <QStatusBar>
 #include <QStackedWidget>
@@ -92,6 +93,77 @@ bool boxRoiObbFromNode(const pcsearch::pipeline::Node& node, double center[3],
         rot[2] = p.getDouble("rot_z");
         return true;
     } catch (...) {
+        return false;
+    }
+}
+
+// Rewrite entry `index` of a boxes_json array (kept in sync with the box
+// being interactively edited). Returns the original text when the array is
+// missing or `index` is out of range, so a stale edit cannot corrupt data.
+std::string updateBoxListEntry(const std::string& json_text, int index,
+                               double cx, double cy, double cz, double hx,
+                               double hy, double hz, double rx, double ry,
+                               double rz, const std::string& label) {
+    using pcsearch::pipeline::json::Value;
+    try {
+        Value v = Value::parse(json_text);
+        if (!v.isArray() || index < 0 ||
+            index >= static_cast<int>(v.asArray().size())) {
+            return json_text;
+        }
+        Value& e = v.asArray()[static_cast<std::size_t>(index)];
+        e["xmin"] = Value::number(cx - hx);
+        e["xmax"] = Value::number(cx + hx);
+        e["ymin"] = Value::number(cy - hy);
+        e["ymax"] = Value::number(cy + hy);
+        e["zmin"] = Value::number(cz - hz);
+        e["zmax"] = Value::number(cz + hz);
+        e["rot_x"] = Value::number(rx);
+        e["rot_y"] = Value::number(ry);
+        e["rot_z"] = Value::number(rz);
+        e["label"] = Value::string(
+            label.empty() ? "roi" + std::to_string(index) : label);
+        return v.dump();
+    } catch (const std::exception&) {
+        return json_text;
+    }
+}
+
+// Read box `index` from a boxes_json array into the legacy xmin.. buffer so
+// the interactive editor and preview can operate on it.
+bool loadBoxListEntry(const std::string& json_text, int index,
+                      double out[6], double rot[3], std::string* label) {
+    using pcsearch::pipeline::json::Value;
+    try {
+        Value v = Value::parse(json_text);
+        if (!v.isArray() || index < 0 ||
+            index >= static_cast<int>(v.asArray().size())) {
+            return false;
+        }
+        const Value& e = v.asArray()[static_cast<std::size_t>(index)];
+        const Value* xmin = e.find("xmin");
+        const Value* xmax = e.find("xmax");
+        const Value* ymin = e.find("ymin");
+        const Value* ymax = e.find("ymax");
+        const Value* zmin = e.find("zmin");
+        const Value* zmax = e.find("zmax");
+        if (!xmin || !xmax || !ymin || !ymax || !zmin || !zmax) return false;
+        out[0] = xmin->asNumber();
+        out[1] = xmax->asNumber();
+        out[2] = ymin->asNumber();
+        out[3] = ymax->asNumber();
+        out[4] = zmin->asNumber();
+        out[5] = zmax->asNumber();
+        rot[0] = e.find("rot_x") ? e["rot_x"].asNumber() : 0.0;
+        rot[1] = e.find("rot_y") ? e["rot_y"].asNumber() : 0.0;
+        rot[2] = e.find("rot_z") ? e["rot_z"].asNumber() : 0.0;
+        if (label) {
+            *label = e.find("label") && e["label"].isString()
+                         ? e["label"].asString()
+                         : std::string();
+        }
+        return true;
+    } catch (const std::exception&) {
         return false;
     }
 }
@@ -617,6 +689,43 @@ void MainWindow::onRoiToggle(bool on) {
 void MainWindow::enterRoiEdit() {
     pcsearch::pipeline::Node* node = graph_.node(selected_node_id_);
     if (!node || node->type() != "box_roi") return;
+    // Multi-box editing: make the active box the editing buffer (xmin..).
+    // The interactive widget always edits this buffer; finishing a drag
+    // commits it back into boxes_json[active_box_index_].
+    try {
+        const auto& p0 = node->params();
+        const int box_count = std::max(1, p0.getInt("box_count"));
+        const std::string json_text = p0.getString("boxes_json");
+        if (box_count > 1 && !json_text.empty()) {
+            if (active_box_index_ >= box_count) {
+                active_box_index_ = box_count - 1;
+            }
+            double out[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+            double rot[3] = {0.0, 0.0, 0.0};
+            if (loadBoxListEntry(json_text, active_box_index_, out, rot,
+                                 nullptr)) {
+                graph_.setParam(node->id(), "xmin",
+                                pcsearch::pipeline::ParamValue{out[0]});
+                graph_.setParam(node->id(), "xmax",
+                                pcsearch::pipeline::ParamValue{out[1]});
+                graph_.setParam(node->id(), "ymin",
+                                pcsearch::pipeline::ParamValue{out[2]});
+                graph_.setParam(node->id(), "ymax",
+                                pcsearch::pipeline::ParamValue{out[3]});
+                graph_.setParam(node->id(), "zmin",
+                                pcsearch::pipeline::ParamValue{out[4]});
+                graph_.setParam(node->id(), "zmax",
+                                pcsearch::pipeline::ParamValue{out[5]});
+                graph_.setParam(node->id(), "rot_x",
+                                pcsearch::pipeline::ParamValue{rot[0]});
+                graph_.setParam(node->id(), "rot_y",
+                                pcsearch::pipeline::ParamValue{rot[1]});
+                graph_.setParam(node->id(), "rot_z",
+                                pcsearch::pipeline::ParamValue{rot[2]});
+            }
+        }
+    } catch (const std::exception&) {
+    }
     // If the box still has the default (unset) size, place it over the whole
     // input cloud so the user can see what will be cropped; otherwise keep the
     // user's current box pose (position / size / rotation).
@@ -689,6 +798,25 @@ void MainWindow::onRoiEditFinished() {
     const double rx = node->params().getDouble("rot_x");
     const double ry = node->params().getDouble("rot_y");
     const double rz = node->params().getDouble("rot_z");
+    // Multi-box: commit the edited box back into the node-level box list.
+    try {
+        const int box_count = std::max(1, node->params().getInt("box_count"));
+        const std::string json_text = node->params().getString("boxes_json");
+        if (box_count > 1 && !json_text.empty()) {
+            std::string label;
+            double tmp[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+            double tmp_rot[3] = {0.0, 0.0, 0.0};
+            loadBoxListEntry(json_text, active_box_index_, tmp, tmp_rot, &label);
+            const std::string updated = updateBoxListEntry(
+                json_text, active_box_index_, cx, cy, cz, hx, hy, hz, rx, ry,
+                rz, label);
+            graph_.setParam(node->id(), "boxes_json",
+                            pcsearch::pipeline::ParamValue{updated});
+            log(tr("Box %1 updated (press F5 to recompute)")
+                    .arg(active_box_index_ + 1));
+        }
+    } catch (const std::exception&) {
+    }
     params_panel_->showNode(node);
     updateRoiBoxPreview();
     log(tr("ROI updated: center(%1, %2, %3) half(%4, %5, %6) rotation(%7, %8, "
@@ -767,6 +895,26 @@ void MainWindow::onParamsAction(const QString& node_id, const QString& action) {
         graph_.setParam(node->id(), "rot_x", pcsearch::pipeline::ParamValue{0.0});
         graph_.setParam(node->id(), "rot_y", pcsearch::pipeline::ParamValue{0.0});
         graph_.setParam(node->id(), "rot_z", pcsearch::pipeline::ParamValue{0.0});
+        // Multi-box: reset the active box entry in the box list as well.
+        const int box_count = std::max(1, node->params().getInt("box_count"));
+        const std::string json_text = node->params().getString("boxes_json");
+        if (box_count > 1 && !json_text.empty()) {
+            std::string label;
+            double tmp[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+            double tmp_rot[3] = {0.0, 0.0, 0.0};
+            loadBoxListEntry(json_text, active_box_index_, tmp, tmp_rot, &label);
+            const double cx = 0.5 * (bounds[0] + bounds[1]);
+            const double cy = 0.5 * (bounds[2] + bounds[3]);
+            const double cz = 0.5 * (bounds[4] + bounds[5]);
+            const double hx = 0.5 * (bounds[1] - bounds[0]);
+            const double hy = 0.5 * (bounds[3] - bounds[2]);
+            const double hz = 0.5 * (bounds[5] - bounds[4]);
+            graph_.setParam(
+                node->id(), "boxes_json",
+                pcsearch::pipeline::ParamValue{updateBoxListEntry(
+                    json_text, active_box_index_, cx, cy, cz, hx, hy, hz, 0.0,
+                    0.0, 0.0, label)});
+        }
     } catch (const std::exception& e) {
         log(tr("Reset bounds failed: %1").arg(QString::fromUtf8(e.what())));
         return;
@@ -807,6 +955,51 @@ void MainWindow::doParamChanged(const QString& node_id, const QString& name,
         graph_.setParam(node_id.toStdString(), name.toStdString(), std::move(value));
         if (const auto* n = graph_.node(node_id.toStdString());
             n && n->type() == "box_roi") {
+            // Box Count +/- keeps the box list in sync: grow (copy of box 0
+            // or the legacy buffer) or truncate, so execution never sees a
+            // count mismatch.
+            if (name == QLatin1String("box_count") &&
+                std::holds_alternative<int>(value)) {
+                const int new_count =
+                    std::max(1, std::get<int>(value));
+                std::string json_text = n->params().getString("boxes_json");
+                if (!json_text.empty()) {
+                    try {
+                        using pcsearch::pipeline::json::Value;
+                        Value v = Value::parse(json_text);
+                        if (v.isArray()) {
+                            const std::size_t old_count = v.asArray().size();
+                            if (old_count != static_cast<std::size_t>(new_count)) {
+                                if (new_count > static_cast<int>(old_count)) {
+                                    const Value seed =
+                                        old_count > 0 ? v.asArray()[0]
+                                                      : Value::object();
+                                    while (v.asArray().size() <
+                                           static_cast<std::size_t>(new_count)) {
+                                        Value copy = seed;
+                                        const std::size_t idx =
+                                            v.asArray().size();
+                                        copy["label"] = Value::string(
+                                            "roi" + std::to_string(idx));
+                                        v.asArray().push_back(std::move(copy));
+                                    }
+                                } else {
+                                    v.asArray().resize(
+                                        static_cast<std::size_t>(new_count));
+                                }
+                                graph_.setParam(node_id.toStdString(),
+                                                "boxes_json",
+                                                pcsearch::pipeline::ParamValue{
+                                                    v.dump()});
+                            }
+                        }
+                    } catch (const std::exception&) {
+                    }
+                }
+                if (active_box_index_ >= new_count) {
+                    active_box_index_ = new_count - 1;
+                }
+            }
             updateRoiBoxPreview();
             // Keep the interactive box in sync when the user edits spin boxes
             // while ROI 框选 is active.
@@ -816,6 +1009,9 @@ void MainWindow::doParamChanged(const QString& node_id, const QString& name,
                 if (boxRoiObbFromNode(*n, center, half, rot)) {
                     cloud_view_->enableRoiEditObb(true, center, half, rot);
                 }
+            }
+            if (name == QLatin1String("box_count")) {
+                updateNodeActionButtons();
             }
         }
         log(tr("Param %1.%2 changed (dirty; press F5 to recompute)").arg(node_id, name));
@@ -1453,6 +1649,7 @@ void MainWindow::updateNodeActionButtons() {
     // The ROI button lives in this bar and is rebuilt on every selection
     // change; drop the old pointer before the old widget is deleted.
     roi_button_ = nullptr;
+    box_selector_ = nullptr;
     while (node_action_bar_->count() > 0) {
         QLayoutItem* item = node_action_bar_->takeAt(0);
         if (QWidget* w = item->widget()) w->deleteLater();
@@ -1466,6 +1663,26 @@ void MainWindow::updateNodeActionButtons() {
     roi_button_->setCheckable(true);
     node_action_bar_->addWidget(roi_button_);
     connect(roi_button_, &QPushButton::toggled, this, &MainWindow::onRoiToggle);
+    // Box selector for multi-box editing: choose which box the interactive
+    // ROI widget (and Reset Bounds) operates on.
+    const int box_count = std::max(1, node->params().getInt("box_count"));
+    if (box_count > 1) {
+        node_action_bar_->addWidget(new QLabel(tr("Box:"), this));
+        box_selector_ = new QSpinBox(this);
+        box_selector_->setRange(1, box_count);
+        box_selector_->setValue(active_box_index_ + 1);
+        box_selector_->setToolTip(
+            tr("Box being edited (changes are written back to Box List)"));
+        node_action_bar_->addWidget(box_selector_);
+        connect(box_selector_, QOverload<int>::of(&QSpinBox::valueChanged),
+                this, [this](int v) {
+                    active_box_index_ = v - 1;
+                    if (roi_button_ && roi_button_->isChecked()) {
+                        enterRoiEdit();
+                    }
+                    updateRoiBoxPreview();
+                });
+    }
     auto* fit = new QPushButton(tr("Reset Bounds (Fit Input Cloud)"), this);
     connect(fit, &QPushButton::clicked, this,
             [this, node_id](bool) {

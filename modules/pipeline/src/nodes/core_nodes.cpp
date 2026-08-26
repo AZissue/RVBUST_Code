@@ -529,11 +529,18 @@ std::vector<core::RoiBox> boxesFromParams(const Params& p) {
     const std::string json_text = p.getString("boxes_json");
     const int count = std::max(1, p.getInt("box_count"));
     if (json_text.empty()) {
-        if (count > 1) {
-            throw std::runtime_error(
-                "box_roi: box_count > 1 requires boxes_json (box list)");
+        // No explicit list: replicate the legacy interactive box `count`
+        // times with stable labels, so +/- box_count works out of the box and
+        // each box can then be edited independently.
+        std::vector<core::RoiBox> boxes;
+        const core::RoiBox base = boxFromParams(p);
+        boxes.reserve(static_cast<std::size_t>(count));
+        for (int i = 0; i < count; ++i) {
+            core::RoiBox b = base;
+            b.label = "roi" + std::to_string(i);
+            boxes.push_back(std::move(b));
         }
-        return {boxFromParams(p)};
+        return boxes;
     }
     const json::Value v = json::Value::parse(json_text);
     if (!v.isArray()) {

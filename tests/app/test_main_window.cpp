@@ -10,6 +10,7 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QMenu>
+#include <QSpinBox>
 #include <QStackedWidget>
 #include <QSurfaceFormat>
 #include <QTemporaryDir>
@@ -68,6 +69,9 @@ private slots:
     void roiButtonOnlyForBoxRoiNode();
     // Per-frame transforms accumulate and reset.
     void frameTransformAppliesAndResets();
+    // Raising box_count via the params spinbox creates the multi-box selector
+    // in the node action area (and vice versa when lowered to 1).
+    void boxCountCreatesBoxSelector();
 
 private:
     QString writePly(QTemporaryDir& dir) const;
@@ -534,6 +538,37 @@ void MainWindowTest::frameTransformAppliesAndResets() {
     QCOMPARE(static_cast<int>(view->transformedFrameCount()), 1);
     view->resetFrameTransforms(targets);
     QCOMPARE(static_cast<int>(view->transformedFrameCount()), 0);
+}
+
+void MainWindowTest::boxCountCreatesBoxSelector() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString ply = writePly(dir);
+    app::MainWindow w;
+    QVERIFY(w.loadDemo(ply));
+
+    auto hasBoxSelector = [&w]() {
+        for (QSpinBox* s : w.findChildren<QSpinBox*>()) {
+            if (s->minimum() == 1 && s->maximum() == 2 &&
+                s->objectName() != QLatin1String("box_count")) {
+                return true;
+            }
+        }
+        return false;
+    };
+    QVERIFY(!hasBoxSelector());  // default box_count = 1
+
+    auto* spin = w.findChild<QSpinBox*>(QStringLiteral("box_count"));
+    QVERIFY(spin != nullptr);
+    spin->setValue(2);  // real UI path: emits paramChanged -> doParamChanged
+    QTest::qWait(30);
+    QVERIFY2(hasBoxSelector(),
+             "box_count=2 must add the Box selector to the node action area");
+
+    spin->setValue(1);
+    QTest::qWait(30);
+    QVERIFY2(!hasBoxSelector(),
+             "box_count=1 must remove the Box selector again");
 }
 
 }  // namespace
