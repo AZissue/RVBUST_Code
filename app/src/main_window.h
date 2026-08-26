@@ -104,9 +104,6 @@ private:
     // nodes like load_cloud, which have no inputs).
     void selectAllProps(bool select, bool sync_filter = true,
                         bool prefer_outputs = false);
-    // Write the selected input frames into the selected Box ROI node's
-    // frame_filter param (empty selection / select-all -> all frames).
-    void syncBoxRoiFilter();
     void showFallbackOutput();
     // Applies the "Show Data Types" filter to the 3D view and re-renders the
     // current content (selection layer / display3d layers) immediately.
@@ -168,9 +165,6 @@ private:
     GraphRunner* runner_ = nullptr;
     QThread* runner_thread_ = nullptr;
     QTimer* display_timer_ = nullptr;
-    // False while refreshPropsTree() applies its default selection, so the
-    // Box ROI frame filter is not reset just by selecting a node.
-    bool props_sync_filter_ = true;
     // display3d node id -> viewport name it was last routed to (for stale
     // layer cleanup when a node moves to another viewport or is deleted).
     std::map<std::string, std::string> display_routes_;

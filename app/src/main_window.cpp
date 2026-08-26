@@ -1285,15 +1285,12 @@ void MainWindow::refreshPropsTree(bool prefer_outputs) {
 
     results_tree_->expandAll();
     results_tree_->blockSignals(false);
-    // Default selection drives the 3D view but must not reset a previously
-    // configured Box ROI frame filter.
-    props_sync_filter_ = false;
     selectAllProps(true, false, prefer_outputs);
-    props_sync_filter_ = true;
 }
 
 void MainWindow::selectAllProps(bool select, bool sync_filter,
                                 bool prefer_outputs) {
+    (void)sync_filter;
     // Decide the default group: inputs when the selected node actually has
     // input object rows, otherwise outputs. Two degenerate layouts must fall
     // back to outputs: source nodes whose input group only carries the
@@ -1356,9 +1353,7 @@ void MainWindow::selectAllProps(bool select, bool sync_filter,
     } else {
         results_tree_->clearSelection();
     }
-    if (!sync_filter) props_sync_filter_ = false;
     applyPropsSelection();
-    props_sync_filter_ = true;
 }
 
 std::vector<std::int64_t> MainWindow::selectedInputIndices(int port) const {
@@ -1420,49 +1415,8 @@ void MainWindow::applyPropsSelection() {
     } else {
         cloud_view_->showObjectList(&show);
     }
-    if (props_sync_filter_) syncBoxRoiFilter();
     // ROI baseline follows the selected input frames (project requirement).
     updateRoiBoxPreview();
-}
-
-void MainWindow::syncBoxRoiFilter() {
-    pcsearch::pipeline::Node* node = graph_.node(selected_node_id_);
-    if (!node || node->type() != "box_roi") return;
-    int total_input = 0;
-    for (const auto& e : graph_.edges()) {
-        if (e.to_id != selected_node_id_ || e.to_port != 0) continue;
-        if (const auto* l = graph_.output(e.from_id, e.from_port)) {
-            total_input = static_cast<int>(l->objects.size());
-        }
-        break;
-    }
-    std::vector<int> selected;
-    const QList<QTreeWidgetItem*> items = results_tree_->selectedItems();
-    for (QTreeWidgetItem* item : items) {
-        if (!item->data(0, kPropsIndexRole).isValid()) continue;
-        if (!item->data(0, kPropsInputRole).toBool()) continue;
-        if (item->data(0, kPropsInputPortRole).toInt() != 0) continue;
-        selected.push_back(item->data(0, kPropsIndexRole).toInt());
-    }
-    std::sort(selected.begin(), selected.end());
-    std::string filter;
-    // Proper subset only: select-all / clear keep "all frames" semantics.
-    if (!selected.empty() && static_cast<int>(selected.size()) < total_input) {
-        for (std::size_t k = 0; k < selected.size(); ++k) {
-            if (k) filter += ",";
-            filter += std::to_string(selected[k]);
-        }
-    }
-    if (filter == node->params().getString("frame_filter")) return;
-    try {
-        graph_.setParam(selected_node_id_, "frame_filter",
-                        pcsearch::pipeline::ParamValue{filter});
-        log(tr("Box ROI frame filter: %1 (press F5 to recompute)")
-                .arg(filter.empty() ? QStringLiteral("all frames")
-                                    : QString::fromStdString(filter)));
-    } catch (const std::exception& e) {
-        log(QString::fromUtf8(e.what()));
-    }
 }
 
 void MainWindow::showFallbackOutput() {

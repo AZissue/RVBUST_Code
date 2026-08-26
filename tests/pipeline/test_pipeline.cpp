@@ -938,7 +938,7 @@ int main() {
                           "mbbox: error mentions boxes_json");
     }
 
-    // ---- box_roi frame_filter: only selected frames are cropped ----
+    // ---- box_roi processes every frame (frame_filter removed, PROJECT §9) ----
     {
         const std::filesystem::path src_dir = dir / "filter_src";
         std::filesystem::create_directories(src_dir);
@@ -957,53 +957,30 @@ int main() {
         g.setParam(box->id(), "ymax", ParamValue{10.0});
         g.setParam(box->id(), "zmin", ParamValue{-10.0});
         g.setParam(box->id(), "zmax", ParamValue{10.0});
-        g.setParam(box->id(), "frame_filter", ParamValue{std::string("0,2")});
         g.connect(load->id(), 0, box->id(), 0);
-        failures += check(g.execute(), "filter: execute ok");
+        failures += check(g.execute(), "allframes: execute ok");
 
         const auto* clouds = g.output(box->id(), 0);
         const auto* regions = g.output(box->id(), 1);
         failures += check(clouds && clouds->objects.size() == 3 &&
                               regions && regions->objects.size() == 3,
-                          "filter: 1:1 output alignment preserved");
+                          "allframes: 1:1 output alignment preserved");
         if (clouds && regions && clouds->objects.size() == 3) {
-            // Frame 0 and 2 are cropped to 50 points; frame 1 passes through.
-            failures += check(clouds->objects[0]->cloud->size() == 50 &&
-                                  clouds->objects[0]->roi &&
-                                  clouds->objects[0]->roi->valid,
-                              "filter: frame 0 cropped with valid roi");
-            failures += check(clouds->objects[1]->cloud->size() == 60 &&
-                                  !clouds->objects[1]->roi,
-                              "filter: frame 1 passthrough unchanged");
-            failures += check(clouds->objects[2]->cloud->size() == 50 &&
-                                  clouds->objects[2]->roi &&
-                                  clouds->objects[2]->roi->valid,
-                              "filter: frame 2 cropped with valid roi");
-            failures += check(regions->objects[0]->roi &&
-                                  regions->objects[0]->roi->valid &&
-                                  regions->objects[2]->roi &&
-                                  regions->objects[2]->roi->valid,
-                              "filter: selected frames have valid region rows");
-            failures += check(regions->objects[1]->roi &&
-                                  !regions->objects[1]->roi->valid,
-                              "filter: passthrough frame has invalid region row");
+            // Every frame is cropped to 50 points and carries a valid box.
+            for (std::size_t i = 0; i < 3; ++i) {
+                failures += check(clouds->objects[i]->cloud->size() == 50 &&
+                                      clouds->objects[i]->roi &&
+                                      clouds->objects[i]->roi->valid,
+                                  "allframes: frame cropped with valid roi");
+                failures += check(regions->objects[i]->roi &&
+                                      regions->objects[i]->roi->valid,
+                                  "allframes: region row has valid box");
+            }
             failures += check(clouds->objects[0]->id == "frame_000.roi0" &&
-                                  clouds->objects[1]->id == "frame_001" &&
+                                  clouds->objects[1]->id == "frame_001.roi0" &&
                                   clouds->objects[2]->id == "frame_002.roi0",
-                              "filter: ids reflect cropped vs passthrough");
+                              "allframes: ids use the cropped naming");
         }
-
-        // Invalid filter tokens fail fast.
-        Graph g2;
-        auto* load2 = g2.addNode("load_cloud");
-        g2.setParam(load2->id(), "folder", ParamValue{src_dir.string()});
-        g2.setParam(load2->id(), "mode", ParamValue{std::string("all")});
-        auto* box2 = g2.addNode("box_roi");
-        g2.setParam(box2->id(), "frame_filter", ParamValue{std::string("abc")});
-        g2.connect(load2->id(), 0, box2->id(), 0);
-        failures += check(!g2.execute(), "filter: invalid token must fail");
-        failures += check(g2.lastError().find("frame_filter") != std::string::npos,
-                          "filter: error mentions frame_filter");
     }
 
     // ---- Provenance is the producing node id (PROJECT §9) ----
