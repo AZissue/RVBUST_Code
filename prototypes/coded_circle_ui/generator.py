@@ -273,6 +273,20 @@ def generate_full_board(
     return img, codes, binaries
 
 
+def _format_save_error(path: str, exc: Exception) -> str:
+    """把文件保存异常转换为用户友好的中文提示。"""
+    name = os.path.basename(path)
+    # errno 13 = Permission denied, errno 32 = Sharing violation (Windows)
+    if isinstance(exc, PermissionError) or (
+        isinstance(exc, OSError) and getattr(exc, "errno", None) in (13, 32)
+    ):
+        return (
+            f"无法写入 {name}：文件可能被其他程序占用或没有写入权限。\n"
+            f"请先关闭已打开的 {name}，或更换输出目录后再试。"
+        )
+    return f"保存 {name} 失败：{exc}"
+
+
 def save_board(
     img: np.ndarray,
     codes: List[int],
@@ -303,19 +317,29 @@ def save_board(
         "binaries": binaries,
     }
     meta_path = os.path.join(output_dir, "coded_circle_meta.json")
-    with open(meta_path, "w", encoding="utf-8") as f:
-        json.dump(meta, f, indent=2, ensure_ascii=False)
-    saved.append(meta_path)
+    try:
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(meta, f, indent=2, ensure_ascii=False)
+        saved.append(meta_path)
+    except Exception as e:
+        raise RuntimeError(_format_save_error(meta_path, e)) from e
 
     if fmt in ("png", "both"):
         png_path = os.path.join(output_dir, f"{base_name}.png")
-        cv2.imwrite(png_path, img)
-        saved.append(png_path)
+        try:
+            if not cv2.imwrite(png_path, img):
+                raise OSError(f"cv2.imwrite 返回失败，路径：{png_path}")
+            saved.append(png_path)
+        except Exception as e:
+            raise RuntimeError(_format_save_error(png_path, e)) from e
 
     if fmt in ("pdf", "both"):
         pdf_path = os.path.join(output_dir, f"{base_name}.pdf")
-        if _try_generate_pdf(codes, binaries, pdf_path, params):
+        try:
+            _try_generate_pdf(codes, binaries, pdf_path, params)
             saved.append(pdf_path)
+        except Exception as e:
+            raise RuntimeError(_format_save_error(pdf_path, e)) from e
 
     return saved
 
@@ -329,70 +353,80 @@ def _try_generate_pdf(
     try:
         import cairo
     except ImportError:
-        return False
+        raise RuntimeError(
+            "生成 PDF 需要 pycairo 库。请安装：pip install pycairo"
+        ) from None
 
-    width, height = _page_size_px(params.page_type, params.dpi)
-    surface = cairo.PDFSurface(output_path, width, height)
-    ctx = cairo.Context(surface)
-    ctx.set_source_rgb(1, 1, 1)
-    ctx.paint()
-
-    radius_px = _mm_to_px(params.effective_radius_mm, params.dpi)
-    margin_px = _mm_to_px(params.margin_mm, params.dpi)
-    cell = int(2 * radius_px * params.r4_to_r0_ratio)
-    cols = max(1, (width - 2 * margin_px) // cell)
-    rows = max(1, (height - 2 * margin_px) // cell)
-
-    def draw_sector(cx, cy, inner, outer, start, end):
+    try:
+        width, height = _page_size_px(params.page_type, params.dpi)
+        surface = cairo.PDFSurface(output_path, width, height)
+        ctx = cairo.Context(surface)
         ctx.set_source_rgb(1, 1, 1)
-        ctx.new_sub_path()
-        ctx.arc(cx, cy, outer, start, end)
-        ctx.line_to(cx + inner * math.cos(end), cy + inner * math.sin(end))
-        ctx.arc_negative(cx, cy, inner, end, start)
-        ctx.close_path()
-        ctx.fill()
+        ctx.paint()
 
-    def calculate_degrees(code):
-        n = len(code)
-        step = 2 * math.pi / n
-        result = []
-        i = 0
-        while i < n:
-            if code[i] == "1":
-                start = i
-                while i < n and code[i] == "1":
+        radius_px = _mm_to_px(params.effective_radius_mm, params.dpi)
+        margin_px = _mm_to_px(params.margin_mm, params.dpi)
+        cell = int(2 * radius_px * params.r4_to_r0_ratio)
+        cols = max(1, (width - 2 * margin_px) // cell)
+        rows = max(1, (height - 2 * margin_px) // cell)
+
+        def draw_sector(cx, cy, inner, outer, start, end):
+            ctx.set_source_rgb(1, 1, 1)
+            ctx.new_sub_path()
+            ctx.arc(cx, cy, outer, start, end)
+            ctx.line_to(cx + inner * math.cos(end), cy + inner * math.sin(end))
+            ctx.arc_negative(cx, cy, inner, end, start)
+            ctx.close_path()
+            ctx.fill()
+
+        def calculate_degrees(code):
+            n = len(code)
+            step = 2 * math.pi / n
+            result = []
+            i = 0
+            while i < n:
+                if code[i] == "1":
+                    start = i
+                    while i < n and code[i] == "1":
+                        i += 1
+                    result.append((start * step, i * step))
+                else:
                     i += 1
-                result.append((start * step, i * step))
-            else:
-                i += 1
-        return result
+            return result
 
-    for idx, (dec, binary) in enumerate(zip(codes, binaries)):
-        if idx >= cols * rows:
-            break
-        row = idx // cols
-        col = idx % cols
-        cx = margin_px + col * cell + cell / 2
-        cy = margin_px + row * cell + cell / 2
+        for idx, (dec, binary) in enumerate(zip(codes, binaries)):
+            if idx >= cols * rows:
+                break
+            row = idx // cols
+            col = idx % cols
+            cx = margin_px + col * cell + cell / 2
+            cy = margin_px + row * cell + cell / 2
 
-        ctx.set_source_rgb(0, 0, 0)
-        half = radius_px * params.r3_to_r0_ratio
-        ctx.rectangle(cx - half, cy - half, 2 * half, 2 * half)
-        ctx.fill()
+            ctx.set_source_rgb(0, 0, 0)
+            half = radius_px * params.r3_to_r0_ratio
+            ctx.rectangle(cx - half, cy - half, 2 * half, 2 * half)
+            ctx.fill()
 
-        ctx.set_source_rgb(1, 1, 1)
-        ctx.arc(cx, cy, radius_px, 0, 2 * math.pi)
-        ctx.fill()
+            ctx.set_source_rgb(1, 1, 1)
+            ctx.arc(cx, cy, radius_px, 0, 2 * math.pi)
+            ctx.fill()
 
-        for start_a, end_a in calculate_degrees(binary):
-            draw_sector(cx, cy, radius_px * params.r1_to_r0_ratio, radius_px * params.r2_to_r0_ratio, start_a, end_a)
+            for start_a, end_a in calculate_degrees(binary):
+                draw_sector(cx, cy, radius_px * params.r1_to_r0_ratio, radius_px * params.r2_to_r0_ratio, start_a, end_a)
 
-        font_size = radius_px * (params.r4_to_r0_ratio - params.r3_to_r0_ratio)
-        ctx.set_source_rgb(0, 0, 0)
-        ctx.select_font_face("Arial", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
-        ctx.set_font_size(font_size)
-        ctx.move_to(cx - font_size, cy + radius_px * params.r4_to_r0_ratio)
-        ctx.show_text(str(dec))
+            font_size = radius_px * (params.r4_to_r0_ratio - params.r3_to_r0_ratio)
+            ctx.set_source_rgb(0, 0, 0)
+            ctx.select_font_face("Arial", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
+            ctx.set_font_size(font_size)
+            ctx.move_to(cx - font_size, cy + radius_px * params.r4_to_r0_ratio)
+            ctx.show_text(str(dec))
 
-    surface.finish()
+        surface.finish()
+    except (PermissionError, OSError) as e:
+        raise RuntimeError(
+            "无法写入 PDF：文件可能被其他程序占用或没有写入权限。\n"
+            "请先关闭已打开的 PDF，或更换输出目录后再试。"
+        ) from e
+    except Exception as e:
+        raise RuntimeError(f"生成 PDF 失败：{e}") from e
     return True
