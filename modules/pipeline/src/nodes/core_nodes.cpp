@@ -135,9 +135,13 @@ core::LengthUnit resolveUnit(const std::string& unit) {
 
 std::string expandPath(const std::string& path, std::size_t index, std::size_t total) {
     if (total <= 1) return path;
-    const std::filesystem::path p(path);
-    return (p.parent_path() / (p.stem().string() + "_" + std::to_string(index) + p.extension().string()))
-        .string();
+    // Pure string surgery on UTF-8 paths: do not pass narrow strings through
+    // std::filesystem::path on Windows, or non-ASCII (Chinese) folder names
+    // get mangled by the ANSI codepage (PROJECT §8.5 / P1-4).
+    const std::size_t dot = path.find_last_of('.');
+    const std::string base = (dot == std::string::npos) ? path : path.substr(0, dot);
+    const std::string ext = (dot == std::string::npos) ? std::string{} : path.substr(dot);
+    return base + "_" + std::to_string(index) + ext;
 }
 
 // Zero-padded frame identity used for batch object ids / save naming:
@@ -270,17 +274,21 @@ ObjectList SaveCloudNode::execute(const std::vector<ObjectList>& inputs, const P
     if (!has_known_ext) file_name += ext;
     options.format = format;
 
-    const std::filesystem::path base_path =
-        std::filesystem::path(folder) / file_name;
+    // Build all paths as UTF-8 narrow strings; filesystem operations go through
+    // the IO layer's UTF-8 <-> wide conversion so Chinese paths do not hit the
+    // ANSI codepage error "No mapping for the Unicode character...".
+    const std::string base_path_str =
+        io::pathToUtf8(io::pathFromUtf8(folder) / io::pathFromUtf8(file_name));
+
     std::error_code ec;
-    std::filesystem::create_directories(base_path.parent_path(), ec);
+    std::filesystem::create_directories(io::pathFromUtf8(folder), ec);
     if (ec) {
         throw std::runtime_error("save_cloud: cannot create folder: " + folder);
     }
 
     const auto& objects = inputs[0].objects;
     for (std::size_t i = 0; i < objects.size(); ++i) {
-        io::writePointCloud(expandPath(base_path.string(), i, objects.size()),
+        io::writePointCloud(expandPath(base_path_str, i, objects.size()),
                             *objects[i]->cloud, options);
     }
     return inputs[0];
