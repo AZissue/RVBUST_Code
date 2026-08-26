@@ -76,12 +76,14 @@ private:
     // Put the currently selected Box ROI node's box into the interactive
     // vtkBoxWidget2 editor (auto-entered when the node is selected).
     void enterRoiEdit();
-    void refreshResults();
+    void refreshResults(bool prefer_outputs = false);
     // Rebuild the cloud-properties tree for the selected node: its inputs
     // (from upstream edges, grouped by port) and outputs (grouped by port),
     // one row per object/frame. Falls back to all node outputs when nothing
     // is selected. Rows are multi-selectable and drive the 3D view.
-    void refreshPropsTree();
+    // `prefer_outputs` makes the default selection show the output group
+    // (used after "run to node" so the just-computed node result appears).
+    void refreshPropsTree(bool prefer_outputs = false);
     // Collect the selected rows and push them to the 3D viewport: output
     // selections win, otherwise input selections; empty selection clears the
     // view. Also refreshes the ROI baseline (selected input frames).
@@ -92,7 +94,8 @@ private:
     // Select / deselect every object row of the properties tree. Selecting
     // picks the input group by default (falling back to outputs for source
     // nodes like load_cloud, which have no inputs).
-    void selectAllProps(bool select, bool sync_filter = true);
+    void selectAllProps(bool select, bool sync_filter = true,
+                        bool prefer_outputs = false);
     // Write the selected input frames into the selected Box ROI node's
     // frame_filter param (empty selection / select-all -> all frames).
     void syncBoxRoiFilter();
@@ -135,6 +138,9 @@ private:
     ViewportManager* viewports_ = nullptr;
 
     bool running_ = false;
+    // True when the last run was "run to selected node" (drives the default
+    // properties selection to the output group afterwards).
+    bool last_run_to_selected_ = false;
     std::string selected_node_id_;
     GraphRunner* runner_ = nullptr;
     QThread* runner_thread_ = nullptr;

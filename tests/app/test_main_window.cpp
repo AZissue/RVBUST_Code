@@ -38,9 +38,13 @@ private slots:
     // With no node selected the tree lists every node's first output directly
     // under the node root (no group/port layers); Select All must still work.
     void selectAllSelectsFallbackListWhenNothingSelected();
+    // After "run to node", the properties panel must default to the selected
+    // node's outputs (the just-computed result), not its inputs.
+    void runToNodeDefaultsToOutputs();
 
 private:
     QString writePly(QTemporaryDir& dir) const;
+    QTreeWidget* canvasTree(app::MainWindow& w) const;
     QTreeWidget* propsTree(app::MainWindow& w) const;
     QPushButton* selectAllButton(app::MainWindow& w) const;
     QPlainTextEdit* logView(app::MainWindow& w) const;
@@ -101,6 +105,16 @@ QTreeWidget* MainWindowTest::propsTree(app::MainWindow& w) const {
     return nullptr;
 }
 
+QTreeWidget* MainWindowTest::canvasTree(app::MainWindow& w) const {
+    for (QTreeWidget* t : w.findChildren<QTreeWidget*>()) {
+        const QString head = t->headerItem()->text(0);
+        if (head == QLatin1String("Node") || head == QString::fromUtf8("节点")) {
+            return t;
+        }
+    }
+    return nullptr;
+}
+
 QPushButton* MainWindowTest::selectAllButton(app::MainWindow& w) const {
     for (QPushButton* b : w.findChildren<QPushButton*>()) {
         const QString text = b->text();
@@ -119,11 +133,14 @@ bool MainWindowTest::waitForRun(app::MainWindow& w, int timeout_ms) const {
     QElapsedTimer timer;
     timer.start();
     const QString done = QLatin1String("Graph executed successfully");
+    const QString failed = QLatin1String("Graph execution failed");
+    QPlainTextEdit* log = logView(w);
+    const int done_before = log ? log->toPlainText().count(done) : 0;
+    const int failed_before = log ? log->toPlainText().count(failed) : 0;
     while (timer.elapsed() < timeout_ms) {
         QTest::qWait(25);
-        QPlainTextEdit* log = logView(w);
-        if (log && log->toPlainText().contains(done)) return true;
-        if (log && log->toPlainText().contains(QLatin1String("Graph execution failed"))) {
+        if (log && log->toPlainText().count(done) > done_before) return true;
+        if (log && log->toPlainText().count(failed) > failed_before) {
             qWarning() << "graph run failed:" << log->toPlainText();
             return false;
         }
@@ -151,14 +168,7 @@ void MainWindowTest::selectAllFallsBackToOutputsForSourceNode() {
 
     // Pick the load_cloud node id from the canvas tree (all nodes listed
     // in insertion order; the demo graph starts with load_cloud).
-    QTreeWidget* canvas = nullptr;
-    for (QTreeWidget* t : w.findChildren<QTreeWidget*>()) {
-        const QString head = t->headerItem()->text(0);
-        if (head == QLatin1String("Node") || head == QString::fromUtf8("节点")) {
-            canvas = t;
-            break;
-        }
-    }
+    QTreeWidget* canvas = canvasTree(w);
     QVERIFY(canvas);
     const QString load_id = canvas->topLevelItem(0)->text(0);
     QMetaObject::invokeMethod(&w, "doSelectNode", Qt::DirectConnection,
@@ -224,6 +234,47 @@ void MainWindowTest::selectAllSelectsFallbackListWhenNothingSelected() {
     QVERIFY2(selected > 0,
              "Select All with no node selected must select the listed outputs, "
              "not clear the 3D view");
+}
+
+void MainWindowTest::runToNodeDefaultsToOutputs() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString ply = writePly(dir);
+    app::MainWindow w;
+    QVERIFY(w.loadDemo(ply));
+    w.runGraph();
+    QVERIFY(waitForRun(w));
+
+    QTreeWidget* canvas = canvasTree(w);
+    QVERIFY(canvas);
+    const QString load_id = canvas->topLevelItem(0)->text(0);
+    const QString roi_id = canvas->topLevelItem(1)->text(0);
+
+    // loadDemo already selected box_roi; re-run only up to it.
+    w.runGraph(true);
+    QVERIFY(waitForRun(w));
+
+    QTreeWidget* tree = propsTree(w);
+    QVERIFY(tree);
+    const QList<QTreeWidgetItem*> selected = tree->selectedItems();
+    QVERIFY2(selected.size() > 0, "run-to-node must leave a non-empty selection");
+    for (QTreeWidgetItem* item : selected) {
+        QVERIFY2(item->text(3) == roi_id,
+                 "run-to-node default selection must show the node outputs");
+    }
+
+    // The Select All button keeps its meaning: it falls back to the input
+    // group (upstream source) again.
+    QPushButton* button = selectAllButton(w);
+    QVERIFY(button);
+    button->click();
+    QTest::qWait(50);
+    const QList<QTreeWidgetItem*> after = tree->selectedItems();
+    QVERIFY2(after.size() > 0, "Select All after run-to-node must keep a selection");
+    for (QTreeWidgetItem* item : after) {
+        QVERIFY2(item->text(3) == load_id,
+                 "Select All must select the input group again");
+    }
 }
 
 }  // namespace

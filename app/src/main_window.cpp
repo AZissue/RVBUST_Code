@@ -760,6 +760,7 @@ void MainWindow::runGraph(bool to_selected) {
         return;
     }
     running_ = true;
+    last_run_to_selected_ = to_selected;
     setEditingEnabled(false);
     statusBar()->showMessage(tr("Running graph..."));
 
@@ -795,7 +796,7 @@ void MainWindow::onRunFinished(bool ok, const QString& error) {
 
     if (ok) {
         log(tr("Graph executed successfully"));
-        refreshResults();
+        refreshResults(last_run_to_selected_ && !selected_node_id_.empty());
         refreshOutputCombo();
         // With a selected node, refreshResults() already re-applied the
         // properties selection to the 3D view; without one, show the combo.
@@ -1051,8 +1052,8 @@ void MainWindow::showAbout() {
            "C++20 / Qt6 / VTK / PCL"));
 }
 
-void MainWindow::refreshResults() {
-    refreshPropsTree();
+void MainWindow::refreshResults(bool prefer_outputs) {
+    refreshPropsTree(prefer_outputs);
 }
 
 namespace {
@@ -1096,7 +1097,7 @@ bool groupHasObjectRows(const QTreeWidgetItem* group) {
 
 }  // namespace
 
-void MainWindow::refreshPropsTree() {
+void MainWindow::refreshPropsTree(bool prefer_outputs) {
     results_tree_->blockSignals(true);
     results_tree_->clear();
     const std::string sel = selected_node_id_;
@@ -1197,11 +1198,12 @@ void MainWindow::refreshPropsTree() {
     // Default selection drives the 3D view but must not reset a previously
     // configured Box ROI frame filter.
     props_sync_filter_ = false;
-    selectAllProps(true, false);
+    selectAllProps(true, false, prefer_outputs);
     props_sync_filter_ = true;
 }
 
-void MainWindow::selectAllProps(bool select, bool sync_filter) {
+void MainWindow::selectAllProps(bool select, bool sync_filter,
+                                bool prefer_outputs) {
     // Decide the default group: inputs when the selected node actually has
     // input object rows, otherwise outputs. Two degenerate layouts must fall
     // back to outputs: source nodes whose input group only carries the
@@ -1231,6 +1233,7 @@ void MainWindow::selectAllProps(bool select, bool sync_filter) {
         prefer_input = has_input;
         (void)has_output;
     }
+    if (prefer_outputs) prefer_input = false;
 
     std::vector<QTreeWidgetItem*> object_rows;
     for (int i = 0; i < results_tree_->topLevelItemCount(); ++i) {
