@@ -35,6 +35,8 @@
 - 上次会话结束已提交：是（ROI W/E、体素修复与本会话文档约定均已推送）
 
 ## ✅ 已完成（近期；更早历史见 git）
+- [x] 2026-08-25 修复 3D 视窗跟随逻辑：运行后主视窗按“显示输出”combo 刷新；选中普通节点时自动切到该节点输出；Box ROI 仍显示输入云以便编辑；save_cloud 中文路径保存失败修复
+- [x] 2026-08-25 修复 save_cloud 中文路径：所有路径走 UTF-8 ↔ wide 转换，避免 MSVC std::filesystem::path 经 ANSI 代码页导致 “No mapping for the Unicode character...”；expandPath 改为纯字符串操作
 - [x] 2026-08-25 完成节点 I/O / 批量 / 分块 / 显示统一约定（PROJECT §8 + §9 待修清单），
   含一帧多盒、文件夹批量读取模式、视窗多图层显示模型
 - [x] 2026-08-25 修复本地一键构建：CMake 复用 RvcVisionStudio 自编译 VTK（带 GUISupportQt）解决 PCL 1.13.0 捆绑 VTK 缺 Qt 支持问题；start.bat 自动探测本机 Qt/PCL 路径；ctest 6/6 + autoquit 冒烟通过
