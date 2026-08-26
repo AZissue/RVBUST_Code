@@ -361,7 +361,20 @@ void MainWindow::doSelectNode(const QString& id) {
         roi_button_->blockSignals(false);
         enterRoiEdit();
     }
-    showNodeInputCloud(selected_node_id_);
+
+    // The "Show Output" combo should drive the main viewport. For Box ROI we
+    // still show the input cloud so the user can fit/adjust the box against the
+    // full source; for every other node we show that node's own output.
+    if (node && node->type() == "box_roi") {
+        showNodeInputCloud(selected_node_id_);
+    } else {
+        const int idx = output_combo_->findData(id);
+        if (idx >= 0) {
+            output_combo_->setCurrentIndex(idx);
+        } else {
+            showNodeInputCloud(selected_node_id_);
+        }
+    }
     updateRoiBoxPreview();
 }
 
@@ -730,7 +743,11 @@ void MainWindow::onRunFinished(bool ok, const QString& error) {
         log(tr("Graph executed successfully"));
         refreshResults();
         refreshOutputCombo();
-        if (!selected_node_id_.empty()) {
+        // After a run the main viewport follows the "Show Output" combo, not
+        // the selected node's input. The only exception is Box ROI, where the
+        // user is editing against the full input cloud.
+        if (!selected_node_id_.empty() &&
+            graph_.node(selected_node_id_)->type() == "box_roi") {
             showNodeInputCloud(selected_node_id_);
         } else {
             showSelectedOutput();
