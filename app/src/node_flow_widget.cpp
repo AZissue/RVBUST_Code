@@ -45,10 +45,11 @@ class EdgeItem : public QGraphicsPathItem {
 public:
     using QGraphicsPathItem::QGraphicsPathItem;
 
-    // Wider hit shape so the line is easy to right-click.
+    // Wider hit shape so the line is easy to right-click: the visual line is
+    // only 2px, so the hit corridor is 20px (10px each side).
     QPainterPath shape() const override {
         QPainterPathStroker stroker;
-        stroker.setWidth(10.0);
+        stroker.setWidth(20.0);
         return stroker.createStroke(path());
     }
 

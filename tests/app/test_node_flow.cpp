@@ -8,6 +8,7 @@
 
 #include <QImage>
 #include <QComboBox>
+#include <QGraphicsPathItem>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QSignalSpy>
@@ -177,6 +178,30 @@ private slots:
         app::ParamsPanel panel;
         panel.showNode(box);
         QVERIFY(panel.findChild<QPushButton*>() == nullptr);
+    }
+
+    void edgeHitAreaIsWideEnough() {
+        Graph g;
+        auto* load = g.addNode("load_cloud");
+        auto* zf = g.addNode("z_filter");
+        app::NodeFlowWidget w;
+        w.setGraph(&g);
+        w.addNode(load, QPointF(10, 10));
+        w.addNode(zf, QPointF(310, 10));
+        w.resize(800, 400);
+        g.connect(load->id(), 0, zf->id(), 0);
+        w.addEdge(QString::fromStdString(load->id()), 0,
+                  QString::fromStdString(zf->id()), 0);
+
+        // The cubic's midpoint is the average of the two port centers; the
+        // visible line is 2px but the hit corridor must cover points well
+        // away from it (8px off the line should still hit the edge item).
+        const QPointF a = w.outputPortPos(load->id(), 0);
+        const QPointF b = w.inputPortPos(zf->id(), 0);
+        const QPointF probe = 0.5 * (a + b) + QPointF(0, 8);
+        QGraphicsItem* hit = w.scene()->itemAt(probe, QTransform());
+        QVERIFY2(hit && dynamic_cast<QGraphicsPathItem*>(hit) != nullptr,
+                 "edge hit shape must cover a point 8px off the visible line");
     }
 
     void paramsPanelLoadCloudDoesNotCrash() {
