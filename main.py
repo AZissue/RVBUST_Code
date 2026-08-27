@@ -24,6 +24,7 @@ def main():
     from version import get_version
 
     try:
+        from PySide6.QtCore import QPropertyAnimation
         from PySide6.QtWidgets import QApplication, QDialog
     except ImportError:
         print("[ERROR] PySide6 未安装，仅 core 模块可用（python test_core.py）")
@@ -74,9 +75,18 @@ def main():
         main_window.set_mode(mode, devices)
         main_window.setWindowTitle(
             f"RVC 拼接工作站 — {LauncherDialog.MODE_NAMES[mode]} {get_version()}")
+
+        # 主窗口从透明淡入，同时直接关闭启动小窗，避免小窗淡出时闪一下
+        main_window.setWindowOpacity(0.0)
         main_window.show()
-        # 小窗淡出后关闭，实现平滑过渡
-        launcher.fade_out_and_accept()
+        fade_in = QPropertyAnimation(main_window, b"windowOpacity")
+        fade_in.setDuration(200)
+        fade_in.setStartValue(0.0)
+        fade_in.setEndValue(1.0)
+        fade_in.start()
+        # 保持动画引用，防止被 Python GC 销毁
+        main_window._fade_in_animation = fade_in
+        launcher.accept()
 
     def on_auto_ip(devices: list):
         """自动配置 IP（后台执行，防止 UI 卡住）。"""
