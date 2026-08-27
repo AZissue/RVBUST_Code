@@ -20,7 +20,7 @@ from typing import Dict, List, Optional, Set, Tuple
 
 import numpy as np
 
-from PySide6.QtCore import QObject, QTimer
+from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QMessageBox
 
