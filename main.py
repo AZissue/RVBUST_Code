@@ -61,6 +61,10 @@ def main():
 
     def on_connection_finished(success: bool, message: str):
         """相机连接完成：先渲染主窗口，再让小窗淡出关闭。"""
+        # 设备管理重连时，bridge 会再次发射 connection_finished；
+        # 这里只响应初始启动小窗的连接结果，避免旧回调把模式刷回初始状态。
+        if not launcher.isVisible():
+            return
         if not success:
             launcher.hide_connection_overlay()
             return

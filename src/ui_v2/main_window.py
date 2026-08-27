@@ -408,8 +408,14 @@ class MainWindowShell(QMainWindow):
         if dialog.exec() == QDialog.Accepted and connected["mode"]:
             self._dirty = False
             self.set_mode(connected["mode"], connected["devices"])
-            self.device_manager_reopened.emit(
-                connected["mode"], connected["devices"])
+            # 后台重连：直接使用 backend_bridge，避免 signal 旧回调干扰；
+            # 启动小窗已有遮罩，主窗口不再重复显示 loading。
+            if self._backend_bridge is not None:
+                self._backend_bridge._on_device_manager_reopened(
+                    connected["mode"], connected["devices"], show_loading=False)
+            else:
+                self.device_manager_reopened.emit(
+                    connected["mode"], connected["devices"])
 
     def _confirm_discard(self) -> bool:
         """未保存数据确认框。
