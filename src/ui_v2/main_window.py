@@ -130,12 +130,22 @@ class MainWindowShell(QMainWindow):
         else:
             self.resize(1280, 800)
 
+        self._center_on_screen()
+
         self._mode = LauncherDialog.MODE_MULTI_CAM
         self._devices: List[DeviceInfo] = []
         self._dirty = False  # 有未保存的标定/会话数据
         self._backend_bridge: Optional['BackendBridge'] = None
 
         self._setup_ui()
+
+    def _center_on_screen(self):
+        """根据屏幕可用区域把主窗口居中。"""
+        screen = QApplication.primaryScreen()
+        if screen:
+            geo = screen.availableGeometry()
+            self.move((geo.width() - self.width()) // 2,
+                      (geo.height() - self.height()) // 2)
 
     # ------------------------------------------------------------ UI 搭建
     def _setup_ui(self):
