@@ -1,14 +1,17 @@
 # -*- coding: utf-8 -*-
 """
-离线拼接测试 UI。
+离线拼接测试 UI（基于主程序 ui_v2 组件重构）。
 
 功能：
-  - 选择数据文件夹；
-  - 列出所有图像/点云文件对；
+  - 选择本地图像/点云文件夹；
+  - 列出按文件名前缀匹配的文件对；
   - 点击文件对：左侧显示 2D 图像（红点标出编码圆圆心），右侧显示 3D 点云；
-  - 点击「拼接」：自动检测、配准、合并，输出结果信息。
+  - 点击「拼接」：自动检测、配准、合并，输出结果信息；
+  - 支持保存合并后的 PLY。
 
-不生成任何 JSON 配置文件。
+说明：
+  - 使用主程序 ui_v2 的 GLOBAL_QSS 主题、ViewerPanel 3D 查看器、LoadingOverlay；
+  - 仅作原型验证，不入主程序模式栈；后续由测试决定是否并入主程序。
 """
 
 from __future__ import annotations
@@ -17,7 +20,7 @@ import os
 import sys
 
 # 把项目 src 和本原型 core 加入路径
-_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 sys.path.insert(0, os.path.join(_PROJECT_ROOT, "src"))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "core"))
 
@@ -33,7 +36,11 @@ from PySide6.QtWidgets import (
     QFileDialog, QMessageBox, QSizePolicy, QSplitter
 )
 
-from ui.viewer_3d import EmbeddedPointCloudViewer
+# 复用主程序 ui_v2 的主题与控件
+from ui_v2.theme import GLOBAL_QSS, BG_PANEL, TEXT_MUTED, TEXT_SECONDARY
+from ui_v2.widgets.viewer_panel import ViewerPanel
+from ui_v2.widgets.loading_overlay import LoadingOverlay
+
 from core.marker_detector import MarkerDetector
 from offline_stitcher import OfflineStitcher, FramePair
 
@@ -52,8 +59,9 @@ def cv_image_to_qpixmap(image_bgr: np.ndarray) -> QPixmap:
 class OfflineStitchWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("离线拼接测试工具")
+        self.setWindowTitle("离线拼接测试工具（ui_v2 重构版）")
         self.resize(1400, 900)
+        self._center_on_screen()
 
         self.stitcher = OfflineStitcher()
         self.current_pair: FramePair | None = None
@@ -74,13 +82,14 @@ class OfflineStitchWindow(QMainWindow):
         left_layout.setSpacing(8)
 
         self.btn_select_dir = QPushButton("选择数据文件夹")
-        self.btn_select_dir.setMinimumHeight(32)
+        self.btn_select_dir.setObjectName("primary")
+        self.btn_select_dir.setMinimumHeight(34)
         self.btn_select_dir.clicked.connect(self._on_select_directory)
         left_layout.addWidget(self.btn_select_dir)
 
         self.lbl_dir = QLabel("未选择文件夹")
         self.lbl_dir.setWordWrap(True)
-        self.lbl_dir.setStyleSheet("color: gray;")
+        self.lbl_dir.setStyleSheet(f"color: {TEXT_MUTED};")
         left_layout.addWidget(self.lbl_dir)
 
         self.list_files = QListWidget()
@@ -89,6 +98,7 @@ class OfflineStitchWindow(QMainWindow):
         left_layout.addWidget(self.list_files, 1)
 
         self.btn_stitch = QPushButton("开始拼接")
+        self.btn_stitch.setObjectName("primary")
         self.btn_stitch.setMinimumHeight(36)
         self.btn_stitch.setEnabled(False)
         self.btn_stitch.clicked.connect(self._on_stitch)
@@ -96,7 +106,7 @@ class OfflineStitchWindow(QMainWindow):
 
         self.txt_log = QTextEdit()
         self.txt_log.setReadOnly(True)
-        self.txt_log.setMaximumHeight(160)
+        self.txt_log.setMaximumHeight(180)
         self.txt_log.setPlaceholderText("运行信息...")
         left_layout.addWidget(self.txt_log)
 
@@ -111,18 +121,32 @@ class OfflineStitchWindow(QMainWindow):
         # 2D 预览
         self.lbl_image = QLabel("2D 预览")
         self.lbl_image.setAlignment(Qt.AlignCenter)
-        self.lbl_image.setStyleSheet("background-color: #1e1e1e; color: #888;")
+        self.lbl_image.setStyleSheet(
+            f"background-color: {BG_PANEL}; color: {TEXT_SECONDARY}; border: none; border-radius: 6px;"
+        )
         self.lbl_image.setMinimumHeight(280)
         self.lbl_image.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         right_layout.addWidget(self.lbl_image, 1)
 
-        # 3D 预览
-        self.viewer_3d = EmbeddedPointCloudViewer(self)
+        # 3D 预览（复用主程序 ViewerPanel）
+        self.viewer_3d = ViewerPanel("3D 点云预览", self)
         self.viewer_3d.setMinimumHeight(280)
         right_layout.addWidget(self.viewer_3d, 1)
 
         splitter.addWidget(right)
         splitter.setSizes([320, 1080])
+
+        # 加载遮罩（复用主程序 LoadingOverlay）
+        self._overlay = LoadingOverlay(central)
+        self._overlay.hide()
+
+    def _center_on_screen(self):
+        """屏幕居中。"""
+        screen = QApplication.primaryScreen()
+        if screen:
+            geo = screen.availableGeometry()
+            self.move((geo.width() - self.width()) // 2,
+                      (geo.height() - self.height()) // 2)
 
     # ------------------------------------------------------------------
     # 事件处理
@@ -191,6 +215,8 @@ class OfflineStitchWindow(QMainWindow):
             QMessageBox.warning(self, "警告", "没有可拼接的文件对")
             return
 
+        self._overlay.show_message("正在拼接...")
+
         # 逐个加入拼接链
         for pair in self.stitcher.pairs:
             ok, msg = self.stitcher.add_pair_to_chain(pair)
@@ -200,13 +226,13 @@ class OfflineStitchWindow(QMainWindow):
 
         merged, msg = self.stitcher.stitch()
         self._log(msg)
+        self._overlay.hide_overlay()
 
         if merged is not None:
             self.viewer_3d.clear_all()
             self.viewer_3d.set_pointcloud_merged(merged)
             self._log(f"合并点云已显示，共 {len(merged.points)} 点")
 
-            # 提示保存
             reply = QMessageBox.question(
                 self, "保存", "拼接完成，是否保存合并点云？",
                 QMessageBox.Yes | QMessageBox.No)
@@ -219,20 +245,23 @@ class OfflineStitchWindow(QMainWindow):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        if hasattr(self, "_overlay") and self._overlay.isVisible():
+            self._overlay.setGeometry(0, 0, self.width(), self.height())
         if self.current_pair is not None:
-            # 窗口大小变化时刷新 2D 预览尺寸
             self._refresh_image()
 
     def _refresh_image(self):
-        if self.lbl_image.pixmap() is None or self.lbl_image.pixmap().isNull():
+        pm = self.lbl_image.pixmap()
+        if pm is None or pm.isNull():
             return
-        self.lbl_image.setPixmap(self.lbl_image.pixmap().scaled(
+        self.lbl_image.setPixmap(pm.scaled(
             self.lbl_image.width(), self.lbl_image.height(),
             Qt.KeepAspectRatio, Qt.SmoothTransformation))
 
 
 def main():
     app = QApplication(sys.argv)
+    app.setStyleSheet(GLOBAL_QSS)
     window = OfflineStitchWindow()
     window.show()
     sys.exit(app.exec())

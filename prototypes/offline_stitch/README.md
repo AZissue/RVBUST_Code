@@ -1,8 +1,9 @@
-# 离线拼接测试工具
+# 离线拼接测试工具（ui_v2 重构版）
 
 > 位置：`D:\RVC_SRC\Python\MultiCameraCalibration\prototypes\offline_stitch`  
 > 目标：不连相机，直接读取本地图像+点云文件对，做标记物检测与点云拼接验证。  
-> 范围：仅基础功能，不生成额外 JSON 配置文件。
+> 范围：仅基础功能，不生成额外 JSON 配置文件。  
+> UI：复用主程序 `src/ui_v2` 的 `GLOBAL_QSS` 主题、`ViewerPanel` 3D 查看器和 `LoadingOverlay`。
 
 ---
 
