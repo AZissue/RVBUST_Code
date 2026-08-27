@@ -72,12 +72,12 @@ class OfflineStitchWindow(QMainWindow):
         root.setContentsMargins(8, 8, 8, 8)
         root.setSpacing(8)
 
-        splitter = QSplitter(Qt.Horizontal)
-        root.addWidget(splitter, 1)
+        self._main_splitter = QSplitter(Qt.Horizontal)
+        root.addWidget(self._main_splitter, 1)
 
         # --------------------------- 左侧面板 ---------------------------
-        left = QWidget()
-        left_layout = QVBoxLayout(left)
+        self._left_panel = QWidget()
+        left_layout = QVBoxLayout(self._left_panel)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(8)
 
@@ -110,11 +110,11 @@ class OfflineStitchWindow(QMainWindow):
         self.txt_log.setPlaceholderText("运行信息...")
         left_layout.addWidget(self.txt_log)
 
-        splitter.addWidget(left)
+        self._main_splitter.addWidget(self._left_panel)
 
         # --------------------------- 右侧面板 ---------------------------
-        right = QWidget()
-        right_layout = QVBoxLayout(right)
+        self._right_panel = QWidget()
+        right_layout = QVBoxLayout(self._right_panel)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(8)
 
@@ -131,14 +131,18 @@ class OfflineStitchWindow(QMainWindow):
         # 3D 预览（复用主程序 ViewerPanel）
         self.viewer_3d = ViewerPanel("3D 点云预览", self)
         self.viewer_3d.setMinimumHeight(280)
+        self.viewer_3d.maximize_toggled.connect(self._on_viewer_maximize_toggled)
         right_layout.addWidget(self.viewer_3d, 1)
 
-        splitter.addWidget(right)
-        splitter.setSizes([320, 1080])
+        self._main_splitter.addWidget(self._right_panel)
+        self._main_splitter.setSizes([320, 1080])
 
         # 加载遮罩（复用主程序 LoadingOverlay）
         self._overlay = LoadingOverlay(central)
         self._overlay.hide()
+
+        self._viewer_maximized = False
+        self._pre_maximize_sizes = None
 
     def _center_on_screen(self):
         """屏幕居中。"""
@@ -257,6 +261,23 @@ class OfflineStitchWindow(QMainWindow):
         self.lbl_image.setPixmap(pm.scaled(
             self.lbl_image.width(), self.lbl_image.height(),
             Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+    def _on_viewer_maximize_toggled(self, maximized: bool):
+        """3D 查看器最大化/恢复：隐藏/恢复左侧面板与 2D 预览区。"""
+        self._viewer_maximized = maximized
+        if maximized:
+            self._pre_maximize_sizes = self._main_splitter.sizes()
+            self._left_panel.hide()
+            self.lbl_image.hide()
+            total = max(self._main_splitter.width(), 100)
+            self._main_splitter.setSizes([0, total])
+        else:
+            self._left_panel.show()
+            self.lbl_image.show()
+            if self._pre_maximize_sizes:
+                self._main_splitter.setSizes(self._pre_maximize_sizes)
+            else:
+                self._main_splitter.setSizes([320, 1080])
 
 
 def main():

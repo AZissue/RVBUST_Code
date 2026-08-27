@@ -130,11 +130,11 @@ class TurntableWorkspace(QWidget):
         root.setSpacing(10)
 
         # ---- 左侧控制面板（可滚动，避免小屏幕显示不全）----
-        left_scroll = QScrollArea()
-        left_scroll.setWidgetResizable(True)
-        left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        left_scroll.setFrameShape(QFrame.NoFrame)
-        left_scroll.setMinimumWidth(280)
+        self._left_panel = QScrollArea()
+        self._left_panel.setWidgetResizable(True)
+        self._left_panel.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._left_panel.setFrameShape(QFrame.NoFrame)
+        self._left_panel.setMinimumWidth(280)
 
         left_widget = QWidget()
         left = QVBoxLayout(left_widget)
@@ -156,12 +156,12 @@ class TurntableWorkspace(QWidget):
         left.addWidget(self._build_stitch_group())
         left.addStretch(1)
 
-        left_scroll.setWidget(left_widget)
-        root.addWidget(left_scroll, 1)
+        self._left_panel.setWidget(left_widget)
+        root.addWidget(self._left_panel, 1)
 
         # ---- 右侧：2D 预览 + 3D 查看器 ----
-        right_split = QSplitter(Qt.Horizontal)
-        right_split.setChildrenCollapsible(False)
+        self._right_split = QSplitter(Qt.Horizontal)
+        self._right_split.setChildrenCollapsible(False)
 
         self.preview_2d_label = QLabel("2D 预览区")
         self.preview_2d_label.setAlignment(Qt.AlignCenter)
@@ -170,15 +170,19 @@ class TurntableWorkspace(QWidget):
         )
         self.preview_2d_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.preview_2d_label.setMinimumSize(360, 270)
-        right_split.addWidget(self.preview_2d_label)
+        self._right_split.addWidget(self.preview_2d_label)
 
         self.viewer = ViewerPanel("3D 转台拼接预览")
         self.viewer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.viewer.setMinimumSize(360, 270)
-        right_split.addWidget(self.viewer)
+        self.viewer.maximize_toggled.connect(self._on_viewer_maximize_toggled)
+        self._right_split.addWidget(self.viewer)
 
-        right_split.setSizes([540, 810])
-        root.addWidget(right_split, 3)
+        self._right_split.setSizes([540, 810])
+        root.addWidget(self._right_split, 3)
+
+        self._viewer_maximized = False
+        self._pre_maximize_sizes = None
 
     def _build_camera_group(self) -> QGroupBox:
         grp = QGroupBox("相机连接")
@@ -829,3 +833,20 @@ class TurntableWorkspace(QWidget):
             self.log(f"会话已保存: {path}")
 
         self._run_worker(_save, _done)
+
+    def _on_viewer_maximize_toggled(self, maximized: bool):
+        """3D 查看器最大化/恢复：隐藏/恢复左侧面板与 2D 预览区。"""
+        self._viewer_maximized = maximized
+        if maximized:
+            self._pre_maximize_sizes = self._right_split.sizes()
+            self._left_panel.hide()
+            self.preview_2d_label.hide()
+            total = max(self._right_split.width(), 100)
+            self._right_split.setSizes([0, total])
+        else:
+            self._left_panel.show()
+            self.preview_2d_label.show()
+            if self._pre_maximize_sizes:
+                self._right_split.setSizes(self._pre_maximize_sizes)
+            else:
+                self._right_split.setSizes([540, 810])

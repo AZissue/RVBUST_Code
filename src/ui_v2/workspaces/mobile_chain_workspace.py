@@ -104,13 +104,13 @@ class MobileChainWorkspace(QWidget):
         body.addWidget(self._timeline)
 
         # ---- 中央：左实时取景 / 右 3D 预览（水平布局，便于边拍边看） ----
-        center_split = QSplitter(Qt.Horizontal)
+        self._center_split = QSplitter(Qt.Horizontal)
         self._live_view = LiveViewPanel()
         self._live_view.setMinimumWidth(420)
         self._live_view.setSizePolicy(
             QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._live_view.mode_toggled.connect(self.auto_mode_changed)
-        center_split.addWidget(self._live_view)
+        self._center_split.addWidget(self._live_view)
 
         self._viewer = ViewerPanel("实时 3D 拼接预览（按机位分色）")
         self._viewer.setMinimumWidth(420)
@@ -118,16 +118,18 @@ class MobileChainWorkspace(QWidget):
             QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._viewer.viewer_message.connect(
             lambda m: self.log_message.emit(m, "info"))
-        center_split.addWidget(self._viewer)
-        center_split.setStretchFactor(0, 1)
-        center_split.setStretchFactor(1, 1)
-        center_split.setSizes([600, 600])
-        body.addWidget(center_split, 1)
+        self._viewer.maximize_toggled.connect(self._on_viewer_maximize_toggled)
+        self._center_split.addWidget(self._viewer)
+        self._center_split.setStretchFactor(0, 1)
+        self._center_split.setStretchFactor(1, 1)
+        self._center_split.setSizes([600, 600])
+        body.addWidget(self._center_split, 1)
 
         root.addLayout(body, 1)
 
         # ---- 底部：评估卡片 + 操作按钮区 ----
-        bottom = QHBoxLayout()
+        self._bottom_widget = QWidget()
+        bottom = QHBoxLayout(self._bottom_widget)
         bottom.setSpacing(8)
 
         self._eval_card = EvaluationCard()
@@ -177,7 +179,7 @@ class MobileChainWorkspace(QWidget):
         actions.addWidget(self._btn_delete_node)
 
         bottom.addLayout(actions)
-        root.addLayout(bottom)
+        root.addWidget(self._bottom_widget)
 
         # ---- 底部常驻统计行：已接 N 机位 | 累计误差 | 平均单步误差 ----
         self._stats_label = QLabel("已接 0 机位 ｜ 累计误差 — ｜ 平均单步误差 —")
@@ -186,6 +188,8 @@ class MobileChainWorkspace(QWidget):
         root.addWidget(self._stats_label)
 
         self._selected_node: Optional[int] = None
+        self._viewer_maximized = False
+        self._pre_maximize_sizes = None
 
     # ------------------------------------------------------------ 状态机（UI 门控）
     def set_state(self, state: str):
@@ -419,3 +423,24 @@ class MobileChainWorkspace(QWidget):
             self.delete_station_requested.emit(self._selected_node)
             self._selected_node = None
             self._btn_delete_node.setEnabled(False)
+
+    def _on_viewer_maximize_toggled(self, maximized: bool):
+        """3D 查看器最大化/恢复：隐藏/恢复时间线、底部操作区和 2D 取景。"""
+        self._viewer_maximized = maximized
+        if maximized:
+            self._pre_maximize_sizes = self._center_split.sizes()
+            self._timeline.hide()
+            self._bottom_widget.hide()
+            self._stats_label.hide()
+            self._live_view.hide()
+            total = max(self._center_split.width(), 100)
+            self._center_split.setSizes([0, total])
+        else:
+            self._timeline.show()
+            self._bottom_widget.show()
+            self._stats_label.show()
+            self._live_view.show()
+            if self._pre_maximize_sizes:
+                self._center_split.setSizes(self._pre_maximize_sizes)
+            else:
+                self._center_split.setSizes([600, 600])

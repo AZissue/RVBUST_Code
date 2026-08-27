@@ -617,7 +617,9 @@ class MultiCamWorkspace(QWidget):
             self._left_widget.hide()
             self._right_widget.hide()
             self._camera_grid.hide()
-            self._center_split.setSizes([0, 1])
+            # 让 3D 查看器占满整个中央区域（size 用像素值，1 像素会导致几乎不可见）
+            total = max(self._center_split.height(), 100)
+            self._center_split.setSizes([0, total])
         else:
             self._left_widget.show()
             self._right_widget.show()
