@@ -15,11 +15,19 @@ MvSDKLog/
 .vscode/
 .idea/
 
+# Tool / worktree metadata
+.kimi-code/
+.worktrees/
+
 # Backups
 backup_*/
 
 # Calibration results (user-generated)
 calibration.json
+
+# Generated point clouds / meshes (large binaries)
+/*.ply
+*.stl
 
 # Generated coded circle boards
 OutputCodedCircleData/

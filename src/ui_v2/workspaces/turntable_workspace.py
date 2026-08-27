@@ -96,6 +96,9 @@ class TurntableWorkspace(QWidget):
     log_message = Signal(str, str)
     """工作区日志（message, level）。"""
 
+    dirty_changed = Signal(bool)
+    """工作区数据脏标记变化（例如拍摄/标定/拼接后应设为 True）。"""
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._state = "idle"
@@ -638,6 +641,7 @@ class TurntableWorkspace(QWidget):
                         f"frame1 仅检测到 {len(markers)} 个标记点，标定至少需要 3 个。\n"
                         "请调整标记物位置、光照或曝光后重拍。"
                     )
+            self.dirty_changed.emit(True)
             self._update_online_ui()
 
         self._run_worker(_capture, _done)
@@ -672,6 +676,7 @@ class TurntableWorkspace(QWidget):
                 self.viewer.set_pointcloud("frame1", None)
                 self.log("标定完成，请将转台回到起始位置，从 step 1 开始采集")
                 self.set_state("calibrated")
+                self.dirty_changed.emit(True)
             else:
                 QMessageBox.warning(self, "标定失败", msg)
             self._update_online_ui()
@@ -719,6 +724,7 @@ class TurntableWorkspace(QWidget):
             if self.session.current_step > total:
                 self.log("360° 采集完成，可以拼接")
             self.set_state("capturing")
+            self.dirty_changed.emit(True)
             self._update_online_ui()
 
         self._run_worker(_capture, _done)

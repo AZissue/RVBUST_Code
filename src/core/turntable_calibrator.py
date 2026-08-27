@@ -177,7 +177,8 @@ class TurntableCalibrator:
             if pcd is None or len(pcd.points) == 0:
                 continue
             T = self.get_transform_for_step(i)
-            pcd_t = pcd.transform(T)
+            pcd_t = o3d.geometry.PointCloud(pcd)
+            pcd_t.transform(T)
             merged += pcd_t
 
         if len(merged.points) == 0:

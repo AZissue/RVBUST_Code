@@ -84,6 +84,7 @@ class FixedMultiCamWorkflow(WorkflowBase):
         self._frames_scan.clear()
         self._calibration_locked = False
         self.calibration_engine.pair_results.clear()
+        self.calibration_engine.reference_id = None
         logger.info("功能一工作流已重置")
 
     # ------------------------------------------------------------------
@@ -104,6 +105,7 @@ class FixedMultiCamWorkflow(WorkflowBase):
         elif self._state not in (self.STATE_IDLE, self.STATE_CALIBRATED):
             return False, f"当前状态 {self._state} 不允许重新标定"
         self._reference_id = reference_id
+        self.calibration_engine.set_reference(reference_id)
         self._state = self.STATE_CALIBRATING
         self._calibration_locked = False
         logger.info(f"进入标定阶段，参考相机: {reference_id}")

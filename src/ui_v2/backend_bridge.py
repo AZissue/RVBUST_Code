@@ -161,6 +161,18 @@ class BackendBridge(QObject):
                 pass
         return device_infos
 
+    @staticmethod
+    def get_ordered_devices(devices: List[DeviceInfo]) -> List[DeviceInfo]:
+        """对齐 backend 连接顺序：真实设备在前，测试/虚拟设备在后。
+
+        LauncherDialog 返回的勾选顺序是用户点击顺序；camera_id 分配必须
+        与 backend 的 ordered_devices（real + test）一致，否则卡片标题与
+        实际视频帧错位。
+        """
+        real = [d for d in devices if isinstance(d.backend_ref, int)]
+        test = [d for d in devices if not isinstance(d.backend_ref, int)]
+        return real + test
+
     def auto_configure_network(self, devices: List[DeviceInfo],
                                on_finished=None):
         """对勾选设备自动配置 IP；未勾选则对所有 GigE 设备配置（后台执行）。
@@ -1311,8 +1323,9 @@ class BackendBridge(QObject):
         def _work():
             if self._current_mode == LauncherDialog.MODE_MULTI_CAM:
                 return self._save_fixed_session()
-            else:
-                return self._save_mobile_session()
+            if self._current_mode == LauncherDialog.MODE_TURNTABLE:
+                return self._save_turntable_session()
+            return self._save_mobile_session()
 
         def _done(result, error):
             self.shell.hide_loading()
@@ -1354,6 +1367,45 @@ class BackendBridge(QObject):
         # StationManager 已在拍摄时存盘，这里只返回会话路径
         return True, f"移动拼接会话已保存: {report.get('session_dir', 'unknown')}"
 
+    def _save_turntable_session(self) -> Tuple[bool, str]:
+        """保存转台 360° 拼接会话（序列帧 + 标定元数据）。"""
+        import json
+        ws = self.shell.workspace_turntable()
+        session = ws.session
+        frames = session.get_all_frames()
+        if not frames:
+            return False, "无转台帧数据可保存"
+
+        offline = OfflineSession()
+        offline.create_new("offline_data")
+        for frame in frames:
+            cam_id = getattr(frame, "camera_name", None) or "cam0"
+            offline.add_frame(cam_id, frame)
+
+        meta = {
+            "mode": "turntable",
+            "step_count": session.step_count(),
+            "total_steps_needed": session.total_steps_needed(),
+            "current_step": session.current_step,
+        }
+        calib = session.calib
+        if calib.is_calibrated():
+            meta["angle_deg"] = float(np.degrees(calib.angle_rad))
+            meta["axis"] = (
+                calib.axis.tolist() if calib.axis is not None else None)
+            meta["center"] = (
+                calib.center.tolist() if calib.center is not None else None)
+
+        try:
+            meta_path = os.path.join(offline.session_dir, "turntable_meta.json")
+            with open(meta_path, "w", encoding="utf-8") as f:
+                json.dump(meta, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.warning(f"保存转台元数据失败: {e}")
+
+        offline.save_all()
+        return True, f"转台会话已保存: {offline.session_dir}"
+
     def _on_open_session(self):
         """打开离线会话并加载帧。"""
         from PySide6.QtWidgets import QFileDialog
@@ -1387,13 +1439,41 @@ class BackendBridge(QObject):
         if self._current_mode == LauncherDialog.MODE_MULTI_CAM:
             # 取每台相机的最新帧作为标定帧
             latest = {cid: flist[-1] for cid, flist in frames.items() if flist}
+            if not latest:
+                self.shell.log("会话为空，无标定帧可加载", "warn")
+                return
+
+            # 确保工作流处于标定阶段；先 reset 再 start，避免历史状态干扰
+            self.fixed_workflow.reset()
+            ref_id = self.fixed_workflow.reference_id
+            if ref_id not in latest:
+                ref_id = sorted(latest.keys())[0]
+            ok, msg = self.fixed_workflow.start_calibration(ref_id)
+            if not ok:
+                self.shell.log(f"加载会话失败: {msg}", "error")
+                return
+
+            failed = []
             for cid, frame in latest.items():
-                self.fixed_workflow.add_calibration_frame(frame)
+                ok, msg = self.fixed_workflow.add_calibration_frame(frame)
+                if not ok:
+                    failed.append(cid)
+                    self.shell.log(f"加载 {cid} 标定帧失败: {msg}", "warn")
+
+            if failed:
+                self.shell.log(
+                    f"部分相机标定帧未加载: {failed}，已回到连接状态", "warn")
+                self.shell.workspace_multi().set_state("connected")
+                return
+
             ws = self.shell.workspace_multi()
             ws.reset_camera_grid(list(latest.keys()), enable_controls=False)
             for cid, frame in latest.items():
                 ws.camera_grid().set_frame(cid, frame, frame.markers)
             ws.set_state("captured")
+            self.shell.set_dirty(True)
+            self.shell.log(
+                f"会话加载完成: {len(latest)} 台相机标定帧已恢复", "success")
         else:
             # 模式 B：加载会话暂不恢复时间线，仅记录
             self.shell.log("模式 B 会话加载：已加载帧数据，时间线恢复待实现", "info")

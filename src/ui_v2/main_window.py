@@ -163,6 +163,7 @@ class MainWindowShell(QMainWindow):
         self._ws_mobile.log_message.connect(self.log)
         self._ws_turntable.log_message.connect(self.log)
         self._ws_mobile.chain_stats_changed.connect(self._on_chain_stats)
+        self._ws_turntable.dirty_changed.connect(self.set_dirty)
 
         root.addWidget(self._stack, 1)
 
@@ -407,15 +408,20 @@ class MainWindowShell(QMainWindow):
 
         if dialog.exec() == QDialog.Accepted and connected["mode"]:
             self._dirty = False
-            self.set_mode(connected["mode"], connected["devices"])
+            # 与 backend 的 camera_id 分配顺序对齐：真实设备在前，测试设备在后
+            ordered_devices = connected["devices"]
+            if self._backend_bridge is not None:
+                ordered_devices = self._backend_bridge.get_ordered_devices(
+                    connected["devices"])
+            self.set_mode(connected["mode"], ordered_devices)
             # 后台重连：直接使用 backend_bridge，避免 signal 旧回调干扰；
             # 启动小窗已有遮罩，主窗口不再重复显示 loading。
             if self._backend_bridge is not None:
                 self._backend_bridge._on_device_manager_reopened(
-                    connected["mode"], connected["devices"], show_loading=False)
+                    connected["mode"], ordered_devices, show_loading=False)
             else:
                 self.device_manager_reopened.emit(
-                    connected["mode"], connected["devices"])
+                    connected["mode"], ordered_devices)
 
     def _confirm_discard(self) -> bool:
         """未保存数据确认框。

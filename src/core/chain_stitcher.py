@@ -343,7 +343,9 @@ class ChainStitcher:
                                          edge.T, rms_mm=edge.rms_mm,
                                          inlier_ratio=edge.inlier_ratio,
                                          common_markers=edge.common_markers)
-                reachable.add(sid)
+                # 重配准成功后必须重算可达闭包，否则下游节点经新边已连通，
+                # 仍会被判为不可达而重复注册，导致 edges 与邻接表出现重复边。
+                reachable = _compute_reachable()
                 reregistered = True
                 break
             if not reregistered:

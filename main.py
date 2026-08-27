@@ -57,7 +57,8 @@ def main():
         在启动小窗上显示遮罩，后台连接相机；连接完成后平滑切换到主窗口。
         """
         launcher.show_connection_overlay("正在连接相机...")
-        bridge._on_device_manager_reopened(mode, devices, show_loading=False)
+        ordered = BackendBridge.get_ordered_devices(devices)
+        bridge._on_device_manager_reopened(mode, ordered, show_loading=False)
 
     def on_connection_finished(success: bool, message: str):
         """相机连接完成：先渲染主窗口，再让小窗淡出关闭。"""
@@ -69,7 +70,7 @@ def main():
             launcher.hide_connection_overlay()
             return
         mode = launcher.selected_mode()
-        devices = launcher.selected_devices()
+        devices = BackendBridge.get_ordered_devices(launcher.selected_devices())
         main_window.set_mode(mode, devices)
         main_window.setWindowTitle(
             f"RVC 拼接工作站 — {LauncherDialog.MODE_NAMES[mode]} {get_version()}")
