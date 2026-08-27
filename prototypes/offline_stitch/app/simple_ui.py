@@ -24,6 +24,7 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
 sys.path.insert(0, os.path.join(_PROJECT_ROOT, "src"))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "core"))
 
+import json
 import numpy as np
 import cv2
 import open3d as o3d
@@ -31,9 +32,10 @@ import open3d as o3d
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap, QImage
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QPushButton, QLabel, QListWidget, QListWidgetItem, QTextEdit,
-    QFileDialog, QMessageBox, QSizePolicy, QSplitter
+    QFileDialog, QMessageBox, QSizePolicy, QSplitter,
+    QSpinBox, QDoubleSpinBox, QGroupBox
 )
 
 # 复用主程序 ui_v2 的主题与控件
@@ -91,6 +93,9 @@ class OfflineStitchWindow(QMainWindow):
         self.lbl_dir.setWordWrap(True)
         self.lbl_dir.setStyleSheet(f"color: {TEXT_MUTED};")
         left_layout.addWidget(self.lbl_dir)
+
+        # --------------------------- 标记物参数 ---------------------------
+        self._build_marker_param_group(left_layout)
 
         self.list_files = QListWidget()
         self.list_files.setMinimumWidth(220)
@@ -152,6 +157,78 @@ class OfflineStitchWindow(QMainWindow):
             self.move((geo.width() - self.width()) // 2,
                       (geo.height() - self.height()) // 2)
 
+    def _build_marker_param_group(self, parent_layout: QVBoxLayout):
+        """编码圆参数输入区。"""
+        group = QGroupBox("编码圆参数")
+        form = QFormLayout(group)
+        form.setSpacing(6)
+        form.setContentsMargins(8, 10, 8, 10)
+
+        self.spin_n = QSpinBox()
+        self.spin_n.setRange(4, 64)
+        self.spin_n.setValue(8)
+        self.spin_n.setToolTip("扇区数 N")
+        self.spin_n.valueChanged.connect(self._on_marker_param_changed)
+        form.addRow("扇区数 N:", self.spin_n)
+
+        self.spin_r1 = QDoubleSpinBox()
+        self.spin_r1.setRange(1.0, 20.0)
+        self.spin_r1.setSingleStep(0.1)
+        self.spin_r1.setValue(2.0)
+        self.spin_r1.setDecimals(2)
+        self.spin_r1.setToolTip("r1/r0 比值")
+        self.spin_r1.valueChanged.connect(self._on_marker_param_changed)
+        form.addRow("r1/r0:", self.spin_r1)
+
+        self.spin_r2 = QDoubleSpinBox()
+        self.spin_r2.setRange(1.0, 20.0)
+        self.spin_r2.setSingleStep(0.1)
+        self.spin_r2.setValue(3.0)
+        self.spin_r2.setDecimals(2)
+        self.spin_r2.setToolTip("r2/r0 比值")
+        self.spin_r2.valueChanged.connect(self._on_marker_param_changed)
+        form.addRow("r2/r0:", self.spin_r2)
+
+        btn_load = QPushButton("加载编码圆配置...")
+        btn_load.setObjectName("secondary")
+        btn_load.setToolTip("从 coded_circle_meta.json 加载参数")
+        btn_load.clicked.connect(self._on_load_marker_config)
+        form.addRow(btn_load)
+
+        parent_layout.addWidget(group)
+
+    def _on_marker_param_changed(self):
+        """参数变化时同步到 OfflineStitcher。"""
+        self._apply_marker_params()
+
+    def _apply_marker_params(self):
+        n = self.spin_n.value()
+        r1 = self.spin_r1.value()
+        r2 = self.spin_r2.value()
+        self.stitcher.set_coded_circle_params(n, r1, r2)
+        self._log(f"编码圆参数已设置: N={n}, r1/r0={r1:.2f}, r2/r0={r2:.2f}")
+
+    def _on_load_marker_config(self):
+        """从生成器输出的 coded_circle_meta.json 加载参数。"""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "选择编码圆配置文件", "", "JSON (*.json)")
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+            params = meta.get("params", meta)
+            n = int(params.get("N", params.get("n", 8)))
+            r1 = float(params.get("r1_to_r0_ratio", 2.0))
+            r2 = float(params.get("r2_to_r0_ratio", 3.0))
+            self.spin_n.setValue(n)
+            self.spin_r1.setValue(r1)
+            self.spin_r2.setValue(r2)
+            self._on_marker_param_changed()
+            self._log(f"已加载编码圆配置: {path}")
+        except Exception as e:
+            QMessageBox.warning(self, "加载失败", f"无法解析配置文件:\n{e}")
+
     # ------------------------------------------------------------------
     # 事件处理
     # ------------------------------------------------------------------
@@ -168,6 +245,7 @@ class OfflineStitchWindow(QMainWindow):
         self.lbl_image.setText("2D 预览")
         self.lbl_image.setPixmap(QPixmap())
         self.stitcher = OfflineStitcher()
+        self._apply_marker_params()
 
         count, msg = self.stitcher.load_directory(directory)
         self.lbl_dir.setText(directory)

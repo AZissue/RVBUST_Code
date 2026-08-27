@@ -109,6 +109,14 @@ class OfflineStitcher:
         self.messages.append(msg)
         return len(self.pairs), msg
 
+    def set_marker_type(self, marker_type: str):
+        """设置标记物类型（'coded_circle' 或 'asymmetric_grid'）。"""
+        self.marker_detector.set_marker_type(marker_type)
+
+    def set_coded_circle_params(self, n: int, r1_ratio: float, r2_ratio: float):
+        """设置编码圆参数（N / r1/r0 / r2/r0）。"""
+        self.marker_detector.set_params(n, r1_ratio, r2_ratio)
+
     def detect_pair(self, pair: FramePair) -> Tuple[bool, str, List[Dict]]:
         """对单对文件做 2D+3D 检测。
 
