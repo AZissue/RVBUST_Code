@@ -29,8 +29,9 @@ from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog,
-    QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
-    QSizePolicy, QSpinBox, QSplitter, QTextEdit, QVBoxLayout, QWidget,
+    QFrame, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
+    QPushButton, QScrollArea, QSizePolicy, QSpinBox, QSplitter,
+    QTextEdit, QVBoxLayout, QWidget,
 )
 
 from ..theme import STATUS_ERR, STATUS_OK, TEXT_MUTED, TEXT_SECONDARY
@@ -125,9 +126,18 @@ class TurntableWorkspace(QWidget):
         root.setContentsMargins(10, 10, 10, 10)
         root.setSpacing(10)
 
-        # ---- 左侧控制面板 ----
-        left = QVBoxLayout()
+        # ---- 左侧控制面板（可滚动，避免小屏幕显示不全）----
+        left_scroll = QScrollArea()
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        left_scroll.setFrameShape(QFrame.NoFrame)
+        left_scroll.setMinimumWidth(280)
+
+        left_widget = QWidget()
+        left = QVBoxLayout(left_widget)
         left.setSpacing(10)
+        left.setContentsMargins(4, 4, 4, 4)
+        left.setAlignment(Qt.AlignTop)
 
         info = QLabel(
             "<b>转台 360° 拼接</b><br>"
@@ -142,7 +152,9 @@ class TurntableWorkspace(QWidget):
         left.addWidget(self._build_capture_group())
         left.addWidget(self._build_stitch_group())
         left.addStretch(1)
-        root.addLayout(left, 1)
+
+        left_scroll.setWidget(left_widget)
+        root.addWidget(left_scroll, 1)
 
         # ---- 右侧：2D 预览 + 3D 查看器 ----
         right_split = QSplitter(Qt.Horizontal)

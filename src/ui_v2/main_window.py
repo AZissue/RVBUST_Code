@@ -18,9 +18,9 @@ from typing import List, Optional
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QDialog, QDoubleSpinBox, QFormLayout, QFrame, QHBoxLayout,
-    QLabel, QMainWindow, QMessageBox, QPushButton, QSpinBox,
-    QStackedWidget, QToolButton, QVBoxLayout, QWidget,
+    QApplication, QDialog, QDoubleSpinBox, QFormLayout, QFrame,
+    QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton,
+    QSpinBox, QStackedWidget, QToolButton, QVBoxLayout, QWidget,
 )
 
 from .launcher_dialog import LauncherDialog
@@ -119,7 +119,16 @@ class MainWindowShell(QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("RVC 拼接工作站")
-        self.resize(1280, 800)
+
+        # 根据屏幕可用区域设置初始窗口大小，避免在小分辨率屏幕上显示不全
+        screen = QApplication.primaryScreen()
+        if screen:
+            geo = screen.availableGeometry()
+            w = min(1600, int(geo.width() * 0.9))
+            h = min(1000, int(geo.height() * 0.9))
+            self.resize(max(1280, w), max(800, h))
+        else:
+            self.resize(1280, 800)
 
         self._mode = LauncherDialog.MODE_MULTI_CAM
         self._devices: List[DeviceInfo] = []
@@ -145,9 +154,13 @@ class MainWindowShell(QMainWindow):
         self._ws_multi = MultiCamWorkspace()
         self._ws_mobile = MobileChainWorkspace()
         self._ws_turntable = TurntableWorkspace()
+        # 空白占位页：避免 set_mode() 前默认显示 multi 工作区造成闪切
+        self._blank_page = QWidget()
+        self._stack.addWidget(self._blank_page)
         self._stack.addWidget(self._ws_multi)
         self._stack.addWidget(self._ws_mobile)
         self._stack.addWidget(self._ws_turntable)
+        self._stack.setCurrentWidget(self._blank_page)
 
         # 工作区日志统一汇入日志面板与状态栏
         self._ws_multi.log_message.connect(self.log)
