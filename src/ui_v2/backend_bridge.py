@@ -44,6 +44,9 @@ from .widgets.device_table import DeviceInfo
 class BackendBridge(QObject):
     """ui_v2 与 core 模块的桥接器。"""
 
+    connection_finished = Signal(bool, str)
+    """设备连接完成信号：(success, message)。"""
+
     def __init__(self, shell: MainWindowShell):
         super().__init__()
         self.shell = shell
@@ -186,9 +189,18 @@ class BackendBridge(QObject):
 
         self._run_background(_work, _done)
 
-    def _on_device_manager_reopened(self, mode: str, devices: List[DeviceInfo]):
-        """设备管理小窗确认：断开旧设备 → 连接新设备 → 切换工作区。"""
-        self.shell.show_loading("正在连接设备...")
+    def _on_device_manager_reopened(
+        self, mode: str, devices: List[DeviceInfo], show_loading: bool = True
+    ):
+        """设备管理小窗确认：断开旧设备 → 连接新设备 → 切换工作区。
+
+        Args:
+            show_loading: 是否在主窗口显示 loading 遮罩。
+                          主程序新流程会在 launcher 小窗上先显示遮罩，
+                          因此调用时传入 False。
+        """
+        if show_loading:
+            self.shell.show_loading("正在连接设备...")
         # 清空旧相机注册表（避免多次进入设备管理后 camera_id 递增错乱）
         self.camera_manager.clear()
 
@@ -214,7 +226,9 @@ class BackendBridge(QObject):
 
         def _done(results, error):
             if error:
-                self.shell.hide_loading()
+                if show_loading:
+                    self.shell.hide_loading()
+                self.connection_finished.emit(False, f"连接设备异常: {error}")
                 self.shell.log(f"连接设备异常: {error}", "error")
                 return
             ok_count = sum(1 for _, ok, _ in results if ok)
@@ -241,7 +255,9 @@ class BackendBridge(QObject):
             elif mode == LauncherDialog.MODE_TURNTABLE:
                 # 模式 C：转台工作区自行管理相机、采集与拼接流程
                 self.shell.workspace_turntable().set_state("connected")
-            self.shell.hide_loading()
+            if show_loading:
+                self.shell.hide_loading()
+            self.connection_finished.emit(True, f"设备连接完成: {ok_count}/{len(results)} 台成功")
 
         self._run_background(_connect, _done)
 

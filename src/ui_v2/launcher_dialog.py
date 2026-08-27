@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QPropertyAnimation, Signal
 from PySide6.QtWidgets import (
     QApplication, QDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QVBoxLayout,
@@ -228,6 +228,61 @@ class LauncherDialog(QDialog):
         root.addLayout(bottom)
 
         self._set_mode(self._mode)
+
+        # 连接遮罩：点击连接后覆盖小窗，显示"正在连接相机"
+        self._connection_overlay = self._build_connection_overlay()
+
+        # 淡出动画：连接完成后小窗淡出，主窗口已在下方显示
+        self._fade_animation = QPropertyAnimation(self, b"windowOpacity")
+        self._fade_animation.setDuration(200)
+        self._fade_animation.finished.connect(self.accept)
+
+    def _build_connection_overlay(self) -> QFrame:
+        overlay = QFrame(self)
+        overlay.setStyleSheet(
+            f"QFrame {{ background-color: rgba(30, 31, 36, 0.92); border-radius: 8px; }}"
+        )
+        lo = QVBoxLayout(overlay)
+        lo.setAlignment(Qt.AlignCenter)
+        lo.setSpacing(16)
+
+        icon = QLabel()
+        icon.setPixmap(ui_icons.pixmap("bolt", ACCENT, 40))
+        icon.setAlignment(Qt.AlignCenter)
+        lo.addWidget(icon)
+
+        self._overlay_label = QLabel("正在连接相机...")
+        self._overlay_label.setStyleSheet(
+            f"color: {TEXT_SECONDARY}; font-size: 16px; font-weight: 600;"
+        )
+        self._overlay_label.setAlignment(Qt.AlignCenter)
+        lo.addWidget(self._overlay_label)
+
+        overlay.hide()
+        return overlay
+
+    def show_connection_overlay(self, text: str = "正在连接相机..."):
+        """显示全屏连接遮罩。"""
+        self._overlay_label.setText(text)
+        self._connection_overlay.setGeometry(self.rect())
+        self._connection_overlay.show()
+        self._connection_overlay.raise_()
+
+    def hide_connection_overlay(self):
+        """隐藏连接遮罩。"""
+        self._connection_overlay.hide()
+
+    def fade_out_and_accept(self):
+        """小窗淡出后关闭，实现与主窗口的平滑过渡。"""
+        self.hide_connection_overlay()
+        self._fade_animation.setStartValue(1.0)
+        self._fade_animation.setEndValue(0.0)
+        self._fade_animation.start()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "_connection_overlay"):
+            self._connection_overlay.setGeometry(self.rect())
 
     def _center_on_screen(self):
         screen = QApplication.primaryScreen()

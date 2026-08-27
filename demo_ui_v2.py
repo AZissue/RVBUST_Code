@@ -32,7 +32,7 @@ if SCREENSHOT_MODE:
 
 import numpy as np
 
-from PySide6.QtCore import QTimer, Qt
+from PySide6.QtCore import QObject, QTimer, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QDialog
 
@@ -155,10 +155,14 @@ def numpy_to_qpixmap(arr: np.ndarray) -> QPixmap:
 # 模拟后端
 # ---------------------------------------------------------------------------
 
-class MockBackendBridge:
+class MockBackendBridge(QObject):
     """ui_v2 的模拟后端：不依赖 RVC SDK，用合成数据驱动 UI。"""
 
+    connection_finished = Signal(bool, str)
+    """设备连接完成信号（与真实 BackendBridge 接口一致）。"""
+
     def __init__(self, shell: MainWindowShell):
+        super().__init__()
         self.shell = shell
         self._devices: List[DeviceInfo] = []
         self._camera_ids: List[str] = []
@@ -211,8 +215,11 @@ class MockBackendBridge:
     def enumerate_devices(self) -> List[DeviceInfo]:
         return make_mock_devices()
 
-    def _on_device_manager_reopened(self, mode: str, devices: List[DeviceInfo]):
-        self.shell.show_loading("正在连接设备...")
+    def _on_device_manager_reopened(
+        self, mode: str, devices: List[DeviceInfo], show_loading: bool = True
+    ):
+        if show_loading:
+            self.shell.show_loading("正在连接设备...")
         self._devices = list(devices)
         self._camera_ids = [f"cam{i}" for i in range(len(devices))]
         self._current_mode = mode
@@ -229,7 +236,9 @@ class MockBackendBridge:
             else:
                 self.shell.workspace_turntable().set_state("connected")
                 self.shell.log("已进入转台 360° 拼接模式", "success")
-            self.shell.hide_loading()
+            if show_loading:
+                self.shell.hide_loading()
+            self.connection_finished.emit(True, f"已进入 {LauncherDialog.MODE_NAMES[mode]}")
 
         QTimer.singleShot(1200, _done)
 
@@ -646,17 +655,27 @@ def main():
     main_window.set_backend_bridge(bridge)
 
     def on_connect(mode: str, devices: list):
-        # 与真实主程序一致：先渲染目标工作区 + loading，再后台连接
+        # 与真实主程序一致：小窗显示遮罩，后台连接，完成后平滑切换
+        launcher.show_connection_overlay("正在连接相机...")
+        bridge._on_device_manager_reopened(mode, devices, show_loading=False)
+
+    def on_connection_finished(success: bool, message: str):
+        if not success:
+            launcher.hide_connection_overlay()
+            return
+        mode = launcher.selected_mode()
+        devices = launcher.selected_devices()
         main_window.set_mode(mode, devices)
+        main_window.setWindowTitle(
+            f"RVC 拼接工作站 — {LauncherDialog.MODE_NAMES[mode]} {get_version()} [DEMO]")
         main_window.show()
-        main_window.show_loading("正在连接相机...")
-        bridge._on_device_manager_reopened(mode, devices)
-        launcher.accept()
+        launcher.fade_out_and_accept()
 
     launcher.connect_requested.connect(on_connect)
     launcher.auto_ip_requested.connect(
         lambda devs: main_window.log(f"自动设置 IP ×{len(devs)}（演示）", "info")
     )
+    bridge.connection_finished.connect(on_connection_finished)
 
     if SCREENSHOT_MODE:
         # 离屏截图模式：不阻塞在 launcher.exec()，直接 show 并截图后进入主窗口
@@ -670,12 +689,8 @@ def main():
     else:
         if launcher.exec() != QDialog.Accepted:
             return 0
-        mode = launcher.selected_mode()
-        devices = launcher.selected_devices()
 
-    # on_connect 中已完成 set_mode / show / loading，这里只需设置标题
-    main_window.setWindowTitle(
-        f"RVC 拼接工作站 — {LauncherDialog.MODE_NAMES[mode]} {get_version()} [DEMO]")
+    # on_connection_finished 中已完成 set_mode / show / 标题设置
 
     if SCREENSHOT_MODE:
         # 截图模式使用较大窗口，确保能看到 2D 预览 cover 铺满效果

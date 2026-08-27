@@ -54,13 +54,24 @@ def main():
     def on_connect(mode: str, devices: list):
         """连接设备。
 
-        先显示目标工作区并展示 loading，再后台连接相机，避免空白页/闪切。
+        在启动小窗上显示遮罩，后台连接相机；连接完成后平滑切换到主窗口。
         """
+        launcher.show_connection_overlay("正在连接相机...")
+        bridge._on_device_manager_reopened(mode, devices, show_loading=False)
+
+    def on_connection_finished(success: bool, message: str):
+        """相机连接完成：先渲染主窗口，再让小窗淡出关闭。"""
+        if not success:
+            launcher.hide_connection_overlay()
+            return
+        mode = launcher.selected_mode()
+        devices = launcher.selected_devices()
         main_window.set_mode(mode, devices)
+        main_window.setWindowTitle(
+            f"RVC 拼接工作站 — {LauncherDialog.MODE_NAMES[mode]} {get_version()}")
         main_window.show()
-        main_window.show_loading("正在连接相机...")
-        bridge._on_device_manager_reopened(mode, devices)
-        launcher.accept()
+        # 小窗淡出后关闭，实现平滑过渡
+        launcher.fade_out_and_accept()
 
     def on_auto_ip(devices: list):
         """自动配置 IP（后台执行，防止 UI 卡住）。"""
@@ -78,6 +89,7 @@ def main():
     launcher.refresh_requested.connect(on_refresh)
     launcher.connect_requested.connect(on_connect)
     launcher.auto_ip_requested.connect(on_auto_ip)
+    bridge.connection_finished.connect(on_connection_finished)
 
     # 初始枚举设备
     on_refresh()
@@ -85,10 +97,7 @@ def main():
     if launcher.exec() != QDialog.Accepted:
         return 0
 
-    # 2. 设置主窗口标题（工作区切换已在 on_connect 中完成）
-    mode = launcher.selected_mode()
-    main_window.setWindowTitle(
-        f"RVC 拼接工作站 — {LauncherDialog.MODE_NAMES[mode]} {get_version()}")
+    # 2. 工作区切换与小窗关闭已在 on_connection_finished 中完成
 
     # 3. 运行
     exit_code = app.exec()
