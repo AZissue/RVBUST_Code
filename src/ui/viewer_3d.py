@@ -898,6 +898,12 @@ class EmbeddedPointCloudViewer(QWidget):
             self.status_changed.emit(f"拼接点云已加载: {len(pcd.points)} 点")
         self._refresh_current()
 
+    def show_camera(self, camera_id: str):
+        """切换到指定 camera_id 的单相机显示模式。"""
+        idx = self.combo_mode.findData(camera_id)
+        if idx >= 0:
+            self.combo_mode.setCurrentIndex(idx)
+
     def set_highlight(self, camera_id: str, indices: Optional[list] = None):
         """高亮某台相机点云中的指定索引。"""
         self._highlights[camera_id] = indices or []
@@ -1029,9 +1035,9 @@ class EmbeddedPointCloudViewer(QWidget):
         失败或仍超阈值时回退到均匀采样。保留颜色/法线。
 
         关键点：
-          1. 先剔除 NaN/Inf 点得到"干净"点云，避免 open3d 在含无效点的输入上
-             产出异常结果；
-          2. 体素尺寸上限锁定到 MAX_RENDER_VOXEL_MM，防止大场景 AABB 过大时
+          1. 大数据量时先走 uniform_down_sample 粗降，避免全量复制 2600 万点；
+          2. 再剔除 NaN/Inf 点得到"干净"点云做体素精修；
+          3. 体素尺寸上限锁定到 MAX_RENDER_VOXEL_MM，防止大场景 AABB 过大时
              把有效点过度塌缩成稀疏点云。
         """
         n = len(pcd.points)
@@ -1039,22 +1045,34 @@ class EmbeddedPointCloudViewer(QWidget):
             return pcd
         try:
             pts = np.asarray(pcd.points)
-            colors = np.asarray(pcd.colors) if pcd.has_colors() else None
-            # 1. 只保留有效点
             valid_mask = np.isfinite(pts).all(axis=1)
             n_valid = int(valid_mask.sum())
             if n_valid == 0:
                 raise ValueError("无有效点，无法体素降采样")
+
+            # 1. 快速粗降：有效点远超目标时，先在原始点云上均匀采样到约 2x 目标，
+            #    避免后续把几千万点全量复制进 clean 点云。
+            if n_valid > target_count * 4:
+                k = max(1, int(np.ceil(n / (target_count * 2))))
+                pcd = pcd.uniform_down_sample(every_k_points=k)
+                n = len(pcd.points)
+                pts = np.asarray(pcd.points)
+                valid_mask = np.isfinite(pts).all(axis=1)
+                n_valid = int(valid_mask.sum())
+                if n_valid == 0:
+                    raise ValueError("粗降后无有效点")
+
+            # 2. 在已粗降的数据上剔除无效点并保留颜色/法线
+            colors = np.asarray(pcd.colors) if pcd.has_colors() else None
+            normals = np.asarray(pcd.normals) if pcd.has_normals() else None
             clean = o3d.geometry.PointCloud()
             clean.points = o3d.utility.Vector3dVector(pts[valid_mask])
             if colors is not None and len(colors) == n:
                 clean.colors = o3d.utility.Vector3dVector(colors[valid_mask])
-            if pcd.has_normals():
-                normals = np.asarray(pcd.normals)
-                if len(normals) == n:
-                    clean.normals = o3d.utility.Vector3dVector(normals[valid_mask])
+            if normals is not None and len(normals) == n:
+                clean.normals = o3d.utility.Vector3dVector(normals[valid_mask])
 
-            # 2. 在干净点云上估计体素尺寸，并加硬上限
+            # 3. 在干净点云上估计体素尺寸，并加硬上限
             valid_pts = pts[valid_mask]
             min_b = valid_pts.min(axis=0)
             max_b = valid_pts.max(axis=0)
@@ -1073,7 +1091,7 @@ class EmbeddedPointCloudViewer(QWidget):
                 f"AABB [{extent[0]:.1f}, {extent[1]:.1f}, {extent[2]:.1f}] mm, "
                 f"体素 {voxel_size:.3f} mm, 目标 {target_count} 点")
 
-            # 3. 体素降采样
+            # 4. 体素降采样精修
             ds = clean.voxel_down_sample(voxel_size=voxel_size)
             # 若体素采样后仍超阈值，再均匀采样兜底
             if len(ds.points) > target_count:

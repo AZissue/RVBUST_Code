@@ -68,6 +68,11 @@ class OfflineStitchWindow(QMainWindow):
         self.stitcher = OfflineStitcher()
         self.current_pair: FramePair | None = None
 
+        # 合并点云缓存：full 用于保存，display 用于渲染（已下采样）
+        self._merged_pcd_full: o3d.geometry.PointCloud | None = None
+        self._merged_pcd_display: o3d.geometry.PointCloud | None = None
+        self._merged_list_item: QListWidgetItem | None = None
+
         central = QWidget()
         self.setCentralWidget(central)
         root = QHBoxLayout(central)
@@ -242,6 +247,69 @@ class OfflineStitchWindow(QMainWindow):
             QMessageBox.warning(self, "加载失败", f"无法解析配置文件:\n{e}")
 
     # ------------------------------------------------------------------
+    # 合并点云缓存与显示
+    # ------------------------------------------------------------------
+    def _prepare_merged_for_display(self, pcd: o3d.geometry.PointCloud,
+                                    target_points: int = 1_000_000
+                                    ) -> o3d.geometry.PointCloud:
+        """为 3D 查看器生成显示级点云：保留完整点云用于保存，显示时降采样。
+
+        策略：
+          1. 点数未超限直接返回；
+          2. 超限时先快速均匀采样到 target*2，再体素采样到 target 左右；
+          3. 任何异常回退均匀采样，避免 UI 卡死。
+        """
+        n = len(pcd.points)
+        if n <= target_points:
+            return pcd
+        try:
+            # 快速粗降：uniform_down_sample 在原始点云上 O(N)，非常快
+            k = max(1, int(np.ceil(n / (target_points * 2))))
+            coarse = pcd.uniform_down_sample(every_k_points=k)
+            if len(coarse.points) <= target_points:
+                return coarse
+
+            # 精修：在有效点上体素降采样
+            pts = np.asarray(coarse.points)
+            valid_mask = np.isfinite(pts).all(axis=1)
+            if not valid_mask.any():
+                raise ValueError("无有效点")
+            clean = o3d.geometry.PointCloud()
+            clean.points = o3d.utility.Vector3dVector(pts[valid_mask])
+            if pcd.has_colors():
+                colors = np.asarray(pcd.colors)
+                if len(colors) == n:
+                    clean.colors = o3d.utility.Vector3dVector(
+                        colors[::k][valid_mask])
+
+            min_b = pts[valid_mask].min(axis=0)
+            max_b = pts[valid_mask].max(axis=0)
+            extent = max_b - min_b
+            if not np.isfinite(extent).all() or (extent <= 0).any():
+                raise ValueError("AABB 异常")
+            voxel = max((float(extent.prod()) / target_points) ** (1.0 / 3.0), 1e-6)
+            voxel = min(voxel, 3.0, float(extent.min()) / 10.0)
+            ds = clean.voxel_down_sample(voxel_size=voxel)
+            return ds if len(ds.points) > 0 else coarse
+        except Exception as e:
+            self._log(f"合并点云显示下采样失败({e})，回退均匀采样")
+            k = max(1, int(np.ceil(n / target_points)))
+            return pcd.uniform_down_sample(every_k_points=k)
+
+    def _add_merged_list_item(self):
+        """在文件列表顶部插入「合并结果」入口。"""
+        if self._merged_list_item is not None:
+            return
+        item = QListWidgetItem("【合并结果】")
+        item.setData(Qt.UserRole, "__merged__")
+        item.setToolTip("点击显示拼接后的合并点云")
+        # 用深红背景+白字突出显示
+        item.setBackground(Qt.red)
+        item.setForeground(Qt.white)
+        self.list_files.insertItem(0, item)
+        self._merged_list_item = item
+
+    # ------------------------------------------------------------------
     # 事件处理
     # ------------------------------------------------------------------
     def _log(self, text: str):
@@ -258,6 +326,11 @@ class OfflineStitchWindow(QMainWindow):
         self.lbl_image.setPixmap(QPixmap())
         self.stitcher = OfflineStitcher()
         self._apply_marker_params()
+
+        # 清空上一次合并结果缓存
+        self._merged_pcd_full = None
+        self._merged_pcd_display = None
+        self._merged_list_item = None
 
         recursive = self.chk_recursive.isChecked()
         count, msg = self.stitcher.load_directory(directory, recursive=recursive)
@@ -281,7 +354,21 @@ class OfflineStitchWindow(QMainWindow):
                 "请勾选「递归子目录」以扫描子文件夹。")
 
     def _on_file_selected(self, item: QListWidgetItem):
-        pair: FramePair = item.data(Qt.UserRole)
+        data = item.data(Qt.UserRole)
+
+        # 合并结果入口
+        if data == "__merged__":
+            if self._merged_pcd_display is not None:
+                self.viewer_3d.set_pointcloud_merged(self._merged_pcd_display)
+                self.lbl_image.setText("合并点云预览")
+                self.lbl_image.setPixmap(QPixmap())
+                self._log(f"显示合并点云: {len(self._merged_pcd_full.points)} 点 "
+                          f"(显示用 {len(self._merged_pcd_display.points)} 点)")
+            else:
+                QMessageBox.information(self, "提示", "暂无合并点云，请先执行拼接")
+            return
+
+        pair: FramePair = data
         self.current_pair = pair
 
         # 2D 检测 + 标注红点
@@ -303,13 +390,13 @@ class OfflineStitchWindow(QMainWindow):
             Qt.KeepAspectRatio, Qt.SmoothTransformation))
         self._log(f"{pair.name}: 检测到 {len(markers)} 个编码圆")
 
-        # 3D 点云
+        # 3D 点云：不再 clear_all，保留合并点云缓存；切换到该文件对的单相机视图
         pcd = o3d.io.read_point_cloud(pair.ply_path)
         if pcd is None or len(pcd.points) == 0:
             self._log(f"无法读取点云: {pair.ply_path}")
             return
-        self.viewer_3d.clear_all()
         self.viewer_3d.set_pointcloud(pair.name, pcd)
+        self.viewer_3d.show_camera(pair.name)
         self._log(f"{pair.name}: 点云 {len(pcd.points)} 点")
 
     def _on_stitch(self):
@@ -331,22 +418,33 @@ class OfflineStitchWindow(QMainWindow):
         self._overlay.hide_overlay()
 
         if merged is not None:
+            self._merged_pcd_full = merged
+            self._merged_pcd_display = self._prepare_merged_for_display(merged)
             self.viewer_3d.clear_all()
-            self.viewer_3d.set_pointcloud_merged(merged)
-            self._log(f"合并点云已显示，共 {len(merged.points)} 点")
+            self.viewer_3d.set_pointcloud_merged(self._merged_pcd_display)
+            self._add_merged_list_item()
+            self._log(
+                f"合并点云已缓存: 原始 {len(merged.points)} 点, "
+                f"显示用 {len(self._merged_pcd_display.points)} 点"
+            )
             self.btn_save_merged.setEnabled(True)
 
     def _on_save_merged(self):
-        if self.stitcher.merged_pcd is None:
+        # 优先使用 UI 层缓存的完整点云，保留颜色/法线等全部信息
+        pcd_to_save = self._merged_pcd_full or self.stitcher.merged_pcd
+        if pcd_to_save is None:
             QMessageBox.warning(self, "警告", "没有可保存的合并点云")
             return
         path, _ = QFileDialog.getSaveFileName(
             self, "保存合并点云", "merged.ply", "PLY (*.ply)")
         if path:
-            ok, save_msg = self.stitcher.save_merged(path)
-            self._log(save_msg)
-            if ok:
+            try:
+                o3d.io.write_point_cloud(path, pcd_to_save)
+                self._log(f"已保存完整合并点云 ({len(pcd_to_save.points)} 点): {path}")
                 QMessageBox.information(self, "保存成功", f"合并点云已保存到:\n{path}")
+            except Exception as e:
+                self._log(f"保存失败: {e}")
+                QMessageBox.warning(self, "保存失败", f"无法保存合并点云:\n{e}")
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
