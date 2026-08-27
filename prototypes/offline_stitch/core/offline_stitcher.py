@@ -47,8 +47,27 @@ class FramePair:
         return os.path.exists(self.image_path) and os.path.exists(self.ply_path)
 
 
-def collect_frame_pairs(directory: str) -> List[FramePair]:
-    """按文件名前缀匹配目录下的图像和点云文件。"""
+def _normalize_name(name: str) -> str:
+    """去掉常见后缀，便于 2D/3D 文件前缀匹配。"""
+    # 常见成对后缀：xxx_color / xxx_depth / xxx_img / xxx_pcd 等
+    suffixes = ("_color", "_rgb", "_img", "_image", "_2d",
+                "_depth", "_dep", "_pcd", "_ply", "_points",
+                "_cloud", "_3d", "_c", "_d")
+    lower = name.lower()
+    for suffix in suffixes:
+        if lower.endswith(suffix):
+            return name[: -len(suffix)]
+    return name
+
+
+def collect_frame_pairs(directory: str, recursive: bool = True) -> List[FramePair]:
+    """按文件名前缀匹配目录下的图像和点云文件。
+
+    支持：
+      - 递归子目录；
+      - 精确前缀匹配；
+      - 去掉 _color/_depth/_img/_pcd 等常见后缀后的模糊匹配。
+    """
     if not directory or not os.path.isdir(directory):
         return []
 
@@ -58,22 +77,46 @@ def collect_frame_pairs(directory: str) -> List[FramePair]:
     images: Dict[str, str] = {}
     plys: Dict[str, str] = {}
 
-    for entry in sorted(os.listdir(directory)):
-        lower = entry.lower()
-        path = os.path.join(directory, entry)
-        if not os.path.isfile(path):
-            continue
-        # 去掉扩展名作为前缀
-        name, ext = os.path.splitext(entry)
-        if ext.lower() in image_exts:
-            images[name] = path
-        elif ext.lower() in ply_exts:
-            plys[name] = path
+    if recursive:
+        walker = os.walk(directory)
+    else:
+        walker = [(directory, [], os.listdir(directory))]
+
+    for dirpath, _dirnames, filenames in walker:
+        for entry in filenames:
+            lower = entry.lower()
+            path = os.path.join(dirpath, entry)
+            name, ext = os.path.splitext(entry)
+            if ext.lower() in image_exts:
+                images[name] = path
+            elif ext.lower() in ply_exts:
+                plys[name] = path
 
     pairs: List[FramePair] = []
-    for name in sorted(set(images.keys()) & set(plys.keys())):
-        pairs.append(FramePair(name, images[name], plys[name]))
-    return pairs
+    matched_plys: set = set()
+
+    # 第一轮：精确前缀匹配
+    for name in sorted(images.keys()):
+        if name in plys:
+            pairs.append(FramePair(name, images[name], plys[name]))
+            matched_plys.add(name)
+
+    # 第二轮：去掉常见后缀的模糊匹配
+    norm_images = {n: _normalize_name(n) for n in images}
+    norm_plys = {n: _normalize_name(n) for n in plys}
+    for img_name, img_norm in sorted(norm_images.items()):
+        if img_name in plys:
+            continue  # 已精确匹配
+        for ply_name, ply_norm in norm_plys.items():
+            if ply_name in matched_plys:
+                continue
+            if img_norm and img_norm == ply_norm:
+                pair_name = f"{img_name}⇄{ply_name}"
+                pairs.append(FramePair(pair_name, images[img_name], plys[ply_name]))
+                matched_plys.add(ply_name)
+                break
+
+    return sorted(pairs, key=lambda p: p.name)
 
 
 class OfflineStitcher:
@@ -100,12 +143,17 @@ class OfflineStitcher:
         self.directory: Optional[str] = None
         self.pairs: List[FramePair] = []
         self.messages: List[str] = []
+        self.merged_pcd: Optional[o3d.geometry.PointCloud] = None
 
-    def load_directory(self, directory: str) -> Tuple[int, str]:
+    def load_directory(self, directory: str, recursive: bool = True) -> Tuple[int, str]:
         """加载目录并识别文件对。"""
         self.directory = directory
-        self.pairs = collect_frame_pairs(directory)
-        msg = f"目录 {directory}: 发现 {len(self.pairs)} 对图像/点云"
+        self.pairs = collect_frame_pairs(directory, recursive=recursive)
+        if self.pairs:
+            msg = (f"目录 {directory}: 发现 {len(self.pairs)} 对图像/点云 "
+                   f"({len([p for p in self.pairs if '⇄' in p.name])} 对为模糊匹配)")
+        else:
+            msg = f"目录 {directory}: 发现 0 对图像/点云（请检查文件名是否对应）"
         self.messages.append(msg)
         return len(self.pairs), msg
 
@@ -172,23 +220,22 @@ class OfflineStitcher:
         return ok, msg
 
     def stitch(self) -> Tuple[Optional[o3d.geometry.PointCloud], str]:
-        """执行拼接，返回合并点云和消息。"""
-        merged = self.chain_stitcher.get_merged_pointcloud(self.processor)
-        if merged is None:
+        """执行拼接，缓存并返回合并点云和消息。"""
+        self.merged_pcd = self.chain_stitcher.get_merged_pointcloud(self.processor)
+        if self.merged_pcd is None:
             return None, "无可用点云"
         info = self.chain_stitcher.get_error_report()
         msg = (f"拼接完成: 节点 {info['n_nodes']}, 边 {info['n_edges']}, "
-               f"合并点数 {len(merged.points)}")
+               f"合并点数 {len(self.merged_pcd.points)}")
         self.messages.append(msg)
-        return merged, msg
+        return self.merged_pcd, msg
 
     def save_merged(self, path: str) -> Tuple[bool, str]:
-        """保存合并点云。"""
-        merged = self.chain_stitcher.get_merged_pointcloud(self.processor)
-        if merged is None:
+        """保存缓存的合并点云。"""
+        if self.merged_pcd is None:
             return False, "无合并点云"
         try:
-            o3d.io.write_point_cloud(path, merged)
+            o3d.io.write_point_cloud(path, self.merged_pcd)
             return True, f"已保存 {path}"
         except Exception as e:
             return False, f"保存失败: {e}"

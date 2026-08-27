@@ -35,7 +35,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QPushButton, QLabel, QListWidget, QListWidgetItem, QTextEdit,
     QFileDialog, QMessageBox, QSizePolicy, QSplitter,
-    QSpinBox, QDoubleSpinBox, QGroupBox
+    QSpinBox, QDoubleSpinBox, QGroupBox, QCheckBox
 )
 
 # 复用主程序 ui_v2 的主题与控件
@@ -94,6 +94,11 @@ class OfflineStitchWindow(QMainWindow):
         self.lbl_dir.setStyleSheet(f"color: {TEXT_MUTED};")
         left_layout.addWidget(self.lbl_dir)
 
+        self.chk_recursive = QCheckBox("递归子目录")
+        self.chk_recursive.setChecked(True)
+        self.chk_recursive.setToolTip("勾选时扫描所选文件夹及其子文件夹")
+        left_layout.addWidget(self.chk_recursive)
+
         # --------------------------- 标记物参数 ---------------------------
         self._build_marker_param_group(left_layout)
 
@@ -108,6 +113,13 @@ class OfflineStitchWindow(QMainWindow):
         self.btn_stitch.setEnabled(False)
         self.btn_stitch.clicked.connect(self._on_stitch)
         left_layout.addWidget(self.btn_stitch)
+
+        self.btn_save_merged = QPushButton("保存合并点云")
+        self.btn_save_merged.setObjectName("secondary")
+        self.btn_save_merged.setMinimumHeight(34)
+        self.btn_save_merged.setEnabled(False)
+        self.btn_save_merged.clicked.connect(self._on_save_merged)
+        left_layout.addWidget(self.btn_save_merged)
 
         self.txt_log = QTextEdit()
         self.txt_log.setReadOnly(True)
@@ -247,7 +259,8 @@ class OfflineStitchWindow(QMainWindow):
         self.stitcher = OfflineStitcher()
         self._apply_marker_params()
 
-        count, msg = self.stitcher.load_directory(directory)
+        recursive = self.chk_recursive.isChecked()
+        count, msg = self.stitcher.load_directory(directory, recursive=recursive)
         self.lbl_dir.setText(directory)
         self._log(msg)
 
@@ -257,8 +270,15 @@ class OfflineStitchWindow(QMainWindow):
             self.list_files.addItem(item)
 
         self.btn_stitch.setEnabled(count > 0)
+        self.btn_save_merged.setEnabled(False)
         if count == 0:
-            QMessageBox.information(self, "提示", "未找到名称对应的图像/点云文件对")
+            QMessageBox.information(
+                self, "提示",
+                "未找到名称对应的图像/点云文件对。\n\n"
+                "支持的命名示例：\n"
+                "  1.png + 1.ply\n"
+                "  1_color.png + 1_depth.ply\n\n"
+                "请勾选「递归子目录」以扫描子文件夹。")
 
     def _on_file_selected(self, item: QListWidgetItem):
         pair: FramePair = item.data(Qt.UserRole)
@@ -314,16 +334,19 @@ class OfflineStitchWindow(QMainWindow):
             self.viewer_3d.clear_all()
             self.viewer_3d.set_pointcloud_merged(merged)
             self._log(f"合并点云已显示，共 {len(merged.points)} 点")
+            self.btn_save_merged.setEnabled(True)
 
-            reply = QMessageBox.question(
-                self, "保存", "拼接完成，是否保存合并点云？",
-                QMessageBox.Yes | QMessageBox.No)
-            if reply == QMessageBox.Yes:
-                path, _ = QFileDialog.getSaveFileName(
-                    self, "保存合并点云", "merged.ply", "PLY (*.ply)")
-                if path:
-                    ok, save_msg = self.stitcher.save_merged(path)
-                    self._log(save_msg)
+    def _on_save_merged(self):
+        if self.stitcher.merged_pcd is None:
+            QMessageBox.warning(self, "警告", "没有可保存的合并点云")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "保存合并点云", "merged.ply", "PLY (*.ply)")
+        if path:
+            ok, save_msg = self.stitcher.save_merged(path)
+            self._log(save_msg)
+            if ok:
+                QMessageBox.information(self, "保存成功", f"合并点云已保存到:\n{path}")
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
