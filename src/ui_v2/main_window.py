@@ -154,13 +154,9 @@ class MainWindowShell(QMainWindow):
         self._ws_multi = MultiCamWorkspace()
         self._ws_mobile = MobileChainWorkspace()
         self._ws_turntable = TurntableWorkspace()
-        # 空白占位页：避免 set_mode() 前默认显示 multi 工作区造成闪切
-        self._blank_page = QWidget()
-        self._stack.addWidget(self._blank_page)
         self._stack.addWidget(self._ws_multi)
         self._stack.addWidget(self._ws_mobile)
         self._stack.addWidget(self._ws_turntable)
-        self._stack.setCurrentWidget(self._blank_page)
 
         # 工作区日志统一汇入日志面板与状态栏
         self._ws_multi.log_message.connect(self.log)

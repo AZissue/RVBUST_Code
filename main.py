@@ -52,7 +52,13 @@ def main():
         launcher.set_devices(bridge.enumerate_devices())
 
     def on_connect(mode: str, devices: list):
-        """连接设备。"""
+        """连接设备。
+
+        先显示目标工作区并展示 loading，再后台连接相机，避免空白页/闪切。
+        """
+        main_window.set_mode(mode, devices)
+        main_window.show()
+        main_window.show_loading("正在连接相机...")
         bridge._on_device_manager_reopened(mode, devices)
         launcher.accept()
 
@@ -79,11 +85,10 @@ def main():
     if launcher.exec() != QDialog.Accepted:
         return 0
 
-    # 2. 设置主窗口标题（工作区切换已由 _on_device_manager_reopened 完成）
+    # 2. 设置主窗口标题（工作区切换已在 on_connect 中完成）
     mode = launcher.selected_mode()
     main_window.setWindowTitle(
         f"RVC 拼接工作站 — {LauncherDialog.MODE_NAMES[mode]} {get_version()}")
-    main_window.show()
 
     # 3. 运行
     exit_code = app.exec()

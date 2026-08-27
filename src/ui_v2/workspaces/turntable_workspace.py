@@ -359,7 +359,11 @@ class TurntableWorkspace(QWidget):
         self.marker_detector = detector
 
     def set_devices(self, devices: List[DeviceInfo]):
-        """主窗口切换模式时传入设备。"""
+        """主窗口切换模式时传入设备。
+
+        注意：状态（connected / idle）由 BackendBridge 在相机连接完成后设置，
+        这里只刷新设备列表与 UI 门控，避免在连接过程中显示已连接。
+        """
         self._devices = list(devices)
         self._reset_online_state()
         if self.cam_mgr is None or self.marker_detector is None:
@@ -369,8 +373,6 @@ class TurntableWorkspace(QWidget):
         else:
             # 主程序模式：使用 backend bridge 提供的已初始化相机管理器
             self._on_refresh_devices()
-            if devices:
-                self.set_state("connected")
 
     def set_state(self, state: str):
         if state not in self.STATES:

@@ -213,8 +213,8 @@ class BackendBridge(QObject):
             return results
 
         def _done(results, error):
-            self.shell.hide_loading()
             if error:
+                self.shell.hide_loading()
                 self.shell.log(f"连接设备异常: {error}", "error")
                 return
             ok_count = sum(1 for _, ok, _ in results if ok)
@@ -222,8 +222,7 @@ class BackendBridge(QObject):
                 level = "success" if ok else "warn"
                 self.shell.log(f"相机 {cid}: {msg}", level)
             self.shell.log(f"设备连接完成: {ok_count}/{len(results)} 台成功", "info")
-            # 切换工作区
-            self.shell.set_mode(mode, ordered_devices)
+            # 工作区已在 on_connect 中切换，这里只刷新设备状态与后续初始化
             self._current_mode = mode
             if mode == LauncherDialog.MODE_MULTI_CAM:
                 # 模式 A：启动标定阶段并同步参考相机下拉
@@ -238,9 +237,11 @@ class BackendBridge(QObject):
                 # 模式 B 需要初始化链式拼接会话
                 ok, msg = self.mobile_workflow.start_chaining()
                 self.shell.log(msg, "success" if ok else "warn")
+                self.shell.workspace_mobile().set_state("connected")
             elif mode == LauncherDialog.MODE_TURNTABLE:
                 # 模式 C：转台工作区自行管理相机、采集与拼接流程
                 self.shell.workspace_turntable().set_state("connected")
+            self.shell.hide_loading()
 
         self._run_background(_connect, _done)
 

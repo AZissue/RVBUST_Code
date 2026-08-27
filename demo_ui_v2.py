@@ -218,8 +218,6 @@ class MockBackendBridge:
         self._current_mode = mode
 
         def _done():
-            self.shell.hide_loading()
-            self.shell.set_mode(mode, devices)
             if mode == LauncherDialog.MODE_MULTI_CAM:
                 self.shell.workspace_multi().set_state("connected")
                 self._multi_state = 0
@@ -231,6 +229,7 @@ class MockBackendBridge:
             else:
                 self.shell.workspace_turntable().set_state("connected")
                 self.shell.log("已进入转台 360° 拼接模式", "success")
+            self.shell.hide_loading()
 
         QTimer.singleShot(1200, _done)
 
@@ -572,7 +571,12 @@ SCREENSHOT_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tmp_
 
 
 def screenshot_dir() -> str:
-    sub = "mobile" if DEMO_MODE == LauncherDialog.MODE_MOBILE_CHAIN else "multi"
+    if DEMO_MODE == LauncherDialog.MODE_MOBILE_CHAIN:
+        sub = "mobile"
+    elif DEMO_MODE == LauncherDialog.MODE_TURNTABLE:
+        sub = "turntable"
+    else:
+        sub = "multi"
     path = os.path.join(SCREENSHOT_ROOT, sub)
     os.makedirs(path, exist_ok=True)
     return path
@@ -642,6 +646,10 @@ def main():
     main_window.set_backend_bridge(bridge)
 
     def on_connect(mode: str, devices: list):
+        # 与真实主程序一致：先渲染目标工作区 + loading，再后台连接
+        main_window.set_mode(mode, devices)
+        main_window.show()
+        main_window.show_loading("正在连接相机...")
         bridge._on_device_manager_reopened(mode, devices)
         launcher.accept()
 
@@ -665,10 +673,9 @@ def main():
         mode = launcher.selected_mode()
         devices = launcher.selected_devices()
 
-    main_window.set_mode(mode, devices)
+    # on_connect 中已完成 set_mode / show / loading，这里只需设置标题
     main_window.setWindowTitle(
         f"RVC 拼接工作站 — {LauncherDialog.MODE_NAMES[mode]} {get_version()} [DEMO]")
-    main_window.show()
 
     if SCREENSHOT_MODE:
         # 截图模式使用较大窗口，确保能看到 2D 预览 cover 铺满效果
