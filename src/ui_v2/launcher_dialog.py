@@ -273,8 +273,11 @@ class LauncherDialog(QDialog):
         self._connection_overlay.hide()
 
     def fade_out_and_accept(self):
-        """小窗淡出后关闭，实现与主窗口的平滑过渡。"""
-        self.hide_connection_overlay()
+        """小窗淡出后关闭，实现与主窗口的平滑过渡。
+
+        注意：不要提前隐藏连接遮罩，否则遮罩瞬间消失后小窗内容会闪一下；
+        直接对整个窗口做 opacity 动画，遮罩会随窗口一起淡出。
+        """
         self._fade_animation.setStartValue(1.0)
         self._fade_animation.setEndValue(0.0)
         self._fade_animation.start()
