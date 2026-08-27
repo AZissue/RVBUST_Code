@@ -557,6 +557,10 @@ std::vector<std::string> listPointCloudFiles(const std::string& folder) {
     return out;
 }
 
+std::filesystem::path pathFromUtf8(const std::string& utf8) { return utf8Path(utf8); }
+
+std::string pathToUtf8(const std::filesystem::path& p) { return toUtf8(p); }
+
 core::PointCloudData readPointCloud(const std::string& path, const ReadOptions& options) {
     Format fmt = options.format;
     if (fmt == Format::Auto) fmt = formatFromPath(path);

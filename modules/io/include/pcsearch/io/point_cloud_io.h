@@ -2,6 +2,7 @@
 
 #include "pcsearch/core_data/point_cloud.h"
 
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -36,6 +37,14 @@ void writePointCloud(const std::string& path, const core::PointCloudData& cloud,
 // e.g. shot_2.ply < shot_10.ply). Returns an empty list when `folder` is not
 // a directory or contains no supported files. Paths are returned as UTF-8.
 std::vector<std::string> listPointCloudFiles(const std::string& folder);
+
+// Convert a UTF-8 narrow-string path to a std::filesystem::path. On Windows
+// this avoids the ANSI codepage so Chinese paths survive the round-trip.
+std::filesystem::path pathFromUtf8(const std::string& utf8);
+
+// Convert a std::filesystem::path back to the project's UTF-8 narrow-string
+// convention. On Windows this converts from the native wide path.
+std::string pathToUtf8(const std::filesystem::path& p);
 
 class IoError : public std::runtime_error {
 public:

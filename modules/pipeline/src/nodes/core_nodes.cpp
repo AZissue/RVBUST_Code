@@ -286,9 +286,12 @@ ObjectList SaveCloudNode::execute(const std::vector<ObjectList>& inputs, const P
     }
     options.format = format;
 
-    const std::filesystem::path folder_path(folder);
+    // Filesystem operations go through the IO layer's UTF-8 <-> wide
+    // conversion so Chinese paths do not hit the ANSI codepage error
+    // "No mapping for the Unicode character..." (merged from another
+    // session's save_cloud fix).
     std::error_code ec;
-    std::filesystem::create_directories(folder_path, ec);
+    std::filesystem::create_directories(io::pathFromUtf8(folder), ec);
     if (ec) {
         throw std::runtime_error("save_cloud: cannot create folder: " + folder);
     }
@@ -317,7 +320,8 @@ ObjectList SaveCloudNode::execute(const std::vector<ObjectList>& inputs, const P
         if (obj.roi && !obj.roi->label.empty()) {
             stem += "." + obj.roi->label;
         }
-        const std::string out_path = (folder_path / (stem + ext)).string();
+        const std::string out_path =
+            io::pathToUtf8(io::pathFromUtf8(folder) / io::pathFromUtf8(stem + ext));
         io::writePointCloud(out_path, *obj.cloud, options);
     }
     return inputs[0];
