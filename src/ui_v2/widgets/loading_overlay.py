@@ -74,6 +74,13 @@ class LoadingOverlay(QWidget):
         self._timer.start(400)
         QApplication.processEvents()
 
+    def update_message(self, text: str):
+        """更新提示文字（不重置动画计时器），用于显示实时进度。"""
+        self._base_text = text.rstrip(".")
+        self._dots = 0
+        self._label.setText(self._base_text)
+        QApplication.processEvents()
+
     def hide_overlay(self):
         self._timer.stop()
         self.hide()

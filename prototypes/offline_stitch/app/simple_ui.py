@@ -404,15 +404,19 @@ class OfflineStitchWindow(QMainWindow):
             QMessageBox.warning(self, "警告", "没有可拼接的文件对")
             return
 
+        total = len(self.stitcher.pairs)
         self._overlay.show_message("正在拼接...")
 
-        # 逐个加入拼接链
-        for pair in self.stitcher.pairs:
+        # 逐个加入拼接链，并在 loading 上显示进度
+        for i, pair in enumerate(self.stitcher.pairs, start=1):
+            self._overlay.update_message(
+                f"正在拼接... 检测/加入第 {i}/{total} 帧: {pair.name}")
             ok, msg = self.stitcher.add_pair_to_chain(pair)
             self._log(f"{pair.name}: {msg}")
             if not ok:
                 continue
 
+        self._overlay.update_message("正在拼接... 合并点云与计算误差")
         merged, msg = self.stitcher.stitch()
         self._log(msg)
         self._overlay.hide_overlay()
