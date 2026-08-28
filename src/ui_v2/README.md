@@ -12,7 +12,7 @@
 
 ```
 [启动小窗 LauncherDialog] ──连接成功──▶ [主窗口 MainWindowShell]
-  · 模式卡片（A/B 分流）                 · 顶部功能栏（设备管理/模式/会话/后处理/日志/帮助）
+  · 模式卡片（A/B/C 分流）               · 顶部功能栏（设备管理/模式/会话/日志/帮助）
   · 设备管理（搜索/自动IP/多选）          · QStackedWidget 双工作区（互不干扰）
   · 模式-数量规则门控连接按钮             · 状态栏：模式 | 设备在线 | 当前状态 | 建议
 ```
@@ -110,7 +110,6 @@ UI 只呈现不编造文案。
 |------|-----------|
 | `device_manager_reopened(mode, devices)` | 断开旧设备 → 连接新设备 → 工作区已自动切换 |
 | `save_session_requested` / `open_session_requested` | OfflineSession（`scans/<mode>_session_时间戳/`） |
-| `postprocess_applied(params)` | PointCloudProcessor（裁切/下采样/离群点滤波） |
 
 公共方法：`log(msg, level)`、`show_loading(text)` / `hide_loading()`、
 `set_dirty(bool)`（未保存数据脏标记，关闭/切模式前弹确认）。

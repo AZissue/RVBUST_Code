@@ -139,7 +139,6 @@ class BackendBridge(QObject):
         """接线主窗口。"""
         self.shell.save_session_requested.connect(self._on_save_session)
         self.shell.open_session_requested.connect(self._on_open_session)
-        self.shell.postprocess_applied.connect(self._on_postprocess_applied)
 
     # ------------------------------------------------------------------
     # 设备管理（LauncherDialog）
@@ -1527,23 +1526,6 @@ class BackendBridge(QObject):
         else:
             # 模式 B：加载会话暂不恢复时间线，仅记录
             self.shell.log("模式 B 会话加载：已加载帧数据，时间线恢复待实现", "info")
-
-    def _on_postprocess_applied(self, params: dict):
-        """后处理参数应用。"""
-        crop_radius = params.get("crop_radius_mm", 0.0)
-        voxel = params.get("voxel_mm", 0.0)
-        outlier_nb = params.get("outlier_neighbors", 0)
-
-        self.processor.crop_mode = "sphere" if crop_radius > 0 else "none"
-        self.processor.crop_radius = crop_radius if crop_radius > 0 else 500.0
-        self.processor.enable_voxel_downsample = voxel > 0
-        self.processor.voxel_size = voxel if voxel > 0 else 0.5
-        self.processor.enable_outlier_removal = outlier_nb > 0
-        self.processor.outlier_nb_neighbors = outlier_nb if outlier_nb > 0 else 20
-
-        self.shell.log(
-            f"后处理参数已应用: 裁切={crop_radius:.2f}mm, "
-            f"下采样={voxel:.2f}mm, 离群点邻域={outlier_nb}", "info")
 
     # ------------------------------------------------------------------
     # 工具方法

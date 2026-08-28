@@ -3,13 +3,15 @@
 ui_v2.main_window —— 主窗口框架（空壳）。
 
 双窗口模型的主窗口侧：
-  - 顶部功能栏：设备管理 / 模式▾ / 保存会话 / 打开会话 / 后处理 / 日志 / 帮助；
-  - 中央 QStackedWidget：多相机工作区（模式 A）/ 单相机工作区（模式 B），
-    两种模式工作区互不干扰、各自独立状态；
+  - 顶部功能栏：设备管理 / 模式▾ / 保存会话 / 打开会话 / 日志 / 帮助；
+  - 中央 QStackedWidget：多相机工作区（模式 A）/ 单相机工作区（模式 B）/
+    转台工作区（模式 C），各模式互不干扰、各自独立状态；
   - 底部状态栏：模式 | 设备在线 n/m | 当前步骤 | 最近误差/建议。
 
 「设备管理」随时回到启动小窗（LauncherDialog）改模式/换设备，
 确认后主窗口切换工作区（有未保存工作时先弹确认）。
+
+注：后处理功能入口已移除，后续将单独增加后处理设置/预览页面。
 """
 
 from __future__ import annotations
@@ -18,9 +20,9 @@ from typing import List, Optional
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QApplication, QDialog, QDoubleSpinBox, QFormLayout, QFrame,
-    QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton,
-    QSpinBox, QStackedWidget, QToolButton, QVBoxLayout, QWidget,
+    QApplication, QDialog, QFrame, QHBoxLayout, QLabel, QMainWindow,
+    QMessageBox, QPushButton, QStackedWidget, QToolButton, QVBoxLayout,
+    QWidget,
 )
 
 from .launcher_dialog import LauncherDialog
@@ -35,64 +37,6 @@ if False:
     from .backend_bridge import BackendBridge
 
 
-class _PostProcessDialog(QDialog):
-    """后处理参数面板（两模式共用）：裁切范围 / 下采样 / 离群点滤波。
-
-    # TODO(BACKEND): 参数应用到 PointCloudProcessor
-    """
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("后处理参数")
-        self.setModal(True)
-        self.setMinimumWidth(320)
-
-        lo = QVBoxLayout(self)
-        form = QFormLayout()
-        form.setSpacing(8)
-
-        self._crop_radius = QDoubleSpinBox()
-        self._crop_radius.setRange(0, 100000)
-        self._crop_radius.setValue(0)
-        self._crop_radius.setSuffix(" mm")
-        self._crop_radius.setSpecialValueText("不裁切")
-        form.addRow("裁切半径:", self._crop_radius)
-
-        self._voxel = QDoubleSpinBox()
-        self._voxel.setRange(0, 100)
-        self._voxel.setValue(0)
-        self._voxel.setDecimals(2)
-        self._voxel.setSuffix(" mm")
-        self._voxel.setSpecialValueText("不下采样")
-        form.addRow("下采样体素:", self._voxel)
-
-        self._outlier_nb = QSpinBox()
-        self._outlier_nb.setRange(0, 100)
-        self._outlier_nb.setValue(0)
-        self._outlier_nb.setSpecialValueText("关闭滤波")
-        form.addRow("离群点邻域:", self._outlier_nb)
-
-        lo.addLayout(form)
-
-        btn_row = QHBoxLayout()
-        btn_row.addStretch(1)
-        cancel = QPushButton("取消")
-        cancel.clicked.connect(self.reject)
-        btn_row.addWidget(cancel)
-        ok = QPushButton("应用")
-        ok.setObjectName("primary")
-        ok.clicked.connect(self.accept)
-        btn_row.addWidget(ok)
-        lo.addLayout(btn_row)
-
-    def params(self) -> dict:
-        return {
-            "crop_radius_mm": self._crop_radius.value(),
-            "voxel_mm": self._voxel.value(),
-            "outlier_neighbors": self._outlier_nb.value(),
-        }
-
-
 class MainWindowShell(QMainWindow):
     """拼接主窗口（空壳）。
 
@@ -100,7 +44,6 @@ class MainWindowShell(QMainWindow):
         device_manager_reopened(str, list)  从设备管理小窗确认新模式+设备
         save_session_requested()
         open_session_requested()
-        postprocess_applied(dict)
     """
 
     device_manager_reopened = Signal(str, list)
@@ -112,9 +55,6 @@ class MainWindowShell(QMainWindow):
 
     open_session_requested = Signal()
     """打开会话并恢复对应模式工作区状态。"""
-
-    postprocess_applied = Signal(dict)
-    """后处理参数应用。"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -231,13 +171,6 @@ class MainWindowShell(QMainWindow):
         ui_icons.apply(btn_open, "folder_open", TEXT_SECONDARY, 15)
         btn_open.clicked.connect(self.open_session_requested)
         lo.addWidget(btn_open)
-
-        btn_post = QToolButton()
-        btn_post.setText("后处理")
-        btn_post.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-        ui_icons.apply(btn_post, "filter", TEXT_SECONDARY, 15)
-        btn_post.clicked.connect(self._open_postprocess)
-        lo.addWidget(btn_post)
 
         lo.addStretch(1)
 
@@ -522,12 +455,6 @@ class MainWindowShell(QMainWindow):
         x = max(margin, x)
         y = max(toolbar_h + margin, y)
         self._log_panel.move(x, y)
-
-    def _open_postprocess(self):
-        dialog = _PostProcessDialog(self)
-        if dialog.exec() == QDialog.Accepted:
-            self.postprocess_applied.emit(dialog.params())
-            self.log(f"后处理参数已应用（接口预留）：{dialog.params()}", "info")
 
     def _show_help(self):
         from version import get_version
