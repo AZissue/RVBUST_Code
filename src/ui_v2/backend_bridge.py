@@ -132,6 +132,7 @@ class BackendBridge(QObject):
         ws.delete_station_requested.connect(self._on_mobile_delete_station)
         ws.optimize_requested.connect(self._on_mobile_optimize)
         ws.save_requested.connect(self._on_mobile_save)
+        ws.offline_load_requested.connect(self._on_mobile_offline_load)
         ws.station_selected.connect(self._on_mobile_station_selected)
 
     def _wire_main_window(self):
@@ -1310,6 +1311,55 @@ class BackendBridge(QObject):
                 if paths.get("ply_path"):
                     self.shell.log(f"点云: {paths['ply_path']}", "info")
                 self.shell.log(f"报告: {paths['json_path']}", "info")
+
+        self._run_background(_work, _done)
+
+    def _on_mobile_offline_load(self):
+        """离线加载单相机站位会话目录并自动拼接。"""
+        from PySide6.QtWidgets import QFileDialog
+
+        base = self.mobile_workflow.session_dir or "offline_data/stations"
+        session_dir = QFileDialog.getExistingDirectory(
+            self.shell, "选择单相机会话目录", base)
+        if not session_dir:
+            return
+
+        self.shell.show_loading("正在离线加载会话...")
+
+        def _work():
+            ok, msg = self.mobile_workflow.load_session_dir(session_dir)
+            if not ok:
+                return False, msg, None, None
+            evaluations = self.mobile_workflow.get_station_evaluations()
+            merged = self.mobile_workflow.get_merged_pointcloud()
+            report = self.mobile_workflow.get_error_report()
+            return True, msg, evaluations, (merged, report)
+
+        def _done(result, error):
+            self.shell.hide_loading()
+            if error:
+                self.shell.log(f"离线加载失败: {error}", "error")
+                return
+            ok, msg, evaluations, data = result
+            self.shell.log(msg, "success" if ok else "warn")
+            if not ok or not evaluations:
+                return
+
+            ws = self.shell.workspace_mobile()
+            ws.reset_session()
+            ws.set_stations(evaluations)
+            ws.set_state("chaining" if len(evaluations) < 3 else "ready")
+            self.shell.set_dirty(True)
+
+            merged, report = data
+            if merged is not None:
+                ws.viewer().set_pointcloud_merged(merged)
+                self.shell.log(
+                    f"合并点云已显示: {len(merged.points)} 点", "info")
+            if report:
+                self.shell.log(
+                    f"节点 {report.get('n_nodes', 0)} 边 {report.get('n_edges', 0)} "
+                    f"累计误差 {report.get('cum_rms_mm', 0):.3f}mm", "info")
 
         self._run_background(_work, _done)
 

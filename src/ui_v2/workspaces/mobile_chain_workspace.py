@@ -62,6 +62,9 @@ class MobileChainWorkspace(QWidget):
     save_requested = Signal()
     """保存拼接数据：会话 + 拼接点云 PLY + 误差报告 error_report.json。"""
 
+    offline_load_requested = Signal()
+    """离线加载已有会话目录并自动拼接。"""
+
     optimize_requested = Signal()
     """闭环全局优化（弹出优化前后误差对比由后端结果回填）。"""
 
@@ -76,6 +79,9 @@ class MobileChainWorkspace(QWidget):
 
     chain_stats_changed = Signal(str)
     """链统计变化（供主窗口状态栏常驻显示）。"""
+
+    dirty_changed = Signal(bool)
+    """是否有未保存的拍摄数据（≥1 个机位时变为 True）。"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -169,6 +175,13 @@ class MobileChainWorkspace(QWidget):
         ui_icons.apply(self._btn_save, "save", TEXT_SECONDARY, 14)
         self._btn_save.clicked.connect(self.save_requested)
         actions.addWidget(self._btn_save)
+
+        self._btn_offline_load = QPushButton("离线加载会话")
+        self._btn_offline_load.setToolTip(
+            "加载已保存的单相机站位会话目录（station_N/png+ply）并自动拼接")
+        ui_icons.apply(self._btn_offline_load, "folder_open", TEXT_SECONDARY, 14)
+        self._btn_offline_load.clicked.connect(self.offline_load_requested)
+        actions.addWidget(self._btn_offline_load)
 
         # 选中节点的删除入口（点击时间线节点后可用）
         self._btn_delete_node = QPushButton("删除选中机位（后续链自动重算）")
@@ -392,6 +405,7 @@ class MobileChainWorkspace(QWidget):
         self._station_count = len(self._timeline._nodes)
         self._total_error_mm = total
         self._refresh_stats()
+        self.dirty_changed.emit(self._station_count > 0)
 
     def _refresh_stats(self):
         """底部常驻统计：已接 N 机位 | 累计误差 | 平均单步误差（超阈值变红）。"""

@@ -81,8 +81,34 @@ class StationManager:
         self._session_dir = session_dir
         self._created = now.isoformat(timespec="seconds")
         self._write_meta()
-        logger.info(f"站位会话已创建: {session_dir}")
+        logger.info(
+            f"站位会话已创建: {session_dir}。\n"
+            "  存储结构: session_*/station_N/station_N.png + station_N.ply + meta.json\n"
+            "  - png: 2D 图像（含编码圆标注）\n"
+            "  - ply: 对应站位点云\n"
+            "  - meta.json: 会话元数据（创建时间、站位列表）")
         return session_dir
+
+    def attach_session(self, session_dir: str) -> bool:
+        """关联一个已存在的会话目录，不创建新目录（用于离线加载）。"""
+        if not os.path.isdir(session_dir):
+            return False
+        self._stations = {}
+        self._station_times = {}
+        self._station_seq = 0
+        self._session_dir = os.path.abspath(session_dir)
+        # 尝试读取原 meta.json 的创建时间
+        meta_path = os.path.join(self._session_dir, "meta.json")
+        if os.path.exists(meta_path):
+            try:
+                with open(meta_path, "r", encoding="utf-8") as f:
+                    meta = json.load(f)
+                self._created = meta.get("created", "")
+            except Exception:
+                self._created = ""
+        else:
+            self._created = ""
+        return True
 
     def _write_meta(self):
         """重写会话级 meta.json（站位列表 + 创建 / 更新时间）。"""

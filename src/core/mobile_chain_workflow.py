@@ -23,8 +23,10 @@
 
 from __future__ import annotations
 
+import os
 from typing import Dict, List, Optional, Tuple, Any
 
+import cv2
 import numpy as np
 
 from .workflow_base import WorkflowBase
@@ -84,7 +86,11 @@ class MobileChainWorkflow(WorkflowBase):
     # 链式拼接流程
     # ------------------------------------------------------------------
     def start_chaining(self) -> Tuple[bool, str]:
-        """开始链式拼接：初始化 ChainStitcher 和 StationManager。"""
+        """开始链式拼接：初始化 ChainStitcher 和 StationManager。
+
+        注意：会话目录不再在启动时创建，而是延迟到首次拍摄机位时，
+        避免测试阶段反复进入模式 B 产生大量空会话目录。
+        """
         if self._state not in (self.STATE_IDLE, self.STATE_READY):
             return False, f"当前状态 {self._state} 不允许重新开始"
         self._chain_stitcher = ChainStitcher(
@@ -96,11 +102,108 @@ class MobileChainWorkflow(WorkflowBase):
             max_rms_mm=2.0,
         )
         self._station_manager = StationManager(self.camera_manager)
-        session_dir = self._station_manager.new_session()
+        # 延迟创建会话目录，首次拍摄时 StationManager.capture_station 会自动创建
+        self.set_session_dir(None)
+        self._state = self.STATE_CHAINING
+        logger.info("链式拼接已就绪，等待拍摄首个机位")
+        return True, "链式拼接已就绪，等待拍摄首个机位"
+
+    def load_session_dir(self, session_dir: str) -> Tuple[bool, str]:
+        """从已有会话目录离线加载所有站位并自动拼接。
+
+        目录结构要求：
+            session_*/station_1/station_1.png + station_1.ply + meta.json
+            session_*/station_2/...
+        """
+        if not os.path.isdir(session_dir):
+            return False, f"目录不存在: {session_dir}"
+
+        # 初始化链式拼接器
+        self._chain_stitcher = ChainStitcher(
+            marker_detector=self.marker_detector,
+            calibration_engine=self.calibration_engine,
+            stitch_engine=self.stitch_engine,
+            min_common_markers=3,
+            min_inlier_ratio=0.7,
+            max_rms_mm=2.0,
+        )
+        self._station_manager = StationManager(self.camera_manager)
+        self._station_manager.attach_session(session_dir)
         self.set_session_dir(session_dir)
         self._state = self.STATE_CHAINING
-        logger.info(f"链式拼接已开始，会话目录: {session_dir}")
-        return True, f"链式拼接已开始，会话目录: {session_dir}"
+
+        station_names = [
+            name for name in sorted(os.listdir(session_dir))
+            if name.startswith(self._station_manager.STATION_PREFIX)
+            and os.path.isdir(os.path.join(session_dir, name))
+        ]
+        if not station_names:
+            return False, "未找到站位数据（station_N 子目录）"
+
+        loaded = 0
+        for station_name in station_names:
+            station_dir = os.path.join(session_dir, station_name)
+            img_path = os.path.join(station_dir, f"{station_name}.png")
+            ply_path = os.path.join(station_dir, f"{station_name}.ply")
+            if not os.path.exists(img_path) or not os.path.exists(ply_path):
+                logger.warning(f"{station_name} 缺少 png/ply，跳过")
+                continue
+
+            image = cv2.imread(img_path)
+            if image is None:
+                logger.warning(f"{station_name} 图像读取失败，跳过")
+                continue
+
+            markers = self.marker_detector.detect_3d(
+                image, offline_ply_path=ply_path)
+            if not markers:
+                logger.warning(f"{station_name} 未检测到标记物，跳过")
+                continue
+
+            # 统一字段名
+            for m in markers:
+                if "x_2d" in m and "u" not in m:
+                    m["u"] = m["x_2d"]
+                if "y_2d" in m and "v" not in m:
+                    m["v"] = m["y_2d"]
+
+            try:
+                seq = int(station_name.split("_")[1])
+            except ValueError:
+                seq = loaded + 1
+
+            frame = FrameData(
+                frame_id=seq,
+                camera_name=station_name,
+                image_np=image,
+                pointmap=None,
+                rvc_image=None,
+                is_offline=True,
+                offline_dir=session_dir,
+                offline_image_path=img_path,
+                offline_pointmap_path=ply_path,
+                markers=markers,
+            )
+
+            ok, msg, _edge = self._chain_stitcher.add_frame(frame)
+            if not ok:
+                logger.warning(f"{station_name} 配准失败: {msg}，跳过")
+                continue
+
+            self._station_manager._stations[station_name] = frame
+            self._station_manager._station_times[station_name] = ""
+            self._station_manager._station_seq = max(
+                self._station_manager._station_seq, seq)
+            loaded += 1
+
+        if loaded == 0:
+            return False, "没有成功加载任何站位"
+        if len(self._chain_stitcher.nodes) < 2:
+            return True, f"仅成功加载 {loaded} 个有效站位，无法形成拼接链"
+
+        self._state = self.STATE_READY if len(self._chain_stitcher.nodes) >= 3 else self.STATE_CHAINING
+        logger.info(f"离线加载会话完成: {session_dir}，共 {loaded} 个站位入链")
+        return True, f"离线加载完成: {loaded} 个站位入链"
 
     def capture_station(self) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
         """拍摄当前机位并自动配准。
@@ -120,6 +223,10 @@ class MobileChainWorkflow(WorkflowBase):
         station_id, msg = self._station_manager.capture_station(camera_id)
         if station_id is None:
             return False, f"拍摄失败: {msg}", None
+
+        # 首次拍摄后同步会话目录到工作流
+        if self.session_dir is None:
+            self.set_session_dir(self._station_manager.session_dir)
 
         # 获取帧数据
         frame = self._station_manager.get_frame(station_id)

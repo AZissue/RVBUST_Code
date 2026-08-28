@@ -173,6 +173,7 @@ class MainWindowShell(QMainWindow):
         self._ws_mobile.log_message.connect(self.log)
         self._ws_turntable.log_message.connect(self.log)
         self._ws_mobile.chain_stats_changed.connect(self._on_chain_stats)
+        self._ws_mobile.dirty_changed.connect(self.set_dirty)
         self._ws_turntable.dirty_changed.connect(self.set_dirty)
 
         root.addWidget(self._stack, 1)
@@ -546,15 +547,20 @@ class MainWindowShell(QMainWindow):
             "提示：无真实多机环境时，可在启动小窗点击『+ 测试设备』临时添加虚拟相机。")
 
     def closeEvent(self, event):
-        """主窗口关闭即退出程序；会话未保存时弹确认。"""
+        """主窗口关闭即退出程序；有未保存数据时提示保存。"""
         if self._dirty:
-            ret = QMessageBox.question(
-                self, "退出确认",
-                "会话尚未保存，确定退出吗？",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-            if ret != QMessageBox.Yes:
+            ret = QMessageBox.warning(
+                self, "会话未保存",
+                "当前会话包含未保存的拍摄数据，是否保存？",
+                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+                QMessageBox.Save)
+            if ret == QMessageBox.Cancel:
                 event.ignore()
                 return
+            if ret == QMessageBox.Save:
+                self.save_session_requested.emit()
+                # 保存是异步的，这里直接退出；如需等待保存完成再退出，
+                # 需要把 closeEvent 改为同步等待，目前保持简单行为。
         event.accept()
 
     def resizeEvent(self, event):
