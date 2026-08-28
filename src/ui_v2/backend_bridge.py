@@ -265,7 +265,9 @@ class BackendBridge(QObject):
                 self.shell.log(msg, "success" if ok else "warn")
                 self.shell.workspace_mobile().set_state("connected")
             elif mode == LauncherDialog.MODE_TURNTABLE:
-                # 模式 C：转台工作区自行管理相机、采集与拼接流程
+                # 模式 C：转台工作区接入主程序共享的相机管理器
+                self.shell.workspace_turntable().set_camera_manager(
+                    self.camera_manager, self.marker_detector)
                 self.shell.workspace_turntable().set_state("connected")
             if show_loading:
                 self.shell.hide_loading()

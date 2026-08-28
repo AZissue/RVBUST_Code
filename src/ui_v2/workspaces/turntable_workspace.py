@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (
     QTextEdit, QVBoxLayout, QWidget,
 )
 
-from ..theme import STATUS_ERR, STATUS_OK, TEXT_MUTED, TEXT_SECONDARY
+from ..theme import BG_CARD, STATUS_ERR, STATUS_OK, TEXT_MUTED, TEXT_SECONDARY
 from .. import icons as ui_icons
 from ..widgets import ViewerPanel
 from ..widgets.device_table import DeviceInfo
@@ -163,14 +163,34 @@ class TurntableWorkspace(QWidget):
         self._right_split = QSplitter(Qt.Horizontal)
         self._right_split.setChildrenCollapsible(False)
 
-        self.preview_2d_label = QLabel("2D 预览区")
+        # 2D 预览面板（带标题栏的卡片式容器）
+        self._preview_panel = QWidget()
+        preview_lo = QVBoxLayout(self._preview_panel)
+        preview_lo.setContentsMargins(0, 0, 0, 0)
+        preview_lo.setSpacing(0)
+        self._preview_panel.setStyleSheet(
+            f"background-color: {BG_CARD}; border: 1px solid #3a3a3a; border-radius: 8px;"
+        )
+
+        preview_title = QLabel("2D 预览")
+        preview_title.setFixedHeight(28)
+        preview_title.setStyleSheet(
+            f"color: {TEXT_SECONDARY}; font-size: 11px; font-weight: 600; "
+            f"background-color: transparent; border: none; padding-left: 8px;"
+        )
+        preview_lo.addWidget(preview_title)
+
+        self.preview_2d_label = QLabel("未启动预览")
         self.preview_2d_label.setAlignment(Qt.AlignCenter)
         self.preview_2d_label.setStyleSheet(
-            f"background-color: #0a0a0a; color: {TEXT_MUTED}; border: 1px solid #3a3a3a;"
+            f"background-color: #0f0f12; color: {TEXT_MUTED}; "
+            "border: none; border-bottom-left-radius: 8px; border-bottom-right-radius: 8px;"
         )
         self.preview_2d_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.preview_2d_label.setMinimumSize(360, 270)
-        self._right_split.addWidget(self.preview_2d_label)
+        preview_lo.addWidget(self.preview_2d_label, 1)
+
+        self._right_split.addWidget(self._preview_panel)
 
         self.viewer = ViewerPanel("3D 转台拼接预览")
         self.viewer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -185,45 +205,14 @@ class TurntableWorkspace(QWidget):
         self._pre_maximize_sizes = None
 
     def _build_camera_group(self) -> QGroupBox:
-        grp = QGroupBox("相机连接")
+        """相机已由 LauncherDialog 连接，这里只显示状态与标记物类型。"""
+        grp = QGroupBox("相机")
         v = QVBoxLayout(grp)
         v.setSpacing(8)
 
-        h = QHBoxLayout()
-        self.btn_rvc_init = QPushButton("初始化 RVC")
-        self.btn_rvc_init.clicked.connect(self._on_rvc_init)
-        h.addWidget(self.btn_rvc_init)
-
-        self.btn_rvc_shutdown = QPushButton("关闭 RVC")
-        self.btn_rvc_shutdown.clicked.connect(self._on_rvc_shutdown)
-        self.btn_rvc_shutdown.setEnabled(False)
-        h.addWidget(self.btn_rvc_shutdown)
-        v.addLayout(h)
-
-        h = QHBoxLayout()
-        self.combo_devices = QComboBox()
-        self.combo_devices.setMinimumWidth(140)
-        h.addWidget(self.combo_devices)
-
-        self.btn_refresh_devices = QPushButton("刷新")
-        self.btn_refresh_devices.clicked.connect(self._on_refresh_devices)
-        h.addWidget(self.btn_refresh_devices)
-        v.addLayout(h)
-
-        h = QHBoxLayout()
-        self.btn_connect_cam = QPushButton("连接相机")
-        self.btn_connect_cam.clicked.connect(self._on_connect_camera)
-        self.btn_connect_cam.setEnabled(False)
-        h.addWidget(self.btn_connect_cam)
-
-        self.btn_disconnect_cam = QPushButton("断开")
-        self.btn_disconnect_cam.clicked.connect(self._on_disconnect_camera)
-        self.btn_disconnect_cam.setEnabled(False)
-        h.addWidget(self.btn_disconnect_cam)
-        v.addLayout(h)
-
-        self.lbl_cam_status = QLabel("RVC 未初始化")
+        self.lbl_cam_status = QLabel("未连接相机")
         self.lbl_cam_status.setWordWrap(True)
+        self.lbl_cam_status.setStyleSheet(f"color: {TEXT_MUTED};")
         v.addWidget(self.lbl_cam_status)
 
         h = QHBoxLayout()
@@ -373,13 +362,12 @@ class TurntableWorkspace(QWidget):
         """
         self._devices = list(devices)
         self._reset_online_state()
-        if self.cam_mgr is None or self.marker_detector is None:
-            # 独立运行/演示模式：自己初始化相机
-            if devices:
-                self._on_rvc_init()
-        else:
-            # 主程序模式：使用 backend bridge 提供的已初始化相机管理器
-            self._on_refresh_devices()
+
+    def set_camera_manager(self, cam_mgr: CameraManager, marker_detector: MarkerDetector):
+        """接入主程序共享的相机管理器与标记物检测器（LauncherDialog 已连接相机）。"""
+        self.cam_mgr = cam_mgr
+        self.marker_detector = marker_detector
+        self._update_online_ui()
 
     def set_state(self, state: str):
         if state not in self.STATES:
@@ -403,7 +391,7 @@ class TurntableWorkspace(QWidget):
         self.session.reset()
         self.viewer.clear_all()
         self.preview_2d_label.setPixmap(QPixmap())
-        self.preview_2d_label.setText("2D 预览区")
+        self.preview_2d_label.setText("未启动预览")
         self.set_state("idle" if not self._is_connected() else "connected")
 
     def _is_connected(self) -> bool:
@@ -412,10 +400,6 @@ class TurntableWorkspace(QWidget):
     def _update_online_ui(self):
         connected = self._is_connected()
 
-        self.btn_rvc_init.setEnabled(self.cam_mgr is None)
-        self.btn_rvc_shutdown.setEnabled(self.cam_mgr is not None)
-        self.btn_connect_cam.setEnabled(self.cam_mgr is not None and self.combo_devices.count() > 0)
-        self.btn_disconnect_cam.setEnabled(connected)
         self.btn_preview_2d.setEnabled(connected)
         self.btn_capture_frame0.setEnabled(connected)
 
@@ -441,8 +425,10 @@ class TurntableWorkspace(QWidget):
             name = getattr(info, "name", "unknown") if info else cam_id
             sn = getattr(info, "sn", "-") if info else "-"
             self.lbl_cam_status.setText(f"已连接: {name} ({sn})")
+            self.lbl_cam_status.setStyleSheet(f"color: {STATUS_OK};")
         else:
-            self.lbl_cam_status.setText("未连接相机")
+            self.lbl_cam_status.setText("未连接相机（请从启动小窗连接）")
+            self.lbl_cam_status.setStyleSheet(f"color: {STATUS_ERR};")
 
         self.lbl_frame0.setText(
             f"frame0: {'已拍摄 ' + str(len(self.current_markers0)) + ' 个标记' if self.current_frame0 else '未拍摄'}"
@@ -496,85 +482,6 @@ class TurntableWorkspace(QWidget):
             mtype = self.combo_marker_type.currentData()
             self.marker_detector.set_marker_type(mtype)
             self.log(f"标记物类型切换为: {mtype}")
-
-    def _on_rvc_init(self):
-        if self.cam_mgr is not None:
-            self.log("RVC 已初始化，无需重复初始化")
-            return
-        self.cam_mgr = CameraManager()
-        ok, msg = self.cam_mgr.initialize()
-        if ok:
-            self.marker_detector = MarkerDetector(self.combo_marker_type.currentData())
-            self.log("RVC 初始化成功")
-            self._on_refresh_devices()
-            self.set_state("idle")
-        else:
-            self.log(f"RVC 初始化失败: {msg}", "error")
-            self.cam_mgr = None
-        self._update_online_ui()
-
-    def _on_rvc_shutdown(self):
-        if self.cam_mgr is not None:
-            self.cam_mgr.shutdown()
-            self.cam_mgr = None
-        self.marker_detector = None
-        self._reset_online_state()
-        self.combo_devices.clear()
-        self.log("RVC 已关闭")
-        self._update_online_ui()
-
-    def _on_refresh_devices(self):
-        if self.cam_mgr is None:
-            return
-        self.combo_devices.clear()
-        devices = self.cam_mgr.find_devices()
-        if not devices:
-            self.log("未找到 RVC 设备")
-            return
-        for i, dev in enumerate(devices):
-            try:
-                ok, info = dev.GetDeviceInfo()
-                name = info.name if ok else f"设备{i}"
-                sn = getattr(info, "sn", "-") if ok else "-"
-                self.combo_devices.addItem(f"[{i}] {name} ({sn})", i)
-            except Exception as e:
-                self.log(f"读取设备 {i} 信息失败: {e}", "warn")
-        self.log(f"发现 {len(devices)} 台设备")
-        self._update_online_ui()
-
-    def _on_connect_camera(self):
-        if self.cam_mgr is None:
-            return
-        if "cam0" in self.cam_mgr.get_connected_ids():
-            self.log("相机 cam0 已连接")
-            return
-        idx = self.combo_devices.currentData()
-        if idx is None:
-            return
-        self.log("连接相机中...")
-
-        def _connect():
-            if "cam0" not in self.cam_mgr.camera_ids:
-                self.cam_mgr.add_camera("cam0")
-            return self.cam_mgr.connect("cam0", idx)
-
-        def _done(result):
-            ok, msg = result
-            self.log(f"连接相机: {msg}", "success" if ok else "error")
-            if not ok:
-                self.cam_mgr.remove_camera("cam0")
-            else:
-                self.set_state("connected")
-            self._update_online_ui()
-
-        self._run_worker(_connect, _done)
-
-    def _on_disconnect_camera(self):
-        if self.cam_mgr is not None:
-            self.cam_mgr.remove_camera("cam0")
-            self._reset_online_state()
-            self.log("相机已断开")
-        self._update_online_ui()
 
     # ------------------------------------------------------------------ 2D 预览
     def _on_preview_2d(self):
@@ -840,12 +747,12 @@ class TurntableWorkspace(QWidget):
         if maximized:
             self._pre_maximize_sizes = self._right_split.sizes()
             self._left_panel.hide()
-            self.preview_2d_label.hide()
+            self._preview_panel.hide()
             total = max(self._right_split.width(), 100)
             self._right_split.setSizes([0, total])
         else:
             self._left_panel.show()
-            self.preview_2d_label.show()
+            self._preview_panel.show()
             if self._pre_maximize_sizes:
                 self._right_split.setSizes(self._pre_maximize_sizes)
             else:
