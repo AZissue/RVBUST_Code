@@ -152,24 +152,37 @@ QComboBox QAbstractItemView {{
 }}
 
 QRadioButton, QCheckBox {{ spacing: 8px; }}
-QRadioButton::indicator, QCheckBox::indicator {{
+
+/* 单选按钮：圆形，选中态为品牌红圆环 + 白点 */
+QRadioButton::indicator {{
     width: 16px; height: 16px;
-    border: 2px solid {BORDER}; border-radius: {RADIUS};
-    background-color: {BG_INPUT};
+    border-radius: 8px;
+    border: 2px solid {BORDER};
+    background-color: transparent;
 }}
-QRadioButton::indicator:hover, QCheckBox::indicator:hover {{
-    border-color: {BORDER_HOVER};
-}}
+QRadioButton::indicator:hover {{ border-color: {ACCENT}; }}
 QRadioButton::indicator:checked {{
     border: 5px solid {ACCENT};
     background-color: #FFFFFF;
 }}
+QRadioButton::indicator:disabled {{
+    border-color: #2E313A;
+    background-color: {BG_PANEL};
+}}
+
+/* 复选框：圆角矩形，选中态填充品牌红 */
+QCheckBox::indicator {{
+    width: 16px; height: 16px;
+    border-radius: 4px;
+    border: 2px solid {BORDER};
+    background-color: transparent;
+}}
+QCheckBox::indicator:hover {{ border-color: {ACCENT}; }}
 QCheckBox::indicator:checked {{
     border-color: {ACCENT};
     background-color: {ACCENT};
-    image: none;
 }}
-QRadioButton::indicator:disabled, QCheckBox::indicator:disabled {{
+QCheckBox::indicator:disabled {{
     border-color: #2E313A;
     background-color: {BG_PANEL};
 }}
