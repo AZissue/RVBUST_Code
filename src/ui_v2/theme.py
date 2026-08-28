@@ -151,8 +151,28 @@ QComboBox QAbstractItemView {{
     selection-background-color: {ACCENT};
 }}
 
-QRadioButton, QCheckBox {{ spacing: 6px; }}
-QRadioButton::indicator, QCheckBox::indicator {{ width: 14px; height: 14px; }}
+QRadioButton, QCheckBox {{ spacing: 8px; }}
+QRadioButton::indicator, QCheckBox::indicator {{
+    width: 16px; height: 16px;
+    border: 2px solid {BORDER}; border-radius: {RADIUS};
+    background-color: {BG_INPUT};
+}}
+QRadioButton::indicator:hover, QCheckBox::indicator:hover {{
+    border-color: {BORDER_HOVER};
+}}
+QRadioButton::indicator:checked {{
+    border: 5px solid {ACCENT};
+    background-color: #FFFFFF;
+}}
+QCheckBox::indicator:checked {{
+    border-color: {ACCENT};
+    background-color: {ACCENT};
+    image: none;
+}}
+QRadioButton::indicator:disabled, QCheckBox::indicator:disabled {{
+    border-color: #2E313A;
+    background-color: {BG_PANEL};
+}}
 
 /* ============ 分组 / 卡片 ============ */
 QGroupBox {{
@@ -204,9 +224,17 @@ QTabBar::tab:hover {{ color: {TEXT_PRIMARY}; }}
 QListWidget {{
     background-color: {BG_PANEL}; border: 1px solid {BORDER};
     border-radius: {RADIUS};
+    outline: none;
 }}
-QListWidget::item {{ padding: 4px 6px; border-radius: 4px; }}
-QListWidget::item:selected {{ background-color: {ACCENT_DIM}; color: {TEXT_PRIMARY}; }}
+QListWidget::item {{
+    padding: 6px 8px; border-radius: 4px;
+    border-left: 3px solid transparent;
+    outline: none;
+}}
+QListWidget::item:selected {{
+    background-color: {ACCENT_DIM}; color: {TEXT_PRIMARY};
+    border-left: 3px solid {ACCENT};
+}}
 QListWidget::item:hover {{ background-color: {BG_CARD}; }}
 
 /* ============ Splitter / 滚动条 ============ */
