@@ -13,14 +13,61 @@ __VERSION__ = "1.0.0-alpha"
 __VERSION_FILE__ = __file__
 
 
+def _get_git_short_hash(fallback: str = "") -> str:
+    """尝试从 Git 工作区获取当前提交短 hash（GitHub 推送号）。
+
+    兼容开发环境与 PyInstaller 打包环境：打包时通常无 .git 目录，
+    可回退到空字符串或预写入的 fallback。
+    """
+    import os
+    import subprocess
+
+    # 优先从环境变量读取（CI/CD 注入）
+    env_hash = os.environ.get("GIT_COMMIT_SHORT", "").strip()
+    if env_hash:
+        return env_hash
+
+    # 尝试从 .git 目录获取
+    try:
+        file_dir = os.path.dirname(os.path.abspath(__file__))
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=file_dir,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=True,
+            timeout=2,
+        )
+        short = result.stdout.strip()
+        if short:
+            return short
+    except Exception:
+        pass
+    return fallback
+
+
 def get_version() -> str:
-    """返回当前版本字符串（带 v 前缀）。"""
-    return f"v{__VERSION__}"
+    """返回当前版本字符串（带 v 前缀），自动附加 Git 提交号后缀。
+
+    示例: v1.0.0-alpha+g84550da
+    """
+    base = __VERSION__
+    git_hash = _get_git_short_hash()
+    if git_hash:
+        return f"v{base}+g{git_hash}"
+    return f"v{base}"
 
 
 def _parse_version() -> tuple:
-    """解析当前版本为 (major, minor, patch) 整数元组。"""
-    parts = __VERSION__.split(".")
+    """解析当前版本为 (major, minor, patch) 整数元组。
+
+    兼容 pre-release 后缀（如 1.0.0-alpha），只取前三段数字。
+    """
+    base = __VERSION__.split("+")[0].split("-")[0]
+    parts = base.split(".")
+    if len(parts) < 3:
+        parts += ["0"] * (3 - len(parts))
     return int(parts[0]), int(parts[1]), int(parts[2])
 
 
