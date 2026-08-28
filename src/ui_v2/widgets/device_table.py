@@ -18,11 +18,13 @@ from dataclasses import dataclass, field
 from typing import List
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor, QPainter, QPen, QBrush
 from PySide6.QtWidgets import (
-    QAbstractItemView, QHeaderView, QTableWidget, QTableWidgetItem,
+    QAbstractItemView, QCheckBox, QHeaderView, QHBoxLayout, QTableWidget,
+    QTableWidgetItem, QWidget,
 )
 
-from ..theme import STATUS_ERR, STATUS_OK, TEXT_MUTED
+from ..theme import ACCENT, STATUS_ERR, STATUS_OK, TEXT_MUTED, TEXT_PRIMARY
 
 
 @dataclass
@@ -36,6 +38,48 @@ class DeviceInfo:
     checked: bool = False    # 勾选状态
     backend_ref: object = field(default=None, repr=False)
     """后端设备句柄/索引（SDK 设备对象或枚举下标），UI 不解释，原样回传。"""
+
+
+class ModernCheckBox(QCheckBox):
+    """自定义现代风格勾选框：圆角矩形 + 白色对勾，无焦点虚线框。"""
+
+    CHECK_SIZE = 18
+    RADIUS = 4
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFocusPolicy(Qt.NoFocus)
+        self.setText("")
+        self.setCursor(Qt.PointingHandCursor)
+        # 隐藏原生 indicator，完全自绘
+        self.setStyleSheet("QCheckBox::indicator { width: 0px; height: 0px; }")
+        self.setFixedSize(self.CHECK_SIZE, self.CHECK_SIZE)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        size = self.CHECK_SIZE
+        x = (self.width() - size) // 2
+        y = (self.height() - size) // 2
+
+        if self.isChecked():
+            painter.setBrush(QBrush(QColor(ACCENT)))
+            painter.setPen(Qt.NoPen)
+            painter.drawRoundedRect(x, y, size, size, self.RADIUS, self.RADIUS)
+            # 白色对勾
+            painter.setPen(
+                QPen(QColor(TEXT_PRIMARY), 2.5,
+                     Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            painter.drawLine(int(x + size * 0.25), int(y + size * 0.52),
+                             int(x + size * 0.44), int(y + size * 0.70))
+            painter.drawLine(int(x + size * 0.42), int(y + size * 0.70),
+                             int(x + size * 0.75), int(y + size * 0.30))
+        else:
+            painter.setBrush(Qt.NoBrush)
+            painter.setPen(QPen(QColor("#555555"), 1.5))
+            painter.drawRoundedRect(x + 0.5, y + 0.5, size - 1, size - 1,
+                                    self.RADIUS, self.RADIUS)
 
 
 class DeviceTable(QTableWidget):
@@ -52,15 +96,17 @@ class DeviceTable(QTableWidget):
         self._devices: List[DeviceInfo] = []
         self._filter_text = ""
         self._show_ip_status = True  # 动态控制 IP/状态列显示
+        self._check_widgets: List[ModernCheckBox] = []
 
         self.setColumnCount(len(self.COLS))
         self.setHorizontalHeaderLabels(self.COLS)
         self.verticalHeader().setVisible(False)
         self.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.setSelectionMode(QAbstractItemView.SingleSelection)  # 行选仅作高亮
+        self.setSelectionMode(QAbstractItemView.NoSelection)  # 禁用行选高亮，避免虚线框
         self.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.setShowGrid(False)
         self.setAlternatingRowColors(True)
+        self.setFocusPolicy(Qt.NoFocus)  # 去掉焦点虚线框
 
         header = self.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
@@ -69,7 +115,6 @@ class DeviceTable(QTableWidget):
         header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
 
-        self.itemChanged.connect(self._on_item_changed)
         self.itemClicked.connect(self._on_row_clicked)
 
     # ------------------------------------------------------------ 公共接口
@@ -126,11 +171,20 @@ class DeviceTable(QTableWidget):
     def _rebuild(self):
         self.blockSignals(True)
         self.setRowCount(len(self._devices))
+        self._check_widgets = []
         for row, dev in enumerate(self._devices):
-            check = QTableWidgetItem()
-            check.setFlags(Qt.ItemIsEnabled | Qt.ItemIsUserCheckable)
-            check.setCheckState(Qt.Checked if dev.checked else Qt.Unchecked)
-            self.setItem(row, 0, check)
+            # 现代风格勾选框，居中放置
+            chk = ModernCheckBox()
+            chk.setChecked(dev.checked)
+            chk.toggled.connect(lambda checked, r=row: self._on_check_toggled(r, checked))
+            self._check_widgets.append(chk)
+
+            wrapper = QWidget()
+            wrapper_layout = QHBoxLayout(wrapper)
+            wrapper_layout.setContentsMargins(6, 2, 6, 2)
+            wrapper_layout.setAlignment(Qt.AlignCenter)
+            wrapper_layout.addWidget(chk)
+            self.setCellWidget(row, 0, wrapper)
 
             self.setItem(row, 1, QTableWidgetItem(dev.model or "—"))
             self.setItem(row, 2, QTableWidgetItem(dev.serial or "—"))
@@ -148,19 +202,15 @@ class DeviceTable(QTableWidget):
         from PySide6.QtGui import QBrush, QColor
         return QBrush(QColor(STATUS_OK if online else TEXT_MUTED))
 
-    def _on_item_changed(self, item: QTableWidgetItem):
-        if item.column() != 0:
-            return
-        row = item.row()
+    def _on_check_toggled(self, row: int, checked: bool):
+        """勾选框状态变化时同步数据并发射信号。"""
         if 0 <= row < len(self._devices):
-            self._devices[row].checked = item.checkState() == Qt.Checked
+            self._devices[row].checked = checked
             self.checked_changed.emit(self.checked_devices())
 
     def _on_row_clicked(self, item: QTableWidgetItem):
         """点击行任意位置切换勾选（多选交互）。"""
         row = item.row()
-        check_item = self.item(row, 0)
-        if check_item is None:
-            return
-        check_item.setCheckState(
-            Qt.Unchecked if check_item.checkState() == Qt.Checked else Qt.Checked)
+        if 0 <= row < len(self._check_widgets):
+            chk = self._check_widgets[row]
+            chk.setChecked(not chk.isChecked())
