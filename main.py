@@ -30,6 +30,9 @@ def main():
         print("[ERROR] PySide6 未安装，仅 core 模块可用（python test_core.py）")
         return 1
 
+    from core.utils import logger
+    logger.info(f"MultiCameraCalibration 启动，版本: {get_version()}")
+
     app = QApplication(sys.argv)
     app.setApplicationName("MultiCameraCalibration")
 
