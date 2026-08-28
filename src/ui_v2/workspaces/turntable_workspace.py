@@ -346,14 +346,6 @@ class TurntableWorkspace(QWidget):
         return grp
 
     # ------------------------------------------------------------------ 公共接口
-    def set_camera_manager(self, cam_mgr: Optional[CameraManager]):
-        """主窗口注入 backend bridge 的 CameraManager。"""
-        self.cam_mgr = cam_mgr
-
-    def set_marker_detector(self, detector: Optional[MarkerDetector]):
-        """主窗口注入 backend bridge 的 MarkerDetector。"""
-        self.marker_detector = detector
-
     def set_devices(self, devices: List[DeviceInfo]):
         """主窗口切换模式时传入设备。
 

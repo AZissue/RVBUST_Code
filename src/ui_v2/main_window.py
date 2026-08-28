@@ -271,8 +271,10 @@ class MainWindowShell(QMainWindow):
         else:
             self._stack.setCurrentWidget(self._ws_turntable)
             if self._backend_bridge is not None:
-                self._ws_turntable.set_camera_manager(self._backend_bridge.camera_manager)
-                self._ws_turntable.set_marker_detector(self._backend_bridge.marker_detector)
+                self._ws_turntable.set_camera_manager(
+                    self._backend_bridge.camera_manager,
+                    self._backend_bridge.marker_detector,
+                )
             self._ws_turntable.set_devices(devices)
             self._ws_turntable.set_state("connected" if devices else "idle")
             self._btn_mode.setText("模式：转台 360° 拼接 ▾")

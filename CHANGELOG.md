@@ -11,6 +11,17 @@
 
 ---
 
+## [1.0.5] - 2026-08-28
+
+### Fixed
+- 修复转台 360° 拼接模式进入时崩溃：
+  `TurntableWorkspace.set_camera_manager()` 存在两个重复定义，
+  导致 `main_window.set_mode()` 调用参数不匹配；
+  移除旧的两步注入方法，统一使用合并后的 `set_camera_manager(cam_mgr, marker_detector)`。
+- 修复转台模式连接相机遮罩卡住的问题，现在可正常进入主功能页面。
+
+---
+
 ## [1.0.4] - 2026-08-28
 
 ### Changed
