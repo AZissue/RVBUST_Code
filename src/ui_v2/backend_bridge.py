@@ -237,21 +237,33 @@ class BackendBridge(QObject):
         results: List[Tuple[str, bool, str]],
         real_devices: List[DeviceInfo],
         required: int,
+        total_count: Optional[int] = None,
     ) -> Tuple[str, str]:
         """根据连接结果构造用户友好的失败原因和排查建议。
+
+        Args:
+            total_count: 总设备数（含测试相机）。为 None 时取 len(results)。
 
         Returns:
             (reason, details) 分别用于弹窗标题下方的正文和详细说明。
         """
         ok_count = sum(1 for _, ok, _ in results if ok)
+        total_count = total_count if total_count is not None else len(results)
         failures = [(cid, msg) for cid, ok, msg in results if not ok]
 
-        # 1. 只选了测试相机（没有真实设备）
-        if not real_devices:
+        # 1. 设备总数不足（含只选测试相机但数量不够）
+        if total_count < required:
+            if not real_devices:
+                return (
+                    f"当前仅选择了 {total_count} 台测试相机（仅用于 UI 布局预览），"
+                    f"该模式需要至少 {required} 台设备。",
+                    "调试 UI 时可选择多台测试相机进入；"
+                    "正式使用请检查真实 RVC 相机是否已上电、网线/USB 是否连接正常，"
+                    "然后点击「刷新」重新枚举设备并勾选真实相机。",
+                )
             return (
-                "当前所选设备均为测试相机（仅用于 UI 布局预览），无法进入工作区。",
-                "请检查真实 RVC 相机是否已上电、网线/USB 是否连接正常，"
-                "然后点击「刷新」重新枚举设备并勾选真实相机。",
+                f"该模式需要至少 {required} 台设备，当前仅 {total_count} 台。",
+                "请继续勾选更多设备，或检查真实相机的连接状态。",
             )
 
         # 2. 有真实设备但全部连接失败
@@ -279,12 +291,14 @@ class BackendBridge(QObject):
                 )
             return reason, details
 
-        # 3. 部分成功但数量不足
+        # 3. 部分成功但真实相机数量不足
         msgs = "\n".join(f"  • {cid}: {msg}" for cid, msg in failures)
         return (
-            f"该模式需要至少 {required} 台相机成功连接，当前仅 {ok_count} 台成功。",
+            f"该模式需要至少 {required} 台设备，当前 {total_count} 台已选择，"
+            f"但仅 {ok_count} 台真实相机成功连接。",
             f"失败详情：\n{msgs}\n\n"
-            "建议：检查失败相机的连接状态，排除被占用或网络问题后重试。",
+            "当前仍可用测试相机进入工作区调试 UI；"
+            "正式拍摄/标定请检查失败相机的连接状态，排除被占用或网络问题后重试。",
         )
 
     def _show_connection_error(self, title: str, reason: str, details: str):
@@ -294,6 +308,29 @@ class BackendBridge(QObject):
         msg_box.setIcon(QMessageBox.Warning)
         msg_box.setText(reason)
         msg_box.setInformativeText(details)
+        msg_box.setStandardButtons(QMessageBox.Ok)
+        msg_box.exec()
+
+    def _show_debug_mode_notice(
+        self, mode_name: str, real_ok_count: int, test_count: int
+    ):
+        """提示当前以测试相机为主进入调试模式，正式功能需要真实相机。"""
+        self.shell.log(
+            f"{mode_name} 以调试模式进入：真实相机 {real_ok_count} 台，"
+            f"测试设备 {test_count} 台", "warn")
+        msg_box = QMessageBox(self.shell)
+        msg_box.setWindowTitle(f"{mode_name} — 调试模式")
+        msg_box.setIcon(QMessageBox.Information)
+        msg_box.setText(
+            f"当前已使用 {test_count} 台测试相机进入 {mode_name} 工作区。\n"
+            f"真实相机成功连接 {real_ok_count} 台。")
+        msg_box.setInformativeText(
+            "测试相机仅用于 UI 布局调试：\n"
+            "  • 可以正常查看界面布局、操作流程和大部分交互；\n"
+            "  • 拍摄、标定、拼接等依赖真实数据的功能会失败或无结果；\n"
+            "  • 正式使用时请连接真实 RVC 相机。\n\n"
+            "如果刚用过「参数调试」打开 RVCManager，请关闭 RVCManager 后"
+            "重新连接真实相机。")
         msg_box.setStandardButtons(QMessageBox.Ok)
         msg_box.exec()
 
@@ -405,19 +442,24 @@ class BackendBridge(QObject):
                     details="请检查相机是否上电、网络是否正常，或尝试重新插拔相机后重试。")
                 return
             ok_count = sum(1 for _, ok, _ in results if ok)
+            total_count = len(results)
+            test_count = total_count - ok_count
             for cid, ok, msg in results:
                 level = "success" if ok else "warn"
                 self.shell.log(f"相机 {cid}: {msg}", level)
-            self.shell.log(f"设备连接完成: {ok_count}/{len(results)} 台成功", "info")
+            self.shell.log(
+                f"设备连接完成: {ok_count}/{total_count} 台真实相机成功，"
+                f"测试设备 {test_count} 台", "info")
             # 工作区已在 on_connect 中切换，这里只刷新设备状态与后续初始化
             self._current_mode = mode
             if mode == LauncherDialog.MODE_MULTI_CAM:
-                # 模式 A：多相机外参标定要求至少 2 台相机成功连接
-                if ok_count < 2:
+                # 模式 A：多相机外参标定要求至少 2 台设备（真实或测试均可进入 UI）
+                if total_count < 2:
                     reason, details = self._classify_connection_failure(
-                        results, real_devices, required=2)
+                        results, real_devices, required=2,
+                        total_count=total_count)
                     self.shell.log(
-                        f"多相机外参标定需要至少 2 台相机，当前仅 {ok_count} 台成功",
+                        f"多相机外参标定需要至少 2 台设备，当前仅 {total_count} 台",
                         "error")
                     if show_loading:
                         self.shell.hide_loading()
@@ -425,8 +467,11 @@ class BackendBridge(QObject):
                         "无法进入多相机外参标定", reason, details)
                     self.connection_finished.emit(
                         False,
-                        f"多相机外参标定需要至少 2 台相机，当前 {ok_count} 台成功")
+                        f"多相机外参标定需要至少 2 台设备，当前 {total_count} 台")
                     return
+                if ok_count < 2 and test_count > 0:
+                    self._show_debug_mode_notice(
+                        "多相机外参标定", ok_count, test_count)
                 # 参考相机选第一台真实连接成功的相机，fallback 到 cam0
                 reference_id = next(
                     (cid for cid, ok, _ in results if ok), "cam0")
@@ -435,44 +480,38 @@ class BackendBridge(QObject):
                 self._on_multi_reference_changed(reference_id)
                 self.shell.workspace_multi().set_state("connected")
             elif mode == LauncherDialog.MODE_MOBILE_CHAIN:
-                # 模式 B：单相机移动拼接要求至少 1 台真实相机成功连接
-                if ok_count < 1:
-                    reason, details = self._classify_connection_failure(
-                        results, real_devices, required=1)
-                    self.shell.log(
-                        "单相机移动拼接需要至少 1 台真实相机连接", "error")
-                    if show_loading:
-                        self.shell.hide_loading()
-                    self._show_connection_error(
-                        "无法进入单相机移动拼接", reason, details)
-                    self.connection_finished.emit(
-                        False, "单相机移动拼接需要至少 1 台真实相机连接")
-                    return
                 # 模式 B 需要初始化链式拼接会话
                 ok, msg = self.mobile_workflow.start_chaining()
                 self.shell.log(msg, "success" if ok else "warn")
                 self.shell.workspace_mobile().set_state("connected")
             elif mode == LauncherDialog.MODE_TURNTABLE:
-                # 模式 C：转台要求至少 1 台相机成功连接
-                if ok_count < 1:
+                # 模式 C：转台要求至少 1 台设备（真实或测试均可进入 UI）
+                if total_count < 1:
                     reason, details = self._classify_connection_failure(
-                        results, real_devices, required=1)
+                        results, real_devices, required=1,
+                        total_count=total_count)
                     self.shell.log(
-                        "转台 360° 拼接需要至少 1 台相机连接", "error")
+                        "转台 360° 拼接需要至少 1 台设备", "error")
                     if show_loading:
                         self.shell.hide_loading()
                     self._show_connection_error(
                         "无法进入转台 360° 拼接", reason, details)
                     self.connection_finished.emit(
-                        False, "转台 360° 拼接需要至少 1 台相机连接")
+                        False, "转台 360° 拼接需要至少 1 台设备")
                     return
+                if ok_count < 1 and test_count > 0:
+                    self._show_debug_mode_notice(
+                        "转台 360° 拼接", ok_count, test_count)
                 # 转台工作区接入主程序共享的相机管理器
                 self.shell.workspace_turntable().set_camera_manager(
                     self.camera_manager, self.marker_detector)
                 self.shell.workspace_turntable().set_state("connected")
             if show_loading:
                 self.shell.hide_loading()
-            self.connection_finished.emit(True, f"设备连接完成: {ok_count}/{len(results)} 台成功")
+            self.connection_finished.emit(
+                True,
+                f"设备连接完成: {ok_count}/{total_count} 台真实相机成功"
+                f"（测试设备 {test_count} 台）")
 
         self._run_background(_connect, _done)
 
