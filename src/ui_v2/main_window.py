@@ -413,9 +413,10 @@ class MainWindowShell(QMainWindow):
                         return
                     # 连接失败：弹窗提示并回退到之前的模式
                     self.log(f"设备连接失败: {message}", "error")
+                    suggestion = self._connection_failure_suggestion(message)
                     ret = QMessageBox.warning(
                         self, "设备连接失败",
-                        f"{message}\n是否返回之前的模式？",
+                        f"{message}\n\n{suggestion}\n\n是否返回之前的模式？",
                         QMessageBox.Yes | QMessageBox.No,
                         QMessageBox.Yes,
                     )
@@ -433,6 +434,38 @@ class MainWindowShell(QMainWindow):
             else:
                 self.device_manager_reopened.emit(
                     connected["mode"], ordered_devices)
+
+    @staticmethod
+    def _connection_failure_suggestion(message: str) -> str:
+        """根据连接失败消息返回排查建议。"""
+        msg = message or ""
+        if "测试设备" in msg or "测试相机" in msg or "仅布局" in msg:
+            return (
+                "排查建议：\n"
+                "  1. 测试相机仅用于 UI 布局预览，不能替代真实相机进入工作区；\n"
+                "  2. 请检查真实 RVC 相机是否已上电、网线/USB 是否连接正常；\n"
+                "  3. 点击「刷新」重新枚举设备后勾选真实相机。"
+            )
+        if "占用" in msg or "RVCManager" in msg:
+            return (
+                "排查建议：\n"
+                "  1. 若刚使用过「参数调试」打开 RVCManager，请关闭 RVCManager 后再连接；\n"
+                "  2. 检查任务管理器，结束其他占用相机的进程；\n"
+                "  3. 重新点击「设备管理」进入小窗后再次连接。"
+            )
+        if "至少需要" in msg:
+            return (
+                "排查建议：\n"
+                "  1. 多相机外参标定至少需要 2 台真实相机，转台至少需要 1 台；\n"
+                "  2. 检查失败相机的连接状态，排除网线松动或 IP 冲突；\n"
+                "  3. 尝试点击「自动设置 IP」修复网络配置。"
+            )
+        return (
+            "排查建议：\n"
+            "  1. 检查相机是否上电、网线/USB 是否连接正常；\n"
+            "  2. 点击「自动设置 IP」修复 GigE 相机网络配置；\n"
+            "  3. 关闭 RVCManager 等可能占用相机的软件后重试。"
+        )
 
     def _confirm_discard(self) -> bool:
         """未保存数据确认框。

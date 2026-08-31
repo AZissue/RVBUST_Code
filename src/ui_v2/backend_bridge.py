@@ -230,6 +230,74 @@ class BackendBridge(QObject):
             )
 
     # ------------------------------------------------------------------
+    # 连接失败诊断与提示
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _classify_connection_failure(
+        results: List[Tuple[str, bool, str]],
+        real_devices: List[DeviceInfo],
+        required: int,
+    ) -> Tuple[str, str]:
+        """根据连接结果构造用户友好的失败原因和排查建议。
+
+        Returns:
+            (reason, details) 分别用于弹窗标题下方的正文和详细说明。
+        """
+        ok_count = sum(1 for _, ok, _ in results if ok)
+        failures = [(cid, msg) for cid, ok, msg in results if not ok]
+
+        # 1. 只选了测试相机（没有真实设备）
+        if not real_devices:
+            return (
+                "当前所选设备均为测试相机（仅用于 UI 布局预览），无法进入工作区。",
+                "请检查真实 RVC 相机是否已上电、网线/USB 是否连接正常，"
+                "然后点击「刷新」重新枚举设备并勾选真实相机。",
+            )
+
+        # 2. 有真实设备但全部连接失败
+        if ok_count == 0 and failures:
+            msgs = "\n".join(f"  • {cid}: {msg}" for cid, msg in failures)
+            busy = any("占用" in msg or "RVCManager" in msg for _, msg in failures)
+            if busy:
+                reason = "所有真实相机均连接失败，检测到相机可能被占用。"
+                details = (
+                    f"失败详情：\n{msgs}\n\n"
+                    "常见原因与解决方法：\n"
+                    "  1. RVCManager 或其他调试工具正在占用相机："
+                    "请关闭 RVCManager 后再点击「连接设备」。\n"
+                    "  2. 本软件已连接过该相机：请尝试点击「设备管理」重新进入小窗连接。\n"
+                    "  3. 相机被其他程序占用：请检查任务管理器，结束相关进程后重试。"
+                )
+            else:
+                reason = "所有真实相机均连接失败。"
+                details = (
+                    f"失败详情：\n{msgs}\n\n"
+                    "常见原因与解决方法：\n"
+                    "  1. 相机未上电或网线/USB 松动：请检查物理连接。\n"
+                    "  2. 相机 IP 不在同一网段：请点击「自动设置 IP」。\n"
+                    "  3. 防火墙或杀毒软件拦截：请临时关闭后重试。"
+                )
+            return reason, details
+
+        # 3. 部分成功但数量不足
+        msgs = "\n".join(f"  • {cid}: {msg}" for cid, msg in failures)
+        return (
+            f"该模式需要至少 {required} 台相机成功连接，当前仅 {ok_count} 台成功。",
+            f"失败详情：\n{msgs}\n\n"
+            "建议：检查失败相机的连接状态，排除被占用或网络问题后重试。",
+        )
+
+    def _show_connection_error(self, title: str, reason: str, details: str):
+        """弹出带排查建议的连接失败提示框。"""
+        msg_box = QMessageBox(self.shell)
+        msg_box.setWindowTitle(title)
+        msg_box.setIcon(QMessageBox.Warning)
+        msg_box.setText(reason)
+        msg_box.setInformativeText(details)
+        msg_box.setStandardButtons(QMessageBox.Ok)
+        msg_box.exec()
+
+    # ------------------------------------------------------------------
     # 设备管理（LauncherDialog）
     # ------------------------------------------------------------------
     def enumerate_devices(self) -> List[DeviceInfo]:
@@ -331,6 +399,10 @@ class BackendBridge(QObject):
                     self.shell.hide_loading()
                 self.connection_finished.emit(False, f"连接设备异常: {error}")
                 self.shell.log(f"连接设备异常: {error}", "error")
+                self._show_connection_error(
+                    "连接设备异常",
+                    f"连接过程中发生异常：{error}",
+                    details="请检查相机是否上电、网络是否正常，或尝试重新插拔相机后重试。")
                 return
             ok_count = sum(1 for _, ok, _ in results if ok)
             for cid, ok, msg in results:
@@ -342,11 +414,15 @@ class BackendBridge(QObject):
             if mode == LauncherDialog.MODE_MULTI_CAM:
                 # 模式 A：多相机外参标定要求至少 2 台相机成功连接
                 if ok_count < 2:
+                    reason, details = self._classify_connection_failure(
+                        results, real_devices, required=2)
                     self.shell.log(
                         f"多相机外参标定需要至少 2 台相机，当前仅 {ok_count} 台成功",
                         "error")
                     if show_loading:
                         self.shell.hide_loading()
+                    self._show_connection_error(
+                        "无法进入多相机外参标定", reason, details)
                     self.connection_finished.emit(
                         False,
                         f"多相机外参标定需要至少 2 台相机，当前 {ok_count} 台成功")
@@ -366,10 +442,14 @@ class BackendBridge(QObject):
             elif mode == LauncherDialog.MODE_TURNTABLE:
                 # 模式 C：转台要求至少 1 台相机成功连接
                 if ok_count < 1:
+                    reason, details = self._classify_connection_failure(
+                        results, real_devices, required=1)
                     self.shell.log(
                         "转台 360° 拼接需要至少 1 台相机连接", "error")
                     if show_loading:
                         self.shell.hide_loading()
+                    self._show_connection_error(
+                        "无法进入转台 360° 拼接", reason, details)
                     self.connection_finished.emit(
                         False, "转台 360° 拼接需要至少 1 台相机连接")
                     return
