@@ -254,9 +254,9 @@ MultiCameraCalibration/
 | 5 | 单相机多站位模式（StationManager + 站位面板）、test_station | ✅ 完成 |
 | 6 | UI v2 重构（LauncherDialog + 工作区 + 浮动面板） | ✅ 完成 |
 | 7 | 转台 360° 拼接（模式 C）并入主程序 | ✅ 完成 |
-| 8 | 离线拼接（模式 D）：不连相机重放会话数据 | ✅ 完成（prototypes/offline_stitch 保留验证） |
+| 8 | 离线拼接：不连相机重放会话数据（prototypes/offline_stitch 保留验证） | ✅ 完成 |
 | 9 | 编码圆标定板生成器 | ✅ 完成 |
-| 10 | 机器人手眼配合拼接（模式 E）：手眼标定 + 机器人扫描 | 🚧 core 已落地，UI 未接线 |
+| 10 | 机器人手眼配合拼接（模式 D）：手眼标定 + 机器人扫描 | 🚧 core 已落地，UI 未接线 |
 
 后续扩展方向：
 
@@ -269,9 +269,9 @@ MultiCameraCalibration/
 ## 已知限制
 
 - **硬触发未实现**：目前为软触发同步，多相机拍摄存在毫秒级时间差
-- **全局 BA 未实现**：链式拓扑仅 BFS 最短路径复合，无全局误差均衡，
-  长链累积误差随链长增长（移动链式模式已提供闭环全局优化入口）
-- **模式 E UI 未接线**：手眼标定与机器人扫描的 core 已落地，但 LauncherDialog
+- **全局 BA 已提供接口**：`pose_graph.optimize_global_ba` 已实现，移动链式模式
+  已提供闭环全局优化入口；默认仍使用 BFS 生成树以兼顾速度
+- **模式 D UI 未接线**：手眼标定与机器人扫描的 core 已落地，但 LauncherDialog
   无入口、backend_bridge 无信号接线
 - **检测依赖 SDK**：编码圆检测需 PyRVC；无 SDK 环境仅可走合成数据测试
 - **单标定板假设**：星型标定假设所有相机同时看到同一块编码圆板

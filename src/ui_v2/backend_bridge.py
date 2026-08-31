@@ -16,6 +16,7 @@ ui_v2.backend_bridge —— ui_v2 空壳与现有 core 模块的桥接器。
 from __future__ import annotations
 
 import os
+import threading
 from typing import Dict, List, Optional, Set, Tuple
 
 import numpy as np
@@ -68,6 +69,9 @@ class BackendBridge(QObject):
 
         # 当前模式
         self._current_mode = LauncherDialog.MODE_MULTI_CAM
+
+        # 标记物检测器共享状态锁（set_marker_type / detect_3d 非线程安全）
+        self._detect_lock = threading.Lock()
 
         # 模式 B 实时取景定时器
         self._preview_timer = QTimer(self)
@@ -350,35 +354,29 @@ class BackendBridge(QObject):
         self._run_background(_work, _done)
 
     def _on_multi_detect(self, method: str):
-        """检测标记物（多相机并行，缩短总耗时）。"""
-        self.marker_detector.set_marker_type(self._map_detect_method(method))
+        """检测标记物（串行执行，避免共享 MarkerDetector 线程竞态）。"""
+        marker_type = self._map_detect_method(method)
         self.shell.show_loading("正在检测标记物...")
 
         def _detect_one(cid_frame):
             cid, frame = cid_frame
-            markers = self.marker_detector.detect_3d(
-                frame.image_np,
-                pointmap=frame.pointmap,
-                rvc_image=frame.rvc_image,
-                offline_ply_path=frame.offline_pointmap_path,
-            )
+            with self._detect_lock:
+                self.marker_detector.set_marker_type(marker_type)
+                markers = self.marker_detector.detect_3d(
+                    frame.image_np,
+                    pointmap=frame.pointmap,
+                    rvc_image=frame.rvc_image,
+                    offline_ply_path=frame.offline_pointmap_path,
+                )
             frame.markers = markers
             return cid, len(markers)
 
         def _work():
             frames = list(self.fixed_workflow.frames_calib.items())
-            if len(frames) <= 1:
-                marker_counts = {}
-                for cid, frame in frames:
-                    cid_out, count = _detect_one((cid, frame))
-                    marker_counts[cid_out] = count
-                return marker_counts
-            from concurrent.futures import ThreadPoolExecutor
             marker_counts = {}
-            max_workers = min(len(frames), 4)
-            with ThreadPoolExecutor(max_workers=max_workers) as exe:
-                for cid, count in exe.map(_detect_one, frames):
-                    marker_counts[cid] = count
+            for cid, frame in frames:
+                cid_out, count = _detect_one((cid, frame))
+                marker_counts[cid_out] = count
             return marker_counts
         def _done(marker_counts, error):
             self.shell.hide_loading()

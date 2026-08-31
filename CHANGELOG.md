@@ -11,6 +11,35 @@
 
 ---
 
+## [1.1.2] - 2026-08-31
+
+### Fixed
+- **P2-c3** `station_timeline.update_station()` 布局插入索引错误，
+  改为按 `layout_index` 原位替换，避免删除/重排站位后界面布局错乱。
+- **P3 N12** 多相机检测改为串行执行并加 `_detect_lock` 保护，
+  消除 `MarkerDetector` 共享状态在多线程并发下的竞态条件。
+- **P3 N13** 转台 360° 拼接增加 `_busy` 门控，
+  2D 预览、frame0/frame1 拍摄、步进采集互斥，防止操作重叠导致崩溃。
+
+### Changed
+- **P3 N9** 主窗口初始大小与居中改用 `QApplication.screenAt(QCursor.pos())`，
+  多显示器环境下不再默认挤到主屏幕左上角。
+- **P3 N5** 新增 `ruff.toml` 静态检查配置，统一代码风格。
+- **P3 N6** `version._parse_version()` 兼容 `v` 前缀与非数字后缀，
+  解析失败时回退 `(0,0,0)` 避免启动崩溃。
+- **P3 N11** 转台保存会话成功后立即 `dirty_changed.emit(False)`，
+  不再保留已保存的脏标记。
+- **P3 N4** `README.md` 统一模式命名为 D（机器人手眼），修正全局 BA 说明。
+- **P3 N14** 删除未使用的 `web-ui-shell/` 并加入 `.gitignore`；
+  清理 `.git/objects/pack/tmp_pack_*` 临时文件。
+- **P3 N1/N2** 创建 git tag `v1.1.1` 并规范化版本管理。
+
+### Tests
+- `test_core.py`、`test_chain_stitcher.py`、`test_robot_stitch.py`、
+  `test_integration.py`、`test_ui.py` 全部通过。
+
+---
+
 ## [1.1.1] - 2026-08-31
 
 ### Fixed

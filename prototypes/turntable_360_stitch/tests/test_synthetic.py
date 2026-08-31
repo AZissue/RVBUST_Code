@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
+r"""
 转台拼接算法单元测试：纯合成数据，无 UI，验证标定精度与拼接完整性。
 
 运行方式：
@@ -63,6 +63,13 @@ def test_full_360_stitch():
     angle_deg = 30.0
     synth = SyntheticTurntableData(angle_deg=angle_deg, noise_mm=0.3)
     pcds, markers = synth.generate_sequence(n_steps=11)  # 0~330°
+
+    # 生成序列应每帧都是独立对象，且角度递增导致质心不同
+    for i in range(1, len(pcds)):
+        assert pcds[i] is not pcds[0], f"第 {i} 帧与第 0 帧是同一对象（原地修改 bug）"
+        c0 = np.asarray(pcds[0].points).mean(axis=0)
+        ci = np.asarray(pcds[i].points).mean(axis=0)
+        assert np.linalg.norm(ci - c0) > 1.0, f"第 {i} 帧与第 0 帧质心重合"
 
     calib = TurntableCalibrator()
     ok, msg, info = calib.calibrate_from_markers(markers[0], markers[1])

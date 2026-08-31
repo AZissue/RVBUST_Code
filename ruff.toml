@@ -1,0 +1,9 @@
+# Ruff 静态检查配置（从 pyflakes 开始，逐步收紧）
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]  # 行长度由项目自行把握
+line-length = 100
+target-version = "py310"
+
+[per-file-ignores]
+"prototypes/**" = ["F403", "F405"]  # 原型代码允许 * import
+"test_*.py" = ["F401", "F841"]      # 测试文件允许未使用导入/变量

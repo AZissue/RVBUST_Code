@@ -190,18 +190,17 @@ class StationTimeline(QScrollArea):
         self.set_current(data.index)
 
     def update_station(self, data: StationNodeData):
-        """更新已有节点（重拍覆盖 / 闭环优化后误差刷新）。
-
-        空壳实现：移除旧节点并按原位重建。
-        """
+        """更新已有节点（重拍覆盖 / 闭环优化后误差刷新）。"""
         for i, node in enumerate(self._nodes):
             if node._data.index == data.index:
+                # 记录旧节点在布局中的真实位置
+                layout_index = self._vbox.indexOf(node)
                 self._vbox.removeWidget(node)
                 node.deleteLater()
                 new_node = StationNode(data)
                 new_node.clicked.connect(self._on_node_clicked)
                 new_node.recapture_clicked.connect(self.recapture_requested)
-                self._vbox.insertWidget(i + 1, new_node)  # +1 跳过 header
+                self._vbox.insertWidget(layout_index, new_node)
                 self._nodes[i] = new_node
                 break
 

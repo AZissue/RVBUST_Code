@@ -10,7 +10,7 @@
   v1.0.1+g<hash>
 """
 
-__VERSION__ = "1.1.1"
+__VERSION__ = "1.1.2"
 __VERSION_FILE__ = __file__
 
 
@@ -63,13 +63,18 @@ def get_version() -> str:
 def _parse_version() -> tuple:
     """解析当前版本为 (major, minor, patch) 整数元组。
 
-    兼容 pre-release 后缀（如 1.0.0-alpha），只取前三段数字。
+    兼容 pre-release 后缀（如 1.0.0-alpha）与 v 前缀，只取前三段数字。
+    无法解析时返回 (0, 0, 0) 避免崩溃。
     """
     base = __VERSION__.split("+")[0].split("-")[0]
+    base = base.lstrip("vV")
     parts = base.split(".")
     if len(parts) < 3:
         parts += ["0"] * (3 - len(parts))
-    return int(parts[0]), int(parts[1]), int(parts[2])
+    try:
+        return int(parts[0]), int(parts[1]), int(parts[2])
+    except ValueError:
+        return 0, 0, 0
 
 
 def bump_patch() -> str:

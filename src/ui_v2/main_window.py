@@ -63,8 +63,11 @@ class MainWindowShell(QMainWindow):
         super().__init__(parent)
         self.setWindowTitle("RVC 拼接工作站")
 
-        # 根据屏幕可用区域设置初始窗口大小，避免在小分辨率屏幕上显示不全
-        screen = QApplication.primaryScreen()
+        # 根据当前屏幕可用区域设置初始窗口大小，避免在小分辨率屏幕上显示不全
+        from PySide6.QtGui import QCursor
+        screen = QApplication.screenAt(QCursor.pos())
+        if screen is None:
+            screen = QApplication.primaryScreen()
         if screen:
             geo = screen.availableGeometry()
             w = min(1600, int(geo.width() * 0.9))
@@ -83,12 +86,15 @@ class MainWindowShell(QMainWindow):
         self._setup_ui()
 
     def _center_on_screen(self):
-        """根据屏幕可用区域把主窗口居中。"""
-        screen = QApplication.primaryScreen()
+        """根据当前鼠标所在屏幕的可用区域把主窗口居中。"""
+        from PySide6.QtGui import QCursor
+        screen = QApplication.screenAt(QCursor.pos())
+        if screen is None:
+            screen = QApplication.primaryScreen()
         if screen:
             geo = screen.availableGeometry()
-            self.move((geo.width() - self.width()) // 2,
-                      (geo.height() - self.height()) // 2)
+            self.move(geo.x() + (geo.width() - self.width()) // 2,
+                      geo.y() + (geo.height() - self.height()) // 2)
 
     # ------------------------------------------------------------ UI 搭建
     def _setup_ui(self):

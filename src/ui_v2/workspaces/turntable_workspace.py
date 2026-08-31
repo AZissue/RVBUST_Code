@@ -120,8 +120,16 @@ class TurntableWorkspace(QWidget):
         # worker 引用池（防止 QThread 被 GC）
         self._active_workers: List[WorkerThread] = []
 
+        # 2D/3D 采集互斥门控：防止用户同时触发多个相机操作
+        self._busy = False
+
         self._setup_ui()
         self.set_state("idle")
+
+    def _set_busy(self, busy: bool):
+        """设置/释放相机操作忙状态，并刷新按钮使能。"""
+        self._busy = busy
+        self._update_online_ui()
 
     # ------------------------------------------------------------------ UI
     def _setup_ui(self):
@@ -391,20 +399,21 @@ class TurntableWorkspace(QWidget):
 
     def _update_online_ui(self):
         connected = self._is_connected()
+        busy = self._busy
 
-        self.btn_preview_2d.setEnabled(connected)
-        self.btn_capture_frame0.setEnabled(connected)
+        self.btn_preview_2d.setEnabled(connected and not busy)
+        self.btn_capture_frame0.setEnabled(connected and not busy)
 
         frame0_shot = self.current_frame0 is not None
         f0_ok = frame0_shot and len(self.current_markers0) >= 3
-        self.btn_capture_frame1.setEnabled(frame0_shot)
+        self.btn_capture_frame1.setEnabled(frame0_shot and not busy)
 
         f1_ok = self.current_frame1 is not None and len(self.current_markers1) >= 3
-        self.btn_online_calib.setEnabled(f0_ok and f1_ok)
+        self.btn_online_calib.setEnabled(f0_ok and f1_ok and not busy)
 
         calibrated = self.session.is_calibrated()
-        self.btn_capture_step.setEnabled(calibrated)
-        self.btn_auto_capture.setEnabled(calibrated)
+        self.btn_capture_step.setEnabled(calibrated and not busy)
+        self.btn_auto_capture.setEnabled(calibrated and not busy)
         self.chk_auto_stitch.setEnabled(calibrated)
         self.btn_stitch.setEnabled(self.session.can_stitch())
         self.btn_save.setEnabled(self.merged is not None)
@@ -468,6 +477,16 @@ class TurntableWorkspace(QWidget):
             return
         on_done(result)
 
+    def _run_busy_worker(self, func, on_done, *args, **kwargs):
+        """启动后台线程，并在完成时自动释放 _busy 门控。"""
+        self._set_busy(True)
+
+        def _wrapped_done(result):
+            self._set_busy(False)
+            on_done(result)
+
+        return self._run_worker(func, _wrapped_done, *args, **kwargs)
+
     # ------------------------------------------------------------------ 相机连接
     def _on_marker_type_changed(self, _idx):
         if self.marker_detector is not None:
@@ -477,7 +496,7 @@ class TurntableWorkspace(QWidget):
 
     # ------------------------------------------------------------------ 2D 预览
     def _on_preview_2d(self):
-        if not self._is_connected():
+        if not self._is_connected() or self._busy:
             return
         self.log("2D 预览拍摄中...")
 
@@ -491,7 +510,7 @@ class TurntableWorkspace(QWidget):
             self.log(f"2D 预览: {frame.image_np.shape}")
             self._display_2d(frame.image_np)
 
-        self._run_worker(_capture, _done)
+        self._run_busy_worker(_capture, _done)
 
     # ------------------------------------------------------------------ frame0/frame1 拍摄
     def _on_capture_frame0(self):
@@ -501,7 +520,7 @@ class TurntableWorkspace(QWidget):
         self._capture_frame_for_calib(is_frame0=False)
 
     def _capture_frame_for_calib(self, is_frame0: bool):
-        if not self._is_connected():
+        if not self._is_connected() or self._busy:
             return
         label = "frame0" if is_frame0 else "frame1"
         self.log(f"拍摄 {label} 中...")
@@ -547,7 +566,7 @@ class TurntableWorkspace(QWidget):
             self.dirty_changed.emit(True)
             self._update_online_ui()
 
-        self._run_worker(_capture, _done)
+        self._run_busy_worker(_capture, _done)
 
     # ------------------------------------------------------------------ 在线标定
     def _on_online_calibrate(self):
@@ -596,7 +615,7 @@ class TurntableWorkspace(QWidget):
         self._capture_sequence_step()
 
     def _capture_sequence_step(self, auto_continue: bool = False):
-        if not self._is_connected():
+        if not self._is_connected() or self._busy:
             return
         step = self.session.current_step
         self.log(f"拍摄第 {step} 步...")
@@ -634,7 +653,7 @@ class TurntableWorkspace(QWidget):
                 interval_ms = self.spin_auto_interval.value() * 1000
                 QTimer.singleShot(interval_ms, self._auto_capture_next)
 
-        self._run_worker(_capture, _done)
+        self._run_busy_worker(_capture, _done)
 
     def _on_toggle_auto_capture(self, checked: bool):
         if checked:
@@ -733,6 +752,7 @@ class TurntableWorkspace(QWidget):
 
         def _done(path):
             self.log(f"会话已保存: {path}")
+            self.dirty_changed.emit(False)
 
         self._run_worker(_save, _done)
 

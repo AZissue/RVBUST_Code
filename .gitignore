@@ -19,6 +19,9 @@ MvSDKLog/
 .kimi-code/
 .worktrees/
 
+# Archived web UI shell (superseded by ui_v2)
+web-ui-shell/
+
 # Backups
 backup_*/
 
