@@ -11,20 +11,18 @@
 
 ---
 
-## [1.4.0] - 2026-08-31
+## [1.3.1] - 2026-08-31
 
-### Changed
-- 后处理测试原型 `prototypes/postprocess_test/app.py` 重构为 ui_v2 风格：
-  - 应用 `theme.GLOBAL_QSS`，使用品牌红主色、深色工业风面板与卡片；
-  - 顶部工具栏使用与主程序一致的图标与按钮样式；
-  - 左侧 DB 树、右侧后处理面板样式与主程序工作区统一；
-  - 底部新增日志栏（LogPanel），加载/处理/保存信息实时输出；
+### Added
+- 新增后处理测试原型 `prototypes/postprocess_test/`：
+  - 左侧 DB 树参考 CloudCompare 风格，支持按文件层级加载 PLY/PCD/XYZ；
+  - 中间复用 `src/ui_v2/widgets/viewer_panel.py` 的 3D 点云查看器；
+  - 右侧后处理面板：体素下采样、统计离群点去除、AABB/球/OBB 裁切；
+  - 底部日志栏（LogPanel）实时输出加载/处理/保存信息；
   - 3D 查看器设置 `MAX_RENDER_POINTS = 100,000,000`，显示原始点云，
     不触发显示级体素下采样。
-
----
-
-## [1.3.1] - 2026-08-31
+- 后处理测试原型 UI 采用 ui_v2 风格：应用 `theme.GLOBAL_QSS`，
+  使用与主程序一致的图标、按钮与面板样式。
 
 ### Fixed
 - 修复后处理测试原型 `prototypes/postprocess_test/app.py` 的模块导入路径：
