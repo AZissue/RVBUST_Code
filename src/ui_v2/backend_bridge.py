@@ -251,7 +251,17 @@ class BackendBridge(QObject):
             # 工作区已在 on_connect 中切换，这里只刷新设备状态与后续初始化
             self._current_mode = mode
             if mode == LauncherDialog.MODE_MULTI_CAM:
-                # 模式 A：启动标定阶段并同步参考相机下拉
+                # 模式 A：多相机外参标定要求至少 2 台相机成功连接
+                if ok_count < 2:
+                    self.shell.log(
+                        f"多相机外参标定需要至少 2 台相机，当前仅 {ok_count} 台成功",
+                        "error")
+                    if show_loading:
+                        self.shell.hide_loading()
+                    self.connection_finished.emit(
+                        False,
+                        f"多相机外参标定需要至少 2 台相机，当前 {ok_count} 台成功")
+                    return
                 # 参考相机选第一台真实连接成功的相机，fallback 到 cam0
                 reference_id = next(
                     (cid for cid, ok, _ in results if ok), "cam0")
@@ -265,7 +275,16 @@ class BackendBridge(QObject):
                 self.shell.log(msg, "success" if ok else "warn")
                 self.shell.workspace_mobile().set_state("connected")
             elif mode == LauncherDialog.MODE_TURNTABLE:
-                # 模式 C：转台工作区接入主程序共享的相机管理器
+                # 模式 C：转台要求至少 1 台相机成功连接
+                if ok_count < 1:
+                    self.shell.log(
+                        "转台 360° 拼接需要至少 1 台相机连接", "error")
+                    if show_loading:
+                        self.shell.hide_loading()
+                    self.connection_finished.emit(
+                        False, "转台 360° 拼接需要至少 1 台相机连接")
+                    return
+                # 转台工作区接入主程序共享的相机管理器
                 self.shell.workspace_turntable().set_camera_manager(
                     self.camera_manager, self.marker_detector)
                 self.shell.workspace_turntable().set_state("connected")
@@ -715,7 +734,12 @@ class BackendBridge(QObject):
             self.shell.hide_loading()
             # 恢复移动工作站预览
             self._resume_2d_preview(mobile_preview_cam)
-            # 恢复其他相机的卡片预览
+            # 失败路径：恢复本机卡片预览勾选
+            if error or frame is None:
+                if was_card_preview_active:
+                    self._card_preview_active.add(camera_id)
+                    self._set_card_preview_checked(camera_id, True)
+            # 恢复其他相机的卡片预览定时器
             if self._card_preview_active and card_timer_was_running:
                 self._card_preview_timer.start(200 if len(self._card_preview_active) > 2 else 100)
 
@@ -1382,11 +1406,13 @@ class BackendBridge(QObject):
             self.shell.hide_loading()
             if error:
                 self.shell.log(f"保存会话失败: {error}", "error")
+                self.shell.session_save_finished.emit(False, str(error))
                 return
             ok, msg = result
             self.shell.log(msg, "success" if ok else "warn")
             if ok:
                 self.shell.set_dirty(False)
+            self.shell.session_save_finished.emit(ok, msg)
 
         self._run_background(_work, _done)
 
@@ -1479,13 +1505,13 @@ class BackendBridge(QObject):
                 self.shell.log(f"加载会话失败: {error}", "error")
                 return
             session, frames = result
-            self._load_session_into_workflow(session, frames)
-            self.shell.log(f"会话加载完成: {path}（{len(frames)} 台相机）", "success")
+            self._load_session_into_workflow(session, frames, path)
 
         self._run_background(_work, _done)
 
     def _load_session_into_workflow(self, session: OfflineSession,
-                                    frames: Dict[str, List[FrameData]]):
+                                    frames: Dict[str, List[FrameData]],
+                                    path: str):
         """把加载的会话帧回填到当前工作流与 UI。"""
         if self._current_mode == LauncherDialog.MODE_MULTI_CAM:
             # 取每台相机的最新帧作为标定帧
@@ -1525,9 +1551,16 @@ class BackendBridge(QObject):
             self.shell.set_dirty(True)
             self.shell.log(
                 f"会话加载完成: {len(latest)} 台相机标定帧已恢复", "success")
-        else:
+        elif self._current_mode == LauncherDialog.MODE_MOBILE_CHAIN:
             # 模式 B：加载会话暂不恢复时间线，仅记录
-            self.shell.log("模式 B 会话加载：已加载帧数据，时间线恢复待实现", "info")
+            self.shell.log(
+                f"模式 B（单相机移动拼接）会话已读取 {len(frames)} 台相机数据，"
+                "时间线恢复待实现", "warn")
+        else:
+            # 模式 C：当前未实现会话恢复
+            self.shell.log(
+                "模式 C（转台 360° 拼接）暂不支持从会话恢复数据，"
+                "请重新拍摄/标定", "warn")
 
     # ------------------------------------------------------------------
     # 工具方法

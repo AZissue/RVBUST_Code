@@ -53,6 +53,9 @@ class MainWindowShell(QMainWindow):
     save_session_requested = Signal()
     """保存会话（scans/<mode>_session_时间戳/，沿用 OfflineSession 逻辑）。"""
 
+    session_save_finished = Signal(bool, str)
+    """会话保存完成信号：(success, message)。"""
+
     open_session_requested = Signal()
     """打开会话并恢复对应模式工作区状态。"""
 
@@ -476,7 +479,7 @@ class MainWindowShell(QMainWindow):
             "提示：无真实多机环境时，可在启动小窗点击『+ 测试设备』临时添加虚拟相机。")
 
     def closeEvent(self, event):
-        """主窗口关闭即退出程序；有未保存数据时提示保存。"""
+        """主窗口关闭即退出程序；有未保存数据时提示保存并等待完成。"""
         if self._dirty:
             ret = QMessageBox.warning(
                 self, "会话未保存",
@@ -488,9 +491,50 @@ class MainWindowShell(QMainWindow):
                 return
             if ret == QMessageBox.Save:
                 self.save_session_requested.emit()
-                # 保存是异步的，这里直接退出；如需等待保存完成再退出，
-                # 需要把 closeEvent 改为同步等待，目前保持简单行为。
+                # 同步等待保存完成，避免异步保存被主线程退出中断导致文件半写
+                self._wait_for_session_save(event)
+                return
         event.accept()
+
+    def _wait_for_session_save(self, event):
+        """用局部事件循环等待会话保存完成，再 accept/ignore 关闭事件。"""
+        from PySide6.QtCore import QEventLoop, QTimer
+
+        loop = QEventLoop(self)
+        finished = {"ok": False, "msg": ""}
+
+        def _on_finished(ok: bool, msg: str):
+            finished["ok"] = ok
+            finished["msg"] = msg
+            loop.quit()
+
+        self.session_save_finished.connect(_on_finished)
+
+        # 超时保险：30 秒后强制退出等待
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+        timer.timeout.connect(loop.quit)
+        timer.start(30000)
+
+        loop.exec()
+
+        timer.stop()
+        self.session_save_finished.disconnect(_on_finished)
+
+        if finished["ok"]:
+            self.log(f"关闭前已保存: {finished['msg']}", "success")
+            event.accept()
+        else:
+            # 保存失败/超时，询问是否仍要关闭
+            ret = QMessageBox.warning(
+                self, "保存未完成",
+                f"会话保存可能未完成：{finished['msg']}\n是否仍要关闭程序？",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No)
+            if ret == QMessageBox.Yes:
+                event.accept()
+            else:
+                event.ignore()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

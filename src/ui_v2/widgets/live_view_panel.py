@@ -155,12 +155,12 @@ class LiveViewPanel(QFrame):
 
     # ------------------------------------------------------------ 公共接口
     def set_frame(self, pixmap: Optional[QPixmap]):
-        """刷新实时画面。
-
-        # TODO(BACKEND): 相机帧 → QPixmap（复用 camera_card.numpy_to_qpixmap）
-        """
+        """刷新实时画面；传入 None 时清空画布。"""
         self._current_pixmap = pixmap
-        self._canvas.setPixmap(pixmap)
+        if pixmap is None:
+            self._canvas.clear()
+        else:
+            self._canvas.setPixmap(pixmap)
 
     def _refresh_frame(self):
         """按当前画布尺寸重新缩放帧（窗口最大化/拉伸时铺满）。"""
