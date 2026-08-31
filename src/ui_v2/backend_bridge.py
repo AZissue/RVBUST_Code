@@ -435,6 +435,19 @@ class BackendBridge(QObject):
                 self._on_multi_reference_changed(reference_id)
                 self.shell.workspace_multi().set_state("connected")
             elif mode == LauncherDialog.MODE_MOBILE_CHAIN:
+                # 模式 B：单相机移动拼接要求至少 1 台真实相机成功连接
+                if ok_count < 1:
+                    reason, details = self._classify_connection_failure(
+                        results, real_devices, required=1)
+                    self.shell.log(
+                        "单相机移动拼接需要至少 1 台真实相机连接", "error")
+                    if show_loading:
+                        self.shell.hide_loading()
+                    self._show_connection_error(
+                        "无法进入单相机移动拼接", reason, details)
+                    self.connection_finished.emit(
+                        False, "单相机移动拼接需要至少 1 台真实相机连接")
+                    return
                 # 模式 B 需要初始化链式拼接会话
                 ok, msg = self.mobile_workflow.start_chaining()
                 self.shell.log(msg, "success" if ok else "warn")
