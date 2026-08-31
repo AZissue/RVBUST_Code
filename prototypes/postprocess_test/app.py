@@ -30,9 +30,9 @@ from PySide6.QtWidgets import (
 )
 
 # 让原型能引用 src/ 下的模块
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+SRC_ROOT = Path(__file__).resolve().parents[2] / "src"
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
 
 from core.point_cloud_processor import PointCloudProcessor
 from ui.viewer_3d import EmbeddedPointCloudViewer

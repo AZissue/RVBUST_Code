@@ -11,6 +11,14 @@
 
 ---
 
+## [1.3.1] - 2026-08-31
+
+### Fixed
+- 修复后处理测试原型 `prototypes/postprocess_test/app.py` 的模块导入路径：
+  将 `sys.path` 指向 `src/` 目录，而非项目根目录，解决 `ModuleNotFoundError: No module named 'core'`。
+
+---
+
 ## [1.3.0] - 2026-08-31
 
 ### Added
