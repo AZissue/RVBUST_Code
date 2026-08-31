@@ -680,6 +680,7 @@ class TurntableWorkspace(QWidget):
             self.viewer.clear_all()
             self.viewer.set_pointcloud_merged(merged)
             self.set_state("stitched")
+            self.dirty_changed.emit(True)
             self._update_online_ui()
 
         self._run_worker(_stitch, _done)

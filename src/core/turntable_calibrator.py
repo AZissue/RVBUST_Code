@@ -184,7 +184,8 @@ class TurntableCalibrator:
         if len(merged.points) == 0:
             return None, "合并结果为空"
 
-        msg = f"合并 {len(pcds)} 帧，原始共 {sum(len(p.points) for p in pcds)} 点，"
+        valid_pcds = [p for p in pcds if p is not None]
+        msg = f"合并 {len(valid_pcds)} 帧，原始共 {sum(len(p.points) for p in valid_pcds)} 点，"
         if downsample_voxel is not None and downsample_voxel > 0:
             before = len(merged.points)
             merged = merged.voxel_down_sample(downsample_voxel)

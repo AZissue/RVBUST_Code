@@ -133,7 +133,10 @@ class MobileChainWorkflow(WorkflowBase):
         self._state = self.STATE_CHAINING
 
         station_names = [
-            name for name in sorted(os.listdir(session_dir))
+            name for name in sorted(
+                os.listdir(session_dir),
+                key=lambda n: int(n.split("_")[1]) if n.split("_")[-1].isdigit() else 0,
+            )
             if name.startswith(self._station_manager.STATION_PREFIX)
             and os.path.isdir(os.path.join(session_dir, name))
         ]
@@ -179,7 +182,7 @@ class MobileChainWorkflow(WorkflowBase):
                 pointmap=None,
                 rvc_image=None,
                 is_offline=True,
-                offline_dir=session_dir,
+                offline_dir=station_dir,
                 offline_image_path=img_path,
                 offline_pointmap_path=ply_path,
                 markers=markers,

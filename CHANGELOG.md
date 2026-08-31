@@ -11,6 +11,23 @@
 
 ---
 
+## [1.0.8] - 2026-08-31
+
+### Fixed
+- **P0** 修复单相机移动拼接离线加载会话后删除/撤销/失败帧会删除整个会话目录的数据丢失问题：
+  `load_session_dir` 中每帧 `offline_dir` 改为站位子目录，与在线拍摄路径一致。
+- **P1** 修复 `load_session_dir` 按字符串排序导致 `station_10` 排在 `station_2` 前面的问题，
+  改为按站位序号数字排序，避免 ≥10 机位会话丢站/参考系错位。
+- **P1** 同步 `prototypes/turntable_360_stitch/core/turntable_calibrator.py` 的转台点云复制修复，
+  避免原地 transform 导致多次拼接结果漂移。
+- **P2** 修复 `src/core/turntable_calibrator.py` 拼接消息构造时未过滤 `None` 帧的潜在崩溃。
+- 转台模式拼接成功后也置脏标记，关闭窗口时触发未保存确认。
+
+### Changed
+- 复选框选中态增加白色对勾 SVG，提升可访问性。
+
+---
+
 ## [1.0.7] - 2026-08-28
 
 ### Changed
