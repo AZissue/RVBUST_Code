@@ -11,6 +11,17 @@
 
 ---
 
+## [1.3.0] - 2026-08-31
+
+### Added
+- 新增后处理测试原型 `prototypes/postprocess_test/`：
+  - 左侧 DB 树参考 CloudCompare 风格，支持按文件层级加载 PLY/PCD/XYZ；
+  - 中间完整 3D 点云查看器，复用 `src/ui/viewer_3d.py`；
+  - 右侧后处理面板：体素下采样、统计离群点去除、AABB/球/OBB 裁切；
+  - 支持将后处理结果保存为新点云文件。
+
+---
+
 ## [1.2.6] - 2026-08-31
 
 ### Fixed
