@@ -22,7 +22,7 @@ from __future__ import annotations
 from typing import Dict, List, Optional
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QPainter, QPen, QBrush
 from PySide6.QtWidgets import (
     QComboBox, QFrame, QGroupBox, QHBoxLayout, QLabel, QListWidget,
     QProgressBar, QPushButton, QRadioButton, QSpinBox, QSplitter,
@@ -37,6 +37,53 @@ from ..theme import (
 from .. import icons as ui_icons
 from ..widgets import CameraGrid, StepBar, ViewerPanel
 from ..widgets.device_table import DeviceInfo
+
+
+class ModernRadioButton(QRadioButton):
+    """现代风格单选按钮：圆角矩形 + 白色对勾，与设备表格 ModernCheckBox 风格一致。"""
+
+    CHECK_SIZE = 18
+    RADIUS = 4
+
+    def __init__(self, text: str = "", parent=None):
+        super().__init__(text, parent)
+        self.setFocusPolicy(Qt.NoFocus)
+        self.setCursor(Qt.PointingHandCursor)
+        # 隐藏原生 indicator，完全自绘
+        self.setStyleSheet("QRadioButton::indicator { width: 0px; height: 0px; }")
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        size = self.CHECK_SIZE
+        # 方框左侧居中，文字在方框右侧
+        x = 0
+        y = (self.height() - size) // 2
+
+        if self.isChecked():
+            painter.setBrush(QBrush(QColor(ACCENT)))
+            painter.setPen(Qt.NoPen)
+            painter.drawRoundedRect(x, y, size, size, self.RADIUS, self.RADIUS)
+            # 白色对勾
+            painter.setPen(
+                QPen(QColor(TEXT_PRIMARY), 2.5,
+                     Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            painter.drawLine(int(x + size * 0.25), int(y + size * 0.52),
+                             int(x + size * 0.44), int(y + size * 0.70))
+            painter.drawLine(int(x + size * 0.42), int(y + size * 0.70),
+                             int(x + size * 0.75), int(y + size * 0.30))
+        else:
+            painter.setBrush(Qt.NoBrush)
+            painter.setPen(QPen(QColor("#555555"), 1.5))
+            painter.drawRoundedRect(x + 0.5, y + 0.5, size - 1, size - 1,
+                                    self.RADIUS, self.RADIUS)
+
+        # 绘制文字
+        text_x = x + size + 6
+        painter.setPen(QColor(TEXT_PRIMARY))
+        painter.drawText(text_x, 0, self.width() - text_x, self.height(),
+                         Qt.AlignLeft | Qt.AlignVCenter, self.text())
 
 
 class MultiCamWorkspace(QWidget):
@@ -139,9 +186,9 @@ class MultiCamWorkspace(QWidget):
         cap_lo = QVBoxLayout(cap_group)
         cap_lo.setSpacing(6)
         sync_row = QHBoxLayout()
-        self._rb_sync = QRadioButton("同步拍摄")
+        self._rb_sync = ModernRadioButton("同步拍摄")
         self._rb_sync.setChecked(True)
-        self._rb_async = QRadioButton("异步拍摄")
+        self._rb_async = ModernRadioButton("异步拍摄")
         sync_row.addWidget(self._rb_sync)
         sync_row.addWidget(self._rb_async)
         sync_row.addStretch(1)
