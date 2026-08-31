@@ -7,7 +7,7 @@ N 相机固定外参标定与点云融合系统。从成熟的双相机项目
 离线拼接重放（D，原型 UI 并入主程序）、机器人手眼配合拼接（E，core 已落地）。
 DualCameraFusion 保持不动，本项目为全新工程。
 
-当前版本：`v1.0.2+g<hash>`（运行时自动附加 Git commit 短 hash）。
+当前版本：`v1.1.2+g<hash>`（运行时自动附加 Git commit 短 hash）。
 版本变更详见 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ## 功能特性
@@ -180,7 +180,6 @@ MultiCameraCalibration/
 │   ├── coded_circle_ui/            # 编码圆标定板生成器原型
 │   ├── offline_stitch/             # 离线拼接原型（已并入主程序，保留验证）
 │   └── turntable_360_stitch/       # 转台 360° 拼接实验
-├── web-ui-shell/                   # Web 版 UI 壳实验
 ├── docs/                           # 设计/审查/规划文档
 └── test_*.py                       # 回归测试
 ```
@@ -209,9 +208,9 @@ MultiCameraCalibration/
 │   point_cloud_processor 点云裁切/下采样/滤波          │
 │   offline_session       离线会话（批量检测/标定/拼接）│
 │   station_manager       单相机多站位（拍后立即存盘）  │
-│   handeye.py            手眼标定求解（模式 D）        │
-│   robot_interface.py    机器人抽象接口（模式 D）      │
-│   robot_stitch_workflow 机器人扫描拼接（模式 D）      │
+│   handeye.py            手眼标定求解（模式 E）        │
+│   robot_interface.py    机器人抽象接口（模式 E）      │
+│   robot_stitch_workflow 机器人扫描拼接（模式 E）      │
 │   utils                 日志 + 安全资源释放           │
 ├─────────────────────────────────────────────────────┤
 │ PyRVC SDK / Open3D / NumPy / SciPy / OpenCV         │
@@ -256,7 +255,7 @@ MultiCameraCalibration/
 | 7 | 转台 360° 拼接（模式 C）并入主程序 | ✅ 完成 |
 | 8 | 离线拼接：不连相机重放会话数据（prototypes/offline_stitch 保留验证） | ✅ 完成 |
 | 9 | 编码圆标定板生成器 | ✅ 完成 |
-| 10 | 机器人手眼配合拼接（模式 D）：手眼标定 + 机器人扫描 | 🚧 core 已落地，UI 未接线 |
+| 10 | 机器人手眼配合拼接（模式 E）：手眼标定 + 机器人扫描 | 🚧 core 已落地，UI 未接线 |
 
 后续扩展方向：
 
@@ -271,7 +270,7 @@ MultiCameraCalibration/
 - **硬触发未实现**：目前为软触发同步，多相机拍摄存在毫秒级时间差
 - **全局 BA 已提供接口**：`pose_graph.optimize_global_ba` 已实现，移动链式模式
   已提供闭环全局优化入口；默认仍使用 BFS 生成树以兼顾速度
-- **模式 D UI 未接线**：手眼标定与机器人扫描的 core 已落地，但 LauncherDialog
+- **模式 E UI 未接线**：手眼标定与机器人扫描的 core 已落地，但 LauncherDialog
   无入口、backend_bridge 无信号接线
 - **检测依赖 SDK**：编码圆检测需 PyRVC；无 SDK 环境仅可走合成数据测试
 - **单标定板假设**：星型标定假设所有相机同时看到同一块编码圆板
@@ -279,7 +278,7 @@ MultiCameraCalibration/
 ## 版本与变更日志
 
 - 版本号规则：`v1.0.x` 小修复、`v1.x.0` 中等规模、`v2.0.0` 大型重构/功能
-- 运行时版本号自动附加 Git commit 短 hash：`v1.0.2+g<hash>`
+- 运行时版本号自动附加 Git commit 短 hash：`v1.1.2+g<hash>`
 - 完整版本变更记录见 [`CHANGELOG.md`](CHANGELOG.md)
 
 ## 环境
