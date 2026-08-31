@@ -3,7 +3,7 @@
 ui_v2.main_window —— 主窗口框架（空壳）。
 
 双窗口模型的主窗口侧：
-  - 顶部功能栏：设备管理 / 模式▾ / 保存会话 / 打开会话 / 参数调试 / 日志 / 帮助；
+  - 顶部功能栏：设备管理 / 保存会话 / 打开会话 / 参数调试 / 日志 / 帮助；
   - 中央 QStackedWidget：多相机工作区（模式 A）/ 单相机工作区（模式 B）/
     转台工作区（模式 C），各模式互不干扰、各自独立状态；
   - 底部状态栏：模式 | 设备在线 n/m | 当前步骤 | 最近误差/建议。
@@ -158,14 +158,6 @@ class MainWindowShell(QMainWindow):
         self._btn_devices.clicked.connect(self.open_device_manager)
         lo.addWidget(self._btn_devices)
 
-        self._btn_mode = QToolButton()
-        self._btn_mode.setText("模式：多相机外参标定 ▾")
-        self._btn_mode.setToolTip("点击回到启动小窗切换模式")
-        self._btn_mode.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-        ui_icons.apply(self._btn_mode, "swap", TEXT_SECONDARY, 15)
-        self._btn_mode.clicked.connect(self.open_device_manager)
-        lo.addWidget(self._btn_mode)
-
         sep1 = QLabel("｜")
         sep1.setStyleSheet(f"color: {TEXT_MUTED};")
         lo.addWidget(sep1)
@@ -282,12 +274,10 @@ class MainWindowShell(QMainWindow):
             self._stack.setCurrentWidget(self._ws_multi)
             self._ws_multi.set_devices(devices)
             self._ws_multi.set_state("connected" if devices else "idle")
-            self._btn_mode.setText("模式：多相机外参标定 ▾")
         elif mode == LauncherDialog.MODE_MOBILE_CHAIN:
             self._stack.setCurrentWidget(self._ws_mobile)
             self._ws_mobile.set_devices(devices)
             self._ws_mobile.set_state("connected" if devices else "idle")
-            self._btn_mode.setText("模式：单相机移动拼接 ▾")
         else:
             self._stack.setCurrentWidget(self._ws_turntable)
             if self._backend_bridge is not None:
@@ -297,7 +287,6 @@ class MainWindowShell(QMainWindow):
                 )
             self._ws_turntable.set_devices(devices)
             self._ws_turntable.set_state("connected" if devices else "idle")
-            self._btn_mode.setText("模式：转台 360° 拼接 ▾")
 
         self._refresh_statusbar()
         self.log(f"已进入「{LauncherDialog.MODE_NAMES[mode]}」工作区"

@@ -7,7 +7,7 @@ N 相机固定外参标定与点云融合系统。从成熟的双相机项目
 离线拼接重放（D，原型 UI 并入主程序）、机器人手眼配合拼接（E，core 已落地）。
 DualCameraFusion 保持不动，本项目为全新工程。
 
-当前版本：`v1.2.4+g<hash>`（运行时自动附加 Git commit 短 hash）。
+当前版本：`v1.2.5+g<hash>`（运行时自动附加 Git commit 短 hash）。
 版本变更详见 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ## 功能特性
@@ -278,7 +278,7 @@ MultiCameraCalibration/
 ## 版本与变更日志
 
 - 版本号规则：`v1.0.x` 小修复、`v1.x.0` 中等规模、`v2.0.0` 大型重构/功能
-- 运行时版本号自动附加 Git commit 短 hash：`v1.2.4+g<hash>`
+- 运行时版本号自动附加 Git commit 短 hash：`v1.2.5+g<hash>`
 - 完整版本变更记录见 [`CHANGELOG.md`](CHANGELOG.md)
 
 ## 环境
