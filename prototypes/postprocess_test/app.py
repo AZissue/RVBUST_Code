@@ -84,6 +84,12 @@ class PostProcessTestWindow(QMainWindow):
         root.setSpacing(0)
         self.setCentralWidget(central)
 
+        # 底部日志栏（先创建，工具栏会引用）
+        self._log_panel = LogPanel(self)
+        self._log_panel.setFixedHeight(140)
+        self._log_panel.setStyleSheet(
+            f"QWidget {{ background-color: {BG_PANEL}; border-top: 1px solid {BORDER}; }}")
+
         # 顶部工具栏
         toolbar = self._build_toolbar()
         root.addWidget(toolbar)
@@ -116,12 +122,6 @@ class PostProcessTestWindow(QMainWindow):
         body.addWidget(self._viewer_panel, 1)
 
         root.addLayout(body, 1)
-
-        # 底部日志栏
-        self._log_panel = LogPanel(self)
-        self._log_panel.setFixedHeight(140)
-        self._log_panel.setStyleSheet(
-            f"QWidget {{ background-color: {BG_PANEL}; border-top: 1px solid {BORDER}; }}")
         root.addWidget(self._log_panel)
 
         self._log("后处理测试工具已启动", "info")
