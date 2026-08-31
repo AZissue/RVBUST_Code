@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QSize
 from PySide6.QtGui import QColor, QPainter, QPen, QBrush
 from PySide6.QtWidgets import (
     QComboBox, QFrame, QGroupBox, QHBoxLayout, QLabel, QListWidget,
@@ -51,6 +51,16 @@ class ModernRadioButton(QRadioButton):
         self.setCursor(Qt.PointingHandCursor)
         # 隐藏原生 indicator，完全自绘
         self.setStyleSheet("QRadioButton::indicator { width: 0px; height: 0px; }")
+
+    def sizeHint(self) -> QSize:
+        fm = self.fontMetrics()
+        text_width = fm.horizontalAdvance(self.text())
+        w = self.CHECK_SIZE + 8 + text_width + 8
+        h = max(self.CHECK_SIZE + 6, fm.height() + 6)
+        return QSize(w, h)
+
+    def minimumSizeHint(self) -> QSize:
+        return self.sizeHint()
 
     def paintEvent(self, event):
         painter = QPainter(self)
