@@ -11,6 +11,19 @@
 
 ---
 
+## [1.1.1] - 2026-08-31
+
+### Fixed
+- **P2-c1** `ChainStitcher.get_merged_pointcloud()` 返回内部缓存的深拷贝，
+  防止调用方修改后污染缓存。
+- **P2-c2** 新增 `pcd_utils.merge_pointclouds()`，合并前统一 colors/normals 属性，
+  修复 `o3d.PointCloud +=` 在属性不对称时颜色/法向量被清零的问题；
+  已应用到 `chain_stitcher`、`stitch_engine`、`robot_stitch_workflow` 三处。
+- **P2-c10** `TurntableCalibrator.generate_sequence()` 每帧先复制 base_pcd 再 transform，
+  避免原地修改导致所有帧变成同一姿态；同步修复原型侧相同 bug。
+
+---
+
 ## [1.1.0] - 2026-08-31
 
 ### Fixed

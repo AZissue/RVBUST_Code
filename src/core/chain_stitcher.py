@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import copy
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple, Any
@@ -24,6 +25,8 @@ from typing import Dict, List, Optional, Tuple, Any
 import numpy as np
 
 import open3d as o3d
+
+from .pcd_utils import merge_pointclouds
 
 from .marker_detector import MarkerDetector
 from .calibration_engine import CalibrationEngine
@@ -185,7 +188,8 @@ class ChainStitcher:
         if self._merged_pcd_cache is None or len(self._merged_pcd_cache.points) == 0:
             return None
 
-        merged = self._merged_pcd_cache
+        # 返回副本，防止调用方修改内部缓存
+        merged = copy.deepcopy(self._merged_pcd_cache)
         if processor is not None:
             merged, _ = processor.process(merged)
         return merged
@@ -407,7 +411,7 @@ class ChainStitcher:
             return
         if self._merged_pcd_cache is None:
             self._merged_pcd_cache = o3d.geometry.PointCloud()
-        self._merged_pcd_cache += pcd
+        merge_pointclouds(self._merged_pcd_cache, pcd)
 
     def _rebuild_merged_cache(self):
         """根据当前所有节点重建缓存（回退路径）。"""

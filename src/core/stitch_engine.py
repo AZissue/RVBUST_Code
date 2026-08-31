@@ -22,6 +22,7 @@ from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 from .frame_data import FrameData
 from .calibration_engine import CalibrationEngine
 from .point_cloud_processor import PointCloudProcessor
+from .pcd_utils import merge_pointclouds
 from .utils import logger
 
 if TYPE_CHECKING:
@@ -87,8 +88,8 @@ class StitchEngine:
             if T is not None:
                 pcd.transform(T)
 
-            # 4. 合并
-            merged += pcd
+            # 4. 合并（属性对齐，避免 colors/normals 被清零）
+            merge_pointclouds(merged, pcd)
             n_merged += 1
             logs.append(f"{cam_id}: {len(pcd.points)} 点"
                         + ("" if T is None else "（已变换）"))

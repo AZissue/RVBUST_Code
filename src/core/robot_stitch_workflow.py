@@ -26,6 +26,7 @@ import open3d as o3d
 from .workflow_base import WorkflowBase
 from .robot_interface import RobotInterface
 from .frame_data import FrameData
+from .pcd_utils import merge_pointclouds
 from .utils import logger
 
 
@@ -159,7 +160,7 @@ class RobotStitchWorkflow(WorkflowBase):
             if self._merged_pcd is None:
                 self._merged_pcd = o3d.geometry.PointCloud(pcd_t)
             else:
-                self._merged_pcd += pcd_t
+                merge_pointclouds(self._merged_pcd, pcd_t)
 
         info = {
             'frame_id': frame.frame_id,

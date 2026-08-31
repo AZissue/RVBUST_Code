@@ -402,7 +402,8 @@ class SyntheticTurntableData:
         markers_list = []
         for i in range(n_steps + 1):
             T = transform_matrix(self.axis, i * self.angle_rad, self.center)
-            pcd_i = base_pcd.transform(T)
+            pcd_i = o3d.geometry.PointCloud(base_pcd)
+            pcd_i.transform(T)
             if self.noise_mm > 0:
                 pts = np.asarray(pcd_i.points)
                 pts += np.random.normal(0, self.noise_mm, pts.shape)
