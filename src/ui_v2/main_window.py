@@ -3,7 +3,7 @@
 ui_v2.main_window —— 主窗口框架（空壳）。
 
 双窗口模型的主窗口侧：
-  - 顶部功能栏：设备管理 / 模式▾ / 保存会话 / 打开会话 / 日志 / 帮助；
+  - 顶部功能栏：设备管理 / 模式▾ / 保存会话 / 打开会话 / 参数调试 / 日志 / 帮助；
   - 中央 QStackedWidget：多相机工作区（模式 A）/ 单相机工作区（模式 B）/
     转台工作区（模式 C），各模式互不干扰、各自独立状态；
   - 底部状态栏：模式 | 设备在线 n/m | 当前步骤 | 最近误差/建议。
@@ -58,6 +58,9 @@ class MainWindowShell(QMainWindow):
 
     open_session_requested = Signal()
     """打开会话并恢复对应模式工作区状态。"""
+
+    param_debug_requested = Signal()
+    """参数调试：断开当前相机并打开 RVC 官方调试工具 RVCManager。"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -180,6 +183,14 @@ class MainWindowShell(QMainWindow):
         ui_icons.apply(btn_open, "folder_open", TEXT_SECONDARY, 15)
         btn_open.clicked.connect(self.open_session_requested)
         lo.addWidget(btn_open)
+
+        btn_param_debug = QToolButton()
+        btn_param_debug.setText("参数调试")
+        btn_param_debug.setToolTip("断开当前相机并打开 RVCManager 官方调试工具")
+        btn_param_debug.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        ui_icons.apply(btn_param_debug, "sliders", TEXT_SECONDARY, 15)
+        btn_param_debug.clicked.connect(self.open_param_debug)
+        lo.addWidget(btn_param_debug)
 
         lo.addStretch(1)
 
@@ -307,6 +318,17 @@ class MainWindowShell(QMainWindow):
     def set_backend_bridge(self, bridge: 'BackendBridge'):
         """设置后端桥接器引用（用于设备枚举等 core 操作）。"""
         self._backend_bridge = bridge
+
+    # ------------------------------------------------------------ 参数调试（打开 RVCManager）
+    def open_param_debug(self):
+        """回到设备连接页面，断开当前相机，打开 RVC 官方调试工具 RVCManager。"""
+        if self._dirty and not self._confirm_discard():
+            return
+
+        # 先让后端断开相机并启动官方调试工具
+        self.param_debug_requested.emit()
+        # 再打开设备管理小窗，方便用户调试完成后重新连接
+        self.open_device_manager()
 
     # ------------------------------------------------------------ 设备管理（回小窗）
     def open_device_manager(self):

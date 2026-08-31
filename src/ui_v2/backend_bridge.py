@@ -16,6 +16,7 @@ ui_v2.backend_bridge —— ui_v2 空壳与现有 core 模块的桥接器。
 from __future__ import annotations
 
 import os
+import subprocess
 import threading
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -23,7 +24,7 @@ import numpy as np
 
 from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtGui import QPixmap
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QFileDialog, QMessageBox
 
 from core.camera_manager import CameraManager
 from core.fixed_multi_cam_workflow import FixedMultiCamWorkflow
@@ -143,6 +144,90 @@ class BackendBridge(QObject):
         """接线主窗口。"""
         self.shell.save_session_requested.connect(self._on_save_session)
         self.shell.open_session_requested.connect(self._on_open_session)
+        self.shell.param_debug_requested.connect(self._on_param_debug)
+
+    # ------------------------------------------------------------------
+    # 参数调试：打开官方 RVCManager
+    # ------------------------------------------------------------------
+    def _on_param_debug(self):
+        """断开当前已连接相机，打开 RVC 官方调试工具 RVCManager。
+
+        自动按默认安装路径查找 D/C 盘；找不到时弹窗提示并允许用户
+        自定义选择 RVCManager.exe 路径。
+        """
+        # 1. 断开当前已连接相机
+        try:
+            connected_ids = self.camera_manager.get_connected_ids()
+            if connected_ids:
+                self.camera_manager.disconnect_all()
+                self.shell.log(
+                    f"已断开 {len(connected_ids)} 台相机，准备打开 RVCManager", "info")
+            else:
+                self.shell.log("当前无在线相机，直接打开 RVCManager", "info")
+        except Exception as e:
+            self.shell.log(f"断开相机时出错: {e}", "warn")
+
+        # 2. 查找默认安装路径
+        candidates = [
+            r"D:\Program Files\RVBUST\RVC\RVCManager\RVCManager.exe",
+            r"C:\Program Files\RVBUST\RVC\RVCManager\RVCManager.exe",
+        ]
+        executable: Optional[str] = None
+        for path in candidates:
+            if os.path.isfile(path):
+                executable = path
+                break
+
+        # 3. 找不到则弹窗提示并让用户自定义路径
+        if executable is None:
+            self.shell.log("未在默认路径找到 RVCManager.exe", "warn")
+            reply = QMessageBox.question(
+                self.shell,
+                "未找到 RVCManager",
+                "未在以下默认路径找到 RVCManager.exe：\n"
+                "D:\\Program Files\\RVBUST\\RVC\\RVCManager\\RVCManager.exe\n"
+                "C:\\Program Files\\RVBUST\\RVC\\RVCManager\\RVCManager.exe\n\n"
+                "是否手动指定 RVCManager.exe 路径？",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes,
+            )
+            if reply != QMessageBox.Yes:
+                self.shell.log("已取消打开 RVCManager", "info")
+                return
+
+            default_dir = r"C:\Program Files\RVBUST\RVC\RVCManager"
+            if not os.path.isdir(default_dir):
+                default_dir = r"C:\\"
+            executable, _ = QFileDialog.getOpenFileName(
+                self.shell,
+                "选择 RVCManager.exe",
+                default_dir,
+                "可执行文件 (*.exe)",
+            )
+            if not executable:
+                self.shell.log("未选择 RVCManager.exe，已取消", "info")
+                return
+            if os.path.basename(executable) != "RVCManager.exe":
+                QMessageBox.warning(
+                    self.shell,
+                    "路径无效",
+                    "请选择 RVCManager.exe 官方调试工具。",
+                )
+                self.shell.log(f"选择的文件不是 RVCManager.exe: {executable}", "warn")
+                return
+
+        # 4. 打开官方调试工具
+        try:
+            subprocess.Popen([executable], shell=False)
+            self.shell.log(f"已启动 RVCManager: {executable}", "success")
+        except Exception as e:
+            self.shell.log(f"启动 RVCManager 失败: {e}", "error")
+            QMessageBox.critical(
+                self.shell,
+                "启动失败",
+                f"无法启动 RVCManager：\n{e}\n\n"
+                f"请检查路径是否正确或尝试以管理员身份运行。",
+            )
 
     # ------------------------------------------------------------------
     # 设备管理（LauncherDialog）

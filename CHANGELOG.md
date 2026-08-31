@@ -11,6 +11,22 @@
 
 ---
 
+## [1.2.0] - 2026-08-31
+
+### Added
+- 主窗口顶部工具栏新增「参数调试」按钮（位于「打开会话」之后）。
+  点击后：先回到设备连接页面（LauncherDialog），断开当前已连接相机，
+  然后自动查找并打开 RVC 官方调试工具 `RVCManager.exe`。
+  默认查找路径：
+  - `D:\Program Files\RVBUST\RVC\RVCManager\RVCManager.exe`
+  - `C:\Program Files\RVBUST\RVC\RVCManager\RVCManager.exe`
+  若均未找到，弹窗提示并允许用户手动指定 `RVCManager.exe` 路径。
+
+### Changed
+- `ui_v2/icons.py` 新增「sliders」线性图标，用于「参数调试」按钮。
+
+---
+
 ## [1.1.3] - 2026-08-31
 
 ### Changed

@@ -80,6 +80,12 @@ _BODIES = {
     # 后处理（漏斗滤波）
     "filter":
         '<path d="M3 4.5h18l-7 8.5v5.5l-4 2v-7.5z"/>',
+    # 参数调试（三滑块）
+    "sliders":
+        '<path d="M5 3v7M5 14v7M12 3v12M12 18v3M19 3v4M19 10v11"/>'
+        '<circle cx="5" cy="12" r="1.6" fill="{c}" stroke="none"/>'
+        '<circle cx="12" cy="16" r="1.6" fill="{c}" stroke="none"/>'
+        '<circle cx="19" cy="8" r="1.6" fill="{c}" stroke="none"/>',
     # 日志（终端）
     "terminal":
         '<rect x="2.5" y="4" width="19" height="16" rx="2"/>'
