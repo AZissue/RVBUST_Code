@@ -595,7 +595,7 @@ class TurntableWorkspace(QWidget):
             return
         self._capture_sequence_step()
 
-    def _capture_sequence_step(self):
+    def _capture_sequence_step(self, auto_continue: bool = False):
         if not self._is_connected():
             return
         step = self.session.current_step
@@ -629,6 +629,10 @@ class TurntableWorkspace(QWidget):
             self.set_state("capturing")
             self.dirty_changed.emit(True)
             self._update_online_ui()
+            # 自动采集：等当前帧完成后再调度下一拍，避免 worker 堆积
+            if auto_continue and self.btn_auto_capture.isChecked():
+                interval_ms = self.spin_auto_interval.value() * 1000
+                QTimer.singleShot(interval_ms, self._auto_capture_next)
 
         self._run_worker(_capture, _done)
 
@@ -650,9 +654,7 @@ class TurntableWorkspace(QWidget):
             self.btn_auto_capture.setText("开始自动采集")
             self.log("自动采集完成")
             return
-        self._capture_sequence_step()
-        interval_ms = self.spin_auto_interval.value() * 1000
-        QTimer.singleShot(interval_ms, self._auto_capture_next)
+        self._capture_sequence_step(auto_continue=True)
 
     # ------------------------------------------------------------------ 拼接 / 保存
     def _on_stitch(self):

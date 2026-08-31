@@ -411,12 +411,14 @@ class OfflineStitchWindow(QMainWindow):
         for i, pair in enumerate(self.stitcher.pairs, start=1):
             self._overlay.update_message(
                 f"正在拼接... 检测/加入第 {i}/{total} 帧: {pair.name}")
+            QApplication.processEvents()
             ok, msg = self.stitcher.add_pair_to_chain(pair)
             self._log(f"{pair.name}: {msg}")
             if not ok:
                 continue
 
         self._overlay.update_message("正在拼接... 合并点云与计算误差")
+        QApplication.processEvents()
         merged, msg = self.stitcher.stitch()
         self._log(msg)
         self._overlay.hide_overlay()

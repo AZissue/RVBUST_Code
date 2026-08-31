@@ -118,6 +118,24 @@ class MobileChainWorkflow(WorkflowBase):
         if not os.path.isdir(session_dir):
             return False, f"目录不存在: {session_dir}"
 
+        # 先扫描站位目录，确认至少存在候选站位再改动内部状态
+        station_names = [
+            name for name in sorted(
+                os.listdir(session_dir),
+                key=lambda n: int(n.split("_")[1]) if n.split("_")[-1].isdigit() else 0,
+            )
+            if name.startswith(StationManager.STATION_PREFIX)
+            and os.path.isdir(os.path.join(session_dir, name))
+        ]
+        if not station_names:
+            return False, "未找到站位数据（station_N 子目录）"
+
+        # 保存旧状态，加载失败时回滚
+        old_chain = self._chain_stitcher
+        old_station = self._station_manager
+        old_session_dir = self._session_dir
+        old_state = self._state
+
         # 初始化链式拼接器
         self._chain_stitcher = ChainStitcher(
             marker_detector=self.marker_detector,
@@ -131,17 +149,6 @@ class MobileChainWorkflow(WorkflowBase):
         self._station_manager.attach_session(session_dir)
         self.set_session_dir(session_dir)
         self._state = self.STATE_CHAINING
-
-        station_names = [
-            name for name in sorted(
-                os.listdir(session_dir),
-                key=lambda n: int(n.split("_")[1]) if n.split("_")[-1].isdigit() else 0,
-            )
-            if name.startswith(self._station_manager.STATION_PREFIX)
-            and os.path.isdir(os.path.join(session_dir, name))
-        ]
-        if not station_names:
-            return False, "未找到站位数据（station_N 子目录）"
 
         loaded = 0
         for station_name in station_names:
@@ -200,6 +207,11 @@ class MobileChainWorkflow(WorkflowBase):
             loaded += 1
 
         if loaded == 0:
+            # 回滚到加载前的状态，避免半初始化
+            self._chain_stitcher = old_chain
+            self._station_manager = old_station
+            self._session_dir = old_session_dir
+            self._state = old_state
             return False, "没有成功加载任何站位"
         if len(self._chain_stitcher.nodes) < 2:
             return True, f"仅成功加载 {loaded} 个有效站位，无法形成拼接链"

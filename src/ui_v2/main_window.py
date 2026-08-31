@@ -362,12 +362,46 @@ class MainWindowShell(QMainWindow):
             if self._backend_bridge is not None:
                 ordered_devices = self._backend_bridge.get_ordered_devices(
                     connected["devices"])
-            self.set_mode(connected["mode"], ordered_devices)
-            # 后台重连：直接使用 backend_bridge，避免 signal 旧回调干扰；
-            # 启动小窗已有遮罩，主窗口不再重复显示 loading。
+
+            prev_mode = self._mode
+            prev_devices = list(self._devices)
+            new_mode = connected["mode"]
+
+            # 先切换到新模式的 UI 布局（不等待连接结果）
+            self.set_mode(new_mode, ordered_devices)
+
             if self._backend_bridge is not None:
+                self.show_loading("正在连接设备...")
+
+                def _on_reconnect_finished(success: bool, message: str):
+                    try:
+                        self._backend_bridge.connection_finished.disconnect(
+                            _on_reconnect_finished)
+                    except RuntimeError:
+                        pass
+                    self.hide_loading()
+                    if success:
+                        self.log(message, "success")
+                        return
+                    # 连接失败：弹窗提示并回退到之前的模式
+                    self.log(f"设备连接失败: {message}", "error")
+                    ret = QMessageBox.warning(
+                        self, "设备连接失败",
+                        f"{message}\n是否返回之前的模式？",
+                        QMessageBox.Yes | QMessageBox.No,
+                        QMessageBox.Yes,
+                    )
+                    if ret == QMessageBox.Yes and prev_mode:
+                        self.set_mode(prev_mode, prev_devices)
+                        # 尝试恢复旧设备连接（如果有）
+                        self._backend_bridge._on_device_manager_reopened(
+                            prev_mode, prev_devices, show_loading=False)
+                    # No 则停留在新模式，由用户在小窗或设备管理中重试
+
+                self._backend_bridge.connection_finished.connect(
+                    _on_reconnect_finished)
                 self._backend_bridge._on_device_manager_reopened(
-                    connected["mode"], ordered_devices, show_loading=False)
+                    new_mode, ordered_devices, show_loading=False)
             else:
                 self.device_manager_reopened.emit(
                     connected["mode"], ordered_devices)
