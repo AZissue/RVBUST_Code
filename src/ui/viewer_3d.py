@@ -340,8 +340,8 @@ class PointCloudViewer(QOpenGLWidget):
                 "point_count": n,
                 "uploaded": False,
             }
-            if self._has_gl:
-                self._upload_cloud(cloud_id)
+            # 不在此处上传 VBO：set_pointcloud 可能在非 GL 上下文线程/时机被调用，
+            # 统一延迟到 paintGL 中上传，避免生成无效 VAO。
         self._update_scene_bounds()
         self.update()
 
@@ -367,8 +367,12 @@ class PointCloudViewer(QOpenGLWidget):
             return
         if self._has_gl and cloud.get("vao") is not None:
             from OpenGL import GL
-            GL.glDeleteVertexArrays(1, [cloud["vao"]])
-            GL.glDeleteBuffers(3, [cloud["vbo_pos"], cloud["vbo_col"], cloud["vbo_size"]])
+            self.makeCurrent()
+            try:
+                GL.glDeleteVertexArrays(1, [cloud["vao"]])
+                GL.glDeleteBuffers(3, [cloud["vbo_pos"], cloud["vbo_col"], cloud["vbo_size"]])
+            finally:
+                self.doneCurrent()
 
     def reset_view(self):
         self.camera.reset()
