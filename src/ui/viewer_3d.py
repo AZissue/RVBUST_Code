@@ -342,7 +342,7 @@ class PointCloudViewer(QOpenGLWidget):
             }
             # 不在此处上传 VBO：set_pointcloud 可能在非 GL 上下文线程/时机被调用，
             # 统一延迟到 paintGL 中上传，避免生成无效 VAO。
-        self._update_scene_bounds()
+        self._bounds_dirty = True
         self.update()
 
     def set_pointcloud_visible(self, cloud_id: str, visible: bool):
@@ -351,14 +351,14 @@ class PointCloudViewer(QOpenGLWidget):
         if cloud is None:
             return
         cloud["visible"] = bool(visible)
-        self._update_scene_bounds()
+        self._bounds_dirty = True
         self.update()
 
     def clear_pointclouds(self):
         """删除所有多路点云及其 GPU 资源。"""
         for cloud_id in list(self._clouds.keys()):
             self._remove_cloud(cloud_id)
-        self._update_scene_bounds()
+        self._bounds_dirty = True
         self.update()
 
     def _remove_cloud(self, cloud_id: str):
@@ -662,6 +662,11 @@ class PointCloudViewer(QOpenGLWidget):
         has_multi = bool(self._clouds)
         if not has_legacy and not has_multi:
             return
+
+        if self._bounds_dirty:
+            self._update_scene_bounds()
+            self._line_pos = None
+            self._bounds_dirty = False
 
         aspect = self.width() / max(self.height(), 1)
         proj = QMatrix4x4()

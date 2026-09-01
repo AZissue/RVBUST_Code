@@ -8,11 +8,9 @@
   - 右侧：后处理参数面板（下采样、离群点去除、AABB/球/OBB 裁切）；
   - 底部：日志栏，输出加载/处理/保存信息。
 
-显示控制由左侧 DB 树统一负责：勾选的点云自动叠加显示，取消勾选则隐藏，
-不再依赖 3D 查看器内部的"全部叠加/合并结果"下拉框。
-
-点云按原始数据渲染：不触发显示级下采样，NaN/Inf 点由 OpenGL 层替换为
-零点以维持索引对应，但不会被删除。
+显示控制由左侧 DB 树统一负责：勾选的点云自动叠加显示，取消勾选则隐藏。
+为解决大数据量（数千万点）卡顿，引入"显示预算"机制：仅对显示副本进行自适应
+均匀降采样，原始 open3d 点云对象保留给后处理与保存。
 
 运行方式：
     python prototypes/postprocess_test/app.py
@@ -104,9 +102,12 @@ class DBTreeItem(QTreeWidgetItem):
         self.original_pcd = pcd
         self.file_key: Optional[str] = None
         self.color = (0.7, 0.7, 0.7)
-        # 渲染缓存：避免每次切换/勾选都重新从 open3d 对象转换
+        # 原始点云渲染缓存（用于后处理/保存/生成显示副本）
         self._render_points: Optional[np.ndarray] = None
         self._render_colors: Optional[np.ndarray] = None
+        # 显示级降采样缓存（实际上传到 GPU）
+        self._display_points: Optional[np.ndarray] = None
+        self._display_colors: Optional[np.ndarray] = None
 
 
 class PostProcessTestWindow(QMainWindow):
@@ -122,6 +123,8 @@ class PostProcessTestWindow(QMainWindow):
         self._current_item: Optional[DBTreeItem] = None
         self._batch_loading = False
         self._viewer_cloud_keys: Set[str] = set()
+        # 显示预算：所有可见点云上传到 GPU 的总点数上限
+        self._render_budget = 5_000_000
 
         self._setup_ui()
 
@@ -166,9 +169,7 @@ class PostProcessTestWindow(QMainWindow):
         self._viewer_panel = ViewerPanel("3D 点云预览")
         self._viewer_panel.setStyleSheet(
             f"QFrame {{ background-color: {BG_WINDOW}; border: none; }}")
-        # 禁用显示级下采样，保证原始点云完整渲染
-        self._viewer_panel.viewer().MAX_RENDER_POINTS = 100_000_000
-        # 隐藏 3D 查看器自带的"显示"下拉框，统一由左侧 DB 树控制可见性
+        # 隐藏 3D 查看器自带的"显示"下拉框，统一由左侧 DB 树控制
         self._hide_viewer_display_combo()
 
         body.addWidget(self._viewer_panel, 1)
@@ -218,6 +219,19 @@ class PostProcessTestWindow(QMainWindow):
         lo.addWidget(btn_delete)
 
         lo.addStretch(1)
+
+        # 显示预算控制
+        lbl_budget = QLabel("显示预算:")
+        lbl_budget.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px;")
+        lo.addWidget(lbl_budget)
+        self._spin_budget = QSpinBox()
+        self._spin_budget.setRange(50, 10000)  # 单位：万点
+        self._spin_budget.setValue(self._render_budget // 10000)
+        self._spin_budget.setSuffix(" 万点")
+        self._spin_budget.setToolTip(
+            "所有可见点云上传到 GPU 的总点数上限；超过时按比例均匀降采样显示")
+        self._spin_budget.valueChanged.connect(self._on_budget_changed)
+        lo.addWidget(self._spin_budget)
 
         btn_clear_log = QPushButton("清空日志")
         ui_icons.apply(btn_clear_log, "trash", TEXT_SECONDARY, 15)
@@ -380,7 +394,7 @@ class PostProcessTestWindow(QMainWindow):
 
     # ------------------------------------------------------------------ 事件
     def _hide_viewer_display_combo(self):
-        """隐藏 3D 查看器工具栏里的"显示"下拉框及其标签，统一由 DB 树控制。"""
+        """隐藏 3D 查看器工具栏里的"显示"下拉框及其标签，统一由左侧 DB 树控制。"""
         viewer = self._viewer_panel.viewer()
         viewer.combo_mode.hide()
         # 查找并隐藏对应的"显示:"标签
@@ -396,11 +410,13 @@ class PostProcessTestWindow(QMainWindow):
         return COLOR_PALETTE[idx % len(COLOR_PALETTE)]
 
     def _cache_render_arrays(self, item: DBTreeItem):
-        """从点云对象生成渲染缓存，避免每次刷新都重复转换。"""
+        """从点云对象生成原始渲染缓存（完整分辨率，用于后处理/保存）。"""
         pcd = item.pcd
         if pcd is None or len(pcd.points) == 0:
             item._render_points = None
             item._render_colors = None
+            item._display_points = None
+            item._display_colors = None
             return
         points = np.asarray(pcd.points, dtype=np.float32)
         if pcd.has_colors():
@@ -411,6 +427,65 @@ class PostProcessTestWindow(QMainWindow):
             colors = np.tile(np.array(item.color, dtype=np.float32), (len(points), 1))
         item._render_points = points
         item._render_colors = colors
+        # 显示副本会在 _rebuild_display_caches 中按需生成
+        item._display_points = None
+        item._display_colors = None
+
+    def _rebuild_display_caches(self):
+        """按当前显示预算为所有可见点云生成显示级降采样副本。"""
+        visible_items = []
+        total_raw = 0
+        for i in range(self._tree.topLevelItemCount()):
+            file_item = self._tree.topLevelItem(i)
+            if file_item.checkState(0) != Qt.Checked:
+                continue
+            for j in range(file_item.childCount()):
+                child = file_item.child(j)
+                if not isinstance(child, DBTreeItem):
+                    continue
+                if child.checkState(0) == Qt.Checked and child.pcd is not None:
+                    if child._render_points is None:
+                        self._cache_render_arrays(child)
+                    if child._render_points is not None:
+                        visible_items.append(child)
+                        total_raw += len(child._render_points)
+
+        # 非可见点云清空显示缓存以释放内存
+        visible_set = {id(it) for it in visible_items}
+        for i in range(self._tree.topLevelItemCount()):
+            file_item = self._tree.topLevelItem(i)
+            for j in range(file_item.childCount()):
+                child = file_item.child(j)
+                if isinstance(child, DBTreeItem) and id(child) not in visible_set:
+                    child._display_points = None
+                    child._display_colors = None
+
+        if total_raw <= self._render_budget or not visible_items:
+            for item in visible_items:
+                item._display_points = item._render_points.copy()
+                item._display_colors = item._render_colors.copy()
+            return
+
+        # 按比例分配预算，每朵云至少保留 1% 预算（避免小点云消失）
+        min_pts = max(1000, self._render_budget // (len(visible_items) * 100))
+        for item in visible_items:
+            n = len(item._render_points)
+            target = max(min_pts, int(self._render_budget * n / total_raw))
+            if target >= n:
+                item._display_points = item._render_points.copy()
+                item._display_colors = item._render_colors.copy()
+            else:
+                k = max(1, int(np.ceil(n / target)))
+                idx = np.arange(0, n, k)
+                item._display_points = item._render_points[idx].copy()
+                item._display_colors = item._render_colors[idx].copy()
+
+    def _on_budget_changed(self, value: int):
+        """显示预算改变时重新生成显示副本并刷新。"""
+        self._render_budget = value * 10000
+        self._log(f"显示预算调整为 {self._render_budget:,} 点", "info")
+        self._rebuild_display_caches()
+        self._refresh_viewer()
 
     def _on_crop_mode_changed(self, idx: int):
         mode = self._combo_crop.itemData(idx)
@@ -487,6 +562,7 @@ class PostProcessTestWindow(QMainWindow):
         self._batch_loading = False
         loaded = len(self._loaded_pcds) - getattr(self, "_load_count_before", 0)
         self._log(f"批量加载完成，新增 {loaded} 个点云", "success")
+        self._rebuild_display_caches()
         self._refresh_viewer()
 
     def _load_file(self, path: str,
@@ -522,6 +598,7 @@ class PostProcessTestWindow(QMainWindow):
             self._log(
                 f"加载 {base}：原始点数 {n_points:,}，路径 {path}", "info")
             if not self._batch_loading:
+                self._rebuild_display_caches()
                 self._refresh_viewer()
         except Exception as e:
             self._log(f"加载失败 {path}：{e}", "error")
@@ -568,12 +645,14 @@ class PostProcessTestWindow(QMainWindow):
                 self._tree.takeTopLevelItem(idx)
         if removed_names:
             self._log(f"已删除点云：{', '.join(removed_names)}", "info")
+            self._rebuild_display_caches()
             self._refresh_viewer()
             self._on_tree_selection_changed()
 
     def _on_tree_item_changed(self, item: QTreeWidgetItem, column: int):
         if column != 0:
             return
+        self._rebuild_display_caches()
         self._refresh_viewer()
 
     def _on_tree_selection_changed(self):
@@ -582,6 +661,7 @@ class PostProcessTestWindow(QMainWindow):
             self._current_item = None
             self._lbl_info.setText("未选择点云")
             if self._chk_crop_preview.isChecked():
+                self._rebuild_display_caches()
                 self._refresh_viewer()
             return
         item = selected[0]
@@ -599,14 +679,17 @@ class PostProcessTestWindow(QMainWindow):
             return
         self._current_item = cloud_item
         pcd = cloud_item.pcd
+        raw_n = len(pcd.points)
+        disp_n = len(cloud_item._display_points) if cloud_item._display_points is not None else raw_n
         info = (
             f"名称: {cloud_item.text(0)}\n"
-            f"点数: {len(pcd.points):,}\n"
-            f"{self._bbox_info(pcd)}"
+            f"原始点数: {raw_n:,}\n"
+            f"显示点数: {disp_n:,}"
         )
         self._lbl_info.setText(info)
-        self._log(f"选中 {cloud_item.text(0)}，点数 {len(pcd.points):,}", "info")
+        self._log(f"选中 {cloud_item.text(0)}，原始 {raw_n:,} / 显示 {disp_n:,} 点", "info")
         if self._chk_crop_preview.isChecked():
+            self._rebuild_display_caches()
             self._refresh_viewer()
 
     @staticmethod
@@ -678,26 +761,25 @@ class PostProcessTestWindow(QMainWindow):
 
         # 上传新可见点云，已缓存的仅切换可见性
         for key, item in visible_items:
+            pts = item._display_points
+            cols = item._display_colors
+            if pts is None or cols is None:
+                continue
             if key not in self._viewer_cloud_keys:
-                if item._render_points is None or item._render_colors is None:
-                    self._cache_render_arrays(item)
-                pts = item._render_points
-                cols = item._render_colors
-                if pts is not None and cols is not None:
-                    gl_viewer.set_pointcloud(key, pts, cols, visible=True)
-                    self._viewer_cloud_keys.add(key)
+                gl_viewer.set_pointcloud(key, pts, cols, visible=True)
+                self._viewer_cloud_keys.add(key)
             else:
                 gl_viewer.set_pointcloud_visible(key, True)
 
         # 取消勾选：隐藏但保留 VBO
         for key in self._viewer_cloud_keys:
-            if key not in visible_keys:
+            if key not in visible_keys and key != "__crop_preview__":
                 gl_viewer.set_pointcloud_visible(key, False)
 
         # 从 DB 树删除后彻底移除 VBO
         loaded_keys = set(self._loaded_pcds.keys())
         for key in list(self._viewer_cloud_keys):
-            if key not in loaded_keys:
+            if key not in loaded_keys and key != "__crop_preview__":
                 gl_viewer.set_pointcloud(key, None)
                 self._viewer_cloud_keys.discard(key)
 
@@ -727,7 +809,8 @@ class PostProcessTestWindow(QMainWindow):
                 if cloud is not None:
                     total += cloud["point_count"]
             gl_viewer.set_overlay_text(
-                f"可见点云 {len(visible_data_keys)} 个 | 总点数 {total:,}")
+                f"可见点云 {len(visible_data_keys)} 个 | 显示总点数 {total:,}"
+                f" / 预算 {self._render_budget:,}")
 
     def _on_apply_process(self):
         if self._current_item is None or self._current_item.pcd is None:
@@ -753,6 +836,7 @@ class PostProcessTestWindow(QMainWindow):
             self._cache_render_arrays(self._current_item)
             key = self._current_item.file_key or self._current_item.text(0)
             self._viewer_cloud_keys.discard(key)
+            self._rebuild_display_caches()
             self._refresh_viewer()
 
             stats_text = " | ".join(
@@ -772,6 +856,7 @@ class PostProcessTestWindow(QMainWindow):
             self._cache_render_arrays(self._current_item)
             key = self._current_item.file_key or self._current_item.text(0)
             self._viewer_cloud_keys.discard(key)
+            self._rebuild_display_caches()
             self._refresh_viewer()
             self._log(f"已重置 {self._current_item.text(0)} 为原始点云", "info")
             QMessageBox.information(self, "提示", "已重置为原始点云。")
