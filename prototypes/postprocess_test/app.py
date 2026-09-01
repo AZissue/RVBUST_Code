@@ -26,7 +26,7 @@ import numpy as np
 import open3d as o3d
 
 from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QAction, QFont, QIcon
+from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDockWidget, QFileDialog, QGroupBox,
     QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPushButton,
@@ -74,7 +74,6 @@ class PostProcessTestWindow(QMainWindow):
         self._current_item: Optional[DBTreeItem] = None
 
         self._setup_ui()
-        self._setup_menubar()
 
     # ------------------------------------------------------------------ UI
     def _setup_ui(self):
@@ -89,6 +88,10 @@ class PostProcessTestWindow(QMainWindow):
         self._log_panel.setFixedHeight(140)
         self._log_panel.setStyleSheet(
             f"QWidget {{ background-color: {BG_PANEL}; border-top: 1px solid {BORDER}; }}")
+
+        # 顶部工具栏
+        toolbar = self._build_toolbar()
+        root.addWidget(toolbar)
 
         # 主体：左右 dock + 中间 3D
         body = QHBoxLayout()
@@ -122,32 +125,47 @@ class PostProcessTestWindow(QMainWindow):
 
         self._log("后处理测试工具已启动", "info")
 
-    def _setup_menubar(self):
-        menubar = self.menuBar()
-        menubar.setStyleSheet(f"background-color: {BG_PANEL}; border: none;")
-        file_menu = menubar.addMenu("文件")
+    def _build_toolbar(self) -> QWidget:
+        bar = QWidget()
+        bar.setStyleSheet(
+            f"background-color: {BG_PANEL}; border-bottom: 1px solid {BORDER};")
+        lo = QHBoxLayout(bar)
+        lo.setContentsMargins(10, 6, 10, 6)
+        lo.setSpacing(8)
 
-        open_action = QAction("打开点云文件...", self)
-        open_action.setShortcut("Ctrl+O")
-        open_action.triggered.connect(self._on_open_files)
-        file_menu.addAction(open_action)
+        lbl_title = QLabel("后处理测试工具")
+        lbl_title.setStyleSheet(
+            f"color: {TEXT_PRIMARY}; font-size: 15px; font-weight: 700;")
+        lo.addWidget(lbl_title)
 
-        open_folder_action = QAction("打开点云文件夹...", self)
-        open_folder_action.triggered.connect(self._on_open_folder)
-        file_menu.addAction(open_folder_action)
+        lo.addSpacing(20)
 
-        file_menu.addSeparator()
+        btn_open = QPushButton("打开点云文件")
+        btn_open.setToolTip("加载一个或多个 PLY/PCD/XYZ 文件")
+        ui_icons.apply(btn_open, "folder_open", TEXT_SECONDARY, 15)
+        btn_open.clicked.connect(self._on_open_files)
+        lo.addWidget(btn_open)
 
-        save_action = QAction("保存当前点云...", self)
-        save_action.setShortcut("Ctrl+S")
-        save_action.triggered.connect(self._on_save_current)
-        file_menu.addAction(save_action)
+        btn_folder = QPushButton("打开点云文件夹")
+        btn_folder.setToolTip("递归加载文件夹内所有点云文件")
+        ui_icons.apply(btn_folder, "layers", TEXT_SECONDARY, 15)
+        btn_folder.clicked.connect(self._on_open_folder)
+        lo.addWidget(btn_folder)
 
-        file_menu.addSeparator()
+        btn_save = QPushButton("保存当前点云")
+        btn_save.setToolTip("保存当前选中的处理后点云")
+        ui_icons.apply(btn_save, "save", TEXT_SECONDARY, 15)
+        btn_save.clicked.connect(self._on_save_current)
+        lo.addWidget(btn_save)
 
-        exit_action = QAction("退出", self)
-        exit_action.triggered.connect(self.close)
-        file_menu.addAction(exit_action)
+        lo.addStretch(1)
+
+        btn_clear_log = QPushButton("清空日志")
+        ui_icons.apply(btn_clear_log, "trash", TEXT_SECONDARY, 15)
+        btn_clear_log.clicked.connect(self._log_panel.clear)
+        lo.addWidget(btn_clear_log)
+
+        return bar
 
     def _build_db_panel(self) -> QWidget:
         panel = QWidget()
@@ -182,11 +200,6 @@ class PostProcessTestWindow(QMainWindow):
         self._tree.itemChanged.connect(self._on_tree_item_changed)
         self._tree.itemSelectionChanged.connect(self._on_tree_selection_changed)
         lo.addWidget(self._tree, 1)
-
-        btn_clear_log = QPushButton("清空日志")
-        ui_icons.apply(btn_clear_log, "trash", TEXT_SECONDARY, 15)
-        btn_clear_log.clicked.connect(self._log_panel.clear)
-        lo.addWidget(btn_clear_log)
 
         return panel
 
