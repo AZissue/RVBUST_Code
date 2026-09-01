@@ -220,6 +220,10 @@ class PointCloudViewer(QOpenGLWidget):
         self._has_gl = False
         self.highlight_indices = None
 
+        # 多路点云 VBO 缓存（cloud_id -> metadata）
+        self._clouds: Dict[str, dict] = {}
+        self._bounds_dirty = True
+
         # 渲染选项（仅改标志，不重建点云 VBO）
         self._point_size = 1.0
         self._bg_color = BG_DARK
@@ -283,6 +287,7 @@ class PointCloudViewer(QOpenGLWidget):
             self.colors[invalid_mask] = [0.1, 0.1, 0.1]
         self.highlight_indices = highlight_indices
         self._initialized = False
+        self._bounds_dirty = True
         self.update()
         return {"total": total, "valid": int(total - invalid_mask.sum()),
                 "invalid": int(invalid_mask.sum())}
@@ -297,7 +302,73 @@ class PointCloudViewer(QOpenGLWidget):
         self.colors = None
         self.point_count = 0
         self.highlight_indices = None
+        self._bounds_dirty = True
         self.update()
+
+    def set_pointcloud(self, cloud_id: str, points: np.ndarray = None,
+                       colors: np.ndarray = None, visible: bool = True,
+                       highlight_indices: list = None):
+        """添加/更新/删除一路独立点云 VBO。
+
+        points=None 时删除该路点云及其 GPU 资源。
+        """
+        if points is None:
+            self._remove_cloud(cloud_id)
+        else:
+            points = np.asarray(points, dtype=np.float32)
+            assert points.ndim == 2 and points.shape[1] == 3, "points 必须是 (N, 3)"
+            n = len(points)
+            invalid_mask = np.isnan(points).any(axis=1) | np.isinf(points).any(axis=1)
+            points[invalid_mask] = 0.0
+            if colors is not None:
+                colors = np.asarray(colors, dtype=np.float32)
+                if colors.shape != (n, 3):
+                    colors = np.tile(colors[:1], (n, 1))
+                colors[invalid_mask] = [0.1, 0.1, 0.1]
+            else:
+                colors = np.tile(np.array([0.5, 0.5, 0.5], dtype=np.float32), (n, 1))
+                colors[invalid_mask] = [0.1, 0.1, 0.1]
+            self._clouds[cloud_id] = {
+                "points": points,
+                "colors": colors.astype(np.float32),
+                "visible": bool(visible),
+                "highlight_indices": highlight_indices,
+                "vao": None,
+                "vbo_pos": None,
+                "vbo_col": None,
+                "vbo_size": None,
+                "point_count": n,
+                "uploaded": False,
+            }
+            if self._has_gl:
+                self._upload_cloud(cloud_id)
+        self._update_scene_bounds()
+        self.update()
+
+    def set_pointcloud_visible(self, cloud_id: str, visible: bool):
+        """切换指定点云的可见性（不重建 VBO）。"""
+        cloud = self._clouds.get(cloud_id)
+        if cloud is None:
+            return
+        cloud["visible"] = bool(visible)
+        self._update_scene_bounds()
+        self.update()
+
+    def clear_pointclouds(self):
+        """删除所有多路点云及其 GPU 资源。"""
+        for cloud_id in list(self._clouds.keys()):
+            self._remove_cloud(cloud_id)
+        self._update_scene_bounds()
+        self.update()
+
+    def _remove_cloud(self, cloud_id: str):
+        cloud = self._clouds.pop(cloud_id, None)
+        if cloud is None:
+            return
+        if self._has_gl and cloud.get("vao") is not None:
+            from OpenGL import GL
+            GL.glDeleteVertexArrays(1, [cloud["vao"]])
+            GL.glDeleteBuffers(3, [cloud["vbo_pos"], cloud["vbo_col"], cloud["vbo_size"]])
 
     def reset_view(self):
         self.camera.reset()
@@ -310,6 +381,8 @@ class PointCloudViewer(QOpenGLWidget):
         """点大小 1~5 px，重建 size VBO（数据不变）。"""
         self._point_size = float(max(1.0, min(5.0, size)))
         self._initialized = False
+        for cloud in self._clouds.values():
+            cloud["uploaded"] = False
         self.update()
 
     def set_background(self, dark: bool):
@@ -351,12 +424,18 @@ class PointCloudViewer(QOpenGLWidget):
             GL.glEnable(GL.GL_PROGRAM_POINT_SIZE)
             GL.glEnable(GL.GL_MULTISAMPLE)
             self._shader = self._compile_shader(self.VERTEX_SHADER, self.FRAGMENT_SHADER)
+            self._loc_a_position = GL.glGetAttribLocation(self._shader, "a_position")
+            self._loc_a_color = GL.glGetAttribLocation(self._shader, "a_color")
+            self._loc_a_size = GL.glGetAttribLocation(self._shader, "a_size")
+            self._loc_u_mvp = GL.glGetUniformLocation(self._shader, "u_mvp")
             self._vao = GL.glGenVertexArrays(1)
             # 修复原实现 _vbo_col 未创建的隐患：三个 VBO 一次性生成
             self._vbo_pos, self._vbo_col, self._vbo_size = GL.glGenBuffers(3)
             # 参考元素（坐标轴 + 网格地面）线段 VAO
             self._line_vao = GL.glGenVertexArrays(1)
             self._line_vbo_pos, self._line_vbo_col = GL.glGenBuffers(2)
+            self._line_pos = None
+            self._line_col = None
             self._axes_vert_count = 0
             self._grid_vert_count = 0
         except Exception as e:
@@ -398,10 +477,10 @@ class PointCloudViewer(QOpenGLWidget):
     # 参考元素：坐标轴 + 网格地面（世界坐标，数据已按质心居中故需平移）
     # ------------------------------------------------------------------
     def _build_reference_lines(self):
-        """生成坐标轴 (6 顶点) + 网格地面线段顶点（居中坐标系），numpy 向量化。"""
+        """生成坐标轴 (18 顶点) + 网格地面线段顶点（世界坐标，由模型矩阵统一居中）。"""
         c = self.centroid.astype(np.float64)
         # 坐标轴原点放在点云质心上方（悬浮显示，避免被网格/点云遮挡）
-        origin = -c + np.array([0, 0, self._extent * 0.2], dtype=np.float64)
+        origin = c + np.array([0, 0, self._extent * 0.2], dtype=np.float64)
         axis_len = self._extent * 0.4                 # 包围盒对角线 ~40%，让坐标轴更明显
         arrow_len = axis_len * 0.15                   # 箭头长度
 
@@ -436,7 +515,7 @@ class PointCloudViewer(QOpenGLWidget):
         # 网格：点云 Z 最低点处，XY 以点云质心为中心，10×10 格
         step = _nice_step(self._extent / 10.0)
         half = step * 5.0
-        gz = self._z_min - c[2]
+        gz = self._z_min
         offs = np.linspace(-half, half, 11)
         lines = []
         for v in offs:  # 22 条线段（常量循环仅 22 次，非点级循环）
@@ -455,19 +534,12 @@ class PointCloudViewer(QOpenGLWidget):
         if not self._has_gl or self.points is None or self.point_count == 0:
             return
         from OpenGL import GL
-        centered = (self.points - self.centroid).astype(np.float32)
+        points = self.points.astype(np.float32)
         GL.glBindVertexArray(self._vao)
         GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self._vbo_pos)
-        GL.glBufferData(GL.GL_ARRAY_BUFFER, centered.nbytes, centered, GL.GL_STATIC_DRAW)
-        pos_loc = GL.glGetAttribLocation(self._shader, "a_position")
-        GL.glVertexAttribPointer(pos_loc, 3, GL.GL_FLOAT, GL.GL_FALSE, 0, None)
-        GL.glEnableVertexAttribArray(pos_loc)
-        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self._vbo_col)
-        GL.glBufferData(GL.GL_ARRAY_BUFFER, self.colors.nbytes, self.colors, GL.GL_STATIC_DRAW)
-        col_loc = GL.glGetAttribLocation(self._shader, "a_color")
-        GL.glVertexAttribPointer(col_loc, 3, GL.GL_FLOAT, GL.GL_FALSE, 0, None)
-        GL.glEnableVertexAttribArray(col_loc)
-        # 上传点大小（高亮索引用大点）
+        GL.glBufferData(GL.GL_ARRAY_BUFFER, points.nbytes, points, GL.GL_STATIC_DRAW)
+        GL.glVertexAttribPointer(self._loc_a_position, 3, GL.GL_FLOAT, GL.GL_FALSE, 0, None)
+        GL.glEnableVertexAttribArray(self._loc_a_position)
         colors = self.colors.copy()
         sizes = np.full(self.point_count, self._point_size, dtype=np.float32)
         if self.highlight_indices is not None:
@@ -477,28 +549,99 @@ class PointCloudViewer(QOpenGLWidget):
                     colors[idx] = [1.0, 0.0, 0.0]
         GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self._vbo_col)
         GL.glBufferData(GL.GL_ARRAY_BUFFER, colors.nbytes, colors, GL.GL_STATIC_DRAW)
+        GL.glVertexAttribPointer(self._loc_a_color, 3, GL.GL_FLOAT, GL.GL_FALSE, 0, None)
+        GL.glEnableVertexAttribArray(self._loc_a_color)
         GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self._vbo_size)
         GL.glBufferData(GL.GL_ARRAY_BUFFER, sizes.nbytes, sizes, GL.GL_STATIC_DRAW)
-        size_loc = GL.glGetAttribLocation(self._shader, "a_size")
-        GL.glVertexAttribPointer(size_loc, 1, GL.GL_FLOAT, GL.GL_FALSE, 0, None)
-        GL.glEnableVertexAttribArray(size_loc)
+        GL.glVertexAttribPointer(self._loc_a_size, 1, GL.GL_FLOAT, GL.GL_FALSE, 0, None)
+        GL.glEnableVertexAttribArray(self._loc_a_size)
         GL.glBindVertexArray(0)
+        self._initialized = True
 
-        # 参考元素线段（随数据重建：包围盒 / Z 最低点变化）
-        self._build_reference_lines()
+    def _upload_cloud(self, cloud_id: str):
+        """为指定 cloud_id 创建/更新 VAO/VBO（原始世界坐标，居中由模型矩阵完成）。"""
+        if not self._has_gl:
+            return
+        cloud = self._clouds.get(cloud_id)
+        if cloud is None:
+            return
+        from OpenGL import GL
+        if cloud["vao"] is None:
+            cloud["vao"] = GL.glGenVertexArrays(1)
+            cloud["vbo_pos"], cloud["vbo_col"], cloud["vbo_size"] = GL.glGenBuffers(3)
+        n = cloud["point_count"]
+        points = cloud["points"].astype(np.float32)
+        colors = cloud["colors"].copy()
+        sizes = np.full(n, self._point_size, dtype=np.float32)
+        hili = cloud.get("highlight_indices")
+        if hili is not None:
+            for idx in hili:
+                if 0 <= idx < n:
+                    sizes[idx] = 10.0
+                    colors[idx] = [1.0, 0.0, 0.0]
+        GL.glBindVertexArray(cloud["vao"])
+        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, cloud["vbo_pos"])
+        GL.glBufferData(GL.GL_ARRAY_BUFFER, points.nbytes, points, GL.GL_STATIC_DRAW)
+        GL.glVertexAttribPointer(self._loc_a_position, 3, GL.GL_FLOAT, GL.GL_FALSE, 0, None)
+        GL.glEnableVertexAttribArray(self._loc_a_position)
+        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, cloud["vbo_col"])
+        GL.glBufferData(GL.GL_ARRAY_BUFFER, colors.nbytes, colors, GL.GL_STATIC_DRAW)
+        GL.glVertexAttribPointer(self._loc_a_color, 3, GL.GL_FLOAT, GL.GL_FALSE, 0, None)
+        GL.glEnableVertexAttribArray(self._loc_a_color)
+        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, cloud["vbo_size"])
+        GL.glBufferData(GL.GL_ARRAY_BUFFER, sizes.nbytes, sizes, GL.GL_STATIC_DRAW)
+        GL.glVertexAttribPointer(self._loc_a_size, 1, GL.GL_FLOAT, GL.GL_FALSE, 0, None)
+        GL.glEnableVertexAttribArray(self._loc_a_size)
+        GL.glBindVertexArray(0)
+        cloud["uploaded"] = True
+
+    def _upload_reference_lines(self):
+        """上传参考元素（坐标轴/网格）线段到 GPU。"""
+        if not self._has_gl or self._line_pos is None or self._line_col is None:
+            return
+        from OpenGL import GL
         GL.glBindVertexArray(self._line_vao)
         GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self._line_vbo_pos)
         GL.glBufferData(GL.GL_ARRAY_BUFFER, self._line_pos.nbytes,
                         self._line_pos, GL.GL_STATIC_DRAW)
-        GL.glVertexAttribPointer(pos_loc, 3, GL.GL_FLOAT, GL.GL_FALSE, 0, None)
-        GL.glEnableVertexAttribArray(pos_loc)
+        GL.glVertexAttribPointer(self._loc_a_position, 3, GL.GL_FLOAT, GL.GL_FALSE, 0, None)
+        GL.glEnableVertexAttribArray(self._loc_a_position)
         GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self._line_vbo_col)
         GL.glBufferData(GL.GL_ARRAY_BUFFER, self._line_col.nbytes,
                         self._line_col, GL.GL_STATIC_DRAW)
-        GL.glVertexAttribPointer(col_loc, 3, GL.GL_FLOAT, GL.GL_FALSE, 0, None)
-        GL.glEnableVertexAttribArray(col_loc)
+        GL.glVertexAttribPointer(self._loc_a_color, 3, GL.GL_FLOAT, GL.GL_FALSE, 0, None)
+        GL.glEnableVertexAttribArray(self._loc_a_color)
         GL.glBindVertexArray(0)
-        self._initialized = True
+
+    def _update_scene_bounds(self):
+        """根据当前可见点云（多路 + 遗留单路）重新计算场景质心与相机参数。"""
+        visible_points = []
+        for cloud in self._clouds.values():
+            if not cloud.get("visible", True):
+                continue
+            pts = cloud["points"]
+            mask = np.isfinite(pts).all(axis=1)
+            if mask.any():
+                visible_points.append(pts[mask])
+        if self.points is not None and self.point_count > 0:
+            pts = self.points
+            mask = np.isfinite(pts).all(axis=1)
+            if mask.any():
+                visible_points.append(pts[mask])
+        if visible_points:
+            all_pts = np.concatenate(visible_points, axis=0)
+            self.centroid = all_pts.mean(axis=0).astype(np.float32)
+            extent_xyz = all_pts.max(axis=0) - all_pts.min(axis=0)
+            self._extent = max(float(np.linalg.norm(extent_xyz)), 1e-3)
+            self._z_min = float(all_pts[:, 2].min())
+            self._z_max = float(all_pts[:, 2].max())
+        else:
+            self.centroid = np.zeros(3, dtype=np.float32)
+            self._extent = 10.0
+            self._z_min = self._z_max = 0.0
+        self.camera.target = self.centroid.astype(np.float32)
+        self.camera.distance = max(self._extent * 1.5, 1.0)
+        self._bounds_dirty = True
 
     def paintGL(self):
         if not self._has_gl:
@@ -510,34 +653,57 @@ class PointCloudViewer(QOpenGLWidget):
             pass
         GL.glClearColor(*self._bg_color)
         GL.glClear(GL.GL_COLOR_BUFFER_BIT | GL.GL_DEPTH_BUFFER_BIT)
-        if self.points is not None and self.point_count > 0:
+
+        has_legacy = self.points is not None and self.point_count > 0
+        has_multi = bool(self._clouds)
+        if not has_legacy and not has_multi:
+            return
+
+        aspect = self.width() / max(self.height(), 1)
+        proj = QMatrix4x4()
+        far_plane = max(self._extent * 5.0, 100.0)
+        proj.perspective(45.0, aspect, max(self._extent * 0.001, 1e-4), far_plane)
+        view = self.camera.view_matrix()
+        model = QMatrix4x4()
+        model.translate(-self.centroid[0], -self.centroid[1], -self.centroid[2])
+        mvp = proj * view * model
+
+        GL.glUseProgram(self._shader)
+        GL.glUniformMatrix4fv(self._loc_u_mvp, 1, GL.GL_FALSE, mvp.data())
+
+        if has_multi:
+            for cid, cloud in self._clouds.items():
+                if not cloud.get("visible", True):
+                    continue
+                if not cloud.get("uploaded"):
+                    self._upload_cloud(cid)
+                if cloud["point_count"] > 0:
+                    GL.glBindVertexArray(cloud["vao"])
+                    GL.glDrawArrays(GL.GL_POINTS, 0, cloud["point_count"])
+                    GL.glBindVertexArray(0)
+        elif has_legacy:
             if not self._initialized:
                 self._upload_data()
-            GL.glUseProgram(self._shader)
-            aspect = self.width() / max(self.height(), 1)
-            proj = QMatrix4x4()
-            far_plane = max(self._extent * 5.0, 100.0)
-            proj.perspective(45.0, aspect, max(self._extent * 0.001, 1e-4), far_plane)
-            # 相机目标点移到原点（数据已按质心居中）
-            view = self.camera.view_matrix()
-            mvp = proj * view
-            mvp_loc = GL.glGetUniformLocation(self._shader, "u_mvp")
-            GL.glUniformMatrix4fv(mvp_loc, 1, GL.GL_FALSE, mvp.data())
             GL.glBindVertexArray(self._vao)
             GL.glDrawArrays(GL.GL_POINTS, 0, self.point_count)
             GL.glBindVertexArray(0)
-            # 参考元素线段（同一 shader / MVP，点大小属性用常量 1）
-            if (self._show_axes or self._show_grid) and self._initialized:
-                size_loc = GL.glGetAttribLocation(self._shader, "a_size")
-                GL.glBindVertexArray(self._line_vao)
-                GL.glVertexAttrib1f(size_loc, 1.0)
-                if self._show_axes and self._axes_vert_count:
-                    GL.glDrawArrays(GL.GL_LINES, 0, self._axes_vert_count)
-                if self._show_grid and self._grid_vert_count:
-                    GL.glDrawArrays(GL.GL_LINES, self._axes_vert_count,
-                                    self._grid_vert_count)
-                GL.glBindVertexArray(0)
-            GL.glUseProgram(0)
+
+        # 参考元素线段（同一 shader / MVP，点大小属性用常量 1）
+        if self._show_axes or self._show_grid:
+            if self._bounds_dirty or self._line_pos is None:
+                self._build_reference_lines()
+                self._upload_reference_lines()
+                self._bounds_dirty = False
+            GL.glBindVertexArray(self._line_vao)
+            GL.glVertexAttrib1f(self._loc_a_size, 1.0)
+            if self._show_axes and self._axes_vert_count:
+                GL.glDrawArrays(GL.GL_LINES, 0, self._axes_vert_count)
+            if self._show_grid and self._grid_vert_count:
+                GL.glDrawArrays(GL.GL_LINES, self._axes_vert_count,
+                                self._grid_vert_count)
+            GL.glBindVertexArray(0)
+
+        GL.glUseProgram(0)
 
     def resizeGL(self, w: int, h: int):
         if self._has_gl:
@@ -917,6 +1083,8 @@ class EmbeddedPointCloudViewer(QWidget):
     def remove_camera(self, camera_id: str):
         """相机移除时同步清除其点云。"""
         self.set_pointcloud(camera_id, None)
+        if self._viewer:
+            self._viewer.set_pointcloud(camera_id, None)
 
     def clear_all(self):
         self._pcds = {}
@@ -930,6 +1098,7 @@ class EmbeddedPointCloudViewer(QWidget):
         self.combo_mode.setCurrentIndex(0)
         if self._viewer:
             self._viewer.clear()
+            self._viewer.clear_pointclouds()
         self._update_overlay("未加载点云")
 
     def reset_view(self):
@@ -957,6 +1126,10 @@ class EmbeddedPointCloudViewer(QWidget):
     def set_collapsed(self, collapsed: bool):
         """外部设置折叠状态（会触发 collapse_toggled 信号）。"""
         self.btn_collapse.setChecked(not collapsed)
+
+    def viewer(self) -> Optional[PointCloudViewer]:
+        """返回底层 OpenGL 渲染器（高级调试使用）。"""
+        return self._viewer
 
     # ------------------------------------------------------------------
     # 工具栏槽函数
@@ -1193,6 +1366,8 @@ class EmbeddedPointCloudViewer(QWidget):
             self._update_overlay("渲染失败")
 
     def _show_single(self, camera_id: str):
+        if self._viewer:
+            self._viewer.clear_pointclouds()
         pcd = self._pcds.get(camera_id)
         if pcd is None or len(pcd.points) == 0:
             self._update_overlay(f"相机 {camera_id} 无点云")
@@ -1205,6 +1380,8 @@ class EmbeddedPointCloudViewer(QWidget):
                              highlight=self._highlights.get(camera_id))
 
     def _show_merged(self):
+        if self._viewer:
+            self._viewer.clear_pointclouds()
         pcd = self._pcd_merged
         if pcd is None or len(pcd.points) == 0:
             self._update_overlay("无拼接点云")
@@ -1216,25 +1393,36 @@ class EmbeddedPointCloudViewer(QWidget):
         self._load_to_viewer(points, colors, "拼接点云")
 
     def _show_overlay(self):
-        """全部相机按各自颜色叠加显示。"""
-        all_points, all_colors = [], []
+        """全部相机按各自颜色叠加显示（多 VBO 缓存）。"""
+        if self._viewer is None:
+            return
+        # 切换到多路模式前清空遗留单路数据，避免重复绘制
+        self._viewer.clear()
+        # 移除已不存在的相机 VBO
+        for cid in list(self._viewer._clouds.keys()):
+            if cid not in self._pcds:
+                self._viewer.set_pointcloud(cid, None)
+
+        total_valid = 0
         for cid in self._camera_order:
             pcd = self._pcds.get(cid)
             if pcd is None or len(pcd.points) == 0:
                 continue
             points, colors = self._pcd_to_arrays(
                 pcd, self._color_for(cid), max_points=self.MAX_RENDER_POINTS)
-            all_points.append(points)
-            all_colors.append(colors)
-        if not all_points:
+            self._viewer.set_pointcloud(
+                cid, points, colors, visible=True,
+                highlight_indices=self._highlights.get(cid))
+            invalid = int((np.isnan(points).any(axis=1) | np.isinf(points).any(axis=1)).sum())
+            total_valid += len(points) - invalid
+
+        if not self._viewer._clouds:
             self._update_overlay("未加载点云")
-            if self._viewer:
-                self._viewer.clear()
             return
-        points = np.concatenate(all_points, axis=0)
-        colors = np.concatenate(all_colors, axis=0)
-        self._load_to_viewer(points, colors,
-                             f"全部叠加 ({len(all_points)} 台相机)")
+
+        name = f"全部叠加 ({len(self._viewer._clouds)} 台相机)"
+        self.status_changed.emit(f"{name} | 点数: {total_valid:,}")
+        self._update_overlay(self._compose_overlay(name, total_valid))
 
     def closeEvent(self, event):
         event.accept()

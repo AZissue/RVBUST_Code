@@ -23,17 +23,17 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, Set
 
 import numpy as np
 import open3d as o3d
 
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt, QSize, QThread, Signal
 from PySide6.QtGui import QAction, QFont, QIcon
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDockWidget, QFileDialog, QGroupBox,
-    QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QPushButton,
-    QSpinBox, QSplitter, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
+    QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QProgressDialog,
+    QPushButton, QSpinBox, QSplitter, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
 # 让原型能引用 src/ 下的模块
@@ -62,6 +62,33 @@ COLOR_PALETTE = [
     (0.40, 0.90, 0.80),   # 蓝绿
     (0.95, 0.50, 0.50),   # 红
 ]
+
+
+class LoadPointCloudWorker(QThread):
+    """后台加载 PLY/PCD/XYZ 点云文件。"""
+
+    progress = Signal(int, int, str)
+    loaded = Signal(dict)
+    error = Signal(str)
+    finished = Signal()
+
+    def __init__(self, files: list, parent=None):
+        super().__init__(parent)
+        self.files = files
+
+    def run(self):
+        total = len(self.files)
+        for i, path in enumerate(self.files, start=1):
+            try:
+                self.progress.emit(i - 1, total, path)
+                pcd = o3d.io.read_point_cloud(path)
+                if len(pcd.points) == 0:
+                    self.error.emit(f"文件为空或无法解析：{path}")
+                else:
+                    self.loaded.emit({"path": path, "pcd": pcd})
+            except Exception as e:
+                self.error.emit(f"加载失败 {path}：{e}")
+        self.finished.emit()
 
 
 class DBTreeItem(QTreeWidgetItem):
@@ -94,6 +121,7 @@ class PostProcessTestWindow(QMainWindow):
         self._loaded_pcds: Dict[str, o3d.geometry.PointCloud] = {}
         self._current_item: Optional[DBTreeItem] = None
         self._batch_loading = False
+        self._viewer_cloud_keys: Set[str] = set()
 
         self._setup_ui()
 
@@ -400,37 +428,72 @@ class PostProcessTestWindow(QMainWindow):
             "点云文件 (*.ply *.pcd *.xyz);;所有文件 (*)")
         if not files:
             return
-        self._batch_loading = True
-        self._tree.blockSignals(True)
-        try:
-            for path in files:
-                self._load_file(path)
-        finally:
-            self._tree.blockSignals(False)
-            self._batch_loading = False
-            self._refresh_viewer()
+        self._run_load_worker(files)
 
     def _on_open_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "选择点云文件夹")
         if not folder:
             return
-        count_before = len(self._loaded_pcds)
+        files = []
+        for ext in (".ply", ".pcd", ".xyz"):
+            files.extend([str(p) for p in Path(folder).glob(f"*{ext}")])
+        if not files:
+            self._log("文件夹中没有找到点云文件", "warn")
+            return
+        self._run_load_worker(files)
+
+    def _run_load_worker(self, files: list):
+        """启动后台加载线程并显示进度对话框。"""
+        if not files:
+            return
+        self._load_count_before = len(self._loaded_pcds)
         self._batch_loading = True
         self._tree.blockSignals(True)
-        try:
-            for ext in (".ply", ".pcd", ".xyz"):
-                for path in Path(folder).glob(f"*{ext}"):
-                    self._load_file(str(path))
-        finally:
-            self._tree.blockSignals(False)
-            self._batch_loading = False
-            self._refresh_viewer()
-            loaded = len(self._loaded_pcds) - count_before
-            self._log(f"文件夹加载完成，新增 {loaded} 个点云", "success")
 
-    def _load_file(self, path: str):
+        self._progress = QProgressDialog("正在加载点云...", None, 0, len(files), self)
+        self._progress.setWindowModality(Qt.WindowModal)
+        self._progress.setCancelButton(None)
+        self._progress.setValue(0)
+        self._progress.show()
+
+        self._worker = LoadPointCloudWorker(files, self)
+        self._worker.progress.connect(self._on_load_progress)
+        self._worker.loaded.connect(self._on_file_loaded)
+        self._worker.error.connect(self._on_load_error)
+        self._worker.finished.connect(self._on_load_finished)
+        self._worker.start()
+
+    def _on_load_progress(self, current: int, total: int, filename: str):
+        if getattr(self, "_progress", None) is not None:
+            self._progress.setMaximum(total)
+            self._progress.setValue(current)
+            self._progress.setLabelText(f"正在加载: {Path(filename).name}")
+
+    def _on_file_loaded(self, data: dict):
+        path = data["path"]
+        pcd = data["pcd"]
+        self._load_file(path, pcd=pcd)
+        if getattr(self, "_progress", None) is not None:
+            self._progress.setValue(self._progress.value() + 1)
+
+    def _on_load_error(self, msg: str):
+        self._log(msg, "error")
+
+    def _on_load_finished(self):
+        if getattr(self, "_progress", None) is not None:
+            self._progress.close()
+            self._progress = None
+        self._tree.blockSignals(False)
+        self._batch_loading = False
+        loaded = len(self._loaded_pcds) - getattr(self, "_load_count_before", 0)
+        self._log(f"批量加载完成，新增 {loaded} 个点云", "success")
+        self._refresh_viewer()
+
+    def _load_file(self, path: str,
+                   pcd: Optional[o3d.geometry.PointCloud] = None):
         try:
-            pcd = o3d.io.read_point_cloud(path)
+            if pcd is None:
+                pcd = o3d.io.read_point_cloud(path)
             n_points = len(pcd.points)
             if n_points == 0:
                 self._log(f"文件为空或无法解析：{path}", "warn")
@@ -590,8 +653,16 @@ class PostProcessTestWindow(QMainWindow):
         return preview_pts, preview_colors
 
     def _refresh_viewer(self):
-        """根据 DB 树勾选状态刷新 3D 视图。"""
-        visible = []
+        """根据 DB 树勾选状态刷新 3D 视图（多 VBO 缓存，避免重复上传）。"""
+        gl_viewer = self._viewer_panel.viewer().viewer()
+        if gl_viewer is None:
+            return
+
+        # 清理遗留单路点云，避免多路与单路同时绘制
+        gl_viewer.clear()
+
+        visible_keys = set()
+        visible_items = []
         for i in range(self._tree.topLevelItemCount()):
             file_item = self._tree.topLevelItem(i)
             if file_item.checkState(0) != Qt.Checked:
@@ -601,35 +672,62 @@ class PostProcessTestWindow(QMainWindow):
                 if not isinstance(child, DBTreeItem):
                     continue
                 if child.checkState(0) == Qt.Checked and child.pcd is not None:
-                    visible.append(child)
+                    key = child.file_key or child.text(0)
+                    visible_keys.add(key)
+                    visible_items.append((key, child))
 
-        gl_viewer = self._viewer_panel.viewer()._viewer
-        if not visible:
-            if gl_viewer is not None:
-                gl_viewer.clear()
-                gl_viewer.set_overlay_text("未加载点云")
-            return
+        # 上传新可见点云，已缓存的仅切换可见性
+        for key, item in visible_items:
+            if key not in self._viewer_cloud_keys:
+                if item._render_points is None or item._render_colors is None:
+                    self._cache_render_arrays(item)
+                pts = item._render_points
+                cols = item._render_colors
+                if pts is not None and cols is not None:
+                    gl_viewer.set_pointcloud(key, pts, cols, visible=True)
+                    self._viewer_cloud_keys.add(key)
+            else:
+                gl_viewer.set_pointcloud_visible(key, True)
 
-        if len(visible) == 1:
-            item = visible[0]
-            points = item._render_points
-            colors = item._render_colors
-            name = item.text(0)
-        else:
-            points = np.concatenate([it._render_points for it in visible], axis=0)
-            colors = np.concatenate([it._render_colors for it in visible], axis=0)
-            name = f"全部叠加 ({len(visible)} 个点云)"
+        # 取消勾选：隐藏但保留 VBO
+        for key in self._viewer_cloud_keys:
+            if key not in visible_keys:
+                gl_viewer.set_pointcloud_visible(key, False)
 
-        # 叠加裁切范围预览
+        # 从 DB 树删除后彻底移除 VBO
+        loaded_keys = set(self._loaded_pcds.keys())
+        for key in list(self._viewer_cloud_keys):
+            if key not in loaded_keys:
+                gl_viewer.set_pointcloud(key, None)
+                self._viewer_cloud_keys.discard(key)
+
+        # 裁切范围预览（特殊 cloud id）
         if self._chk_crop_preview.isChecked() and self._current_item is not None:
-            preview_pts, preview_colors = self._crop_preview_arrays(self._current_item)
+            preview_pts, preview_cols = self._crop_preview_arrays(self._current_item)
             if preview_pts is not None:
-                points = np.concatenate([points, preview_pts], axis=0)
-                colors = np.concatenate([colors, preview_colors], axis=0)
+                gl_viewer.set_pointcloud("__crop_preview__", preview_pts, preview_cols, visible=True)
+                self._viewer_cloud_keys.add("__crop_preview__")
+            else:
+                if "__crop_preview__" in self._viewer_cloud_keys:
+                    gl_viewer.set_pointcloud("__crop_preview__", None)
+                    self._viewer_cloud_keys.discard("__crop_preview__")
+        else:
+            if "__crop_preview__" in self._viewer_cloud_keys:
+                gl_viewer.set_pointcloud("__crop_preview__", None)
+                self._viewer_cloud_keys.discard("__crop_preview__")
 
-        # 调用内部渲染接口，保留着色模式切换等工具栏功能
-        self._viewer_panel.viewer()._load_to_viewer(
-            points, colors, name, highlight=None, cache=True)
+        # 刷新叠加层文字
+        visible_data_keys = visible_keys - {"__crop_preview__"}
+        if not visible_data_keys:
+            gl_viewer.set_overlay_text("未加载点云")
+        else:
+            total = 0
+            for key in visible_data_keys:
+                cloud = gl_viewer._clouds.get(key)
+                if cloud is not None:
+                    total += cloud["point_count"]
+            gl_viewer.set_overlay_text(
+                f"可见点云 {len(visible_data_keys)} 个 | 总点数 {total:,}")
 
     def _on_apply_process(self):
         if self._current_item is None or self._current_item.pcd is None:
@@ -653,6 +751,8 @@ class PostProcessTestWindow(QMainWindow):
             result, stats = self._processor.process(self._current_item.pcd)
             self._current_item.pcd = result
             self._cache_render_arrays(self._current_item)
+            key = self._current_item.file_key or self._current_item.text(0)
+            self._viewer_cloud_keys.discard(key)
             self._refresh_viewer()
 
             stats_text = " | ".join(
@@ -670,6 +770,8 @@ class PostProcessTestWindow(QMainWindow):
         if self._current_item.original_pcd is not None:
             self._current_item.pcd = self._current_item.original_pcd
             self._cache_render_arrays(self._current_item)
+            key = self._current_item.file_key or self._current_item.text(0)
+            self._viewer_cloud_keys.discard(key)
             self._refresh_viewer()
             self._log(f"已重置 {self._current_item.text(0)} 为原始点云", "info")
             QMessageBox.information(self, "提示", "已重置为原始点云。")
