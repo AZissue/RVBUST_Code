@@ -603,7 +603,7 @@ class PostProcessTestWindow(QMainWindow):
                 if child.checkState(0) == Qt.Checked and child.pcd is not None:
                     visible.append(child)
 
-        gl_viewer = self._viewer_panel.viewer().viewer()
+        gl_viewer = self._viewer_panel.viewer()._viewer
         if not visible:
             if gl_viewer is not None:
                 gl_viewer.clear()
