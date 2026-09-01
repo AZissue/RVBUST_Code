@@ -307,10 +307,12 @@ class PointCloudViewer(QOpenGLWidget):
 
     def set_pointcloud(self, cloud_id: str, points: np.ndarray = None,
                        colors: np.ndarray = None, visible: bool = True,
-                       highlight_indices: list = None):
+                       highlight_indices: list = None,
+                       point_size: Optional[float] = None):
         """添加/更新/删除一路独立点云 VBO。
 
         points=None 时删除该路点云及其 GPU 资源。
+        point_size 为 None 时使用全局点大小。
         """
         if points is None:
             self._remove_cloud(cloud_id)
@@ -333,6 +335,7 @@ class PointCloudViewer(QOpenGLWidget):
                 "colors": colors.astype(np.float32),
                 "visible": bool(visible),
                 "highlight_indices": highlight_indices,
+                "point_size": point_size,
                 "vao": None,
                 "vbo_pos": None,
                 "vbo_col": None,
@@ -576,7 +579,10 @@ class PointCloudViewer(QOpenGLWidget):
         n = cloud["point_count"]
         points = cloud["points"].astype(np.float32)
         colors = cloud["colors"].copy()
-        sizes = np.full(n, self._point_size, dtype=np.float32)
+        size = cloud.get("point_size")
+        if size is None or size <= 0:
+            size = self._point_size
+        sizes = np.full(n, float(size), dtype=np.float32)
         hili = cloud.get("highlight_indices")
         if hili is not None:
             for idx in hili:

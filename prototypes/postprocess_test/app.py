@@ -3,7 +3,7 @@
 后处理测试工具 —— 独立原型（ui_v2 风格）。
 
 布局参考 CloudCompare：
-  - 左侧：DB 树（文件 → 点云对象），顶部提供打开 PLY 文件按钮；
+  - 左侧：DB 树 + 属性页，顶部为 DB 树，底部显示选中点云属性；
   - 中间：完整 3D 点云查看器（复用 src/ui_v2/widgets/viewer_panel.py）；
   - 右侧：后处理参数面板（下采样、离群点去除、AABB/球/OBB 裁切）；
   - 底部：日志栏，输出加载/处理/保存信息。
@@ -21,17 +21,18 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-from typing import Dict, Optional, Set
+from typing import Dict, List, Optional, Set
 
 import numpy as np
 import open3d as o3d
 
 from PySide6.QtCore import Qt, QSize, QThread, Signal
-from PySide6.QtGui import QAction, QFont, QIcon
+from PySide6.QtGui import QAction, QColor, QFont, QIcon
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QDockWidget, QFileDialog, QGroupBox,
-    QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QProgressDialog,
-    QPushButton, QSpinBox, QSplitter, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
+    QApplication, QCheckBox, QColorDialog, QComboBox, QDockWidget, QFileDialog,
+    QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox,
+    QProgressDialog, QPushButton, QSizePolicy, QSpinBox, QSplitter, QTreeWidget,
+    QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
 # 让原型能引用 src/ 下的模块
@@ -60,6 +61,14 @@ COLOR_PALETTE = [
     (0.40, 0.90, 0.80),   # 蓝绿
     (0.95, 0.50, 0.50),   # 红
 ]
+
+
+def _to_qcolor(color: tuple) -> QColor:
+    """将归一化 RGB 三元组转为 QColor。"""
+    r = max(0, min(255, int(color[0] * 255)))
+    g = max(0, min(255, int(color[1] * 255)))
+    b = max(0, min(255, int(color[2] * 255)))
+    return QColor(r, g, b)
 
 
 class LoadPointCloudWorker(QThread):
@@ -102,7 +111,8 @@ class DBTreeItem(QTreeWidgetItem):
         self.original_pcd = pcd
         self.file_key: Optional[str] = None
         self.color = (0.7, 0.7, 0.7)
-        # 原始点云渲染缓存（用于后处理/保存/生成显示副本）
+        self.point_size = 1
+        # 原始点云渲染缓存（完整分辨率，用于后处理/保存/生成显示副本）
         self._render_points: Optional[np.ndarray] = None
         self._render_colors: Optional[np.ndarray] = None
         # 显示级降采样缓存（实际上传到 GPU）
@@ -151,7 +161,7 @@ class PostProcessTestWindow(QMainWindow):
         body.setSpacing(0)
         body.setContentsMargins(0, 0, 0, 0)
 
-        # 左侧 DB 树
+        # 左侧 DB 树 + 属性页
         self._dock_db = QDockWidget("DB 树", self)
         self._dock_db.setFeatures(QDockWidget.NoDockWidgetFeatures)
         self._dock_db.setTitleBarWidget(QWidget())
@@ -247,37 +257,265 @@ class PostProcessTestWindow(QMainWindow):
         lo.setContentsMargins(10, 10, 10, 10)
         lo.setSpacing(10)
 
+        splitter = QSplitter(Qt.Vertical)
+
+        # ---- DB 树 ----
+        tree_container = QWidget()
+        tree_lo = QVBoxLayout(tree_container)
+        tree_lo.setContentsMargins(0, 0, 0, 0)
+        tree_lo.setSpacing(6)
+
         lbl = QLabel("DB 树")
         lbl.setStyleSheet(
             f"color: {TEXT_PRIMARY}; font-size: 14px; font-weight: 700;")
-        lo.addWidget(lbl)
+        tree_lo.addWidget(lbl)
 
         self._tree = QTreeWidget()
         self._tree.setHeaderHidden(True)
         self._tree.setSelectionMode(QTreeWidget.ExtendedSelection)
+        # 选中项红色高亮，去掉虚线焦点框
         self._tree.setStyleSheet(f"""
             QTreeWidget {{
                 background-color: {BG_CARD};
                 border: 1px solid {BORDER};
                 border-radius: 6px;
                 color: {TEXT_PRIMARY};
+                outline: none;
             }}
             QTreeWidget::item {{
                 padding: 4px 2px;
                 border: none;
             }}
             QTreeWidget::item:selected {{
-                background-color: {ACCENT};
+                background-color: #d32f2f;
                 color: #FFFFFF;
             }}
+            QTreeWidget::item:selected:!active {{
+                background-color: #b71c1c;
+                color: #FFFFFF;
+            }}
+            QTreeWidget:focus {{ outline: none; }}
         """)
         self._tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self._tree.customContextMenuRequested.connect(self._on_tree_context_menu)
         self._tree.itemChanged.connect(self._on_tree_item_changed)
         self._tree.itemSelectionChanged.connect(self._on_tree_selection_changed)
-        lo.addWidget(self._tree, 1)
+        tree_lo.addWidget(self._tree, 1)
+        splitter.addWidget(tree_container)
 
+        # ---- 属性页 ----
+        prop_container = self._build_property_panel()
+        splitter.addWidget(prop_container)
+        splitter.setSizes([480, 280])
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 0)
+
+        lo.addWidget(splitter, 1)
         return panel
+
+    def _build_property_panel(self) -> QWidget:
+        """底部属性页：显示/编辑选中点云属性。"""
+        panel = QWidget()
+        panel.setStyleSheet(f"background-color: {BG_PANEL}; border: none;")
+        lo = QVBoxLayout(panel)
+        lo.setContentsMargins(0, 0, 0, 0)
+        lo.setSpacing(6)
+
+        lbl = QLabel("属性")
+        lbl.setStyleSheet(
+            f"color: {TEXT_PRIMARY}; font-size: 14px; font-weight: 700;")
+        lo.addWidget(lbl)
+
+        group = QGroupBox("选中点云")
+        group.setStyleSheet(
+            f"QGroupBox {{ color: {TEXT_SECONDARY}; border: 1px solid {BORDER}; "
+            f"margin-top: 8px; padding-top: 8px; }}"
+            f"QGroupBox::title {{ subcontrol-origin: margin; left: 6px; }}")
+        form = QVBoxLayout(group)
+        form.setSpacing(8)
+
+        # 名称
+        row_name = QHBoxLayout()
+        row_name.addWidget(QLabel("名称:"))
+        self._prop_name = QLineEdit()
+        self._prop_name.setReadOnly(True)
+        self._prop_name.setStyleSheet(
+            f"QLineEdit {{ background-color: {BG_INPUT}; color: {TEXT_PRIMARY}; "
+            f"border: 1px solid {BORDER}; border-radius: 4px; padding: 4px; }}")
+        row_name.addWidget(self._prop_name, 1)
+        form.addLayout(row_name)
+
+        # 点数
+        row_pts = QHBoxLayout()
+        row_pts.addWidget(QLabel("原始点数:"))
+        self._prop_raw_pts = QLabel("-")
+        self._prop_raw_pts.setStyleSheet(f"color: {TEXT_MUTED};")
+        row_pts.addWidget(self._prop_raw_pts)
+        row_pts.addSpacing(12)
+        row_pts.addWidget(QLabel("显示点数:"))
+        self._prop_disp_pts = QLabel("-")
+        self._prop_disp_pts.setStyleSheet(f"color: {TEXT_MUTED};")
+        row_pts.addWidget(self._prop_disp_pts)
+        row_pts.addStretch(1)
+        form.addLayout(row_pts)
+
+        # 可见
+        row_vis = QHBoxLayout()
+        self._prop_visible = QCheckBox("可见")
+        self._prop_visible.stateChanged.connect(self._on_prop_visible_changed)
+        row_vis.addWidget(self._prop_visible)
+        row_vis.addStretch(1)
+        form.addLayout(row_vis)
+
+        # 点大小
+        row_size = QHBoxLayout()
+        row_size.addWidget(QLabel("点大小:"))
+        self._prop_size = QSpinBox()
+        self._prop_size.setRange(1, 10)
+        self._prop_size.setValue(1)
+        self._prop_size.valueChanged.connect(self._on_prop_size_changed)
+        row_size.addWidget(self._prop_size)
+        row_size.addStretch(1)
+        form.addLayout(row_size)
+
+        # 颜色
+        row_color = QHBoxLayout()
+        row_color.addWidget(QLabel("显示颜色:"))
+        self._prop_color = QPushButton()
+        self._prop_color.setFixedSize(28, 22)
+        self._prop_color.setToolTip("点击选择颜色")
+        self._prop_color.clicked.connect(self._on_prop_color_clicked)
+        row_color.addWidget(self._prop_color)
+        btn_reset_color = QPushButton("恢复默认")
+        btn_reset_color.setToolTip("恢复为默认配色")
+        btn_reset_color.clicked.connect(self._on_prop_color_reset)
+        row_color.addWidget(btn_reset_color)
+        row_color.addStretch(1)
+        form.addLayout(row_color)
+
+        form.addStretch(1)
+        lo.addWidget(group)
+        return panel
+
+    def _selected_cloud_items(self) -> List[DBTreeItem]:
+        """返回当前选中的所有点云节点（若选中文件节点则取其第一个子点云）。"""
+        items = []
+        for item in self._tree.selectedItems():
+            if not isinstance(item, DBTreeItem):
+                continue
+            if item.pcd is not None:
+                items.append(item)
+            elif item.childCount() > 0:
+                child = item.child(0)
+                if isinstance(child, DBTreeItem) and child.pcd is not None:
+                    items.append(child)
+        return items
+
+    def _update_property_panel(self):
+        """根据当前选中项刷新属性页。"""
+        items = self._selected_cloud_items()
+        if not items:
+            self._prop_name.setText("未选择点云")
+            self._prop_raw_pts.setText("-")
+            self._prop_disp_pts.setText("-")
+            self._prop_visible.setChecked(False)
+            self._prop_visible.setEnabled(False)
+            self._prop_size.setEnabled(False)
+            self._prop_color.setEnabled(False)
+            self._prop_color.setStyleSheet("background-color: transparent;")
+            return
+
+        self._prop_visible.setEnabled(True)
+        self._prop_size.setEnabled(True)
+        self._prop_color.setEnabled(True)
+
+        if len(items) == 1:
+            item = items[0]
+            self._prop_name.setText(item.text(0))
+            raw_n = len(item.pcd.points) if item.pcd else 0
+            disp_n = len(item._display_points) if item._display_points is not None else raw_n
+            self._prop_raw_pts.setText(f"{raw_n:,}")
+            self._prop_disp_pts.setText(f"{disp_n:,}")
+            self._prop_visible.setChecked(item.checkState(0) == Qt.Checked)
+            self._prop_size.setValue(item.point_size)
+            self._set_color_button(item.color)
+        else:
+            total_raw = sum(len(it.pcd.points) for it in items if it.pcd)
+            total_disp = sum(
+                len(it._display_points) if it._display_points is not None
+                else (len(it.pcd.points) if it.pcd else 0)
+                for it in items
+            )
+            self._prop_name.setText(f"已选择 {len(items)} 个点云")
+            self._prop_raw_pts.setText(f"{total_raw:,}")
+            self._prop_disp_pts.setText(f"{total_disp:,}")
+            # 可见性：全部勾选才勾选
+            all_checked = all(it.checkState(0) == Qt.Checked for it in items)
+            self._prop_visible.setChecked(all_checked)
+            # 点大小：全部相同才显示，否则清空
+            sizes = {it.point_size for it in items}
+            self._prop_size.setValue(next(iter(sizes)) if len(sizes) == 1 else 1)
+            # 颜色：不显示多选颜色
+            self._set_color_button((0.7, 0.7, 0.7))
+
+    def _set_color_button(self, color: tuple):
+        qc = _to_qcolor(color)
+        self._prop_color.setStyleSheet(
+            f"QPushButton {{ background-color: {qc.name()}; "
+            f"border: 1px solid {BORDER}; border-radius: 4px; }}"
+        )
+
+    def _on_prop_visible_changed(self, state: int):
+        items = self._selected_cloud_items()
+        checked = state == Qt.Checked
+        for item in items:
+            item.setCheckState(0, Qt.Checked if checked else Qt.Unchecked)
+        # tree itemChanged 会触发刷新
+
+    def _on_prop_size_changed(self, value: int):
+        items = self._selected_cloud_items()
+        if not items:
+            return
+        for item in items:
+            item.point_size = value
+            key = item.file_key or item.text(0)
+            self._viewer_cloud_keys.discard(key)
+        self._rebuild_display_caches()
+        self._refresh_viewer()
+
+    def _on_prop_color_clicked(self):
+        items = self._selected_cloud_items()
+        if not items:
+            return
+        init_color = _to_qcolor(items[0].color)
+        color = QColorDialog.getColor(init_color, self, "选择点云颜色")
+        if not color.isValid():
+            return
+        rgb = (color.redF(), color.greenF(), color.blueF())
+        for item in items:
+            item.color = rgb
+            key = item.file_key or item.text(0)
+            self._viewer_cloud_keys.discard(key)
+        self._rebuild_display_caches()
+        self._refresh_viewer()
+        self._update_property_panel()
+
+    def _on_prop_color_reset(self):
+        items = self._selected_cloud_items()
+        if not items:
+            return
+        # 根据文件在树中的索引恢复默认配色
+        for i in range(self._tree.topLevelItemCount()):
+            file_item = self._tree.topLevelItem(i)
+            for j in range(file_item.childCount()):
+                child = file_item.child(j)
+                if child in items:
+                    child.color = self._color_for_index(i)
+                    key = child.file_key or child.text(0)
+                    self._viewer_cloud_keys.discard(key)
+        self._rebuild_display_caches()
+        self._refresh_viewer()
+        self._update_property_panel()
 
     def _build_process_panel(self) -> QWidget:
         panel = QWidget()
@@ -495,6 +733,7 @@ class PostProcessTestWindow(QMainWindow):
         else:
             self._line_crop_param.setText(str(self._processor.crop_ratio))
         if self._chk_crop_preview.isChecked():
+            self._rebuild_display_caches()
             self._refresh_viewer()
 
     def _on_open_files(self):
@@ -652,10 +891,12 @@ class PostProcessTestWindow(QMainWindow):
     def _on_tree_item_changed(self, item: QTreeWidgetItem, column: int):
         if column != 0:
             return
+        self._update_property_panel()
         self._rebuild_display_caches()
         self._refresh_viewer()
 
     def _on_tree_selection_changed(self):
+        self._update_property_panel()
         selected = self._tree.selectedItems()
         if not selected:
             self._current_item = None
@@ -766,7 +1007,8 @@ class PostProcessTestWindow(QMainWindow):
             if pts is None or cols is None:
                 continue
             if key not in self._viewer_cloud_keys:
-                gl_viewer.set_pointcloud(key, pts, cols, visible=True)
+                gl_viewer.set_pointcloud(
+                    key, pts, cols, visible=True, point_size=item.point_size)
                 self._viewer_cloud_keys.add(key)
             else:
                 gl_viewer.set_pointcloud_visible(key, True)
