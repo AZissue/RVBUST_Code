@@ -231,6 +231,21 @@ class PointCloudViewer(QOpenGLWidget):
         self._show_grid = True
         self._overlay_text = ""
 
+        # MVP 矩阵缓存（用于屏幕/世界坐标互转）
+        self._mvp_matrix: Optional[np.ndarray] = None
+        self._mvp_inv: Optional[np.ndarray] = None
+
+        # 旋转中心可视化
+        self._pivot_visible = False
+        self._pivot_position = np.zeros(3, dtype=np.float32)
+
+        # ROI 框选
+        self._roi_mode = False
+        self._roi_start = None
+        self._roi_rect = None
+        self._roi_rubberband = None
+        self._roi_selected_indices: Dict[str, np.ndarray] = {}
+
         # 信息叠加层：透明 QLabel 子控件（QPainter 在 3.0 Core Profile 下
         # 无法使用 Qt GL 绘制引擎，故改用控件叠加方案）
         self._overlay_label = QLabel(self)
@@ -445,6 +460,18 @@ class PointCloudViewer(QOpenGLWidget):
             self._line_col = None
             self._axes_vert_count = 0
             self._grid_vert_count = 0
+
+            # 选中包围盒 / 旋转中心 线框 VAO
+            self._bbox_vao = GL.glGenVertexArrays(1)
+            self._bbox_vbo_pos, self._bbox_vbo_col = GL.glGenBuffers(2)
+            self._bbox_pos = None
+            self._bbox_col = None
+            self._bbox_vert_count = 0
+            self._pivot_vao = GL.glGenVertexArrays(1)
+            self._pivot_vbo_pos, self._pivot_vbo_col = GL.glGenBuffers(2)
+            self._pivot_pos = None
+            self._pivot_col = None
+            self._pivot_vert_count = 0
         except Exception as e:
             logger.error(f"OpenGL 初始化失败: {e}")
             self._has_gl = False
@@ -623,6 +650,103 @@ class PointCloudViewer(QOpenGLWidget):
         GL.glEnableVertexAttribArray(self._loc_a_color)
         GL.glBindVertexArray(0)
 
+    def set_selection_bbox(self, bounds_list: List[tuple]):
+        """设置选中点云的包围盒线框；bounds_list 元素为 (min, max) 各为 3 元组。"""
+        if not bounds_list:
+            self._bbox_pos = None
+            self._bbox_col = None
+            self._bbox_vert_count = 0
+            self.update()
+            return
+        lines = []
+        for (bmin, bmax) in bounds_list:
+            bmin = np.asarray(bmin, dtype=np.float32)
+            bmax = np.asarray(bmax, dtype=np.float32)
+            corners = np.array([
+                [bmin[0], bmin[1], bmin[2]],
+                [bmax[0], bmin[1], bmin[2]],
+                [bmax[0], bmax[1], bmin[2]],
+                [bmin[0], bmax[1], bmin[2]],
+                [bmin[0], bmin[1], bmax[2]],
+                [bmax[0], bmin[1], bmax[2]],
+                [bmax[0], bmax[1], bmax[2]],
+                [bmin[0], bmax[1], bmax[2]],
+            ], dtype=np.float32)
+            edges = [
+                (0, 1), (1, 2), (2, 3), (3, 0),
+                (4, 5), (5, 6), (6, 7), (7, 4),
+                (0, 4), (1, 5), (2, 6), (3, 7),
+            ]
+            for i, j in edges:
+                lines.append(corners[i])
+                lines.append(corners[j])
+        self._bbox_pos = np.array(lines, dtype=np.float32)
+        self._bbox_col = np.tile(np.array([[1.0, 0.2, 0.2]], dtype=np.float32),
+                                 (len(lines), 1))
+        self._bbox_vert_count = len(lines)
+        self.update()
+
+    def _upload_bbox_lines(self):
+        """上传包围盒线框到 GPU。"""
+        if not self._has_gl or self._bbox_pos is None or self._bbox_col is None:
+            return
+        from OpenGL import GL
+        GL.glBindVertexArray(self._bbox_vao)
+        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self._bbox_vbo_pos)
+        GL.glBufferData(GL.GL_ARRAY_BUFFER, self._bbox_pos.nbytes,
+                        self._bbox_pos, GL.GL_STATIC_DRAW)
+        GL.glVertexAttribPointer(self._loc_a_position, 3, GL.GL_FLOAT, GL.GL_FALSE, 0, None)
+        GL.glEnableVertexAttribArray(self._loc_a_position)
+        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self._bbox_vbo_col)
+        GL.glBufferData(GL.GL_ARRAY_BUFFER, self._bbox_col.nbytes,
+                        self._bbox_col, GL.GL_STATIC_DRAW)
+        GL.glVertexAttribPointer(self._loc_a_color, 3, GL.GL_FLOAT, GL.GL_FALSE, 0, None)
+        GL.glEnableVertexAttribArray(self._loc_a_color)
+        GL.glBindVertexArray(0)
+
+    def set_pivot_visible(self, visible: bool):
+        """显示/隐藏旋转中心十字。"""
+        self._pivot_visible = bool(visible)
+        self.update()
+
+    def set_pivot_position(self, pos):
+        """设置旋转中心位置并更新十字几何。"""
+        self._pivot_position = np.asarray(pos, dtype=np.float32)
+        self._update_pivot_position(self._pivot_position)
+
+    def _update_pivot_position(self, pos):
+        """生成旋转中心十字线框几何。"""
+        pos = np.asarray(pos, dtype=np.float32)
+        size = max(self._extent * 0.05, 0.1)
+        pts = np.array([
+            pos + [-size, 0, 0], pos + [size, 0, 0],
+            pos + [0, -size, 0], pos + [0, size, 0],
+            pos + [0, 0, -size], pos + [0, 0, size],
+        ], dtype=np.float32)
+        self._pivot_pos = pts
+        self._pivot_col = np.tile(np.array([[1.0, 0.9, 0.2]], dtype=np.float32),
+                                   (len(pts), 1))
+        self._pivot_vert_count = len(pts)
+        self.update()
+
+    def _upload_pivot_lines(self):
+        """上传旋转中心十字到 GPU。"""
+        if not self._has_gl or self._pivot_pos is None or self._pivot_col is None:
+            return
+        from OpenGL import GL
+        GL.glBindVertexArray(self._pivot_vao)
+        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self._pivot_vbo_pos)
+        GL.glBufferData(GL.GL_ARRAY_BUFFER, self._pivot_pos.nbytes,
+                        self._pivot_pos, GL.GL_STATIC_DRAW)
+        GL.glVertexAttribPointer(self._loc_a_position, 3, GL.GL_FLOAT, GL.GL_FALSE, 0, None)
+        GL.glEnableVertexAttribArray(self._loc_a_position)
+        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self._pivot_vbo_col)
+        GL.glBufferData(GL.GL_ARRAY_BUFFER, self._pivot_col.nbytes,
+                        self._pivot_col, GL.GL_STATIC_DRAW)
+        GL.glVertexAttribPointer(self._loc_a_color, 3, GL.GL_FLOAT, GL.GL_FALSE, 0, None)
+        GL.glEnableVertexAttribArray(self._loc_a_color)
+        GL.glBindVertexArray(0)
+
     def _update_scene_bounds(self):
         """根据当前可见点云（多路 + 遗留单路）重新计算场景质心与相机参数。"""
         visible_points = []
@@ -683,6 +807,13 @@ class PointCloudViewer(QOpenGLWidget):
         model.translate(-self.centroid[0], -self.centroid[1], -self.centroid[2])
         mvp = proj * view * model
 
+        # 缓存 MVP 供反投影/投影使用（column-major）
+        self._mvp_matrix = np.array(mvp.data(), dtype=np.float64).reshape(4, 4, order='F')
+        try:
+            self._mvp_inv = np.linalg.inv(self._mvp_matrix)
+        except np.linalg.LinAlgError:
+            self._mvp_inv = None
+
         GL.glUseProgram(self._shader)
         GL.glUniformMatrix4fv(self._loc_u_mvp, 1, GL.GL_FALSE, mvp.data())
 
@@ -718,6 +849,22 @@ class PointCloudViewer(QOpenGLWidget):
                                 self._grid_vert_count)
             GL.glBindVertexArray(0)
 
+        # 选中包围盒线框
+        if self._bbox_pos is not None and self._bbox_vert_count > 0:
+            self._upload_bbox_lines()
+            GL.glBindVertexArray(self._bbox_vao)
+            GL.glVertexAttrib1f(self._loc_a_size, 1.0)
+            GL.glDrawArrays(GL.GL_LINES, 0, self._bbox_vert_count)
+            GL.glBindVertexArray(0)
+
+        # 旋转中心十字
+        if self._pivot_visible and self._pivot_pos is not None and self._pivot_vert_count > 0:
+            self._upload_pivot_lines()
+            GL.glBindVertexArray(self._pivot_vao)
+            GL.glVertexAttrib1f(self._loc_a_size, 1.0)
+            GL.glDrawArrays(GL.GL_LINES, 0, self._pivot_vert_count)
+            GL.glBindVertexArray(0)
+
         GL.glUseProgram(0)
 
     def resizeGL(self, w: int, h: int):
@@ -734,15 +881,157 @@ class PointCloudViewer(QOpenGLWidget):
     # 鼠标交互
     # ------------------------------------------------------------------
     def mousePressEvent(self, event):
+        if self._roi_mode and event.button() == Qt.LeftButton:
+            self._roi_start = event.pos()
+            self._ensure_rubberband()
+            self._roi_rubberband.setGeometry(event.x(), event.y(), 0, 0)
+            self._roi_rubberband.show()
+            return
         self.camera.begin_drag(event.pos())
 
     def mouseMoveEvent(self, event):
+        if self._roi_mode and self._roi_start is not None:
+            rect = self._roi_rect_from_points(self._roi_start, event.pos())
+            self._roi_rubberband.setGeometry(rect)
+            return
         self.camera.drag(event.pos(), event.buttons())
         self._axes_indicator.set_rotation(self.camera.rotation_x, self.camera.rotation_y)
         self.update()
 
     def mouseReleaseEvent(self, event):
+        if self._roi_mode and event.button() == Qt.LeftButton and self._roi_start is not None:
+            self._roi_rect = self._roi_rect_from_points(self._roi_start, event.pos())
+            self._roi_start = None
+            self._roi_rubberband.hide()
+            self._compute_roi_selection()
+            return
         self.camera.end_drag()
+
+    def set_roi_mode(self, enabled: bool):
+        """进入/退出 ROI 矩形框选模式。"""
+        self._roi_mode = bool(enabled)
+        if not self._roi_mode:
+            self._roi_start = None
+            self._roi_rect = None
+            self._roi_selected_indices = {}
+            if self._roi_rubberband is not None:
+                self._roi_rubberband.hide()
+        self.update()
+
+    def clear_roi_selection(self):
+        """清除 ROI 高亮与选中索引。"""
+        self._roi_rect = None
+        self._roi_selected_indices = {}
+        # 恢复所有点云原始颜色
+        for cloud in self._clouds.values():
+            if "orig_colors" in cloud and cloud["orig_colors"] is not None:
+                cloud["colors"] = cloud["orig_colors"]
+                cloud["orig_colors"] = None
+                cloud["uploaded"] = False
+        self._initialized = False
+        self.update()
+
+    def get_roi_selection(self) -> Dict[str, np.ndarray]:
+        """返回当前 ROI 选中的各 cloud_id 索引数组。"""
+        return {k: v.copy() for k, v in self._roi_selected_indices.items()}
+
+    def _ensure_rubberband(self):
+        if self._roi_rubberband is None:
+            from PySide6.QtWidgets import QRubberBand
+            self._roi_rubberband = QRubberBand(QRubberBand.Rectangle, self)
+            self._roi_rubberband.setStyleSheet(
+                "QRubberBand { border: 2px dashed #FF5252; background-color: rgba(255,82,82,30); }"
+            )
+
+    @staticmethod
+    def _roi_rect_from_points(a, b):
+        from PySide6.QtCore import QRect
+        x1, y1 = a.x(), a.y()
+        x2, y2 = b.x(), b.y()
+        return QRect(min(x1, x2), min(y1, y2), abs(x2 - x1), abs(y1 - y2))
+
+    def _compute_roi_selection(self):
+        """根据 _roi_rect 计算每个可见点云的选中索引。"""
+        self._roi_selected_indices = {}
+        if self._roi_rect is None or self._roi_rect.width() < 3 or self._roi_rect.height() < 3:
+            return
+        rect = self._roi_rect
+        # 读取矩形区域深度缓冲
+        depth_buf = self._read_depth_rect(rect)
+        if depth_buf is None:
+            return
+        h = self.height()
+        # 反投影深度缓冲到世界坐标平面（可选：直接在屏幕空间比较深度）
+        for cloud_id, cloud in self._clouds.items():
+            if not cloud.get("visible", True):
+                continue
+            pts = cloud["points"]
+            if len(pts) == 0:
+                continue
+            screen = self.world_to_screen(pts)
+            if screen is None:
+                continue
+            sx = screen[:, 0]
+            sy = screen[:, 1]
+            sz = screen[:, 2]
+            in_rect = (
+                (sx >= rect.left()) & (sx <= rect.right()) &
+                (sy >= rect.top()) & (sy <= rect.bottom()) &
+                (sz >= 0.0) & (sz <= 1.0)
+            )
+            if not in_rect.any():
+                continue
+            # 对矩形内点采样深度缓冲
+            ix = np.clip(np.round(sx[in_rect]).astype(np.int32), rect.left(), rect.right())
+            iy = np.clip(np.round(h - 1 - sy[in_rect]).astype(np.int32),
+                         h - 1 - rect.bottom(), h - 1 - rect.top())
+            # depth_buf 索引：[y - rect.top(), x - rect.left()]
+            bufx = ix - rect.left()
+            bufy = iy - (h - 1 - rect.bottom())
+            buf_h, buf_w = depth_buf.shape
+            bufx = np.clip(bufx, 0, buf_w - 1)
+            bufy = np.clip(bufy, 0, buf_h - 1)
+            sampled = depth_buf[bufy, bufx]
+            # 深度匹配：使用绝对容差 0.005 + 相对容差 1%
+            tol = 0.005 + 0.01 * sampled
+            visible = np.abs(sz[in_rect] - sampled) < tol
+            idx_in_rect = np.nonzero(in_rect)[0]
+            selected = idx_in_rect[visible]
+            if len(selected) > 0:
+                self._roi_selected_indices[cloud_id] = selected
+        # 高亮显示选中点
+        self._highlight_roi_selection()
+
+    def _read_depth_rect(self, rect):
+        """读取矩形区域深度缓冲，返回 float32 [h, w] 数组。"""
+        try:
+            from OpenGL import GL
+            self.makeCurrent()
+            x = max(0, rect.left())
+            y = max(0, self.height() - rect.bottom() - 1)
+            w = min(rect.width(), self.width() - x)
+            h = min(rect.height(), self.height() - y)
+            if w <= 0 or h <= 0:
+                return None
+            buf = GL.glReadPixels(x, y, w, h, GL.GL_DEPTH_COMPONENT, GL.GL_FLOAT)
+            return np.asarray(buf, dtype=np.float32).reshape(h, w)
+        except Exception:
+            return None
+
+    def _highlight_roi_selection(self):
+        """将 ROI 选中点临时标红（保留原始颜色用于恢复）。"""
+        for cloud_id, indices in self._roi_selected_indices.items():
+            cloud = self._clouds.get(cloud_id)
+            if cloud is None:
+                continue
+            # 首次高亮时保存原始颜色
+            if cloud.get("orig_colors") is None:
+                cloud["orig_colors"] = cloud["colors"].copy()
+            colors = cloud["colors"].copy()
+            colors[indices] = [1.0, 0.0, 0.0]
+            cloud["colors"] = colors
+            cloud["uploaded"] = False
+        self.update()
 
     def mouseDoubleClickEvent(self, event):
         """双击滚轮（中键）：重新选择旋转中心到点击位置。"""
@@ -751,16 +1040,62 @@ class PointCloudViewer(QOpenGLWidget):
         event.accept()
 
     def _set_rotation_center(self, pos):
-        """把旋转中心设置到鼠标点击的 3D 位置（简化：平移相机使点击处居中）。"""
-        # 将屏幕坐标转换为归一化设备坐标，估算点击处在视图中的偏移
-        w, h = max(self.width(), 1), max(self.height(), 1)
-        nx = (2.0 * pos.x()) / w - 1.0
-        ny = 1.0 - (2.0 * pos.y()) / h
-        # 根据当前缩放和距离估算平移量，使点击处移到视野中心
-        pan_scale = self.camera._distance / self.camera.zoom * 0.5
-        self.camera.pan_x -= nx * pan_scale
-        self.camera.pan_y -= ny * pan_scale
+        """把旋转中心设置到鼠标点击位置对应的 3D 点（通过深度缓冲反投影）。"""
+        if not self._has_gl:
+            return
+        depth = self._read_depth(pos.x(), pos.y())
+        if depth is None or depth >= 0.99999:
+            return
+        world_pos = self.screen_to_world(pos.x(), pos.y(), depth)
+        if world_pos is None:
+            return
+        self.camera.set_target(world_pos, keep_position=True)
+        self._update_pivot_position(world_pos)
         self.update()
+
+    def _read_depth(self, x: int, y: int):
+        """读取 (x,y) 处深度缓冲值，失败返回 None。"""
+        try:
+            from OpenGL import GL
+            self.makeCurrent()
+            px = max(0, min(x, self.width() - 1))
+            # OpenGL 原点在左下角，y 需要翻转
+            py = max(0, min(self.height() - 1 - y, self.height() - 1))
+            depth = GL.glReadPixels(px, py, 1, 1, GL.GL_DEPTH_COMPONENT, GL.GL_FLOAT)
+            return float(depth[0][0])
+        except Exception:
+            return None
+
+    def screen_to_world(self, x: float, y: float, depth: float):
+        """屏幕坐标 + 深度 → 世界坐标；depth 为 [0,1]（OpenGL 深度缓冲值）。"""
+        if self._mvp_inv is None:
+            return None
+        w, h = max(self.width(), 1), max(self.height(), 1)
+        ndc = np.array([
+            2.0 * x / w - 1.0,
+            1.0 - 2.0 * y / h,
+            2.0 * depth - 1.0,
+            1.0,
+        ], dtype=np.float64)
+        world_h = self._mvp_inv @ ndc
+        if abs(world_h[3]) < 1e-9:
+            return None
+        return world_h[:3] / world_h[3]
+
+    def world_to_screen(self, points: np.ndarray):
+        """世界坐标 (N,3) → 屏幕坐标 (N,3)，第三列为 OpenGL 深度 [0,1]。"""
+        if self._mvp_matrix is None:
+            return None
+        pts = np.asarray(points, dtype=np.float64)
+        n = len(pts)
+        homo = np.concatenate([pts, np.ones((n, 1), dtype=np.float64)], axis=1)
+        clip = (self._mvp_matrix @ homo.T).T
+        w = np.where(clip[:, 3:] != 0, clip[:, 3:], 1.0)
+        ndc = clip[:, :3] / w
+        sx = (ndc[:, 0] + 1.0) * 0.5 * self.width()
+        sy = (1.0 - ndc[:, 1]) * 0.5 * self.height()
+        sz = (ndc[:, 2] + 1.0) * 0.5
+        return np.stack([sx, sy, sz], axis=1)
 
     def wheelEvent(self, event):
         delta = event.angleDelta().y()
@@ -772,7 +1107,11 @@ class PointCloudViewer(QOpenGLWidget):
 
 
 class _ArcBallCamera:
-    """ArcBall 相机控制器（左键旋转 / 右键平移 / 滚轮缩放 / 双击滚轮设中心）。"""
+    """轨道相机控制器（左键旋转 / 右键平移 / 滚轮缩放 / 双击中键设中心）。
+
+    使用 lookAt(position, target, up) 构建视图矩阵，旋转/平移围绕显式 target
+    进行，避免原实现中平移后旋转中心漂移、方向反转的问题。
+    """
 
     # 视角预设：(rotation_x, rotation_y)
     PRESETS = {
@@ -782,17 +1121,13 @@ class _ArcBallCamera:
         "iso": (30.0, -45.0),
     }
 
-    def __init__(self, distance: float = 2.0, pan_sensitivity: float = 0.005):
+    def __init__(self, distance: float = 2.0):
         self.rotation_x = 30.0
         self.rotation_y = -45.0
-        self.zoom = 1.0
-        self.pan_x = 0.0
-        self.pan_y = 0.0
         self._distance = distance
-        self._pan_sensitivity = pan_sensitivity
+        self.target = np.zeros(3, dtype=np.float32)
         self._last_pos = None
         self._tracking = False
-        self.target = np.zeros(3, dtype=np.float32)
 
     @property
     def distance(self) -> float:
@@ -800,7 +1135,37 @@ class _ArcBallCamera:
 
     @distance.setter
     def distance(self, value: float):
-        self._distance = max(1.0, value)
+        self._distance = max(1e-4, value)
+
+    def position(self) -> np.ndarray:
+        """根据当前角度计算相机 eye 位置。"""
+        rx = np.radians(self.rotation_x)
+        ry = np.radians(self.rotation_y)
+        d = self._distance
+        # v = R_y(ry) * R_x(rx) * (0, 0, d)
+        x = d * np.cos(rx) * np.sin(ry)
+        y = -d * np.sin(rx)
+        z = d * np.cos(rx) * np.cos(ry)
+        return self.target + np.array([x, y, z], dtype=np.float32)
+
+    def _basis(self):
+        """返回相机坐标系在世界坐标下的 (right, up, forward)。"""
+        pos = self.position()
+        forward = self.target - pos
+        norm = np.linalg.norm(forward)
+        if norm < 1e-9:
+            forward = np.array([0.0, 0.0, -1.0], dtype=np.float32)
+        else:
+            forward = forward / norm
+        world_up = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+        right = np.cross(forward, world_up)
+        rnorm = np.linalg.norm(right)
+        if rnorm < 1e-9:
+            right = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+        else:
+            right = right / rnorm
+        up = np.cross(right, forward)
+        return right, up, forward
 
     def begin_drag(self, pos):
         self._last_pos = pos
@@ -813,43 +1178,60 @@ class _ArcBallCamera:
         dy = pos.y() - self._last_pos.y()
         self._last_pos = pos
         if buttons == Qt.LeftButton:
+            # 左右拖动绕世界 Z 轴旋转，上下拖动绕相机右轴俯仰
             self.rotation_y += dx * 0.5
             self.rotation_x += dy * 0.5
-            # 俯仰角不做 ±89° 钳制：允许 360° 全向环绕（越过两极时画面自然
-            # 翻转，与 MeshLab/CloudCompare 自由轨道一致）；wrap 到 [-180,180]
-            # 仅防止长时间拖拽后数值无限累积，视觉效果不变（旋转是周期的）
             self.rotation_x = (self.rotation_x + 180.0) % 360.0 - 180.0
             self.rotation_y = (self.rotation_y + 180.0) % 360.0 - 180.0
         elif buttons == Qt.RightButton:
-            # 平移灵敏度随缩放自适应：zoom 越大（放大），视野越小，平移越慢
-            sens = self._pan_sensitivity * self._distance / max(self.zoom, 0.01)
-            self.pan_x += dx * sens
-            self.pan_y -= dy * sens
+            # 在视图平面平移 target（及 position），灵敏度随距离自适应
+            sens = self._distance * np.tan(np.radians(22.5)) * 2.0 / 1000.0
+            right, up, _ = self._basis()
+            delta = -dx * sens * right + dy * sens * up
+            self.target += delta
 
     def end_drag(self):
         self._tracking = False
 
     def zoom_in(self, step: float = 0.1):
-        self.zoom = max(0.01, self.zoom * (1.0 - step))
+        self._distance = max(1e-4, self._distance * (1.0 - step))
 
     def zoom_out(self, step: float = 0.1):
-        self.zoom = max(0.01, self.zoom * (1.0 + step))
+        self._distance = max(1e-4, self._distance * (1.0 + step))
 
     def view_matrix(self) -> QMatrix4x4:
         m = QMatrix4x4()
-        m.translate(self.pan_x, self.pan_y, -self._distance / self.zoom)
-        m.rotate(self.rotation_x, 1, 0, 0)
-        m.rotate(self.rotation_y, 0, 1, 0)
+        pos = self.position()
+        m.lookAt(
+            pos[0], pos[1], pos[2],
+            self.target[0], self.target[1], self.target[2],
+            0.0, 0.0, 1.0,
+        )
         return m
 
+    def set_target(self, target, keep_position: bool = False):
+        """设置旋转中心；keep_position=True 时保持相机 eye 位置不变（画面不跳）。"""
+        target = np.asarray(target, dtype=np.float32)
+        if keep_position:
+            pos = self.position()
+            self.target = target
+            # 重新计算 distance/angles 使 position 保持不变
+            diff = pos - self.target
+            d = float(np.linalg.norm(diff))
+            self._distance = max(1e-4, d)
+            if d > 1e-9:
+                self.rotation_x = np.degrees(-np.arcsin(np.clip(diff[1] / d, -1.0, 1.0)))
+                cos_rx = np.cos(np.radians(self.rotation_x))
+                denom = max(1e-9, d * cos_rx)
+                self.rotation_y = np.degrees(np.arctan2(diff[0] / denom, diff[2] / denom))
+        else:
+            self.target = target
+
     def set_preset(self, preset: str):
-        """视角预设：重置平移 / 缩放并应用固定旋转角。"""
         rx, ry = self.PRESETS.get(preset, self.PRESETS["iso"])
         self.rotation_x = rx
         self.rotation_y = ry
-        self.zoom = 1.0
-        self.pan_x = 0.0
-        self.pan_y = 0.0
+        self.target = np.zeros(3, dtype=np.float32)
 
     def reset(self):
         self.set_preset("iso")
@@ -892,6 +1274,8 @@ class EmbeddedPointCloudViewer(QWidget):
         self._last_name: str = ""
         self._last_highlight: Optional[list] = None
         self._maximized = False
+        self._minimal_toolbar = False
+        self._toolbar_widgets: List[QWidget] = []
         self._setup_ui()
         self._setup_viewer()
 
@@ -942,35 +1326,47 @@ class EmbeddedPointCloudViewer(QWidget):
         self.btn_collapse.toggled.connect(self._on_collapse_toggled)
         apply_icon(self.btn_collapse, "view_iso")
         tb.addWidget(self.btn_collapse)
+        self._toolbar_widgets.append(self.btn_collapse)
 
         # 显示模式
-        tb.addWidget(QLabel("显示:"))
+        lbl_mode = QLabel("显示:")
+        tb.addWidget(lbl_mode)
+        self._toolbar_widgets.append(lbl_mode)
         self.combo_mode = QComboBox()
         self.combo_mode.addItem("全部叠加", self.MODE_OVERLAY)
         self.combo_mode.addItem("合并结果", self.MODE_MERGED)
         self.combo_mode.currentIndexChanged.connect(self._on_mode_changed)
         tb.addWidget(self.combo_mode, 1)
+        self._toolbar_widgets.append(self.combo_mode)
 
         # 着色模式
-        tb.addWidget(QLabel("着色:"))
+        lbl_color = QLabel("着色:")
+        tb.addWidget(lbl_color)
+        self._toolbar_widgets.append(lbl_color)
         self.combo_color = QComboBox()
         self.combo_color.addItem("按站位", self.COLOR_STATION)
         self.combo_color.addItem("按高度", self.COLOR_HEIGHT)
         self.combo_color.addItem("灰度", self.COLOR_GRAY)
         self.combo_color.currentIndexChanged.connect(self._on_color_mode_changed)
         tb.addWidget(self.combo_color)
+        self._toolbar_widgets.append(self.combo_color)
 
         # 点大小
-        tb.addWidget(QLabel("点大小:"))
+        lbl_size = QLabel("点大小:")
+        tb.addWidget(lbl_size)
+        self._toolbar_widgets.append(lbl_size)
         self.spin_point_size = QSpinBox()
         self.spin_point_size.setRange(1, 5)
         self.spin_point_size.setValue(1)
         self.spin_point_size.valueChanged.connect(self._on_point_size_changed)
         tb.addWidget(self.spin_point_size)
+        self._toolbar_widgets.append(self.spin_point_size)
 
         # 视角预设（纯文字按钮；提供 view_top/view_front/view_side/view_iso
         # 图标文件后变为图标+文字）
-        tb.addWidget(QLabel("视角:"))
+        lbl_view = QLabel("视角:")
+        tb.addWidget(lbl_view)
+        self._toolbar_widgets.append(lbl_view)
         for text, preset in (("顶", "top"), ("前", "front"),
                              ("侧", "side"), ("等轴", "iso")):
             btn = QToolButton()
@@ -979,6 +1375,7 @@ class EmbeddedPointCloudViewer(QWidget):
             btn.clicked.connect(lambda _=False, p=preset: self.set_view_preset(p))
             apply_icon(btn, f"view_{preset}")
             tb.addWidget(btn)
+            self._toolbar_widgets.append(btn)
 
         # 重置视角
         self.btn_reset_view = QToolButton()
@@ -987,6 +1384,7 @@ class EmbeddedPointCloudViewer(QWidget):
         self.btn_reset_view.clicked.connect(self.reset_view)
         apply_icon(self.btn_reset_view, "reset_view")
         tb.addWidget(self.btn_reset_view)
+        self._toolbar_widgets.append(self.btn_reset_view)
 
         # 参考元素开关（checkable 图标按钮，checked 高亮由工具栏样式表区分）
         self.btn_axes = QToolButton()
@@ -998,6 +1396,7 @@ class EmbeddedPointCloudViewer(QWidget):
         self.btn_axes.toggled.connect(self._on_axes_toggled)
         apply_icon(self.btn_axes, "view_axes")
         tb.addWidget(self.btn_axes)
+        self._toolbar_widgets.append(self.btn_axes)
         self.btn_grid = QToolButton()
         self.btn_grid.setText("网格")
         self.btn_grid.setToolTip("显示 / 隐藏网格地面")
@@ -1007,6 +1406,7 @@ class EmbeddedPointCloudViewer(QWidget):
         self.btn_grid.toggled.connect(self._on_grid_toggled)
         apply_icon(self.btn_grid, "view_grid")
         tb.addWidget(self.btn_grid)
+        self._toolbar_widgets.append(self.btn_grid)
 
         # 背景切换（theme.png：图标固定，仅文本随状态切换）
         self.btn_bg = QToolButton()
@@ -1016,6 +1416,7 @@ class EmbeddedPointCloudViewer(QWidget):
         self.btn_bg.toggled.connect(self._on_bg_toggled)
         apply_icon(self.btn_bg, "theme")
         tb.addWidget(self.btn_bg)
+        self._toolbar_widgets.append(self.btn_bg)
 
         tb.addStretch(1)
 
@@ -1145,6 +1546,59 @@ class EmbeddedPointCloudViewer(QWidget):
     def viewer(self) -> Optional[PointCloudViewer]:
         """返回底层 OpenGL 渲染器（高级调试使用）。"""
         return self._viewer
+
+    def set_toolbar_minimal(self, minimal: bool = True):
+        """切换极简工具栏：仅保留最大化按钮。"""
+        self._minimal_toolbar = bool(minimal)
+        for w in self._toolbar_widgets:
+            w.setVisible(not self._minimal_toolbar)
+
+    def set_show_axes(self, on: bool):
+        """显示/隐藏 3D 坐标轴。"""
+        if self._viewer:
+            self._viewer.set_show_axes(on)
+        if not self._minimal_toolbar:
+            self.btn_axes.setChecked(bool(on))
+
+    def set_show_grid(self, on: bool):
+        """显示/隐藏网格地面。"""
+        if self._viewer:
+            self._viewer.set_show_grid(on)
+        if not self._minimal_toolbar:
+            self.btn_grid.setChecked(bool(on))
+
+    def set_background(self, dark: bool):
+        """切换深色/浅色背景。"""
+        if self._viewer:
+            self._viewer.set_background(dark)
+        if not self._minimal_toolbar:
+            self.btn_bg.setChecked(not dark)
+
+    def set_pivot_visible(self, visible: bool):
+        """显示/隐藏旋转中心。"""
+        if self._viewer:
+            self._viewer.set_pivot_visible(visible)
+
+    def set_selection_bbox(self, bounds_list: List[tuple]):
+        """设置选中点云的包围盒线框（bounds_list: [(min,max), ...]）。"""
+        if self._viewer:
+            self._viewer.set_selection_bbox(bounds_list)
+
+    def set_roi_mode(self, enabled: bool):
+        """进入/退出 ROI 框选模式。"""
+        if self._viewer:
+            self._viewer.set_roi_mode(enabled)
+
+    def clear_roi_selection(self):
+        """清除 ROI 选中高亮。"""
+        if self._viewer:
+            self._viewer.clear_roi_selection()
+
+    def get_roi_selection(self) -> Dict[str, np.ndarray]:
+        """返回当前 ROI 选中的各 cloud_id 索引数组。"""
+        if self._viewer:
+            return self._viewer.get_roi_selection()
+        return {}
 
     # ------------------------------------------------------------------
     # 工具栏槽函数

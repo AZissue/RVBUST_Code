@@ -118,6 +118,8 @@ class DBTreeItem(QTreeWidgetItem):
         # 显示级降采样缓存（实际上传到 GPU）
         self._display_points: Optional[np.ndarray] = None
         self._display_colors: Optional[np.ndarray] = None
+        # 显示副本相对原始点云的步长（uniform 下采样每 k 点取 1）
+        self._display_step: int = 1
 
 
 class PostProcessTestWindow(QMainWindow):
@@ -179,8 +181,10 @@ class PostProcessTestWindow(QMainWindow):
         self._viewer_panel = ViewerPanel("3D 点云预览")
         self._viewer_panel.setStyleSheet(
             f"QFrame {{ background-color: {BG_WINDOW}; border: none; }}")
-        # 隐藏 3D 查看器自带的"显示"下拉框，统一由左侧 DB 树控制
-        self._hide_viewer_display_combo()
+        # 后处理子功能使用极简 3D 工具栏，控制项放到左右面板
+        self._viewer_panel.viewer().set_toolbar_minimal(True)
+        self._viewer_panel.viewer().set_show_axes(False)
+        self._viewer_panel.viewer().set_show_grid(True)
 
         body.addWidget(self._viewer_panel, 1)
 
@@ -393,6 +397,24 @@ class PostProcessTestWindow(QMainWindow):
         row_color.addStretch(1)
         form.addLayout(row_color)
 
+        # 显示包围盒
+        row_bbox = QHBoxLayout()
+        self._prop_bbox = QCheckBox("显示包围盒")
+        self._prop_bbox.setChecked(True)
+        self._prop_bbox.stateChanged.connect(self._on_prop_bbox_changed)
+        row_bbox.addWidget(self._prop_bbox)
+        row_bbox.addStretch(1)
+        form.addLayout(row_bbox)
+
+        # 显示旋转中心
+        row_pivot = QHBoxLayout()
+        self._prop_pivot = QCheckBox("显示旋转中心")
+        self._prop_pivot.setChecked(False)
+        self._prop_pivot.stateChanged.connect(self._on_prop_pivot_changed)
+        row_pivot.addWidget(self._prop_pivot)
+        row_pivot.addStretch(1)
+        form.addLayout(row_pivot)
+
         form.addStretch(1)
         lo.addWidget(group)
         return panel
@@ -517,6 +539,196 @@ class PostProcessTestWindow(QMainWindow):
         self._refresh_viewer()
         self._update_property_panel()
 
+    def _on_prop_bbox_changed(self, state: int):
+        self._update_selection_bbox()
+
+    def _on_prop_pivot_changed(self, state: int):
+        visible = state == Qt.Checked
+        gl_viewer = self._viewer_panel.viewer()
+        gl_viewer.set_pivot_visible(visible)
+        if visible:
+            gl_viewer.viewer().set_pivot_position(gl_viewer.viewer().camera.target)
+
+    def _update_selection_bbox(self):
+        """根据 DB 树选中项更新 3D 视图中的包围盒线框。"""
+        gl_viewer = self._viewer_panel.viewer()
+        if not self._prop_bbox.isChecked():
+            gl_viewer.set_selection_bbox([])
+            return
+        items = self._selected_cloud_items()
+        bounds = []
+        for item in items:
+            if item.pcd is None or len(item.pcd.points) == 0:
+                continue
+            pts = np.asarray(item.pcd.points)
+            mask = np.isfinite(pts).all(axis=1)
+            if not mask.any():
+                continue
+            pts = pts[mask]
+            bounds.append((pts.min(axis=0).tolist(), pts.max(axis=0).tolist()))
+        gl_viewer.set_selection_bbox(bounds)
+
+    # ------------------------------------------------------------------ 视图控制
+    def _on_view_preset(self, preset: str):
+        self._viewer_panel.viewer().set_view_preset(preset)
+
+    def _on_reset_view(self):
+        self._viewer_panel.viewer().reset_view()
+
+    def _on_view_axes_changed(self, state: int):
+        self._viewer_panel.viewer().set_show_axes(state == Qt.Checked)
+
+    def _on_view_grid_changed(self, state: int):
+        self._viewer_panel.viewer().set_show_grid(state == Qt.Checked)
+
+    def _on_view_bg_changed(self, state: int):
+        self._viewer_panel.viewer().set_background(dark=state == Qt.Checked)
+
+    # ------------------------------------------------------------------ ROI
+    def _on_roi_start(self):
+        checked = self._btn_roi_start.isChecked()
+        self._viewer_panel.viewer().set_roi_mode(checked)
+        if checked:
+            self._lbl_roi_status.setText("ROI 模式：在 3D 视图中按住左键拖拽框选")
+            self._start_roi_timer()
+        else:
+            self._lbl_roi_status.setText("未框选")
+            self._stop_roi_timer()
+
+    def _on_roi_cancel(self):
+        self._viewer_panel.viewer().clear_roi_selection()
+        self._btn_roi_start.setChecked(False)
+        self._lbl_roi_status.setText("未框选")
+        self._btn_segment_in.setEnabled(False)
+        self._btn_segment_out.setEnabled(False)
+        self._stop_roi_timer()
+
+    def _start_roi_timer(self):
+        from PySide6.QtCore import QTimer
+        self._roi_timer = QTimer(self)
+        self._roi_timer.timeout.connect(self._check_roi_selection)
+        self._roi_timer.start(200)
+
+    def _stop_roi_timer(self):
+        if getattr(self, "_roi_timer", None) is not None:
+            self._roi_timer.stop()
+            self._roi_timer = None
+
+    def _check_roi_selection(self):
+        selection = self._viewer_panel.viewer().get_roi_selection()
+        total = sum(len(v) for v in selection.values())
+        if total > 0:
+            self._lbl_roi_status.setText(f"已选中 {total:,} 个点")
+            self._btn_segment_in.setEnabled(True)
+            self._btn_segment_out.setEnabled(True)
+        else:
+            self._lbl_roi_status.setText("ROI 模式：在 3D 视图中按住左键拖拽框选")
+            self._btn_segment_in.setEnabled(False)
+            self._btn_segment_out.setEnabled(False)
+
+    def _on_segment_in(self):
+        self._apply_roi_segment(True)
+
+    def _on_segment_out(self):
+        self._apply_roi_segment(False)
+
+    def _apply_roi_segment(self, segment_in: bool):
+        selection = self._viewer_panel.viewer().get_roi_selection()
+        if not selection:
+            self._log("ROI 未选中任何点", "warn")
+            return
+        created = []
+        for cloud_id, indices in selection.items():
+            item = self._find_item_by_key(cloud_id)
+            if item is None or item.pcd is None:
+                continue
+            pcd = item.pcd
+            pts = np.asarray(pcd.points)
+            if len(pts) == 0:
+                continue
+            # 将显示级索引映射回原始点云索引
+            step = getattr(item, "_display_step", 1)
+            orig_indices = (indices.astype(np.int64) * step)
+            orig_indices = np.clip(orig_indices, 0, len(pts) - 1)
+            mask = np.zeros(len(pts), dtype=bool)
+            mask[orig_indices] = True
+            if not segment_in:
+                mask = ~mask
+            if not mask.any():
+                continue
+            new_pcd = o3d.geometry.PointCloud()
+            new_pcd.points = o3d.utility.Vector3dVector(pts[mask])
+            if pcd.has_colors():
+                cols = np.asarray(pcd.colors)
+                new_pcd.colors = o3d.utility.Vector3dVector(cols[mask])
+            if pcd.has_normals():
+                norms = np.asarray(pcd.normals)
+                new_pcd.normals = o3d.utility.Vector3dVector(norms[mask])
+            suffix = "_in" if segment_in else "_out"
+            base = item.file_key or item.text(0)
+            new_name = f"{base}{suffix}"
+            # 重名处理
+            counter = 1
+            unique_name = new_name
+            while unique_name in self._loaded_pcds:
+                counter += 1
+                unique_name = f"{new_name}_{counter}"
+            self._add_pcd_to_tree(unique_name, new_pcd, parent_key=base)
+            created.append(unique_name)
+        self._viewer_panel.viewer().clear_roi_selection()
+        self._btn_roi_start.setChecked(False)
+        self._lbl_roi_status.setText(f"已生成：{', '.join(created)}")
+        self._btn_segment_in.setEnabled(False)
+        self._btn_segment_out.setEnabled(False)
+        self._stop_roi_timer()
+        self._log(f"ROI {'保留' if segment_in else '剔除'} 结果：{', '.join(created)}", "success")
+
+    def _find_item_by_key(self, key: str):
+        """根据 file_key 找到 DB 树中对应的点云节点。"""
+        for i in range(self._tree.topLevelItemCount()):
+            file_item = self._tree.topLevelItem(i)
+            if getattr(file_item, "file_key", None) == key:
+                if file_item.childCount() > 0:
+                    child = file_item.child(0)
+                    if isinstance(child, DBTreeItem):
+                        return child
+            for j in range(file_item.childCount()):
+                child = file_item.child(j)
+                if isinstance(child, DBTreeItem) and getattr(child, "file_key", None) == key:
+                    return child
+        return None
+
+    def _add_pcd_to_tree(self, name: str, pcd: o3d.geometry.PointCloud,
+                         parent_key: Optional[str] = None):
+        """将点云加入 DB 树并刷新显示。"""
+        self._loaded_pcds[name] = pcd
+        # 若指定父节点则作为子节点插入，否则作为新文件节点
+        parent_item = None
+        if parent_key is not None:
+            for i in range(self._tree.topLevelItemCount()):
+                fi = self._tree.topLevelItem(i)
+                if getattr(fi, "file_key", None) == parent_key:
+                    parent_item = fi
+                    break
+        color = self._color_for_index(self._tree.topLevelItemCount())
+        if parent_item is not None:
+            cloud_item = DBTreeItem(name, pcd=pcd, parent=parent_item)
+            cloud_item.file_key = name
+            cloud_item.color = color
+            parent_item.setExpanded(True)
+        else:
+            file_item = DBTreeItem(name, pcd=None)
+            file_item.file_key = name
+            file_item.color = color
+            cloud_item = DBTreeItem(f"{name} - Cloud", pcd=pcd, parent=file_item)
+            cloud_item.file_key = name
+            cloud_item.color = color
+            file_item.setExpanded(True)
+            self._tree.addTopLevelItem(file_item)
+        self._cache_render_arrays(cloud_item)
+        self._rebuild_display_caches()
+        self._refresh_viewer()
+
     def _build_process_panel(self) -> QWidget:
         panel = QWidget()
         panel.setStyleSheet(f"background-color: {BG_PANEL}; border: none;")
@@ -528,6 +740,71 @@ class PostProcessTestWindow(QMainWindow):
         lbl.setStyleSheet(
             f"color: {TEXT_PRIMARY}; font-size: 14px; font-weight: 700;")
         lo.addWidget(lbl)
+
+        # 视图控制
+        view_group = QGroupBox("视图")
+        view_group.setStyleSheet(
+            f"QGroupBox {{ color: {TEXT_SECONDARY}; border: 1px solid {BORDER}; "
+            f"margin-top: 8px; padding-top: 8px; }}"
+            f"QGroupBox::title {{ subcontrol-origin: margin; left: 6px; }}")
+        view_lo = QVBoxLayout(view_group)
+        row_presets = QHBoxLayout()
+        for text, preset in (("顶", "top"), ("前", "front"),
+                             ("侧", "side"), ("等轴", "iso")):
+            btn = QPushButton(text)
+            btn.setFixedHeight(28)
+            btn.clicked.connect(lambda _=False, p=preset: self._on_view_preset(p))
+            row_presets.addWidget(btn)
+        btn_reset = QPushButton("重置")
+        btn_reset.setFixedHeight(28)
+        btn_reset.clicked.connect(self._on_reset_view)
+        row_presets.addWidget(btn_reset)
+        view_lo.addLayout(row_presets)
+        row_toggles = QHBoxLayout()
+        self._chk_axes = QCheckBox("坐标轴")
+        self._chk_axes.setChecked(False)
+        self._chk_axes.stateChanged.connect(self._on_view_axes_changed)
+        row_toggles.addWidget(self._chk_axes)
+        self._chk_grid = QCheckBox("网格")
+        self._chk_grid.setChecked(True)
+        self._chk_grid.stateChanged.connect(self._on_view_grid_changed)
+        row_toggles.addWidget(self._chk_grid)
+        self._chk_bg = QCheckBox("深色背景")
+        self._chk_bg.setChecked(True)
+        self._chk_bg.stateChanged.connect(self._on_view_bg_changed)
+        row_toggles.addWidget(self._chk_bg)
+        view_lo.addLayout(row_toggles)
+        lo.addWidget(view_group)
+
+        # ROI 裁剪
+        roi_group = QGroupBox("ROI 裁剪")
+        roi_group.setStyleSheet(view_group.styleSheet())
+        roi_lo = QVBoxLayout(roi_group)
+        self._btn_roi_start = QPushButton("开始框选")
+        self._btn_roi_start.setCheckable(True)
+        self._btn_roi_start.setToolTip("在 3D 视图中拖拽矩形选择区域")
+        self._btn_roi_start.clicked.connect(self._on_roi_start)
+        roi_lo.addWidget(self._btn_roi_start)
+        self._lbl_roi_status = QLabel("未框选")
+        self._lbl_roi_status.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 12px;")
+        self._lbl_roi_status.setWordWrap(True)
+        roi_lo.addWidget(self._lbl_roi_status)
+        row_roi = QHBoxLayout()
+        self._btn_segment_in = QPushButton("保留选中")
+        self._btn_segment_in.setToolTip("将框选区域内的点保存为新点云")
+        self._btn_segment_in.setEnabled(False)
+        self._btn_segment_in.clicked.connect(self._on_segment_in)
+        row_roi.addWidget(self._btn_segment_in)
+        self._btn_segment_out = QPushButton("剔除选中")
+        self._btn_segment_out.setToolTip("将框选区域外的点保存为新点云")
+        self._btn_segment_out.setEnabled(False)
+        self._btn_segment_out.clicked.connect(self._on_segment_out)
+        row_roi.addWidget(self._btn_segment_out)
+        roi_lo.addLayout(row_roi)
+        btn_roi_cancel = QPushButton("取消")
+        btn_roi_cancel.clicked.connect(self._on_roi_cancel)
+        roi_lo.addWidget(btn_roi_cancel)
+        lo.addWidget(roi_group)
 
         # 当前选中信息
         info_group = QGroupBox("当前选中")
@@ -631,18 +908,6 @@ class PostProcessTestWindow(QMainWindow):
         return panel
 
     # ------------------------------------------------------------------ 事件
-    def _hide_viewer_display_combo(self):
-        """隐藏 3D 查看器工具栏里的"显示"下拉框及其标签，统一由左侧 DB 树控制。"""
-        viewer = self._viewer_panel.viewer()
-        viewer.combo_mode.hide()
-        # 查找并隐藏对应的"显示:"标签
-        for w in viewer.children():
-            if isinstance(w, QWidget):
-                for lbl in w.findChildren(QLabel):
-                    if lbl.text() == "显示:":
-                        lbl.hide()
-                        return
-
     @staticmethod
     def _color_for_index(idx: int):
         return COLOR_PALETTE[idx % len(COLOR_PALETTE)]
@@ -702,6 +967,7 @@ class PostProcessTestWindow(QMainWindow):
             for item in visible_items:
                 item._display_points = item._render_points.copy()
                 item._display_colors = item._render_colors.copy()
+                item._display_step = 1
             return
 
         # 按比例分配预算，每朵云至少保留 1% 预算（避免小点云消失）
@@ -712,11 +978,13 @@ class PostProcessTestWindow(QMainWindow):
             if target >= n:
                 item._display_points = item._render_points.copy()
                 item._display_colors = item._render_colors.copy()
+                item._display_step = 1
             else:
                 k = max(1, int(np.ceil(n / target)))
                 idx = np.arange(0, n, k)
                 item._display_points = item._render_points[idx].copy()
                 item._display_colors = item._render_colors[idx].copy()
+                item._display_step = k
 
     def _on_budget_changed(self, value: int):
         """显示预算改变时重新生成显示副本并刷新。"""
@@ -897,6 +1165,7 @@ class PostProcessTestWindow(QMainWindow):
 
     def _on_tree_selection_changed(self):
         self._update_property_panel()
+        self._update_selection_bbox()
         selected = self._tree.selectedItems()
         if not selected:
             self._current_item = None
