@@ -8,9 +8,9 @@
 
 | 分支 | 项目 | 技术栈 | 说明 |
 |---|---|---|---|
-| `crm-system` | **TechSupportCRM** | FastAPI + Vue 3 + Vite | 客户管理与工单系统（二代版本），支持客户跟进、工单流转、数据导入导出、提醒跟进等功能 |
+| `crm_system` | **CRM 工单与客户管理系统** | Node.js Express + lowdb + 单文件前端 | 客户管理与工单系统，支持客户跟进、工单流转、工作日志、图片上传、数据导入导出、已解决工单自动关闭等功能（替代早期 crm-system / master 分支版本） |
 | `MultiCameraCalibration` | **多相机外参标定与点云拼接** | Python + PySide6 + Open3D + RVC SDK | N 相机外参标定（RANSAC + SVD + 四元数平均），非对称圆标定板检测与位姿法标定，编码圆标记检测，单相机多站位模式，离线会话批量处理，点云拼接与后处理 |
-| `master` | **CRM_New（早期版）** | Node.js + 纯 HTML/JS | CRM 系统初代原型，单文件前端 + Express 后端 + JSON 数据库 |
+| `master` | **CRM_New（旧版归档）** | Node.js + 纯 HTML/JS | CRM 系统早期版本归档（含部署脚本），已由 `crm_system` 分支替代 |
 | `CodedCircleRegistration_v2` | **编码圆拼接工具 v2** | Python + PySide6 + Open3D + RVC SDK | 基于 RVC 深度相机的编码圆点云拼接系统，支持多帧自动配准与彩色融合 |
 | `hand-eye-tools` | **手眼标定数据采集助手** | Python + PyQt5 + Open3D + RVC SDK | 基于 RVC X2 相机的手眼标定数据采集 GUI 工具，支持眼在手外/眼在手上 × 标记物/TCP 戳点四种模式，导出 HandEyeManager 兼容格式 |
 | `rvc-vision-studio` | **RvcVisionStudio** | C++ / Qt6 + QtNodes + PCL / VTK | 拖拽式零代码 3D 点云流程编排与测量平台，支持 ROI 框选、几何拟合、尺寸测量、多视窗与异步执行引擎 |
@@ -21,8 +21,8 @@
 ## 快速进入各项目
 
 ```bash
-# CRM 系统（二代）
-git checkout crm-system
+# CRM 工单与客户管理系统（当前版）
+git checkout crm_system
 
 # 多相机外参标定与点云拼接
 git checkout MultiCameraCalibration
