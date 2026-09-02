@@ -316,8 +316,24 @@ class MainWindowShell(QMainWindow):
 
         # 先让后端断开相机并启动官方调试工具
         self.param_debug_requested.emit()
+        # 同步刷新主界面为未连接状态，避免用户关掉小窗后仍看到旧连接状态
+        self._set_connection_idle()
         # 再打开设备管理小窗，方便用户调试完成后重新连接
         self.open_device_manager()
+
+    def _set_connection_idle(self):
+        """将当前工作区标记为未连接，清空设备列表并刷新状态栏。"""
+        self._devices = []
+        if self._mode == LauncherDialog.MODE_MULTI_CAM:
+            self._ws_multi.set_devices([])
+            self._ws_multi.set_state("idle")
+        elif self._mode == LauncherDialog.MODE_MOBILE_CHAIN:
+            self._ws_mobile.set_devices([])
+            self._ws_mobile.set_state("idle")
+        else:
+            self._ws_turntable.set_devices([])
+            self._ws_turntable.set_state("idle")
+        self._refresh_statusbar()
 
     # ------------------------------------------------------------ 设备管理（回小窗）
     def open_device_manager(self):
