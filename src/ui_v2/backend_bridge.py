@@ -443,15 +443,31 @@ class BackendBridge(QObject):
                 return
             ok_count = sum(1 for _, ok, _ in results if ok)
             total_count = len(results)
-            test_count = total_count - ok_count
+            real_count = len(real_devices)
+            test_count = len(test_devices)
             for cid, ok, msg in results:
                 level = "success" if ok else "warn"
                 self.shell.log(f"相机 {cid}: {msg}", level)
             self.shell.log(
-                f"设备连接完成: {ok_count}/{total_count} 台真实相机成功，"
+                f"设备连接完成: {ok_count}/{real_count} 台真实相机成功，"
                 f"测试设备 {test_count} 台", "info")
-            # 工作区已在 on_connect 中切换，这里只刷新设备状态与后续初始化
             self._current_mode = mode
+
+            # 若用户勾选了真实相机但全部连接失败，阻断进入工作区并给出排查建议
+            if real_count > 0 and ok_count == 0:
+                reason, details = self._classify_connection_failure(
+                    results, real_devices, required=1,
+                    total_count=real_count)
+                self.shell.log(
+                    "所有真实相机连接失败，未进入工作区", "error")
+                if show_loading:
+                    self.shell.hide_loading()
+                self._show_connection_error(
+                    "相机连接失败", reason, details)
+                self.connection_finished.emit(
+                    False, "所有真实相机连接失败")
+                return
+
             if mode == LauncherDialog.MODE_MULTI_CAM:
                 # 模式 A：多相机外参标定要求至少 2 台设备（真实或测试均可进入 UI）
                 if total_count < 2:
@@ -480,6 +496,23 @@ class BackendBridge(QObject):
                 self._on_multi_reference_changed(reference_id)
                 self.shell.workspace_multi().set_state("connected")
             elif mode == LauncherDialog.MODE_MOBILE_CHAIN:
+                # 模式 B：单相机移动拼接要求至少 1 台设备
+                if total_count < 1:
+                    reason, details = self._classify_connection_failure(
+                        results, real_devices, required=1,
+                        total_count=total_count)
+                    self.shell.log(
+                        "单相机移动拼接需要至少 1 台设备", "error")
+                    if show_loading:
+                        self.shell.hide_loading()
+                    self._show_connection_error(
+                        "无法进入单相机移动拼接", reason, details)
+                    self.connection_finished.emit(
+                        False, "单相机移动拼接需要至少 1 台设备")
+                    return
+                if ok_count < 1 and test_count > 0:
+                    self._show_debug_mode_notice(
+                        "单相机移动拼接", ok_count, test_count)
                 # 模式 B 需要初始化链式拼接会话
                 ok, msg = self.mobile_workflow.start_chaining()
                 self.shell.log(msg, "success" if ok else "warn")
@@ -510,7 +543,7 @@ class BackendBridge(QObject):
                 self.shell.hide_loading()
             self.connection_finished.emit(
                 True,
-                f"设备连接完成: {ok_count}/{total_count} 台真实相机成功"
+                f"设备连接完成: {ok_count}/{real_count} 台真实相机成功"
                 f"（测试设备 {test_count} 台）")
 
         self._run_background(_connect, _done)

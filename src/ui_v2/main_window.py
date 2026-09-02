@@ -384,9 +384,6 @@ class MainWindowShell(QMainWindow):
             prev_devices = list(self._devices)
             new_mode = connected["mode"]
 
-            # 先切换到新模式的 UI 布局（不等待连接结果）
-            self.set_mode(new_mode, ordered_devices)
-
             if self._backend_bridge is not None:
                 self.show_loading("正在连接设备...")
 
@@ -399,28 +396,26 @@ class MainWindowShell(QMainWindow):
                     self.hide_loading()
                     if success:
                         self.log(message, "success")
+                        # 连接成功后再切换到新模式工作区
+                        self.set_mode(new_mode, ordered_devices)
                         return
-                    # 连接失败：弹窗提示并回退到之前的模式
+                    # 连接失败：弹窗提示并保持在之前的模式
                     self.log(f"设备连接失败: {message}", "error")
                     suggestion = self._connection_failure_suggestion(message)
-                    ret = QMessageBox.warning(
+                    QMessageBox.warning(
                         self, "设备连接失败",
-                        f"{message}\n\n{suggestion}\n\n是否返回之前的模式？",
-                        QMessageBox.Yes | QMessageBox.No,
-                        QMessageBox.Yes,
+                        f"{message}\n\n{suggestion}",
+                        QMessageBox.Ok,
+                        QMessageBox.Ok,
                     )
-                    if ret == QMessageBox.Yes and prev_mode:
-                        self.set_mode(prev_mode, prev_devices)
-                        # 尝试恢复旧设备连接（如果有）
-                        self._backend_bridge._on_device_manager_reopened(
-                            prev_mode, prev_devices, show_loading=False)
-                    # No 则停留在新模式，由用户在小窗或设备管理中重试
 
                 self._backend_bridge.connection_finished.connect(
                     _on_reconnect_finished)
                 self._backend_bridge._on_device_manager_reopened(
                     new_mode, ordered_devices, show_loading=False)
             else:
+                # 无 backend_bridge 时直接按旧流程切换
+                self.set_mode(new_mode, ordered_devices)
                 self.device_manager_reopened.emit(
                     connected["mode"], ordered_devices)
 
