@@ -936,6 +936,15 @@ class PostProcessTestWindow(QMainWindow):
 
     def _rebuild_display_caches(self):
         """按当前显示预算为所有可见点云生成显示级降采样副本。"""
+        try:
+            self._do_rebuild_display_caches()
+        except Exception as e:
+            self._log(f"重建显示缓存失败：{e}", "error")
+            import traceback
+            traceback.print_exc()
+
+    def _do_rebuild_display_caches(self):
+        """_rebuild_display_caches 的实际实现。"""
         visible_items = []
         total_raw = 0
         for i in range(self._tree.topLevelItemCount()):
@@ -1069,8 +1078,20 @@ class PostProcessTestWindow(QMainWindow):
         self._batch_loading = False
         loaded = len(self._loaded_pcds) - getattr(self, "_load_count_before", 0)
         self._log(f"批量加载完成，新增 {loaded} 个点云", "success")
-        self._rebuild_display_caches()
-        self._refresh_viewer()
+        # 延迟刷新：等进度对话框关闭、事件循环清空后再重建/渲染，
+        # 避免在模态对话框状态尚未完全释放时访问 GL 上下文
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(0, self._finalize_batch_load)
+
+    def _finalize_batch_load(self):
+        """批量加载完成后在主线程事件循环下一轮重建显示缓存并刷新 3D 视图。"""
+        try:
+            self._rebuild_display_caches()
+            self._refresh_viewer()
+        except Exception as e:
+            self._log(f"批量加载后刷新视图失败：{e}", "error")
+            import traceback
+            traceback.print_exc()
 
     def _load_file(self, path: str,
                    pcd: Optional[o3d.geometry.PointCloud] = None):
@@ -1080,7 +1101,8 @@ class PostProcessTestWindow(QMainWindow):
             n_points = len(pcd.points)
             if n_points == 0:
                 self._log(f"文件为空或无法解析：{path}", "warn")
-                QMessageBox.warning(self, "加载失败", f"文件为空或无法解析：\n{path}")
+                if not self._batch_loading:
+                    QMessageBox.warning(self, "加载失败", f"文件为空或无法解析：\n{path}")
                 return
 
             name = Path(path).name
@@ -1109,7 +1131,8 @@ class PostProcessTestWindow(QMainWindow):
                 self._refresh_viewer()
         except Exception as e:
             self._log(f"加载失败 {path}：{e}", "error")
-            QMessageBox.critical(self, "加载失败", f"无法加载 {path}：\n{e}")
+            if not self._batch_loading:
+                QMessageBox.critical(self, "加载失败", f"无法加载 {path}：\n{e}")
 
     def _on_tree_context_menu(self, pos):
         item = self._tree.itemAt(pos)
@@ -1247,6 +1270,15 @@ class PostProcessTestWindow(QMainWindow):
 
     def _refresh_viewer(self):
         """根据 DB 树勾选状态刷新 3D 视图（多 VBO 缓存，避免重复上传）。"""
+        try:
+            self._do_refresh_viewer()
+        except Exception as e:
+            self._log(f"刷新 3D 视图失败：{e}", "error")
+            import traceback
+            traceback.print_exc()
+
+    def _do_refresh_viewer(self):
+        """_refresh_viewer 的实际实现。"""
         gl_viewer = self._viewer_panel.viewer().viewer()
         if gl_viewer is None:
             return
