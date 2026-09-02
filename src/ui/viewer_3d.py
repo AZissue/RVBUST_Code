@@ -38,7 +38,7 @@ import numpy as np
 import open3d as o3d
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QMatrix4x4
+from PySide6.QtGui import QMatrix4x4, QVector3D
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QComboBox,
     QSpinBox, QSizePolicy, QToolButton,
@@ -1203,9 +1203,9 @@ class _ArcBallCamera:
         m = QMatrix4x4()
         pos = self.position()
         m.lookAt(
-            pos[0], pos[1], pos[2],
-            self.target[0], self.target[1], self.target[2],
-            0.0, 0.0, 1.0,
+            QVector3D(float(pos[0]), float(pos[1]), float(pos[2])),
+            QVector3D(float(self.target[0]), float(self.target[1]), float(self.target[2])),
+            QVector3D(0.0, 0.0, 1.0),
         )
         return m
 
