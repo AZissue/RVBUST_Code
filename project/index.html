@@ -1,0 +1,3478 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>技术支持工单与客户管理系统</title>
+<style>
+/* ===== CSS Reset & Base ===== */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 16px; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif; background: #f0f2f5; color: #333; line-height: 1.6; min-height: 100vh; }
+a { text-decoration: none; color: inherit; }
+ul, ol { list-style: none; }
+img { max-width: 100%; display: block; }
+button { font-family: inherit; cursor: pointer; border: none; background: none; }
+input, textarea, select { font-family: inherit; font-size: 1rem; }
+
+/* ===== CSS Variables ===== */
+:root {
+  --primary: #1890ff; --primary-dark: #096dd9; --primary-light: #e6f7ff;
+  --success: #52c41a; --success-light: #f6ffed;
+  --warning: #faad14; --warning-light: #fffbe6;
+  --danger: #ff4d4f; --danger-light: #fff1f0;
+  --info: #13c2c2; --info-light: #e6fffb;
+  --text: #262626; --text-secondary: #595959; --text-muted: #8c8c8c;
+  --border: #d9d9d9; --border-light: #f0f0f0;
+  --bg: #f0f2f5; --bg-white: #fff; --bg-sidebar: #001529;
+  --shadow: 0 2px 8px rgba(0,0,0,0.08); --shadow-lg: 0 4px 16px rgba(0,0,0,0.12);
+  --radius: 6px; --radius-lg: 8px;
+  --sidebar-width: 220px; --header-height: 64px;
+}
+
+/* ===== Layout ===== */
+.app-layout { display: flex; min-height: 100vh; }
+.sidebar {
+  width: var(--sidebar-width); background: var(--bg-sidebar); color: #fff;
+  position: fixed; top: 0; left: 0; bottom: 0; z-index: 100;
+  transition: transform .3s; overflow-y: auto;
+}
+.sidebar-brand { padding: 16px; font-size: 1.1rem; font-weight: 600; border-bottom: 1px solid rgba(255,255,255,0.1); display: flex; align-items: center; gap: 8px; }
+.sidebar-brand .icon { font-size: 1.4rem; }
+.sidebar-nav { padding: 8px 0; }
+.nav-item { display: flex; align-items: center; gap: 10px; padding: 12px 20px; color: rgba(255,255,255,0.7); transition: all .2s; cursor: pointer; }
+.nav-item:hover, .nav-item.active { background: #1890ff; color: #fff; }
+.nav-item .icon { font-size: 1.1rem; width: 20px; text-align: center; }
+.nav-group-title { padding: 12px 20px 4px; font-size: .75rem; color: rgba(255,255,255,0.45); text-transform: uppercase; letter-spacing: .5px; }
+.main { flex: 1; margin-left: var(--sidebar-width); min-height: 100vh; display: flex; flex-direction: column; }
+.header {
+  height: var(--header-height); background: #fff; border-bottom: 1px solid var(--border-light);
+  display: flex; align-items: center; justify-content: space-between; padding: 0 24px;
+  position: sticky; top: 0; z-index: 50;
+}
+.header-left { display: flex; align-items: center; gap: 16px; }
+.menu-toggle { display: none; font-size: 1.3rem; color: var(--text-secondary); }
+.header-right { display: flex; align-items: center; gap: 16px; }
+.badge-btn { position: relative; padding: 8px; color: var(--text-secondary); font-size: 1.1rem; }
+.badge-btn .badge {
+  position: absolute; top: 4px; right: 4px; min-width: 16px; height: 16px; padding: 0 4px;
+  background: var(--danger); color: #fff; font-size: .65rem; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+}
+.user-info { display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 4px 8px; border-radius: var(--radius); }
+.user-info:hover { background: var(--bg); }
+.user-avatar { width: 32px; height: 32px; border-radius: 50%; background: var(--primary); color: #fff; display: flex; align-items: center; justify-content: center; font-size: .85rem; font-weight: 600; }
+.content { flex: 1; padding: 24px; overflow-y: auto; }
+.page-title { font-size: 1.4rem; font-weight: 600; margin-bottom: 20px; color: var(--text); }
+
+/* ===== Mobile Sidebar Overlay ===== */
+.sidebar-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 99; }
+
+/* ===== Cards ===== */
+.card { background: #fff; border-radius: var(--radius-lg); box-shadow: var(--shadow); margin-bottom: 20px; }
+.card-header { padding: 16px 20px; border-bottom: 1px solid var(--border-light); display: flex; align-items: center; justify-content: space-between; }
+.card-title { font-weight: 600; font-size: 1.05rem; }
+.card-body { padding: 20px; }
+
+/* ===== Stats Row ===== */
+.stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 20px; }
+.stat-card { background: #fff; border-radius: var(--radius-lg); box-shadow: var(--shadow); padding: 20px; display: flex; align-items: center; gap: 16px; }
+.stat-icon { width: 48px; height: 48px; border-radius: var(--radius); display: flex; align-items: center; justify-content: center; font-size: 1.4rem; flex-shrink: 0; }
+.stat-icon.blue { background: var(--primary-light); color: var(--primary); }
+.stat-icon.green { background: var(--success-light); color: var(--success); }
+.stat-icon.orange { background: var(--warning-light); color: var(--warning); }
+.stat-icon.red { background: var(--danger-light); color: var(--danger); }
+.stat-icon.cyan { background: var(--info-light); color: var(--info); }
+.stat-value { font-size: 1.6rem; font-weight: 700; color: var(--text); }
+.stat-label { font-size: .85rem; color: var(--text-muted); }
+
+/* ===== Buttons ===== */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 16px; border-radius: var(--radius); font-size: .9rem; transition: all .2s; border: 1px solid transparent; cursor: pointer; }
+.btn:disabled { opacity: .6; cursor: not-allowed; }
+.btn-primary { background: var(--primary); color: #fff; }
+.btn-primary:hover:not(:disabled) { background: var(--primary-dark); }
+.btn-success { background: var(--success); color: #fff; }
+.btn-success:hover:not(:disabled) { background: #389e0d; }
+.btn-warning { background: var(--warning); color: #fff; }
+.btn-warning:hover:not(:disabled) { background: #d48806; }
+.btn-danger { background: var(--danger); color: #fff; }
+.btn-danger:hover:not(:disabled) { background: #cf1322; }
+.btn-default { background: #fff; border-color: var(--border); color: var(--text); }
+.btn-default:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }
+.btn-sm { padding: 4px 12px; font-size: .85rem; }
+.btn-lg { padding: 10px 24px; font-size: 1rem; }
+.btn-group { display: flex; gap: 8px; }
+
+/* ===== Forms ===== */
+.form-group { margin-bottom: 16px; }
+.form-label { display: block; margin-bottom: 6px; font-size: .9rem; color: var(--text-secondary); font-weight: 500; }
+.form-label .required { color: var(--danger); margin-left: 2px; }
+.form-input, .form-select, .form-textarea {
+  width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius);
+  background: #fff; color: var(--text); transition: border-color .2s;
+}
+.form-input:focus, .form-select:focus, .form-textarea:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(24,144,255,0.1); }
+.form-textarea { resize: vertical; min-height: 80px; }
+.form-hint { font-size: .8rem; color: var(--text-muted); margin-top: 4px; }
+.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+
+/* ===== Tables ===== */
+.table-wrap { overflow-x: auto; }
+.data-table { width: 100%; border-collapse: collapse; }
+.data-table th, .data-table td { padding: 12px 16px; text-align: left; font-size: .9rem; }
+.data-table thead th { background: #fafafa; font-weight: 600; color: var(--text-secondary); border-bottom: 1px solid var(--border-light); white-space: nowrap; }
+.data-table tbody tr { border-bottom: 1px solid var(--border-light); transition: background .2s; }
+.data-table tbody tr:hover { background: #fafafa; }
+.data-table td { color: var(--text); }
+
+/* ===== Tags ===== */
+.tag { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 4px; font-size: .8rem; font-weight: 500; }
+.tag-blue { background: var(--primary-light); color: var(--primary); }
+.tag-green { background: var(--success-light); color: var(--success); }
+.tag-orange { background: var(--warning-light); color: var(--warning); }
+.tag-red { background: var(--danger-light); color: var(--danger); }
+.tag-gray { background: #f5f5f5; color: var(--text-muted); }
+.tag-purple { background: #f3e8ff; color: #7c3aed; }
+
+/* ===== Status ===== */
+.status { display: inline-flex; align-items: center; gap: 4px; }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; }
+.status-dot.blue { background: var(--primary); }
+.status-dot.green { background: var(--success); }
+.status-dot.orange { background: var(--warning); }
+.status-dot.red { background: var(--danger); }
+.status-dot.gray { background: #bfbfbf; }
+
+/* ===== Search & Filters ===== */
+.search-bar { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
+.search-input { flex: 1; min-width: 200px; position: relative; }
+.search-input input { width: 100%; padding: 8px 12px 8px 36px; border: 1px solid var(--border); border-radius: var(--radius); }
+.search-input::before { content: "🔍"; position: absolute; left: 12px; top: 50%; transform: translateY(-50%); opacity: .5; font-size: .9rem; }
+.filter-group { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ===== Empty State ===== */
+.empty-state { text-align: center; padding: 60px 20px; color: var(--text-muted); }
+.empty-state .icon { font-size: 3rem; margin-bottom: 12px; opacity: .5; }
+.empty-state .title { font-size: 1.1rem; color: var(--text-secondary); margin-bottom: 8px; }
+
+/* ===== Modal ===== */
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 200; display: flex; align-items: center; justify-content: center; padding: 20px; }
+.modal { background: #fff; border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); width: 100%; max-width: 560px; max-height: 90vh; overflow-y: auto; animation: modalIn .2s ease; }
+.modal-header { padding: 16px 20px; border-bottom: 1px solid var(--border-light); display: flex; align-items: center; justify-content: space-between; }
+.modal-title { font-weight: 600; font-size: 1.05rem; }
+.modal-close { font-size: 1.3rem; color: var(--text-muted); cursor: pointer; padding: 4px; }
+.modal-close:hover { color: var(--text); }
+.modal-body { padding: 20px; }
+.modal-footer { padding: 12px 20px; border-top: 1px solid var(--border-light); display: flex; justify-content: flex-end; gap: 8px; }
+@keyframes modalIn { from { opacity: 0; transform: translateY(-20px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ===== Dropdown ===== */
+.dropdown { position: relative; }
+.dropdown-menu { position: absolute; right: 0; top: 100%; margin-top: 4px; background: #fff; border-radius: var(--radius); box-shadow: var(--shadow-lg); border: 1px solid var(--border-light); min-width: 160px; z-index: 150; display: none; }
+.dropdown.open .dropdown-menu { display: block; }
+.dropdown-item { padding: 10px 16px; cursor: pointer; font-size: .9rem; color: var(--text); display: flex; align-items: center; gap: 8px; }
+.dropdown-item:hover { background: #f5f5f5; }
+
+/* ===== Login Page - Professional Split Layout ===== */
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  background: var(--bg-white);
+}
+
+/* 左侧品牌区 */
+.login-left {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding: 48px;
+  background: linear-gradient(135deg, #1e3a5f 0%, #2563eb 50%, #4f46e5 100%);
+  color: white;
+  position: relative;
+  overflow: hidden;
+}
+.login-left::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.05'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+  opacity: 0.5;
+}
+.login-left-content {
+  position: relative;
+  max-width: 420px;
+}
+.login-brand-logo {
+  font-size: 2rem;
+  font-weight: 800;
+  margin-bottom: 24px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.login-brand-tagline {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin-bottom: 16px;
+  opacity: 0.95;
+}
+.login-brand-desc {
+  font-size: 1rem;
+  line-height: 1.7;
+  opacity: 0.8;
+  margin-bottom: 32px;
+}
+.login-brand-features {
+  list-style: none;
+}
+.login-brand-features li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  font-size: 0.9rem;
+  opacity: 0.85;
+}
+.login-brand-features li::before {
+  content: '✓';
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+/* 右侧登录区 */
+.login-right {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding: 48px;
+}
+.login-card {
+  width: 100%;
+  max-width: 420px;
+  background: var(--bg-white);
+  border-radius: 16px;
+  box-shadow: var(--shadow-lg);
+  padding: 48px;
+  animation: cardSlideUp 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes cardSlideUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.login-card-header {
+  text-align: center;
+  margin-bottom: 32px;
+}
+.login-card-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+.login-card-subtitle {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+/* 登录表单 */
+.login-form .form-group {
+  margin-bottom: 20px;
+}
+.login-form .form-label {
+  display: block;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+.login-form .form-input {
+  width: 100%;
+  height: 48px;
+  padding: 0 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 1rem;
+  color: var(--text);
+  background: var(--bg-white);
+  transition: all 0.2s;
+}
+.login-form .form-input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-light);
+  outline: none;
+}
+.login-form .form-input::placeholder {
+  color: var(--text-muted);
+}
+.login-form .input-wrap {
+  position: relative;
+}
+.login-form .input-wrap .toggle-pass {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 1rem;
+  user-select: none;
+}
+.login-form .input-wrap .toggle-pass:hover {
+  color: var(--primary);
+}
+.login-remember {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+.login-remember-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.login-remember-label input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--primary);
+}
+.login-btn {
+  width: 100%;
+  height: 48px;
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.login-btn:hover:not(:disabled) {
+  background: var(--primary-dark);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(24,144,255,0.3);
+}
+.login-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+.login-btn .spinner {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+.login-hint {
+  text-align: center;
+  margin-top: 24px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border-light);
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  line-height: 1.8;
+}
+.login-hint code {
+  background: var(--bg);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-family: monospace;
+  color: var(--primary);
+  font-size: 0.85rem;
+}
+
+/* 响应式 */
+@media (max-width: 768px) {
+  .login-page { flex-direction: column; }
+  .login-left {
+    flex: none;
+    padding: 32px 24px;
+    min-height: 200px;
+    text-align: center;
+  }
+  .login-brand-features { display: none; }
+  .login-right { flex: 1; padding: 24px; }
+  .login-card { box-shadow: none; padding: 24px 0; border-radius: 0; }
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* ===== Tabs ===== */
+.tabs { display: flex; border-bottom: 1px solid var(--border-light); margin-bottom: 20px; gap: 4px; }
+.tab { padding: 10px 16px; cursor: pointer; color: var(--text-secondary); font-size: .9rem; border-bottom: 2px solid transparent; margin-bottom: -1px; transition: all .2s; }
+.tab:hover { color: var(--primary); }
+.tab.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 500; }
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+/* ===== Timeline ===== */
+.timeline { position: relative; padding-left: 24px; }
+.timeline::before { content: ""; position: absolute; left: 7px; top: 4px; bottom: 4px; width: 2px; background: var(--border-light); }
+.timeline-item { position: relative; padding-bottom: 20px; }
+.timeline-dot { position: absolute; left: -20px; top: 4px; width: 14px; height: 14px; border-radius: 50%; background: var(--primary); border: 2px solid #fff; box-shadow: 0 0 0 2px var(--primary-light); }
+.timeline-dot.green { background: var(--success); box-shadow: 0 0 0 2px var(--success-light); }
+.timeline-dot.orange { background: var(--warning); box-shadow: 0 0 0 2px var(--warning-light); }
+.timeline-dot.red { background: var(--danger); box-shadow: 0 0 0 2px var(--danger-light); }
+.timeline-time { font-size: .8rem; color: var(--text-muted); margin-bottom: 4px; }
+.timeline-content { background: #f5f5f5; padding: 10px 14px; border-radius: var(--radius); font-size: .9rem; }
+
+/* ===== Notifications ===== */
+.notify-container { position: fixed; top: 20px; right: 20px; z-index: 300; display: flex; flex-direction: column; gap: 10px; }
+.notify-item {
+  background: #fff; border-radius: var(--radius); box-shadow: var(--shadow-lg);
+  padding: 14px 18px; min-width: 280px; max-width: 360px;
+  display: flex; align-items: flex-start; gap: 10px; animation: notifyIn .3s ease;
+  border-left: 4px solid var(--primary);
+}
+.notify-item.success { border-left-color: var(--success); }
+.notify-item.warning { border-left-color: var(--warning); }
+.notify-item.error { border-left-color: var(--danger); }
+.notify-item .icon { font-size: 1.2rem; flex-shrink: 0; }
+.notify-item .content { flex: 1; }
+.notify-item .title { font-weight: 600; font-size: .95rem; margin-bottom: 2px; }
+.notify-item .message { font-size: .85rem; color: var(--text-secondary); }
+.notify-close { color: var(--text-muted); cursor: pointer; font-size: 1.1rem; }
+@keyframes notifyIn { from { opacity: 0; transform: translateX(100%); } to { opacity: 1; transform: translateX(0); } }
+@keyframes notifyOut { to { opacity: 0; transform: translateX(100%); } }
+
+/* ===== Smart Input ===== */
+.smart-input-wrap { position: relative; }
+.smart-input { width: 100%; padding: 12px 16px; border: 2px solid var(--border); border-radius: var(--radius-lg); font-size: 1rem; transition: all .2s; resize: vertical; min-height: 60px; }
+.smart-input:focus { outline: none; border-color: var(--primary); }
+.smart-hint { margin-top: 8px; padding: 10px 14px; background: var(--primary-light); border-radius: var(--radius); font-size: .85rem; color: var(--text-secondary); }
+.smart-hint strong { color: var(--primary); }
+
+/* ===== Responsive ===== */
+@media (max-width: 768px) {
+  .sidebar { transform: translateX(-100%); }
+  .sidebar.open { transform: translateX(0); }
+  .main { margin-left: 0; }
+  .menu-toggle { display: block; }
+  .sidebar-overlay.show { display: block; }
+  .stats-row { grid-template-columns: repeat(2, 1fr); }
+  .form-row { grid-template-columns: 1fr; }
+  .search-bar { flex-direction: column; }
+  .header { padding: 0 16px; }
+  .content { padding: 16px; }
+  .data-table th, .data-table td { padding: 10px 12px; white-space: nowrap; }
+  .modal { margin: 10px; }
+}
+@media (max-width: 480px) {
+  .stats-row { grid-template-columns: 1fr; }
+}
+
+/* ===== Utility ===== */
+.text-right { text-align: right; }
+.text-center { text-align: center; }
+.text-muted { color: var(--text-muted); }
+.text-primary { color: var(--primary); }
+.text-success { color: var(--success); }
+.text-danger { color: var(--danger); }
+.text-warning { color: var(--warning); }
+.font-bold { font-weight: 600; }
+.font-sm { font-size: .85rem; }
+.mt-1 { margin-top: 4px; } .mt-2 { margin-top: 8px; } .mt-3 { margin-top: 12px; } .mt-4 { margin-top: 16px; }
+.mb-1 { margin-bottom: 4px; } .mb-2 { margin-bottom: 8px; } .mb-3 { margin-bottom: 12px; } .mb-4 { margin-bottom: 16px; }
+.flex { display: flex; } .flex-between { justify-content: space-between; } .flex-center { align-items: center; } .gap-2 { gap: 8px; }
+.hide { display: none !important; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+// ===================== 工具函数 =====================
+const generateId = () => Date.now().toString(36) + Math.random().toString(36).substr(2, 6);
+
+const debounce = (fn, delay) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), delay); }; };
+
+window.doSmartParse = () => {
+  const smartInput = document.getElementById('smart-input');
+  if (!smartInput) return;
+  const text = smartInput.value.trim();
+  if (!text) { notify('请先输入问题描述', '', 'warning'); return; }
+  const parsed = parseTicketInput(text);
+  if (parsed.title) document.getElementById('new-title').value = parsed.title;
+  if (parsed.customerId) {
+    const c = getCustomers().find(x => x.id === parsed.customerId);
+    if (c) {
+      document.getElementById('new-customer-id').value = c.id;
+      document.getElementById('new-customer-search').value = c.name;
+    }
+  } else if (parsed.customerName) {
+    // 没匹配到客户，但第一段是公司名，填充到搜索框
+    document.getElementById('new-customer-search').value = parsed.customerName;
+    document.getElementById('new-customer-id').value = '';
+  }
+  if (parsed.priority) document.getElementById('new-priority').value = parsed.priority;
+  if (parsed.category) document.getElementById('new-category').value = parsed.category;
+  if (parsed.description) document.getElementById('new-desc').value = parsed.description;
+  if (parsed.engineerId && document.getElementById('new-engineer')) {
+    document.getElementById('new-engineer').value = parsed.engineerId;
+  }
+  if (parsed.status && document.getElementById('new-status')) {
+    document.getElementById('new-status').value = parsed.status;
+  }
+  notify('解析完成', '已自动填充识别到的字段', 'success');
+};
+const formatDate = (d, fmt = 'yyyy-MM-dd HH:mm') => {
+  if (!d) return '-';
+  const date = typeof d === 'string' ? new Date(d) : d;
+  if (isNaN(date)) return '-';
+  const pad = n => String(n).padStart(2, '0');
+  const map = { yyyy: date.getFullYear(), MM: pad(date.getMonth()+1), dd: pad(date.getDate()), HH: pad(date.getHours()), mm: pad(date.getMinutes()), ss: pad(date.getSeconds()) };
+  return fmt.replace(/yyyy|MM|dd|HH|mm|ss/g, m => map[m]);
+};
+const escapeHtml = str => str == null ? '' : String(str).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[m]));
+
+window.copyToClipboard = async (text) => {
+  try {
+    await navigator.clipboard.writeText(text);
+    notify('已复制', text, 'success');
+  } catch (e) {
+    // 降级方案
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    notify('已复制', text, 'success');
+  }
+};
+
+window.closeModalWithCleanup = (btn) => {
+  const modal = btn.closest('.modal-overlay');
+  const container = document.getElementById('new-images');
+  if (container && container._cleanupPaste) container._cleanupPaste();
+  __pendingImages = [];
+  modal.remove();
+};
+
+function openImageLightbox(src) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.style.cssText = 'display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.85);z-index:2000;';
+  overlay.innerHTML = `<img src="${src}" style="max-width:90vw;max-height:90vh;object-fit:contain;cursor:zoom-out;box-shadow:0 20px 60px rgba(0,0,0,0.5);border-radius:4px;" onclick="this.closest('.modal-overlay').remove()">`;
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  document.addEventListener('keydown', function esc(e) { if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', esc); } });
+  document.body.appendChild(overlay);
+}
+
+// ===================== 图片上传工具（改为文件存储）=====================
+async function uploadImage(file) {
+  const form = new FormData();
+  form.append('file', file);
+  const res = await fetch(`${API_BASE}/upload`, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${__token}` },
+    body: form
+  });
+  if (!res.ok) throw new Error('上传失败');
+  return res.json();
+}
+
+async function uploadMultiImages(files) {
+  const form = new FormData();
+  for (const f of files) form.append('files', f);
+  const res = await fetch(`${API_BASE}/upload/multi`, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${__token}` },
+    body: form
+  });
+  if (!res.ok) throw new Error('上传失败');
+  return res.json();
+}
+
+let __pendingImages = []; // 当前弹窗待上传的图片 { id, url, name }
+
+function initImageUpload(containerId) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  container.innerHTML = `
+    <div class="image-upload-area" id="${containerId}-drop" style="border:2px dashed var(--border);border-radius:var(--radius);padding:12px;text-align:center;color:var(--text-muted);cursor:pointer;transition:all .2s;" onclick="document.getElementById('${containerId}-file').click()">
+      <div style="font-size:1.5rem;margin-bottom:4px;">📎</div>
+      <div style="font-size:.85rem;">点击上传或粘贴图片 (Ctrl+V)</div>
+      <div style="font-size:.75rem;margin-top:2px;">支持 JPG/PNG，自动压缩</div>
+    </div>
+    <input type="file" id="${containerId}-file" accept="image/*" multiple style="display:none">
+    <div id="${containerId}-preview" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;"></div>
+  `;
+  const drop = document.getElementById(`${containerId}-drop`);
+  const fileInput = document.getElementById(`${containerId}-file`);
+  const preview = document.getElementById(`${containerId}-preview`);
+
+  // 点击上传
+  fileInput.addEventListener('change', async (e) => {
+    for (const file of e.target.files) await addImage(file, preview);
+  });
+
+  // 拖拽
+  drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.style.borderColor = 'var(--primary)'; drop.style.background = 'var(--primary-light)'; });
+  drop.addEventListener('dragleave', () => { drop.style.borderColor = 'var(--border)'; drop.style.background = ''; });
+  drop.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    drop.style.borderColor = 'var(--border)'; drop.style.background = '';
+    for (const file of e.dataTransfer.files) if (file.type.startsWith('image/')) await addImage(file, preview);
+  });
+
+  // 粘贴
+  const pasteHandler = async (e) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    let hasImage = false;
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        hasImage = true;
+        e.preventDefault();
+        await addImage(item.getAsFile(), preview);
+      }
+    }
+  };
+  document.addEventListener('paste', pasteHandler);
+  // 清理函数挂在容器上
+  container._cleanupPaste = () => document.removeEventListener('paste', pasteHandler);
+}
+
+async function addImage(file, previewEl) {
+  try {
+    const { url } = await uploadImage(file);
+    const id = generateId();
+    __pendingImages.push({ id, url, name: file.name });
+    const div = document.createElement('div');
+    div.style.cssText = 'position:relative;width:80px;height:80px;border-radius:var(--radius);overflow:hidden;border:1px solid var(--border);';
+    div.innerHTML = `<img src="${url}" style="width:100%;height:100%;object-fit:cover;"><button onclick="removeImage('${id}',this)" style="position:absolute;top:2px;right:2px;width:20px;height:20px;border-radius:50%;background:rgba(0,0,0,0.5);color:#fff;border:none;font-size:12px;cursor:pointer;">×</button>`;
+    previewEl.appendChild(div);
+  } catch (e) { console.warn('图片上传失败', e); notify('图片上传失败', e.message, 'error'); }
+}
+
+window.removeImage = (id, btn) => {
+  __pendingImages = __pendingImages.filter(x => x.id !== id);
+  btn.closest('div').remove();
+};
+
+
+// ===================== API Client =====================
+const API_BASE = '/api';
+let __token = localStorage.getItem('crm_token') || '';
+let __users = [];
+let __tickets = [];
+let __customers = [];
+let __worklogs = [];
+let __ticketPage = { page: 1, pageSize: 20 };
+let __customerPage = { page: 1, pageSize: 20 };
+let __ticketFilter = { status: '', priority: '', search: '' };
+let __customerFilter = { search: '' };
+
+
+async function apiFetch(path, opts = {}) {
+  const url = `${API_BASE}${path}`;
+  const res = await fetch(url, {
+    ...opts,
+    headers: {
+      'Content-Type': 'application/json',
+      ...( __token ? { 'Authorization': `Bearer ${__token}` } : {} ),
+      ...(opts.headers || {})
+    }
+  });
+  if (res.status === 401) { logout(); throw new Error('未登录'); }
+  if (res.status === 403) throw new Error('权限不足');
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `HTTP ${res.status}`);
+  }
+  return res.json().catch(() => ({}));
+}
+
+async function loadAllData() {
+  try {
+    const [users, tickets, customers, worklogs] = await Promise.all([
+      apiFetch('/users'),
+      apiFetch('/tickets'),
+      apiFetch('/customers'),
+      apiFetch('/worklogs')
+    ]);
+    __users = users || [];
+    __tickets = tickets || [];
+    __customers = customers || [];
+    __worklogs = worklogs || [];
+    return true;
+  } catch (e) {
+    console.error('[API] 加载数据失败:', e);
+    return false;
+  }
+}
+
+// 自动刷新
+let __refreshTimer = null;
+let __lastRefresh = 0;
+
+async function doRefresh() {
+  const btn = document.getElementById('btn-refresh');
+  if (btn) { btn.style.animation = 'spin 1s linear infinite'; }
+  const ok = await loadAllData();
+  if (ok) {
+    __lastRefresh = Date.now();
+    notify('数据已刷新', '', 'success', 1500);
+    // 直接重渲染当前页面
+    if (currentRoute === 'dashboard' || currentRoute === 'tickets' || currentRoute === 'customers' || currentRoute.startsWith('ticket/') || currentRoute.startsWith('customer/')) {
+      renderRoute();
+    }
+  } else {
+    notify('刷新失败', '请检查后端服务是否启动', 'error', 3000);
+  }
+  if (btn) { btn.style.animation = ''; }
+}
+
+function startAutoRefresh() {
+  stopAutoRefresh();
+  // 自动刷新已禁用：避免刷新时清除用户正在输入的内容
+  // __refreshTimer = setInterval(...)
+}
+function stopAutoRefresh() { if (__refreshTimer) { clearInterval(__refreshTimer); __refreshTimer = null; } }
+
+window.addEventListener('beforeunload', stopAutoRefresh);
+
+const getUsers = () => __users;
+const getTickets = () => __tickets;
+const getCustomers = () => __customers;
+const getWorklogs = () => __worklogs;
+
+// ===================== Auth (API) =====================
+async function loginAsync(username, password, remember) {
+  const result = await apiFetch('/login', { method: 'POST', body: JSON.stringify({ username, password }) });
+  if (!result.token) return null;
+  __token = result.token;
+  if (remember) localStorage.setItem('crm_token', __token);
+  else sessionStorage.setItem('crm_token', __token);
+  await loadAllData();
+  startAutoRefresh();
+  return result.user;
+}
+
+function logout() {
+  stopAutoRefresh();
+  __token = '';
+  localStorage.removeItem('crm_token');
+  sessionStorage.removeItem('crm_token');
+  __users = []; __tickets = []; __customers = [];
+  window.location.hash = '#login';
+}
+
+function getCurrentUser() {
+  if (!__token) {
+    const t = localStorage.getItem('crm_token') || sessionStorage.getItem('crm_token');
+    if (t) __token = t;
+    else return null;
+  }
+  try {
+    const decoded = atob(__token);
+    const [id, username, role] = decoded.split(':');
+    const user = __users.find(u => u.id === id);
+    if (user) return { ...user, userId: user.id };
+    // Fallback: 数据未加载时返回基本信息，确保界面不崩溃
+    return { id, username, role, userId: id, name: username || '用户', color: '#1890ff', email: '', phone: '' };
+  } catch { return null; }
+}
+
+const isAdmin = () => { const s = getCurrentUser(); return s && s.role === 'admin'; };
+const isEngineer = () => { const s = getCurrentUser(); return s && (s.role === 'engineer' || s.role === 'admin'); };
+
+// ===================== 数据操作 (API + 本地缓存) =====================
+async function saveTicketUpdate(id, fields) {
+  await apiFetch(`/tickets/${id}`, { method: 'PUT', body: JSON.stringify(fields) });
+  const idx = __tickets.findIndex(t => t.id === id);
+  if (idx >= 0) Object.assign(__tickets[idx], fields);
+}
+
+async function createTicketAsync(ticket) {
+  const newT = await apiFetch('/tickets', { method: 'POST', body: JSON.stringify(ticket) });
+  __tickets.unshift(newT);
+  return newT;
+}
+
+async function addTicketComment(id, comment) {
+  await apiFetch(`/tickets/${id}/comments`, { method: 'POST', body: JSON.stringify(comment) });
+  const t = __tickets.find(tk => tk.id === id);
+  if (t) {
+    t.comments = t.comments || [];
+    t.comments.push({ ...comment, userId: (getCurrentUser() || {}).id, userName: (getCurrentUser() || {}).name, createdAt: new Date().toISOString() });
+  }
+}
+
+async function createCustomerAsync(c) {
+  const newC = await apiFetch('/customers', { method: 'POST', body: JSON.stringify(c) });
+  __customers.push(newC);
+  return newC;
+}
+
+async function updateCustomerAsync(id, fields) {
+  await apiFetch(`/customers/${id}`, { method: 'PUT', body: JSON.stringify(fields) });
+  const idx = __customers.findIndex(c => c.id === id);
+  if (idx >= 0) Object.assign(__customers[idx], fields);
+}
+
+async function createUserAsync(u) {
+  const newU = await apiFetch('/users', { method: 'POST', body: JSON.stringify(u) });
+  __users.push(newU);
+  return newU;
+}
+
+async function updateUserAsync(id, fields) {
+  await apiFetch(`/users/${id}`, { method: 'PUT', body: JSON.stringify(fields) });
+  const idx = __users.findIndex(u => u.id === id);
+  if (idx >= 0) Object.assign(__users[idx], fields);
+}
+
+async function fetchStats() {
+  return apiFetch('/stats');
+}
+
+// 初始化数据由后端 seed，前端不再 initData
+
+// ===================== 自然语言解析模块 =====================
+function parseTicketInput(text) {
+  const result = { title: '', customerId: '', engineerId: '', priority: 'medium', category: '', description: text };
+  const customers = getCustomers();
+  const engineers = getUsers().filter(u => u.role === 'engineer');
+  const t = text.trim();
+  if (!t) return result;
+
+  // === 简易模糊匹配：字符包含度 + 公共子序列 ===
+  function fuzzyMatch(input, target) {
+    const a = input.toLowerCase(), b = target.toLowerCase();
+    if (a === b) return 1.0;
+    if (a.includes(b) || b.includes(a)) return 0.9;
+    // 计算公共子序列占比（简单版：逐个字符匹配）
+    let match = 0, j = 0;
+    for (let i = 0; i < a.length && j < b.length; i++) {
+      if (a[i] === b[j]) { match++; j++; }
+    }
+    return match / Math.max(a.length, b.length);
+  }
+
+  // === 1. 分段解析：按常见分隔符拆分 ===
+  // 用户输入格式通常是：公司名，问题描述，进度/结果
+  const segments = t.split(/[，,。！？\n;；]/).map(s => s.trim()).filter(s => s.length > 0);
+  const firstSeg = segments[0] || t;
+  const restSeg = segments.slice(1).join('，');
+
+  // === 2. 客户识别：优先从第一段匹配 ===
+  let bestMatch = null, bestScore = 0;
+  for (const c of customers) {
+    let score = 0;
+    // 精确匹配
+    if (firstSeg.includes(c.name)) score += 100;
+    if (c.contact && firstSeg.includes(c.contact)) score += 80;
+    if (c.name.length > 2 && firstSeg.includes(c.name.substring(0, 2))) score += 30;
+    if (c.name.length > 4 && firstSeg.includes(c.name.substring(0, 4))) score += 50;
+    if (c.phone && firstSeg.includes(c.phone.slice(-4))) score += 50;
+    if (c.industry && firstSeg.includes(c.industry)) score += 30;
+    // 模糊匹配（第一段全段 vs 客户名）
+    if (score < 50) {
+      const sim = fuzzyMatch(firstSeg, c.name);
+      if (sim >= 0.6) score += Math.round(sim * 70);
+    }
+    if (score > bestScore) { bestScore = score; bestMatch = c; }
+  }
+  // 如果第一段没匹配到，尝试全文本匹配
+  if (!bestMatch || bestScore < 30) {
+    for (const c of customers) {
+      let score = 0;
+      if (t.includes(c.name)) score += 80;
+      if (c.contact && t.includes(c.contact)) score += 60;
+      if (c.name.length > 2 && t.includes(c.name.substring(0, 2))) score += 20;
+      if (score > bestScore) { bestScore = score; bestMatch = c; }
+    }
+  }
+  // 填充客户：匹配到就填ID+name，没匹配到就填第一段作为客户名
+  if (bestMatch && bestScore >= 25) {
+    result.customerId = bestMatch.id;
+    result.customerName = bestMatch.name;
+  } else {
+    result.customerName = firstSeg;
+  }
+
+  // === 3. 负责人识别 ===
+  let engMatch = null, engScore = 0;
+  const engPatterns = [
+    /(?:麻烦|让|找|指派|交给|给|请|让)\s*([\u4e00-\u9fa5]{2,4})\s*(?:看一下?|处理|跟进|看看|搞一下?|帮忙|解决|排查)/,
+    /(?:负责人|指派|工程师)\s*[：:]\s*([\u4e00-\u9fa5]{2,4})/,
+  ];
+  for (const re of engPatterns) {
+    const m = t.match(re);
+    if (m) {
+      const name = m[1];
+      const u = engineers.find(e => e.name === name || e.name.includes(name));
+      if (u) { engMatch = u; engScore = 100; break; }
+    }
+  }
+  if (!engMatch) {
+    for (const u of engineers) {
+      let score = 0;
+      if (t.includes(u.name)) score += 100;
+      if (u.name.length >= 2 && t.includes(u.name.charAt(0))) score += 20;
+      if (score > engScore) { engScore = score; engMatch = u; }
+    }
+  }
+  if (engMatch && bestMatch && bestMatch.contact && bestMatch.contact.includes(engMatch.name)) {
+    engScore -= 50;
+  }
+  if (engMatch && engScore >= 40) result.engineerId = engMatch.id;
+
+  // === 4. 优先级识别 ===
+  const urgentWords = /紧急|立刻|马上|高优|严重|崩溃|宕机|死机|无法启动|断网|全部|都|报警|告警|火灾|漏水|停电|核心|生产|瘫痪/;
+  const highWords = /着急|尽快|重要|关键|影响|故障|报错|异常|连不上|连不了|连不到|访问不了|打不开/;
+  const lowWords = /低优|不急|稍后|低优先级|看看|咨询|了解一下|请教|建议|优化|升级|未来|计划/;
+  if (urgentWords.test(t)) result.priority = 'high';
+  else if (lowWords.test(t)) result.priority = 'low';
+  else if (highWords.test(t)) result.priority = 'high';
+  const urgentCount = (t.match(/紧急|立刻|马上|严重|崩溃|宕机|死机|无法|断网|瘫痪/g) || []).length;
+  if (urgentCount >= 2) result.priority = 'high';
+
+  // === 5. 类别识别 ===
+  const catPatterns = [
+    { keys: ['点云','点云质量','点云调试','深度图','深度数据','3D数据','点云生成','点云拼接','点云融合','噪声','空洞','飞点','精度','分辨率','视差','双目','结构光','ToF'], cat: '点云调试' },
+    { keys: ['硬件','设备','相机','镜头','电源','主板','内存','硬盘','CPU','风扇','过热','黑屏','花屏','显示器','连接线','接口','USB','网线','线缆','损坏','故障','无法开机','重启'], cat: '硬件故障' },
+    { keys: ['软件','程序','应用','客户端','安装','卸载','闪退','报错','异常','Bug','崩溃','卡死','界面','UI','显示','版本','兼容','更新','升级'], cat: '软件问题' },
+    { keys: ['SDK','API','接口','开发包','编程','代码','脚本','C++','Python','调用','集成','编译','链接','示例','Demo','文档','开发指南'], cat: 'SDK开发' },
+    { keys: ['标定','手眼标定','眼在手上','眼在手外','相机标定','内参','外参','畸变','棋盘格','标定板','圆点标定','坐标系','位姿','矩阵','RPY','旋转','平移','变换'], cat: '手眼标定' },
+    { keys: ['需求','沟通','咨询','报价','方案','技术方案','定制','开发','合作','项目','验收','交付','培训','演示','介绍','了解','需求确认'], cat: '需求沟通' },
+    { keys: ['样品','测试','检测','测量','验证','精度测试','重复性','对比','评估','试用','样机','现场','实验','验收','报告','数据分析'], cat: '样品测试' },
+    { keys: ['选型','相机选型','型号','参数','规格','对比','推荐','适用','场景','应用','分辨率','帧率','视场','FOV','基线','工作距离','环境光','IP防护','接口类型'], cat: '相机选型' },
+    { keys: ['资料','文档','手册','说明书','证书','资质','报价单','合同','发票','图纸','规格书','参数表'], cat: '资料提供' },
+  ];
+  let bestCat = null, bestCatScore = 0;
+  for (const p of catPatterns) {
+    let score = 0;
+    for (const k of p.keys) { if (t.includes(k)) score += 10; }
+    if (score > bestCatScore) { bestCatScore = score; bestCat = p.cat; }
+  }
+  if (bestCat && bestCatScore >= 10) result.category = bestCat;
+  if (!result.category) result.category = '其他';
+
+  // === 6. 标题提取：按用户输入顺序 ===
+  // 用户输入：公司名，问题描述，进度/结果
+  // 如果识别到客户名，标题 = 客户名之后的第一个分段（问题描述）
+  // 如果没识别到客户名，标题 = 第二段（默认第一段是公司名候选）
+  let title = '';
+  if (bestMatch && bestScore >= 25) {
+    // 识别到客户名，取客户名之后的第一个非空分段
+    const nameIdx = t.indexOf(bestMatch.name);
+    if (nameIdx >= 0) {
+      const afterName = t.substring(nameIdx + bestMatch.name.length);
+      title = afterName.split(/[，,。！？\n;；]/).filter(s => s.trim())[0]?.trim() || '';
+    }
+  } else if (segments.length >= 2) {
+    // 没识别到客户名，但有多段输入，默认第二段是问题描述
+    title = segments[1];
+  }
+  // 如果上面都没提取到（单段输入且没识别到客户），标题留空，让用户自己填
+  // 单段输入视为公司名，不自动填充标题
+  if (!title) {
+    title = '';
+  }
+  // 清理噪音词
+  const noisePattern = /^(麻烦|请|帮忙|你好|您好|请问|我们|公司|这边|今天|现在|刚才|刚刚|发现|出现|有个|有个问题|有个故障|有个报错|报错|故障|问题|一下|帮忙|一下|需要|想|要|希望|的|，|,)\s*/i;
+  for (let i = 0; i < 5; i++) {
+    const newTitle = title.replace(noisePattern, '');
+    if (newTitle === title) break;
+    title = newTitle;
+  }
+  title = title.replace(/^[\s的，那边]+/, '').trim();
+  // 截取前30字
+  if (title.length > 30) {
+    const cut = title.substring(0, 30);
+    const lastPunc = Math.max(cut.lastIndexOf(' '), cut.lastIndexOf('，'));
+    title = lastPunc > 15 ? cut.substring(0, lastPunc) + '...' : cut + '...';
+  }
+  result.title = title || '新工单';
+
+  return result;
+}
+
+// 简易日期解析：支持 YYMMDD / YYYYMMDD / YYYY-MM-DD / YY-MM-DD
+function parseSimpleDate(input) {
+  if (!input) return null;
+  const s = String(input).trim().replace(/-/g, '');
+  let y, m, d;
+  if (s.length === 6) {
+    y = parseInt(s.slice(0, 2), 10);
+    y = y >= 50 ? 1900 + y : 2000 + y;
+    m = s.slice(2, 4);
+    d = s.slice(4, 6);
+  } else if (s.length === 8) {
+    y = s.slice(0, 4);
+    m = s.slice(4, 6);
+    d = s.slice(6, 8);
+  } else if (/^\d{4}-\d{2}-\d{2}/.test(input)) {
+    return input.slice(0, 10);
+  } else {
+    return null;
+  }
+  const mm = parseInt(m, 10), dd = parseInt(d, 10);
+  if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
+  return `${y}-${m}-${d}`;
+}
+
+// ===================== 通知系统 =====================
+function notify(title, message, type = 'info', duration = 3000) {
+  const container = document.getElementById('notify-container') || (() => {
+    const el = document.createElement('div'); el.id = 'notify-container'; el.className = 'notify-container'; document.body.appendChild(el); return el;
+  })();
+  const icons = { info: 'ℹ️', success: '✅', warning: '⚠️', error: '❌' };
+  const item = document.createElement('div');
+  item.className = `notify-item ${type}`;
+  item.innerHTML = `<span class="icon">${icons[type]}</span><div class="content"><div class="title">${escapeHtml(title)}</div><div class="message">${escapeHtml(message)}</div></div><span class="notify-close">&times;</span>`;
+  item.querySelector('.notify-close').onclick = () => { item.style.animation = 'notifyOut .3s ease forwards'; setTimeout(() => item.remove(), 300); };
+  container.appendChild(item);
+  if (duration) setTimeout(() => { if (item.parentNode) { item.style.animation = 'notifyOut .3s ease forwards'; setTimeout(() => item.remove(), 300); } }, duration);
+}
+
+// ===================== 路由系统 =====================
+const routes = {};
+let currentRoute = '';
+function route(path, handler) { routes[path] = handler; }
+function navigate(path) { window.location.hash = '#' + path; }
+function matchRoute(hash) {
+  const path = hash.replace(/^#/, '') || 'login';
+  for (const [pattern, handler] of Object.entries(routes)) {
+    const regex = new RegExp('^' + pattern.replace(/:\w+/g, '([^/]+)') + '$');
+    const m = path.match(regex);
+    if (m) { currentRoute = path; return () => handler(...m.slice(1)); }
+  }
+  return null;
+}
+function renderRoute() {
+  const app = document.getElementById('app');
+  const user = getCurrentUser();
+  const hash = window.location.hash;
+  // 未登录只能访问login
+  if (!user && hash !== '#login') { window.location.hash = '#login'; return; }
+  const handler = matchRoute(hash);
+  if (handler) { app.innerHTML = ''; handler(); }
+  else { app.innerHTML = '<div class="empty-state"><div class="icon">🔍</div><div class="title">页面未找到</div></div>'; }
+}
+window.addEventListener('hashchange', renderRoute);
+
+// ===================== 布局渲染 =====================
+function renderLayout(contentFn) {
+  const user = getCurrentUser();
+  const isAdminUser = user && user.role === 'admin';
+  const app = document.getElementById('app');
+  app.innerHTML = `
+    <div class="app-layout">
+      <aside class="sidebar" id="sidebar">
+        <div class="sidebar-brand"><span class="icon">🛠️</span> 技术支持系统</div>
+        <nav class="sidebar-nav">
+          <div class="nav-item ${currentRoute==='dashboard'?'active':''}" onclick="navigate('dashboard')"><span class="icon">📊</span> 仪表盘</div>
+          <div class="nav-item ${currentRoute.startsWith('ticket')?'active':''}" onclick="navigate('tickets')"><span class="icon">🎫</span> 工单管理</div>
+          <div class="nav-item ${currentRoute.startsWith('customer')?'active':''}" onclick="navigate('customers')"><span class="icon">👥</span> 客户管理</div>
+          <div class="nav-item ${currentRoute==='worklogs'?'active':''}" onclick="navigate('worklogs')"><span class="icon">📝</span> 工作日志</div>
+          ${isAdminUser ? `<div class="nav-group-title">管理员</div>
+          <div class="nav-item ${currentRoute==='admin/team'?'active':''}" onclick="navigate('admin/team')"><span class="icon">👨‍💻</span> 团队设置</div>
+          <div class="nav-item ${currentRoute==='admin/stats'?'active':''}" onclick="navigate('admin/stats')"><span class="icon">📈</span> 统计报表</div>` : ''}
+        </nav>
+      </aside>
+      <div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div>
+      <div class="main">
+        <header class="header">
+          <div class="header-left">
+            <button class="menu-toggle" onclick="toggleSidebar()">☰</button>
+            <span class="font-sm text-muted">${formatDate(new Date(), 'yyyy年MM月dd日')}</span>
+          </div>
+          <div class="header-right">
+            <button class="badge-btn" id="btn-refresh" onclick="doRefresh()" title="刷新数据">🔄</button>
+            <div class="dropdown" id="notify-dropdown">
+              <button class="badge-btn" onclick="toggleNotifyDropdown()">🔔 ${getUnreadCount() > 0 ? `<span class="badge">${getUnreadCount()}</span>` : ''}</button>
+              <div class="dropdown-menu" id="notify-menu" style="width:320px;max-height:360px;overflow-y:auto;"></div>
+            </div>
+            <div class="dropdown" id="user-dropdown">
+              <div class="user-info" onclick="toggleUserDropdown()">
+                <div class="user-avatar">${user.name.charAt(0)}</div>
+                <span class="font-sm font-bold">${user.name}</span>
+                <span class="font-sm text-muted">▼</span>
+              </div>
+              <div class="dropdown-menu">
+                <div class="dropdown-item" onclick="navigate('dashboard')"><span>📊</span> 仪表盘</div>
+                <div class="dropdown-item" onclick="doLogout()"><span>🚪</span> 退出登录</div>
+              </div>
+            </div>
+          </div>
+        </header>
+        <div class="content" id="page-content"></div>
+      </div>
+    </div>`;
+  contentFn(document.getElementById('page-content'));
+  updateNotifyMenu();
+}
+
+function toggleSidebar() { document.getElementById('sidebar').classList.toggle('open'); document.getElementById('sidebar-overlay').classList.toggle('show'); }
+function closeSidebar() { document.getElementById('sidebar').classList.remove('open'); document.getElementById('sidebar-overlay').classList.remove('show'); }
+function toggleUserDropdown() { document.getElementById('user-dropdown').classList.toggle('open'); }
+function toggleNotifyDropdown() { document.getElementById('notify-dropdown').classList.toggle('open'); }
+function doLogout() { stopAutoRefresh(); logout(); notify('已退出', '您已成功退出系统', 'success'); navigate('login'); }
+
+// 提醒/通知数据（后端持久化）
+let __remindersCache = [];
+async function loadReminders() {
+  try { __remindersCache = await apiFetch('/reminders'); } catch(e) { console.warn('[Reminders] 加载失败:', e); }
+}
+function getReminders() { return __remindersCache; }
+function saveReminders(v) { __remindersCache = v; }
+async function addReminder(ticketId, toUserId, message) {
+  const r = { id: generateId(), ticketId, toUserId, message, fromUserId: getCurrentUser().userId, fromName: getCurrentUser().name, createdAt: new Date().toISOString(), read: false };
+  try { await apiFetch('/reminders', { method: 'POST', body: JSON.stringify(r) }); __remindersCache.push(r); } catch(e) { console.warn('[Reminders] 添加失败:', e); }
+}
+async function readReminderAsync(id) {
+  try { await apiFetch(`/reminders/${id}/read`, { method: 'PUT' }); } catch(e) {}
+  const r = __remindersCache.find(x => x.id === id);
+  if (r) r.read = true;
+}
+async function clearAllRemindersAsync() {
+  const uid = (getCurrentUser() || {}).userId;
+  try { await apiFetch('/reminders/clear', { method: 'POST' }); } catch(e) {}
+  __remindersCache = __remindersCache.map(r => r.toUserId === uid ? {...r, read: true} : r);
+}
+function getUnreadCount() {
+  const uid = (getCurrentUser() || {}).userId;
+  return getReminders().filter(r => r.toUserId === uid && !r.read).length;
+}
+function updateNotifyMenu() {
+  const menu = document.getElementById('notify-menu');
+  if (!menu) return;
+  const uid = (getCurrentUser() || {}).userId;
+  const list = getReminders().filter(r => r.toUserId === uid).sort((a,b) => new Date(b.createdAt)-new Date(a.createdAt)).slice(0,20);
+  if (!list.length) { menu.innerHTML = '<div class="dropdown-item text-muted">暂无提醒</div>'; return; }
+  menu.innerHTML = list.map(r => `<div class="dropdown-item" style="${r.read?'':'background:#e6f7ff;'};cursor:pointer;" onclick="readReminder('${r.id}')">
+    <div><div class="font-sm font-bold">${escapeHtml(r.fromName)} 的提醒</div><div class="font-sm">${escapeHtml(r.message)}</div><div class="font-sm text-muted">${formatDate(r.createdAt)}</div></div>
+  </div>`).join('') + '<div class="dropdown-item text-center text-primary" onclick="clearAllReminders()">全部已读</div>';
+}
+async function readReminder(id) {
+  await readReminderAsync(id);
+  updateNotifyMenu();
+  const r = getReminders().find(x => x.id === id);
+  if (r && r.ticketId) navigate('ticket/' + r.ticketId);
+}
+async function clearAllReminders() {
+  await clearAllRemindersAsync();
+  updateNotifyMenu();
+}
+
+// ===================== 登录页面 =====================
+route('login', () => {
+  const app = document.getElementById('app');
+  app.innerHTML = `
+    <div class="login-page">
+      <div class="login-left">
+        <div class="login-left-content">
+          <div class="login-brand-logo">
+            <span>🎫</span>
+            <span>工单管理系统</span>
+          </div>
+          <div class="login-brand-tagline">技术支持团队协同工作平台</div>
+          <div class="login-brand-desc">
+            专为技术支持团队打造的工单与客户管理工具，支持智能工单创建、客户联动管理、团队高效协作。
+          </div>
+          <ul class="login-brand-features">
+            <li>自然语言智能解析创建工单</li>
+            <li>创建人与负责人分离机制</li>
+            <li>定向催办与逾期提醒</li>
+            <li>客户设备与联系人管理</li>
+            <li>团队工作量统计报表</li>
+          </ul>
+        </div>
+      </div>
+      <div class="login-right">
+        <div class="login-card">
+          <div class="login-card-header">
+            <div class="login-card-title">欢迎登录</div>
+            <div class="login-card-subtitle">请输入账号密码登录系统</div>
+          </div>
+          <form class="login-form" id="login-form" onsubmit="event.preventDefault(); handleLogin();">
+            <div class="form-group">
+              <label class="form-label">登录账号</label>
+              <input type="text" id="login-user" class="form-input" placeholder="请输入用户名" value="${localStorage.getItem('crm_last_username') || ''}" autocomplete="username">
+            </div>
+            <div class="form-group">
+              <label class="form-label">登录密码</label>
+              <div class="input-wrap">
+                <input type="password" id="login-pass" class="form-input" placeholder="请输入密码" value="" autocomplete="current-password">
+                <span class="toggle-pass" onclick="togglePassword()" title="显示/隐藏密码">👁️</span>
+              </div>
+            </div>
+            <div class="login-remember">
+              <label class="login-remember-label">
+                <input type="checkbox" id="login-remember" checked>
+                <span>记住我（7天内自动登录）</span>
+              </label>
+            </div>
+            <button type="submit" class="login-btn" id="login-btn">
+              <span class="btn-text">登 录</span>
+            </button>
+          </form>
+          <div class="login-hint">
+            首次使用默认管理员账号：<code>admin</code> / <code>admin123</code><br>
+            工程师演示账号：<code>zhangsan</code> / <code>123456</code>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  bindLoginEvents();
+});
+window.togglePassword = () => {
+  const passInput = document.getElementById('login-pass');
+  const toggle = document.querySelector('.toggle-pass');
+  if (passInput.type === 'password') { passInput.type = 'text'; toggle.textContent = '🙈'; }
+  else { passInput.type = 'password'; toggle.textContent = '👁️'; }
+};
+window.bindLoginEvents = () => {
+  const form = document.getElementById('login-form');
+  if (!form) return;
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    handleLogin();
+  });
+  document.getElementById('login-pass') && document.getElementById('login-pass').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') form.dispatchEvent(new Event('submit'));
+  });
+};
+window.handleLogin = async () => {
+  const form = document.getElementById('login-form');
+  if (!form) return;
+  const btn = document.getElementById('login-btn');
+  const btnText = btn.querySelector('.btn-text');
+  btn.disabled = true;
+  btnText.innerHTML = '<span class="spinner"></span>登录中...';
+  try {
+    const u = document.getElementById('login-user').value.trim();
+    const p = document.getElementById('login-pass').value;
+    const remember = document.getElementById('login-remember') && document.getElementById('login-remember').checked;
+    const user = await loginAsync(u, p, remember);
+    if (user) {
+      localStorage.setItem('crm_last_username', u);
+      notify('登录成功', `欢迎回来，${user.name}`, 'success');
+      navigate('dashboard');
+    } else {
+      notify('登录失败', '用户名或密码错误', 'error');
+      btn.disabled = false;
+      btnText.textContent = '登 录';
+    }
+  } catch (e) {
+    notify('登录失败', e.message || '网络错误，请检查后端服务是否启动', 'error');
+    btn.disabled = false;
+    btnText.textContent = '登 录';
+  }
+};
+
+// ===================== Dashboard =====================
+route('dashboard', () => {
+  if (!getCurrentUser()) return navigate('login');
+  const isAdminUser = isAdmin();
+  renderLayout(container => {
+    const tickets = getTickets();
+    const customers = getCustomers();
+    const users = getUsers();
+    const total = tickets.length;
+    const pending = tickets.filter(t => t.status === 'pending').length;
+    const processing = tickets.filter(t => t.status === 'processing').length;
+    const waiting = tickets.filter(t => t.status === 'waiting').length;
+    const resolved = tickets.filter(t => t.status === 'resolved').length;
+    const highPriority = tickets.filter(t => t.priority === 'high' && t.status !== 'resolved' && t.status !== 'closed').length;
+    const overdue = tickets.filter(t => t.status !== 'resolved' && t.status !== 'closed' && new Date(t.dueDate) < new Date()).length;
+
+    container.innerHTML = `
+      <h1 class="page-title">📊 仪表盘</h1>
+      <div class="stats-row">
+        <div class="stat-card" style="cursor:pointer" onclick="goTicketsWithFilter('')"><div class="stat-icon blue">🎫</div><div><div class="stat-value">${total}</div><div class="stat-label">全部工单</div></div></div>
+        <div class="stat-card" style="cursor:pointer" onclick="goTicketsWithFilter('pending')"><div class="stat-icon orange">⏳</div><div><div class="stat-value">${pending}</div><div class="stat-label">待处理</div></div></div>
+        <div class="stat-card" style="cursor:pointer" onclick="goTicketsWithFilter('processing')"><div class="stat-icon cyan">🔄</div><div><div class="stat-value">${processing}</div><div class="stat-label">处理中</div></div></div>
+        <div class="stat-card" style="cursor:pointer" onclick="goTicketsWithFilter('resolved')"><div class="stat-icon green">✅</div><div><div class="stat-value">${resolved}</div><div class="stat-label">已解决</div></div></div>
+        <div class="stat-card" style="cursor:pointer" onclick="goTicketsWithFilter('high')"><div class="stat-icon red">🔥</div><div><div class="stat-value">${highPriority}</div><div class="stat-label">高优先级</div></div></div>
+        ${isAdminUser ? `<div class="stat-card"><div class="stat-icon blue">👥</div><div><div class="stat-value">${customers.length}</div><div class="stat-label">客户数量</div></div></div><div class="stat-card"><div class="stat-icon" style="background:#f0f0f0;color:#666;">📤</div><div><div class="stat-value" style="font-size:1rem;"><button class="btn btn-sm btn-default" onclick="exportTickets()">工单</button> <button class="btn btn-sm btn-default" onclick="exportCustomers()">客户</button></div><div class="stat-label">导出CSV</div></div></div>` : ''}
+      </div>
+      ${overdue > 0 ? `<div class="card mb-4" style="border-left:4px solid var(--danger);"><div class="card-body"><strong>⚠️ 有 ${overdue} 个工单已逾期，请尽快处理！</strong></div></div>` : ''}
+      <div class="card mb-4" style="border-left:4px solid var(--primary);">
+        <div class="card-header"><span class="card-title">⚡ 快速创建工单</span></div>
+        <div class="card-body">
+          <div class="smart-input-wrap">
+            <textarea class="smart-input" id="quick-ticket-input" rows="2" placeholder="某某公司相机拍照超时，张三帮忙看一下，紧急..."></textarea>
+            <div class="smart-hint">💡 <strong>智能识别</strong>：系统会自动识别客户、优先级和分类</div>
+          </div>
+          <div class="text-right mt-3">
+            <button class="btn btn-primary" onclick="openQuickCreateTicket()">📝 创建工单</button>
+          </div>
+        </div>
+      </div>
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+        <div class="card">
+          <div class="card-header"><span class="card-title">📋 我的工单</span><button class="btn btn-sm btn-primary" onclick="navigate('tickets')">查看全部</button></div>
+          <div class="card-body" style="padding:0;">
+            <div class="table-wrap"><table class="data-table"><thead><tr><th>工单号</th><th>标题</th><th>状态</th><th>优先级</th></tr></thead><tbody>
+              ${getMyTickets().slice(0,5).map(t => `<tr style="cursor:pointer" onclick="navigate('ticket/${t.id}')"><td>${t.id}</td><td>${escapeHtml(t.title)}</td><td>${statusTag(t.status)}</td><td>${priorityTag(t.priority)}</td></tr>`).join('') || '<tr><td colspan="4" class="text-center text-muted">暂无工单</td></tr>'}
+            </tbody></table></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><span class="card-title">🔔 最近提醒</span></div>
+          <div class="card-body" style="padding:0;">
+            <div class="table-wrap"><table class="data-table"><thead><tr><th>来源</th><th>内容</th><th>时间</th></tr></thead><tbody>
+              ${getReminders().filter(r => r.toUserId === getCurrentUser().userId).slice(0,5).map(r => `<tr><td>${escapeHtml(r.fromName)}</td><td>${escapeHtml(r.message)}</td><td class="text-muted font-sm">${formatDate(r.createdAt)}</td></tr>`).join('') || '<tr><td colspan="3" class="text-center text-muted">暂无提醒</td></tr>'}
+            </tbody></table></div>
+          </div>
+        </div>
+      </div>
+      ${isAdminUser ? `
+      <div class="card mt-4">
+        <div class="card-header"><span class="card-title">👨‍💻 工程师负载</span></div>
+        <div class="card-body">
+          <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px,1fr)); gap: 16px;">
+            ${users.filter(u => u.role === 'engineer').map(u => {
+              const engTickets = tickets.filter(t => t.engineerId === u.id && t.status !== 'resolved' && t.status !== 'closed');
+              return `<div style="background:#f5f5f5; padding:16px; border-radius:var(--radius);"><div class="font-bold">${u.name}</div><div class="text-muted font-sm">${u.email}</div><div class="mt-2">处理中: <span class="text-primary font-bold">${engTickets.filter(t=>t.status==='processing').length}</span> | 待处理: <span class="text-warning font-bold">${engTickets.filter(t=>t.status==='pending').length}</span></div></div>`;
+            }).join('')}
+          </div>
+        </div>
+      </div>` : ''}
+    `;
+  });
+});
+
+function renderPagination(total, currentPage, pageSize, goFuncName) {
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  if (totalPages <= 1) return '';
+  let html = `<div class="pagination" style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-top:1px solid var(--border-light);">
+    <span style="font-size:.85rem;color:var(--text-muted);">共 ${total} 条，${totalPages} 页</span>
+    <div style="display:flex;gap:4px;align-items:center;">`;
+  html += `<button class="btn btn-sm btn-default" ${currentPage===1?'disabled':''} onclick="${goFuncName}(${currentPage-1})">上一页</button>`;
+  for (let i = 1; i <= totalPages; i++) {
+    if (i === 1 || i === totalPages || (i >= currentPage - 1 && i <= currentPage + 1)) {
+      html += `<button class="btn btn-sm ${i===currentPage?'btn-primary':'btn-default'}" onclick="${goFuncName}(${i})">${i}</button>`;
+    } else if (i === currentPage - 2 || i === currentPage + 2) {
+      html += `<span style="padding:2px 4px;color:var(--text-muted);font-size:.85rem;">...</span>`;
+    }
+  }
+  html += `<button class="btn btn-sm btn-default" ${currentPage===totalPages?'disabled':''} onclick="${goFuncName}(${currentPage+1})">下一页</button>`;
+  html += `</div></div>`;
+  return html;
+}
+
+window.goTicketPage = (p) => { __ticketPage.page = p; window.dispatchEvent(new HashChangeEvent('hashchange')); };
+window.goCustomerPage = (p) => { __customerPage.page = p; window.dispatchEvent(new HashChangeEvent('hashchange')); };
+window.goTicketsWithFilter = (filter) => {
+  __dashboardFilter = filter;
+  navigate('tickets');
+};
+
+function getMyTickets() {
+  const uid = (getCurrentUser() || {}).userId;
+  return getTickets().filter(t => t.engineerId === uid || isAdmin()).sort((a,b) => b.id.localeCompare(a.id));
+}
+function statusTag(s) {
+  const map = { pending: '<span class="tag tag-orange">待处理</span>', processing: '<span class="tag tag-blue">处理中</span>', waiting: '<span class="tag tag-purple">等待客户回复</span>', resolved: '<span class="tag tag-green">已解决</span>', closed: '<span class="tag tag-gray">已关闭</span>' };
+  return map[s] || s;
+}
+function priorityTag(p) {
+  const map = { high: '<span class="tag tag-red">高</span>', medium: '<span class="tag tag-orange">中</span>', low: '<span class="tag tag-green">低</span>' };
+  return map[p] || p;
+}
+
+// ===================== 工单列表 =====================
+route('tickets', () => {
+  if (!getCurrentUser()) return navigate('login');
+  renderLayout(container => {
+    let filterStatus = __ticketFilter.status;
+    let filterPriority = __ticketFilter.priority;
+    let search = __ticketFilter.search;
+    const dashFilter = window.__dashboardFilter;
+    if (dashFilter) {
+      if (dashFilter === 'high') { filterPriority = 'high'; __ticketFilter.priority = 'high'; }
+      else { filterStatus = dashFilter; __ticketFilter.status = dashFilter; }
+      window.__dashboardFilter = '';
+    }
+    const page = __ticketPage.page;
+    const pageSize = __ticketPage.pageSize;
+    const renderList = () => {
+      let list = getTickets();
+      if (filterStatus) list = list.filter(t => t.status === filterStatus);
+      if (filterPriority) list = list.filter(t => t.priority === filterPriority);
+      if (search) {
+        const s = search.toLowerCase();
+        list = list.filter(t => {
+          const c = getCustomers().find(x => x.id === t.customerId);
+          const eng = getUsers().find(x => x.id === t.engineerId);
+          return (t.title && t.title.toLowerCase().includes(s)) ||
+                 (t.id && t.id.toLowerCase().includes(s)) ||
+                 (c && c.name && c.name.toLowerCase().includes(s)) ||
+                 (eng && eng.name && eng.name.toLowerCase().includes(s));
+        });
+      }
+      list = list.sort((a,b) => b.id.localeCompare(a.id));
+      const total = list.length;
+      const start = (page - 1) * pageSize;
+      const pageList = list.slice(start, start + pageSize);
+      const tbody = document.getElementById('ticket-tbody');
+      const pgContainer = document.getElementById('ticket-pagination');
+      if (!tbody) return;
+      tbody.innerHTML = pageList.map(t => {
+        const c = getCustomers().find(x => x.id === t.customerId);
+        const eng = getUsers().find(x => x.id === t.engineerId);
+        const overdue = t.status !== 'resolved' && t.status !== 'closed' && new Date(t.dueDate) < new Date();
+        return `<tr>
+          <td style="cursor:pointer" onclick="navigate('ticket/${t.id}')"><span class="font-bold">${t.id}</span>${overdue?' <span class="tag tag-red">逾期</span>':''}</td>
+          <td style="cursor:pointer" onclick="navigate('ticket/${t.id}')">${escapeHtml(t.title)}</td>
+          <td style="cursor:pointer" onclick="navigate('ticket/${t.id}')">${c ? escapeHtml(c.name) : t.customerId ? '<span class="text-muted">客户已删除</span>' : '-'}</td>
+          <td style="cursor:pointer" onclick="navigate('ticket/${t.id}')">${escapeHtml(t.category || '-')}</td>
+          <td style="cursor:pointer" onclick="navigate('ticket/${t.id}')">${statusTag(t.status)}</td>
+          <td style="cursor:pointer" onclick="navigate('ticket/${t.id}')">${priorityTag(t.priority)}</td>
+          <td style="cursor:pointer" onclick="navigate('ticket/${t.id}')">${eng ? escapeHtml(eng.name) : '-'}</td>
+          <td style="cursor:pointer" onclick="navigate('ticket/${t.id}')">${t.ticketDate ? formatDate(t.ticketDate) : formatDate(t.createdAt)}</td>
+          <td style="cursor:pointer" onclick="navigate('ticket/${t.id}')">${formatDate(t.dueDate, 'MM-dd')}</td>
+          ${isAdmin() ? `<td><button class="btn btn-sm btn-danger" onclick="event.stopPropagation(); deleteTicket('${t.id}')">删除</button></td>` : ''}
+        </tr>`;
+      }).join('') || '<tr><td colspan="10" class="text-center text-muted">无匹配工单</td></tr>';
+      if (pgContainer) pgContainer.innerHTML = renderPagination(total, page, pageSize, 'goTicketPage');
+    };
+    container.innerHTML = `
+      <h1 class="page-title">🎫 工单管理</h1>
+      <div class="search-bar">
+        <div class="search-input"><input type="text" id="ticket-search" value="${escapeHtml(search)}" placeholder="搜索工单号、标题、客户名或负责人..."></div>
+        <div class="filter-group">
+          <select class="form-select" id="filter-status" style="width:120px"><option value="">全部状态</option><option value="pending" ${filterStatus==='pending'?'selected':''}>待处理</option><option value="processing" ${filterStatus==='processing'?'selected':''}>处理中</option><option value="waiting" ${filterStatus==='waiting'?'selected':''}>等待客户回复</option><option value="resolved" ${filterStatus==='resolved'?'selected':''}>已解决</option></select>
+          <select class="form-select" id="filter-priority" style="width:120px"><option value="">全部优先级</option><option value="high" ${filterPriority==='high'?'selected':''}>高</option><option value="medium" ${filterPriority==='medium'?'selected':''}>中</option><option value="low" ${filterPriority==='low'?'selected':''}>低</option></select>
+          <button class="btn btn-primary" onclick="openCreateTicketModal()">+ 新建工单</button>
+          <button class="btn btn-default" onclick="exportMyTickets()">📥 导出我的工单</button>
+          <button class="btn btn-success" onclick="openWeeklyExportModal()">📅 按周导出</button>
+        </div>
+      </div>
+      <div class="card"><div class="card-body" style="padding:0;"><div class="table-wrap">
+        <table class="data-table"><thead><tr><th>工单号</th><th>标题</th><th>客户</th><th>分类</th><th>状态</th><th>优先级</th><th>负责人</th><th>日期</th><th>截止日期</th>${isAdmin()?'<th>操作</th>':''}</tr></thead>
+        <tbody id="ticket-tbody"></tbody></table>
+      </div><div id="ticket-pagination"></div></div></div>`;
+    setTimeout(renderList, 0);
+    document.getElementById('ticket-search').addEventListener('input', debounce(e => { search = e.target.value; __ticketFilter.search = search; __ticketPage.page = 1; renderList(); }, 300));
+    document.getElementById('filter-status').addEventListener('change', e => { filterStatus = e.target.value; __ticketFilter.status = filterStatus; __ticketPage.page = 1; renderList(); });
+    document.getElementById('filter-priority').addEventListener('change', e => { filterPriority = e.target.value; __ticketFilter.priority = filterPriority; __ticketPage.page = 1; renderList(); });
+  });
+});
+
+// ===================== 导出我的工单（工程师） =====================
+function exportMyTickets() {
+  const user = getCurrentUser();
+  if (!user) return showToast('请先登录', 'error');
+  const myTickets = getTickets().filter(t => t.engineerId === user.id || t.creatorId === user.id);
+  if (!myTickets.length) return showToast('您没有工单可导出', 'warning');
+  const headers = ['工单号', '类型', '标题', '客户ID', '客户名', '状态', '优先级', '分类', '负责人ID', '负责人', '工单日期', '创建时间', '截止日期', '描述'];
+  const rows = myTickets.map(t => {
+    const c = getCustomers().find(c => c.id === t.customerId);
+    const u = getUsers().find(u => u.id === t.engineerId);
+    return [
+      t.id, t.ticketType || '', t.title || '', t.customerId || '', c ? c.name : '', t.status || '', t.priority || '', t.category || '', t.engineerId || '', u ? u.name : '', t.ticketDate || '', t.createdAt || '', t.dueDate || '', t.description || ''
+    ];
+  });
+  const csv = [headers.join(','), ...rows.map(r => r.map(cell => '"' + String(cell || '').replace(/"/g, '""') + '"').join(','))].join('\r\n');
+  const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `我的工单_${user.name}_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  showToast(`已导出 ${myTickets.length} 条工单`, 'success');
+}
+// ===================== 按周导出工单 =====================
+function openWeeklyExportModal() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const week = getWeekNumber(now);
+  const weekStr = `${year}-W${String(week).padStart(2, '0')}`;
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay';
+  modal.innerHTML = `<div class="modal" style="max-width:480px">
+    <div class="modal-header"><span class="modal-title">📅 按周导出工单</span><span class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</span></div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">选择周</label>
+        <input type="week" id="weekly-export-week" class="form-input" value="${weekStr}">
+        <div class="form-hint">默认当前周，可手动调整</div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">导出范围</label>
+        <div class="flex gap-2">
+          <button class="btn btn-default flex-1" onclick="document.getElementById('weekly-scope').value='all'" id="btn-scope-all">全部工单</button>
+          <button class="btn btn-primary flex-1" onclick="document.getElementById('weekly-scope').value='mine'" id="btn-scope-mine">我的工单</button>
+        </div>
+        <input type="hidden" id="weekly-scope" value="mine">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button>
+      <button class="btn btn-success" onclick="exportWeeklyTickets()">导出 CSV</button>
+    </div>
+  </div>`;
+  document.body.appendChild(modal);
+}
+
+function getWeekNumber(d) {
+  const date = new Date(d.getTime());
+  date.setHours(0, 0, 0, 0);
+  date.setDate(date.getDate() + 4 - (date.getDay() || 7));
+  const yearStart = new Date(date.getFullYear(), 0, 1);
+  return Math.ceil((((date - yearStart) / 86400000) + 1) / 7);
+}
+
+function getWeekRange(weekStr) {
+  const [year, w] = weekStr.split('-W').map(Number);
+  const d = new Date(year, 0, 1);
+  const dayNum = d.getDay() || 7;
+  const offset = 7 - dayNum + (w - 1) * 7;
+  d.setDate(d.getDate() + offset);
+  const start = new Date(d);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(d);
+  end.setDate(end.getDate() + 6);
+  end.setHours(23, 59, 59, 999);
+  return { start, end };
+}
+
+function exportWeeklyTickets() {
+  const weekStr = document.getElementById('weekly-export-week').value;
+  const scope = document.getElementById('weekly-scope').value;
+  if (!weekStr) return showToast('请选择周', 'warning');
+  const { start, end } = getWeekRange(weekStr);
+  const user = getCurrentUser();
+  let tickets = getTickets().filter(t => {
+    const created = new Date(t.createdAt);
+    return created >= start && created <= end;
+  });
+  if (scope === 'mine') {
+    tickets = tickets.filter(t => t.engineerId === user.id || t.creatorId === user.id);
+  }
+  if (!tickets.length) return showToast('该周范围内没有工单', 'warning');
+  const headers = ['工单号', '类型', '标题', '客户ID', '客户名', '状态', '优先级', '分类', '负责人ID', '负责人', '工单日期', '创建时间', '截止日期', '描述'];
+  const rows = tickets.map(t => {
+    const c = getCustomers().find(c => c.id === t.customerId);
+    const u = getUsers().find(u => u.id === t.engineerId);
+    return [
+      t.id, t.ticketType || '', t.title || '', t.customerId || '', c ? c.name : '', t.status || '', t.priority || '', t.category || '', t.engineerId || '', u ? u.name : '', t.ticketDate || '', t.createdAt || '', t.dueDate || '', t.description || ''
+    ];
+  });
+  const csv = [headers.join(','), ...rows.map(r => r.map(cell => String(cell || '').replace(/\"/g, '\"\"').replace(/\n/g, ' ').replace(/\r/g, ' ')).join(','))].join('\r\n');
+  const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `工单周报_${weekStr}_${scope === 'mine' ? user.name : '全部'}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  showToast(`已导出 ${tickets.length} 条工单 (${weekStr})`, 'success');
+  document.querySelector('.modal-overlay').remove();
+}
+
+// ===================== 新建工单弹窗 =====================
+
+window.openLinkTicketsModal = (customerId, customerName) => {
+  // 查找所有 customerId 为空或客户不存在的工单
+  const allCustomers = getCustomers();
+  const orphanTickets = getTickets().filter(t => {
+    if (!t.customerId) return true;
+    const c = allCustomers.find(x => x.id === t.customerId);
+    return !c;
+  }).sort((a,b) => b.id.localeCompare(a.id));
+  
+  if (!orphanTickets.length) {
+    notify('没有可关联的工单', '所有工单都已关联到现有客户', 'info');
+    return;
+  }
+  
+  const modal = document.createElement('div'); modal.className = 'modal-overlay';
+  modal.innerHTML = `
+    <div class="modal" style="max-width:700px">
+      <div class="modal-header"><span class="modal-title">🔗 关联工单到 ${escapeHtml(customerName)}</span><span class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</span></div>
+      <div class="modal-body" style="max-height:60vh;overflow-y:auto">
+        <p class="text-muted font-sm mb-3">以下工单当前未关联到任何客户，勾选后点击确认关联。</p>
+        <table class="data-table"><thead><tr><th style="width:40px"><input type="checkbox" id="link-all" onclick="document.querySelectorAll('.link-check').forEach(c=>c.checked=this.checked)"></th><th>工单号</th><th>标题</th><th>状态</th><th>优先级</th><th>创建时间</th></tr></thead>
+        <tbody>
+          ${orphanTickets.map(t => `<tr><td><input type="checkbox" class="link-check" data-id="${t.id}"></td><td>${t.id}</td><td>${escapeHtml(t.title)}</td><td>${statusTag(t.status)}</td><td>${priorityTag(t.priority)}</td><td>${formatDate(t.createdAt)}</td></tr>`).join('')}
+        </tbody></table>
+      </div>
+      <div class="modal-footer"><button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button><button class="btn btn-primary" onclick="submitLinkTickets('${customerId}')">确认关联</button></div>
+    </div>`;
+  document.body.appendChild(modal);
+};
+
+window.submitLinkTickets = async (customerId) => {
+  const checks = document.querySelectorAll('.link-check:checked');
+  if (!checks.length) { notify('请至少选择一个工单', '', 'warning'); return; }
+  const ids = Array.from(checks).map(c => c.dataset.id);
+  try {
+    for (const id of ids) {
+      await saveTicketUpdate(id, { customerId, updatedAt: new Date().toISOString() });
+    }
+    notify('关联成功', `已将 ${ids.length} 个工单关联到当前客户`, 'success');
+    document.querySelector('.modal-overlay').remove();
+    await loadAllData();
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+  } catch (e) {
+    notify('关联失败', e.message, 'error');
+  }
+};
+
+window.openCreateTicketForCustomer = (customerId, customerName) => {
+  openCreateTicketModal();
+  setTimeout(() => {
+    const searchEl = document.getElementById('new-customer-search');
+    const idEl = document.getElementById('new-customer-id');
+    if (searchEl) searchEl.value = customerName;
+    if (idEl) idEl.value = customerId;
+  }, 300);
+};
+
+window.openCreateTicketModal = () => {
+  const modal = document.createElement('div'); modal.className = 'modal-overlay';
+  const customers = getCustomers();
+  const engineers = getUsers().filter(u => u.role === 'engineer');
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-header"><span class="modal-title">📝 新建工单</span><span class="modal-close" onclick="closeModalWithCleanup(this)">&times;</span></div>
+      <div class="modal-body">
+        <div class="smart-input-wrap">
+          <textarea class="smart-input" id="smart-input" rows="3" placeholder="某某公司相机拍照超时，张三帮忙看一下，紧急..."></textarea>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;">
+            <div class="smart-hint">💡 <strong>智能识别</strong>：系统会自动识别客户、优先级和分类</div>
+            <button class="btn btn-sm btn-primary" onclick="doSmartParse()">🔮 智能解析</button>
+          </div>
+        </div>
+        <hr style="margin:16px 0; border:none; border-top:1px solid var(--border-light);">
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">工单类型</label>
+            <select class="form-select" id="new-ticket-type"><option value="RVC" selected>RVC</option><option value="VDA">VDA</option></select>
+          </div>
+          <div class="form-group"><label class="form-label">状态</label>
+            <select class="form-select" id="new-status"><option value="pending" selected>待处理</option><option value="processing">处理中</option><option value="waiting">等待回复</option><option value="resolved">已解决</option><option value="closed">已关闭</option></select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group" style="flex:1.5"><label class="form-label">标题 <span class="required">*</span></label><input type="text" id="new-title" class="form-input"></div>
+          <div class="form-group"><label class="form-label">工单日期</label><input type="text" id="new-ticket-date" class="form-input" placeholder="如 260702 或 2026-07-02"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">客户</label>
+            <div class="customer-search-wrap" style="position:relative;">
+              <input type="text" id="new-customer-search" class="form-input" placeholder="输入客户名称搜索，未匹配将自动创建（可选）" autocomplete="off">
+              <input type="hidden" id="new-customer-id">
+              <div id="customer-suggestions" style="display:none;position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid var(--border);border-radius:0 0 var(--radius) var(--radius);max-height:200px;overflow-y:auto;z-index:100;box-shadow:var(--shadow);"></div>
+            </div>
+          </div>
+          <div class="form-group"><label class="form-label">指派工程师 <span class="required">*</span></label>
+            <select class="form-select" id="new-engineer">${engineers.map(u => `<option value="${u.id}">${escapeHtml(u.name)}</option>`).join('')}</select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">优先级</label>
+            <select class="form-select" id="new-priority"><option value="high">高</option><option value="medium" selected>中</option><option value="low">低</option></select>
+          </div>
+          <div class="form-group"><label class="form-label">分类</label>
+            <select class="form-select" id="new-category"><option value="点云调试">点云调试</option><option value="硬件故障">硬件故障</option><option value="软件问题">软件问题</option><option value="SDK开发">SDK开发</option><option value="手眼标定">手眼标定</option><option value="需求沟通">需求沟通</option><option value="样品测试">样品测试</option><option value="相机选型">相机选型</option><option value="资料提供">资料提供</option><option value="其他">其他</option></select>
+          </div>
+        </div>
+        <div class="form-group"><label class="form-label">详细描述</label><textarea class="form-textarea" id="new-desc" rows="3"></textarea></div>
+        <div class="form-group"><label class="form-label">附件图片</label><div id="new-images"></div></div>
+      </div>
+      <div class="modal-footer"><button class="btn btn-default" onclick="closeModalWithCleanup(this)">取消</button><button class="btn btn-primary" onclick="submitNewTicket()">创建工单</button></div>
+    </div>`;
+  document.body.appendChild(modal);
+  __pendingImages = [];
+  initImageUpload('new-images');
+  const smartInput = document.getElementById('smart-input');
+  smartInput.addEventListener('input', debounce(() => {
+    const parsed = parseTicketInput(smartInput.value);
+    if (parsed.title) document.getElementById('new-title').value = parsed.title;
+    if (parsed.customerId) {
+      const c = getCustomers().find(x => x.id === parsed.customerId);
+      if (c) {
+        document.getElementById('new-customer-id').value = c.id;
+        document.getElementById('new-customer-search').value = c.name;
+      }
+    } else if (parsed.customerName) {
+      document.getElementById('new-customer-search').value = parsed.customerName;
+      document.getElementById('new-customer-id').value = '';
+    }
+    if (parsed.priority) document.getElementById('new-priority').value = parsed.priority;
+    if (parsed.category) document.getElementById('new-category').value = parsed.category;
+    if (parsed.description) document.getElementById('new-desc').value = parsed.description;
+    if (parsed.engineerId && document.getElementById('new-engineer')) {
+      document.getElementById('new-engineer').value = parsed.engineerId;
+    }
+  }, 400));
+  // 绑定客户搜索
+  bindCustomerSearch();
+};
+
+window.submitNewTicket = async () => {
+  const title = document.getElementById('new-title').value.trim();
+  let customerId = document.getElementById('new-customer-id').value;
+  const customerName = document.getElementById('new-customer-search').value.trim();
+  let engineerId = document.getElementById('new-engineer').value;
+  const priority = document.getElementById('new-priority').value;
+  const category = document.getElementById('new-category').value;
+  const status = document.getElementById('new-status').value;
+  const ticketDateRaw = document.getElementById('new-ticket-date').value.trim();
+  const ticketDate = parseSimpleDate(ticketDateRaw) || new Date().toISOString().slice(0, 10);
+  const description = document.getElementById('new-desc').value.trim();
+  if (!title) { notify('请填写标题', '', 'warning'); return; }
+  // 客户名称改为可选
+  // 如果没有指定负责人，默认使用创建人自己
+  if (!engineerId) {
+    engineerId = (getCurrentUser() || {}).id || '';
+  }
+  // 如果填写了客户名称但没有匹配到已有客户，自动创建新客户
+  if (customerName && !customerId) {
+    try {
+      const newC = await createCustomerAsync({
+        id: generateId('cus'),
+        name: customerName,
+        contact: '',
+        phone: '',
+        email: '',
+        address: '',
+        industry: '',
+        level: 'C',
+        devices: [],
+        createdAt: new Date().toISOString()
+      });
+      customerId = newC.id;
+      notify('新客户已创建', customerName, 'success');
+    } catch (e) {
+      notify('创建客户失败', e.message, 'error');
+      return;
+    }
+  }
+  try {
+    const now = new Date().toISOString();
+    const due = new Date(Date.now() + 86400000 * (priority==='high'?1:priority==='medium'?3:7)).toISOString();
+    const ticketType = document.getElementById('new-ticket-type').value;
+    const newTicket = await createTicketAsync({
+      ticketType, title, customerId, engineerId, status, priority, category, description,
+      ticketDate: ticketDate + 'T00:00:00.000Z',
+      images: __pendingImages.map(x => x.url),
+      createdAt: now, updatedAt: now, dueDate: due, creatorId: (getCurrentUser() || {}).id, comments: []
+    });
+    addReminder(newTicket.id, engineerId, `您有一个新工单被指派：${title}`);
+    notify('创建成功', `工单 ${newTicket.id} 已创建`, 'success');
+    document.querySelector('.modal-overlay').remove();
+    await loadAllData();
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+  } catch (e) {
+    notify('创建失败', e.message, 'error');
+  }
+};
+
+window.bindCustomerSearch = () => {
+  const searchInput = document.getElementById('new-customer-search');
+  const idInput = document.getElementById('new-customer-id');
+  const suggestions = document.getElementById('customer-suggestions');
+  if (!searchInput || !suggestions) return;
+
+  const showSuggestions = (list) => {
+    if (!list.length) { suggestions.style.display = 'none'; return; }
+    suggestions.innerHTML = list.map(c => `<div class="suggestion-item" data-id="${c.id}" style="padding:8px 12px;cursor:pointer;transition:background .15s;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background=''">${escapeHtml(c.name)} <span class="text-muted" style="font-size:.8rem">${escapeHtml(c.contact||'')}</span></div>`).join('');
+    suggestions.style.display = 'block';
+    suggestions.querySelectorAll('.suggestion-item').forEach(el => {
+      el.addEventListener('click', () => {
+        searchInput.value = el.textContent.replace(/\s+/g, ' ').trim();
+        idInput.value = el.dataset.id;
+        suggestions.style.display = 'none';
+      });
+    });
+  };
+
+  searchInput.addEventListener('input', debounce(() => {
+    const val = searchInput.value.trim().toLowerCase();
+    idInput.value = ''; // 清空已选ID，重新搜索
+    if (!val) { suggestions.style.display = 'none'; return; }
+    
+    // 1. 精确子串匹配（优先）
+    let matches = getCustomers().filter(c =>
+      c.name.toLowerCase().includes(val) ||
+      (c.contact && c.contact.toLowerCase().includes(val)) ||
+      (c.phone && c.phone.includes(val))
+    );
+    
+    // 2. 如果精确匹配太少，补充字符级模糊匹配（不要求连续）
+    if (matches.length < 3 && val.length >= 2) {
+      const chars = [...val];
+      const fuzzy = getCustomers().filter(c => {
+        if (matches.includes(c)) return false; // 已匹配的不再加入
+        const name = c.name.toLowerCase();
+        // 检查输入的每个字符是否都在名字中出现过
+        return chars.every(ch => name.includes(ch));
+      }).slice(0, 6);
+      matches = [...matches, ...fuzzy];
+    }
+    
+    showSuggestions(matches.slice(0, 8));
+  }, 200));
+
+  searchInput.addEventListener('focus', () => {
+    const val = searchInput.value.trim().toLowerCase();
+    if (!val) {
+      // 空值时显示最近客户
+      showSuggestions(getCustomers().slice(0, 6));
+      return;
+    }
+    let matches = getCustomers().filter(c =>
+      c.name.toLowerCase().includes(val) ||
+      (c.contact && c.contact.toLowerCase().includes(val)) ||
+      (c.phone && c.phone.includes(val))
+    );
+    if (matches.length < 3 && val.length >= 2) {
+      const chars = [...val];
+      const fuzzy = getCustomers().filter(c => {
+        if (matches.includes(c)) return false;
+        const name = c.name.toLowerCase();
+        return chars.every(ch => name.includes(ch));
+      }).slice(0, 6);
+      matches = [...matches, ...fuzzy];
+    }
+    showSuggestions(matches.slice(0, 8));
+  });
+
+  // 点击外部关闭建议
+  document.addEventListener('click', (e) => {
+    if (!searchInput.contains(e.target) && !suggestions.contains(e.target)) {
+      suggestions.style.display = 'none';
+    }
+  });
+
+  // 键盘导航
+  searchInput.addEventListener('keydown', (e) => {
+    const items = suggestions.querySelectorAll('.suggestion-item');
+    const active = suggestions.querySelector('.suggestion-item.active');
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (!active) { items[0] && items[0].classList.add('active'); items[0] && (items[0].style.background = 'var(--primary-light)'); }
+      else {
+        const next = active.nextElementSibling;
+        if (next) { active.classList.remove('active'); active.style.background = ''; next.classList.add('active'); next.style.background = 'var(--primary-light)'; }
+      }
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (active) {
+        const prev = active.previousElementSibling;
+        if (prev) { active.classList.remove('active'); active.style.background = ''; prev.classList.add('active'); prev.style.background = 'var(--primary-light)'; }
+      }
+    } else if (e.key === 'Enter') {
+      if (active) { active.click(); e.preventDefault(); }
+    } else if (e.key === 'Escape') {
+      suggestions.style.display = 'none';
+    }
+  });
+};
+
+window.openEditTicketModal = (id) => {
+  const t = getTickets().find(x => x.id === id); if (!t) return;
+  const modal = document.createElement('div'); modal.className = 'modal-overlay';
+  modal.innerHTML = `<div class="modal"><div class="modal-header"><span class="modal-title">✏️ 编辑工单</span><span class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</span></div>
+    <div class="modal-body">
+      <div class="form-group"><label class="form-label">标题 <span class="required">*</span></label><input type="text" id="edit-title" class="form-input" value="${escapeHtml(t.title)}"></div>
+      <div class="form-row"><div class="form-group"><label class="form-label">客户</label><select class="form-select" id="edit-customer">${getCustomers().map(c => `<option value="${c.id}" ${c.id===t.customerId?'selected':''}>${escapeHtml(c.name)}</option>`).join('')}</select></div><div class="form-group"><label class="form-label">负责人</label><select class="form-select" id="edit-engineer">${getUsers().filter(u=>u.role==='engineer').map(u => `<option value="${u.id}" ${u.id===t.engineerId?'selected':''}>${escapeHtml(u.name)}</option>`).join('')}</select></div></div>
+      <div class="form-row"><div class="form-group"><label class="form-label">状态</label><select class="form-select" id="edit-status"><option value="pending" ${t.status==='pending'?'selected':''}>待处理</option><option value="processing" ${t.status==='processing'?'selected':''}>处理中</option><option value="waiting" ${t.status==='waiting'?'selected':''}>等待客户回复</option><option value="resolved" ${t.status==='resolved'?'selected':''}>已解决</option><option value="closed" ${t.status==='closed'?'selected':''}>已关闭</option></select></div><div class="form-group"><label class="form-label">优先级</label><select class="form-select" id="edit-priority"><option value="low" ${t.priority==='low'?'selected':''}>低</option><option value="medium" ${t.priority==='medium'?'selected':''}>中</option><option value="high" ${t.priority==='high'?'selected':''}>高</option></select></div></div>
+      <div class="form-row"><div class="form-group"><label class="form-label">分类</label><select class="form-select" id="edit-category"><option value="点云调试" ${t.category==='点云调试'?'selected':''}>点云调试</option><option value="硬件故障" ${t.category==='硬件故障'?'selected':''}>硬件故障</option><option value="软件问题" ${t.category==='软件问题'?'selected':''}>软件问题</option><option value="SDK开发" ${t.category==='SDK开发'?'selected':''}>SDK开发</option><option value="手眼标定" ${t.category==='手眼标定'?'selected':''}>手眼标定</option><option value="需求沟通" ${t.category==='需求沟通'?'selected':''}>需求沟通</option><option value="样品测试" ${t.category==='样品测试'?'selected':''}>样品测试</option><option value="相机选型" ${t.category==='相机选型'?'selected':''}>相机选型</option><option value="资料提供" ${t.category==='资料提供'?'selected':''}>资料提供</option><option value="其他" ${t.category==='其他'?'selected':''}>其他</option></select></div><div class="form-group"><label class="form-label">工单日期</label><input type="text" id="edit-ticket-date" class="form-input" placeholder="如 260702 或 2026-07-02" value="${t.ticketDate ? parseSimpleDate(t.ticketDate) || '' : ''}"></div></div>
+      <div class="form-group"><label class="form-label">截止日期</label><input type="datetime-local" id="edit-due" class="form-input" value="${t.dueDate ? t.dueDate.slice(0,16) : ''}"></div>
+      <div class="form-group"><label class="form-label">详细描述</label><textarea class="form-textarea" id="edit-desc" rows="3">${escapeHtml(t.description || '')}</textarea></div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button><button class="btn btn-primary" onclick="submitEditTicket('${t.id}')">保存</button></div></div>`;
+  document.body.appendChild(modal);
+};
+
+window.submitEditTicket = async (id) => {
+  const title = document.getElementById('edit-title').value.trim();
+  const customerId = document.getElementById('edit-customer').value;
+  const engineerId = document.getElementById('edit-engineer').value;
+  const status = document.getElementById('edit-status').value;
+  const priority = document.getElementById('edit-priority').value;
+  const category = document.getElementById('edit-category').value;
+  const ticketDateRaw = document.getElementById('edit-ticket-date').value.trim();
+  const ticketDate = parseSimpleDate(ticketDateRaw);
+  const dueDate = document.getElementById('edit-due').value;
+  const description = document.getElementById('edit-desc').value.trim();
+  if (!title) { notify('请填写标题', '', 'warning'); return; }
+  try {
+    const fields = { title, customerId, engineerId, status, priority, category, description };
+    if (ticketDate) fields.ticketDate = ticketDate + 'T00:00:00.000Z';
+    if (dueDate) fields.dueDate = new Date(dueDate).toISOString();
+    await saveTicketUpdate(id, fields);
+    notify('保存成功', '', 'success');
+    document.querySelector('.modal-overlay').remove();
+    await loadAllData();
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+  } catch (e) {
+    notify('保存失败', e.message, 'error');
+  }
+};
+
+window.deleteTicket = async (id) => {
+  if (!confirm(`确定删除工单 ${id}？此操作不可恢复。`)) return;
+  try {
+    await apiFetch(`/tickets/${id}`, { method: 'DELETE' });
+    __tickets = __tickets.filter(t => t.id !== id);
+    notify('已删除', `工单 ${id} 已删除`, 'success');
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+  } catch (e) {
+    notify('删除失败', e.message, 'error');
+  }
+};
+
+// ===================== 工单详情 =====================
+route('ticket/([^/]+)', (id) => {
+  if (!getCurrentUser()) return navigate('login');
+  const ticket = getTickets().find(t => t.id === id);
+  if (!ticket) { notify('工单不存在', '', 'error'); navigate('tickets'); return; }
+  const customer = getCustomers().find(c => c.id === ticket.customerId);
+  const engineer = getUsers().find(u => u.id === ticket.engineerId);
+  renderLayout(container => {
+    const creator = getUsers().find(u => u.id === ticket.creatorId);
+    const isCreator = ticket.creatorId === (getCurrentUser() || {}).id;
+    const canEdit = isAdmin() || ticket.engineerId === getCurrentUser().userId || isCreator;
+    const canUrge = ticket.status !== 'resolved' && ticket.status !== 'closed' && (isAdmin() || ticket.engineerId === getCurrentUser().userId || isCreator);
+    const overdue = ticket.status !== 'resolved' && ticket.status !== 'closed' && new Date(ticket.dueDate) < new Date();
+    container.innerHTML = `
+      <div class="flex flex-between flex-center mb-4">
+        <h1 class="page-title" style="margin:0">🎫 ${ticket.id} ${escapeHtml(ticket.title)}</h1>
+        <div class="btn-group">
+          <button class="btn btn-default btn-sm" onclick="copyToClipboard('${ticket.id}')">📋 复制编号</button>
+          ${canEdit ? `<button class="btn btn-primary btn-sm" onclick="openEditTicketModal('${ticket.id}')">✏️ 编辑</button>` : ''}
+          ${canEdit && ticket.status === 'pending' ? `<button class="btn btn-primary btn-sm" onclick="startProcessing('${ticket.id}')">▶️ 开始处理</button>` : ''}
+          ${canEdit && ticket.status === 'processing' ? `<button class="btn btn-warning btn-sm" onclick="waitForCustomer('${ticket.id}')">⏸️ 等待客户回复</button>` : ''}
+          ${canEdit && ticket.status === 'waiting' ? `<button class="btn btn-primary btn-sm" onclick="resumeProcessing('${ticket.id}')">▶️ 继续处理</button>` : ''}
+          ${canEdit && (ticket.status === 'processing' || ticket.status === 'waiting') ? `<button class="btn btn-success btn-sm" onclick="resolveTicket('${ticket.id}')">✅ 标记解决</button>` : ''}
+          ${canEdit && ticket.status === 'resolved' ? `<button class="btn btn-default btn-sm" onclick="closeTicket('${ticket.id}')">🔒 关闭工单</button>` : ''}
+          ${isAdmin() ? `<button class="btn btn-warning btn-sm" onclick="openTransferModal('${ticket.id}')">🔄 转交</button>` : ''}
+          ${canUrge ? `<button class="btn btn-danger btn-sm" onclick="openUrgeModal('${ticket.id}')">🔔 催办</button>` : ''}
+          <button class="btn btn-default btn-sm" onclick="navigate('tickets')">返回列表</button>
+        </div>
+      </div>
+      <div style="display:grid; grid-template-columns: 2fr 1fr; gap: 20px;">
+        <div>
+          <div class="card">
+            <div class="card-header"><span class="card-title">工单信息</span>${overdue ? '<span class="tag tag-red">已逾期</span>' : ''}</div>
+            <div class="card-body">
+              <div class="form-row">
+                <div class="form-group"><label class="form-label">状态</label><div>${statusTag(ticket.status)}</div></div>
+                <div class="form-group"><label class="form-label">优先级</label><div>${priorityTag(ticket.priority)}</div></div>
+              </div>
+              <div class="form-row">
+                <div class="form-group"><label class="form-label">分类</label><div>${escapeHtml(ticket.category)}</div></div>
+                <div class="form-group"><label class="form-label">日期</label><div>${ticket.ticketDate ? formatDate(ticket.ticketDate) : formatDate(ticket.createdAt)}</div></div>
+              </div>
+              <div class="form-row">
+                <div class="form-group"><label class="form-label">截止日期</label><div class="${overdue?'text-danger font-bold':''}">${formatDate(ticket.dueDate)}</div></div>
+              </div>
+              <div class="form-group"><label class="form-label">问题描述</label><div style="background:#f5f5f5;padding:12px;border-radius:var(--radius);white-space:pre-wrap;">${escapeHtml(ticket.description)}</div></div>
+              ${(ticket.images && ticket.images.length) ? `<div class="form-group"><label class="form-label">附件图片</label><div style="display:flex;gap:8px;flex-wrap:wrap;">${ticket.images.map(img => `<img src="${img}" onclick="openImageLightbox('${img}')" style="max-width:200px;max-height:150px;border-radius:var(--radius);border:1px solid var(--border);cursor:zoom-in;transition:transform .2s;" onmouseover="this.style.transform='scale(1.03)'" onmouseout="this.style.transform='scale(1)'">`).join('')}</div></div>` : ''}
+            </div>
+          </div>
+          <div class="card mt-4">
+            <div class="card-header"><span class="card-title">💬 处理记录</span></div>
+            <div class="card-body">
+              <div class="timeline">
+                <div class="timeline-item"><div class="timeline-dot blue"></div><div class="timeline-time">${formatDate(ticket.createdAt)}</div><div class="timeline-content">工单创建</div></div>
+                ${(ticket.comments || []).map(c => `<div class="timeline-item"><div class="timeline-dot green"></div><div class="timeline-time">${formatDate(c.createdAt)} - ${escapeHtml(c.userName)}</div><div class="timeline-content">${escapeHtml(c.content)}${(c.images && c.images.length) ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">${c.images.map(img => `<img src="${img}" onclick="openImageLightbox('${img}')" style="max-width:160px;max-height:120px;border-radius:var(--radius);border:1px solid var(--border);cursor:zoom-in;transition:transform .2s;" onmouseover="this.style.transform='scale(1.03)'" onmouseout="this.style.transform='scale(1)'">`).join('')}</div>` : ''}</div></div>`).join('')}
+              </div>
+              ${ticket.status !== 'resolved' && ticket.status !== 'closed' ? `
+              <div class="mt-4">
+                <textarea class="form-textarea" id="comment-input" rows="2" placeholder="添加处理记录..."></textarea>
+                <div id="comment-images"></div>
+                <div class="text-right mt-2"><button class="btn btn-primary btn-sm" onclick="addComment('${ticket.id}')">提交记录</button></div>
+              </div>` : ''}
+            </div>
+          </div>
+        </div>
+        <div>
+          <div class="card">
+            <div class="card-header"><span class="card-title">👤 客户信息</span></div>
+            <div class="card-body">
+              <div class="form-group"><label class="form-label">客户名称</label><div class="font-bold">${customer ? escapeHtml(customer.name) : ticket.customerId ? '<span class="text-muted">客户已删除</span>' : '-'}</div></div>
+              <div class="form-group"><label class="form-label">联系人</label><div>${customer ? escapeHtml(customer.contact) : '-'}</div></div>
+              <div class="form-group"><label class="form-label">电话</label><div>${customer ? escapeHtml(customer.phone) : '-'}</div></div>
+              <div class="form-group"><label class="form-label">邮箱</label><div>${customer ? escapeHtml(customer.email) : '-'}</div></div>
+              <div class="form-group"><label class="form-label">地址</label><div>${customer ? escapeHtml(customer.address) : '-'}</div></div>
+              ${customer ? `<button class="btn btn-default btn-sm" style="width:100%" onclick="navigate('customer/${customer.id}')">查看客户详情</button>` : ''}
+            </div>
+          </div>
+          <div class="card mt-4">
+            <div class="card-header"><span class="card-title">🔧 设备信息</span></div>
+            <div class="card-body" style="padding:0;">
+              ${customer && customer.devices ? customer.devices.map(d => `<div style="padding:12px 16px; border-bottom:1px solid var(--border-light);"><div class="font-bold">${escapeHtml(d.name)}</div><div class="font-sm text-muted">${escapeHtml(d.model)} | SN: ${escapeHtml(d.sn)}</div></div>`).join('') || '<div class="text-muted text-center" style="padding:16px">暂无设备</div>' : '<div class="text-muted text-center" style="padding:16px">暂无设备</div>'}
+            </div>
+          </div>
+          <div class="card mt-4">
+            <div class="card-header"><span class="card-title">📝 创建人</span></div>
+            <div class="card-body">
+              <div class="flex flex-center gap-2">
+                <div class="user-avatar">${creator ? creator.name.charAt(0) : '?'}</div>
+                <div><div class="font-bold">${creator ? escapeHtml(creator.name) : '-'}</div><div class="font-sm text-muted">${creator ? escapeHtml(creator.email || '') : ''}</div><div class="font-sm text-muted">${formatDate(ticket.createdAt)} 创建</div></div>
+              </div>
+            </div>
+          </div>
+          <div class="card mt-4">
+            <div class="card-header"><span class="card-title">👨‍💻 负责人</span></div>
+            <div class="card-body">
+              <div class="flex flex-center gap-2">
+                <div class="user-avatar">${engineer ? engineer.name.charAt(0) : '?'}</div>
+                <div><div class="font-bold">${engineer ? escapeHtml(engineer.name) : '-'}</div><div class="font-sm text-muted">${engineer ? escapeHtml(engineer.email) : ''}</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>`;
+  });
+  // 初始化评论区图片上传
+  setTimeout(() => {
+    __pendingImages = [];
+    const imgContainer = document.getElementById('comment-images');
+    if (imgContainer) initImageUpload('comment-images');
+  }, 50);
+});
+
+window.resolveTicket = async (id) => {
+  try {
+    await saveTicketUpdate(id, { status: 'resolved', updatedAt: new Date().toISOString() });
+    notify('工单已解决', `${id} 已标记为已解决`, 'success');
+    await loadAllData();
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+  } catch (e) {
+    notify('操作失败', e.message, 'error');
+  }
+};
+window.startProcessing = async (id) => {
+  try {
+    await saveTicketUpdate(id, { status: 'processing', updatedAt: new Date().toISOString() });
+    notify('开始处理', `${id} 已开始处理`, 'success');
+    await loadAllData();
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+  } catch (e) {
+    notify('操作失败', e.message, 'error');
+  }
+};
+window.waitForCustomer = async (id) => {
+  try {
+    await saveTicketUpdate(id, { status: 'waiting', updatedAt: new Date().toISOString() });
+    notify('等待客户回复', `${id} 已标记为等待客户回复`, 'success');
+    await loadAllData();
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+  } catch (e) {
+    notify('操作失败', e.message, 'error');
+  }
+};
+window.resumeProcessing = async (id) => {
+  try {
+    await saveTicketUpdate(id, { status: 'processing', updatedAt: new Date().toISOString() });
+    notify('继续处理', `${id} 已恢复处理中`, 'success');
+    await loadAllData();
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+  } catch (e) {
+    notify('操作失败', e.message, 'error');
+  }
+};
+window.closeTicket = async (id) => {
+  try {
+    await saveTicketUpdate(id, { status: 'closed', updatedAt: new Date().toISOString() });
+    notify('工单已关闭', `${id} 已关闭`, 'success');
+    await loadAllData();
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+  } catch (e) {
+    notify('操作失败', e.message, 'error');
+  }
+};
+
+window.exportTickets = async () => {
+  try {
+    const resp = await fetch(`${API_BASE}/export/tickets`, { headers: { Authorization: `Bearer ${__token}` } });
+    if (!resp.ok) throw new Error('导出失败');
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `tickets_${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    notify('导出成功', '工单 CSV 已下载', 'success');
+  } catch (e) {
+    notify('导出失败', e.message, 'error');
+  }
+};
+
+window.exportCustomers = async () => {
+  try {
+    const resp = await fetch(`${API_BASE}/export/customers`, { headers: { Authorization: `Bearer ${__token}` } });
+    if (!resp.ok) throw new Error('导出失败');
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `customers_${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    notify('导出成功', '客户 CSV 已下载', 'success');
+  } catch (e) {
+    notify('导出失败', e.message, 'error');
+  }
+};
+
+window.importData = async () => {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.json';
+  input.onchange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (!confirm('导入将覆盖现有数据，建议先导出备份。确定继续？')) return;
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      await apiFetch('/import', { method: 'POST', body: JSON.stringify(data) });
+      await loadAllData();
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+      notify('导入成功', '数据已恢复', 'success');
+    } catch (err) {
+      notify('导入失败', err.message, 'error');
+    }
+  };
+  input.click();
+};
+
+window.addComment = async (id) => {
+  const content = document.getElementById('comment-input').value.trim();
+  if (!content && !__pendingImages.length) return;
+  try {
+    await addTicketComment(id, { content, images: __pendingImages.map(x => x.url) });
+    __pendingImages = [];
+    notify('记录已添加', '', 'success');
+    await loadAllData();
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+  } catch (e) {
+    notify('操作失败', e.message, 'error');
+  }
+};
+
+window.openTransferModal = (id) => {
+  const modal = document.createElement('div'); modal.className = 'modal-overlay';
+  const engineers = getUsers().filter(u => u.role === 'engineer');
+  modal.innerHTML = `<div class="modal"><div class="modal-header"><span class="modal-title">🔄 转交工单</span><span class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</span></div>
+    <div class="modal-body">
+      <div class="form-group"><label class="form-label">选择新负责人</label><select class="form-select" id="transfer-engineer">${engineers.map(u => `<option value="${u.id}">${escapeHtml(u.name)}</option>`).join('')}</select></div>
+      <div class="form-group"><label class="form-label">转交说明</label><textarea class="form-textarea" id="transfer-note" rows="2"></textarea></div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button><button class="btn btn-primary" onclick="doTransfer('${id}')">确认转交</button></div></div>`;
+  document.body.appendChild(modal);
+};
+window.doTransfer = async (id) => {
+  const newEng = document.getElementById('transfer-engineer').value;
+  const note = document.getElementById('transfer-note').value.trim();
+  try {
+    await saveTicketUpdate(id, { engineerId: newEng, updatedAt: new Date().toISOString() });
+    const t = getTickets().find(x => x.id === id);
+    if (t) {
+      const oldEng = t.engineerId;
+      await addTicketComment(id, { content: `工单转交给 ${(getUsers().find(u=>u.id===newEng) || {}).name || ''}${note ? '，备注：'+note : ''}` });
+      addReminder(id, newEng, `工单 ${id} 已转交给您：${t.title}`);
+      if (oldEng !== newEng) addReminder(id, oldEng, `工单 ${id} 已转交他人：${t.title}`);
+    }
+    notify('转交成功', '', 'success');
+    document.querySelector('.modal-overlay').remove();
+    await loadAllData();
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+  } catch (e) {
+    notify('转交失败', e.message, 'error');
+  }
+};
+
+window.openUrgeModal = (id) => {
+  const modal = document.createElement('div'); modal.className = 'modal-overlay';
+  modal.innerHTML = `<div class="modal"><div class="modal-header"><span class="modal-title">🔔 催办工单</span><span class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</span></div>
+    <div class="modal-body">
+      <div class="form-group"><label class="form-label">催办内容</label><textarea class="form-textarea" id="urge-msg" rows="2">请尽快处理此工单，谢谢！</textarea></div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button><button class="btn btn-danger" onclick="doUrge('${id}')">发送催办</button></div></div>`;
+  document.body.appendChild(modal);
+};
+window.doUrge = async (id) => {
+  const msg = document.getElementById('urge-msg').value.trim();
+  const t = getTickets().find(x => x.id === id);
+  if (t) {
+    try {
+      await addTicketComment(id, { content: `【催办】${msg}` });
+      addReminder(id, t.engineerId, `【催办】${getCurrentUser().name}：${msg}（工单：${t.title}）`);
+      notify('催办已发送', '', 'success');
+      document.querySelector('.modal-overlay').remove();
+      await loadAllData();
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+    } catch (e) {
+      notify('催办失败', e.message, 'error');
+    }
+  }
+};
+
+// ===================== 客户列表 =====================
+route('customers', () => {
+  if (!getCurrentUser()) return navigate('login');
+  renderLayout(container => {
+    let search = __customerFilter.search;
+    const page = __customerPage.page;
+    const pageSize = __customerPage.pageSize;
+    const render = () => {
+      let list = getCustomers();
+      if (search) list = list.filter(c => c.name.includes(search) || c.contact.includes(search) || c.phone.includes(search));
+      const total = list.length;
+      const start = (page - 1) * pageSize;
+      const pageList = list.slice(start, start + pageSize);
+      const tbody = document.getElementById('cust-tbody');
+      const pgContainer = document.getElementById('customer-pagination');
+      if (!tbody) return;
+      tbody.innerHTML = pageList.map(c => {
+        const lastTicket = getTickets().filter(t => t.customerId === c.id).sort((a,b) => b.id.localeCompare(a.id))[0];
+        return `<tr>
+        <td style="cursor:pointer" onclick="navigate('customer/${c.id}')">${escapeHtml(c.name)}</td>
+        <td style="cursor:pointer" onclick="navigate('customer/${c.id}')">${escapeHtml(c.contact)}</td>
+        <td style="cursor:pointer" onclick="navigate('customer/${c.id}')">${escapeHtml(c.phone)}</td>
+        <td style="cursor:pointer" onclick="navigate('customer/${c.id}')">${escapeHtml(c.industry)}</td>
+        <td style="cursor:pointer" onclick="navigate('customer/${c.id}')"><span class="tag ${c.level==='A'?'tag-red':c.level==='B'?'tag-orange':'tag-green'}">${c.level}级</span></td>
+        <td style="cursor:pointer" onclick="navigate('customer/${c.id}')">${lastTicket ? formatDate(lastTicket.createdAt) : '<span class="text-muted">-</span>'}</td>
+        <td style="cursor:pointer" onclick="navigate('customer/${c.id}')">${c.devices && c.devices.length || 0}</td>
+        ${isAdmin()?`<td><button class="btn btn-sm btn-danger" onclick="event.stopPropagation(); deleteCustomer('${c.id}')">删除</button></td>`:''}
+      </tr>`;
+      }).join('') || '<tr><td colspan="8" class="text-center text-muted">无匹配客户</td></tr>';
+      if (pgContainer) pgContainer.innerHTML = renderPagination(total, page, pageSize, 'goCustomerPage');
+    };
+    container.innerHTML = `
+      <h1 class="page-title">👥 客户管理</h1>
+      <div class="search-bar">
+        <div class="search-input"><input type="text" id="cust-search" value="${escapeHtml(search)}" placeholder="搜索客户名称、联系人或电话..."></div>
+        <button class="btn btn-primary" onclick="openAddCustomerModal()">+ 添加客户</button>
+      </div>
+      <div class="card"><div class="card-body" style="padding:0;"><div class="table-wrap">
+        <table class="data-table"><thead><tr><th>客户名称</th><th>联系人</th><th>电话</th><th>行业</th><th>等级</th><th>最近工单</th><th>设备数</th>${isAdmin()?'<th>操作</th>':''}</tr></thead>
+        <tbody id="cust-tbody"></tbody></table>
+      </div><div id="customer-pagination"></div></div></div>`;
+    setTimeout(render, 0);
+    document.getElementById('cust-search').addEventListener('input', debounce(e => { search = e.target.value; __customerFilter.search = search; __customerPage.page = 1; render(); }, 300));
+  });
+});
+
+window.openAddCustomerModal = () => {
+  const modal = document.createElement('div'); modal.className = 'modal-overlay';
+  modal.innerHTML = `<div class="modal"><div class="modal-header"><span class="modal-title">➕ 添加客户</span><span class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</span></div>
+    <div class="modal-body">
+      <div class="form-row"><div class="form-group"><label class="form-label">客户名称 <span class="required">*</span></label><input type="text" id="cust-name" class="form-input"></div><div class="form-group"><label class="form-label">联系人</label><input type="text" id="cust-contact" class="form-input"></div></div>
+      <div class="form-row"><div class="form-group"><label class="form-label">电话</label><input type="text" id="cust-phone" class="form-input"></div><div class="form-group"><label class="form-label">邮箱</label><input type="text" id="cust-email" class="form-input"></div></div>
+      <div class="form-group"><label class="form-label">地址</label><input type="text" id="cust-address" class="form-input"></div>
+      <div class="form-row"><div class="form-group"><label class="form-label">行业</label><input type="text" id="cust-industry" class="form-input"></div><div class="form-group"><label class="form-label">等级</label><select class="form-select" id="cust-level"><option>A</option><option>B</option><option>C</option></select></div></div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button><button class="btn btn-primary" onclick="submitCustomer()">保存</button></div></div>`;
+  document.body.appendChild(modal);
+};
+window.submitCustomer = async () => {
+  const name = document.getElementById('cust-name').value.trim();
+  const contact = document.getElementById('cust-contact').value.trim();
+  if (!name) { notify('请填写必填项', '', 'warning'); return; }
+  try {
+    await createCustomerAsync({ id: generateId('cus'), name, contact, phone: document.getElementById('cust-phone').value, email: document.getElementById('cust-email').value, address: document.getElementById('cust-address').value, industry: document.getElementById('cust-industry').value, level: document.getElementById('cust-level').value, devices: [], createdAt: new Date().toISOString() });
+    notify('添加成功', '', 'success');
+    document.querySelector('.modal-overlay').remove();
+    navigate('customers');
+  } catch (e) {
+    notify('添加失败', e.message, 'error');
+  }
+};
+
+// ===================== 客户详情 =====================
+route('customer/([^/]+)', (id) => {
+  if (!getCurrentUser()) return navigate('login');
+  const customer = getCustomers().find(c => c.id === id);
+  if (!customer) { notify('客户不存在', '', 'error'); navigate('customers'); return; }
+  const relatedTickets = getTickets().filter(t => t.customerId === id).sort((a,b) => b.id.localeCompare(a.id));
+  renderLayout(container => {
+    container.innerHTML = `
+      <div class="flex flex-between flex-center mb-4"><h1 class="page-title" style="margin:0">👤 ${escapeHtml(customer.name)}</h1><div class="btn-group"><button class="btn btn-primary btn-sm" onclick="openEditCustomerModal('${customer.id}')">✏️ 编辑</button><button class="btn btn-default btn-sm" onclick="navigate('customers')">返回列表</button></div></div>
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+        <div class="card">
+          <div class="card-header"><span class="card-title">基本信息</span></div>
+          <div class="card-body">
+            <div class="form-row"><div class="form-group"><label class="form-label">联系人</label><div>${escapeHtml(customer.contact)}</div></div><div class="form-group"><label class="form-label">等级</label><div><span class="tag ${customer.level==='A'?'tag-red':customer.level==='B'?'tag-orange':'tag-green'}">${customer.level}级</span></div></div></div>
+            <div class="form-row"><div class="form-group"><label class="form-label">电话</label><div>${escapeHtml(customer.phone)}</div></div><div class="form-group"><label class="form-label">邮箱</label><div>${escapeHtml(customer.email)}</div></div></div>
+            <div class="form-group"><label class="form-label">地址</label><div>${escapeHtml(customer.address)}</div></div>
+            <div class="form-row"><div class="form-group"><label class="form-label">行业</label><div>${escapeHtml(customer.industry)}</div></div><div class="form-group"><label class="form-label">创建时间</label><div>${formatDate(customer.createdAt)}</div></div></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><span class="card-title">设备清单</span><button class="btn btn-sm btn-primary" onclick="openAddDeviceModal('${customer.id}')">+ 添加设备</button></div>
+          <div class="card-body" style="padding:0;">
+            ${customer.devices && customer.devices.length ? customer.devices.map((d,i) => `<div style="padding:12px 16px; border-bottom:1px solid var(--border-light);"><div class="flex flex-between flex-center"><span class="font-bold">${escapeHtml(d.name)}</span><button class="btn btn-sm btn-danger" onclick="removeDevice('${customer.id}',${i})">删除</button></div><div class="font-sm text-muted">${escapeHtml(d.model)} | SN: ${escapeHtml(d.sn)}</div></div>`).join('') : '<div class="empty-state" style="padding:30px;"><div class="text-muted">暂无设备</div></div>'}
+          </div>
+        </div>
+      </div>
+      <div class="card mt-4">
+        <div class="card-header"><span class="card-title">📋 最近互动</span></div>
+        <div class="card-body">
+          ${relatedTickets.length ? `
+            <div class="flex flex-between flex-center mb-3">
+              <div><span class="font-bold">共 ${relatedTickets.length} 个工单</span><span class="text-muted font-sm">（最后更新: ${formatDate(relatedTickets[0].updatedAt)})</span></div>
+              <span class="tag ${relatedTickets[0].status==='pending'?'tag-orange':relatedTickets[0].status==='processing'?'tag-blue':relatedTickets[0].status==='resolved'?'tag-green':'tag-gray'}">${relatedTickets[0].status==='pending'?'待处理':relatedTickets[0].status==='processing'?'处理中':relatedTickets[0].status==='waiting'?'等待回复':relatedTickets[0].status==='resolved'?'已解决':'已关闭'}</span>
+            </div>
+            <div style="padding:12px; background:#f5f5f5; border-radius:var(--radius); cursor:pointer;" onclick="navigate('ticket/${relatedTickets[0].id}')">
+              <div class="font-bold">${escapeHtml(relatedTickets[0].title)}</div>
+              <div class="font-sm text-muted mt-1">${relatedTickets[0].id} | ${escapeHtml(relatedTickets[0].category || '未分类')} | ${relatedTickets[0].ticketDate ? formatDate(relatedTickets[0].ticketDate) : formatDate(relatedTickets[0].createdAt)}</div>
+            </div>
+          ` : '<div class="text-muted text-center">暂无互动记录</div>'}
+        </div>
+      </div>
+      <div class="card mt-4">
+        <div class="card-header"><span class="card-title">相关工单</span><div class="btn-group"><button class="btn btn-sm btn-primary" onclick="openCreateTicketForCustomer('${customer.id}', '${escapeHtml(customer.name)}')">➕ 新建工单</button><button class="btn btn-sm btn-default" onclick="openLinkTicketsModal('${customer.id}', '${escapeHtml(customer.name)}')">🔗 关联工单</button></div></div>
+        <div class="card-body" style="padding:0;"><div class="table-wrap">
+          <table class="data-table"><thead><tr><th>工单号</th><th>标题</th><th>状态</th><th>优先级</th><th>日期</th></tr></thead>
+          <tbody>${relatedTickets.map(t => `<tr style="cursor:pointer" onclick="navigate('ticket/${t.id}')"><td>${t.id}</td><td>${escapeHtml(t.title)}</td><td>${statusTag(t.status)}</td><td>${priorityTag(t.priority)}</td><td>${t.ticketDate ? formatDate(t.ticketDate) : formatDate(t.createdAt)}</td></tr>`).join('') || '<tr><td colspan="5" class="text-center text-muted">暂无工单</td></tr>'}</tbody>
+          </table>
+        </div></div>
+      </div>`;
+  });
+});
+
+window.openAddDeviceModal = (cid) => {
+  const modal = document.createElement('div'); modal.className = 'modal-overlay';
+  modal.innerHTML = `<div class="modal"><div class="modal-header"><span class="modal-title">➕ 添加设备</span><span class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</span></div>
+    <div class="modal-body">
+      <div class="form-group"><label class="form-label">设备名称 <span class="required">*</span></label><input type="text" id="dev-name" class="form-input"></div>
+      <div class="form-row"><div class="form-group"><label class="form-label">型号</label><input type="text" id="dev-model" class="form-input"></div><div class="form-group"><label class="form-label">序列号</label><input type="text" id="dev-sn" class="form-input"></div></div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button><button class="btn btn-primary" onclick="submitDevice('${cid}')">保存</button></div></div>`;
+  document.body.appendChild(modal);
+};
+window.submitDevice = async (cid) => {
+  const name = document.getElementById('dev-name').value.trim();
+  if (!name) { notify('请填写设备名称', '', 'warning'); return; }
+  try {
+    const c = getCustomers().find(x => x.id === cid);
+    if (c) {
+      c.devices = c.devices || [];
+      c.devices.push({ name, model: document.getElementById('dev-model').value, sn: document.getElementById('dev-sn').value });
+      await updateCustomerAsync(cid, { devices: c.devices });
+      notify('添加成功', '', 'success');
+      document.querySelector('.modal-overlay').remove();
+      navigate('customer/' + cid);
+    }
+  } catch (e) {
+    notify('添加失败', e.message, 'error');
+  }
+};
+window.removeDevice = async (cid, idx) => {
+  if (!confirm('确定删除此设备？')) return;
+  try {
+    const c = getCustomers().find(x => x.id === cid);
+    if (c && c.devices) { c.devices.splice(idx, 1); await updateCustomerAsync(cid, { devices: c.devices }); notify('已删除', '', 'success'); navigate('customer/' + cid); }
+  } catch (e) {
+    notify('删除失败', e.message, 'error');
+  }
+};
+
+window.openEditCustomerModal = (id) => {
+  const c = getCustomers().find(x => x.id === id); if (!c) return;
+  const modal = document.createElement('div'); modal.className = 'modal-overlay';
+  modal.innerHTML = `<div class="modal"><div class="modal-header"><span class="modal-title">✏️ 编辑客户</span><span class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</span></div>
+    <div class="modal-body">
+      <div class="form-row"><div class="form-group"><label class="form-label">客户名称 <span class="required">*</span></label><input type="text" id="edit-cust-name" class="form-input" value="${escapeHtml(c.name)}"></div><div class="form-group"><label class="form-label">联系人</label><input type="text" id="edit-cust-contact" class="form-input" value="${escapeHtml(c.contact)}"></div></div>
+      <div class="form-row"><div class="form-group"><label class="form-label">电话</label><input type="text" id="edit-cust-phone" class="form-input" value="${escapeHtml(c.phone||'')}"></div><div class="form-group"><label class="form-label">邮箱</label><input type="text" id="edit-cust-email" class="form-input" value="${escapeHtml(c.email||'')}"></div></div>
+      <div class="form-group"><label class="form-label">地址</label><input type="text" id="edit-cust-address" class="form-input" value="${escapeHtml(c.address||'')}"></div>
+      <div class="form-row"><div class="form-group"><label class="form-label">行业</label><input type="text" id="edit-cust-industry" class="form-input" value="${escapeHtml(c.industry||'')}"></div><div class="form-group"><label class="form-label">等级</label><select class="form-select" id="edit-cust-level"><option value="A" ${c.level==='A'?'selected':''}>A</option><option value="B" ${c.level==='B'?'selected':''}>B</option><option value="C" ${c.level==='C'?'selected':''}>C</option></select></div></div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button><button class="btn btn-primary" onclick="submitEditCustomer('${c.id}')">保存</button></div></div>`;
+  document.body.appendChild(modal);
+};
+window.submitEditCustomer = async (id) => {
+  const name = document.getElementById('edit-cust-name').value.trim();
+  const contact = document.getElementById('edit-cust-contact').value.trim();
+  if (!name) { notify('请填写必填项', '', 'warning'); return; }
+  try {
+    await updateCustomerAsync(id, {
+      name, contact,
+      phone: document.getElementById('edit-cust-phone').value,
+      email: document.getElementById('edit-cust-email').value,
+      address: document.getElementById('edit-cust-address').value,
+      industry: document.getElementById('edit-cust-industry').value,
+      level: document.getElementById('edit-cust-level').value
+    });
+    notify('保存成功', '', 'success');
+    document.querySelector('.modal-overlay').remove();
+    navigate('customer/' + id);
+    await loadAllData();
+  } catch (e) {
+    notify('保存失败', e.message, 'error');
+  }
+};
+
+window.openQuickCreateTicket = () => {
+  const text = document.getElementById('quick-ticket-input').value.trim();
+  openCreateTicketModal();
+  if (!text) return;
+  // 等待弹窗渲染后填充智能解析结果
+  setTimeout(() => {
+    const parsed = parseTicketInput(text);
+    const titleEl = document.getElementById('new-title');
+    const priorityEl = document.getElementById('new-priority');
+    const categoryEl = document.getElementById('new-category');
+    const descEl = document.getElementById('new-desc');
+    const smartInput = document.getElementById('smart-input');
+    if (titleEl) titleEl.value = parsed.title || '';
+    if (parsed.customerId) {
+      const c = getCustomers().find(x => x.id === parsed.customerId);
+      if (c) {
+        const searchEl = document.getElementById('new-customer-search');
+        const idEl = document.getElementById('new-customer-id');
+        if (searchEl) searchEl.value = c.name;
+        if (idEl) idEl.value = c.id;
+      }
+    } else if (parsed.customerName) {
+      const searchEl = document.getElementById('new-customer-search');
+      const idEl = document.getElementById('new-customer-id');
+      if (searchEl) searchEl.value = parsed.customerName;
+      if (idEl) idEl.value = '';
+    }
+    if (priorityEl && parsed.priority) priorityEl.value = parsed.priority;
+    if (categoryEl && parsed.category) categoryEl.value = parsed.category;
+    if (descEl) descEl.value = parsed.description || text;
+    if (parsed.engineerId && document.getElementById('new-engineer')) {
+      document.getElementById('new-engineer').value = parsed.engineerId;
+    }
+    if (smartInput) smartInput.value = text;
+    document.getElementById('new-ticket-date').value = new Date().toISOString().slice(0, 10);
+    smartInput && smartInput.dispatchEvent(new Event('input'));
+  }, 50);
+};
+window.deleteCustomer = async (id) => {
+  if (!confirm(`确定删除此客户？关联工单不会被删除，请谨慎操作。`)) return;
+  try {
+    await apiFetch(`/customers/${id}`, { method: 'DELETE' });
+    __customers = __customers.filter(c => c.id !== id);
+    notify('已删除', '客户已删除', 'success');
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+  } catch (e) {
+    notify('删除失败', e.message, 'error');
+  }
+};
+
+// ===================== 团队设置 (Admin) =====================
+route('admin/team', () => {
+  if (!isAdmin()) { notify('无权访问', '', 'error'); navigate('dashboard'); return; }
+  renderLayout(container => {
+    const users = getUsers();
+    container.innerHTML = `
+      <h1 class="page-title">👨‍💻 团队设置</h1>
+      <div class="card"><div class="card-body" style="padding:0;"><div class="table-wrap">
+        <table class="data-table"><thead><tr><th>用户名</th><th>姓名</th><th>角色</th><th>邮箱</th><th>电话</th><th>操作</th></tr></thead>
+        <tbody>${users.map(u => `<tr><td>${escapeHtml(u.username)}</td><td>${escapeHtml(u.name)}</td><td>${u.role==='admin'?'<span class="tag tag-red">管理员</span>':'<span class="tag tag-blue">工程师</span>'}</td><td>${escapeHtml(u.email)}</td><td>${escapeHtml(u.phone)}</td>
+          <td><button class="btn btn-sm btn-default" onclick="openEditUserModal('${u.id}')">编辑</button></td></tr>`).join('')}</tbody>
+        </table>
+      </div></div></div>
+      <div class="mt-4"><button class="btn btn-primary" onclick="openAddUserModal()">+ 添加成员</button></div>`;
+  });
+});
+
+window.openAddUserModal = () => {
+  const modal = document.createElement('div'); modal.className = 'modal-overlay';
+  modal.innerHTML = `<div class="modal"><div class="modal-header"><span class="modal-title">➕ 添加成员</span><span class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</span></div>
+    <div class="modal-body">
+      <div class="form-row"><div class="form-group"><label class="form-label">用户名 <span class="required">*</span></label><input type="text" id="new-username" class="form-input"></div><div class="form-group"><label class="form-label">姓名 <span class="required">*</span></label><input type="text" id="new-name" class="form-input"></div></div>
+      <div class="form-row"><div class="form-group"><label class="form-label">密码 <span class="required">*</span></label><input type="password" id="new-password" class="form-input" value="123456"></div><div class="form-group"><label class="form-label">角色</label><select class="form-select" id="new-role"><option value="engineer">工程师</option><option value="admin">管理员</option></select></div></div>
+      <div class="form-row"><div class="form-group"><label class="form-label">邮箱</label><input type="text" id="new-email" class="form-input"></div><div class="form-group"><label class="form-label">电话</label><input type="text" id="new-phone" class="form-input"></div></div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button><button class="btn btn-primary" onclick="submitUser()">保存</button></div></div>`;
+  document.body.appendChild(modal);
+};
+window.submitUser = async () => {
+  const username = document.getElementById('new-username').value.trim();
+  const name = document.getElementById('new-name').value.trim();
+  const password = document.getElementById('new-password').value;
+  if (!username || !name || !password) { notify('请填写必填项', '', 'warning'); return; }
+  const users = getUsers();
+  if (users.find(u => u.username === username)) { notify('用户名已存在', '', 'warning'); return; }
+  try {
+    await createUserAsync({ id: generateId('usr'), username, name, password, role: document.getElementById('new-role').value, email: document.getElementById('new-email').value, phone: document.getElementById('new-phone').value, color: '#2563eb', isActive: true, createdAt: new Date().toISOString() });
+    notify('添加成功', '', 'success');
+    document.querySelector('.modal-overlay').remove();
+    await loadAllData();
+    navigate('admin/team');
+  } catch (e) {
+    notify('添加失败', e.message, 'error');
+  }
+};
+window.openEditUserModal = (id) => {
+  const u = getUsers().find(x => x.id === id); if (!u) return;
+  const modal = document.createElement('div'); modal.className = 'modal-overlay';
+  modal.innerHTML = `<div class="modal"><div class="modal-header"><span class="modal-title">✏️ 编辑成员</span><span class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</span></div>
+    <div class="modal-body">
+      <div class="form-row"><div class="form-group"><label class="form-label">用户名</label><input type="text" class="form-input" value="${escapeHtml(u.username)}" disabled></div><div class="form-group"><label class="form-label">姓名 <span class="required">*</span></label><input type="text" id="edit-name" class="form-input" value="${escapeHtml(u.name)}"></div></div>
+      <div class="form-row"><div class="form-group"><label class="form-label">新密码（留空不修改）</label><input type="password" id="edit-password" class="form-input"></div><div class="form-group"><label class="form-label">角色</label><select class="form-select" id="edit-role"><option value="engineer" ${u.role==='engineer'?'selected':''}>工程师</option><option value="admin" ${u.role==='admin'?'selected':''}>管理员</option></select></div></div>
+      <div class="form-row"><div class="form-group"><label class="form-label">邮箱</label><input type="text" id="edit-email" class="form-input" value="${escapeHtml(u.email||'')}"></div><div class="form-group"><label class="form-label">电话</label><input type="text" id="edit-phone" class="form-input" value="${escapeHtml(u.phone||'')}"></div></div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">取消</button><button class="btn btn-primary" onclick="updateUser('${id}')">保存</button></div></div>`;
+  document.body.appendChild(modal);
+};
+window.updateUser = async (id) => {
+  const fields = {
+    name: document.getElementById('edit-name').value.trim(),
+    role: document.getElementById('edit-role').value,
+    email: document.getElementById('edit-email').value,
+    phone: document.getElementById('edit-phone').value
+  };
+  const pwd = document.getElementById('edit-password').value;
+  if (pwd) fields.password = pwd;
+  try {
+    await updateUserAsync(id, fields);
+    notify('保存成功', '', 'success');
+    document.querySelector('.modal-overlay').remove();
+    await loadAllData();
+    navigate('admin/team');
+  } catch (e) {
+    notify('保存失败', e.message, 'error');
+  }
+};
+
+// ===================== 统计报表 (Admin) =====================
+route('admin/stats', () => {
+  if (!isAdmin()) { notify('无权访问', '', 'error'); navigate('dashboard'); return; }
+  renderLayout(container => {
+    const tickets = getTickets();
+    const users = getUsers();
+    const customers = getCustomers();
+    const statusCounts = { pending: 0, processing: 0, resolved: 0 };
+    tickets.forEach(t => { if (statusCounts[t.status] !== undefined) statusCounts[t.status]++; });
+    const priorityCounts = { high: tickets.filter(t=>t.priority==='high').length, medium: tickets.filter(t=>t.priority==='medium').length, low: tickets.filter(t=>t.priority==='low').length };
+    const categoryCounts = {};
+    tickets.forEach(t => { categoryCounts[t.category] = (categoryCounts[t.category] || 0) + 1; });
+    const engineerStats = users.filter(u=>u.role==='engineer').map(u => {
+      const ts = tickets.filter(t => t.engineerId === u.id);
+      return { name: u.name, total: ts.length, resolved: ts.filter(t=>t.status==='resolved').length, processing: ts.filter(t=>t.status==='processing').length, pending: ts.filter(t=>t.status==='pending').length };
+    });
+    // 最近7天工单趋势
+    const dailyCounts = {};
+    for (let i=6; i>=0; i--) {
+      const d = new Date(); d.setDate(d.getDate()-i);
+      const key = `${d.getMonth()+1}/${d.getDate()}`;
+      dailyCounts[key] = tickets.filter(t => { const cd = new Date(t.createdAt); return cd.getDate()===d.getDate() && cd.getMonth()===d.getMonth(); }).length;
+    }
+    const maxDaily = Math.max(...Object.values(dailyCounts), 1);
+    container.innerHTML = `
+      <h1 class="page-title">📈 统计报表</h1>
+      <div class="stats-row">
+        <div class="stat-card"><div class="stat-icon blue">🎫</div><div><div class="stat-value">${tickets.length}</div><div class="stat-label">总工单</div></div></div>
+        <div class="stat-card"><div class="stat-icon green">✅</div><div><div class="stat-value">${Math.round((statusCounts.resolved/tickets.length)*100)||0}%</div><div class="stat-label">解决率</div></div></div>
+        <div class="stat-card"><div class="stat-icon orange">⏱️</div><div><div class="stat-value">${tickets.filter(t=>t.status!=='resolved').length}</div><div class="stat-label">未完成</div></div></div>
+        <div class="stat-card"><div class="stat-icon cyan">👥</div><div><div class="stat-value">${customers.length}</div><div class="stat-label">客户数</div></div></div>
+      </div>
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+        <div class="card">
+          <div class="card-header"><span class="card-title">工单状态分布</span></div>
+          <div class="card-body">
+            <div style="display:flex; gap: 8px; margin-bottom: 12px;">
+              <div style="flex:${statusCounts.pending}; background:var(--warning); height:24px; border-radius:4px 0 0 4px;" title="待处理"></div>
+              <div style="flex:${statusCounts.processing}; background:var(--primary); height:24px;" title="处理中"></div>
+              <div style="flex:${statusCounts.waiting || 0}; background:#7c3aed; height:24px;" title="等待客户回复"></div>
+              <div style="flex:${statusCounts.resolved}; background:var(--success); height:24px; border-radius:0 4px 4px 0;" title="已解决"></div>
+            </div>
+            <div class="flex flex-center gap-2">
+              <span class="tag tag-orange">待处理 ${statusCounts.pending}</span>
+              <span class="tag tag-blue">处理中 ${statusCounts.processing}</span>
+              <span class="tag tag-purple">等待回复 ${statusCounts.waiting || 0}</span>
+              <span class="tag tag-green">已解决 ${statusCounts.resolved}</span>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><span class="card-title">优先级分布</span></div>
+          <div class="card-body">
+            <div style="display:flex; gap: 8px; margin-bottom: 12px;">
+              <div style="flex:${priorityCounts.high}; background:var(--danger); height:24px; border-radius:4px 0 0 4px;" title="高"></div>
+              <div style="flex:${priorityCounts.medium}; background:var(--warning); height:24px;" title="中"></div>
+              <div style="flex:${priorityCounts.low}; background:var(--success); height:24px; border-radius:0 4px 4px 0;" title="低"></div>
+            </div>
+            <div class="flex flex-center gap-2">
+              <span class="tag tag-red">高 ${priorityCounts.high}</span>
+              <span class="tag tag-orange">中 ${priorityCounts.medium}</span>
+              <span class="tag tag-green">低 ${priorityCounts.low}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="card mt-4">
+        <div class="card-header"><span class="card-title">📅 近7天工单趋势</span></div>
+        <div class="card-body">
+          <div style="display:flex; align-items:flex-end; gap: 12px; height:120px; padding: 10px 0;">
+            ${Object.entries(dailyCounts).map(([k,v]) => `<div style="flex:1; display:flex; flex-direction:column; align-items:center; gap:6px;"><div style="width:100%; background:var(--primary); border-radius:4px 4px 0 0; height:${(v/maxDaily*100)||4}px; min-height:4px; transition:height .3s;"></div><div class="font-sm text-muted">${k}</div><div class="font-sm font-bold">${v}</div></div>`).join('')}
+          </div>
+        </div>
+      </div>
+      <div class="card mt-4">
+        <div class="card-header"><span class="card-title">👨‍💻 工程师工作统计</span></div>
+        <div class="card-body" style="padding:0;"><div class="table-wrap">
+          <table class="data-table"><thead><tr><th>工程师</th><th>总工单</th><th>已解决</th><th>处理中</th><th>待处理</th><th>解决率</th></tr></thead>
+          <tbody>${engineerStats.map(s => `<tr><td>${escapeHtml(s.name)}</td><td>${s.total}</td><td>${s.resolved}</td><td>${s.processing}</td><td>${s.pending}</td><td>${s.total?Math.round(s.resolved/s.total*100):0}%</td></tr>`).join('')}</tbody>
+          </table>
+        </div></div>
+      </div>
+      <div class="card mt-4">
+        <div class="card-header"><span class="card-title">📂 分类统计</span></div>
+        <div class="card-body">
+          <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px;">
+            ${Object.entries(categoryCounts).map(([k,v]) => `<div style="background:#f5f5f5; padding:12px 16px; border-radius:var(--radius); display:flex; justify-content:space-between; align-items:center;"><span>${escapeHtml(k)}</span><span class="font-bold text-primary">${v}</span></div>`).join('')}
+          </div>
+        </div>
+      </div>`;
+  });
+});
+
+// ===================== 工作日志 =====================
+route('worklogs', () => {
+  if (!getCurrentUser()) return navigate('login');
+  const savedScrollY = window.scrollY;
+  renderLayout(container => {
+    const worklogs = getWorklogs();
+    const user = getCurrentUser();
+    const today = new Date().toISOString().slice(0, 10);
+    const todayCount = worklogs.filter(w => w.time && w.time.startsWith(today)).length;
+    const totalCount = worklogs.length;
+    const projects = [...new Set(worklogs.map(w => w.project).filter(Boolean))];
+    const todayHours = worklogs.filter(w => w.time && w.time.startsWith(today)).reduce((sum, w) => sum + (parseFloat(w.duration) || 0), 0);
+    const weekStart = new Date(today); weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+    const weekHours = worklogs.filter(w => w.time && new Date(w.time) >= weekStart).reduce((sum, w) => sum + (parseFloat(w.duration) || 0), 0);
+    const monthStart = new Date(today.slice(0, 7) + '-01');
+    const monthHours = worklogs.filter(w => w.time && w.time.startsWith(today.slice(0, 7))).reduce((sum, w) => sum + (parseFloat(w.duration) || 0), 0);
+
+    const renderLogList = (data) => {
+      const tbody = document.getElementById('worklog-tbody');
+      if (!tbody) return;
+      const displayData = data || worklogs;
+      const sorted = [...displayData].sort((a, b) => new Date(b.time) - new Date(a.time));
+      tbody.innerHTML = sorted.map(w => {
+        const ticket = w.ticketId ? getTickets().find(t => t.id === w.ticketId) : null;
+        const customer = ticket ? getCustomers().find(c => c.id === ticket.customerId) : null;
+        return `
+          <tr>
+            <td style="white-space:nowrap;">${formatDate(w.time, 'MM-dd HH:mm')}</td>
+            <td>${escapeHtml(w.customer || (customer ? customer.name : '-'))}</td>
+            <td><div class="wl-content-preview" style="max-width:300px;overflow:hidden;text-overflow:ellipsis;cursor:pointer;" onclick="toggleContentExpand(this,'${w.id}')" data-full="${escapeHtml(w.content)}">${escapeHtml(w.content)}</div></td>
+            <td><span class="tag ${w.category==='需求沟通'?'tag-blue':w.category==='技术支撑'?'tag-purple':w.category==='开发'?'tag-green':w.category==='测试'?'tag-orange':w.category==='文档'?'tag-gray':'tag-blue'}">${escapeHtml(w.category)}</span></td>
+            <td><span class="tag tag-orange">${escapeHtml(w.project)}</span></td>
+            <td><span class="tag ${w.progress==='已完成'?'tag-green':w.progress==='暂停'||w.progress==='搁置'?'tag-red':'tag-blue'}">${escapeHtml(w.progress)}</span></td>
+            <td>${w.duration ? w.duration + 'h' : '-'}</td>
+            <td>${ticket ? `<a onclick="navigate('ticket/${ticket.id}')" style="cursor:pointer;color:var(--primary);">${ticket.id}</a>` : '-'}</td>
+            <td>
+              <div class="btn-group">
+                <button class="btn btn-sm btn-default" onclick="viewWorklogDetail('${w.id}')">查看</button>
+                <button class="btn btn-sm btn-default" onclick="openEditWorklogModal('${w.id}')">编辑</button>
+                <button class="btn btn-sm btn-danger" onclick="deleteWorklog('${w.id}')">删除</button>
+              </div>
+            </td>
+          </tr>`;
+      }).join('') || '<tr><td colspan="10" class="text-center text-muted">暂无记录，点击上方按钮添加</td></tr>';
+    };
+
+    const renderProjectBoard = (filter) => {
+      const board = document.getElementById('project-board');
+      if (!board) return;
+      const projectMap = new Map();
+      for (const w of worklogs) {
+        if (!w.project) continue;
+        // 筛选
+        if (filter === 'active' && (w.progress === '暂停' || w.progress === '搁置')) continue;
+        if (filter === 'paused' && (w.progress !== '暂停' && w.progress !== '搁置')) continue;
+        const existing = projectMap.get(w.project);
+        if (!existing || new Date(w.time) > new Date(existing.time)) {
+          projectMap.set(w.project, { name: w.project, progress: w.progress, customer: w.customer, time: w.time });
+        }
+      }
+      const projects = Array.from(projectMap.values()).sort((a, b) => new Date(b.time) - new Date(a.time));
+      const progressOptions = ['刚接洽','需求确认','方案设计','开发中','测试中','已完成','暂停','搁置'];
+      board.innerHTML = projects.map(p => {
+        const projLogs = worklogs.filter(w => w.project === p.name).sort((a, b) => new Date(a.time) - new Date(b.time));
+        const totalHours = projLogs.reduce((sum, w) => sum + (parseFloat(w.duration) || 0), 0);
+        const recordCount = projLogs.length;
+        const firstDate = projLogs[0]?.time ? new Date(projLogs[0].time) : null;
+        const daysSpan = firstDate ? Math.ceil((new Date() - firstDate) / 86400000) : 0;
+        const timelineHtml = projLogs.slice(-5).map((w, idx, arr) => {
+          const prevProgress = arr[idx - 1]?.progress;
+          const progressChanged = idx > 0 && w.progress !== prevProgress;
+          const dotColor = progressChanged ? 'var(--primary)' : '#ccc';
+          const lineColor = idx < arr.length - 1 ? '#e0e0e0' : 'transparent';
+          return `
+            <div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:4px;">
+              <div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;padding-top:2px;">
+                <div style="width:8px;height:8px;border-radius:50%;background:${dotColor};border:2px solid ${progressChanged ? 'var(--primary)' : '#fff'};"></div>
+                ${idx < arr.length - 1 ? '<div style="width:2px;height:20px;background:' + lineColor + ';"></div>' : ''}
+              </div>
+              <div style="flex:1;min-width:0;">
+                <div style="font-size:.8rem;color:var(--text-muted);">${formatDate(w.time, 'MM-dd HH:mm')} · ${w.duration ? w.duration + 'h' : ''}</div>
+                <div style="font-size:.85rem;${progressChanged ? 'color:var(--primary);font-weight:600;' : ''}">${escapeHtml(w.content.substring(0, 40))}${w.content.length > 40 ? '...' : ''}</div>
+                ${progressChanged ? `<div style="font-size:.75rem;color:var(--primary);">→ ${escapeHtml(w.progress)}</div>` : ''}
+              </div>
+            </div>`;
+        }).join('');
+        const isExpanded = window.__expandedProjects && window.__expandedProjects[p.name];
+        return `
+        <div style="margin-bottom:12px;border-radius:var(--radius);border:1px solid var(--border-light);overflow:hidden;background:#fff;">
+          <div onclick="toggleProjectTimeline('${escapeHtml(p.name)}')" style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;cursor:pointer;background:#f5f5f5;transition:background .15s;" onmouseover="this.style.background='#e8e8e8'" onmouseout="this.style.background='#f5f5f5'">
+            <div>
+              <div style="font-weight:600;font-size:1rem;">${escapeHtml(p.name)}</div>
+              <div style="font-size:.75rem;color:var(--text-muted);margin-top:2px;">${escapeHtml(p.customer || '')} · ${recordCount}条记录 · ${totalHours.toFixed(1)}h · ${daysSpan}天</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <select onchange="updateProjectProgressFromBoard('${escapeHtml(p.name)}', this.value);event.stopPropagation();" style="padding:4px 8px;border-radius:4px;border:1px solid var(--border);font-size:.85rem;cursor:pointer;" onclick="event.stopPropagation();">
+                ${progressOptions.map(o => `<option value="${escapeHtml(o)}" ${o===p.progress?'selected':''}>${escapeHtml(o)}</option>`).join('')}
+              </select>
+              <span style="font-size:1.2rem;transition:transform .2s;transform:rotate(${isExpanded ? '90deg' : '0deg'});display:inline-block;">▶</span>
+            </div>
+          </div>
+          ${isExpanded ? `
+          <div style="padding:12px 16px;border-top:1px solid var(--border-light);">
+            <div style="font-size:.8rem;font-weight:600;color:var(--text-muted);margin-bottom:8px;">📋 时间线（最近5条）</div>
+            ${timelineHtml || '<div class="text-muted" style="font-size:.85rem;">暂无记录</div>'}
+            ${recordCount > 5 ? `<div style="text-align:center;margin-top:8px;"><a onclick="showProjectFullTimeline('${escapeHtml(p.name)}');event.stopPropagation();" style="font-size:.8rem;color:var(--primary);cursor:pointer;">查看全部 ${recordCount} 条记录 →</a></div>` : ''}
+          </div>` : ''}
+        </div>`;
+      }).join('') || '<div class="text-center text-muted" style="padding:20px;">暂无项目数据</div>';
+    };
+
+    container.innerHTML = `
+      <h1 class="page-title">📝 工作日志</h1>
+      <div class="stats-row" style="margin-bottom:20px;">
+        <div class="stat-card"><div class="stat-icon blue">📝</div><div><div class="stat-value">${totalCount}</div><div class="stat-label">总记录</div></div></div>
+        <div class="stat-card"><div class="stat-icon green">📅</div><div><div class="stat-value">${todayCount}</div><div class="stat-label">今日记录</div></div></div>
+        <div class="stat-card"><div class="stat-icon orange">⏱️</div><div><div class="stat-value">${todayHours.toFixed(1)}h</div><div class="stat-label">今日工时</div></div></div>
+        <div class="stat-card"><div class="stat-icon cyan">📁</div><div><div class="stat-value">${projects.length}</div><div class="stat-label">活跃项目</div></div></div>
+        <div class="stat-card"><div class="stat-icon purple">📆</div><div><div class="stat-value">${weekHours.toFixed(1)}h</div><div class="stat-label">本周工时</div></div></div>
+        <div class="stat-card"><div class="stat-icon pink">📈</div><div><div class="stat-value">${monthHours.toFixed(1)}h</div><div class="stat-label">本月工时</div></div></div>
+      </div>
+      <div style="display:grid;grid-template-columns:420px 1fr;gap:20px;">
+        <div class="left-col">
+          <div class="card">
+            <div class="card-header"><span class="card-title">➕ 添加 / 编辑记录</span></div>
+              <div id="wl-edit-banner" style="display:none;padding:8px 16px;background:#e6f7ff;border-left:3px solid var(--primary);font-size:.85rem;color:var(--primary);">
+                <span>✏️ 正在编辑记录</span>
+                <span id="wl-edit-info" style="margin-left:8px;color:var(--text-muted);"></span>
+                <a onclick="cancelWorklogEdit()" style="margin-left:auto;cursor:pointer;color:var(--danger);font-weight:500;">取消编辑</a>
+              </div>
+            <div class="card-body">
+              <input type="hidden" id="wl-edit-id" value="">
+              <div class="form-group">
+                <label class="form-label">时间</label>
+                <input type="datetime-local" id="wl-time" class="form-input" required>
+                <div class="btn-group" style="margin-top:8px;">
+                  <button type="button" class="btn btn-sm btn-default" onclick="fillTime('now')">🕐 现在</button>
+                  <button type="button" class="btn btn-sm btn-default" onclick="fillTime('today9')">📅 今天9:00</button>
+                  <button type="button" class="btn btn-sm btn-default" onclick="fillTime('yesterday')">📆 昨天</button>
+                </div>
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label class="form-label">关联工单（可选）</label>
+                  <div class="ticket-search-wrap" style="position:relative;">
+                    <input type="text" id="wl-ticket-search" class="form-input" placeholder="输入客户名称筛选工单，支持模糊匹配" autocomplete="off">
+                    <div id="wl-ticket-suggestions" style="display:none;position:absolute;top:100%;left:0;background:#fff;border:1px solid var(--border);border-radius:0 0 var(--radius) var(--radius);max-height:240px;overflow-y:auto;z-index:100;box-shadow:var(--shadow);min-width:380px;"></div>
+                  </div>
+                  <select id="wl-ticket" class="form-select" style="margin-top:8px;display:none;" onchange="onTicketSelect()">
+                    <option value="">-- 不关联工单 --</option>
+                  </select>
+                  <input type="hidden" id="wl-ticket-id" value="">
+                </div>
+                <div class="form-group">
+                  <label class="form-label">耗时（小时）</label>
+                  <input type="number" id="wl-duration" class="form-input" step="0.5" min="0" placeholder="0.5">
+                </div>
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label class="form-label">客户</label>
+                  <input type="text" id="wl-customer" class="form-input" list="wl-customer-list" placeholder="输入或选择客户" required>
+                  <datalist id="wl-customer-list">${getCustomers().map(c => `<option value="${escapeHtml(c.name)}">`).join('')}</datalist>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">关联项目</label>
+                  <input type="text" id="wl-project" class="form-input" list="wl-project-list" placeholder="输入或选择项目" required>
+                  <datalist id="wl-project-list">${[...new Set(worklogs.map(w => w.project).filter(Boolean))].map(p => `<option value="${escapeHtml(p)}">`).join('')}</datalist>
+                </div>
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label class="form-label">分类</label>
+                  <select id="wl-category" class="form-select">
+                    <option value="需求沟通">需求沟通</option>
+                    <option value="技术支撑">技术支撑</option>
+                    <option value="开发">开发</option>
+                    <option value="测试">测试</option>
+                    <option value="文档">文档</option>
+                    <option value="会议">会议</option>
+                    <option value="学习">学习</option>
+                    <option value="其他">其他</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">项目进度</label>
+                  <select id="wl-progress" class="form-select">
+                    <option value="刚接洽">刚接洽</option>
+                    <option value="需求确认">需求确认</option>
+                    <option value="方案设计">方案设计</option>
+                    <option value="开发中">开发中</option>
+                    <option value="测试中">测试中</option>
+                    <option value="已完成">已完成</option>
+                    <option value="暂停">暂停</option>
+                    <option value="搁置">搁置</option>
+                  </select>
+                </div>
+              </div>
+              <div class="form-group">
+                <label class="form-label">工作内容</label>
+                <textarea id="wl-content" class="form-textarea" rows="3" placeholder="记录今天做了什么..." required></textarea>
+              </div>
+              <div class="btn-group" style="width:100%;">
+                <button class="btn btn-primary" id="wl-submit-btn" onclick="submitWorklog()" style="flex:1;">保存记录</button>
+                <button class="btn btn-warning" id="wl-append-btn" onclick="submitWorklog(true)" style="display:none;">追加新记录</button>
+                <button class="btn btn-default" id="wl-cancel-btn" onclick="cancelWorklogEdit()" style="display:none;">取消</button>
+              </div>
+            </div>
+          </div>
+          <div class="card" style="margin-top:20px;">
+            <div class="card-header">
+              <span class="card-title">📊 项目看板</span>
+              <div class="btn-group" style="margin-left:auto;">
+                <button class="btn btn-sm btn-default ${!window.__boardFilter?'btn-primary':''}" onclick="setBoardFilter('')">全部</button>
+                <button class="btn btn-sm btn-default ${window.__boardFilter==='active'?'btn-primary':''}" onclick="setBoardFilter('active')">活跃</button>
+                <button class="btn btn-sm btn-default ${window.__boardFilter==='paused'?'btn-primary':''}" onclick="setBoardFilter('paused')">暂停/搁置</button>
+              </div>
+            </div>
+            <div class="card-body" id="project-board" style="padding:12px;">
+              <div class="text-center text-muted" style="padding:20px;">暂无项目数据</div>
+            </div>
+          </div>
+        </div>
+        <div class="right-col">
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">📋 记录列表</span>
+              <div class="btn-group">
+                <button class="btn btn-sm btn-success" onclick="exportWorklogsExcel()">📤 导出Excel</button>
+              </div>
+            </div>
+            <div class="card-body" style="padding:0;">
+              <div style="padding:12px 16px;border-bottom:1px solid var(--border-light);display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
+                <input type="text" id="wl-search" class="form-input" placeholder="🔍 搜索客户、项目或内容..." style="flex:1;min-width:200px;" oninput="filterWorklogList()">
+                <select id="wl-filter-category" class="form-select" style="width:120px;" onchange="filterWorklogList()">
+                  <option value="">全部分类</option>
+                  <option value="需求沟通">需求沟通</option>
+                  <option value="技术支撑">技术支撑</option>
+                  <option value="开发">开发</option>
+                  <option value="测试">测试</option>
+                  <option value="文档">文档</option>
+                  <option value="会议">会议</option>
+                  <option value="学习">学习</option>
+                </select>
+                <select id="wl-filter-progress" class="form-select" style="width:120px;" onchange="filterWorklogList()">
+                  <option value="">全部进度</option>
+                  <option value="刚接洽">刚接洽</option>
+                  <option value="需求确认">需求确认</option>
+                  <option value="方案设计">方案设计</option>
+                  <option value="开发中">开发中</option>
+                  <option value="测试中">测试中</option>
+                  <option value="已完成">已完成</option>
+                  <option value="暂停">暂停</option>
+                </select>
+                <button class="btn btn-sm btn-default" onclick="clearWorklogFilters()">清除筛选</button>
+              </div>
+              <div class="table-wrap">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>时间</th>
+                      <th>客户</th>
+                      <th>内容</th>
+                      <th>分类</th>
+                      <th>项目</th>
+                      <th>进度</th>
+                      <th>工时</th>
+                      <th>工单</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="worklog-tbody">
+                    <tr><td colspan="10" class="text-center text-muted">正在加载...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    // 初始化表单时间
+    const now = new Date();
+    now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+    document.getElementById('wl-time').value = now.toISOString().slice(0, 16);
+
+    // 绑定工单搜索
+    bindTicketSearch();
+
+    renderLogList();
+    renderProjectBoard(window.__boardFilter);
+    requestAnimationFrame(() => window.scrollTo(0, savedScrollY));
+  });
+});
+
+window.onTicketSelect = () => {
+  const ticketId = document.getElementById('wl-ticket').value;
+  const customerInput = document.getElementById('wl-customer');
+  if (!ticketId) return;
+  const ticket = getTickets().find(t => t.id === ticketId);
+  if (ticket && ticket.customerId) {
+    const customer = getCustomers().find(c => c.id === ticket.customerId);
+    if (customer) customerInput.value = customer.name;
+  }
+};
+
+// 工单搜索：模糊匹配客户名，选中后显示该客户的工单列表
+window.bindTicketSearch = () => {
+  const searchInput = document.getElementById('wl-ticket-search');
+  const suggestions = document.getElementById('wl-ticket-suggestions');
+  const ticketSelect = document.getElementById('wl-ticket');
+  const ticketIdInput = document.getElementById('wl-ticket-id');
+  if (!searchInput || !suggestions) return;
+
+  const showTickets = (tickets) => {
+    if (!tickets.length) { suggestions.style.display = 'none'; return; }
+    // 按客户分组
+    const grouped = {};
+    for (const t of tickets) {
+      const c = getCustomers().find(x => x.id === t.customerId);
+      const cname = c ? c.name : (t.customerId ? '未知客户' : '未关联客户');
+      if (!grouped[cname]) grouped[cname] = [];
+      grouped[cname].push(t);
+    }
+    let html = '';
+    for (const [cname, list] of Object.entries(grouped)) {
+      html += `<div style="padding:6px 12px;background:#f5f5f5;font-size:.8rem;color:var(--text-muted);font-weight:600;">${escapeHtml(cname)} (${list.length})</div>`;
+      for (const t of list) {
+        const statusText = {pending:'待处理',processing:'处理中',waiting:'等待回复',resolved:'已解决',closed:'已关闭'}[t.status] || t.status;
+        const statusColor = t.status==='pending'?'#faad14':t.status==='processing'?'#1890ff':t.status==='resolved'?'#52c41a':'#bfbfbf';
+        html += `<div class="ticket-suggestion-item" data-id="${t.id}" style="padding:8px 12px;cursor:pointer;transition:background .15s;border-bottom:1px solid var(--border-light);display:flex;align-items:center;gap:8px;">
+          <span style="font-size:.75rem;color:${statusColor};white-space:nowrap;flex-shrink:0;">[${statusText}]</span>
+          <span style="font-weight:500;font-size:.9rem;white-space:nowrap;flex-shrink:0;">${t.id}</span>
+          <span style="color:var(--text-muted);font-size:.85rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;">${escapeHtml(t.title)}</span>
+        </div>`;
+      }
+    }
+    suggestions.innerHTML = html;
+    suggestions.style.display = 'block';
+
+    suggestions.querySelectorAll('.ticket-suggestion-item').forEach(el => {
+      el.addEventListener('mouseover', () => el.style.background = 'var(--primary-light)');
+      el.addEventListener('mouseout', () => el.style.background = '');
+      el.addEventListener('click', () => {
+        const tid = el.dataset.id;
+        const ticket = getTickets().find(t => t.id === tid);
+        if (ticket) {
+          const c = getCustomers().find(x => x.id === ticket.customerId);
+          searchInput.value = c ? c.name : '';
+          ticketIdInput.value = tid;
+          // 填充select并显示
+          ticketSelect.innerHTML = `<option value="">-- 不关联工单 --</option>
+            <option value="${ticket.id}" selected>${ticket.id} - ${escapeHtml(ticket.title)}</option>`;
+          ticketSelect.style.display = 'block';
+          onTicketSelect();
+        }
+        suggestions.style.display = 'none';
+      });
+    });
+  };
+
+  searchInput.addEventListener('input', debounce(() => {
+    const val = searchInput.value.trim().toLowerCase();
+    if (!val) { suggestions.style.display = 'none'; return; }
+    // 模糊匹配：按客户名匹配，显示该客户所有工单
+    const matchedCustomers = getCustomers().filter(c => c.name.toLowerCase().includes(val) || (c.name.length >= 2 && val.length >= 1 && c.name.toLowerCase().indexOf(val) >= 0));
+    // 也尝试直接匹配工单标题
+    const matchedTickets = getTickets().filter(t => {
+      const c = getCustomers().find(x => x.id === t.customerId);
+      const cname = c ? c.name.toLowerCase() : '';
+      return t.title.toLowerCase().includes(val) || t.id.toLowerCase().includes(val) || cname.includes(val);
+    }).sort((a,b) => {
+      // 活跃状态在前
+      const aActive = a.status !== 'resolved' && a.status !== 'closed' ? 1 : 0;
+      const bActive = b.status !== 'resolved' && b.status !== 'closed' ? 1 : 0;
+      return bActive - aActive || new Date(b.updatedAt) - new Date(a.updatedAt);
+    }).slice(0, 20);
+    showTickets(matchedTickets);
+  }, 200));
+
+  searchInput.addEventListener('focus', () => {
+    const val = searchInput.value.trim().toLowerCase();
+    if (val) {
+      searchInput.dispatchEvent(new Event('input'));
+    }
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!searchInput.contains(e.target) && !suggestions.contains(e.target)) {
+      suggestions.style.display = 'none';
+    }
+  });
+
+  searchInput.addEventListener('keydown', (e) => {
+    const items = suggestions.querySelectorAll('.ticket-suggestion-item');
+    const active = suggestions.querySelector('.ticket-suggestion-item.active');
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (!active) { items[0] && items[0].classList.add('active'); items[0] && (items[0].style.background = 'var(--primary-light)'); }
+      else {
+        const next = active.nextElementSibling;
+        if (next && next.classList.contains('ticket-suggestion-item')) { active.classList.remove('active'); active.style.background = ''; next.classList.add('active'); next.style.background = 'var(--primary-light)'; }
+      }
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (active) {
+        const prev = active.previousElementSibling;
+        if (prev && prev.classList.contains('ticket-suggestion-item')) { active.classList.remove('active'); active.style.background = ''; prev.classList.add('active'); prev.style.background = 'var(--primary-light)'; }
+      }
+    } else if (e.key === 'Enter') {
+      if (active) { active.click(); e.preventDefault(); }
+    } else if (e.key === 'Escape') {
+      suggestions.style.display = 'none';
+    }
+  });
+};
+
+window.submitWorklog = async (appendMode) => {
+  const id = document.getElementById('wl-edit-id').value;
+  const time = document.getElementById('wl-time').value;
+  const ticketId = document.getElementById('wl-ticket-id').value || document.getElementById('wl-ticket').value;
+  const duration = document.getElementById('wl-duration').value;
+  const customer = document.getElementById('wl-customer').value.trim();
+  const project = document.getElementById('wl-project').value.trim();
+  const category = document.getElementById('wl-category').value;
+  const progress = document.getElementById('wl-progress').value;
+  const content = document.getElementById('wl-content').value.trim();
+
+  if (!time || !customer || !project || !content) {
+    notify('请填写完整信息', '', 'warning'); return;
+  }
+
+  // 确保 worklog 对象不包含 id（避免前端 Object.assign 覆盖 ID）
+  const worklog = { time, ticketId, duration, customer, project, category, progress, content };
+
+  try {
+    if (id && !appendMode) {
+      // 编辑模式：更新原记录
+      await apiFetch(`/worklogs/${id}`, { method: 'PUT', body: JSON.stringify(worklog) });
+      const idx = __worklogs.findIndex(w => w.id === id);
+      if (idx >= 0) {
+        Object.assign(__worklogs[idx], worklog, { updatedAt: new Date().toISOString() });
+      }
+      notify('记录已更新', '', 'success');
+      cancelWorklogEdit();
+    } else {
+      // 新增/追加模式：创建新记录
+      if (appendMode) {
+        const now = new Date();
+        now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+        worklog.time = now.toISOString().slice(0, 16);
+      }
+      const newW = await apiFetch('/worklogs', { method: 'POST', body: JSON.stringify(worklog) });
+      __worklogs.push(newW);
+    }
+    // 连续记录模式：保存后保留客户/项目，只清空内容+工时
+    if (!id || appendMode) {
+      const savedCustomer = document.getElementById('wl-customer').value;
+      const savedProject = document.getElementById('wl-project').value;
+      const savedCategory = document.getElementById('wl-category').value;
+      const savedProgress = document.getElementById('wl-progress').value;
+      const savedTicketId = document.getElementById('wl-ticket-id').value;
+      const savedTicketSearch = document.getElementById('wl-ticket-search').value;
+      cancelWorklogEdit();
+      document.getElementById('wl-customer').value = savedCustomer;
+      document.getElementById('wl-project').value = savedProject;
+      document.getElementById('wl-category').value = savedCategory;
+      document.getElementById('wl-progress').value = savedProgress;
+      if (savedTicketId) {
+        document.getElementById('wl-ticket-id').value = savedTicketId;
+        document.getElementById('wl-ticket-search').value = savedTicketSearch;
+        const ticket = getTickets().find(t => t.id === savedTicketId);
+        if (ticket) {
+          document.getElementById('wl-ticket').innerHTML = `<option value="">-- 不关联工单 --</option><option value="${ticket.id}" selected>${ticket.id} - ${escapeHtml(ticket.title)}</option>`;
+          document.getElementById('wl-ticket').style.display = 'block';
+        }
+      }
+      notify(appendMode ? '已追加新记录' : '记录已添加，请继续填写下一条', '', 'success');
+    } else {
+      cancelWorklogEdit();
+    }
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+  } catch (e) {
+    notify('保存失败', e.message, 'error');
+    // 保存失败时不清空编辑状态，让用户可以继续尝试
+  }
+};
+
+window.openEditWorklogModal = (id) => {
+  const w = __worklogs.find(x => x.id === id);
+  if (!w) { notify('记录不存在', '可能已被删除', 'warning'); return; }
+  document.getElementById('wl-edit-id').value = w.id;
+  document.getElementById('wl-time').value = w.time.slice(0, 16);
+  document.getElementById('wl-ticket-id').value = w.ticketId || '';
+  document.getElementById('wl-ticket').value = w.ticketId || '';
+  if (w.ticketId) {
+    const ticket = getTickets().find(t => t.id === w.ticketId);
+    if (ticket) {
+      const c = getCustomers().find(x => x.id === ticket.customerId);
+      document.getElementById('wl-ticket-search').value = c ? c.name : '';
+      document.getElementById('wl-ticket').innerHTML = `<option value="">-- 不关联工单 --</option><option value="${ticket.id}" selected>${ticket.id} - ${escapeHtml(ticket.title)}</option>`;
+      document.getElementById('wl-ticket').style.display = 'block';
+    }
+  } else {
+    document.getElementById('wl-ticket-search').value = '';
+    document.getElementById('wl-ticket').innerHTML = '<option value="">-- 不关联工单 --</option>';
+    document.getElementById('wl-ticket').style.display = 'none';
+  }
+  document.getElementById('wl-duration').value = w.duration || '';
+  document.getElementById('wl-customer').value = w.customer || '';
+  document.getElementById('wl-project').value = w.project || '';
+  document.getElementById('wl-category').value = w.category || '需求沟通';
+  document.getElementById('wl-progress').value = w.progress || '开发中';
+  document.getElementById('wl-content').value = w.content || '';
+  document.getElementById('wl-submit-btn').textContent = '更新记录';
+  document.getElementById('wl-cancel-btn').style.display = 'inline-block';
+  const appendBtn = document.getElementById('wl-append-btn');
+  if (appendBtn) { appendBtn.style.display = 'inline-block'; appendBtn.textContent = '追加新记录'; }
+  const banner = document.getElementById('wl-edit-banner');
+  if (banner) { banner.style.display = 'flex'; banner.style.alignItems = 'center'; }
+  const info = document.getElementById('wl-edit-info');
+  if (info) info.textContent = w.time ? formatDate(w.time, 'yyyy-MM-dd HH:mm') : '';
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+};
+
+window.cancelWorklogEdit = () => {
+  try {
+    const editId = document.getElementById('wl-edit-id');
+    if (editId) editId.value = '';
+    const ticketId = document.getElementById('wl-ticket-id');
+    if (ticketId) ticketId.value = '';
+    const search = document.getElementById('wl-ticket-search');
+    if (search) search.value = '';
+    const ticketSelect = document.getElementById('wl-ticket');
+    if (ticketSelect) { ticketSelect.innerHTML = '<option value="">-- 不关联工单 --</option>'; ticketSelect.style.display = 'none'; }
+    const duration = document.getElementById('wl-duration');
+    if (duration) duration.value = '';
+    const customer = document.getElementById('wl-customer');
+    if (customer) customer.value = '';
+    const project = document.getElementById('wl-project');
+    if (project) project.value = '';
+    const category = document.getElementById('wl-category');
+    if (category) category.value = '需求沟通';
+    const progress = document.getElementById('wl-progress');
+    if (progress) progress.value = '开发中';
+    const content = document.getElementById('wl-content');
+    if (content) content.value = '';
+    const submitBtn = document.getElementById('wl-submit-btn');
+    if (submitBtn) submitBtn.textContent = '保存记录';
+    const appendBtn = document.getElementById('wl-append-btn');
+    if (appendBtn) appendBtn.style.display = 'none';
+    const cancelBtn = document.getElementById('wl-cancel-btn');
+    if (cancelBtn) cancelBtn.style.display = 'none';
+    const banner = document.getElementById('wl-edit-banner');
+    if (banner) banner.style.display = 'none';
+    const time = document.getElementById('wl-time');
+    if (time) {
+      const now = new Date();
+      now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+      time.value = now.toISOString().slice(0, 16);
+    }
+  } catch (e) {
+    console.warn('cancelWorklogEdit error:', e);
+  }
+};
+
+window.deleteWorklog = async (id) => {
+  if (!confirm('确定删除这条记录？')) return;
+  try {
+    await apiFetch(`/worklogs/${id}`, { method: 'DELETE' });
+    __worklogs = __worklogs.filter(w => w.id !== id);
+    notify('已删除', '', 'success');
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+  } catch (e) {
+    notify('删除失败', e.message, 'error');
+  }
+};
+
+window.fillTime = (mode) => {
+  const now = new Date();
+  now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+  const input = document.getElementById('wl-time');
+  if (mode === 'now') {
+    input.value = now.toISOString().slice(0, 16);
+  } else if (mode === 'today9') {
+    input.value = now.toISOString().slice(0, 10) + 'T09:00';
+  } else if (mode === 'yesterday') {
+    const y = new Date(now); y.setDate(y.getDate() - 1);
+    input.value = y.toISOString().slice(0, 10) + 'T09:00';
+  }
+};
+
+window.toggleContentExpand = (el, id) => {
+  if (el.dataset.expanded === 'true') {
+    el.style.whiteSpace = 'nowrap';
+    el.style.overflow = 'hidden';
+    el.style.textOverflow = 'ellipsis';
+    el.dataset.expanded = 'false';
+  } else {
+    el.style.whiteSpace = 'normal';
+    el.style.overflow = 'visible';
+    el.style.textOverflow = 'clip';
+    el.dataset.expanded = 'true';
+  }
+};
+
+window.viewWorklogDetail = (id) => {
+  const w = __worklogs.find(x => x.id === id);
+  if (!w) return;
+  const ticket = w.ticketId ? getTickets().find(t => t.id === w.ticketId) : null;
+  const customer = ticket ? getCustomers().find(c => c.id === ticket.customerId) : null;
+  const modal = document.createElement('div'); modal.className = 'modal-overlay';
+  modal.innerHTML = `<div class="modal" style="max-width:560px;">
+    <div class="modal-header"><span class="modal-title">📋 工作日志详情</span><span class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</span></div>
+    <div class="modal-body" style="padding:20px;">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;">
+        <div><div style="font-size:.8rem;color:var(--text-muted);margin-bottom:4px;">时间</div><div style="font-weight:500;">${formatDate(w.time, 'yyyy-MM-dd HH:mm')}</div></div>
+        <div><div style="font-size:.8rem;color:var(--text-muted);margin-bottom:4px;">客户</div><div style="font-weight:500;">${escapeHtml(w.customer || (customer ? customer.name : '-'))}</div></div>
+        <div><div style="font-size:.8rem;color:var(--text-muted);margin-bottom:4px;">分类</div><div><span class="tag ${w.category==='需求沟通'?'tag-blue':w.category==='技术支撑'?'tag-purple':w.category==='开发'?'tag-green':w.category==='测试'?'tag-orange':w.category==='文档'?'tag-gray':'tag-blue'}">${escapeHtml(w.category)}</span></div></div>
+        <div><div style="font-size:.8rem;color:var(--text-muted);margin-bottom:4px;">项目进度</div><div><span class="tag ${w.progress==='已完成'?'tag-green':w.progress==='暂停'||w.progress==='搁置'?'tag-red':'tag-blue'}">${escapeHtml(w.progress)}</span></div></div>
+        <div><div style="font-size:.8rem;color:var(--text-muted);margin-bottom:4px;">工时</div><div style="font-weight:500;">${w.duration ? w.duration + 'h' : '-'}</div></div>
+        <div><div style="font-size:.8rem;color:var(--text-muted);margin-bottom:4px;">关联项目</div><div style="font-weight:500;">${escapeHtml(w.project || '-')}</div></div>
+      </div>
+      <div style="font-size:.8rem;color:var(--text-muted);margin-bottom:4px;">工作内容</div>
+      <div style="background:#f8f9fa;padding:12px;border-radius:var(--radius);border:1px solid var(--border-light);white-space:pre-wrap;">${escapeHtml(w.content)}</div>
+      ${ticket ? `<div style="margin-top:16px;font-size:.85rem;">关联工单：<a onclick="navigate('ticket/${ticket.id}');this.closest('.modal-overlay').remove();" style="cursor:pointer;color:var(--primary);">${ticket.id} - ${escapeHtml(ticket.title)}</a></div>` : ''}
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">关闭</button>
+      <button class="btn btn-primary" onclick="this.closest('.modal-overlay').remove();openEditWorklogModal('${w.id}')">编辑</button>
+    </div>
+  </div>`;
+  document.body.appendChild(modal);
+};
+
+window.filterWorklogList = () => {
+  const search = document.getElementById('wl-search')?.value?.trim().toLowerCase() || '';
+  const cat = document.getElementById('wl-filter-category')?.value || '';
+  const prog = document.getElementById('wl-filter-progress')?.value || '';
+  const filtered = getWorklogs().filter(w => {
+    const matchesSearch = !search || (w.customer||'').toLowerCase().includes(search) || (w.project||'').toLowerCase().includes(search) || (w.content||'').toLowerCase().includes(search);
+    const matchesCat = !cat || w.category === cat;
+    const matchesProg = !prog || w.progress === prog;
+    return matchesSearch && matchesCat && matchesProg;
+  });
+  const tbody = document.getElementById('worklog-tbody');
+  if (!tbody) return;
+  const sorted = [...filtered].sort((a, b) => new Date(b.time) - new Date(a.time));
+  tbody.innerHTML = sorted.map(w => {
+    const ticket = w.ticketId ? getTickets().find(t => t.id === w.ticketId) : null;
+    const customer = ticket ? getCustomers().find(c => c.id === ticket.customerId) : null;
+    return `
+      <tr>
+        <td style="white-space:nowrap;">${formatDate(w.time, 'MM-dd HH:mm')}</td>
+        <td>${escapeHtml(w.customer || (customer ? customer.name : '-'))}</td>
+        <td><div class="wl-content-preview" style="max-width:300px;overflow:hidden;text-overflow:ellipsis;cursor:pointer;" onclick="toggleContentExpand(this,'${w.id}')" data-full="${escapeHtml(w.content)}">${escapeHtml(w.content)}</div></td>
+        <td><span class="tag ${w.category==='需求沟通'?'tag-blue':w.category==='技术支撑'?'tag-purple':w.category==='开发'?'tag-green':w.category==='测试'?'tag-orange':w.category==='文档'?'tag-gray':'tag-blue'}">${escapeHtml(w.category)}</span></td>
+        <td><span class="tag tag-orange">${escapeHtml(w.project)}</span></td>
+        <td><span class="tag ${w.progress==='已完成'?'tag-green':w.progress==='暂停'||w.progress==='搁置'?'tag-red':'tag-blue'}">${escapeHtml(w.progress)}</span></td>
+        <td>${w.duration ? w.duration + 'h' : '-'}</td>
+        <td>${ticket ? `<a onclick="navigate('ticket/${ticket.id}')" style="cursor:pointer;color:var(--primary);">${ticket.id}</a>` : '-'}</td>
+        <td>
+          <div class="btn-group">
+            <button class="btn btn-sm btn-default" onclick="viewWorklogDetail('${w.id}')">查看</button>
+            <button class="btn btn-sm btn-default" onclick="openEditWorklogModal('${w.id}')">编辑</button>
+            <button class="btn btn-sm btn-danger" onclick="deleteWorklog('${w.id}')">删除</button>
+          </div>
+        </td>
+      </tr>`;
+  }).join('') || '<tr><td colspan="10" class="text-center text-muted">暂无匹配记录</td></tr>';
+};
+
+window.clearWorklogFilters = () => {
+  const search = document.getElementById('wl-search');
+  const cat = document.getElementById('wl-filter-category');
+  const prog = document.getElementById('wl-filter-progress');
+  if (search) search.value = '';
+  if (cat) cat.value = '';
+  if (prog) prog.value = '';
+  filterWorklogList();
+};
+
+window.toggleProjectTimeline = (projectName) => {
+  if (!window.__expandedProjects) window.__expandedProjects = {};
+  window.__expandedProjects[projectName] = !window.__expandedProjects[projectName];
+  window.dispatchEvent(new HashChangeEvent('hashchange'));
+};
+
+window.setBoardFilter = (filter) => {
+  window.__boardFilter = filter;
+  window.dispatchEvent(new HashChangeEvent('hashchange'));
+};
+
+window.showProjectFullTimeline = (projectName) => {
+  const logs = getWorklogs().filter(w => w.project === projectName).sort((a, b) => new Date(a.time) - new Date(b.time));
+  const totalHours = logs.reduce((sum, w) => sum + (parseFloat(w.duration) || 0), 0);
+  const modal = document.createElement('div'); modal.className = 'modal-overlay';
+  modal.innerHTML = `<div class="modal" style="max-width:640px;max-height:80vh;display:flex;flex-direction:column;">
+    <div class="modal-header"><span class="modal-title">📋 ${escapeHtml(projectName)} 完整时间线</span><span class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</span></div>
+    <div class="modal-body" style="overflow-y:auto;flex:1;padding:20px;">
+      <div style="display:flex;gap:16px;margin-bottom:16px;font-size:.85rem;color:var(--text-muted);">
+        <span>📄 ${logs.length} 条记录</span>
+        <span>⏱️ ${totalHours.toFixed(1)}h</span>
+        <span>📅 ${logs.length ? formatDate(logs[0].time, 'MM-dd') : ''} ~ ${logs.length ? formatDate(logs[logs.length-1].time, 'MM-dd') : ''}</span>
+      </div>
+      <div style="position:relative;padding-left:20px;">
+        ${logs.map((w, idx) => {
+          const prevProgress = logs[idx-1]?.progress;
+          const progressChanged = idx > 0 && w.progress !== prevProgress;
+          const dotColor = progressChanged ? 'var(--primary)' : '#ccc';
+          return `
+          <div style="display:flex;gap:12px;align-items:flex-start;margin-bottom:16px;position:relative;">
+            <div style="position:absolute;left:-14px;top:2px;width:10px;height:10px;border-radius:50%;background:${dotColor};border:2px solid #fff;box-shadow:0 0 0 1px ${dotColor};z-index:2;"></div>
+            ${idx < logs.length - 1 ? '<div style="position:absolute;left:-10px;top:12px;width:2px;height:calc(100% + 16px);background:#e0e0e0;z-index:1;"></div>' : ''}
+            <div style="flex:1;min-width:0;background:#f8f9fa;padding:12px;border-radius:var(--radius);border:1px solid var(--border-light);">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+                <span style="font-size:.8rem;color:var(--text-muted);">${formatDate(w.time, 'yyyy-MM-dd HH:mm')}</span>
+                <span style="font-size:.75rem;color:var(--primary);font-weight:600;">${w.duration ? w.duration + 'h' : ''}</span>
+              </div>
+              <div style="font-size:.9rem;margin-bottom:4px;">${escapeHtml(w.content)}</div>
+              <div style="display:flex;gap:8px;align-items:center;">
+                <span class="tag ${w.category==='需求沟通'?'tag-blue':w.category==='技术支撑'?'tag-purple':w.category==='开发'?'tag-green':w.category==='测试'?'tag-orange':w.category==='文档'?'tag-gray':'tag-blue'}">${escapeHtml(w.category)}</span>
+                ${progressChanged ? `<span style="font-size:.75rem;color:var(--primary);font-weight:600;">→ ${escapeHtml(w.progress)}</span>` : `<span class="tag tag-gray">${escapeHtml(w.progress)}</span>`}
+              </div>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-default" onclick="this.closest('.modal-overlay').remove()">关闭</button></div>
+  </div>`;
+  document.body.appendChild(modal);
+};
+
+window.updateProjectProgressFromBoard = async (projectName, newProgress) => {
+  const now = new Date();
+  now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+  const worklog = {
+    time: now.toISOString().slice(0, 16),
+    customer: '',
+    project: projectName,
+    category: '其他',
+    progress: newProgress,
+    content: '【进度更新】项目进度变更为：' + newProgress,
+  };
+  try {
+    const newW = await apiFetch('/worklogs', { method: 'POST', body: JSON.stringify(worklog) });
+    __worklogs.push(newW);
+    notify('项目进度已更新', '', 'success');
+    // 更新项目看板时保持原有滚动位置
+    const boardEl = document.getElementById('project-board');
+    const scrollTop = boardEl ? boardEl.scrollTop : 0;
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+    setTimeout(() => {
+      const newBoard = document.getElementById('project-board');
+      if (newBoard) newBoard.scrollTop = scrollTop;
+    }, 50);
+  } catch (e) {
+    notify('更新失败', e.message, 'error');
+  }
+};
+
+window.exportWorklogsExcel = () => {
+  if (!__worklogs.length) { notify('没有记录可导出', '', 'warning'); return; }
+  const data = [...__worklogs].sort((a, b) => new Date(b.time) - new Date(a.time)).map(w => {
+    const ticket = w.ticketId ? getTickets().find(t => t.id === w.ticketId) : null;
+    const customer = ticket ? getCustomers().find(c => c.id === ticket.customerId) : null;
+    return {
+      '时间': w.time,
+      '客户': w.customer || (customer ? customer.name : ''),
+      '工作内容': w.content,
+      '分类': w.category,
+      '关联项目': w.project,
+      '项目进度': w.progress,
+      '工时(小时)': w.duration || '',
+      '关联工单': w.ticketId || '',
+    };
+  });
+  if (typeof XLSX !== 'undefined') {
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, '工作日志');
+    ws['!cols'] = [{wch:20},{wch:16},{wch:40},{wch:12},{wch:16},{wch:12},{wch:10},{wch:16}];
+    XLSX.writeFile(wb, `工作日志_${new Date().toISOString().slice(0,10)}.xlsx`);
+    notify('Excel 已导出', '', 'success');
+  } else {
+    const headers = Object.keys(data[0]);
+    const csv = [headers.join(','), ...data.map(row => headers.map(h => `"${String(row[h]||'').replace(/"/g,'""')}"`).join(','))].join('\n');
+    const blob = new Blob(['\uFEFF'+csv], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `工作日志_${new Date().toISOString().slice(0,10)}.csv`;
+    link.click();
+    notify('已导出 CSV', '', 'success');
+  }
+};
+
+// ===================== 初始化 =====================
+document.addEventListener('DOMContentLoaded', async () => {
+  if (__token) {
+    const ok = await loadAllData();
+    if (!ok) {
+      console.warn('[CRM] 后端连接失败，请确保服务器已启动');
+    } else {
+      startAutoRefresh();
+    }
+  }
+  renderRoute();
+});
+
+// ===================== SheetJS CDN（导出 Excel）=====================
+const sheetjsScript = document.createElement('script');
+sheetjsScript.src = 'https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js';
+sheetjsScript.onload = () => console.log('[SheetJS] 加载成功');
+sheetjsScript.onerror = () => console.warn('[SheetJS] 加载失败，将使用 CSV 导出');
+document.head.appendChild(sheetjsScript);
+</script>
+</body>
+</html>
