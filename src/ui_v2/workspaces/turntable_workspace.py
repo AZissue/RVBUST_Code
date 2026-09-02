@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import time
 from typing import List, Optional
 
@@ -122,6 +123,9 @@ class TurntableWorkspace(QWidget):
 
         # 2D/3D 采集互斥门控：防止用户同时触发多个相机操作
         self._busy = False
+
+        # 临时 PLY 文件路径，退出/重置时清理
+        self._temp_files: List[str] = []
 
         self._setup_ui()
         self.set_state("idle")
@@ -315,6 +319,14 @@ class TurntableWorkspace(QWidget):
         self.lbl_sequence = QLabel("已采集序列: 0 帧")
         v.addWidget(self.lbl_sequence)
 
+        self.btn_clear_sequence = QPushButton("清空拍摄数据")
+        self.btn_clear_sequence.setToolTip(
+            "清空当前步进采集的点云数据，保留标定结果，便于更换工件后重新拍摄拼接"
+        )
+        self.btn_clear_sequence.clicked.connect(self._on_clear_sequence_data)
+        self.btn_clear_sequence.setEnabled(False)
+        v.addWidget(self.btn_clear_sequence)
+
         return grp
 
     def _build_stitch_group(self) -> QGroupBox:
@@ -383,6 +395,14 @@ class TurntableWorkspace(QWidget):
 
     # ------------------------------------------------------------------ 状态与 UI 门控
     def _reset_online_state(self):
+        # 先释放旧帧占用的 RVC 资源，再清空引用
+        for frame in (self.current_frame0, self.current_frame1):
+            if frame is not None:
+                frame.release_rvc()
+        for frame in self.session.sequence:
+            if frame is not None:
+                frame.release_rvc()
+        self._cleanup_temp_files()
         self.current_frame0 = None
         self.current_frame1 = None
         self.current_markers0 = []
@@ -398,50 +418,60 @@ class TurntableWorkspace(QWidget):
         return self.cam_mgr is not None and bool(self.cam_mgr.get_connected_ids())
 
     def _update_online_ui(self):
-        connected = self._is_connected()
-        busy = self._busy
+        try:
+            connected = self._is_connected()
+            busy = self._busy
 
-        self.btn_preview_2d.setEnabled(connected and not busy)
-        self.btn_capture_frame0.setEnabled(connected and not busy)
+            self.btn_preview_2d.setEnabled(connected and not busy)
+            self.btn_capture_frame0.setEnabled(connected and not busy)
 
-        frame0_shot = self.current_frame0 is not None
-        f0_ok = frame0_shot and len(self.current_markers0) >= 3
-        self.btn_capture_frame1.setEnabled(frame0_shot and not busy)
+            frame0_shot = self.current_frame0 is not None
+            f0_ok = frame0_shot and len(self.current_markers0) >= 3
+            self.btn_capture_frame1.setEnabled(frame0_shot and not busy)
 
-        f1_ok = self.current_frame1 is not None and len(self.current_markers1) >= 3
-        self.btn_online_calib.setEnabled(f0_ok and f1_ok and not busy)
+            f1_ok = self.current_frame1 is not None and len(self.current_markers1) >= 3
+            self.btn_online_calib.setEnabled(f0_ok and f1_ok and not busy)
 
-        calibrated = self.session.is_calibrated()
-        self.btn_capture_step.setEnabled(calibrated and not busy)
-        self.btn_auto_capture.setEnabled(calibrated and not busy)
-        self.chk_auto_stitch.setEnabled(calibrated)
-        self.btn_stitch.setEnabled(self.session.can_stitch())
-        self.btn_save.setEnabled(self.merged is not None)
-        self.btn_save_session.setEnabled(self.session.get_all_frames() or self.current_frame0 is not None)
+            calibrated = self.session.is_calibrated()
+            total_steps = self.session.total_steps_needed() if calibrated else 0
+            capture_finished = calibrated and self.session.current_step >= total_steps
+            self.btn_capture_step.setEnabled(calibrated and not busy and not capture_finished)
+            self.btn_auto_capture.setEnabled(calibrated and not busy and not capture_finished)
+            self.chk_auto_stitch.setEnabled(calibrated)
+            self.btn_stitch.setEnabled(self.session.can_stitch())
+            self.btn_save.setEnabled(self.merged is not None)
+            self.btn_save_session.setEnabled(bool(self.session.get_all_frames() or self.current_frame0 is not None))
+            self.btn_clear_sequence.setEnabled(
+                bool(self.session.sequence or self.merged is not None) and not busy
+            )
 
-        if connected:
-            cam_id = self.cam_mgr.get_connected_ids()[0]
-            cam = self.cam_mgr._cameras.get(cam_id)
-            info = cam.device_info if cam else None
-            name = getattr(info, "name", "unknown") if info else cam_id
-            sn = getattr(info, "sn", "-") if info else "-"
-            self.lbl_cam_status.setText(f"已连接: {name} ({sn})")
-            self.lbl_cam_status.setStyleSheet(f"color: {STATUS_OK};")
-        else:
-            self.lbl_cam_status.setText("未连接相机（请从启动小窗连接）")
-            self.lbl_cam_status.setStyleSheet(f"color: {STATUS_ERR};")
+            if connected:
+                cam_id = self.cam_mgr.get_connected_ids()[0]
+                cam = self.cam_mgr._cameras.get(cam_id)
+                info = cam.device_info if cam else None
+                name = getattr(info, "name", "unknown") if info else cam_id
+                sn = getattr(info, "sn", "-") if info else "-"
+                self.lbl_cam_status.setText(f"已连接: {name} ({sn})")
+                self.lbl_cam_status.setStyleSheet(f"color: {STATUS_OK};")
+            else:
+                self.lbl_cam_status.setText("未连接相机（请从启动小窗连接）")
+                self.lbl_cam_status.setStyleSheet(f"color: {STATUS_ERR};")
 
-        self.lbl_frame0.setText(
-            f"frame0: {'已拍摄 ' + str(len(self.current_markers0)) + ' 个标记' if self.current_frame0 else '未拍摄'}"
-        )
-        self.lbl_frame1.setText(
-            f"frame1: {'已拍摄 ' + str(len(self.current_markers1)) + ' 个标记' if self.current_frame1 else '未拍摄'}"
-        )
+            self.lbl_frame0.setText(
+                f"frame0: {'已拍摄 ' + str(len(self.current_markers0)) + ' 个标记' if self.current_frame0 else '未拍摄'}"
+            )
+            self.lbl_frame1.setText(
+                f"frame1: {'已拍摄 ' + str(len(self.current_markers1)) + ' 个标记' if self.current_frame1 else '未拍摄'}"
+            )
 
-        self.lbl_step_info.setText(
-            f"当前步: {self.session.current_step} / 总步: {self.session.total_steps_needed() if calibrated else '—'}"
-        )
-        self.lbl_sequence.setText(f"已采集序列: {len(self.session.sequence)} 帧")
+            self.lbl_step_info.setText(
+                f"当前步: {self.session.current_step} / 总步: {self.session.total_steps_needed() if calibrated else '—'}"
+            )
+            self.lbl_sequence.setText(f"已采集序列: {len(self.session.sequence)} 帧")
+        except Exception as e:
+            self.log(f"[ERROR] 更新 UI 异常: {e}", "error")
+            import traceback
+            self.log(traceback.format_exc(), "error")
 
     def _display_2d(self, image_np: np.ndarray):
         pixmap = _np_to_qpixmap(image_np)
@@ -474,18 +504,54 @@ class TurntableWorkspace(QWidget):
         if error:
             self.log(f"[ERROR] {error}", "error")
             QMessageBox.warning(self, "执行失败", str(error))
+            # 出错时也要释放忙状态，避免按钮一直不可用
+            if self._busy:
+                self._set_busy(False)
             return
         on_done(result)
 
     def _run_busy_worker(self, func, on_done, *args, **kwargs):
-        """启动后台线程，并在完成时自动释放 _busy 门控。"""
+        """启动后台线程，并在 on_done 处理完成后释放 _busy 门控。"""
         self._set_busy(True)
 
         def _wrapped_done(result):
-            self._set_busy(False)
-            on_done(result)
+            try:
+                on_done(result)
+            except Exception as e:
+                self.log(f"[ERROR] 处理拍摄结果异常: {e}", "error")
+                import traceback
+                self.log(traceback.format_exc(), "error")
+            finally:
+                self._set_busy(False)
 
         return self._run_worker(func, _wrapped_done, *args, **kwargs)
+
+    # ------------------------------------------------------------------ 资源释放
+    def _release_frame_rvc(self, frame: Optional[FrameData], pcd: Optional[o3d.geometry.PointCloud] = None):
+        """释放帧占用的 RVC 资源，并用 Open3D 点云保留离线 PLY 路径供后续保存。"""
+        if frame is None:
+            return
+        if pcd is not None and frame.offline_pointmap_path is None:
+            try:
+                fd, tmp_path = tempfile.mkstemp(suffix="_frame_pcd.ply")
+                os.close(fd)
+                o3d.io.write_point_cloud(tmp_path, pcd)
+                frame.offline_pointmap_path = tmp_path
+                frame.is_offline = True
+                self._temp_files.append(tmp_path)
+            except Exception as e:
+                self.log(f"[WARN] 保存临时点云失败: {e}", "warning")
+        frame.release_rvc()
+
+    def _cleanup_temp_files(self):
+        """清理本工作区产生的临时 PLY 文件。"""
+        for path in self._temp_files:
+            try:
+                if os.path.exists(path):
+                    os.unlink(path)
+            except Exception:
+                pass
+        self._temp_files.clear()
 
     # ------------------------------------------------------------------ 相机连接
     def _on_marker_type_changed(self, _idx):
@@ -523,6 +589,12 @@ class TurntableWorkspace(QWidget):
         if not self._is_connected() or self._busy:
             return
         label = "frame0" if is_frame0 else "frame1"
+
+        # 释放旧帧占用的 RVC 资源，避免 SDK 缓冲被占满导致下一次拍摄阻塞
+        old_frame = self.current_frame0 if is_frame0 else self.current_frame1
+        if old_frame is not None:
+            old_frame.release_rvc()
+
         self.log(f"拍摄 {label} 中...")
 
         def _capture():
@@ -563,6 +635,8 @@ class TurntableWorkspace(QWidget):
                         f"frame1 仅检测到 {len(markers)} 个标记点，标定至少需要 3 个。\n"
                         "请调整标记物位置、光照或曝光后重拍。"
                     )
+            # 释放本次拍摄占用的 RVC 资源；已提取的 image_np / markers / pcd 仍保留
+            self._release_frame_rvc(frame, pcd)
             self.dirty_changed.emit(True)
             self._update_online_ui()
 
@@ -590,6 +664,10 @@ class TurntableWorkspace(QWidget):
                 )
                 self.calib = self.session.calib
                 # 标定帧不进入最终拼接，清空 UI 层引用与 3D 查看器中的标定帧
+                if self.current_frame0 is not None:
+                    self.current_frame0.release()
+                if self.current_frame1 is not None:
+                    self.current_frame1.release()
                 self.current_frame0 = None
                 self.current_frame1 = None
                 self.current_markers0 = []
@@ -605,19 +683,79 @@ class TurntableWorkspace(QWidget):
 
         self._run_worker(_calib, _done)
 
+    # ------------------------------------------------------------------ 会话恢复
+    def apply_loaded_calibration(self, info: dict) -> bool:
+        """用会话中保存的标定参数恢复标定状态，直接进入步进采集阶段。"""
+        try:
+            axis = info["axis"]
+            center = info["center"]
+            angle_deg = float(info["angle_deg"])
+            step_count = int(info["step_count"])
+        except Exception as e:
+            self.log(f"会话标定参数不完整: {e}", "error")
+            return False
+        self.session.apply_calibration(axis, center, angle_deg, step_count)
+        self.calib = self.session.calib
+        # 标定帧不进入最终拼接，清空 UI 层引用与 3D 查看器中的标定帧
+        self.current_frame0 = None
+        self.current_frame1 = None
+        self.current_markers0 = []
+        self.current_markers1 = []
+        self.viewer.set_pointcloud("frame0", None)
+        self.viewer.set_pointcloud("frame1", None)
+        self.lbl_online_calib.setText(
+            f"角度: {angle_deg:.2f}°\n"
+            f"360° 步数: {step_count}\n"
+            f"总采集帧数: {step_count + 1}\n"
+            f"旋转轴: [{', '.join(f'{v:.3f}' for v in axis)}]\n"
+            f"旋转中心: [{', '.join(f'{v:.1f}' for v in center)}]"
+        )
+        self.set_state("calibrated")
+        self.dirty_changed.emit(True)
+        self._update_online_ui()
+        return True
+
+    def load_sequence_frames(self, frames: List[FrameData]) -> int:
+        """把离线会话中的步进采集帧加载回当前会话与 3D 查看器。"""
+        count = 0
+        for i, frame in enumerate(frames, start=1):
+            try:
+                pcd = frame.load_pointcloud_o3d()
+            except Exception as e:
+                self.log(f"加载第 {i} 帧点云失败: {e}", "warning")
+                pcd = None
+            self.session.add_sequence_frame(frame, pcd)
+            if pcd is not None:
+                self.viewer.set_pointcloud(f"step_{i}", pcd)
+            count += 1
+        if count:
+            self.set_state("capturing")
+            self.dirty_changed.emit(True)
+            self._update_online_ui()
+        return count
+
     # ------------------------------------------------------------------ 步进采集
     def _on_capture_step(self):
         if not self.session.is_calibrated():
             return
-        if self.session.current_step > self.session.total_steps_needed():
-            QMessageBox.information(self, "采集完成", "已达到 360° 所需步数")
+        total = self.session.total_steps_needed()
+        if self.session.current_step >= total:
+            QMessageBox.information(
+                self, "采集完成",
+                "已完成 360° 步进采集。\n"
+                "可以拼接保存，或点击「清空拍摄数据」后更换工件重新采集。"
+            )
             return
         self._capture_sequence_step()
 
     def _capture_sequence_step(self, auto_continue: bool = False):
         if not self._is_connected() or self._busy:
             return
-        step = self.session.current_step
+        total = self.session.total_steps_needed()
+        if self.session.current_step >= total:
+            self.log("360° 采集已完成，无需继续拍摄", "success")
+            return
+        step = self.session.current_step + 1
         self.log(f"拍摄第 {step} 步...")
 
         def _capture():
@@ -632,7 +770,7 @@ class TurntableWorkspace(QWidget):
         def _done(result):
             frame, pcd = result
             self.session.add_sequence_frame(frame, pcd)
-            step_idx = self.session.current_step - 1
+            step_idx = self.session.current_step
             total = self.session.total_steps_needed()
             self.log(
                 f"第 {step_idx} 步采集完成: {len(pcd.points)} 点 "
@@ -640,16 +778,27 @@ class TurntableWorkspace(QWidget):
             )
             self._display_2d(frame.image_np)
             self.viewer.set_pointcloud(f"step_{step_idx}", pcd)
+            # 释放本次拍摄占用的 RVC 资源，避免连续采集阻塞
+            self._release_frame_rvc(frame, pcd)
+            finished = self.session.current_step >= total
+            if finished:
+                self.log("360° 采集完成，可以拼接", "success")
+                # 自动采集到最后一帧后停止
+                self.btn_auto_capture.setChecked(False)
+                self.btn_auto_capture.setText("开始自动采集")
+                if not auto_continue:
+                    QMessageBox.information(
+                        self, "采集完成",
+                        f"已完成 360° 步进采集（{self.session.current_step}/{total} 帧）。"
+                    )
             if self.chk_auto_stitch.isChecked():
                 self.log("自动实时拼接...")
                 self._do_stitch(silent=True)
-            if self.session.current_step > total:
-                self.log("360° 采集完成，可以拼接")
             self.set_state("capturing")
             self.dirty_changed.emit(True)
             self._update_online_ui()
             # 自动采集：等当前帧完成后再调度下一拍，避免 worker 堆积
-            if auto_continue and self.btn_auto_capture.isChecked():
+            if auto_continue and not finished and self.btn_auto_capture.isChecked():
                 interval_ms = self.spin_auto_interval.value() * 1000
                 QTimer.singleShot(interval_ms, self._auto_capture_next)
 
@@ -660,6 +809,10 @@ class TurntableWorkspace(QWidget):
             if not self.session.is_calibrated():
                 self.btn_auto_capture.setChecked(False)
                 return
+            if self.session.current_step >= self.session.total_steps_needed():
+                self.btn_auto_capture.setChecked(False)
+                self.log("360° 采集已完成，无需继续自动采集", "warning")
+                return
             self.btn_auto_capture.setText("停止自动采集")
             self._auto_capture_next()
         else:
@@ -668,12 +821,44 @@ class TurntableWorkspace(QWidget):
     def _auto_capture_next(self):
         if not self.btn_auto_capture.isChecked():
             return
-        if self.session.current_step > self.session.total_steps_needed():
+        if self.session.current_step >= self.session.total_steps_needed():
             self.btn_auto_capture.setChecked(False)
             self.btn_auto_capture.setText("开始自动采集")
             self.log("自动采集完成")
             return
         self._capture_sequence_step(auto_continue=True)
+
+    def _on_clear_sequence_data(self):
+        """清空当前步进采集的点云数据，保留标定结果，便于更换工件后重新采集。"""
+        if not self.session.sequence and self.merged is None:
+            return
+        ret = QMessageBox.question(
+            self, "清空拍摄数据",
+            "确定清空当前步进采集的点云数据吗？\n"
+            "标定结果将保留，可更换工件后重新拍摄拼接。",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        )
+        if ret != QMessageBox.Yes:
+            return
+        # 停止自动采集
+        self.btn_auto_capture.setChecked(False)
+        self.btn_auto_capture.setText("开始自动采集")
+        # 释放帧资源并清空序列
+        for frame in self.session.sequence:
+            if frame is not None:
+                frame.release()
+        self.session.sequence.clear()
+        self.session.sequence_pcds.clear()
+        self.session.current_step = 0
+        self.merged = None
+        self.lbl_stitch.setText("未拼接")
+        self.viewer.clear_all()
+        self.preview_2d_label.setPixmap(QPixmap())
+        self.preview_2d_label.setText("未启动预览")
+        self.set_state("calibrated" if self.session.is_calibrated() else "connected")
+        self.dirty_changed.emit(False)
+        self.log("已清空拍摄数据，保留标定结果，可重新采集")
+        self._update_online_ui()
 
     # ------------------------------------------------------------------ 拼接 / 保存
     def _on_stitch(self):

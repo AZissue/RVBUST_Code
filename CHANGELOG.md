@@ -11,6 +11,92 @@
 
 ---
 
+## [1.5.0] - 2026-09-02
+
+### Added
+- 模式 C（转台 360° 拼接）支持会话保存/恢复标定数据：
+  - `TurntableCalibrator` 新增 `set_calibration()`，可直接用保存的
+    旋转轴/旋转中心/角度/步数恢复标定；
+  - `OnlineTurntableSession` 新增 `apply_calibration()`；
+  - 无步进帧时也可保存会话（仅标定元数据）；
+  - 加载会话后自动恢复标定状态，「步进采集」直接开放，
+    无需重新拍摄 frame0/frame1 标定；
+  - 若会话中包含步进采集帧，会一并恢复到 3D 查看器，可直接拼接。
+
+### Changed
+- `src/ui_v2/backend_bridge.py`：模式 C 会话加载分支从“不支持”改为
+  恢复标定 + 恢复序列帧。
+
+---
+
+## [1.4.0] - 2026-09-02
+
+### Added
+- 转台 360° 拼接工作区新增「清空拍摄数据」按钮：
+  - 清空当前步进采集的序列帧、点云与拼接结果；
+  - 保留标定结果（旋转轴/角度/步数），便于更换工件后在同一标定基础上重新拍摄、拼接并保存不同的合并点云；
+  - 清空前弹出确认框，防止误删已采集数据。
+
+### Changed
+- 修正步进采集的步数计数逻辑：
+  - `current_step` 现在表示已采集的序列帧数（0 → 总步数），不再多 +1；
+  - 采集到最后一帧后停止自动递增，并弹出「采集完成」提示；
+  - 采集完成后「拍摄当前步 / 开始自动采集」按钮自动禁用，避免超拍。
+
+---
+
+## [1.3.5] - 2026-09-02
+
+### Fixed
+- 修复 `src/ui_v2/workspaces/turntable_workspace.py` 中 `_update_online_ui` 的
+  `TypeError: setEnabled(list)` 错误：
+  `self.session.get_all_frames()` 返回列表，与布尔值做 `or` 运算后仍可能为列表，
+  现用 `bool(...)` 包裹，保证传入 `setEnabled` 的是布尔值。
+
+---
+
+## [1.3.4] - 2026-09-02
+
+### Fixed
+- 修复转台 360° 拼接工作区拍摄 frame0 后 UI 未更新、再次拍摄卡住的问题：
+  - `src/ui_v2/workspaces/turntable_workspace.py` 在拍摄前释放旧帧 RVC 资源，
+    拍摄完成后释放当前帧 RVC 资源，避免 SDK 缓冲/句柄被占满导致后续 `Capture()` 阻塞。
+  - 新增 `FrameData.release_rvc()`，仅释放 RVC PointMap/Image，保留 `image_np` 与 markers。
+  - 将 `_run_busy_worker` 的 `_busy` 释放时机改为 `on_done` 执行完毕后，
+    避免结果处理期间用户误触再次触发拍摄。
+  - 为 `_update_online_ui` 与 `_done` 增加异常捕获与日志输出，便于后续定位。
+
+---
+
+## [1.3.3] - 2026-09-02
+
+### Fixed
+- 修复转台 360° 拼接工作区在拍摄 frame0（未检测到标记物）后，
+  点击「2D 预览」会卡住、相机不再响应的问题：
+  - 根因：M 系列线扫相机在执行 3D `Capture()` 后，SDK 的 `Capture2D()`
+    调用会阻塞，导致预览工作线程一直等待。
+  - 修复：`src/core/camera_manager.py` 的 `SingleCameraController.capture_2d`
+    检测到线扫模式（`line_scan_detected=True`）且为 X1 相机时，
+    改用 3D `Capture()` 取图并丢弃点云，避免阻塞。
+
+---
+
+## [1.3.2] - 2026-09-02
+
+### Fixed
+- 修复 `src/ui/viewer_3d.py` 中 `QMatrix4x4.lookAt` 调用签名错误：
+  使用 `m.lookAt(eye, center, up)` 形式，解决点云无法渲染、
+  `TypeError: lookAt expected 3 arguments, got 9` 异常刷屏的问题。
+- 修复真实相机连接失败后仍可进入主工作区的问题：
+  `src/ui_v2/backend_bridge.py` 现在会判断所有真实相机均打开失败时阻止进入工作区，
+  并弹出提示框列出常见原因（IP 未配置、相机被 RVCManager/其他进程占用、网络异常）
+  及排查/解决方法。
+- 修复点击「参数调试」后主程序 UI 未正确刷新为未连接状态的问题：
+  `src/ui_v2/main_window.py` 在拉起 RVCManager 前主动断开当前相机，
+  关闭调试窗口后界面与按钮状态正确显示「未连接相机」。
+
+---
+
 ## [1.3.1] - 2026-08-31
 
 ### Added

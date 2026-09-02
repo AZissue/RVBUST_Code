@@ -82,6 +82,20 @@ class FrameData:
         self.image_np = None
         self.markers = []
 
+    def release_rvc(self):
+        """仅释放 RVC PointMap/Image 资源，保留 image_np 与 markers。
+
+        在线拍摄后，FrameData 会持有 SDK 句柄/缓冲；不及时释放会导致后续
+        Capture() 调用阻塞。release_rvc 在保持 UI 可用数据的前提下释放这些
+        底层资源。
+        """
+        RVC = _import_rvc()
+        if RVC is not None:
+            safe_destroy(self.pointmap, RVC.PointMap.Destroy, "PointMap")
+            safe_destroy(self.rvc_image, RVC.Image.Destroy, "Image")
+        self.pointmap = None
+        self.rvc_image = None
+
     def save(self, base_dir: str, frame_dir: Optional[str] = None) -> str:
         """保存帧数据到磁盘。返回保存的文件夹路径。
 

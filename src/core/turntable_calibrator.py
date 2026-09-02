@@ -150,6 +150,29 @@ class TurntableCalibrator:
     def is_calibrated(self) -> bool:
         return self.axis is not None and self.step_count > 0
 
+    def set_calibration(
+        self,
+        axis,
+        center,
+        angle_deg: float,
+        step_count: int,
+    ) -> None:
+        """直接从已保存的参数恢复标定结果（用于会话恢复）。
+
+        Args:
+            axis: (3,) 旋转轴，单位向量
+            center: (3,) 旋转中心
+            angle_deg: 单步旋转角度（度）
+            step_count: 360° 所需步数（不含起始帧）
+        """
+        self.axis = np.asarray(axis, dtype=np.float64)
+        self.center = np.asarray(center, dtype=np.float64)
+        self.angle_rad = float(np.radians(angle_deg))
+        self.step_count = int(step_count)
+        # R_init / t_init 仅用于标定过程信息展示，恢复时可留空
+        self.R_init = None
+        self.t_init = None
+
     def get_transform_for_step(self, step: int) -> np.ndarray:
         """第 step 帧（从 0 开始）变换到参考帧的 4x4 矩阵。"""
         if not self.is_calibrated():
@@ -241,7 +264,7 @@ class OnlineTurntableSession:
         self.markers0: List[Dict] = []
         self.markers1: List[Dict] = []
         self.sequence: List[object] = []              # 后续帧 FrameData 列表
-        self.current_step: int = 0                    # 0=未开始采集，1=已拍 frame0，2=已拍 frame1 ...
+        self.current_step: int = 0                    # 0=未开始采集；标定后表示已采集的序列帧数
         self.calib = TurntableCalibrator()
         self.calibrated: bool = False
         self.frame0_pcd: Optional[o3d.geometry.PointCloud] = None
@@ -279,11 +302,32 @@ class OnlineTurntableSession:
             self.frame1_pcd = None
             self.sequence = []
             self.sequence_pcds = []
-            self.current_step = 1
+            # current_step 表示已采集的序列帧数，标定完成后从 0 开始重新计数
+            self.current_step = 0
         return ok, f"{match_msg}; {msg}", info
 
     def is_calibrated(self) -> bool:
         return self.calibrated and self.calib.is_calibrated()
+
+    def apply_calibration(
+        self,
+        axis,
+        center,
+        angle_deg: float,
+        step_count: int,
+    ) -> None:
+        """从会话恢复的标定参数直接建立标定状态（清空 frame0/1 与序列）。"""
+        self.calib.set_calibration(axis, center, angle_deg, step_count)
+        self.calibrated = self.calib.is_calibrated()
+        self.frame0 = None
+        self.frame1 = None
+        self.markers0 = []
+        self.markers1 = []
+        self.frame0_pcd = None
+        self.frame1_pcd = None
+        self.sequence = []
+        self.sequence_pcds = []
+        self.current_step = 0
 
     def step_count(self) -> int:
         return self.calib.step_count if self.is_calibrated() else 0
@@ -293,10 +337,10 @@ class OnlineTurntableSession:
         return self.step_count() + 1 if self.is_calibrated() else 0
 
     def add_sequence_frame(self, frame_data, pcd: o3d.geometry.PointCloud):
-        """添加步进采集帧。标定后 frame0/1 已清空，从 step 1 开始计数。"""
+        """添加步进采集帧。标定后 frame0/1 已清空，current_step 表示已采集帧数。"""
         self.sequence.append(frame_data)
         self.sequence_pcds.append(pcd)
-        self.current_step = 1 + len(self.sequence)
+        self.current_step = len(self.sequence)
 
     def get_all_pcds(self) -> List[o3d.geometry.PointCloud]:
         """获取完整序列点云（frame0, frame1, frame2, ...）。"""

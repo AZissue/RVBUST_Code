@@ -184,14 +184,36 @@ class SingleCameraController:
         self.current_options = None
 
     def capture_2d(self) -> Tuple[Optional[np.ndarray], str]:
-        """仅拍摄 2D 图像（Capture2D），不生成点云，用于取景预览/位置调整。
+        """仅拍摄 2D 图像，不生成点云，用于取景预览/位置调整。
 
         使用相机当前保存的 2D 参数（exposure_time_2d / gain_2d 等），避免默认参数过暗。
+
+        注意：M 系列线扫相机（如 M2600）在执行 3D Capture() 后，SDK 的 Capture2D
+        调用可能阻塞。因此检测到摆动/固定线扫模式时，改用 3D Capture() 取图并
+        丢弃点云，保证预览不卡住。
         """
         if not self.is_connected or not self.camera:
             return None, "相机未连接"
         with self._capture_lock:
             try:
+                # 线扫相机在 3D 拍摄后 Capture2D 会阻塞，直接复用 3D 拍摄取图
+                if self.line_scan_detected and self.camera_type == "X1":
+                    logger.info("线扫相机 2D 预览使用 3D Capture 取图 fallback")
+                    ret = self.camera.Capture()
+                    if not ret:
+                        return None, f"2D 预览失败: {RVC.GetLastErrorMessage()}"
+
+                    img = self.camera.GetImage()
+                    # 点云必须取出以清空 SDK 内部缓冲，避免影响后续拍摄
+                    pm = self.camera.GetPointMap()
+                    if img is None:
+                        return None, "获取图像失败"
+                    if pm is None:
+                        return None, "获取点云失败"
+
+                    image_np = np.array(img, copy=True)
+                    return image_np, "success"
+
                 opts = self.current_options
                 if self.camera_type == "X2":
                     ret = (self.camera.Capture2D(self.camera_id, opts)

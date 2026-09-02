@@ -705,32 +705,26 @@ class PointCloudViewer(QOpenGLWidget):
         GL.glBindVertexArray(0)
 
     def set_pivot_visible(self, visible: bool):
-        """显示/隐藏旋转中心十字。"""
+        """显示/隐藏旋转中心高亮圆点。"""
         self._pivot_visible = bool(visible)
         self.update()
 
     def set_pivot_position(self, pos):
-        """设置旋转中心位置并更新十字几何。"""
+        """设置旋转中心位置并更新高亮圆点。"""
         self._pivot_position = np.asarray(pos, dtype=np.float32)
         self._update_pivot_position(self._pivot_position)
 
     def _update_pivot_position(self, pos):
-        """生成旋转中心十字线框几何。"""
+        """生成旋转中心高亮圆点（单点渲染，大尺寸）。"""
         pos = np.asarray(pos, dtype=np.float32)
-        size = max(self._extent * 0.05, 0.1)
-        pts = np.array([
-            pos + [-size, 0, 0], pos + [size, 0, 0],
-            pos + [0, -size, 0], pos + [0, size, 0],
-            pos + [0, 0, -size], pos + [0, 0, size],
-        ], dtype=np.float32)
-        self._pivot_pos = pts
-        self._pivot_col = np.tile(np.array([[1.0, 0.9, 0.2]], dtype=np.float32),
-                                   (len(pts), 1))
-        self._pivot_vert_count = len(pts)
+        self._pivot_pos = pos.reshape(1, 3)
+        # 高亮橙黄色
+        self._pivot_col = np.array([[1.0, 0.8, 0.2]], dtype=np.float32)
+        self._pivot_vert_count = 1
         self.update()
 
     def _upload_pivot_lines(self):
-        """上传旋转中心十字到 GPU。"""
+        """上传旋转中心圆点到 GPU（单点，大点尺寸）。"""
         if not self._has_gl or self._pivot_pos is None or self._pivot_col is None:
             return
         from OpenGL import GL
@@ -745,6 +739,7 @@ class PointCloudViewer(QOpenGLWidget):
                         self._pivot_col, GL.GL_STATIC_DRAW)
         GL.glVertexAttribPointer(self._loc_a_color, 3, GL.GL_FLOAT, GL.GL_FALSE, 0, None)
         GL.glEnableVertexAttribArray(self._loc_a_color)
+        # 单点：位置、颜色、大小（大小在 paintGL 中通过 glVertexAttrib1f 设置）
         GL.glBindVertexArray(0)
 
     def _update_scene_bounds(self):
@@ -857,15 +852,68 @@ class PointCloudViewer(QOpenGLWidget):
             GL.glDrawArrays(GL.GL_LINES, 0, self._bbox_vert_count)
             GL.glBindVertexArray(0)
 
-        # 旋转中心十字
+        # 旋转中心高亮圆点
         if self._pivot_visible and self._pivot_pos is not None and self._pivot_vert_count > 0:
             self._upload_pivot_lines()
             GL.glBindVertexArray(self._pivot_vao)
-            GL.glVertexAttrib1f(self._loc_a_size, 1.0)
-            GL.glDrawArrays(GL.GL_LINES, 0, self._pivot_vert_count)
+            # 大点尺寸：比点云点大 3 倍，至少 8px
+            pivot_size = max(self._point_size * 3.0, 8.0)
+            GL.glVertexAttrib1f(self._loc_a_size, pivot_size)
+            GL.glDrawArrays(GL.GL_POINTS, 0, self._pivot_vert_count)
             GL.glBindVertexArray(0)
 
         GL.glUseProgram(0)
+
+        # 2D 叠加层：比例尺（QPainter 绘制）
+        self._draw_scale_bar()
+
+    def _draw_scale_bar(self):
+        """在右下角绘制比例尺（类似 CloudCompare）。"""
+        if self._extent <= 0:
+            return
+        from PySide6.QtGui import QPainter, QPen, QColor, QFont
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        # 目标比例尺像素长度
+        target_px = 100
+        # 世界坐标中 100px 对应的长度（近似：根据当前缩放和视口）
+        # 简化：用点云 extent 的 1/10 作为比例尺基准
+        world_len = self._extent / 10.0
+        # 取整到 1/2/5 × 10^k
+        world_len = _nice_step(world_len)
+
+        # 比例尺位置（右下角）
+        margin = 20
+        y = self.height() - margin - 10
+        x_end = self.width() - margin
+        x_start = x_end - target_px
+
+        # 绘制比例尺线
+        painter.setPen(QPen(QColor(200, 200, 200), 2))
+        painter.drawLine(x_start, y, x_end, y)
+        # 端点刻度
+        painter.drawLine(x_start, y - 5, x_start, y + 5)
+        painter.drawLine(x_end, y - 5, x_end, y + 5)
+
+        # 绘制文字
+        font = QFont("Arial", 9)
+        painter.setFont(font)
+        text = self._format_scale(world_len)
+        text_width = painter.fontMetrics().horizontalAdvance(text)
+        painter.drawText(x_start + (target_px - text_width) // 2, y - 8, text)
+
+        painter.end()
+
+    @staticmethod
+    def _format_scale(length: float) -> str:
+        """格式化比例尺文字。"""
+        if length >= 1000:
+            return f"{length / 1000:.1f} m"
+        elif length >= 1:
+            return f"{length:.0f} mm"
+        else:
+            return f"{length * 1000:.0f} μm"
 
     def resizeGL(self, w: int, h: int):
         if self._has_gl:
@@ -887,6 +935,10 @@ class PointCloudViewer(QOpenGLWidget):
             self._roi_rubberband.setGeometry(event.x(), event.y(), 0, 0)
             self._roi_rubberband.show()
             return
+        # 中键点击：设置旋转中心（单击，非双击）
+        if event.button() == Qt.MiddleButton:
+            self._set_rotation_center(event.pos())
+            return
         self.camera.begin_drag(event.pos())
 
     def mouseMoveEvent(self, event):
@@ -906,6 +958,32 @@ class PointCloudViewer(QOpenGLWidget):
             self._compute_roi_selection()
             return
         self.camera.end_drag()
+
+    def screen_to_world(self, screen_pos):
+        """把屏幕坐标反投影到世界坐标（读取深度缓冲精确求交）。"""
+        if self._mvp_inv is None:
+            return None
+        # 读取深度缓冲获取点击位置深度
+        try:
+            from OpenGL import GL
+            self.makeCurrent()
+            x = int(screen_pos.x())
+            y = int(self.height() - screen_pos.y() - 1)
+            depth = GL.glReadPixels(x, y, 1, 1, GL.GL_DEPTH_COMPONENT, GL.GL_FLOAT)
+            z = float(depth[0][0])
+        except Exception:
+            z = 0.5  # 失败时取中点
+
+        # NDC 坐标
+        ndc_x = (2.0 * screen_pos.x()) / self.width() - 1.0
+        ndc_y = 1.0 - (2.0 * screen_pos.y()) / self.height()
+        ndc_z = 2.0 * z - 1.0  # 深度 [0,1] -> NDC [-1,1]
+        ndc = np.array([ndc_x, ndc_y, ndc_z, 1.0], dtype=np.float64)
+        world = self._mvp_inv @ ndc
+        if abs(world[3]) < 1e-12:
+            return None
+        world = world[:3] / world[3]
+        return world.astype(np.float32)
 
     def set_roi_mode(self, enabled: bool):
         """进入/退出 ROI 矩形框选模式。"""
@@ -1033,12 +1111,6 @@ class PointCloudViewer(QOpenGLWidget):
             cloud["uploaded"] = False
         self.update()
 
-    def mouseDoubleClickEvent(self, event):
-        """双击滚轮（中键）：重新选择旋转中心到点击位置。"""
-        if event.button() == Qt.MiddleButton:
-            self._set_rotation_center(event.pos())
-        event.accept()
-
     def _set_rotation_center(self, pos):
         """把旋转中心设置到鼠标点击位置对应的 3D 点（通过深度缓冲反投影）。"""
         if not self._has_gl:
@@ -1051,6 +1123,7 @@ class PointCloudViewer(QOpenGLWidget):
             return
         self.camera.set_target(world_pos, keep_position=True)
         self._update_pivot_position(world_pos)
+        self.set_pivot_visible(True)
         self.update()
 
     def _read_depth(self, x: int, y: int):
@@ -1107,27 +1180,20 @@ class PointCloudViewer(QOpenGLWidget):
 
 
 class _ArcBallCamera:
-    """轨道相机控制器（左键旋转 / 右键平移 / 滚轮缩放 / 双击中键设中心）。
+    """轨道相机控制器（左键旋转 / 右键平移 / 滚轮缩放 / 中键设中心）。
 
-    使用 lookAt(position, target, up) 构建视图矩阵，旋转/平移围绕显式 target
-    进行，避免原实现中平移后旋转中心漂移、方向反转的问题。
+    使用旋转矩阵累积旋转，避免欧拉角万向锁，实现真正的全方位旋转。
+    相机位置 = target + R @ (0, 0, distance)，其中 R 为旋转矩阵。
     """
 
-    # 视角预设：(rotation_x, rotation_y)
-    PRESETS = {
-        "top": (89.0, 0.0),
-        "front": (0.0, 0.0),
-        "side": (0.0, 90.0),
-        "iso": (30.0, -45.0),
-    }
-
     def __init__(self, distance: float = 2.0):
-        self.rotation_x = 30.0
-        self.rotation_y = -45.0
+        self._rotation = np.eye(3, dtype=np.float32)  # 旋转矩阵（行向量）
         self._distance = distance
         self.target = np.zeros(3, dtype=np.float32)
         self._last_pos = None
         self._tracking = False
+        # 初始为等轴视图
+        self.set_preset("iso")
 
     @property
     def distance(self) -> float:
@@ -1138,33 +1204,16 @@ class _ArcBallCamera:
         self._distance = max(1e-4, value)
 
     def position(self) -> np.ndarray:
-        """根据当前角度计算相机 eye 位置。"""
-        rx = np.radians(self.rotation_x)
-        ry = np.radians(self.rotation_y)
-        d = self._distance
-        # v = R_y(ry) * R_x(rx) * (0, 0, d)
-        x = d * np.cos(rx) * np.sin(ry)
-        y = -d * np.sin(rx)
-        z = d * np.cos(rx) * np.cos(ry)
-        return self.target + np.array([x, y, z], dtype=np.float32)
+        """根据当前旋转矩阵计算相机 eye 位置。"""
+        offset = self._rotation @ np.array([0, 0, self._distance], dtype=np.float32)
+        return self.target + offset
 
     def _basis(self):
         """返回相机坐标系在世界坐标下的 (right, up, forward)。"""
-        pos = self.position()
-        forward = self.target - pos
-        norm = np.linalg.norm(forward)
-        if norm < 1e-9:
-            forward = np.array([0.0, 0.0, -1.0], dtype=np.float32)
-        else:
-            forward = forward / norm
-        world_up = np.array([0.0, 0.0, 1.0], dtype=np.float32)
-        right = np.cross(forward, world_up)
-        rnorm = np.linalg.norm(right)
-        if rnorm < 1e-9:
-            right = np.array([1.0, 0.0, 0.0], dtype=np.float32)
-        else:
-            right = right / rnorm
-        up = np.cross(right, forward)
+        # 旋转矩阵的列向量即相机坐标系在世界中的方向
+        right = self._rotation[:, 0]
+        up = self._rotation[:, 1]
+        forward = -self._rotation[:, 2]  # 相机看向 -Z
         return right, up, forward
 
     def begin_drag(self, pos):
@@ -1178,17 +1227,52 @@ class _ArcBallCamera:
         dy = pos.y() - self._last_pos.y()
         self._last_pos = pos
         if buttons == Qt.LeftButton:
-            # 左右拖动绕世界 Z 轴旋转，上下拖动绕相机右轴俯仰
-            self.rotation_y += dx * 0.5
-            self.rotation_x += dy * 0.5
-            self.rotation_x = (self.rotation_x + 180.0) % 360.0 - 180.0
-            self.rotation_y = (self.rotation_y + 180.0) % 360.0 - 180.0
+            # 左键旋转：灵敏度根据距离自适应（越远越灵敏，避免大场景转不动）
+            sensitivity = max(0.1, self._distance * 0.02)
+            # 绕世界 Y 轴旋转（水平拖动）
+            angle_y = np.radians(dx * sensitivity)
+            # 绕相机 right 轴旋转（垂直拖动）
+            right, _, _ = self._basis()
+            angle_x = np.radians(dy * sensitivity)
+            # 累积旋转：先绕世界 Y 轴，再绕相机 right 轴
+            R_y = self._rotation_matrix_from_axis_angle([0, 1, 0], angle_y)
+            R_x = self._rotation_matrix_from_axis_angle(right, angle_x)
+            self._rotation = R_x @ R_y @ self._rotation
+            # 正交化，避免数值漂移
+            self._orthonormalize()
         elif buttons == Qt.RightButton:
-            # 在视图平面平移 target（及 position），灵敏度随距离自适应
+            # 右键平移
             sens = self._distance * np.tan(np.radians(22.5)) * 2.0 / 1000.0
             right, up, _ = self._basis()
             delta = -dx * sens * right + dy * sens * up
             self.target += delta
+
+    @staticmethod
+    def _rotation_matrix_from_axis_angle(axis, angle: float) -> np.ndarray:
+        """Rodrigues 公式：轴角转旋转矩阵。"""
+        axis = np.asarray(axis, dtype=np.float32)
+        norm = np.linalg.norm(axis)
+        if norm < 1e-9:
+            return np.eye(3, dtype=np.float32)
+        axis = axis / norm
+        K = np.array([
+            [0, -axis[2], axis[1]],
+            [axis[2], 0, -axis[0]],
+            [-axis[1], axis[0], 0],
+        ], dtype=np.float32)
+        I = np.eye(3, dtype=np.float32)
+        return I + np.sin(angle) * K + (1.0 - np.cos(angle)) * (K @ K)
+
+    def _orthonormalize(self):
+        """Gram-Schmidt 正交化旋转矩阵。"""
+        x = self._rotation[:, 0]
+        y = self._rotation[:, 1]
+        z = self._rotation[:, 2]
+        x = x / max(np.linalg.norm(x), 1e-9)
+        y = y - np.dot(y, x) * x
+        y = y / max(np.linalg.norm(y), 1e-9)
+        z = np.cross(x, y)
+        self._rotation = np.column_stack([x, y, z])
 
     def end_drag(self):
         self._tracking = False
@@ -1202,10 +1286,11 @@ class _ArcBallCamera:
     def view_matrix(self) -> QMatrix4x4:
         m = QMatrix4x4()
         pos = self.position()
+        _, up, _ = self._basis()
         m.lookAt(
             QVector3D(float(pos[0]), float(pos[1]), float(pos[2])),
             QVector3D(float(self.target[0]), float(self.target[1]), float(self.target[2])),
-            QVector3D(0.0, 0.0, 1.0),
+            QVector3D(float(up[0]), float(up[1]), float(up[2])),
         )
         return m
 
@@ -1213,28 +1298,67 @@ class _ArcBallCamera:
         """设置旋转中心；keep_position=True 时保持相机 eye 位置不变（画面不跳）。"""
         target = np.asarray(target, dtype=np.float32)
         if keep_position:
-            pos = self.position()
+            pos = self.position()  # 先保存当前位置
+            old_distance = self._distance
             self.target = target
-            # 重新计算 distance/angles 使 position 保持不变
+            # 重新计算旋转矩阵，使相机位置保持不变
             diff = pos - self.target
             d = float(np.linalg.norm(diff))
-            self._distance = max(1e-4, d)
             if d > 1e-9:
-                self.rotation_x = np.degrees(-np.arcsin(np.clip(diff[1] / d, -1.0, 1.0)))
-                cos_rx = np.cos(np.radians(self.rotation_x))
-                denom = max(1e-9, d * cos_rx)
-                self.rotation_y = np.degrees(np.arctan2(diff[0] / denom, diff[2] / denom))
+                # 根据新 target 和旧 position 重建旋转矩阵
+                forward = -diff / d  # 相机看向 target，所以 forward 是从 camera 指向 target
+                world_up = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+                right = np.cross(forward, world_up)
+                rnorm = np.linalg.norm(right)
+                if rnorm < 1e-9:
+                    right = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+                else:
+                    right = right / rnorm
+                up = np.cross(right, forward)
+                # 旋转矩阵的列向量：right, up, -forward
+                self._rotation = np.column_stack([right, up, -forward])
+            self._distance = old_distance
         else:
             self.target = target
 
     def set_preset(self, preset: str):
-        rx, ry = self.PRESETS.get(preset, self.PRESETS["iso"])
-        self.rotation_x = rx
-        self.rotation_y = ry
+        """设置视角预设。"""
+        # camera_pos_dir: 相机位置相对于 target 的方向
+        # up_hint: 世界上方向提示
+        presets = {
+            "top": (np.array([0, 0, 1]), np.array([0, 1, 0])),      # 相机在 +Z，看向 -Z
+            "front": (np.array([0, -1, 0]), np.array([0, 0, 1])),   # 相机在 -Y，看向 +Y
+            "side": (np.array([1, 0, 0]), np.array([0, 0, 1])),     # 相机在 +X，看向 -X
+            "iso": (np.array([1, -1, 1]) / np.sqrt(3), np.array([0, 0, 1])),  # 等轴
+        }
+        camera_pos_dir, up_hint = presets.get(preset, presets["iso"])
+        camera_pos_dir = np.asarray(camera_pos_dir, dtype=np.float32)
+        camera_pos_dir = camera_pos_dir / np.linalg.norm(camera_pos_dir)
+        up_hint = np.asarray(up_hint, dtype=np.float32)
+        # 相机看向 target，所以 forward 是从 camera 指向 target
+        forward = -camera_pos_dir
+        # 构建旋转矩阵：right = up_hint × forward, up = forward × right
+        right = np.cross(up_hint, forward)
+        right = right / max(np.linalg.norm(right), 1e-9)
+        up = np.cross(forward, right)
+        # 旋转矩阵的列向量：right, up, -forward（相机看向 -Z）
+        self._rotation = np.column_stack([right, up, -forward])
         self.target = np.zeros(3, dtype=np.float32)
 
     def reset(self):
         self.set_preset("iso")
+
+    # 兼容旧接口（用于坐标轴指示器）
+    @property
+    def rotation_x(self) -> float:
+        """从旋转矩阵提取近似俯仰角（仅用于显示，不用于控制）。"""
+        # 从旋转矩阵第二行第三列提取
+        return float(np.degrees(np.arcsin(np.clip(-self._rotation[1, 2], -1.0, 1.0))))
+
+    @property
+    def rotation_y(self) -> float:
+        """从旋转矩阵提取近似水平角（仅用于显示，不用于控制）。"""
+        return float(np.degrees(np.arctan2(self._rotation[0, 2], self._rotation[2, 2])))
 
 
 # =========================================================================
@@ -1578,6 +1702,11 @@ class EmbeddedPointCloudViewer(QWidget):
         """显示/隐藏旋转中心。"""
         if self._viewer:
             self._viewer.set_pivot_visible(visible)
+
+    def set_pivot_position(self, pos):
+        """设置旋转中心位置。"""
+        if self._viewer:
+            self._viewer.set_pivot_position(pos)
 
     def set_selection_bbox(self, bounds_list: List[tuple]):
         """设置选中点云的包围盒线框（bounds_list: [(min,max), ...]）。"""

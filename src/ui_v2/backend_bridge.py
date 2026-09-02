@@ -1698,8 +1698,8 @@ class BackendBridge(QObject):
         ws = self.shell.workspace_turntable()
         session = ws.session
         frames = session.get_all_frames()
-        if not frames:
-            return False, "无转台帧数据可保存"
+        if not frames and not session.is_calibrated():
+            return False, "无转台数据可保存（请先标定或采集）"
 
         offline = OfflineSession()
         offline.create_new("offline_data")
@@ -1805,10 +1805,40 @@ class BackendBridge(QObject):
                 f"模式 B（单相机移动拼接）会话已读取 {len(frames)} 台相机数据，"
                 "时间线恢复待实现", "warn")
         else:
-            # 模式 C：当前未实现会话恢复
-            self.shell.log(
-                "模式 C（转台 360° 拼接）暂不支持从会话恢复数据，"
-                "请重新拍摄/标定", "warn")
+            # 模式 C：恢复标定数据（以及可选的步进采集帧）
+            ws = self.shell.workspace_turntable()
+            loaded_any = False
+
+            # 1. 恢复标定参数
+            meta_path = os.path.join(path, "turntable_meta.json")
+            if os.path.exists(meta_path):
+                try:
+                    with open(meta_path, "r", encoding="utf-8") as f:
+                        meta = json.load(f)
+                    if meta.get("axis") is not None and meta.get("angle_deg") is not None:
+                        if ws.apply_loaded_calibration(meta):
+                            loaded_any = True
+                            self.shell.log(
+                                "已从会话恢复转台标定数据，可直接步进采集/拼接",
+                                "success")
+                except Exception as e:
+                    self.shell.log(f"读取转台会话元数据失败: {e}", "error")
+
+            # 2. 恢复步进采集帧（如有），加载后可直接拼接
+            seq_frames: List[FrameData] = []
+            for _cid, flist in frames.items():
+                seq_frames.extend(flist)
+            seq_frames.sort(key=lambda f: f.frame_id)
+            if seq_frames:
+                n = ws.load_sequence_frames(seq_frames)
+                loaded_any = True
+                self.shell.log(f"已从会话恢复 {n} 帧步进采集数据", "success")
+
+            if not loaded_any:
+                self.shell.log(
+                    "会话中没有可恢复的转台标定或帧数据", "warn")
+            else:
+                self.shell.set_dirty(True)
 
     # ------------------------------------------------------------------
     # 工具方法
