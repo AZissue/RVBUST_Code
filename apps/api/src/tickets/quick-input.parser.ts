@@ -2,8 +2,9 @@ import { TicketPriority } from '@prisma/client';
 
 export interface Candidate { id: string; name: string; score: number }
 export interface Person { id: string; name: string; username?: string }
-export interface ParserContext { customers: Person[]; users: Person[]; currentUserId: string }
-export interface QuickInputParser { parse(rawText: string, context: ParserContext): ReturnType<typeof parseQuickTicketInput> }
+export interface ParserContext { customers: Person[]; users: Person[]; currentUserId: string; deviceModels?: string[] }
+export type ParsedTicket = Omit<ReturnType<typeof parseQuickTicketInput>, 'priority'> & { priority: TicketPriority };
+export interface QuickInputParser { parse(rawText: string, context: ParserContext): ParsedTicket | Promise<ParsedTicket> }
 const clean = (s: string) => s.replace(/^[\s,，。:：;；]+|[\s,，。:：;；]+$/g, '');
 const normalize = (s: string) => s.toLowerCase().replace(/有限责任公司|股份有限公司|有限公司|机器人|科技|公司|客户/g, '').replace(/\s/g, '');
 
@@ -38,7 +39,7 @@ export function matchPeople(text: string, users: Person[]): Candidate[] {
   return users.map((u) => ({ id: u.id, name: u.name, score: u.name === text || u.username === text ? 1 : surname && u.name.startsWith(surname[1] || surname[2]) ? .8 : similarity(text, u.name) * .8 }))
     .filter((u) => u.score >= .6).sort((a, b) => b.score - a.score);
 }
-const choose = (c: Candidate[], threshold: number) => c[0] && c[0].score >= threshold && (!c[1] || c[0].score - c[1].score >= .12) ? c[0] : null;
+export const choose = (c: Candidate[], threshold: number) => c[0] && c[0].score >= threshold && (!c[1] || c[0].score - c[1].score >= .12) ? c[0] : null;
 
 export function parseQuickTicketInput(rawText: string, context: ParserContext) {
   let issue = clean(rawText);
@@ -53,6 +54,10 @@ export function parseQuickTicketInput(rawText: string, context: ParserContext) {
   const explicit = issue.match(/(?:指定负责人|负责人|指派给|交给)\s*[:：]?\s*([^\s，,。；;]+)/);
   let assigneeText = explicit?.[1] ?? '';
   if (explicit) issue = issue.replace(explicit[0], ' ');
+  if (!assigneeText) {
+    const assigned = issue.match(/(?:^|[\s，,])([^\s，,。；;]{1,20})负责(?=$|[\s，,。；;])/);
+    if (assigned) { assigneeText = assigned[1]; issue = issue.replace(assigned[0], ' '); }
+  }
   if (!assigneeText) {
     const known = context.users.flatMap((u) => [u.name, u.username ?? '', `小${u.name[0]}`, `${u.name[0]}工`]).filter(Boolean).sort((a, b) => b.length - a.length);
     const found = known.find((name) => issue.endsWith(name) || issue.includes(` ${name} `) || issue.includes(`，${name}`));

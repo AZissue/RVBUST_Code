@@ -13,7 +13,9 @@ export class QuickTicketsService {
     this.access.requireInternal(user);
     const customers = await this.prisma.customerOrganization.findMany({ where: this.access.customerWhere(user), select: { id: true, name: true } });
     const users = await this.prisma.user.findMany({ where: { isActive: true, role: { name: { in: ['admin', 'support', 'employee'] } } }, select: { id: true, name: true, username: true } });
-    const result = this.parser.parse(rawText, { customers, users, currentUserId: user.id });
+    const modelHint = rawText.match(/\b[A-Za-z]+[- ]?\d{3,}[A-Za-z0-9-]*\b/)?.[0]?.replace(/ /g, '');
+    const modelCandidates = modelHint ? await this.prisma.device.findMany({ where: { organizationId: { in: customers.map((c) => c.id) }, cameraModel: { equals: modelHint, mode: 'insensitive' } }, select: { cameraModel: true }, take: 20 }) : [];
+    const result = await this.parser.parse(rawText, { customers, users, currentUserId: user.id, deviceModels: [...new Set(modelCandidates.map((d) => d.cameraModel).filter((m): m is string => Boolean(m)))] });
     const devices = result.matchedCustomer && result.deviceText ? await this.prisma.device.findMany({ where: { organizationId: result.matchedCustomer.id, OR: [{ cameraModel: { equals: result.deviceText, mode: 'insensitive' } }, { name: { equals: result.deviceText, mode: 'insensitive' } }] }, select: { id: true, name: true, serialNumber: true, cameraModel: true } }) : [];
     const similarTickets = result.matchedCustomer && result.issue ? await this.similar(user, { organizationId: result.matchedCustomer.id, issue: result.issue, cameraModel: result.deviceText }) : [];
     return { ...result, deviceCandidates: devices, matchedDevice: devices.length === 1 ? devices[0] : null, similarTickets };

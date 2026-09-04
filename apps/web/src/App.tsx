@@ -12,6 +12,7 @@ import { TicketDetailPage, TicketsPage } from './pages/TicketsPage'
 import { UsersPage } from './pages/UsersPage'
 import { WorklogsPage } from './pages/WorklogsPage'
 import { WorkItemsPage } from './pages/WorkItemsPage'
+import { AISettingsPage } from './pages/AISettingsPage'
 
 function ProtectedApp() {
   const { user, loading } = useAuth()
@@ -40,6 +41,7 @@ export default function App() {
       <Route path="users" element={<UsersPage />} />
       <Route path="teams" element={<TeamsPage />} />
       <Route path="settings" element={<SettingsPage />} />
+      <Route path="settings/ai" element={<AISettingsPage />} />
       <Route path="audit" element={<AuditPage />} />
     </Route>
     <Route path="*" element={<Navigate to="/" replace />} />

@@ -523,3 +523,60 @@ model SystemSetting {
 
   @@map("system_settings")
 }
+
+model AIProviderConfig {
+  id              String @id @default(uuid()) @db.Uuid
+  provider        String @db.VarChar(40)
+  name            String @db.VarChar(100)
+  enabled         Boolean @default(false)
+  baseUrl         String @db.VarChar(500)
+  apiKeyEncrypted String?
+  defaultModel    String @db.VarChar(160)
+  temperature     Float @default(0.1)
+  maxTokens       Int @default(1024)
+  timeout         Int @default(30000)
+  isDefault       Boolean @default(false)
+  omitTemperature Boolean @default(false)
+  jsonMode        Boolean @default(true)
+  tokenParameter  String @default("max_tokens") @db.VarChar(40)
+  features        AIFeatureConfig[]
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("ai_provider_configs")
+}
+
+model AIFeatureConfig {
+  featureKey       String @id @db.VarChar(80)
+  providerId       String? @db.Uuid
+  model            String? @db.VarChar(160)
+  useSystemDefault Boolean @default(true)
+  temperature      Float?
+  maxTokens        Int?
+  provider         AIProviderConfig? @relation(fields: [providerId], references: [id], onDelete: SetNull)
+  updatedAt        DateTime @updatedAt
+
+  @@map("ai_feature_configs")
+}
+
+model AIUsageLog {
+  id               String @id @default(uuid()) @db.Uuid
+  requestId        String @unique @db.Uuid
+  userId           String @db.Uuid
+  feature          String @db.VarChar(80)
+  providerId       String? @db.Uuid
+  provider         String? @db.VarChar(40)
+  model            String? @db.VarChar(160)
+  success          Boolean
+  errorType        String? @db.VarChar(60)
+  latencyMs        Int
+  attempts         Int @default(0)
+  promptTokens     Int?
+  completionTokens Int?
+  totalTokens      Int?
+  createdAt        DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([feature, createdAt])
+  @@map("ai_usage_logs")
+}

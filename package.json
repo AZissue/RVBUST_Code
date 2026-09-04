@@ -4,6 +4,7 @@
   "private": true,
   "workspaces": ["apps/*"],
   "scripts": {
+    "ai:init-key": "node scripts/init-ai-key.mjs",
     "dev": "concurrently -n api,web -c red,white \"npm run start:dev -w apps/api\" \"npm run dev -w apps/web\"",
     "build": "npm run build -w apps/api && npm run build -w apps/web",
     "test": "npm run test -w apps/api && npm run test -w apps/web",

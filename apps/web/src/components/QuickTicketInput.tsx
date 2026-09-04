@@ -10,6 +10,7 @@ import { SimpleFormModal } from '../pages/CustomersPage'
 
 interface Candidate { id: string; name: string; score: number }
 interface Parsed {
+  parser?: 'ai' | 'rule'; fallbackReason?: string; model?: string
   rawText: string; issue: string; title: string; priority: TicketPriority; deviceText: string
   matchedCustomer: Candidate | null; customerCandidates: Candidate[]; customerText: string
   matchedAssignee: Candidate | null; assigneeCandidates: Candidate[]; assigneeText: string; assigneeDefaulted: boolean
@@ -89,6 +90,7 @@ function QuickTicketConfirm({ parsed, canCreateCustomer, onClose, onSaved }: { p
     } catch (e) { setError(e instanceof Error ? e.message : '保存失败'); setRetry((n) => n + 1) } finally { setBusy(false) }
   }
   return <Modal title="解析结果确认" onClose={() => { if (!busy) onClose() }} wide><div className="quick-confirm">
+    <div role="status" className="muted">{parsed.parser === 'ai' ? `AI 解析 · ${parsed.model}` : `规则解析${parsed.fallbackReason ? ` · ${parsed.fallbackReason}` : ''}`}</div>
     <fieldset disabled={busy} className="form-grid">
       <label>客户<select aria-label="确认客户" value={organizationId} onChange={(e) => { setOrganizationId(e.target.value); setDeviceId('') }}><option value="">选择现有客户</option>{customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
       <label>负责人<select aria-label="确认负责人" value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)}><option value="">负责人：未匹配</option>{users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</select>{parsed.assigneeDefaulted && parsed.matchedAssignee && <small>默认当前用户：{parsed.matchedAssignee.name}</small>}</label>
