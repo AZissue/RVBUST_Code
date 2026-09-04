@@ -1,0 +1,520 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum TicketSource {
+  CUSTOMER_INQUIRY
+  PRE_SALES_SELECTION
+  AFTER_SALES_INCIDENT
+  ON_SITE_DEBUGGING
+  INTERNAL_TESTING
+  TRAINING
+  SDK_SOFTWARE
+  OTHER
+}
+
+enum TicketStatus {
+  PENDING
+  IN_PROGRESS
+  WAITING_CUSTOMER
+  WAITING_RND
+  RESOLVED
+  CLOSED
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum TicketEventType {
+  CUSTOMER_REPLY
+  INTERNAL_NOTE
+  STATUS_CHANGE
+  ASSIGNMENT
+  ATTACHMENT
+  WORK_RECORD
+  RESOLUTION
+}
+
+enum Visibility {
+  INTERNAL
+  CUSTOMER
+}
+
+enum WorklogSource {
+  WEB
+  IMPORT
+  AI_DRAFT
+  DESKTOP
+}
+
+enum WorkItemStatus {
+  TODO
+  IN_PROGRESS
+  WAITING_FEEDBACK
+  COMPLETED
+  CANCELED
+}
+
+enum WorkItemPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum WorklogStatus {
+  DRAFT
+  CONFIRMED
+}
+
+enum NotificationSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+model Role {
+  id          String           @id @default(uuid()) @db.Uuid
+  name        String           @unique @db.VarChar(40)
+  label       String           @db.VarChar(80)
+  description String?
+  users       User[]
+  permissions RolePermission[]
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String           @id @default(uuid()) @db.Uuid
+  code        String           @unique @db.VarChar(100)
+  description String?
+  roles       RolePermission[]
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String     @db.Uuid @map("role_id")
+  permissionId String     @db.Uuid @map("permission_id")
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  createdAt    DateTime   @default(now()) @map("created_at")
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model Team {
+  id          String       @id @default(uuid()) @db.Uuid
+  name        String       @unique @db.VarChar(100)
+  description String?
+  members     TeamMember[]
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
+
+  @@map("teams")
+}
+
+model TeamMember {
+  teamId    String   @db.Uuid @map("team_id")
+  userId    String   @db.Uuid @map("user_id")
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@id([teamId, userId])
+  @@map("team_members")
+}
+
+model User {
+  id                     String                @id @default(uuid()) @db.Uuid
+  username               String                @unique @db.VarChar(60)
+  email                  String?               @unique @db.VarChar(255)
+  passwordHash           String                @map("password_hash")
+  name                   String                @db.VarChar(100)
+  phone                  String?               @db.VarChar(40)
+  isActive               Boolean               @default(true) @map("is_active")
+  roleId                 String                @db.Uuid @map("role_id")
+  customerOrganizationId String?               @db.Uuid @map("customer_organization_id")
+  role                   Role                  @relation(fields: [roleId], references: [id])
+  customerOrganization   CustomerOrganization? @relation("CustomerPortalUsers", fields: [customerOrganizationId], references: [id])
+  teams                  TeamMember[]
+  sessions               AuthSession[]
+  createdTickets         Ticket[]              @relation("TicketCreator")
+  assignedTickets        Ticket[]              @relation("TicketAssignee")
+  ticketCollaborations   TicketCollaborator[]
+  ticketEvents           TicketEvent[]
+  authoredWorklogs       Worklog[]             @relation("WorklogAuthor")
+  ownedWorkItems         WorkItem[]            @relation("WorkItemOwner")
+  workItemCollaborations WorkItemCollaborator[]
+  notifications          Notification[]
+  auditLogs              AuditLog[]
+  technicalCustomers     CustomerOrganization[] @relation("TechnicalOwner")
+  businessCustomers      CustomerOrganization[] @relation("BusinessOwner")
+  createdAt              DateTime              @default(now()) @map("created_at")
+  updatedAt              DateTime              @updatedAt @map("updated_at")
+
+  @@index([roleId])
+  @@index([customerOrganizationId])
+  @@map("users")
+}
+
+model AuthSession {
+  id        String   @id @default(uuid()) @db.Uuid
+  tokenHash String   @unique @map("token_hash") @db.Char(64)
+  userId    String   @db.Uuid @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("auth_sessions")
+}
+
+model LoginAttempt {
+  id        String   @id @default(uuid()) @db.Uuid
+  username  String   @db.VarChar(60)
+  ipAddress String   @map("ip_address") @db.VarChar(64)
+  success   Boolean
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([username, ipAddress, createdAt])
+  @@map("login_attempts")
+}
+
+model CustomerOrganization {
+  id               String    @id @default(uuid()) @db.Uuid
+  name             String    @unique @db.VarChar(200)
+  region           String?   @db.VarChar(100)
+  industry         String?   @db.VarChar(100)
+  level            String?   @db.VarChar(20)
+  notes            String?
+  technicalOwnerId String?   @db.Uuid @map("technical_owner_id")
+  businessOwnerId  String?   @db.Uuid @map("business_owner_id")
+  technicalOwner   User?     @relation("TechnicalOwner", fields: [technicalOwnerId], references: [id], onDelete: SetNull)
+  businessOwner    User?     @relation("BusinessOwner", fields: [businessOwnerId], references: [id], onDelete: SetNull)
+  contacts         Contact[]
+  devices          Device[]
+  projects         Project[]
+  tickets          Ticket[]
+  workItems        WorkItem[]
+  worklogs         Worklog[]
+  portalUsers      User[]    @relation("CustomerPortalUsers")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  @@index([technicalOwnerId])
+  @@index([businessOwnerId])
+  @@map("customer_organizations")
+}
+
+model Contact {
+  id             String               @id @default(uuid()) @db.Uuid
+  organizationId String               @db.Uuid @map("organization_id")
+  organization   CustomerOrganization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String               @db.VarChar(100)
+  title          String?              @db.VarChar(100)
+  phone          String?              @db.VarChar(40)
+  email          String?              @db.VarChar(255)
+  wechat         String?              @db.VarChar(100)
+  isPrimary      Boolean              @default(false) @map("is_primary")
+  tickets        Ticket[]
+  createdAt      DateTime             @default(now()) @map("created_at")
+  updatedAt      DateTime             @updatedAt @map("updated_at")
+
+  @@index([organizationId])
+  @@index([email])
+  @@map("contacts")
+}
+
+model Device {
+  id             String               @id @default(uuid()) @db.Uuid
+  organizationId String               @db.Uuid @map("organization_id")
+  organization   CustomerOrganization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String               @db.VarChar(120)
+  product        String?              @db.VarChar(120)
+  cameraModel    String?              @map("camera_model") @db.VarChar(100)
+  serialNumber   String?              @map("serial_number") @db.VarChar(120)
+  sdkVersion     String?              @map("sdk_version") @db.VarChar(80)
+  firmware       String?              @db.VarChar(80)
+  location       String?              @db.VarChar(200)
+  notes          String?
+  tickets        Ticket[]
+  createdAt      DateTime             @default(now()) @map("created_at")
+  updatedAt      DateTime             @updatedAt @map("updated_at")
+
+  @@unique([organizationId, serialNumber])
+  @@index([organizationId])
+  @@index([cameraModel])
+  @@map("devices")
+}
+
+model Project {
+  id             String               @id @default(uuid()) @db.Uuid
+  organizationId String?              @db.Uuid @map("organization_id")
+  organization   CustomerOrganization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  name           String               @db.VarChar(200)
+  application    String?
+  status         String?              @db.VarChar(40)
+  notes          String?
+  tickets        Ticket[]
+  workItems      WorkItem[]
+  worklogs       Worklog[]
+  createdAt      DateTime             @default(now()) @map("created_at")
+  updatedAt      DateTime             @updatedAt @map("updated_at")
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@map("projects")
+}
+
+model WorkType {
+  id          String     @id @default(uuid()) @db.Uuid
+  code        String     @unique @db.VarChar(80)
+  label       String     @unique @db.VarChar(100)
+  description String?
+  isActive    Boolean    @default(true) @map("is_active")
+  sortOrder   Int        @default(0) @map("sort_order")
+  workItems   WorkItem[]
+  worklogs    Worklog[]
+  createdAt   DateTime   @default(now()) @map("created_at")
+  updatedAt   DateTime   @updatedAt @map("updated_at")
+
+  @@index([isActive, sortOrder])
+  @@map("work_types")
+}
+
+model WorkItem {
+  id             String                 @id @default(uuid()) @db.Uuid
+  title          String                 @db.VarChar(240)
+  description    String?
+  workTypeId     String                 @db.Uuid @map("work_type_id")
+  organizationId String?                @db.Uuid @map("organization_id")
+  projectId      String?                @db.Uuid @map("project_id")
+  priority       WorkItemPriority       @default(MEDIUM)
+  status         WorkItemStatus         @default(TODO)
+  ownerId        String                 @db.Uuid @map("owner_id")
+  startDate      DateTime?              @map("start_date") @db.Date
+  dueDate        DateTime?              @map("due_date") @db.Date
+  completedAt    DateTime?              @map("completed_at")
+  progress       Int                    @default(0)
+  tags           String[]               @default([])
+  workType       WorkType               @relation(fields: [workTypeId], references: [id])
+  organization   CustomerOrganization?  @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  project        Project?               @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  owner          User                   @relation("WorkItemOwner", fields: [ownerId], references: [id])
+  collaborators  WorkItemCollaborator[]
+  worklogs       Worklog[]
+  createdAt      DateTime               @default(now()) @map("created_at")
+  updatedAt      DateTime               @updatedAt @map("updated_at")
+
+  @@index([ownerId, status])
+  @@index([organizationId])
+  @@index([projectId])
+  @@index([workTypeId])
+  @@index([dueDate])
+  @@map("work_items")
+}
+
+model WorkItemCollaborator {
+  workItemId String   @db.Uuid @map("work_item_id")
+  userId     String   @db.Uuid @map("user_id")
+  workItem   WorkItem @relation(fields: [workItemId], references: [id], onDelete: Cascade)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@id([workItemId, userId])
+  @@map("work_item_collaborators")
+}
+
+model Ticket {
+  id                String               @id @default(uuid()) @db.Uuid
+  number            String               @unique @db.VarChar(32)
+  source            TicketSource
+  organizationId    String               @db.Uuid @map("organization_id")
+  contactId         String?              @db.Uuid @map("contact_id")
+  deviceId          String?              @db.Uuid @map("device_id")
+  projectId         String?              @db.Uuid @map("project_id")
+  cameraModel       String?              @map("camera_model") @db.VarChar(100)
+  serialNumber      String?              @map("serial_number") @db.VarChar(120)
+  sdkVersion        String?              @map("sdk_version") @db.VarChar(80)
+  systemEnvironment String?              @map("system_environment")
+  category          String               @db.VarChar(100)
+  title             String               @db.VarChar(240)
+  description       String
+  priority          TicketPriority       @default(MEDIUM)
+  status            TicketStatus         @default(PENDING)
+  assigneeId        String?              @db.Uuid @map("assignee_id")
+  createdById       String               @db.Uuid @map("created_by_id")
+  plannedAt         DateTime?            @map("planned_at")
+  resolvedAt        DateTime?            @map("resolved_at")
+  solution          String?
+  organization      CustomerOrganization @relation(fields: [organizationId], references: [id])
+  contact           Contact?             @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  device            Device?              @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  project           Project?             @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  assignee          User?                @relation("TicketAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  createdBy         User                 @relation("TicketCreator", fields: [createdById], references: [id])
+  collaborators     TicketCollaborator[]
+  events            TicketEvent[]
+  worklogs          Worklog[]
+  notifications     Notification[]
+  attachments       Attachment[]
+  createdAt         DateTime             @default(now()) @map("created_at")
+  updatedAt         DateTime             @updatedAt @map("updated_at")
+
+  @@index([organizationId])
+  @@index([assigneeId, status])
+  @@index([priority, status])
+  @@index([plannedAt])
+  @@map("tickets")
+}
+
+model TicketCollaborator {
+  ticketId String   @db.Uuid @map("ticket_id")
+  userId   String   @db.Uuid @map("user_id")
+  ticket   Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@id([ticketId, userId])
+  @@map("ticket_collaborators")
+}
+
+model TicketEvent {
+  id         String          @id @default(uuid()) @db.Uuid
+  ticketId   String          @db.Uuid @map("ticket_id")
+  authorId   String          @db.Uuid @map("author_id")
+  type       TicketEventType
+  visibility Visibility      @default(INTERNAL)
+  content    String
+  metadata   Json?
+  ticket     Ticket          @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  author     User            @relation(fields: [authorId], references: [id])
+  attachments Attachment[]
+  createdAt  DateTime        @default(now()) @map("created_at")
+  updatedAt  DateTime        @updatedAt @map("updated_at")
+
+  @@index([ticketId, createdAt])
+  @@index([visibility])
+  @@map("ticket_events")
+}
+
+model Worklog {
+  id             String                @id @default(uuid()) @db.Uuid
+  authorId       String                @db.Uuid @map("author_id")
+  workTypeId     String                @db.Uuid @map("work_type_id")
+  organizationId String?               @db.Uuid @map("organization_id")
+  ticketId       String?               @db.Uuid @map("ticket_id")
+  workItemId     String?               @db.Uuid @map("work_item_id")
+  projectId      String?               @db.Uuid @map("project_id")
+  occurredAt     DateTime              @map("occurred_at")
+  summary        String                @db.VarChar(240)
+  problem        String?
+  actions        String?
+  result         String?
+  nextStep       String?               @map("next_step")
+  durationMinutes Int?                 @map("duration_minutes")
+  rawText        String?               @map("raw_text")
+  aiExtractionId String?               @map("ai_extraction_id") @db.VarChar(120)
+  source         WorklogSource         @default(WEB)
+  status         WorklogStatus         @default(CONFIRMED)
+  visibility     Visibility            @default(INTERNAL)
+  author         User                  @relation("WorklogAuthor", fields: [authorId], references: [id])
+  workType       WorkType              @relation(fields: [workTypeId], references: [id])
+  organization   CustomerOrganization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  ticket         Ticket?               @relation(fields: [ticketId], references: [id], onDelete: SetNull)
+  workItem       WorkItem?             @relation(fields: [workItemId], references: [id], onDelete: SetNull)
+  project        Project?              @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  createdAt      DateTime              @default(now()) @map("created_at")
+  updatedAt      DateTime              @updatedAt @map("updated_at")
+
+  @@index([authorId, occurredAt])
+  @@index([workTypeId, occurredAt])
+  @@index([organizationId])
+  @@index([ticketId])
+  @@index([workItemId])
+  @@index([aiExtractionId, status])
+  @@map("worklogs")
+}
+
+model Notification {
+  id          String               @id @default(uuid()) @db.Uuid
+  recipientId String               @db.Uuid @map("recipient_id")
+  ticketId    String?              @db.Uuid @map("ticket_id")
+  type        String               @db.VarChar(80)
+  severity    NotificationSeverity @default(INFO)
+  title       String               @db.VarChar(200)
+  body        String
+  dedupeKey   String?              @map("dedupe_key") @db.VarChar(180)
+  readAt      DateTime?            @map("read_at")
+  recipient   User                 @relation(fields: [recipientId], references: [id], onDelete: Cascade)
+  ticket      Ticket?              @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  createdAt   DateTime             @default(now()) @map("created_at")
+  updatedAt   DateTime             @updatedAt @map("updated_at")
+
+  @@index([recipientId, readAt, createdAt])
+  @@unique([recipientId, dedupeKey])
+  @@map("notifications")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  actorId    String?  @db.Uuid @map("actor_id")
+  action     String   @db.VarChar(100)
+  entityType String?  @map("entity_type") @db.VarChar(80)
+  entityId   String?  @map("entity_id") @db.VarChar(120)
+  ipAddress  String?  @map("ip_address") @db.VarChar(64)
+  userAgent  String?  @map("user_agent") @db.VarChar(500)
+  metadata   Json?
+  actor      User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([actorId, createdAt])
+  @@index([entityType, entityId])
+  @@index([action, createdAt])
+  @@map("audit_logs")
+}
+
+model Attachment {
+  id           String       @id @default(uuid()) @db.Uuid
+  ticketId     String?      @db.Uuid @map("ticket_id")
+  ticketEventId String?     @db.Uuid @map("ticket_event_id")
+  storageKey   String       @unique @map("storage_key") @db.VarChar(300)
+  originalName String       @map("original_name") @db.VarChar(255)
+  mimeType     String       @map("mime_type") @db.VarChar(120)
+  sizeBytes    Int          @map("size_bytes")
+  visibility   Visibility   @default(INTERNAL)
+  ticket       Ticket?      @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  ticketEvent  TicketEvent? @relation(fields: [ticketEventId], references: [id], onDelete: Cascade)
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
+
+  @@index([ticketId])
+  @@map("attachments")
+}
+
+model SystemSetting {
+  id        String   @id @default(uuid()) @db.Uuid
+  key       String   @unique @db.VarChar(100)
+  value     Json
+  isPublic  Boolean  @default(false) @map("is_public")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("system_settings")
+}

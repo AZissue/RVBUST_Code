@@ -1,0 +1,16 @@
+import { BarChart3, Clock3, Target, Users } from 'lucide-react'
+import type { CSSProperties } from 'react'
+import { useRemote } from '../hooks/useRemote'
+import { api } from '../lib/api'
+import { PageError, PageLoading } from './DashboardPage'
+
+interface ReportData { summary: { weeklyWorklogs: number; supportedCustomers: number; totalMinutes: number; completionRate: number }; daily: Array<{ date: string; count: number; minutes: number }>; workTypes: Array<{ label: string; count: number }>; ticketStatuses: Array<{ status: string; count: number }> }
+const ticketLabels: Record<string, string> = { PENDING: '待处理', IN_PROGRESS: '处理中', WAITING_CUSTOMER: '等待客户', WAITING_RND: '等待研发', RESOLVED: '已解决', CLOSED: '已关闭' }
+
+export function ReportsPage() {
+  const remote = useRemote(() => api<ReportData>('/dashboard/reports'), []); const data = remote.data
+  if (remote.loading) return <PageLoading />
+  if (remote.error || !data) return <PageError message={remote.error} retry={remote.refresh} />
+  const maxDaily = Math.max(...data.daily.map((item) => item.count), 1); const maxType = Math.max(...data.workTypes.map((item) => item.count), 1); const ticketTotal = data.ticketStatuses.reduce((sum, item) => sum + item.count, 0) || 1
+  return <div className="page-stack reports-page"><header className="page-header"><div><span className="eyebrow">ANALYTICS</span><h1>统计报表</h1><p>基于已确认工作记录、工作事项和工单的真实数据。</p></div></header><section className="report-summary"><div><BarChart3 size={17} /><span>本周工作记录</span><strong>{data.summary.weeklyWorklogs}</strong></div><div><Users size={17} /><span>支持客户</span><strong>{data.summary.supportedCustomers}</strong></div><div><Clock3 size={17} /><span>记录工时</span><strong>{Math.round(data.summary.totalMinutes / 60 * 10) / 10}h</strong></div><div><Target size={17} /><span>事项完成率</span><strong>{data.summary.completionRate}%</strong></div></section><div className="reports-grid"><section className="workspace-section report-wide"><div className="section-heading"><div><h2>七日工作趋势</h2><p>每日已确认工作记录</p></div></div><div className="bar-chart">{data.daily.map((item) => <div key={item.date}><span>{item.count}</span><i style={{ height: `${Math.max(item.count / maxDaily * 100, 4)}%` }} /><small>{item.date.slice(5)}</small></div>)}</div></section><section className="workspace-section"><div className="section-heading"><div><h2>工作类型分布</h2><p>本周记录构成</p></div></div><div className="horizontal-chart">{data.workTypes.map((item) => <div key={item.label}><span>{item.label}</span><i><b style={{ width: `${item.count / maxType * 100}%` }} /></i><strong>{item.count}</strong></div>)}</div></section><section className="workspace-section"><div className="section-heading"><div><h2>工单状态分布</h2><p>当前可见工单</p></div></div><div className="donut-row"><div className="donut" style={{ '--complete': `${(data.ticketStatuses.find((item) => item.status === 'RESOLVED')?.count ?? 0) / ticketTotal * 100}%` } as CSSProperties}><strong>{ticketTotal}</strong><span>工单</span></div><div>{data.ticketStatuses.map((item) => <p key={item.status}><i className={`status-${item.status.toLowerCase()}`} />{ticketLabels[item.status] ?? item.status}<strong>{item.count}</strong></p>)}</div></div></section></div></div>
+}

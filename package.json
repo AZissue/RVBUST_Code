@@ -1,0 +1,24 @@
+{
+  "name": "tech-support-crm-v2",
+  "version": "2.0.0",
+  "private": true,
+  "workspaces": ["apps/*"],
+  "scripts": {
+    "dev": "concurrently -n api,web -c red,white \"npm run start:dev -w apps/api\" \"npm run dev -w apps/web\"",
+    "build": "npm run build -w apps/api && npm run build -w apps/web",
+    "test": "npm run test -w apps/api && npm run test -w apps/web",
+    "test:e2e": "dotenv -e .env -- playwright test",
+    "db:migrate": "npm run prisma:migrate -w apps/api",
+    "db:seed": "npm run prisma:seed -w apps/api",
+    "db:import:v1": "dotenv -e .env -- tsx migration/import-v1.ts"
+  },
+  "devDependencies": {
+    "@playwright/test": "latest",
+    "concurrently": "latest",
+    "dotenv-cli": "^11.0.0",
+    "tsx": "^4.20.6"
+  },
+  "overrides": {
+    "deepmerge-ts": "8.0.0"
+  }
+}
