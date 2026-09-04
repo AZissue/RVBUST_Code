@@ -69,6 +69,11 @@ class FixedMultiCamWorkflow(WorkflowBase):
                 return False, f"标定质量不达标: {msg}"
             return True, "标定完成，可以进入扫描阶段"
         if self._state == self.STATE_CALIBRATED:
+            if not self.calibration_engine.pair_results:
+                return False, "无标定结果，请先标定或加载会话/外参"
+            ok, msg = self._check_calibration_quality()
+            if not ok:
+                return False, f"标定质量不达标: {msg}"
             return True, "可以开始扫描"
         if self._state == self.STATE_SCANNING:
             if not self._frames_scan:
@@ -115,6 +120,7 @@ class FixedMultiCamWorkflow(WorkflowBase):
         """添加标定帧（标定阶段）。"""
         if self._state != self.STATE_CALIBRATING:
             return False, "当前不在标定阶段"
+        frame.kind = "calib"
         self._frames_calib[frame.camera_name] = frame
         logger.info(f"标定帧已添加: {frame.camera_name}")
         return True, f"标定帧 {frame.camera_name} 已添加"
@@ -204,7 +210,8 @@ class FixedMultiCamWorkflow(WorkflowBase):
             self._state = self.STATE_CALIBRATED
             self._calibration_locked = True
             return True, f"外参已加载: {path}"
-        return False, f"加载失败: {path}"
+        reason = self.calibration_engine.last_error or "未知原因"
+        return False, f"加载失败: {reason}"
 
     # ------------------------------------------------------------------
     # 扫描阶段
@@ -222,6 +229,7 @@ class FixedMultiCamWorkflow(WorkflowBase):
         """添加扫描帧（扫描阶段）。"""
         if self._state != self.STATE_SCANNING:
             return False, "当前不在扫描阶段"
+        frame.kind = "scan"
         self._frames_scan[frame.camera_name] = frame
         logger.info(f"扫描帧已添加: {frame.camera_name}")
         return True, f"扫描帧 {frame.camera_name} 已添加"

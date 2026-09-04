@@ -88,6 +88,15 @@ class OfflineSession:
         with open(os.path.join(self.session_dir, "meta.json"), 'w', encoding='utf-8') as f:
             json.dump(meta, f, ensure_ascii=False, indent=2)
 
+    def set_meta(self, key: str, value):
+        """合并写入会话级 meta.json 自定义键值（如标定结果）并立即落盘。"""
+        self._meta[key] = value
+        self._write_session_meta()
+
+    def get_meta(self, key: str, default=None):
+        """读取会话级 meta.json 中的自定义键值（load_session 后可用）。"""
+        return self._meta.get(key, default)
+
     def _list_frame_dirs(self) -> List[str]:
         if not self.session_dir or not os.path.isdir(self.session_dir):
             return []
@@ -119,6 +128,7 @@ class OfflineSession:
             camera_name=camera_id,
             image_np=frame_data.image_np,  # 在线会话期间复用内存图像（release 后为 None，检测时从磁盘读）
             markers=list(frame_data.markers),
+            kind=frame_data.kind,
             is_offline=True,
             offline_dir=frame_data.offline_dir,
             offline_image_path=frame_data.offline_image_path,
@@ -195,6 +205,7 @@ class OfflineSession:
                         is_offline=True,
                         offline_dir=frame_dir,
                         markers=entry.get("markers", []),
+                        kind=entry.get("kind"),
                         board_pose=np.asarray(bp_list, dtype=np.float64) if bp_list is not None else None,
                         board_pattern=tuple(bp_tuple) if bp_tuple is not None else None,
                         board_pattern_name=entry.get("board_pattern_name"),

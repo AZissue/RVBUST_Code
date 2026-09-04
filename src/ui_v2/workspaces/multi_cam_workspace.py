@@ -6,8 +6,12 @@ ui_v2.workspaces.multi_cam_workspace —— 模式 A：多相机工作区（空�
   - 顶部：步骤条（连接相机→拍摄标定→检测标记→计算外参→扫描拼接→保存）；
   - 左面板：已连接设备列表（只读）+ 拍摄控制（同步/异步 + 拍摄）+ 参考相机；
   - 中央：相机取景网格 + 3D 拼接预览；
-  - 右面板：标定 Tab（检测 / 结果表格 / 质量评分 / 外参存取）
+  - 右面板：标定 Tab（检测 / 结果表格 / 质量评分 / 质量门禁）
             + 扫描 Tab（撤板提醒横幅 / 扫描控制 / 批量拍摄）。
+
+注：单独「保存/加载外参」入口已弃用（v1.6.0 起），外参随「保存会话」
+一并存储，打开会话时自动恢复；save/load_extrinsics_requested 信号保留
+但不再挂载 UI 按钮。
 
 状态机（UI 严格跟随，见 set_state）：
   待机 → 已连接 → 已拍标定帧 → 已检测 → 已计算外参 → 质量门禁
@@ -339,25 +343,6 @@ class MultiCamWorkspace(QWidget):
         self._gate_hint.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 12px;")
         gate_lo.addWidget(self._gate_hint)
         lo.addWidget(gate_card)
-
-        # ---- 外参存取 ----
-        ext_card, ext_lo = self._section_card("外参存取")
-        ext_row = QHBoxLayout()
-        ext_row.setSpacing(8)
-        self._btn_save_ext = QPushButton("保存外参")
-        self._btn_save_ext.setObjectName("secondary")
-        self._btn_save_ext.setMinimumHeight(32)
-        ui_icons.apply(self._btn_save_ext, "save", TEXT_SECONDARY, 14)
-        self._btn_save_ext.clicked.connect(self.save_extrinsics_requested)
-        ext_row.addWidget(self._btn_save_ext)
-        self._btn_load_ext = QPushButton("加载外参")
-        self._btn_load_ext.setObjectName("secondary")
-        self._btn_load_ext.setMinimumHeight(32)
-        ui_icons.apply(self._btn_load_ext, "folder_open", TEXT_SECONDARY, 14)
-        self._btn_load_ext.clicked.connect(self.load_extrinsics_requested)
-        ext_row.addWidget(self._btn_load_ext)
-        ext_lo.addLayout(ext_row)
-        lo.addWidget(ext_card)
         return tab
 
     def _build_scan_tab(self) -> QWidget:
@@ -474,8 +459,6 @@ class MultiCamWorkspace(QWidget):
         # 标定 Tab
         self._btn_detect.setEnabled(captured and not locked)
         self._btn_calibrate.setEnabled(detected and not locked)
-        self._btn_save_ext.setEnabled(calibrated)
-        self._btn_load_ext.setEnabled(not locked)
 
         # 扫描 Tab：质量门禁（任一 pair 未达标禁止进入扫描）
         scan_ok = locked or (calibrated and self._quality_passed)

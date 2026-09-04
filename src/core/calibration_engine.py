@@ -42,6 +42,8 @@ class CalibrationEngine:
         self.reference_id: Optional[str] = None
         # 多帧标定缓存：{(ref_id, cam_id): [(markers_ref, markers_cam), ...]}
         self._multi_frame_data: Dict[Tuple[str, str], list] = {}
+        # 最近一次 load_calibration 失败原因（供上层展示）
+        self.last_error: Optional[str] = None
 
     # ------------------------------------------------------------------
     # 参考相机
@@ -462,19 +464,58 @@ class CalibrationEngine:
     # ------------------------------------------------------------------
     # 保存 / 加载
     # ------------------------------------------------------------------
+    def to_dict(self) -> dict:
+        """序列化全部 pair 结果 + reference_id 为可 JSON 化的 dict。"""
+        data = {
+            'reference_id': self.reference_id,
+            'pairs': {},
+        }
+        for (ref_id, cam_id), res in self.pair_results.items():
+            entry = dict(res)
+            entry['T'] = res['T'].tolist() if isinstance(res['T'], np.ndarray) else res['T']
+            data['pairs'][f"{ref_id}|{cam_id}"] = entry
+        return data
+
+    def load_from_dict(self, data: dict) -> Tuple[bool, str]:
+        """从 dict 恢复 pair 结果 + reference_id。
+
+         Returns:
+            (ok, message)：pairs 缺失/为空或条目全部无效时返回 False，
+            message 说明原因（便于区分「不是外参文件」与「外参为空」）。
+        """
+        if not isinstance(data, dict):
+            return False, "数据格式错误（不是有效的标定结果）"
+        pairs = data.get('pairs')
+        if not isinstance(pairs, dict) or not pairs:
+            return False, (
+                "文件中没有标定结果数据（pairs 为空）。\n"
+                "如果选择的是会话目录中的 meta.json，请改用主窗口「打开会话」加载；\n"
+                "外参文件应为「保存外参/保存会话」生成的、包含 pairs 字段的 JSON。")
+        self.reference_id = data.get('reference_id')
+        self.pair_results = {}
+        n_invalid = 0
+        for key, entry in pairs.items():
+            try:
+                ref_id, cam_id = str(key).split('|', 1)
+                entry = dict(entry)
+                T = np.asarray(entry['T'], dtype=np.float64)
+                if T.shape != (4, 4):
+                    raise ValueError("T 矩阵维度错误")
+                entry['T'] = T
+                self.pair_results[(ref_id, cam_id)] = entry
+            except Exception:
+                n_invalid += 1
+        if not self.pair_results:
+            return False, f"标定结果全部无效（{n_invalid} 条记录无法解析）"
+        if n_invalid:
+            logger.warning(f"加载标定时跳过 {n_invalid} 条无效记录")
+        return True, f"{len(self.pair_results)} 对"
+
     def save_calibration(self, path: str) -> bool:
         """JSON 保存全部 pair 结果 + reference_id。"""
         try:
-            data = {
-                'reference_id': self.reference_id,
-                'pairs': {},
-            }
-            for (ref_id, cam_id), res in self.pair_results.items():
-                entry = dict(res)
-                entry['T'] = res['T'].tolist() if isinstance(res['T'], np.ndarray) else res['T']
-                data['pairs'][f"{ref_id}|{cam_id}"] = entry
             with open(path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
+                json.dump(self.to_dict(), f, indent=2, ensure_ascii=False)
             logger.info(f"标定结果已保存: {path}")
             return True
         except Exception as e:
@@ -482,19 +523,21 @@ class CalibrationEngine:
             return False
 
     def load_calibration(self, path: str) -> bool:
-        """从 JSON 加载全部 pair 结果 + reference_id。"""
+        """从 JSON 加载全部 pair 结果 + reference_id。
+
+        文件缺失 pairs/记录全部无效时返回 False 并记录原因到 last_error。
+        """
         try:
             with open(path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-            self.reference_id = data.get('reference_id')
-            self.pair_results = {}
-            for key, entry in data.get('pairs', {}).items():
-                ref_id, cam_id = key.split('|', 1)
-                entry = dict(entry)
-                entry['T'] = np.array(entry['T'], dtype=np.float64)
-                self.pair_results[(ref_id, cam_id)] = entry
-            logger.info(f"标定结果已加载: {path} ({len(self.pair_results)} 对)")
-            return True
         except Exception as e:
-            logger.error(f"加载标定失败: {e}")
+            self.last_error = f"文件读取失败: {e}"
+            logger.error(f"加载标定失败: {self.last_error}")
             return False
+        ok, msg = self.load_from_dict(data)
+        if not ok:
+            self.last_error = msg
+            logger.error(f"加载标定失败: {path}: {msg}")
+            return False
+        logger.info(f"标定结果已加载: {path} ({msg})")
+        return True

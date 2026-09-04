@@ -43,6 +43,30 @@ from .main_window import MainWindowShell
 from .widgets.device_table import DeviceInfo
 
 
+def _pairs_from_engine(engine) -> List[Dict]:
+    """把 CalibrationEngine.pair_results 转为 UI 结果表格行。"""
+    pairs = []
+    for (ref, cam), res in engine.pair_results.items():
+        if res.get('success'):
+            pairs.append({
+                'pair': f"{cam}→{ref}",
+                'rms_mm': res['rms_mm'],
+                'inlier_ratio': res['inlier_ratio'],
+                'level': 'ok' if res['rms_mm'] < 0.5 else 'warn' if res['rms_mm'] < 1.5 else 'fail',
+            })
+    return pairs
+
+
+def _score_from_pairs(pairs: List[Dict]) -> int:
+    """基于最大 RMS 与最小内点率加权计算质量评分 0~100。"""
+    if not pairs:
+        return 0
+    max_rms = max(p['rms_mm'] for p in pairs)
+    min_inlier = min(p['inlier_ratio'] for p in pairs)
+    rms_score = max(0.0, 100.0 - max_rms * 25.0)
+    return int(min(100.0, rms_score * (0.5 + 0.5 * min_inlier)))
+
+
 class BackendBridge(QObject):
     """ui_v2 与 core 模块的桥接器。"""
 
@@ -654,30 +678,14 @@ class BackendBridge(QObject):
         self.shell.show_loading("正在计算外参...")
         def _work():
             ok, msg = self.fixed_workflow.calibrate()
-            pairs = []
-            for (ref, cam), res in self.calibration_engine.pair_results.items():
-                if res.get('success'):
-                    pairs.append({
-                        'pair': f"{cam}→{ref}",
-                        'rms_mm': res['rms_mm'],
-                        'inlier_ratio': res['inlier_ratio'],
-                        'level': 'ok' if res['rms_mm'] < 0.5 else 'warn' if res['rms_mm'] < 1.5 else 'fail',
-                    })
-            return ok, msg, pairs
+            return ok, msg, _pairs_from_engine(self.calibration_engine)
         def _done(result, error):
             self.shell.hide_loading()
             if error:
                 self.shell.log(f"标定异常: {error}", "error")
                 return
             ok, msg, pairs = result
-            # 质量评分：基于最大 RMS 与最小内点率加权，0~100
-            if not ok or not pairs:
-                score = 0
-            else:
-                max_rms = max(p['rms_mm'] for p in pairs)
-                min_inlier = min(p['inlier_ratio'] for p in pairs)
-                rms_score = max(0.0, 100.0 - max_rms * 25.0)
-                score = int(min(100.0, rms_score * (0.5 + 0.5 * min_inlier)))
+            score = _score_from_pairs(pairs)
             ws = self.shell.workspace_multi()
             # 设置参考相机，viewer 中参考相机显示为白色
             ws.viewer().set_reference(self.calibration_engine.reference_id)
@@ -715,6 +723,7 @@ class BackendBridge(QObject):
         ok, msg = self.fixed_workflow.load_calibration(path)
         self.shell.log(msg, "success" if ok else "error")
         if not ok:
+            QMessageBox.warning(self.shell, "加载外参失败", msg)
             return
 
         ws = self.shell.workspace_multi()
@@ -722,16 +731,9 @@ class BackendBridge(QObject):
         ws.viewer().set_reference(ref_id)
 
         # 回填标定结果表格，使用户知道加载了哪些 pair
-        pairs = []
-        for (ref, cam), res in self.calibration_engine.pair_results.items():
-            if res.get('success'):
-                pairs.append({
-                    'pair': f"{cam}→{ref}",
-                    'rms_mm': res['rms_mm'],
-                    'inlier_ratio': res['inlier_ratio'],
-                    'level': 'ok' if res['rms_mm'] < 0.5 else 'warn' if res['rms_mm'] < 1.5 else 'fail',
-                })
-        ws.on_calibrate_done(pairs, score=100, quality_passed=True)
+        pairs = _pairs_from_engine(self.calibration_engine)
+        score = _score_from_pairs(pairs)
+        ws.on_calibrate_done(pairs, score, quality_passed=True)
 
         ok_scan, msg_scan = self.fixed_workflow.start_scanning()
         if ok_scan:
@@ -1665,7 +1667,7 @@ class BackendBridge(QObject):
         self._run_background(_work, _done)
 
     def _save_fixed_session(self) -> Tuple[bool, str]:
-        """保存多相机模式会话。"""
+        """保存多相机模式会话（标定帧 + 扫描帧 + 标定结果）。"""
         session = OfflineSession()
         session.create_new("offline_data")
         # 保存标定帧
@@ -1681,6 +1683,9 @@ class BackendBridge(QObject):
             for cid, frame in scan_frames.items():
                 frame.frame_id = max_id + 1
                 session.add_frame(cid, frame)
+        # 保存标定结果（reference_id + pairs），打开会话时可恢复并直接进入扫描
+        if self.calibration_engine.pair_results:
+            session.set_meta("calibration", self.calibration_engine.to_dict())
         session.save_all()
         return True, f"会话已保存: {session.session_dir}"
 
@@ -1762,43 +1767,7 @@ class BackendBridge(QObject):
                                     path: str):
         """把加载的会话帧回填到当前工作流与 UI。"""
         if self._current_mode == LauncherDialog.MODE_MULTI_CAM:
-            # 取每台相机的最新帧作为标定帧
-            latest = {cid: flist[-1] for cid, flist in frames.items() if flist}
-            if not latest:
-                self.shell.log("会话为空，无标定帧可加载", "warn")
-                return
-
-            # 确保工作流处于标定阶段；先 reset 再 start，避免历史状态干扰
-            self.fixed_workflow.reset()
-            ref_id = self.fixed_workflow.reference_id
-            if ref_id not in latest:
-                ref_id = sorted(latest.keys())[0]
-            ok, msg = self.fixed_workflow.start_calibration(ref_id)
-            if not ok:
-                self.shell.log(f"加载会话失败: {msg}", "error")
-                return
-
-            failed = []
-            for cid, frame in latest.items():
-                ok, msg = self.fixed_workflow.add_calibration_frame(frame)
-                if not ok:
-                    failed.append(cid)
-                    self.shell.log(f"加载 {cid} 标定帧失败: {msg}", "warn")
-
-            if failed:
-                self.shell.log(
-                    f"部分相机标定帧未加载: {failed}，已回到连接状态", "warn")
-                self.shell.workspace_multi().set_state("connected")
-                return
-
-            ws = self.shell.workspace_multi()
-            ws.reset_camera_grid(list(latest.keys()), enable_controls=False)
-            for cid, frame in latest.items():
-                ws.camera_grid().set_frame(cid, frame, frame.markers)
-            ws.set_state("captured")
-            self.shell.set_dirty(True)
-            self.shell.log(
-                f"会话加载完成: {len(latest)} 台相机标定帧已恢复", "success")
+            self._load_fixed_session(session, frames)
         elif self._current_mode == LauncherDialog.MODE_MOBILE_CHAIN:
             # 模式 B：加载会话暂不恢复时间线，仅记录
             self.shell.log(
@@ -1839,6 +1808,145 @@ class BackendBridge(QObject):
                     "会话中没有可恢复的转台标定或帧数据", "warn")
             else:
                 self.shell.set_dirty(True)
+
+    # ------------------------------------------------------------------
+    # 模式 A 会话加载
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _split_session_frames(
+        frames: Dict[str, List[FrameData]],
+    ) -> Tuple[Dict[str, FrameData], Dict[str, FrameData]]:
+        """把会话帧按用途拆分为 {camera_id: 最新标定帧} 与 {camera_id: 最新扫描帧}。
+
+        新会话帧带 kind 标记（"calib"/"scan"）；旧会话无 kind 时按 frame_id
+        兼容：最小 frame_id 的一组视为标定帧，其余视为扫描帧。
+        """
+        calib: Dict[str, FrameData] = {}
+        scan: Dict[str, FrameData] = {}
+        has_kind = any(f.kind for flist in frames.values() for f in flist)
+        if has_kind:
+            for cid, flist in frames.items():
+                for f in flist:  # 已按 frame_id 升序，后者覆盖前者取最新
+                    if f.kind == "scan":
+                        scan[cid] = f
+                    else:
+                        calib[cid] = f
+        else:
+            all_ids = sorted({f.frame_id for flist in frames.values()
+                              for f in flist})
+            calib_id = all_ids[0] if all_ids else None
+            for cid, flist in frames.items():
+                for f in flist:
+                    if f.frame_id == calib_id:
+                        calib[cid] = f
+                    else:
+                        scan[cid] = f
+        return calib, scan
+
+    def _load_fixed_session(self, session: OfflineSession,
+                            frames: Dict[str, List[FrameData]]):
+        """模式 A：恢复标定帧/扫描帧/标定结果，开放扫描拼接。"""
+        calib_latest, scan_latest = self._split_session_frames(frames)
+        ws = self.shell.workspace_multi()
+
+        # 1. 恢复标定结果（会话 meta.json 中 calibration 字段）
+        calib_ok = False
+        calib_data = session.get_meta("calibration")
+        self.fixed_workflow.reset()
+        if calib_data:
+            ok, msg = self.calibration_engine.load_from_dict(calib_data)
+            if ok:
+                calib_ok = True
+            else:
+                self.shell.log(f"会话标定结果恢复失败: {msg}", "warn")
+
+        # 2. 确定参考相机并进入标定阶段
+        ref_id = self.calibration_engine.reference_id if calib_ok else None
+        camera_ids = sorted(set(calib_latest) | set(scan_latest))
+        if not camera_ids:
+            self.shell.log("会话为空，无帧数据可加载", "warn")
+            return
+        if ref_id not in camera_ids:
+            ref_id = camera_ids[0]
+        ok, msg = self.fixed_workflow.start_calibration(ref_id)
+        if not ok:
+            self.shell.log(f"加载会话失败: {msg}", "error")
+            return
+
+        # 3. 回填标定帧（markers 已随会话落盘恢复，无需重新检测）
+        failed = []
+        for cid, frame in calib_latest.items():
+            ok, msg = self.fixed_workflow.add_calibration_frame(frame)
+            if not ok:
+                failed.append(cid)
+                self.shell.log(f"加载 {cid} 标定帧失败: {msg}", "warn")
+        if failed:
+            self.shell.log(f"部分相机标定帧未加载: {failed}", "warn")
+
+        # 4. 回填扫描帧（需标定结果支持进入扫描阶段）
+        scan_loaded = False
+        if scan_latest:
+            if calib_ok:
+                ok_scan, msg_scan = self.fixed_workflow.start_scanning()
+                if ok_scan:
+                    for cid, frame in scan_latest.items():
+                        ok, msg = self.fixed_workflow.add_scan_frame(frame)
+                        if ok:
+                            scan_loaded = True
+                        else:
+                            self.shell.log(f"加载 {cid} 扫描帧失败: {msg}", "warn")
+                else:
+                    self.shell.log(
+                        f"会话扫描帧未恢复（无法进入扫描阶段: {msg_scan}），"
+                        "请重新标定后拍摄", "warn")
+            else:
+                self.shell.log(
+                    "会话含扫描帧但无标定结果，已仅恢复标定帧；"
+                    "请重新检测/标定后再拍摄扫描帧", "warn")
+
+        # 5. UI 回填
+        ws.reset_camera_grid(camera_ids, enable_controls=False)
+        # 相机仍在线时开放单相机控制（2D 预览 / 3D 拍摄 / 检测）
+        for cid in camera_ids:
+            card = ws.camera_grid().card(cid)
+            if card is not None:
+                card.set_controls_enabled(
+                    self.camera_manager.is_connected(cid))
+        for cid, frame in calib_latest.items():
+            ws.camera_grid().set_frame(cid, frame, frame.markers)
+            ws.camera_grid().set_frame_kind(cid, "标定帧")
+            ws.camera_grid().set_marker_count(cid, len(frame.markers))
+            ws.camera_grid().set_covis_status(cid, len(frame.markers) > 0)
+        for cid, frame in scan_latest.items():
+            ws.camera_grid().set_frame(cid, frame)
+            ws.camera_grid().set_frame_kind(cid, "扫描帧")
+
+        if calib_ok:
+            pairs = _pairs_from_engine(self.calibration_engine)
+            score = _score_from_pairs(pairs)
+            ws.viewer().set_reference(self.fixed_workflow.reference_id)
+            ws.on_calibrate_done(pairs, score, quality_passed=True)
+            if scan_loaded:
+                ws.set_state("locked")
+                self.shell.log(
+                    f"会话加载完成: 标定结果已恢复（{len(pairs)} 对），"
+                    f"{len(scan_latest)} 台相机扫描帧已恢复，可直接拼接", "success")
+            else:
+                ws.set_state("calibrated")
+                self.shell.log(
+                    f"会话加载完成: 标定结果已恢复（{len(pairs)} 对），"
+                    "可拍摄扫描帧并拼接", "success")
+        else:
+            # 标定帧 markers 已随会话恢复时跳过「检测」步骤
+            if calib_latest and all(f.markers for f in calib_latest.values()):
+                ws.set_state("detected")
+                self.shell.log(
+                    "会话加载完成: 标定帧与标记已恢复，可直接「计算外参」", "success")
+            else:
+                ws.set_state("captured")
+                self.shell.log(
+                    "会话加载完成: 标定帧已恢复（无标记数据，请重新检测）", "success")
+        self.shell.set_dirty(True)
 
     # ------------------------------------------------------------------
     # 工具方法

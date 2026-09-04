@@ -55,6 +55,8 @@ class FrameData:
     board_pattern: Optional[Tuple[int, int]] = None  # (cols, rows)
     board_pattern_name: Optional[str] = None       # 如 '4x11'
     board_rms_mm: float = 0.0                     # 标定板检测圆心重投影误差 RMS（mm）
+    # 帧用途标签（会话保存/恢复时区分标定帧与扫描帧）
+    kind: Optional[str] = None                     # "calib" | "scan" | None
     # 离线模式字段
     is_offline: bool = False
     offline_dir: Optional[str] = None  # 离线数据文件夹路径
@@ -144,6 +146,7 @@ class FrameData:
             "board_pattern": list(self.board_pattern) if self.board_pattern is not None else None,
             "board_pattern_name": self.board_pattern_name,
             "board_rms_mm": float(self.board_rms_mm),
+            "kind": self.kind,
         }
         meta_path = os.path.join(frame_dir, "meta.json")
         if shared:
@@ -189,6 +192,7 @@ class FrameData:
             board_pattern=tuple(bp_tuple) if bp_tuple is not None else None,
             board_pattern_name=meta.get("board_pattern_name"),
             board_rms_mm=float(meta.get("board_rms_mm", 0.0)),
+            kind=meta.get("kind"),
         )
 
         # 加载图像
