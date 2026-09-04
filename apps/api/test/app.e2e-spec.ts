@@ -17,6 +17,7 @@ describe('Phase 1 domain flows (e2e)', () => {
   let createdWorkItemId = '';
 
   beforeAll(async () => {
+    if (!process.env.DATABASE_URL?.includes('schema=quick_ticket_test')) throw new Error('Requires isolated quick_ticket_test schema');
     const moduleFixture: TestingModule = await Test.createTestingModule({ imports: [AppModule] }).compile();
     app = moduleFixture.createNestApplication();
     app.setGlobalPrefix('api');

@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { TicketEventType, TicketPriority, TicketStatus, WorkItemStatus, WorklogStatus } from '@prisma/client';
+import { TicketStatus, WorkItemStatus, WorklogStatus } from '@prisma/client';
 import { AccessPolicyService } from '../auth/access-policy.service.js';
 import type { AuthUser } from '../auth/auth.types.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -9,38 +9,23 @@ export class DashboardService {
   constructor(private readonly prisma: PrismaService, private readonly access: AccessPolicyService) {}
 
   async summary(user: AuthUser) {
-    const ticketScope = this.access.ticketWhere(user);
-    const workItemScope = this.access.workItemWhere(user);
-    const now = new Date();
-    const dayStart = new Date(now); dayStart.setHours(0, 0, 0, 0);
-    const dayEnd = new Date(dayStart); dayEnd.setDate(dayEnd.getDate() + 1);
-    const attentionEnd = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-    const mine = { AND: [ticketScope, { OR: [{ assigneeId: user.id }, { createdById: user.id }, { collaborators: { some: { userId: user.id } } }] }] };
-    const internal = user.role !== 'customer';
-    const [todayTodo, activeWorkItems, waitingFeedback, todayCompleted, pendingTickets, processingTickets, highPriority, waitingCustomer, waitingRnd, recentReplies, myTickets, myWorkItems, todayWorklogs] = await this.prisma.$transaction([
-      this.prisma.workItem.count({ where: { ...workItemScope, status: WorkItemStatus.TODO, OR: [{ startDate: null }, { startDate: { lt: dayEnd } }] } }),
-      this.prisma.workItem.count({ where: { ...workItemScope, status: WorkItemStatus.IN_PROGRESS } }),
-      this.prisma.workItem.count({ where: { ...workItemScope, status: WorkItemStatus.WAITING_FEEDBACK } }),
-      this.prisma.workItem.count({ where: { ...workItemScope, status: WorkItemStatus.COMPLETED, completedAt: { gte: dayStart, lt: dayEnd } } }),
-      this.prisma.ticket.count({ where: { ...ticketScope, status: TicketStatus.PENDING } }),
-      this.prisma.ticket.count({ where: { ...ticketScope, status: TicketStatus.IN_PROGRESS } }),
-      this.prisma.ticket.count({ where: { ...ticketScope, priority: { in: [TicketPriority.HIGH, TicketPriority.URGENT] }, status: { notIn: [TicketStatus.RESOLVED, TicketStatus.CLOSED] } } }),
-      this.prisma.ticket.count({ where: { ...ticketScope, status: TicketStatus.WAITING_CUSTOMER } }),
-      this.prisma.ticket.count({ where: { ...ticketScope, status: TicketStatus.WAITING_RND } }),
-      this.prisma.ticketEvent.findMany({ where: { type: TicketEventType.CUSTOMER_REPLY, ticket: ticketScope }, include: { ticket: { select: { id: true, number: true, title: true } }, author: { select: { name: true } } }, orderBy: { createdAt: 'desc' }, take: 5 }),
-      this.prisma.ticket.findMany({ where: { AND: [mine, { status: { notIn: [TicketStatus.RESOLVED, TicketStatus.CLOSED] } }, { OR: [{ priority: { in: [TicketPriority.HIGH, TicketPriority.URGENT] } }, { status: { in: [TicketStatus.WAITING_CUSTOMER, TicketStatus.WAITING_RND] } }, { plannedAt: { lte: attentionEnd } }, { assigneeId: user.id }] }] }, include: { organization: { select: { name: true } }, assignee: { select: { name: true } } }, orderBy: [{ priority: 'desc' }, { plannedAt: 'asc' }, { updatedAt: 'desc' }], take: 6 }),
-      this.prisma.workItem.findMany({ where: { ...workItemScope, status: { in: [WorkItemStatus.IN_PROGRESS, WorkItemStatus.WAITING_FEEDBACK] } }, include: { workType: true, owner: { select: { id: true, name: true } }, organization: { select: { id: true, name: true } }, project: { select: { id: true, name: true } } }, orderBy: [{ dueDate: 'asc' }, { updatedAt: 'desc' }], take: 8 }),
-      internal ? this.prisma.worklog.findMany({ where: { authorId: user.id, status: WorklogStatus.CONFIRMED, occurredAt: { gte: dayStart, lt: dayEnd } }, include: { workType: true, organization: { select: { id: true, name: true } }, ticket: { select: { id: true, number: true } }, workItem: { select: { id: true, title: true } } }, orderBy: { occurredAt: 'desc' }, take: 10 }) : this.prisma.worklog.findMany({ where: { id: '__none__' } }),
-    ]);
-    return {
-      workItemCounts: { todayTodo, inProgress: activeWorkItems, waitingFeedback, todayCompleted },
-      ticketCounts: { pending: pendingTickets, inProgress: processingTickets, highPriority, waitingCustomer, waitingRnd },
-      recentReplies,
-      myTickets,
-      myWorkItems,
-      todayWorklogs,
-    };
+    const mine = { AND: [this.access.ticketWhere(user), { assigneeId: user.id }] };
+    const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
+    const dayEnd = new Date(dayStart); dayEnd.setDate(dayStart.getDate() + 1);
+    const pending = await this.prisma.ticket.count({ where: { ...mine, status: 'PENDING' } });
+    const inProgress = await this.prisma.ticket.count({ where: { ...mine, status: 'IN_PROGRESS' } });
+    const waitingCustomer = await this.prisma.ticket.count({ where: { ...mine, status: 'WAITING_CUSTOMER' } });
+    const waitingRnd = await this.prisma.ticket.count({ where: { ...mine, status: 'WAITING_RND' } });
+    const highPriority = await this.prisma.ticket.count({ where: { ...mine, priority: { in: ['HIGH', 'URGENT'] }, status: { notIn: ['RESOLVED', 'CLOSED'] } } });
+    const todayTodo = await this.prisma.ticket.count({ where: { ...mine, status: 'PENDING', OR: [{ plannedAt: null }, { plannedAt: { lt: dayEnd } }] } });
+    const todayCompleted = await this.prisma.ticket.count({ where: { ...mine, status: { in: ['RESOLVED', 'CLOSED'] }, resolvedAt: { gte: dayStart, lt: dayEnd } } });
+    const include = { organization: { select: { id: true, name: true } }, assignee: { select: { id: true, name: true } }, device: true };
+    const activeTickets = await this.prisma.ticket.findMany({ where: { ...mine, status: 'IN_PROGRESS' }, include, orderBy: { updatedAt: 'desc' }, take: 8 });
+    const myTickets = await this.prisma.ticket.findMany({ where: { ...mine, status: { notIn: ['RESOLVED', 'CLOSED'] } }, include, orderBy: [{ priority: 'desc' }, { updatedAt: 'desc' }], take: 6 });
+    const todayWorklogs = user.role === 'customer' ? [] : await this.prisma.worklog.findMany({ where: { authorId: user.id, status: 'CONFIRMED', occurredAt: { gte: dayStart, lt: dayEnd } }, include: { workType: true, organization: { select: { id: true, name: true } } }, orderBy: { occurredAt: 'desc' }, take: 10 });
+    return { ticketCounts: { todayTodo, pending, inProgress, highPriority, waitingCustomer, waitingRnd, todayCompleted }, myTickets, activeTickets, todayWorklogs };
   }
+
 
   async reports(user: AuthUser) {
     this.access.requireInternal(user);

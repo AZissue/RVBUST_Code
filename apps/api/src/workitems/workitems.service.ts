@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { WorkItemStatus } from '@prisma/client';
 import { AccessPolicyService } from '../auth/access-policy.service.js';
 import type { AuthUser } from '../auth/auth.types.js';
@@ -54,6 +54,7 @@ export class WorkitemsService {
 
   async update(user: AuthUser, id: string, dto: UpdateWorkItemDto) {
     const current = await this.access.requireWorkItem(user, id);
+    if (current.convertedTicketId) throw new ConflictException('事项已转换，请在关联工单中修改');
     if (user.role === 'employee' && current.ownerId !== user.id) throw new ForbiddenException('只有负责人可以修改此工作事项');
     const ownerId = dto.ownerId ?? current.ownerId;
     if (user.role === 'employee' && ownerId !== user.id) throw new ForbiddenException('普通员工不能转移工作事项');
@@ -76,6 +77,7 @@ export class WorkitemsService {
 
   async remove(user: AuthUser, id: string) {
     const current = await this.access.requireWorkItem(user, id);
+    if (current.convertedTicketId) throw new ConflictException('事项已转换，保留原始数据用于追溯');
     if (user.role === 'employee' && current.ownerId !== user.id) throw new ForbiddenException('只有负责人可以删除此工作事项');
     await this.prisma.workItem.delete({ where: { id } });
     return { success: true };

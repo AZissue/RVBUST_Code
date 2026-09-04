@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test'
 
 test('admin completes the work item and quick work log flow', async ({ page }) => {
+  if (!process.env.DATABASE_URL?.includes('schema=quick_ticket_test')) throw new Error('Requires isolated quick_ticket_test schema')
   const adminPassword = process.env.SEED_ADMIN_PASSWORD
   if (!adminPassword) throw new Error('Set SEED_ADMIN_PASSWORD for the test database before running browser tests')
   const stamp = Date.now()
@@ -17,14 +18,14 @@ test('admin completes the work item and quick work log flow', async ({ page }) =
   await page.getByTitle('跟随系统').click()
   await expect.poll(() => page.evaluate(() => localStorage.getItem('crm-theme'))).toBe('system')
 
-  await page.getByRole('link', { name: '工作事项', exact: true }).click()
+  await page.goto('/work-items')
   await page.getByRole('button', { name: '新建工作事项' }).click()
   await page.getByLabel('标题').fill(`Playwright 教程整理 ${stamp}`)
   await page.getByLabel('工作分类').selectOption({ label: '文档资料' })
   await page.getByLabel('优先级').selectOption('HIGH')
   await page.getByRole('spinbutton', { name: '进度', exact: true }).fill('20')
   await page.getByRole('button', { name: '保存事项' }).click()
-  await expect(page.getByText(`Playwright 教程整理 ${stamp}`)).toBeVisible()
+  await expect(page.locator('.task-row').filter({ hasText: `Playwright 教程整理 ${stamp}` })).toBeVisible()
 
   const task = page.locator('.task-row').filter({ hasText: `Playwright 教程整理 ${stamp}` })
   await task.click()
@@ -58,7 +59,8 @@ test('admin completes the work item and quick work log flow', async ({ page }) =
   await page.getByLabel('账号').fill('admin')
   await page.getByLabel('密码').fill(adminPassword)
   await page.getByRole('button', { name: '安全登录' }).click()
-  await page.getByRole('link', { name: '工作事项', exact: true }).click()
+  await expect(page.getByRole('heading', { name: '今日工作台' })).toBeVisible()
+  await page.goto('/work-items')
   await expect(page.locator('.task-row').filter({ hasText: `Playwright 教程整理 ${stamp}` })).toContainText('已完成')
 
   await page.getByRole('link', { name: '仪表盘' }).click()
@@ -68,8 +70,8 @@ test('admin completes the work item and quick work log flow', async ({ page }) =
   await expect(page.getByText('七日工作趋势')).toBeVisible()
   await page.getByRole('link', { name: '仪表盘' }).click()
   const quickText = `完成SDK教程 ${stamp}；排查M2600无点云 ${stamp}。`
+  await page.goto('/worklogs?create=1')
   await page.getByPlaceholder(/上午完成SDK安装教程/).fill(quickText)
-  await page.getByRole('button', { name: '生成工作记录草稿' }).click()
   await page.getByRole('button', { name: '生成草稿' }).click()
   await expect(page.getByLabel('记录 1')).toHaveValue(`完成SDK教程 ${stamp}`)
   await expect(page.getByLabel('记录 2')).toHaveValue(`排查M2600无点云 ${stamp}`)
@@ -79,7 +81,8 @@ test('admin completes the work item and quick work log flow', async ({ page }) =
 
   await page.setViewportSize({ width: 390, height: 844 })
   await page.getByTitle('导航').click()
-  await expect(page.getByRole('link', { name: '工作事项', exact: true })).toBeVisible()
+  await expect(page.getByRole('link', { name: '我的工作', exact: true })).toBeVisible()
+  await expect(page.getByRole('link', { name: '工作事项', exact: true })).toHaveCount(0)
 
   const worklogs = await (await page.request.get('/api/worklogs')).json()
   for (const worklog of worklogs.filter((item: { summary: string }) => item.summary.endsWith(String(stamp)))) {

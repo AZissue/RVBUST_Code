@@ -15,6 +15,10 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
     const message = Array.isArray(body.message) ? body.message.join('；') : body.message
     throw new ApiError(message || '请求失败', response.status)
   }
+  if (options.method && !['GET', 'HEAD'].includes(options.method.toUpperCase()) && !path.endsWith('/parse') && !path.endsWith('/similar')) {
+    window.dispatchEvent(new Event('crm-data-changed'))
+    if ('BroadcastChannel' in window) { const channel = new BroadcastChannel('crm-data'); channel.postMessage('changed'); channel.close() }
+  }
   return body as T
 }
 

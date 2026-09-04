@@ -300,6 +300,8 @@ model WorkType {
 
 model WorkItem {
   id             String                 @id @default(uuid()) @db.Uuid
+  convertedTicketId String?              @unique @db.Uuid @map("converted_ticket_id")
+  convertedTicket Ticket?               @relation(fields: [convertedTicketId], references: [id], onDelete: Restrict)
   title          String                 @db.VarChar(240)
   description    String?
   workTypeId     String                 @db.Uuid @map("work_type_id")
@@ -343,6 +345,9 @@ model WorkItemCollaborator {
 
 model Ticket {
   id                String               @id @default(uuid()) @db.Uuid
+  rawText           String?              @map("raw_text")
+  requestKey        String?              @unique @db.Uuid @map("request_key")
+  convertedWorkItem WorkItem?
   number            String               @unique @db.VarChar(32)
   source            TicketSource
   organizationId    String               @db.Uuid @map("organization_id")

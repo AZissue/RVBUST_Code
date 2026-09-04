@@ -77,8 +77,9 @@ export class WorklogsService {
       expectedProjectId ??= ticket.projectId ?? undefined;
     }
     if (workItemId) {
-      const item = await this.prisma.workItem.findUnique({ where: { id: workItemId }, select: { organizationId: true, projectId: true } });
+      const item = await this.prisma.workItem.findUnique({ where: { id: workItemId }, select: { organizationId: true, projectId: true, convertedTicketId: true } });
       if (!item) throw new NotFoundException('工作事项不存在');
+      if (item.convertedTicketId && ticketId !== item.convertedTicketId) throw new ForbiddenException('历史事项已转换，请关联对应工单');
       if (expectedOrganizationId && item.organizationId && item.organizationId !== expectedOrganizationId) throw new ForbiddenException('工作事项与所选客户不一致');
       if (expectedProjectId && item.projectId && item.projectId !== expectedProjectId) throw new ForbiddenException('工作事项与所选项目不一致');
     }

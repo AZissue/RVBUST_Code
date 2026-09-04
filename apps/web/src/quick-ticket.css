@@ -1,0 +1,27 @@
+.quick-confirm { display: grid; gap: 18px; }
+.quick-confirm fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+.match-options { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.match-options label { display: flex; flex-direction: row; align-items: center; gap: 6px; }
+.match-options input { width: auto; min-height: auto; }
+.similar-tickets article { padding: 12px 0; border-bottom: 1px solid var(--border); }
+.similar-tickets p, .quick-success { overflow-wrap: anywhere; }
+.quick-success { margin-top: 12px; }
+.metric-strip.compact.personal-ticket-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.personal-ticket-metrics button { text-align: left; color: inherit; background: none; }
+.personal-ticket-metrics button.selected { box-shadow: inset 0 -2px #da3039; }
+.personal-ticket-list .task-row { grid-template-columns: minmax(0, 1fr) auto auto; text-decoration: none; color: inherit; }
+.personal-ticket-list .task-main { min-width: 0; }
+.personal-ticket-list .task-title { flex-wrap: wrap; }
+.personal-ticket-list strong { white-space: normal; overflow-wrap: anywhere; }
+.personal-ticket-list .task-meta { flex-wrap: wrap; }
+.personal-ticket-list .mono { white-space: nowrap; }
+.personal-ticket-list .task-meta, .personal-ticket-list .mono { font-size: 11px; }
+.ticket-queue .toolbar > select { width: 180px; flex: 0 0 auto; }
+.ticket-queue .result-count { white-space: nowrap; }
+@media (max-width: 700px) {
+  .metric-strip.compact.personal-ticket-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .personal-ticket-list .task-row { grid-template-columns: 1fr auto; }
+  .personal-ticket-list .task-main { grid-column: 1 / -1; }
+  .personal-ticket-list .task-row > .badge { display: inline-flex; justify-self: start; }
+  .quick-confirm .header-actions { flex-wrap: wrap; }
+}

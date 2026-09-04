@@ -27,7 +27,7 @@ export default function App() {
     <Route path="/login" element={user ? <Navigate to="/" replace /> : <LoginPage />} />
     <Route path="/" element={<ProtectedApp />}>
       <Route index element={<DashboardPage />} />
-      <Route path="my-work" element={<WorkItemsPage mine />} />
+      <Route path="my-work" element={<TicketsPage mine />} />
       <Route path="work-items" element={<WorkItemsPage />} />
       <Route path="tickets" element={<TicketsPage />} />
       <Route path="tickets/:id" element={<TicketDetailPage />} />

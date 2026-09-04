@@ -35,6 +35,7 @@ export type WorkItemStatus = 'TODO' | 'IN_PROGRESS' | 'WAITING_FEEDBACK' | 'COMP
 export type WorkItemPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT'
 
 export interface WorkItem {
+  convertedTicketId?: string
   id: string
   title: string
   description?: string
@@ -59,6 +60,7 @@ export type TicketStatus = 'PENDING' | 'IN_PROGRESS' | 'WAITING_CUSTOMER' | 'WAI
 export type TicketPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT'
 
 export interface Ticket {
+  rawText?: string
   id: string
   number: string
   source: string

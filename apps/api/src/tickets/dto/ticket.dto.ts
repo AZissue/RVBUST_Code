@@ -3,6 +3,8 @@ import { TicketPriority, TicketSource } from '@prisma/client';
 import { IsArray, IsDateString, IsEnum, IsOptional, IsString, IsUUID, Length } from 'class-validator';
 
 export class CreateTicketDto {
+  @IsOptional() @IsString() @Length(1, 20000) rawText?: string;
+  @IsOptional() @IsUUID() requestKey?: string;
   @IsEnum(TicketSource) source!: TicketSource;
   @IsUUID() organizationId!: string;
   @IsOptional() @IsUUID() contactId?: string;
@@ -22,4 +24,3 @@ export class CreateTicketDto {
 }
 
 export class UpdateTicketDto extends PartialType(CreateTicketDto) {}
-
