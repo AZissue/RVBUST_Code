@@ -28,7 +28,8 @@ export class OpenAICompatibleAdapter implements AIProviderAdapter {
     return this.chat({ ...config, maxTokens: Math.min(config.maxTokens, 1024) }, { messages: [{ role: 'user', content: 'Return exactly this JSON object: {"ok":true}' }], json: true }, signal);
   }
   async listModels(config: AdapterConfig, signal: AbortSignal) {
-    this.validateConfig(config);
+    this.transport.validateUrl(config.baseUrl);
+    if (!config.apiKey) throw new AIError('KEY_MISSING');
     const response = await this.transport.request(config.baseUrl, 'models', config.apiKey, undefined, signal) as { data?: Array<{ id?: unknown }> } | null;
     if (!Array.isArray(response?.data)) throw new AIError('INVALID_OUTPUT');
     return [...new Set(response.data.map((m) => m?.id).filter((id): id is string => typeof id === 'string' && !id.includes(config.apiKey) && /^[a-zA-Z0-9][a-zA-Z0-9_./:@+-]{0,159}$/.test(id)))].slice(0, 300);

@@ -5,7 +5,7 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { AIKeyStore } from './ai.crypto.js';
 import { AIAdapterRegistry } from './ai.registry.js';
 import { AITransport } from './ai.transport.js';
-import { FeatureDto, ProviderDto } from './ai.dto.js';
+import { DiscoverModelsDto, FeatureDto, ProviderDto } from './ai.dto.js';
 import { AIError, FEATURES, safeError, type AdapterConfig, type Feature, type Message, type Usage } from './ai.types.js';
 
 @Injectable()
@@ -90,30 +90,46 @@ export class AIService {
   models(id: string, userId: string) {
     return this.run(userId, 'list_models', id, async (config, adapter, signal) => ({ data: await adapter.listModels(config, signal), usage: { promptTokens: null, completionTokens: null, totalTokens: null } }));
   }
-  private async run<T>(userId: string, feature: string, providerId: string | undefined, operation: (config: AdapterConfig, adapter: ReturnType<AIAdapterRegistry['get']>, signal: AbortSignal) => Promise<{ data: T; usage: Usage }>) {
+  discoverModels(dto: DiscoverModelsDto, userId: string) {
+    return this.run(userId, 'list_models', undefined, async (config, adapter, signal) => ({ data: await adapter.listModels(config, signal), usage: { promptTokens: null, completionTokens: null, totalTokens: null } }), dto);
+  }
+  private async run<T>(userId: string, feature: string, providerId: string | undefined, operation: (config: AdapterConfig, adapter: ReturnType<AIAdapterRegistry['get']>, signal: AbortSignal) => Promise<{ data: T; usage: Usage }>, draft?: DiscoverModelsDto) {
     const started = Date.now(); const requestId = randomUUID();
     let provider: AIProviderConfig | null = null; let model: string | null = null;
+    let providerType: string | null = null;
     let usage: Usage = { promptTokens: null, completionTokens: null, totalTokens: null }; let attempts = 0;
     let errorType: string | null = null; let success = false; let acquired = false;
     try {
       if (this.active.has(userId) || this.active.size >= 8) throw new AIError('BUSY');
       this.active.add(userId); acquired = true;
-      const override = providerId ? null : await this.prisma.aIFeatureConfig.findUnique({ where: { featureKey: feature } });
-      provider = providerId ? await this.prisma.aIProviderConfig.findUnique({ where: { id: providerId } }) : override && !override.useSystemDefault ? (override.providerId ? await this.prisma.aIProviderConfig.findUnique({ where: { id: override.providerId } }) : null) : await this.prisma.aIProviderConfig.findFirst({ where: { isDefault: true } });
-      if (!provider) throw new AIError('NOT_CONFIGURED');
-      model = (!override?.useSystemDefault && override?.model) || provider.defaultModel;
-      if (!providerId && !provider.enabled) throw new AIError('DISABLED');
-      const config: AdapterConfig = { ...provider, apiKey: this.keys.decrypt(provider.apiKeyEncrypted, provider.id), defaultModel: model, temperature: override?.temperature ?? provider.temperature, maxTokens: override?.maxTokens ?? provider.maxTokens };
-      const adapter = this.registry.get(provider.provider);
+      let config: AdapterConfig;
+      if (draft) {
+        providerType = draft.provider;
+        this.transport.validateUrl(draft.baseUrl);
+        provider = draft.providerId ? await this.prisma.aIProviderConfig.findUnique({ where: { id: draft.providerId } }) : null;
+        // A stored credential may only be reused with its original provider and destination.
+        if (!draft.sealedApiKey && (!provider || provider.provider !== draft.provider || provider.baseUrl !== draft.baseUrl.replace(/\/$/, ''))) throw new AIError('KEY_MISSING');
+        const apiKey = draft.sealedApiKey ? this.keys.unseal(draft.sealedApiKey) : this.keys.decrypt(provider!.apiKeyEncrypted, provider!.id);
+        config = { baseUrl: draft.baseUrl, apiKey, timeout: draft.timeout, defaultModel: '', temperature: .1, maxTokens: 1024, omitTemperature: false, jsonMode: true, tokenParameter: 'max_tokens' };
+      } else {
+        const override = providerId ? null : await this.prisma.aIFeatureConfig.findUnique({ where: { featureKey: feature } });
+        provider = providerId ? await this.prisma.aIProviderConfig.findUnique({ where: { id: providerId } }) : override && !override.useSystemDefault ? (override.providerId ? await this.prisma.aIProviderConfig.findUnique({ where: { id: override.providerId } }) : null) : await this.prisma.aIProviderConfig.findFirst({ where: { isDefault: true } });
+        if (!provider) throw new AIError('NOT_CONFIGURED');
+        providerType = provider.provider;
+        model = (!override?.useSystemDefault && override?.model) || provider.defaultModel;
+        if (!providerId && !provider.enabled) throw new AIError('DISABLED');
+        config = { ...provider, apiKey: this.keys.decrypt(provider.apiKeyEncrypted, provider.id), defaultModel: model, temperature: override?.temperature ?? provider.temperature, maxTokens: override?.maxTokens ?? provider.maxTokens };
+      }
+      const adapter = this.registry.get(providerType);
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), provider.timeout);
+      const timer = setTimeout(() => controller.abort(), config.timeout);
       try {
         for (let retry = 0; retry < 2; retry++) {
           attempts++;
           try {
             const response = await operation(config, adapter, controller.signal);
             usage = response.usage; success = true;
-            return { success: true as const, data: response.data, requestId, provider: provider.provider, model, usage, latencyMs: Date.now() - started };
+            return { success: true as const, data: response.data, requestId, provider: providerType, model, usage, latencyMs: Date.now() - started };
           } catch (e) {
             const error = controller.signal.aborted ? new AIError('TIMEOUT') : safeError(e);
             if (error.usage) usage = error.usage;
@@ -127,7 +143,7 @@ export class AIService {
       return { success: false as const, requestId, error: error.message, errorType: error.code, fallback: true, latencyMs: Date.now() - started };
     } finally {
       if (acquired) this.active.delete(userId);
-      try { await this.prisma.aIUsageLog.create({ data: { requestId, userId, feature, providerId: provider?.id, provider: provider?.provider, model, success, errorType, attempts, latencyMs: Date.now() - started, ...usage } }); }
+      try { await this.prisma.aIUsageLog.create({ data: { requestId, userId, feature, providerId: provider?.id, provider: providerType, model, success, errorType, attempts, latencyMs: Date.now() - started, ...usage } }); }
       catch { this.logger.warn(`AI usage metadata could not be persisted: ${requestId}`); }
     }
   }

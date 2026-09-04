@@ -1,5 +1,6 @@
 import { IsBoolean, IsIn, IsInt, IsNumber, IsOptional, IsString, IsUUID, Length, Matches, Max, Min } from 'class-validator';
 import { PROVIDERS } from './ai.types.js';
+import { PickType } from '@nestjs/mapped-types';
 
 export class ProviderDto {
   @IsIn(PROVIDERS) provider: string;
@@ -22,4 +23,8 @@ export class FeatureDto {
   @IsOptional() @IsString() @Length(1, 160) @Matches(/^[a-zA-Z0-9][a-zA-Z0-9_./:@+-]*$/) model?: string | null;
   @IsOptional() @IsNumber() @Min(0) @Max(2) temperature?: number | null;
   @IsOptional() @IsInt() @Min(64) @Max(32768) maxTokens?: number | null;
+}
+
+export class DiscoverModelsDto extends PickType(ProviderDto, ['provider', 'baseUrl', 'sealedApiKey', 'timeout'] as const) {
+  @IsOptional() @IsUUID() providerId?: string;
 }

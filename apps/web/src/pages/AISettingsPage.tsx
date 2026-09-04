@@ -60,15 +60,25 @@ function AISettings() {
 function ProviderEditor({ provider, encryptionReady, onClose, onSaved }: { provider: Provider | null; encryptionReady: boolean; onClose: () => void; onSaved: () => Promise<void> }) {
   const [draft, setDraft] = useState<Draft>(provider ? draftOf(provider) : initial); const [models, setModels] = useState<string[]>([])
   const [busy, setBusy] = useState(false); const [error, setError] = useState('')
-  const set = <K extends keyof Draft>(key: K, value: Draft[K]) => setDraft((d) => ({ ...d, [key]: value }))
-  const changedEndpoint = provider && (draft.baseUrl !== provider.baseUrl || Boolean(draft.apiKey))
+  const set = <K extends keyof Draft>(key: K, value: Draft[K]) => { setDraft((d) => ({ ...d, [key]: value })); if (['baseUrl', 'apiKey', 'provider'].includes(key)) setModels([]) }
+  const canFetchModels = Boolean(draft.baseUrl && (draft.apiKey || (provider?.hasApiKey && draft.baseUrl.replace(/\/$/, '') === provider.baseUrl && draft.provider === provider.provider)))
+  const fetchModels = async () => {
+    setBusy(true); setError(''); setModels([])
+    try {
+      const sealedApiKey = draft.apiKey ? await sealApiKey(draft.apiKey) : undefined
+      const r = await api<Result<string[]>>('/ai/models/discover', { method: 'POST', body: JSON.stringify({ provider: draft.provider, baseUrl: draft.baseUrl, sealedApiKey, providerId: provider?.id, timeout: draft.timeout }) })
+      if (!r.success) throw new Error(`${r.error}；可手动填写模型名称`)
+      if (!r.data.length) throw new Error('接口未返回可用模型，可手动填写模型名称')
+      setModels(r.data)
+    } catch (e) { setError(message(e)) } finally { setBusy(false) }
+  }
   return <Modal title={provider ? '编辑 AI Provider' : '新增 AI Provider'} onClose={() => { if (!busy) onClose() }} wide><form className="ai-provider-form" onSubmit={async (event) => { event.preventDefault(); setBusy(true); setError(''); try { const { apiKey, ...values } = draft; const sealedApiKey = apiKey ? await sealApiKey(apiKey) : undefined; await api(provider ? `/ai/providers/${provider.id}` : '/ai/providers', { method: provider ? 'PUT' : 'POST', body: JSON.stringify({ ...values, sealedApiKey }) }); setDraft((d) => ({ ...d, apiKey: undefined })); await onSaved() } catch (e) { setError(message(e)) } finally { setBusy(false) } }}>
     <fieldset disabled={busy} className="form-grid">
-      <label>Provider 类型<select value={draft.provider} onChange={(e) => { const provider = e.target.value; setDraft((d) => ({ ...d, provider, ...presets[provider], defaultModel: '', tokenParameter: provider === 'openai' ? 'max_completion_tokens' : 'max_tokens' })) }}>{Object.entries(presets).map(([key, p]) => <option key={key} value={key}>{p.name}</option>)}</select></label>
+      <label>Provider 类型<select value={draft.provider} onChange={(e) => { const provider = e.target.value; setModels([]); setDraft((d) => ({ ...d, provider, ...presets[provider], defaultModel: '', tokenParameter: provider === 'openai' ? 'max_completion_tokens' : 'max_tokens' })) }}>{Object.entries(presets).map(([key, p]) => <option key={key} value={key}>{p.name}</option>)}</select></label>
       <label>显示名称<input required maxLength={100} value={draft.name} onChange={(e) => set('name', e.target.value)} /></label>
       <label className="span-2">API Base URL<input type="url" required maxLength={500} value={draft.baseUrl} onChange={(e) => set('baseUrl', e.target.value)} /></label>
       <label className="span-2">API Key{provider?.hasApiKey ? '（已保存，留空不修改）' : ''}<input aria-label="API Key" type="password" autoComplete="new-password" maxLength={2048} disabled={!encryptionReady} value={draft.apiKey || ''} onChange={(e) => set('apiKey', e.target.value)} /></label>
-      <label className="span-2">默认模型<div className="ai-model-input"><input required aria-label="默认模型" list="ai-model-options" maxLength={160} value={draft.defaultModel} onChange={(e) => set('defaultModel', e.target.value)} /><button type="button" className="button" title="使用已保存的配置获取模型列表" disabled={!provider?.hasApiKey || Boolean(changedEndpoint)} onClick={async () => { if (!provider) return; setBusy(true); setError(''); try { const r = await api<Result<string[]>>(`/ai/providers/${provider.id}/models`, { method: 'POST' }); if (!r.success) throw new Error(`${r.error}；可手动填写模型名称`); setModels(r.data) } catch (e) { setError(message(e)) } finally { setBusy(false) } }}><RefreshCw size={14} />获取模型</button></div><datalist id="ai-model-options">{models.map((m) => <option key={m} value={m} />)}</datalist></label>
+      <label className="span-2">默认模型<div className="ai-model-input"><input required aria-label="默认模型" maxLength={160} value={draft.defaultModel} onChange={(e) => set('defaultModel', e.target.value)} /><button type="button" className="button" title="使用当前填写的配置获取模型，无需先保存" disabled={!canFetchModels} onClick={() => void fetchModels()}><RefreshCw size={14} />获取模型</button></div>{models.length > 0 && <select aria-label="可用模型" value={models.includes(draft.defaultModel) ? draft.defaultModel : ''} onChange={(e) => { if (e.target.value) set('defaultModel', e.target.value) }}><option value="">选择模型（{models.length}）</option>{models.map((m) => <option key={m} value={m}>{m}</option>)}</select>}</label>
       <label>Temperature<input type="number" min={0} max={2} step={.1} required value={draft.temperature} onChange={(e) => set('temperature', Number(e.target.value))} /></label>
       <label>最大输出 Token<input type="number" min={64} max={32768} required value={draft.maxTokens} onChange={(e) => set('maxTokens', Number(e.target.value))} /></label>
       <label>超时（秒）<input type="number" min={1} max={60} required value={draft.timeout / 1000} onChange={(e) => set('timeout', Number(e.target.value) * 1000)} /></label>

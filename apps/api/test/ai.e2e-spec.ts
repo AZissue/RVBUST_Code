@@ -73,6 +73,31 @@ describe('AI gateway with isolated local mock, not live provider credentials', (
     const saved = await db.aIProviderConfig.findUniqueOrThrow({ where: { id } }); expect(saved.apiKeyEncrypted).not.toContain(secret);
     expect((await admin.get('/api/ai/providers').expect(200)).body.providers[0].id).toBe(id);
   });
+  it('discovers models before saving without requiring a model or creating configuration', async () => {
+    const count = await db.aIProviderConfig.count();
+    const r = await admin.post('/api/ai/models/discover').send({ provider: 'deepseek', baseUrl, sealedApiKey: sealed, timeout: 1000 }).expect(201);
+    expect(r.body.success).toBe(true); expect(r.body.data).toEqual(['isolated-test-model']); expect(lastBody).toEqual({});
+    expect(r.text).not.toContain(secret); expect(await db.aIProviderConfig.count()).toBe(count);
+    await employee.post('/api/ai/models/discover').send({ provider: 'deepseek', baseUrl, sealedApiKey: sealed, timeout: 1000 }).expect(403);
+    await admin.post('/api/ai/models/discover').send({ provider: 'deepseek', baseUrl, apiKey: secret, timeout: 1000 }).expect(400);
+  });
+  it('uses a saved key for discovery only at the saved destination', async () => {
+    const dto = { provider: 'deepseek', baseUrl, providerId: id, timeout: 1000 };
+    expect((await admin.post('/api/ai/models/discover').send(dto).expect(201)).body.success).toBe(true);
+    const before = calls;
+    expect((await admin.post('/api/ai/models/discover').send({ ...dto, baseUrl: `${baseUrl}/changed` }).expect(201)).body.errorType).toBe('KEY_MISSING');
+    expect((await admin.post('/api/ai/models/discover').send({ ...dto, provider: 'kimi' }).expect(201)).body.errorType).toBe('KEY_MISSING');
+    expect(calls).toBe(before);
+  });
+  it('reports draft discovery auth and timeout failures without saving', async () => {
+    const dto = { provider: 'deepseek', baseUrl, sealedApiKey: sealed, timeout: 1000 }; const count = await db.aIProviderConfig.count();
+    mode = 'status'; status = 401;
+    const denied = await admin.post('/api/ai/models/discover').send(dto).expect(201);
+    expect(denied.body.errorType).toBe('AUTH'); expect(denied.text).not.toContain(secret);
+    mode = 'timeout';
+    expect((await admin.post('/api/ai/models/discover').send(dto).expect(201)).body.errorType).toBe('TIMEOUT');
+    mode = 'ok'; expect(await db.aIProviderConfig.count()).toBe(count);
+  });
   it('tests connection and models through backend and records usage', async () => {
     const tested = (await admin.post(`/api/ai/providers/${id}/test`).expect(201)).body;
     expect(tested.success).toBe(true); expect(tested.usage.totalTokens).toBe(168); expect(lastAuth).toBe(`Bearer ${secret}`);

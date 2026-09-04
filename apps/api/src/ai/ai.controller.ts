@@ -3,7 +3,7 @@ import { Roles } from '../auth/roles.decorator.js';
 import { CurrentUser } from '../auth/current-user.decorator.js';
 import type { AuthUser } from '../auth/auth.types.js';
 import { AIService } from './ai.service.js';
-import { FeatureDto, ProviderDto } from './ai.dto.js';
+import { DiscoverModelsDto, FeatureDto, ProviderDto } from './ai.dto.js';
 
 @Roles('admin')
 @Controller('ai')
@@ -11,6 +11,7 @@ export class AIController {
   constructor(private readonly ai: AIService) {}
   @Get('key-exchange') @Header('Cache-Control', 'no-store') keyExchange() { return this.ai.keyExchange(); }
   @Get('providers') @Header('Cache-Control', 'no-store') providers() { return this.ai.providers(); }
+  @Post('models/discover') discoverModels(@Body() dto: DiscoverModelsDto, @CurrentUser() user: AuthUser) { return this.ai.discoverModels(dto, user.id); }
   @Post('providers') create(@Body() dto: ProviderDto) { return this.ai.saveProvider(dto); }
   @Put('providers/:id') update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: ProviderDto) { return this.ai.updateProvider(id, dto); }
   @Delete('providers/:id') remove(@Param('id', ParseUUIDPipe) id: string) { return this.ai.deleteProvider(id); }

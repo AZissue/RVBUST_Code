@@ -50,7 +50,7 @@ DeepSeek、Kimi/Moonshot、OpenAI、自定义 OpenAI-Compatible 均注册到兼�
 - 统一业务入口和默认配置解析：`apps/api/src/ai/ai.service.ts`。
 - Adapter 契约：`apps/api/src/ai/ai.types.ts`，包括 chat、testConnection、listModels、validateConfig。
 
-添加自定义接口：新增 Provider → 选择 OpenAI-Compatible → 填写名称、Base URL、实际 Key 和模型 → 保存 → 测试连接 → 启用并选择默认。Base URL 是接口前缀，不包含 `/chat/completions`；例如 `https://company.example/v1`。模型名完全可编辑，不预置永远有效的模型。可用已保存配置查询 `/models`，不支持查询的服务可手填。
+添加自定义接口：新增 Provider → 选择 OpenAI-Compatible → 填写名称、Base URL、实际 Key → 获取模型并选择（或手填）→ 保存 → 测试连接 → 启用并选择默认。Base URL 是接口前缀，不包含 `/chat/completions`；例如 `https://company.example/v1`。模型名完全可编辑，不预置永远有效的模型。新增/编辑时均可用当前表单的加密 Key 查询 `/models`，无需先填模型或保存；只有地址和类型未变化时才能复用已保存 Key。不支持查询的服务可手填。获取模型不创建或更新 Provider 配置。
 
 兼容性选项：`max_tokens` / `max_completion_tokens`、是否省略 Temperature、是否发送 JSON 模式参数。模型不支持某参数时按其官方文档调整；无论是否发送 JSON 模式参数，业务结果都必须通过后端严格校验。
 
@@ -85,7 +85,7 @@ Claude/Gemini 原生协议**尚未实现**。未来实现同一 Adapter 接口�
 | 方法 | 路由 |
 | --- | --- |
 | GET | `/api/ai/key-exchange`、`/api/ai/providers`、`/api/ai/features`、`/api/ai/usage` |
-| POST | `/api/ai/providers`、`/api/ai/providers/:id/test`、`/api/ai/providers/:id/models` |
+| POST | `/api/ai/providers`、`/api/ai/providers/:id/test`、`/api/ai/providers/:id/models`、`/api/ai/models/discover` |
 | PUT | `/api/ai/providers/:id`、`/api/ai/features/:key` |
 | DELETE | `/api/ai/providers/:id` |
 
@@ -94,7 +94,7 @@ Claude/Gemini 原生协议**尚未实现**。未来实现同一 Adapter 接口�
 ## 测试结果和限制
 
 - 单元测试：40 项通过。
-- PostgreSQL API 集成：39 项通过，包括 Provider/功能配置、切换、密文保存、权限、无配置降级、无效 JSON、幻觉实体、非法 ID、超时、错误码、最多一次重试和 Token 日志。
+- PostgreSQL API 集成：42 项通过，包括 Provider/功能配置、切换、密文保存、权限、无配置降级、无效 JSON、幻觉实体、非法 ID、超时、错误码、最多一次重试和 Token 日志，以及未保存配置获取模型、原地址才可复用 Key、模型发现失败不写入配置。
 - Playwright：3 条新旧端到端流程通过，包括配置刷新持久化、浏览器提交仅密文、重新编辑拿不到保存的 Key、主题和移动端、普通工单/工作事项/工作记录回归。
 - 生产构建通过。
 - 模拟接口仅运行在隔离测试 schema 中，使用运行时随机测试凭据，结束删除 Provider；没有给正式库填入虚假 Key。
