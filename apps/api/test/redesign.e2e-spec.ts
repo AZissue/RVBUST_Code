@@ -192,10 +192,10 @@ describe('Redesign v1 flows (e2e)', () => {
     const t2 = (await support.post('/api/tickets').send(base).expect(201)).body;
     expect((await employee.get('/api/tickets').expect(200)).body.some((t: { id: string }) => t.id === t2.id)).toBe(true);
     await employee.get(`/api/tickets/${t2.id}`).expect(200);
-    // employee 非创建人/负责人：PATCH / status / events 均 403
+    // employee 非创建人/负责人：PATCH / status / 客户回复均 403
     await employee.patch(`/api/tickets/${t2.id}`).send({ title: '越权修改标题' }).expect(403);
     await employee.post(`/api/tickets/${t2.id}/status`).send({ status: 'IN_PROGRESS' }).expect(403);
-    const denied = await employee.post(`/api/tickets/${t2.id}/events`).send({ type: 'INTERNAL_NOTE', content: '越权备注' }).expect(403);
+    const denied = await employee.post(`/api/tickets/${t2.id}/events`).send({ type: 'CUSTOMER_REPLY', content: '越权客户回复' }).expect(403);
     expect(denied.body.message).toBe('仅创建人、负责人或管理员可以更新该工单');
     // employee 建单指定 support 为负责人：创建人非负责人仍可编辑，但不可转交
     const t3 = (await employee.post('/api/tickets').send({ ...base, title: '转交流程验证工单', description: '转交流程验证工单', assigneeId: supportId }).expect(201)).body;
@@ -218,5 +218,19 @@ describe('Redesign v1 flows (e2e)', () => {
     await support.post(`/api/tickets/${t3.id}/created-by`).send({ createdById: supportId }).expect(403);
     await employee.post(`/api/tickets/${t3.id}/created-by`).send({ createdById: employeeId }).expect(403);
     await db.ticket.deleteMany({ where: { id: { in: [t1.id, t2.id, t3.id] } } });
+  });
+
+  it('allows any internal member to append internal notes but not customer replies on others tickets', async () => {
+    const t = (await support.post('/api/tickets').send({ source: 'AFTER_SALES_INCIDENT', category: '协作备注', organizationId: orgId, title: '协作备注验证工单', description: '协作备注验证工单' }).expect(201)).body;
+    // employee 非创建人/负责人：INTERNAL_NOTE 允许（协作排查），强制内部可见
+    const note = await employee.post(`/api/tickets/${t.id}/events`).send({ type: 'INTERNAL_NOTE', visibility: 'CUSTOMER', content: '协作排查备注' }).expect(201);
+    expect(note.body.type).toBe('INTERNAL_NOTE');
+    expect(note.body.visibility).toBe('INTERNAL');
+    expect(note.body.author.id).toBe(employeeId);
+    // CUSTOMER_REPLY 仍 403
+    await employee.post(`/api/tickets/${t.id}/events`).send({ type: 'CUSTOMER_REPLY', content: '协作客户回复' }).expect(403);
+    // 创建人/负责人不受限
+    await support.post(`/api/tickets/${t.id}/events`).send({ type: 'INTERNAL_NOTE', content: '负责人备注' }).expect(201);
+    await db.ticket.deleteMany({ where: { id: t.id } });
   });
 });

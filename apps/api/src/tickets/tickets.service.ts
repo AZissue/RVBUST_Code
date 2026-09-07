@@ -161,10 +161,13 @@ export class TicketsService {
 
   async addEvent(user: AuthUser, id: string, dto: CreateTicketEventDto) {
     const ticket = await this.access.requireTicket(user, id);
-    if (user.role !== 'customer' && !this.access.canEditTicket(user, ticket)) throw new ForbiddenException('仅创建人、负责人或管理员可以更新该工单');
+    // 内部备注（排查过程）允许所有内部成员在任何工单下追加，便于协作排查；
+    // 客户可见回复及其他类型的写入仍仅限创建人、负责人或管理员。
+    const isInternalNote = user.role !== 'customer' && dto.type === TicketEventType.INTERNAL_NOTE;
+    if (user.role !== 'customer' && !isInternalNote && !this.access.canEditTicket(user, ticket)) throw new ForbiddenException('仅创建人、负责人或管理员可以更新该工单');
     const isCustomer = user.role === 'customer';
-    const visibility = isCustomer ? Visibility.CUSTOMER : (dto.visibility ?? Visibility.INTERNAL);
     const type = isCustomer ? TicketEventType.CUSTOMER_REPLY : dto.type;
+    const visibility = isCustomer ? Visibility.CUSTOMER : type === TicketEventType.INTERNAL_NOTE ? Visibility.INTERNAL : (dto.visibility ?? Visibility.INTERNAL);
     return this.prisma.ticketEvent.create({ data: { ticketId: id, authorId: user.id, type, visibility, content: dto.content }, include: { author: { select: { id: true, name: true } } } });
   }
 
