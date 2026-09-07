@@ -4,7 +4,7 @@
 
 V2 使用 React + TypeScript + NestJS + PostgreSQL + Prisma，分别管理工单（问题）、工作事项（任务）和工作记录（事实）。
 
-启动、环境配置、测试和部署请参阅 [README-V2.md](README-V2.md)，当前实现范围见 [V2开发进度.md](V2开发进度.md)。
+启动、环境配置、测试和部署请参阅 [README-V2.md](docs/README-V2.md)，当前实现范围见 [V2开发进度.md](docs/V2开发进度.md)。设计文档与审查报告见 [docs/](docs/) 目录。
 
 本分支仅包含源码与数据库迁移，不包含本机数据库、真实密码、上传附件、运行时或依赖目录。首次运行请配置 `.env` 并初始化独立数据库；浏览器测试通过环境变量 `SEED_ADMIN_PASSWORD` 登录，只应针对测试数据库执行。
 
