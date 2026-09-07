@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { DeviceStatus, type Prisma } from '@prisma/client';
+import { DeviceOwnerType, DeviceStatus, type Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { ChangeDeviceStatusDto, CreateDeviceDto, UpdateDeviceDto } from './dto/device.dto.js';
 import { zhStatus } from '../common/status-labels.js';
@@ -18,10 +18,12 @@ const transitions: Record<DeviceStatus, DeviceStatus[]> = {
 export class DevicesService {
   constructor(private readonly prisma: PrismaService) {}
 
-  list(query: { status?: DeviceStatus; organizationId?: string; model?: string; keyword?: string }) {
+  list(query: { status?: DeviceStatus; ownerType?: DeviceOwnerType; organizationId?: string; model?: string; keyword?: string }) {
     if (query.status && !Object.values(DeviceStatus).includes(query.status)) throw new BadRequestException('设备状态无效');
+    if (query.ownerType && !Object.values(DeviceOwnerType).includes(query.ownerType)) throw new BadRequestException('设备归属无效');
     const where: Prisma.DeviceWhereInput = {
       status: query.status,
+      ownerType: query.ownerType,
       organizationId: query.organizationId,
       ...(query.model ? { cameraModel: { contains: query.model, mode: 'insensitive' } } : {}),
       ...(query.keyword ? { OR: [{ serialNumber: { contains: query.keyword, mode: 'insensitive' } }, { name: { contains: query.keyword, mode: 'insensitive' } }, { cameraModel: { contains: query.keyword, mode: 'insensitive' } }] } : {}),
@@ -36,15 +38,20 @@ export class DevicesService {
   }
 
   async create(dto: CreateDeviceDto) {
-    if (!await this.prisma.customerOrganization.findUnique({ where: { id: dto.organizationId }, select: { id: true } })) {
+    const ownerType = dto.ownerType ?? DeviceOwnerType.CUSTOMER;
+    if (ownerType === DeviceOwnerType.CUSTOMER && !dto.organizationId) throw new BadRequestException('客户资产必须选择所属客户');
+    if (dto.organizationId && !await this.prisma.customerOrganization.findUnique({ where: { id: dto.organizationId }, select: { id: true } })) {
       throw new BadRequestException('所属客户组织不存在');
     }
     return this.prisma.device.create({ data: this.clean(dto), include: deviceInclude });
   }
 
   async update(id: string, dto: UpdateDeviceDto) {
-    await this.get(id);
-    if (dto.organizationId && !await this.prisma.customerOrganization.findUnique({ where: { id: dto.organizationId }, select: { id: true } })) {
+    const device = await this.get(id);
+    const ownerType = dto.ownerType ?? device.ownerType;
+    const organizationId = dto.organizationId !== undefined ? dto.organizationId : device.organizationId;
+    if (ownerType === DeviceOwnerType.CUSTOMER && !organizationId) throw new BadRequestException('客户资产必须选择所属客户');
+    if (organizationId && !await this.prisma.customerOrganization.findUnique({ where: { id: organizationId }, select: { id: true } })) {
       throw new BadRequestException('所属客户组织不存在');
     }
     return this.prisma.device.update({ where: { id }, data: this.clean(dto), include: deviceInclude });
@@ -68,7 +75,7 @@ export class DevicesService {
     const { organizationId, purchaseDate, warrantyUntil, ...rest } = dto;
     return {
       ...rest,
-      organizationId: organizationId as string,
+      organizationId,
       purchaseDate: purchaseDate ? new Date(purchaseDate) : undefined,
       warrantyUntil: warrantyUntil ? new Date(warrantyUntil) : undefined,
     } as Prisma.DeviceUncheckedCreateInput;

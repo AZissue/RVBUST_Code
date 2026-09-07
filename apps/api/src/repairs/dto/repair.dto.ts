@@ -3,6 +3,7 @@ import { RepairStatus } from '@prisma/client';
 import { IsBoolean, IsDateString, IsEnum, IsOptional, IsString, IsUUID, Length } from 'class-validator';
 
 export class CreateRepairDto {
+  @IsUUID() organizationId!: string;
   @IsOptional() @IsUUID() deviceId?: string;
   @IsOptional() @IsString() @Length(1, 120) serialNumber?: string;
   @IsString() @Length(1, 1000) symptom!: string;

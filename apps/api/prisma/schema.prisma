@@ -95,6 +95,11 @@ enum DeviceStatus {
   RETIRED
 }
 
+enum DeviceOwnerType {
+  COMPANY
+  CUSTOMER
+}
+
 enum LoanStatus {
   ONGOING
   OVERDUE
@@ -282,10 +287,11 @@ model Contact {
 }
 
 model Device {
-  id             String               @id @default(uuid()) @db.Uuid
-  organizationId String               @db.Uuid @map("organization_id")
-  organization   CustomerOrganization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  name           String               @db.VarChar(120)
+  id             String                @id @default(uuid()) @db.Uuid
+  organizationId String?               @db.Uuid @map("organization_id")
+  organization   CustomerOrganization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  ownerType      DeviceOwnerType       @default(CUSTOMER) @map("owner_type")
+  name           String                @db.VarChar(120)
   product        String?              @db.VarChar(120)
   cameraModel    String?              @map("camera_model") @db.VarChar(100)
   serialNumber   String?              @map("serial_number") @db.VarChar(120)

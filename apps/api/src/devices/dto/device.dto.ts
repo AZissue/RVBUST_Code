@@ -1,9 +1,10 @@
 import { PartialType } from '@nestjs/mapped-types';
-import { DeviceStatus } from '@prisma/client';
+import { DeviceOwnerType, DeviceStatus } from '@prisma/client';
 import { IsDateString, IsEnum, IsOptional, IsString, IsUUID, Length } from 'class-validator';
 
 export class CreateDeviceDto {
-  @IsUUID() organizationId!: string;
+  @IsOptional() @IsUUID() organizationId?: string;
+  @IsOptional() @IsEnum(DeviceOwnerType) ownerType?: DeviceOwnerType;
   @IsString() @Length(1, 120) name!: string;
   @IsOptional() @IsString() @Length(0, 120) product?: string;
   @IsOptional() @IsString() @Length(0, 100) cameraModel?: string;

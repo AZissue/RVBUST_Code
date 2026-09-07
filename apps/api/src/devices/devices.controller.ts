@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
-import type { DeviceStatus } from '@prisma/client';
+import type { DeviceOwnerType, DeviceStatus } from '@prisma/client';
 import { Roles } from '../auth/roles.decorator.js';
 import { DevicesService } from './devices.service.js';
 import { ChangeDeviceStatusDto, CreateDeviceDto, UpdateDeviceDto } from './dto/device.dto.js';
@@ -9,8 +9,8 @@ import { ChangeDeviceStatusDto, CreateDeviceDto, UpdateDeviceDto } from './dto/d
 export class DevicesController {
   constructor(private readonly devices: DevicesService) {}
 
-  @Get() list(@Query('status') status?: DeviceStatus, @Query('organizationId') organizationId?: string, @Query('model') model?: string, @Query('keyword') keyword?: string) {
-    return this.devices.list({ status, organizationId, model, keyword });
+  @Get() list(@Query('status') status?: DeviceStatus, @Query('ownerType') ownerType?: DeviceOwnerType, @Query('organizationId') organizationId?: string, @Query('model') model?: string, @Query('keyword') keyword?: string) {
+    return this.devices.list({ status, ownerType, organizationId, model, keyword });
   }
 
   @Get(':id') get(@Param('id') id: string) { return this.devices.get(id); }

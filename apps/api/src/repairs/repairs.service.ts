@@ -59,10 +59,11 @@ export class RepairsService {
           : null;
       if (!device) throw new BadRequestException('设备不存在（需提供 deviceId 或 serialNumber）');
       if (device.status === 'REPAIRING' || device.status === 'RETIRED') throw new BadRequestException(`设备当前状态为「${zhStatus(device.status)}」，不能创建返修单`);
-      if (dto.contactId && !await tx.contact.findFirst({ where: { id: dto.contactId, organizationId: device.organizationId }, select: { id: true } })) throw new BadRequestException('联系人不属于该客户');
+      if (!await tx.customerOrganization.findUnique({ where: { id: dto.organizationId }, select: { id: true } })) throw new BadRequestException('客户组织不存在');
+      if (dto.contactId && !await tx.contact.findFirst({ where: { id: dto.contactId, organizationId: dto.organizationId }, select: { id: true } })) throw new BadRequestException('联系人不属于该客户');
       const inWarranty = dto.inWarranty ?? (device.warrantyUntil ? device.warrantyUntil >= new Date(new Date().toDateString()) : null);
       const data = {
-        deviceId: device.id, organizationId: device.organizationId, createdById: user.id,
+        deviceId: device.id, organizationId: dto.organizationId, createdById: user.id,
         contactId: dto.contactId || null, symptom: dto.symptom, faultCause: dto.faultCause || null,
         resolution: dto.resolution || null, note: dto.note || null, inWarranty,
         receivedAt: dto.receivedAt ? new Date(dto.receivedAt) : new Date(),
@@ -74,6 +75,10 @@ export class RepairsService {
         catch (error) { if ((error as { code?: string }).code !== 'P2002' || attempt === 3) throw error; }
       }
       await tx.device.update({ where: { id: device.id }, data: { status: 'REPAIRING' } });
+      // 返修确认客户资产：客户资产设备无所属客户时，回填为返修单客户；公司样机保持原归属不动
+      if (device.ownerType === 'CUSTOMER' && !device.organizationId) {
+        await tx.device.update({ where: { id: device.id }, data: { organizationId: dto.organizationId } });
+      }
       return repair;
     });
   }

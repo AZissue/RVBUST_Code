@@ -68,8 +68,8 @@ export class LoansService {
       const devices = await tx.device.findMany({ where: { id: { in: deviceIds } } });
       if (devices.length !== deviceIds.length) throw new BadRequestException('设备不存在');
       for (const device of devices) {
+        if (device.ownerType !== 'COMPANY') throw new BadRequestException('客户资产不能创建借测单');
         if (device.status !== 'IN_STOCK') throw new BadRequestException(`设备 ${device.name}（${device.serialNumber ?? device.id}）当前不可借出`);
-        if (device.organizationId !== dto.organizationId) throw new BadRequestException(`设备 ${device.name} 不属于该客户`);
       }
       const data = {
         organizationId: dto.organizationId, contactId: dto.contactId || null, createdById: user.id,
@@ -82,7 +82,8 @@ export class LoansService {
         try { loan = await tx.loanOrder.create({ data: { ...data, loanNo: this.generateNo() }, include: loanInclude }); break; }
         catch (error) { if ((error as { code?: string }).code !== 'P2002' || attempt === 3) throw error; }
       }
-      await tx.device.updateMany({ where: { id: { in: deviceIds } }, data: { status: 'LOANED' } });
+      // 公司样机临时挂靠到借测客户名下
+      await tx.device.updateMany({ where: { id: { in: deviceIds } }, data: { status: 'LOANED', organizationId: dto.organizationId } });
       return loan;
     });
   }
@@ -122,7 +123,8 @@ export class LoansService {
       for (const item of loan.items) {
         await tx.loanItem.update({ where: { id: item.id }, data: { returnedAt: item.returnedAt ?? now, conditionNote: notes.get(item.deviceId) ?? item.conditionNote } });
       }
-      await tx.device.updateMany({ where: { id: { in: loan.items.map((item) => item.deviceId) } }, data: { status: 'IN_STOCK' } });
+      // 公司样机归还后回公司库存（解除临时挂靠）；客户资产不会出现在借测单中，防御性排除
+      await tx.device.updateMany({ where: { id: { in: loan.items.map((item) => item.deviceId) }, ownerType: 'COMPANY' }, data: { status: 'IN_STOCK', organizationId: null } });
       return tx.loanOrder.update({ where: { id }, data: { status: LoanStatus.RETURNED, returnedAt: now }, include: loanInclude });
     });
   }
@@ -131,7 +133,7 @@ export class LoansService {
     const loan = await this.get(user, id);
     if (loan.status !== LoanStatus.ONGOING && loan.status !== LoanStatus.OVERDUE) throw new BadRequestException('该借出单不能取消');
     return this.prisma.$transaction(async (tx) => {
-      await tx.device.updateMany({ where: { id: { in: loan.items.map((item) => item.deviceId) } }, data: { status: 'IN_STOCK' } });
+      await tx.device.updateMany({ where: { id: { in: loan.items.map((item) => item.deviceId) }, ownerType: 'COMPANY' }, data: { status: 'IN_STOCK', organizationId: null } });
       return tx.loanOrder.update({ where: { id }, data: { status: LoanStatus.CANCELLED }, include: loanInclude });
     });
   }

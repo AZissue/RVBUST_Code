@@ -6,7 +6,7 @@ import { StatusBadge } from '../components/Status'
 import { useAuth } from '../context/AuthContext'
 import { useRemote } from '../hooks/useRemote'
 import { api, formatDate } from '../lib/api'
-import { deviceStatusLabel } from '../lib/labels'
+import { deviceStatusLabelByOwner } from '../lib/labels'
 import type { CustomerProfile } from '../types'
 import { Empty, PageError, PageLoading } from './DashboardPage'
 import { DeviceStatusBadge } from './DevicesPage'
@@ -43,7 +43,7 @@ export function CustomerProfilePage() {
     <div className="profile-cards">{textCard('背景介绍', customer.background)}{textCard('应用场景', customer.applicationScenarios)}{textCard('项目需求', customer.projectNeeds)}</div>
     <section className="customer-summary">
       <div><span><UserRound size={12} /> 联系人（{contacts.length}）{canManage && <button className="icon-button" title="新增联系人" onClick={() => setDialog('contact')}><Plus size={13} /></button>}</span><strong>{contacts.slice(0, 3).map((item) => item.name).join('、') || '暂无联系人'}</strong></div>
-      <div><span><Cpu size={12} /> 设备（{devices.length}）{canManage && <button className="icon-button" title="新增设备" onClick={() => setDialog('device')}><Plus size={13} /></button>}</span><strong>{devices.slice(0, 3).map((item) => `${item.name}·${deviceStatusLabel(item.status ?? 'IN_STOCK')}`).join('，') || '暂无设备'}</strong></div>
+      <div><span><Cpu size={12} /> 设备（{devices.length}）{canManage && <button className="icon-button" title="新增设备" onClick={() => setDialog('device')}><Plus size={13} /></button>}</span><strong>{devices.slice(0, 3).map((item) => `${item.name}·${deviceStatusLabelByOwner(item.status ?? 'IN_STOCK', item.ownerType)}`).join('，') || '暂无设备'}</strong></div>
       <div><span><FileClock size={12} /> 进行中工单（{activeTickets.length}）</span><strong>{activeTickets.slice(0, 5).map((item) => item.number).join('、') || '暂无'}</strong></div>
       <div className="wide"><span><Share2 size={12} /> 借测中 {activeLoans.length} · <Wrench size={12} /> 返修中 {activeRepairs.length}</span><strong>{[...activeLoans.map((item) => item.loanNo), ...activeRepairs.map((item) => item.repairNo)].slice(0, 5).join('、') || '暂无进行中借测/返修'}</strong></div>
     </section>
@@ -60,7 +60,7 @@ export function CustomerProfilePage() {
       {tab === 'loans' && !loanOrders.length && <Empty text="暂无借测记录" />}
       {tab === 'repairs' && <table><thead><tr><th>单号</th><th>SN</th><th>故障现象</th><th>状态</th><th>收货日期</th></tr></thead><tbody>{repairOrders.map((repair) => <tr key={repair.id}><td className="mono">{repair.repairNo}</td><td className="mono">{repair.device.serialNumber || '-'}</td><td className="truncate-cell">{repair.symptom}</td><td><RepairStatusBadge status={repair.status} /></td><td>{formatDate(repair.receivedAt)}</td></tr>)}</tbody></table>}
       {tab === 'repairs' && !repairOrders.length && <Empty text="暂无返修记录" />}
-      {tab === 'devices' && <table><thead><tr><th>名称</th><th>型号</th><th>SN</th><th>状态</th><th>保修到期</th></tr></thead><tbody>{devices.map((device) => <tr key={device.id}><td><strong>{device.name}</strong></td><td>{device.cameraModel || device.product || '-'}</td><td className="mono">{device.serialNumber || '-'}</td><td><DeviceStatusBadge status={device.status} /></td><td>{formatDate(device.warrantyUntil)}</td></tr>)}</tbody></table>}
+      {tab === 'devices' && <table><thead><tr><th>名称</th><th>型号</th><th>SN</th><th>状态</th><th>保修到期</th></tr></thead><tbody>{devices.map((device) => <tr key={device.id}><td><strong>{device.name}</strong></td><td>{device.cameraModel || device.product || '-'}</td><td className="mono">{device.serialNumber || '-'}</td><td><DeviceStatusBadge status={device.status} ownerType={device.ownerType} /></td><td>{formatDate(device.warrantyUntil)}</td></tr>)}</tbody></table>}
       {tab === 'devices' && !devices.length && <Empty text="暂无设备记录" />}
     </div></section>
     {editing && <ProfileEditModal customer={customer} onClose={() => setEditing(false)} onSaved={async () => { setEditing(false); await remote.refresh() }} />}

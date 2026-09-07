@@ -3,7 +3,7 @@ import { Fragment, useEffect, useState, type FormEvent } from 'react'
 import { Modal } from '../components/Modal'
 import { useRemote } from '../hooks/useRemote'
 import { api, formatDate } from '../lib/api'
-import { loanStatusLabels } from '../lib/labels'
+import { loanStatusLabels, deviceOwnerLabel } from '../lib/labels'
 import type { Contact, Customer, Device, LoanOrder, LoanStatus, User } from '../types'
 import { Empty, PageError, PageLoading } from './DashboardPage'
 
@@ -69,7 +69,15 @@ function CreateLoanModal({ onClose, onCreated }: { onClose: () => void; onCreate
   useEffect(() => {
     if (!organizationId) { setContacts([]); setDevices([]); return }
     void api<Customer>(`/customers/${organizationId}`).then((customer) => setContacts(customer.contacts ?? [])).catch(() => setContacts([]))
-    void api<Device[]>(`/devices?organizationId=${organizationId}&status=IN_STOCK`).then(setDevices).catch(() => setDevices([]))
+    // 可借设备 = 该客户名下在库客户资产（防御，理论上借测只面向公司样机）+ 全库在库公司样机
+    void Promise.all([
+      api<Device[]>(`/devices?organizationId=${organizationId}&status=IN_STOCK`),
+      api<Device[]>(`/devices?ownerType=COMPANY&status=IN_STOCK`),
+    ]).then(([customerDevices, companyDevices]) => {
+      const merged = new Map<string, Device>()
+      for (const device of [...customerDevices, ...companyDevices]) merged.set(device.id, device)
+      setDevices([...merged.values()])
+    }).catch(() => setDevices([]))
     setSelected([])
   }, [organizationId])
   const submit = async (event: FormEvent<HTMLFormElement>) => {
@@ -90,7 +98,7 @@ function CreateLoanModal({ onClose, onCreated }: { onClose: () => void; onCreate
     <label className="span-2">借测目的<textarea name="purpose" required rows={2} /></label>
     <label>协议编号<input name="agreementNo" /></label>
     <label>备注<input name="note" /></label>
-    <label className="span-2">在库设备（勾选借出）<div className="checkbox-list">{devices.map((device) => <label key={device.id}><input type="checkbox" checked={selected.includes(device.id)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, device.id] : current.filter((id) => id !== device.id))} />{device.name}<span className="mono">{device.serialNumber || '-'}</span>{device.cameraModel ? ` · ${device.cameraModel}` : ''}</label>)}{organizationId && !devices.length && <span className="placeholder-text">该客户暂无在库设备</span>}{!organizationId && <span className="placeholder-text">请先选择客户</span>}</div></label>
+    <label className="span-2">可借设备（勾选借出）<div className="checkbox-list">{devices.map((device) => <label key={device.id}><input type="checkbox" checked={selected.includes(device.id)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, device.id] : current.filter((id) => id !== device.id))} />{device.name}<span className="mono">{device.serialNumber || '-'}</span>{device.cameraModel ? ` · ${device.cameraModel}` : ''} · {deviceOwnerLabel(device.ownerType)}</label>)}{organizationId && !devices.length && <span className="placeholder-text">暂无可借设备（需要在库公司样机）</span>}{!organizationId && <span className="placeholder-text">请先选择客户</span>}</div></label>
     {error && <div className="form-error span-2">{error}</div>}
     <div className="form-actions span-2"><button type="button" className="button" onClick={onClose}>取消</button><button className="button primary" disabled={busy}>{busy ? '正在创建' : '确认创建'}</button></div>
   </form></Modal>
