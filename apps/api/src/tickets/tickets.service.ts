@@ -7,7 +7,7 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { ChangeStatusDto } from './dto/change-status.dto.js';
 import { zhStatus } from '../common/status-labels.js';
 import { CreateTicketEventDto } from './dto/ticket-event.dto.js';
-import { CreateTicketDto, UpdateTicketDto } from './dto/ticket.dto.js';
+import { CreateTicketDto, UpdateTicketDto, ChangeCreatorDto } from './dto/ticket.dto.js';
 
 const ticketInclude = {
   organization: { select: { id: true, name: true, level: true } },
@@ -83,6 +83,7 @@ export class TicketsService {
     await this.access.requireCustomer(user, organizationId);
     await this.validateRelations(organizationId, dto);
     const collaboratorIds = user.role === 'customer' ? [] : [...new Set(dto.collaboratorIds ?? [])];
+    const assigneeId = user.role === 'customer' ? undefined : (dto.assigneeId ?? user.id);
     const data: Omit<Prisma.TicketCreateInput, 'number'> = {
       source: dto.source, category: dto.category, title: dto.title,
       rawText: dto.rawText, requestKey: dto.requestKey,
@@ -93,7 +94,7 @@ export class TicketsService {
       contact: dto.contactId ? { connect: { id: dto.contactId } } : undefined,
       device: dto.deviceId ? { connect: { id: dto.deviceId } } : undefined,
       project: dto.projectId ? { connect: { id: dto.projectId } } : undefined,
-      assignee: dto.assigneeId && user.role !== 'customer' ? { connect: { id: dto.assigneeId } } : undefined,
+      assignee: assigneeId ? { connect: { id: assigneeId } } : undefined,
       collaborators: collaboratorIds.length ? { create: collaboratorIds.map((userId) => ({ user: { connect: { id: userId } } })) } : undefined,
       events: { create: { author: { connect: { id: user.id } }, type: TicketEventType.WORK_RECORD, visibility: user.role === 'customer' ? Visibility.CUSTOMER : Visibility.INTERNAL, content: '工单已创建' } },
     };
@@ -101,7 +102,7 @@ export class TicketsService {
       try {
         const created = await db.ticket.create({ data: { ...data, number: await this.generateNumber(db) }, include: ticketInclude });
         // 事务内调用（如事项转换）跳过通知，由外层在事务提交后补发，避免引用未提交工单
-        if (db === this.prisma && dto.assigneeId && user.role !== 'customer') await this.notifyAssignee(created.id, created.number, dto.assigneeId);
+        if (db === this.prisma && assigneeId && assigneeId !== user.id) await this.notifyAssignee(created.id, created.number, assigneeId);
         return created;
       }
       catch (error) {
@@ -118,6 +119,8 @@ export class TicketsService {
   async update(user: AuthUser, id: string, dto: UpdateTicketDto) {
     if (user.role === 'customer') throw new ForbiddenException('客户账号不能修改工单内部字段');
     const current = await this.access.requireTicket(user, id);
+    if (!this.access.canEditTicket(user, current)) throw new ForbiddenException('仅创建人、负责人或管理员可以更新该工单');
+    if (dto.assigneeId && dto.assigneeId !== current.assigneeId && user.role !== 'admin' && current.assigneeId !== user.id) throw new ForbiddenException('仅当前负责人或管理员可以转交工单');
     const organizationId = dto.organizationId ?? current.organizationId;
     await this.access.requireCustomer(user, organizationId);
     await this.validateRelations(organizationId, { ...dto, contactId: dto.contactId ?? current.contactId ?? undefined, deviceId: dto.deviceId ?? current.deviceId ?? undefined, projectId: dto.projectId ?? current.projectId ?? undefined });
@@ -142,6 +145,7 @@ export class TicketsService {
   async changeStatus(user: AuthUser, id: string, dto: ChangeStatusDto) {
     if (user.role === 'customer') throw new ForbiddenException('客户账号不能修改工单状态');
     const ticket = await this.access.requireTicket(user, id);
+    if (!this.access.canEditTicket(user, ticket)) throw new ForbiddenException('仅创建人、负责人或管理员可以更新该工单');
     if (!transitions[ticket.status].includes(dto.status)) throw new BadRequestException(`不允许从「${zhStatus(ticket.status)}」变更为「${zhStatus(dto.status)}」`);
     return this.prisma.$transaction(async (tx) => {
       const updated = await tx.ticket.update({
@@ -156,11 +160,25 @@ export class TicketsService {
   }
 
   async addEvent(user: AuthUser, id: string, dto: CreateTicketEventDto) {
-    await this.access.requireTicket(user, id);
+    const ticket = await this.access.requireTicket(user, id);
+    if (user.role !== 'customer' && !this.access.canEditTicket(user, ticket)) throw new ForbiddenException('仅创建人、负责人或管理员可以更新该工单');
     const isCustomer = user.role === 'customer';
     const visibility = isCustomer ? Visibility.CUSTOMER : (dto.visibility ?? Visibility.INTERNAL);
     const type = isCustomer ? TicketEventType.CUSTOMER_REPLY : dto.type;
     return this.prisma.ticketEvent.create({ data: { ticketId: id, authorId: user.id, type, visibility, content: dto.content }, include: { author: { select: { id: true, name: true } } } });
+  }
+
+  async changeCreator(user: AuthUser, id: string, dto: ChangeCreatorDto) {
+    const current = await this.access.requireTicket(user, id);
+    const target = await this.prisma.user.findFirst({ where: { id: dto.createdById, status: 'ACTIVE', role: { name: { in: ['admin', 'support', 'employee'] } } }, select: { id: true, name: true } });
+    if (!target) throw new BadRequestException('目标用户不存在、已停用或不是内部成员');
+    if (target.id === current.createdById) return this.prisma.ticket.findUniqueOrThrow({ where: { id }, include: ticketInclude });
+    const from = await this.prisma.user.findUniqueOrThrow({ where: { id: current.createdById }, select: { name: true } });
+    return this.prisma.$transaction(async (tx) => {
+      await tx.ticket.update({ where: { id }, data: { createdById: target.id } });
+      await tx.ticketEvent.create({ data: { ticketId: id, authorId: user.id, type: TicketEventType.INTERNAL_NOTE, visibility: Visibility.INTERNAL, content: `创建人由「${from.name}」变更为「${target.name}」`, metadata: { from: current.createdById, to: target.id } } });
+      return tx.ticket.findUniqueOrThrow({ where: { id }, include: ticketInclude });
+    });
   }
 
   async remove(id: string) {
@@ -211,7 +229,7 @@ export class TicketsService {
       await tx.worklog.updateMany({ where: { workItemId: id, ticketId: null }, data: { ticketId: created.id, organizationId } });
       return tx.ticket.findUniqueOrThrow({ where: { id: created.id }, include: ticketInclude });
     });
-    if (converted.assigneeId) await this.notifyAssignee(converted.id, converted.number, converted.assigneeId);
+    if (converted.assigneeId && converted.assigneeId !== user.id) await this.notifyAssignee(converted.id, converted.number, converted.assigneeId);
     return converted;
   }
 }

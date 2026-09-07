@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Inject, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable } from '@nestjs/common';
 import type { AuthUser } from '../auth/auth.types.js';
 import { AccessPolicyService } from '../auth/access-policy.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -31,7 +31,8 @@ export class QuickTicketsService {
 
   async update(user: AuthUser, id: string, dto: UpdateQuickTicketDto) {
     this.access.requireInternal(user);
-    await this.access.requireTicket(user, id);
+    const current = await this.access.requireTicket(user, id);
+    if (!this.access.canEditTicket(user, current)) throw new ForbiddenException('仅创建人、负责人或管理员可以更新该工单');
     if (!dto.issue.trim()) throw new BadRequestException('问题描述不能为空');
     if (!await this.prisma.user.findFirst({ where: { id: dto.assigneeId, status: "ACTIVE", role: { name: { in: ['admin', 'support', 'employee'] } } } })) throw new BadRequestException('负责人不可分配');
     return this.prisma.$transaction(async (tx) => {

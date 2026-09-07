@@ -45,11 +45,13 @@ describe('Quick tickets and single-source personal work', () => {
     const stored = (await admin.get(`/api/tickets/${ticketId}`).expect(200)).body;
     expect(stored.rawText).toBe(dto.rawText); expect(stored.device.id).toBe(deviceId);
   });
-  it('detects similar same-customer tickets without leaking inaccessible tickets', async () => {
+  it('detects similar same-customer tickets without leaking cross-customer tickets', async () => {
     const dto = { organizationId: orgId, issue: 'M2600连接不上', cameraModel: 'M2600' };
     const matches = (await admin.post('/api/tickets/quick/similar').send(dto).expect(201)).body;
     expect(matches.find((t: { id: string }) => t.id === ticketId).similarity).toBeGreaterThan(80);
-    expect((await employee.post('/api/tickets/quick/similar').send(dto).expect(201)).body).toHaveLength(0);
+    // 内部角色可见全部工单，employee 与 admin 看到的相似工单一致
+    const employeeMatches = (await employee.post('/api/tickets/quick/similar').send(dto).expect(201)).body;
+    expect(employeeMatches.find((t: { id: string }) => t.id === ticketId).similarity).toBeGreaterThan(80);
     expect((await admin.post('/api/tickets/quick/similar').send({ ...dto, organizationId: org2 }).expect(201)).body).toHaveLength(0);
     await customer.post('/api/tickets/quick/parse').send({ rawText: '浙江智享 M2600无点云' }).expect(403);
   });

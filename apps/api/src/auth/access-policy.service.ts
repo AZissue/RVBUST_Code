@@ -14,8 +14,12 @@ export class AccessPolicyService {
 
   ticketWhere(user: AuthUser): Prisma.TicketWhereInput {
     if (user.role === 'customer') return { organizationId: user.customerOrganizationId ?? '__none__' };
-    if (user.role === 'employee') return { OR: [{ createdById: user.id }, { assigneeId: user.id }, { collaborators: { some: { userId: user.id } } }] };
+    // 内部角色（admin/support/employee）可查看全部工单
     return {};
+  }
+
+  canEditTicket(user: AuthUser, ticket: { createdById: string | null; assigneeId: string | null }): boolean {
+    return user.role === 'admin' || ticket.createdById === user.id || ticket.assigneeId === user.id;
   }
 
   worklogWhere(user: AuthUser): Prisma.WorklogWhereInput {

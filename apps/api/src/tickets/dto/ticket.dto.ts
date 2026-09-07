@@ -24,3 +24,7 @@ export class CreateTicketDto {
 }
 
 export class UpdateTicketDto extends PartialType(CreateTicketDto) {}
+
+export class ChangeCreatorDto {
+  @IsUUID() createdById!: string;
+}

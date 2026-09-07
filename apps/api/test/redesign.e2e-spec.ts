@@ -12,7 +12,7 @@ dotenv.config({ path: '../../.env' });
 describe('Redesign v1 flows (e2e)', () => {
   let app: INestApplication; let db: PrismaService;
   let admin: Agent; let support: Agent; let employee: Agent;
-  let adminId: string; let employeeId: string; let orgId: string;
+  let adminId: string; let employeeId: string; let supportId: string; let orgId: string;
   const suffix = randomUUID().slice(0, 8);
   const regUsername = `reg_${suffix}`;
   const regPassword = 'register-pass-1';
@@ -29,6 +29,7 @@ describe('Redesign v1 flows (e2e)', () => {
     await employee.post('/api/auth/login').send({ username: 'employee', password: process.env.SEED_EMPLOYEE_PASSWORD }).expect(201);
     adminId = (await db.user.findUniqueOrThrow({ where: { username: 'admin' } })).id;
     employeeId = (await db.user.findUniqueOrThrow({ where: { username: 'employee' } })).id;
+    supportId = (await db.user.findUniqueOrThrow({ where: { username: 'support' } })).id;
     orgId = (await db.customerOrganization.upsert({ where: { name: `借测客户-${suffix}` }, update: {}, create: { name: `借测客户-${suffix}` } })).id;
   });
 
@@ -180,5 +181,42 @@ describe('Redesign v1 flows (e2e)', () => {
     expect(profile.repairOrders.length).toBeGreaterThan(0);
     // employee 非 owner 不可见
     await employee.get(`/api/customers/${orgId}/profile`).expect(404);
+  });
+
+  it('applies ticket visibility and edit rights by creator, assignee and admin', async () => {
+    const base = { source: 'AFTER_SALES_INCIDENT', category: '权限测试', organizationId: orgId, title: '权限模型改造验证', description: '权限模型改造验证' };
+    // 创建时不指定负责人 → 默认为创建人
+    const t1 = (await employee.post('/api/tickets').send(base).expect(201)).body;
+    expect(t1.assignee?.id).toBe(employeeId);
+    // 内部角色可见全部工单：employee 能看到 support 的工单
+    const t2 = (await support.post('/api/tickets').send(base).expect(201)).body;
+    expect((await employee.get('/api/tickets').expect(200)).body.some((t: { id: string }) => t.id === t2.id)).toBe(true);
+    await employee.get(`/api/tickets/${t2.id}`).expect(200);
+    // employee 非创建人/负责人：PATCH / status / events 均 403
+    await employee.patch(`/api/tickets/${t2.id}`).send({ title: '越权修改标题' }).expect(403);
+    await employee.post(`/api/tickets/${t2.id}/status`).send({ status: 'IN_PROGRESS' }).expect(403);
+    const denied = await employee.post(`/api/tickets/${t2.id}/events`).send({ type: 'INTERNAL_NOTE', content: '越权备注' }).expect(403);
+    expect(denied.body.message).toBe('仅创建人、负责人或管理员可以更新该工单');
+    // employee 建单指定 support 为负责人：创建人非负责人仍可编辑，但不可转交
+    const t3 = (await employee.post('/api/tickets').send({ ...base, title: '转交流程验证工单', description: '转交流程验证工单', assigneeId: supportId }).expect(201)).body;
+    await employee.patch(`/api/tickets/${t3.id}`).send({ title: '创建人更新标题' }).expect(200);
+    const transferDenied = await employee.patch(`/api/tickets/${t3.id}`).send({ assigneeId: adminId }).expect(403);
+    expect(transferDenied.body.message).toBe('仅当前负责人或管理员可以转交工单');
+    // 当前负责人 support 转交给 admin：成功 + 通知 + ASSIGNMENT 时间线事件
+    await support.patch(`/api/tickets/${t3.id}`).send({ assigneeId: adminId }).expect(200);
+    expect(await db.notification.count({ where: { recipientId: adminId, dedupeKey: `ticket-assign:${t3.id}:${adminId}` } })).toBe(1);
+    const events = (await support.get(`/api/tickets/${t3.id}`).expect(200)).body.events as Array<{ type: string; content: string }>;
+    expect(events.some((e) => e.type === 'ASSIGNMENT')).toBe(true);
+    // admin 专属接口变更创建人，时间线留痕
+    const changed = await admin.post(`/api/tickets/${t3.id}/created-by`).send({ createdById: supportId }).expect(201);
+    expect(changed.body.createdBy.id).toBe(supportId);
+    const timeline = (await admin.get(`/api/tickets/${t3.id}`).expect(200)).body.events as Array<{ type: string; content: string }>;
+    const note = timeline.find((e) => e.content.includes('创建人由'));
+    expect(note).toBeTruthy();
+    expect(note!.content).toContain('变更为');
+    // 非 admin 调 created-by 403
+    await support.post(`/api/tickets/${t3.id}/created-by`).send({ createdById: supportId }).expect(403);
+    await employee.post(`/api/tickets/${t3.id}/created-by`).send({ createdById: employeeId }).expect(403);
+    await db.ticket.deleteMany({ where: { id: { in: [t1.id, t2.id, t3.id] } } });
   });
 });
