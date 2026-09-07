@@ -3,13 +3,13 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Modal } from '../components/Modal'
 import { useRemote } from '../hooks/useRemote'
 import { api, formatDate } from '../lib/api'
+import { repairStatusLabels, statusChangeLabel, ticketEventTypeLabel } from '../lib/labels'
 import type { Attachment, Contact, Customer, Device, RepairOrder, RepairStatus, User } from '../types'
 import { Empty, PageError, PageLoading } from './DashboardPage'
 
-const statusLabels: Record<RepairStatus, string> = { RECEIVED: '已收货', DIAGNOSING: '检测中', REPAIRING: '维修中', SHIPPED: '已寄回', CLOSED: '已关闭' }
-export const repairStatusLabels = statusLabels
+export { repairStatusLabels }
 export function RepairStatusBadge({ status }: { status: RepairStatus }) {
-  return <span className={`badge ${status === 'CLOSED' ? '' : status === 'SHIPPED' ? 'ok' : 'status-in_progress'}`}>{statusLabels[status]}</span>
+  return <span className={`badge ${status === 'CLOSED' ? '' : status === 'SHIPPED' ? 'ok' : 'status-in_progress'}`}>{repairStatusLabels[status]}</span>
 }
 const nextStep: Partial<Record<RepairStatus, { status: RepairStatus; label: string }>> = {
   RECEIVED: { status: 'DIAGNOSING', label: '收货检测' },
@@ -28,7 +28,7 @@ export function RepairsPage() {
   const repairs = remote.data ?? []
   return <div className="page-stack">
     <header className="page-header"><div><span className="eyebrow">REPAIR ORDERS</span><h1>返修管理</h1><p>从收货、检测、维修到寄回关闭的完整返修流水。</p></div><button className="button primary" onClick={() => setCreating(true)}><Plus size={16} />新建返修单</button></header>
-    <section className="toolbar"><select aria-label="返修状态筛选" value={status} onChange={(event) => setStatus(event.target.value)}><option value="">全部状态</option>{Object.entries(statusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><span className="result-count">{repairs.length} 张返修单</span></section>
+    <section className="toolbar"><select aria-label="返修状态筛选" value={status} onChange={(event) => setStatus(event.target.value)}><option value="">全部状态</option>{Object.entries(repairStatusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><span className="result-count">{repairs.length} 张返修单</span></section>
     <section className="panel no-padding"><div className="table-wrap"><table><thead><tr><th>单号</th><th>SN</th><th>型号</th><th>客户</th><th>故障现象</th><th>状态</th><th>跟进工程师</th><th>收货日期</th><th>操作</th></tr></thead><tbody>{repairs.map((repair) => <tr key={repair.id}>
       <td className="mono">{repair.repairNo}</td><td className="mono">{repair.device.serialNumber || '-'}</td><td>{repair.device.cameraModel || '-'}</td><td>{repair.organization.name}</td><td className="truncate-cell" title={repair.symptom}>{repair.symptom}</td><td><RepairStatusBadge status={repair.status} /></td><td>{repair.assignee?.name ?? '未指派'}</td><td>{formatDate(repair.receivedAt)}</td>
       <td><button className="button small" onClick={() => setDetailId(repair.id)}>详情</button></td>
@@ -98,7 +98,7 @@ function RepairDetailDrawer({ id, onClose, onChanged }: { id: string; onClose: (
   return <div className="drawer-backdrop" onClick={onClose}><aside className="drawer" onClick={(event) => event.stopPropagation()}>
     <header><div><span className="mono eyebrow">{repair.repairNo}</span><h2>{repair.device.name}（{repair.device.serialNumber || '无 SN'}）</h2><div className="inline-meta"><RepairStatusBadge status={repair.status} /><span>{repair.organization.name}</span><span>{repair.inWarranty == null ? '保修待判定' : repair.inWarranty ? '保内' : '保外'}</span></div></div><button className="icon-button" title="关闭" onClick={onClose}><X size={19} /></button></header>
     {error && <div className="form-error"><button onClick={() => setError('')}><X size={14} /></button>{error}</div>}
-    <section className="drawer-logs"><div className="section-heading"><div><h3>状态时间线</h3><p>{repair.events?.length ?? 0} 条记录</p></div></div><div className="timeline">{repair.events?.map((event) => <article key={event.id}><div className="timeline-dot" /><header><strong>{event.type === 'STATUS_CHANGE' ? '状态变更' : event.type}</strong><time>{formatDate(event.createdAt)}</time></header><p>{event.content}</p></article>)}{!repair.events?.length && <Empty text="暂无记录" />}</div></section>
+    <section className="drawer-logs"><div className="section-heading"><div><h3>状态时间线</h3><p>{repair.events?.length ?? 0} 条记录</p></div></div><div className="timeline">{repair.events?.map((event) => <article key={event.id}><div className="timeline-dot" /><header><strong>{ticketEventTypeLabel(event.type)}</strong><time>{formatDate(event.createdAt)}</time></header><p>{event.type === 'STATUS_CHANGE' ? statusChangeLabel(event.content) : event.content}</p></article>)}{!repair.events?.length && <Empty text="暂无记录" />}</div></section>
     <form onSubmit={save} className="drawer-form">
       <label>跟进工程师<select name="assigneeId" value={repair.assignee?.id ?? ''} onChange={(event) => void assign(event.target.value)}><option value="" disabled>未指派</option>{users.data?.filter((item) => !item.status || item.status === 'ACTIVE').map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
       <label>故障原因<textarea name="faultCause" rows={2} defaultValue={repair.faultCause ?? ''} /></label>

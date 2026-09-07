@@ -3,14 +3,14 @@ import { useState, type FormEvent } from 'react'
 import { Modal } from '../components/Modal'
 import { useRemote } from '../hooks/useRemote'
 import { api, formatDate } from '../lib/api'
+import { deviceStatusLabels } from '../lib/labels'
 import type { Customer, Device, DeviceStatus } from '../types'
 import { Empty, PageError, PageLoading } from './DashboardPage'
 
-const statusLabels: Record<DeviceStatus, string> = { IN_STOCK: '在库', LOANED: '借出', REPAIRING: '返修中', RETIRED: '已报废' }
-export const deviceStatusLabels = statusLabels
+export { deviceStatusLabels }
 export function DeviceStatusBadge({ status }: { status?: DeviceStatus }) {
   const value = status ?? 'IN_STOCK'
-  return <span className={`badge ${value === 'IN_STOCK' ? 'ok' : value === 'REPAIRING' ? 'warn' : value === 'RETIRED' ? '' : 'status-in_progress'}`}>{statusLabels[value]}</span>
+  return <span className={`badge ${value === 'IN_STOCK' ? 'ok' : value === 'REPAIRING' ? 'warn' : value === 'RETIRED' ? '' : 'status-in_progress'}`}>{deviceStatusLabels[value]}</span>
 }
 
 export function DevicesPage() {
@@ -30,7 +30,7 @@ export function DevicesPage() {
   return <div className="page-stack">
     <header className="page-header"><div><span className="eyebrow">DEVICE INVENTORY</span><h1>设备台账</h1><p>统一管理库存、借出、返修与报废设备。</p></div><button className="button primary" onClick={() => setCreating(true)}><Plus size={16} />新增设备</button></header>
     {error && <div className="form-error"><button onClick={() => setError('')}><X size={14} /></button>{error}</div>}
-    <section className="toolbar"><div className="searchbox"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索名称、型号、SN 或客户" /></div><select aria-label="设备状态筛选" value={status} onChange={(event) => setStatus(event.target.value)}><option value="">全部状态</option>{Object.entries(statusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><span className="result-count">{devices.length} 台设备</span></section>
+    <section className="toolbar"><div className="searchbox"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索名称、型号、SN 或客户" /></div><select aria-label="设备状态筛选" value={status} onChange={(event) => setStatus(event.target.value)}><option value="">全部状态</option>{Object.entries(deviceStatusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><span className="result-count">{devices.length} 台设备</span></section>
     <section className="panel no-padding"><div className="table-wrap"><table><thead><tr><th>名称</th><th>型号</th><th>SN</th><th>所属客户</th><th>状态</th><th>保修到期</th><th>操作</th></tr></thead><tbody>{devices.map((item) => <tr key={item.id}>
       <td><strong className="with-icon"><Cpu size={15} />{item.name}</strong></td><td>{item.cameraModel || item.product || '-'}</td><td className="mono">{item.serialNumber || '-'}</td><td>{item.organization?.name ?? '-'}</td><td><DeviceStatusBadge status={item.status} /></td><td>{formatDate(item.warrantyUntil)}</td>
       <td><div className="row-actions">

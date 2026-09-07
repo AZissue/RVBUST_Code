@@ -15,7 +15,7 @@ export class CustomersController {
   @Get('customers') list(@CurrentUser() user: AuthUser, @Query('search') search?: string) { return this.customers.list(user, search); }
   @Get('customers/:id') get(@CurrentUser() user: AuthUser, @Param('id') id: string) { return this.customers.get(user, id); }
   @Get('customers/:id/profile') profile(@CurrentUser() user: AuthUser, @Param('id') id: string) { return this.customers.profile(user, id); }
-  @Roles('admin', 'support') @Post('customers') create(@Body() dto: CreateCustomerDto) { return this.customers.create(dto); }
+  @Roles('admin', 'support', 'employee') @Post('customers') create(@Body() dto: CreateCustomerDto) { return this.customers.create(dto); }
   @Roles('admin', 'support') @Patch('customers/:id') update(@Param('id') id: string, @Body() dto: UpdateCustomerDto) { return this.customers.update(id, dto); }
   @Roles('admin') @Delete('customers/:id') remove(@Param('id') id: string) { return this.customers.remove(id); }
 

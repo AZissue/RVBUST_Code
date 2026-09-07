@@ -5,11 +5,12 @@ import { Modal } from '../components/Modal'
 import { LegacyWorkItemConversion } from '../components/LegacyWorkItemConversion'
 import { useRemote } from '../hooks/useRemote'
 import { api, formatDate } from '../lib/api'
+import { workItemPriorityLabels, workItemStatusLabels } from '../lib/labels'
 import type { Customer, Project, WorkItem, WorkItemStatus, WorkType, Worklog } from '../types'
 import { Empty, PageError, PageLoading } from './DashboardPage'
 
-export const statusLabels: Record<WorkItemStatus, string> = { TODO: '待开始', IN_PROGRESS: '进行中', WAITING_FEEDBACK: '等待反馈', COMPLETED: '已完成', CANCELED: '已取消' }
-const priorityLabels = { LOW: '低', MEDIUM: '普通', HIGH: '高', URGENT: '紧急' }
+export const statusLabels = workItemStatusLabels
+const priorityLabels = workItemPriorityLabels
 const quickProgress = [0, 25, 50, 75, 100]
 
 export function ProgressEditor({ item, onSaved, compact = false }: { item: WorkItem; onSaved: () => Promise<void>; compact?: boolean }) {

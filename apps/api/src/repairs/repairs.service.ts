@@ -5,6 +5,7 @@ import type { AuthUser } from '../auth/auth.types.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AssignRepairDto, CreateRepairDto, TransitionRepairDto, UpdateRepairDto } from './dto/repair.dto.js';
+import { zhStatus } from '../common/status-labels.js';
 
 const repairInclude = {
   device: { select: { id: true, name: true, serialNumber: true, cameraModel: true, status: true, warrantyUntil: true } },
@@ -57,7 +58,7 @@ export class RepairsService {
           ? await tx.device.findFirst({ where: { serialNumber: dto.serialNumber } })
           : null;
       if (!device) throw new BadRequestException('设备不存在（需提供 deviceId 或 serialNumber）');
-      if (device.status === 'REPAIRING' || device.status === 'RETIRED') throw new BadRequestException(`设备当前状态为 ${device.status}，不能创建返修单`);
+      if (device.status === 'REPAIRING' || device.status === 'RETIRED') throw new BadRequestException(`设备当前状态为「${zhStatus(device.status)}」，不能创建返修单`);
       if (dto.contactId && !await tx.contact.findFirst({ where: { id: dto.contactId, organizationId: device.organizationId }, select: { id: true } })) throw new BadRequestException('联系人不属于该客户');
       const inWarranty = dto.inWarranty ?? (device.warrantyUntil ? device.warrantyUntil >= new Date(new Date().toDateString()) : null);
       const data = {
@@ -92,7 +93,7 @@ export class RepairsService {
     const repair = await this.get(user, id);
     const from = order.indexOf(repair.status);
     const to = order.indexOf(dto.status);
-    if (to !== from + 1) throw new BadRequestException(`不允许从 ${repair.status} 变更为 ${dto.status}，仅支持逐级单向流转`);
+    if (to !== from + 1) throw new BadRequestException(`不允许从「${zhStatus(repair.status)}」变更为「${zhStatus(dto.status)}」，仅支持逐级单向流转`);
     const trackingNo = dto.trackingNo ?? repair.trackingNo;
     if (dto.status === RepairStatus.SHIPPED && !trackingNo) throw new BadRequestException('寄回时必须填写物流单号');
     const now = new Date();

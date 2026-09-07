@@ -6,6 +6,7 @@ import { StatusBadge } from '../components/Status'
 import { useAuth } from '../context/AuthContext'
 import { useRemote } from '../hooks/useRemote'
 import { api, formatDate } from '../lib/api'
+import { deviceStatusLabel } from '../lib/labels'
 import type { CustomerProfile } from '../types'
 import { Empty, PageError, PageLoading } from './DashboardPage'
 import { DeviceStatusBadge } from './DevicesPage'
@@ -42,7 +43,7 @@ export function CustomerProfilePage() {
     <div className="profile-cards">{textCard('背景介绍', customer.background)}{textCard('应用场景', customer.applicationScenarios)}{textCard('项目需求', customer.projectNeeds)}</div>
     <section className="customer-summary">
       <div><span><UserRound size={12} /> 联系人（{contacts.length}）{canManage && <button className="icon-button" title="新增联系人" onClick={() => setDialog('contact')}><Plus size={13} /></button>}</span><strong>{contacts.slice(0, 3).map((item) => item.name).join('、') || '暂无联系人'}</strong></div>
-      <div><span><Cpu size={12} /> 设备（{devices.length}）{canManage && <button className="icon-button" title="新增设备" onClick={() => setDialog('device')}><Plus size={13} /></button>}</span><strong>{devices.slice(0, 3).map((item) => `${item.name}·${item.status ?? 'IN_STOCK'}`).join('，') || '暂无设备'}</strong></div>
+      <div><span><Cpu size={12} /> 设备（{devices.length}）{canManage && <button className="icon-button" title="新增设备" onClick={() => setDialog('device')}><Plus size={13} /></button>}</span><strong>{devices.slice(0, 3).map((item) => `${item.name}·${deviceStatusLabel(item.status ?? 'IN_STOCK')}`).join('，') || '暂无设备'}</strong></div>
       <div><span><FileClock size={12} /> 进行中工单（{activeTickets.length}）</span><strong>{activeTickets.slice(0, 5).map((item) => item.number).join('、') || '暂无'}</strong></div>
       <div className="wide"><span><Share2 size={12} /> 借测中 {activeLoans.length} · <Wrench size={12} /> 返修中 {activeRepairs.length}</span><strong>{[...activeLoans.map((item) => item.loanNo), ...activeRepairs.map((item) => item.repairNo)].slice(0, 5).join('、') || '暂无进行中借测/返修'}</strong></div>
     </section>

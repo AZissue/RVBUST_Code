@@ -3,13 +3,13 @@ import { Fragment, useEffect, useState, type FormEvent } from 'react'
 import { Modal } from '../components/Modal'
 import { useRemote } from '../hooks/useRemote'
 import { api, formatDate } from '../lib/api'
+import { loanStatusLabels } from '../lib/labels'
 import type { Contact, Customer, Device, LoanOrder, LoanStatus, User } from '../types'
 import { Empty, PageError, PageLoading } from './DashboardPage'
 
-const statusLabels: Record<LoanStatus, string> = { ONGOING: '借测中', OVERDUE: '已逾期', RETURNED: '已归还', CANCELLED: '已取消' }
-export const loanStatusLabels = statusLabels
+export { loanStatusLabels }
 export function LoanStatusBadge({ status }: { status: LoanStatus }) {
-  return <span className={`badge ${status === 'OVERDUE' ? 'danger' : status === 'ONGOING' ? 'status-in_progress' : status === 'RETURNED' ? 'ok' : ''}`}>{statusLabels[status]}</span>
+  return <span className={`badge ${status === 'OVERDUE' ? 'danger' : status === 'ONGOING' ? 'status-in_progress' : status === 'RETURNED' ? 'ok' : ''}`}>{loanStatusLabels[status]}</span>
 }
 
 export function LoansPage() {
@@ -29,7 +29,7 @@ export function LoansPage() {
     <header className="page-header"><div><span className="eyebrow">LOAN ORDERS</span><h1>借测管理</h1><p>设备借测从借出到归还全程可追踪。</p></div><button className="button primary" onClick={() => setCreating(true)}><Plus size={16} />新建借测单</button></header>
     {error && <div className="form-error"><button onClick={() => setError('')}><X size={14} /></button>{error}</div>}
     <section className="toolbar">
-      <select aria-label="借测状态筛选" value={status} onChange={(event) => setStatus(event.target.value)}><option value="">全部状态</option>{Object.entries(statusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+      <select aria-label="借测状态筛选" value={status} onChange={(event) => setStatus(event.target.value)}><option value="">全部状态</option>{Object.entries(loanStatusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
       <label><input type="checkbox" checked={mine} onChange={(event) => setMine(event.target.checked)} />只看我的</label>
       <span className="result-count">{loans.length} 张借测单</span>
     </section>

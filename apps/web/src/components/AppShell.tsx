@@ -4,6 +4,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useTheme } from '../context/ThemeContext'
 import { api, formatDate } from '../lib/api'
+import { roleLabel } from '../lib/labels'
 import type { ThemeMode } from '../types'
 
 const groups = [
@@ -57,7 +58,7 @@ export function AppShell() {
               {notifications.length ? notifications.slice(0, 8).map((item) => <button key={item.id} className={`notification-row ${item.readAt ? '' : 'unread'}`} onClick={async () => { await api(`/notifications/${item.id}/read`, { method: 'PATCH' }); if (item.ticket) navigate(`/tickets/${item.ticket.id}`); setNotificationsOpen(false); await loadNotifications() }}><strong>{item.title}</strong><span>{item.body}</span><small>{formatDate(item.createdAt)}</small></button>) : <div className="empty-compact">暂无通知</div>}
             </div>}
           </div>
-          <div className="user-menu"><div className="avatar">{user?.name.slice(0, 1)}</div><div><strong>{user?.name}</strong><span>{user?.role}</span></div><ChevronDown size={15} /><button className="icon-button" onClick={async () => { await logout(); navigate('/login') }} title="退出"><LogOut size={17} /></button></div>
+          <div className="user-menu"><div className="avatar">{user?.name.slice(0, 1)}</div><div><strong>{user?.name}</strong><span>{roleLabel(user?.role ?? '')}</span></div><ChevronDown size={15} /><button className="icon-button" onClick={async () => { await logout(); navigate('/login') }} title="退出"><LogOut size={17} /></button></div>
         </div>
       </header>
       <main className="content"><Outlet /></main>

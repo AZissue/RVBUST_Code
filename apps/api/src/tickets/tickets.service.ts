@@ -1,11 +1,11 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable } from '@nestjs/common';
 import { TicketEventType, TicketStatus, Visibility, type Prisma } from '@prisma/client';
-import { randomInt } from 'node:crypto';
 import { AccessPolicyService } from '../auth/access-policy.service.js';
 import type { AuthUser } from '../auth/auth.types.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { ChangeStatusDto } from './dto/change-status.dto.js';
+import { zhStatus } from '../common/status-labels.js';
 import { CreateTicketEventDto } from './dto/ticket-event.dto.js';
 import { CreateTicketDto, UpdateTicketDto } from './dto/ticket.dto.js';
 
@@ -83,8 +83,8 @@ export class TicketsService {
     await this.access.requireCustomer(user, organizationId);
     await this.validateRelations(organizationId, dto);
     const collaboratorIds = user.role === 'customer' ? [] : [...new Set(dto.collaboratorIds ?? [])];
-    const data: Prisma.TicketCreateInput = {
-      number: this.generateNumber(), source: dto.source, category: dto.category, title: dto.title,
+    const data: Omit<Prisma.TicketCreateInput, 'number'> = {
+      source: dto.source, category: dto.category, title: dto.title,
       rawText: dto.rawText, requestKey: dto.requestKey,
       description: dto.description, priority: dto.priority, cameraModel: dto.cameraModel,
       serialNumber: dto.serialNumber, sdkVersion: dto.sdkVersion, systemEnvironment: dto.systemEnvironment,
@@ -99,7 +99,7 @@ export class TicketsService {
     };
     for (let attempt = 0; attempt < 4; attempt++) {
       try {
-        const created = await db.ticket.create({ data: { ...data, number: this.generateNumber() }, include: ticketInclude });
+        const created = await db.ticket.create({ data: { ...data, number: await this.generateNumber(db) }, include: ticketInclude });
         // 事务内调用（如事项转换）跳过通知，由外层在事务提交后补发，避免引用未提交工单
         if (db === this.prisma && dto.assigneeId && user.role !== 'customer') await this.notifyAssignee(created.id, created.number, dto.assigneeId);
         return created;
@@ -142,7 +142,7 @@ export class TicketsService {
   async changeStatus(user: AuthUser, id: string, dto: ChangeStatusDto) {
     if (user.role === 'customer') throw new ForbiddenException('客户账号不能修改工单状态');
     const ticket = await this.access.requireTicket(user, id);
-    if (!transitions[ticket.status].includes(dto.status)) throw new BadRequestException(`不允许从 ${ticket.status} 变更为 ${dto.status}`);
+    if (!transitions[ticket.status].includes(dto.status)) throw new BadRequestException(`不允许从「${zhStatus(ticket.status)}」变更为「${zhStatus(dto.status)}」`);
     return this.prisma.$transaction(async (tx) => {
       const updated = await tx.ticket.update({
         where: { id }, data: { status: dto.status, resolvedAt: dto.status === TicketStatus.RESOLVED ? new Date() : dto.status === TicketStatus.IN_PROGRESS ? null : undefined },
@@ -181,9 +181,14 @@ export class TicketsService {
     try { await Promise.all(checks); } catch { throw new BadRequestException('联系人、设备或项目不属于所选客户'); }
   }
 
-  private generateNumber() {
-    const date = new Date().toISOString().slice(2, 10).replaceAll('-', '');
-    return `TS-${date}-${randomInt(0, 1_000_000).toString().padStart(6, '0')}`;
+  /** RVC-YYMMDD-NNN：按本地日期当日顺序编号。并发冲突由 number 唯一约束 + 上层 P2002 重试兜底 */
+  private async generateNumber(db: Prisma.TransactionClient) {
+    const now = new Date();
+    const ymd = `${String(now.getFullYear()).slice(2)}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+    const prefix = `RVC-${ymd}-`;
+    const last = await db.ticket.findFirst({ where: { number: { startsWith: prefix } }, orderBy: { number: 'desc' }, select: { number: true } });
+    const seq = last ? Number(last.number.slice(prefix.length)) + 1 : 1;
+    return `${prefix}${String(seq).padStart(3, '0')}`;
   }
 
   async convertWorkItem(user: AuthUser, id: string, organizationId: string) {

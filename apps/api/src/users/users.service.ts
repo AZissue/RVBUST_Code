@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { CreateUserDto } from './dto/create-user.dto.js';
 import { ListUsersDto } from './dto/list-users.dto.js';
 import { UpdateUserDto } from './dto/update-user.dto.js';
+import { zhUserStatus } from '../common/status-labels.js';
 
 const publicUserSelect = {
   id: true, username: true, name: true, email: true, phone: true, department: true, status: true,
@@ -99,7 +100,7 @@ export class UsersService {
   private async setStatus(id: string, next: UserStatus, expected: UserStatus) {
     const current = await this.prisma.user.findUnique({ where: { id }, select: { status: true } });
     if (!current) throw new NotFoundException('用户不存在');
-    if (current.status !== expected) throw new BadRequestException(`当前状态为 ${current.status}，不能变更为 ${next}`);
+    if (current.status !== expected) throw new BadRequestException(`当前状态为「${zhUserStatus(current.status)}」，不能变更为「${zhUserStatus(next)}」`);
     return this.prisma.$transaction(async (tx) => {
       const updated = await tx.user.update({ where: { id }, data: { status: next }, select: publicUserSelect });
       // 状态切换时吊销该用户全部会话

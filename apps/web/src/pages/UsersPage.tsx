@@ -4,16 +4,15 @@ import { Modal } from '../components/Modal'
 import { useAuth } from '../context/AuthContext'
 import { useRemote } from '../hooks/useRemote'
 import { api, formatDate } from '../lib/api'
+import { roleLabels, userStatusLabels } from '../lib/labels'
 import type { Role, UserStatus } from '../types'
 import { Empty, PageError, PageLoading } from './DashboardPage'
 
 interface ManagedUser { id: string; username: string; name: string; email?: string | null; phone?: string | null; department?: string | null; status: UserStatus; role: Role | { name: string; label: string }; createdAt?: string }
 
-const roleLabels: Record<Role, string> = { admin: '管理员', support: '技术支持', employee: '员工', customer: '客户' }
 const roleName = (user: ManagedUser): Role => (typeof user.role === 'string' ? user.role : user.role.name as Role)
-const statusLabels: Record<UserStatus, string> = { PENDING: '待审批', ACTIVE: '正常', DISABLED: '已禁用' }
 export function UserStatusBadge({ status }: { status: UserStatus }) {
-  return <span className={`badge ${status === 'ACTIVE' ? 'ok' : status === 'PENDING' ? 'warn' : ''}`}>{statusLabels[status]}</span>
+  return <span className={`badge ${status === 'ACTIVE' ? 'ok' : status === 'PENDING' ? 'warn' : ''}`}>{userStatusLabels[status]}</span>
 }
 
 type Tab = '' | 'PENDING' | 'DISABLED'

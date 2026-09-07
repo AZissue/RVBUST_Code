@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { api } from '../lib/api'
+import { ticketPriorityLabels } from '../lib/labels'
 import type { Customer, Device, Ticket, TicketPriority } from '../types'
 import { Modal } from './Modal'
 import { StatusBadge } from './Status'
@@ -98,7 +99,7 @@ function QuickTicketConfirm({ parsed, canCreateCustomer, onClose, onSaved }: { p
       {!parsed.matchedAssignee && <div className="span-2 match-options"><strong>负责人：未匹配{parsed.assigneeText ? `（${parsed.assigneeText}）` : ''}</strong>{parsed.assigneeCandidates.map((u) => <label key={u.id}><input type="radio" name="assignee-candidate" checked={assigneeId === u.id} onChange={() => setAssigneeId(u.id)} />{u.name}</label>)}</div>}
       <label className="span-2">问题标题<input aria-label="确认标题" maxLength={240} value={title} onChange={(e) => setTitle(e.target.value)} /></label>
       <label className="span-2">问题描述<textarea aria-label="确认问题" rows={3} maxLength={4000} value={issue} onChange={(e) => setIssue(e.target.value)} /></label>
-      <label>优先级<select aria-label="确认优先级" value={priority} onChange={(e) => setPriority(e.target.value as TicketPriority)}><option value="LOW">低</option><option value="MEDIUM">普通</option><option value="HIGH">高</option><option value="URGENT">紧急</option></select></label>
+      <label>优先级<select aria-label="确认优先级" value={priority} onChange={(e) => setPriority(e.target.value as TicketPriority)}>{Object.entries(ticketPriorityLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
       <label>设备型号<input maxLength={100} value={model} onChange={(e) => { setModel(e.target.value); setDeviceId('') }} /></label>
       <label className="span-2">关联设备<select value={deviceId} onChange={(e) => setDeviceId(e.target.value)}><option value="">不关联设备</option>{devices.map((d) => <option key={d.id} value={d.id}>{d.name} {d.serialNumber ?? ''}</option>)}</select></label>
     </fieldset>

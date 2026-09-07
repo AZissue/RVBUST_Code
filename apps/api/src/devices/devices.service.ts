@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { DeviceStatus, type Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { ChangeDeviceStatusDto, CreateDeviceDto, UpdateDeviceDto } from './dto/device.dto.js';
+import { zhStatus } from '../common/status-labels.js';
 
 const deviceInclude = { organization: { select: { id: true, name: true } } } as const;
 
@@ -52,7 +53,7 @@ export class DevicesService {
   async changeStatus(id: string, dto: ChangeDeviceStatusDto) {
     const device = await this.get(id);
     if (!transitions[device.status].includes(dto.status)) {
-      throw new BadRequestException(`不允许从 ${device.status} 变更为 ${dto.status}`);
+      throw new BadRequestException(`不允许从「${zhStatus(device.status)}」变更为「${zhStatus(dto.status)}」`);
     }
     return this.prisma.device.update({ where: { id }, data: { status: dto.status }, include: deviceInclude });
   }
