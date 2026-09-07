@@ -11,22 +11,31 @@ import { FilesService } from './files.service.js';
 
 const allowedTypes = new Set(['image/jpeg', 'image/png', 'image/webp', 'text/plain', 'application/pdf', 'application/zip', 'application/x-zip-compressed']);
 
+const uploadOptions = {
+  storage: diskStorage({
+    destination: resolve(process.env.UPLOAD_DIR ?? './uploads'),
+    filename: (_request: unknown, file: Express.Multer.File, callback: (error: Error | null, filename: string) => void) => callback(null, `${randomUUID()}${extname(file.originalname).toLowerCase()}`),
+  }),
+  limits: { fileSize: Math.max(1, Number(process.env.MAX_UPLOAD_MB ?? 10)) * 1024 * 1024, files: 1 },
+  fileFilter: (_request: unknown, file: Express.Multer.File, callback: (error: Error | null, accept: boolean) => void) => callback(allowedTypes.has(file.mimetype) ? null : new BadRequestException('不支持的文件类型'), allowedTypes.has(file.mimetype)),
+};
+
 @Controller('files')
 export class FilesController {
   constructor(private readonly files: FilesService) {}
 
   @Post('tickets/:ticketId')
-  @UseInterceptors(FileInterceptor('file', {
-    storage: diskStorage({
-      destination: resolve(process.env.UPLOAD_DIR ?? './uploads'),
-      filename: (_request, file, callback) => callback(null, `${randomUUID()}${extname(file.originalname).toLowerCase()}`),
-    }),
-    limits: { fileSize: Math.max(1, Number(process.env.MAX_UPLOAD_MB ?? 10)) * 1024 * 1024, files: 1 },
-    fileFilter: (_request, file, callback) => callback(allowedTypes.has(file.mimetype) ? null : new BadRequestException('不支持的文件类型'), allowedTypes.has(file.mimetype)),
-  }))
+  @UseInterceptors(FileInterceptor('file', uploadOptions))
   upload(@CurrentUser() user: AuthUser, @Param('ticketId') ticketId: string, @UploadedFile() file: Express.Multer.File, @Body() dto: UploadFileDto) {
     if (!file) throw new BadRequestException('请选择文件');
     return this.files.register(user, ticketId, file, dto.visibility);
+  }
+
+  @Post('repairs/:repairOrderId')
+  @UseInterceptors(FileInterceptor('file', uploadOptions))
+  uploadRepair(@CurrentUser() user: AuthUser, @Param('repairOrderId') repairOrderId: string, @UploadedFile() file: Express.Multer.File) {
+    if (!file) throw new BadRequestException('请选择文件');
+    return this.files.registerRepair(user, repairOrderId, file);
   }
 
   @Get(':id')

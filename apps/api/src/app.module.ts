@@ -8,7 +8,10 @@ import { AuthModule } from './auth/auth.module.js';
 import { RolesGuard } from './auth/roles.guard.js';
 import { CustomersModule } from './customers/customers.module.js';
 import { DashboardModule } from './dashboard/dashboard.module.js';
+import { DevicesModule } from './devices/devices.module.js';
 import { FilesModule } from './files/files.module.js';
+import { LoansModule } from './loans/loans.module.js';
+import { RepairsModule } from './repairs/repairs.module.js';
 import { NotificationsModule } from './notifications/notifications.module.js';
 import { PrismaModule } from './prisma/prisma.module.js';
 import { TicketsModule } from './tickets/tickets.module.js';
@@ -20,7 +23,7 @@ import { WorktypesModule } from './worktypes/worktypes.module.js';
 import { HealthController } from './health.controller.js';
 
 @Module({
-  imports: [ConfigModule.forRoot({ isGlobal: true, envFilePath: ['../../.env', '.env'] }), PrismaModule, AuditModule, AuthModule, UsersModule, CustomersModule, TicketsModule, WorkitemsModule, WorklogsModule, WorktypesModule, DashboardModule, NotificationsModule, FilesModule, SystemModule],
+  imports: [ConfigModule.forRoot({ isGlobal: true, envFilePath: ['../../.env', '.env'] }), PrismaModule, AuditModule, AuthModule, UsersModule, CustomersModule, TicketsModule, WorkitemsModule, WorklogsModule, WorktypesModule, DashboardModule, NotificationsModule, FilesModule, SystemModule, DevicesModule, LoansModule, RepairsModule],
   controllers: [HealthController],
   providers: [
     { provide: APP_GUARD, useClass: AuthGuard },

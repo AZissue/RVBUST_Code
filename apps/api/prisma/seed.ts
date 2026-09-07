@@ -34,15 +34,15 @@ async function main() {
   const workTypes = Object.fromEntries((await prisma.workType.findMany()).map((type) => [type.code, type]));
   const admin = await prisma.user.upsert({
     where: { username: 'admin' }, update: {},
-    create: { username: 'admin', name: '系统管理员', email: 'admin@example.local', passwordHash: await hash(requiredPassword('SEED_ADMIN_PASSWORD'), 12), roleId: roles.admin.id },
+    create: { username: 'admin', name: '系统管理员', email: 'admin@example.local', passwordHash: await hash(requiredPassword('SEED_ADMIN_PASSWORD'), 12), roleId: roles.admin.id, status: 'ACTIVE' },
   });
   const support = await prisma.user.upsert({
     where: { username: 'support' }, update: {},
-    create: { username: 'support', name: '技术支持', email: 'support@example.local', passwordHash: await hash(requiredPassword('SEED_SUPPORT_PASSWORD'), 12), roleId: roles.support.id },
+    create: { username: 'support', name: '技术支持', email: 'support@example.local', passwordHash: await hash(requiredPassword('SEED_SUPPORT_PASSWORD'), 12), roleId: roles.support.id, status: 'ACTIVE' },
   });
   const employee = await prisma.user.upsert({
     where: { username: 'employee' }, update: {},
-    create: { username: 'employee', name: '支持协作员工', email: 'employee@example.local', passwordHash: await hash(requiredPassword('SEED_EMPLOYEE_PASSWORD'), 12), roleId: roles.employee.id },
+    create: { username: 'employee', name: '支持协作员工', email: 'employee@example.local', passwordHash: await hash(requiredPassword('SEED_EMPLOYEE_PASSWORD'), 12), roleId: roles.employee.id, status: 'ACTIVE' },
   });
 
   const organization = await prisma.customerOrganization.upsert({
@@ -67,7 +67,7 @@ async function main() {
   });
   await prisma.user.upsert({
     where: { username: 'customer' }, update: { customerOrganizationId: organization.id },
-    create: { username: 'customer', name: '客户测试账号', email: 'customer@example.local', passwordHash: await hash(requiredPassword('SEED_CUSTOMER_PASSWORD'), 12), roleId: roles.customer.id, customerOrganizationId: organization.id },
+    create: { username: 'customer', name: '客户测试账号', email: 'customer@example.local', passwordHash: await hash(requiredPassword('SEED_CUSTOMER_PASSWORD'), 12), roleId: roles.customer.id, status: 'ACTIVE', customerOrganizationId: organization.id },
   });
 
   const ticket = await prisma.ticket.upsert({

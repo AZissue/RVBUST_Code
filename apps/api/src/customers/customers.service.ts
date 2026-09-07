@@ -37,6 +37,21 @@ export class CustomersService {
     return this.prisma.customerOrganization.findUnique({ where: { id }, include: detailInclude });
   }
 
+  async profile(user: AuthUser, id: string) {
+    const organization = await this.prisma.customerOrganization.findUnique({ where: { id } });
+    if (!organization) throw new NotFoundException('客户不存在');
+    if (user.role === 'customer' && user.customerOrganizationId !== id) throw new NotFoundException('客户不存在');
+    if (user.role === 'employee' && organization.technicalOwnerId !== user.id && organization.businessOwnerId !== user.id) throw new NotFoundException('客户不存在');
+    const [contacts, devices, tickets, loanOrders, repairOrders] = await Promise.all([
+      this.prisma.contact.findMany({ where: { organizationId: id }, orderBy: [{ isPrimary: 'desc' }, { name: 'asc' }] }),
+      this.prisma.device.findMany({ where: { organizationId: id }, orderBy: { createdAt: 'desc' } }),
+      this.prisma.ticket.findMany({ where: { organizationId: id }, select: { id: true, number: true, title: true, status: true, priority: true, createdAt: true }, orderBy: { createdAt: 'desc' }, take: 20 }),
+      this.prisma.loanOrder.findMany({ where: { organizationId: id }, include: { contact: { select: { id: true, name: true } }, assignee: { select: { id: true, name: true } }, items: { include: { device: { select: { id: true, name: true, serialNumber: true } } } } }, orderBy: { createdAt: 'desc' }, take: 50 }),
+      this.prisma.repairOrder.findMany({ where: { organizationId: id }, include: { device: { select: { id: true, name: true, serialNumber: true } }, contact: { select: { id: true, name: true } }, assignee: { select: { id: true, name: true } } }, orderBy: { createdAt: 'desc' }, take: 50 }),
+    ]);
+    return { organization, contacts, devices, tickets, loanOrders, repairOrders };
+  }
+
   listDevices(user: AuthUser) {
     return this.prisma.device.findMany({
       where: { organization: this.access.customerWhere(user) },

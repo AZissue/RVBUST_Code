@@ -1,5 +1,6 @@
 export type Role = 'admin' | 'support' | 'employee' | 'customer'
 export type ThemeMode = 'light' | 'dark' | 'system'
+export type UserStatus = 'PENDING' | 'ACTIVE' | 'DISABLED'
 
 export interface User {
   id: string
@@ -7,6 +8,10 @@ export interface User {
   name: string
   email: string | null
   role: Role
+  status?: UserStatus
+  department?: string | null
+  phone?: string | null
+  createdAt?: string
   customerOrganizationId: string | null
   permissions: string[]
 }
@@ -18,6 +23,11 @@ export interface Customer {
   industry?: string
   level?: string
   notes?: string
+  websiteUrl?: string | null
+  wikiRef?: string | null
+  background?: string | null
+  applicationScenarios?: string | null
+  projectNeeds?: string | null
   contacts?: Contact[]
   devices?: Device[]
   projects?: Project[]
@@ -27,8 +37,60 @@ export interface Customer {
 }
 
 export interface Contact { id: string; name: string; title?: string; phone?: string; email?: string; wechat?: string; isPrimary: boolean }
-export interface Device { id: string; name: string; product?: string; cameraModel?: string; serialNumber?: string; sdkVersion?: string; location?: string; organization?: { id: string; name: string } }
+export type DeviceStatus = 'IN_STOCK' | 'LOANED' | 'REPAIRING' | 'RETIRED'
+export interface Device { id: string; name: string; product?: string; cameraModel?: string; serialNumber?: string; sdkVersion?: string; location?: string; status?: DeviceStatus; organizationId?: string; purchaseDate?: string; warrantyUntil?: string; notes?: string; organization?: { id: string; name: string } }
 export interface Project { id: string; name: string; application?: string; status?: string; organization?: { id: string; name: string } }
+
+export type LoanStatus = 'ONGOING' | 'OVERDUE' | 'RETURNED' | 'CANCELLED'
+export interface LoanItem { id: string; returnedAt?: string | null; conditionNote?: string | null; device: { id: string; name: string; serialNumber?: string | null; cameraModel?: string | null } }
+export interface LoanOrder {
+  id: string
+  loanNo: string
+  purpose: string
+  status: LoanStatus
+  loanedAt: string
+  dueAt: string
+  returnedAt?: string | null
+  agreementNo?: string | null
+  note?: string | null
+  organization: { id: string; name: string }
+  contact?: { id: string; name: string } | null
+  assignee?: { id: string; name: string } | null
+  items: LoanItem[]
+}
+
+export type RepairStatus = 'RECEIVED' | 'DIAGNOSING' | 'REPAIRING' | 'SHIPPED' | 'CLOSED'
+export interface RepairEvent { id: string; type: string; content: string; createdAt: string }
+export interface Attachment { id: string; originalName: string; mimeType: string; sizeBytes: number; createdAt: string }
+export interface RepairOrder {
+  id: string
+  repairNo: string
+  symptom: string
+  faultCause?: string | null
+  resolution?: string | null
+  trackingNo?: string | null
+  note?: string | null
+  inWarranty?: boolean | null
+  status: RepairStatus
+  receivedAt: string
+  shippedAt?: string | null
+  closedAt?: string | null
+  device: { id: string; name: string; serialNumber?: string | null; cameraModel?: string | null }
+  organization: { id: string; name: string }
+  contact?: { id: string; name: string } | null
+  assignee?: { id: string; name: string } | null
+  events?: RepairEvent[]
+  attachments?: Attachment[]
+}
+
+export interface CustomerProfile {
+  organization: Customer
+  contacts: Contact[]
+  devices: Device[]
+  tickets: Ticket[]
+  loanOrders: LoanOrder[]
+  repairOrders: RepairOrder[]
+}
 
 export interface WorkType { id: string; code: string; label: string; description?: string; isActive: boolean; sortOrder: number }
 export type WorkItemStatus = 'TODO' | 'IN_PROGRESS' | 'WAITING_FEEDBACK' | 'COMPLETED' | 'CANCELED'

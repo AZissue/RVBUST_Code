@@ -1,10 +1,10 @@
-import { AlertTriangle, ArrowRight, CheckCircle2, CircleDot, Clock3, MessageSquare, Plus, RefreshCw } from 'lucide-react'
+import { AlertTriangle, ArrowRight, CheckCircle2, CircleDot, Clock3, MessageSquare, Plus, RefreshCw, Share2, Wrench } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
 import { PriorityBadge, StatusBadge } from '../components/Status'
 import { QuickTicketInput } from '../components/QuickTicketInput'
 import { useRemote } from '../hooks/useRemote'
 import { api } from '../lib/api'
-import type { Ticket, Worklog } from '../types'
+import type { LoanOrder, RepairOrder, Ticket, Worklog } from '../types'
 
 interface Summary {
   ticketCounts: { todayTodo: number; pending: number; inProgress: number; highPriority: number; waitingCustomer: number; waitingRnd: number; todayCompleted: number }
@@ -13,11 +13,14 @@ interface Summary {
 export function DashboardPage() {
   const navigate = useNavigate()
   const remote = useRemote(() => api<Summary>('/dashboard'), [], true)
+  const overdueLoans = useRemote(() => api<LoanOrder[]>('/loans?status=OVERDUE&mine=1'), [], true)
+  const repairs = useRemote(() => api<RepairOrder[]>('/repairs'), [], true)
   const data = remote.data
   if (remote.loading) return <PageLoading />
   if (!data) return <PageError message={remote.error} retry={remote.refresh} />
   const c = data.ticketCounts
-  const metrics = [['今日待办', c.todayTodo, CircleDot], ['待处理工单', c.pending, Clock3], ['处理中工单', c.inProgress, RefreshCw], ['等待反馈', c.waitingCustomer + c.waitingRnd, MessageSquare], ['今日已完成', c.todayCompleted, CheckCircle2]] as const
+  const repairingCount = (repairs.data ?? []).filter((repair) => ['RECEIVED', 'DIAGNOSING', 'REPAIRING'].includes(repair.status)).length
+  const metrics = [['今日待办', c.todayTodo, CircleDot], ['待处理工单', c.pending, Clock3], ['处理中工单', c.inProgress, RefreshCw], ['等待反馈', c.waitingCustomer + c.waitingRnd, MessageSquare], ['今日已完成', c.todayCompleted, CheckCircle2], ['我的借测逾期', overdueLoans.data?.length ?? 0, Share2], ['返修进行中', repairingCount, Wrench]] as const
   return <div className="page-stack dashboard-page">
     <header className="page-header"><div><span className="eyebrow">TODAY</span><h1>今日工作台</h1></div><div className="header-actions"><button className="button" onClick={() => void remote.refresh()}><RefreshCw size={16} />刷新</button><button className="button primary" onClick={() => navigate('/tickets?create=1')}><Plus size={16} />新建工单</button></div></header>
     {remote.error && <div role="alert" className="form-error">{remote.error}</div>}

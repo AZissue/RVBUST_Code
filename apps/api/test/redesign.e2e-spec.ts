@@ -1,0 +1,151 @@
+import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { Test } from '@nestjs/testing';
+import cookieParser from 'cookie-parser';
+import dotenv from 'dotenv';
+import request, { type Agent } from 'supertest';
+import { randomUUID } from 'node:crypto';
+import { AppModule } from '../src/app.module.js';
+import { PrismaService } from '../src/prisma/prisma.service.js';
+
+dotenv.config({ path: '../../.env' });
+
+describe('Redesign v1 flows (e2e)', () => {
+  let app: INestApplication; let db: PrismaService;
+  let admin: Agent; let support: Agent; let employee: Agent;
+  let adminId: string; let employeeId: string; let orgId: string;
+  const suffix = randomUUID().slice(0, 8);
+  const regUsername = `reg_${suffix}`;
+  const regPassword = 'register-pass-1';
+
+  beforeAll(async () => {
+    if (!process.env.DATABASE_URL?.includes('schema=quick_ticket_test')) throw new Error('Requires isolated quick_ticket_test schema');
+    const module = await Test.createTestingModule({ imports: [AppModule] }).compile();
+    app = module.createNestApplication(); app.setGlobalPrefix('api'); app.use(cookieParser());
+    app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true })); await app.init();
+    db = app.get(PrismaService);
+    admin = request.agent(app.getHttpServer()); support = request.agent(app.getHttpServer()); employee = request.agent(app.getHttpServer());
+    await admin.post('/api/auth/login').send({ username: 'admin', password: process.env.SEED_ADMIN_PASSWORD }).expect(201);
+    await support.post('/api/auth/login').send({ username: 'support', password: process.env.SEED_SUPPORT_PASSWORD }).expect(201);
+    await employee.post('/api/auth/login').send({ username: 'employee', password: process.env.SEED_EMPLOYEE_PASSWORD }).expect(201);
+    adminId = (await db.user.findUniqueOrThrow({ where: { username: 'admin' } })).id;
+    employeeId = (await db.user.findUniqueOrThrow({ where: { username: 'employee' } })).id;
+    orgId = (await db.customerOrganization.upsert({ where: { name: `借测客户-${suffix}` }, update: {}, create: { name: `借测客户-${suffix}` } })).id;
+  });
+
+  afterAll(async () => { await app?.close(); });
+
+  it('registers a PENDING user, blocks login until admin approval, then allows login', async () => {
+    const registered = await request(app.getHttpServer()).post('/api/auth/register').send({ username: regUsername, password: regPassword, name: '注册测试', department: '售后部' }).expect(201);
+    expect(registered.body.message).toContain('审批');
+    const pending = await db.user.findUniqueOrThrow({ where: { username: regUsername }, include: { role: true } });
+    expect(pending.status).toBe('PENDING');
+    expect(pending.role).toMatchObject({ name: 'employee' });
+    // 重复用户名返回同样的模糊提示（防枚举）
+    const dup = await request(app.getHttpServer()).post('/api/auth/register').send({ username: regUsername, password: regPassword, name: '注册测试' }).expect(201);
+    expect(dup.body.message).toBe(registered.body.message);
+    // PENDING 登录被拒
+    const rejected = await request(app.getHttpServer()).post('/api/auth/login').send({ username: regUsername, password: regPassword }).expect(401);
+    expect(rejected.body.message).toBe('账号等待管理员审批');
+    // admin 收到审批通知（幂等）
+    const notices = await db.notification.findMany({ where: { recipientId: adminId, dedupeKey: `user-reg:${pending.id}` } });
+    expect(notices).toHaveLength(1);
+    expect(notices[0].type).toBe('USER_REGISTRATION');
+    // 审批后登录成功
+    await admin.post(`/api/users/${pending.id}/approve`).expect(201);
+    await request(app.getHttpServer()).post('/api/auth/login').send({ username: regUsername, password: regPassword }).expect(201);
+  });
+
+  it('revokes sessions on disable and blocks disabled login', async () => {
+    const user = await db.user.findUniqueOrThrow({ where: { username: regUsername } });
+    const session = request.agent(app.getHttpServer());
+    await session.post('/api/auth/login').send({ username: regUsername, password: regPassword }).expect(201);
+    await session.get('/api/auth/me').expect(200);
+    await admin.post(`/api/users/${user.id}/disable`).expect(201);
+    // 旧会话立即失效
+    await session.get('/api/auth/me').expect(401);
+    const login = await request(app.getHttpServer()).post('/api/auth/login').send({ username: regUsername, password: regPassword }).expect(401);
+    expect(login.body.message).toBe('账号已被禁用');
+    // 恢复
+    await admin.post(`/api/users/${user.id}/enable`).expect(201);
+    await request(app.getHttpServer()).post('/api/auth/login').send({ username: regUsername, password: regPassword }).expect(201);
+  });
+
+  it('runs loan lifecycle: create flips devices to LOANED, return flips back to IN_STOCK', async () => {
+    const d1 = await db.device.create({ data: { organizationId: orgId, name: '借测相机1', serialNumber: `LN1-${suffix}` } });
+    const d2 = await db.device.create({ data: { organizationId: orgId, name: '借测相机2', serialNumber: `LN2-${suffix}` } });
+    const created = (await support.post('/api/loans').send({ organizationId: orgId, purpose: '现场评估', dueAt: '2030-01-01', deviceIds: [d1.id, d2.id] }).expect(201)).body;
+    expect(created.loanNo).toMatch(/^L-\d{6}\d{3}$/);
+    expect((await db.device.findUniqueOrThrow({ where: { id: d1.id } })).status).toBe('LOANED');
+    // 非在库设备不能再借
+    await support.post('/api/loans').send({ organizationId: orgId, purpose: '重复借出', dueAt: '2030-01-01', deviceIds: [d1.id] }).expect(400);
+    // 指派 + 幂等通知
+    await admin.post(`/api/loans/${created.id}/assign`).send({ assigneeId: employeeId }).expect(201);
+    await admin.post(`/api/loans/${created.id}/assign`).send({ assigneeId: employeeId }).expect(201);
+    expect(await db.notification.count({ where: { recipientId: employeeId, dedupeKey: `loan-assign:${created.id}:${employeeId}` } })).toBe(1);
+    // 归还
+    const returned = (await support.post(`/api/loans/${created.id}/return`).send({ items: [{ deviceId: d1.id, conditionNote: '外观完好' }] }).expect(201)).body;
+    expect(returned.status).toBe('RETURNED');
+    expect(returned.returnedAt).toBeTruthy();
+    expect((await db.device.findUniqueOrThrow({ where: { id: d1.id } })).status).toBe('IN_STOCK');
+    expect((await db.device.findUniqueOrThrow({ where: { id: d2.id } })).status).toBe('IN_STOCK');
+  });
+
+  it('lazily marks overdue loans and notifies once', async () => {
+    const device = await db.device.create({ data: { organizationId: orgId, name: '逾期相机', serialNumber: `OD-${suffix}` } });
+    const created = (await support.post('/api/loans').send({ organizationId: orgId, purpose: '逾期测试', loanedAt: '2020-01-01', dueAt: '2020-02-01', deviceIds: [device.id] }).expect(201)).body;
+    expect(created.status).toBe('ONGOING');
+    const listed = (await admin.get('/api/loans?status=OVERDUE').expect(200)).body;
+    const found = listed.find((loan: { id: string }) => loan.id === created.id);
+    expect(found).toBeTruthy();
+    expect((await db.loanOrder.findUniqueOrThrow({ where: { id: created.id } })).status).toBe('OVERDUE');
+    const supporter = await db.user.findUniqueOrThrow({ where: { username: 'support' } });
+    expect(await db.notification.count({ where: { dedupeKey: `loan-overdue:${created.id}`, recipientId: supporter.id } })).toBe(1);
+    // 再次列表不重复通知
+    await admin.get('/api/loans').expect(200);
+    expect(await db.notification.count({ where: { dedupeKey: `loan-overdue:${created.id}` } })).toBe(1);
+  });
+
+  it('hides other users loans from employee role', async () => {
+    const all = (await employee.get('/api/loans').expect(200)).body;
+    for (const loan of all) expect([loan.assigneeId, loan.createdById]).toContain(employeeId);
+    const others = await db.loanOrder.findFirst({ where: { NOT: { OR: [{ assigneeId: employeeId }, { createdById: employeeId }] } } });
+    if (others) await employee.get(`/api/loans/${others.id}`).expect(404);
+  });
+
+  it('enforces repair state machine and auto-fills warranty', async () => {
+    const future = new Date(Date.now() + 365 * 86400_000);
+    const device = await db.device.create({ data: { organizationId: orgId, name: '返修相机', serialNumber: `RP-${suffix}`, warrantyUntil: future } });
+    const created = (await support.post('/api/repairs').send({ serialNumber: device.serialNumber, symptom: '无法出图' }).expect(201)).body;
+    expect(created.repairNo).toMatch(/^RP-\d{6}\d{3}$/);
+    expect(created.inWarranty).toBe(true);
+    expect((await db.device.findUniqueOrThrow({ where: { id: device.id } })).status).toBe('REPAIRING');
+    // 非法跳级流转
+    await support.post(`/api/repairs/${created.id}/transition`).send({ status: 'SHIPPED', trackingNo: 'SF123' }).expect(400);
+    // 逐级流转
+    await support.post(`/api/repairs/${created.id}/transition`).send({ status: 'DIAGNOSING' }).expect(201);
+    await support.post(`/api/repairs/${created.id}/transition`).send({ status: 'REPAIRING' }).expect(201);
+    await support.post(`/api/repairs/${created.id}/transition`).send({ status: 'SHIPPED' }).expect(400); // 缺物流单号
+    await support.post(`/api/repairs/${created.id}/transition`).send({ status: 'SHIPPED', trackingNo: 'SF123456' }).expect(201);
+    await support.post(`/api/repairs/${created.id}/transition`).send({ status: 'CLOSED' }).expect(201);
+    expect((await db.device.findUniqueOrThrow({ where: { id: device.id } })).status).toBe('IN_STOCK');
+    const detail = (await support.get(`/api/repairs/${created.id}`).expect(200)).body;
+    expect(detail.events.map((e: { type: string }) => e.type)).toContain('STATUS_CHANGE');
+  });
+
+  it('rejects invalid device status transitions', async () => {
+    const device = await db.device.create({ data: { organizationId: orgId, name: '状态机相机', serialNumber: `SM-${suffix}` } });
+    await admin.patch(`/api/devices/${device.id}/status`).send({ status: 'REPAIRING' }).expect(400); // IN_STOCK 不能直达 REPAIRING
+    await admin.patch(`/api/devices/${device.id}/status`).send({ status: 'RETIRED' }).expect(200);
+    await admin.patch(`/api/devices/${device.id}/status`).send({ status: 'IN_STOCK' }).expect(400); // RETIRED 不可恢复
+  });
+
+  it('returns aggregated customer profile with object-level isolation', async () => {
+    const profile = (await admin.get(`/api/customers/${orgId}/profile`).expect(200)).body;
+    expect(profile.organization.id).toBe(orgId);
+    expect(profile).toHaveProperty('contacts');
+    expect(profile.loanOrders.length).toBeGreaterThan(0);
+    expect(profile.repairOrders.length).toBeGreaterThan(0);
+    // employee 非 owner 不可见
+    await employee.get(`/api/customers/${orgId}/profile`).expect(404);
+  });
+});

@@ -12,7 +12,7 @@ export class QuickTicketsService {
   async parse(user: AuthUser, rawText: string) {
     this.access.requireInternal(user);
     const customers = await this.prisma.customerOrganization.findMany({ where: this.access.customerWhere(user), select: { id: true, name: true } });
-    const users = await this.prisma.user.findMany({ where: { isActive: true, role: { name: { in: ['admin', 'support', 'employee'] } } }, select: { id: true, name: true, username: true } });
+    const users = await this.prisma.user.findMany({ where: { status: "ACTIVE", role: { name: { in: ['admin', 'support', 'employee'] } } }, select: { id: true, name: true, username: true } });
     const modelHint = rawText.match(/\b[A-Za-z]+[- ]?\d{3,}[A-Za-z0-9-]*\b/)?.[0]?.replace(/ /g, '');
     const modelCandidates = modelHint ? await this.prisma.device.findMany({ where: { organizationId: { in: customers.map((c) => c.id) }, cameraModel: { equals: modelHint, mode: 'insensitive' } }, select: { cameraModel: true }, take: 20 }) : [];
     const result = await this.parser.parse(rawText, { customers, users, currentUserId: user.id, deviceModels: [...new Set(modelCandidates.map((d) => d.cameraModel).filter((m): m is string => Boolean(m)))] });
@@ -33,7 +33,7 @@ export class QuickTicketsService {
     this.access.requireInternal(user);
     await this.access.requireTicket(user, id);
     if (!dto.issue.trim()) throw new BadRequestException('问题描述不能为空');
-    if (!await this.prisma.user.findFirst({ where: { id: dto.assigneeId, isActive: true, role: { name: { in: ['admin', 'support', 'employee'] } } } })) throw new BadRequestException('负责人不可分配');
+    if (!await this.prisma.user.findFirst({ where: { id: dto.assigneeId, status: "ACTIVE", role: { name: { in: ['admin', 'support', 'employee'] } } } })) throw new BadRequestException('负责人不可分配');
     return this.prisma.$transaction(async (tx) => {
       const result = await tx.ticket.updateMany({ where: { id, organizationId: dto.organizationId, updatedAt: new Date(dto.expectedUpdatedAt) }, data: { assigneeId: dto.assigneeId, priority: dto.priority, updatedAt: new Date() } });
       if (!result.count) throw new ConflictException('工单已变化或客户不一致，请重新检查相似工单');

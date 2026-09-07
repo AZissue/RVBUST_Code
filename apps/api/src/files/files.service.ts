@@ -20,12 +20,34 @@ export class FilesService {
     return attachment;
   }
 
-  async getForDownload(user: AuthUser, id: string) {
-    const attachment = await this.prisma.attachment.findUnique({ where: { id }, include: { ticket: { select: { id: true } } } });
-    if (!attachment?.ticket) throw new NotFoundException('附件不存在');
-    await this.access.requireTicket(user, attachment.ticket.id);
-    if (user.role === 'customer' && attachment.visibility !== Visibility.CUSTOMER) throw new NotFoundException('附件不存在');
+  async registerRepair(user: AuthUser, repairOrderId: string, file: Express.Multer.File) {
+    const repair = await this.prisma.repairOrder.findUnique({ where: { id: repairOrderId }, select: { id: true, assigneeId: true, createdById: true } });
+    if (!repair) throw new NotFoundException('返修单不存在');
+    const allowed = user.role === 'admin' || user.role === 'support' || repair.assigneeId === user.id || repair.createdById === user.id;
+    if (!allowed) throw new NotFoundException('返修单不存在');
+    const attachment = await this.prisma.attachment.create({
+      data: { repairOrderId, storageKey: file.filename, originalName: file.originalname, mimeType: file.mimetype, sizeBytes: file.size, visibility: Visibility.INTERNAL },
+    });
+    await this.prisma.repairEvent.create({
+      data: { repairOrderId, authorId: user.id, type: 'ATTACHMENT', content: `上传附件：${file.originalname}`, metadata: { attachmentId: attachment.id } },
+    });
     return attachment;
+  }
+
+  async getForDownload(user: AuthUser, id: string) {
+    const attachment = await this.prisma.attachment.findUnique({ where: { id }, include: { ticket: { select: { id: true } }, repairOrder: { select: { id: true, assigneeId: true, createdById: true } } } });
+    if (attachment?.ticket) {
+      await this.access.requireTicket(user, attachment.ticket.id);
+      if (user.role === 'customer' && attachment.visibility !== Visibility.CUSTOMER) throw new NotFoundException('附件不存在');
+      return attachment;
+    }
+    if (attachment?.repairOrder) {
+      const repair = attachment.repairOrder;
+      const allowed = user.role === 'admin' || user.role === 'support' || repair.assigneeId === user.id || repair.createdById === user.id;
+      if (!allowed) throw new NotFoundException('附件不存在');
+      return attachment;
+    }
+    throw new NotFoundException('附件不存在');
   }
 }
 

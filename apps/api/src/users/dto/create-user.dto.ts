@@ -1,4 +1,4 @@
-import { IsBoolean, IsEmail, IsIn, IsOptional, IsString, IsUUID, Length, Matches } from 'class-validator';
+import { IsEmail, IsIn, IsOptional, IsString, IsUUID, Length, Matches } from 'class-validator';
 
 export class CreateUserDto {
   @IsString() @Length(3, 60) @Matches(/^[a-zA-Z0-9._-]+$/) username!: string;
@@ -7,7 +7,6 @@ export class CreateUserDto {
   @IsIn(['admin', 'support', 'employee', 'customer']) role!: string;
   @IsOptional() @IsEmail() email?: string;
   @IsOptional() @IsString() @Length(0, 40) phone?: string;
-  @IsOptional() @IsBoolean() isActive?: boolean;
+  @IsOptional() @IsString() @Length(0, 100) department?: string;
   @IsOptional() @IsUUID() customerOrganizationId?: string;
 }
-

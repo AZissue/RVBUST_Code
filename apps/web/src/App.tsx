@@ -2,10 +2,14 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import { AppShell } from './components/AppShell'
 import { useAuth } from './context/AuthContext'
 import { AuditPage } from './pages/AuditPage'
-import { CustomerDetailPage, CustomersPage } from './pages/CustomersPage'
+import { CustomerProfilePage } from './pages/CustomerProfilePage'
+import { CustomersPage } from './pages/CustomersPage'
 import { DashboardPage } from './pages/DashboardPage'
 import { DevicesPage } from './pages/DevicesPage'
+import { LoansPage } from './pages/LoansPage'
 import { LoginPage } from './pages/LoginPage'
+import { RegisterPage } from './pages/RegisterPage'
+import { RepairsPage } from './pages/RepairsPage'
 import { ReportsPage } from './pages/ReportsPage'
 import { SettingsPage, TeamsPage } from './pages/SystemPages'
 import { TicketDetailPage, TicketsPage } from './pages/TicketsPage'
@@ -26,6 +30,7 @@ export default function App() {
   const { user } = useAuth()
   return <Routes>
     <Route path="/login" element={user ? <Navigate to="/" replace /> : <LoginPage />} />
+    <Route path="/register" element={user ? <Navigate to="/" replace /> : <RegisterPage />} />
     <Route path="/" element={<ProtectedApp />}>
       <Route index element={<DashboardPage />} />
       <Route path="my-work" element={<TicketsPage mine />} />
@@ -33,8 +38,10 @@ export default function App() {
       <Route path="tickets" element={<TicketsPage />} />
       <Route path="tickets/:id" element={<TicketDetailPage />} />
       <Route path="customers" element={<CustomersPage />} />
-      <Route path="customers/:id" element={<CustomerDetailPage />} />
+      <Route path="customers/:id" element={<CustomerProfilePage />} />
       <Route path="devices" element={<DevicesPage />} />
+      <Route path="loans" element={<LoansPage />} />
+      <Route path="repairs" element={<RepairsPage />} />
       <Route path="worklogs" element={<WorklogsPage />} />
       <Route path="reports" element={<ReportsPage />} />
       <Route path="stats" element={<ReportsPage />} />

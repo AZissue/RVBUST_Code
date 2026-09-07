@@ -19,7 +19,7 @@ export class AuthGuard implements CanActivate {
       where: { tokenHash },
       include: { user: { include: { role: { include: { permissions: { include: { permission: true } } } } } } },
     });
-    if (!session || session.expiresAt <= new Date() || !session.user.isActive) {
+    if (!session || session.expiresAt <= new Date() || session.user.status !== 'ACTIVE') {
       if (session) await this.prisma.authSession.delete({ where: { id: session.id } }).catch(() => undefined);
       throw new UnauthorizedException('登录已失效');
     }

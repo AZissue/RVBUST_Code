@@ -6,6 +6,7 @@ import { QuickTicketsService } from './quick-tickets.service.js';
 import { QUICK_INPUT_PARSER } from './quick-input.parser.js';
 import { AIParser } from './ai.parser.js';
 import { AIModule } from '../ai/ai.module.js';
+import { NotificationsModule } from '../notifications/notifications.module.js';
 
-@Module({ imports: [AuthModule, AIModule], controllers: [TicketsController], providers: [TicketsService, QuickTicketsService, { provide: QUICK_INPUT_PARSER, useClass: AIParser }], exports: [TicketsService] })
+@Module({ imports: [AuthModule, AIModule, NotificationsModule], controllers: [TicketsController], providers: [TicketsService, QuickTicketsService, { provide: QUICK_INPUT_PARSER, useClass: AIParser }], exports: [TicketsService] })
 export class TicketsModule {}

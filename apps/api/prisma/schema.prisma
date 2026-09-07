@@ -82,6 +82,34 @@ enum NotificationSeverity {
   CRITICAL
 }
 
+enum UserStatus {
+  PENDING
+  ACTIVE
+  DISABLED
+}
+
+enum DeviceStatus {
+  IN_STOCK
+  LOANED
+  REPAIRING
+  RETIRED
+}
+
+enum LoanStatus {
+  ONGOING
+  OVERDUE
+  RETURNED
+  CANCELLED
+}
+
+enum RepairStatus {
+  RECEIVED
+  DIAGNOSING
+  REPAIRING
+  SHIPPED
+  CLOSED
+}
+
 model Role {
   id          String           @id @default(uuid()) @db.Uuid
   name        String           @unique @db.VarChar(40)
@@ -146,7 +174,8 @@ model User {
   passwordHash           String                @map("password_hash")
   name                   String                @db.VarChar(100)
   phone                  String?               @db.VarChar(40)
-  isActive               Boolean               @default(true) @map("is_active")
+  department             String?               @db.VarChar(100)
+  status                 UserStatus            @default(PENDING)
   roleId                 String                @db.Uuid @map("role_id")
   customerOrganizationId String?               @db.Uuid @map("customer_organization_id")
   role                   Role                  @relation(fields: [roleId], references: [id])
@@ -155,6 +184,8 @@ model User {
   sessions               AuthSession[]
   createdTickets         Ticket[]              @relation("TicketCreator")
   assignedTickets        Ticket[]              @relation("TicketAssignee")
+  assignedLoans          LoanOrder[]           @relation("LoanAssignee")
+  assignedRepairs        RepairOrder[]         @relation("RepairAssignee")
   ticketCollaborations   TicketCollaborator[]
   ticketEvents           TicketEvent[]
   authoredWorklogs       Worklog[]             @relation("WorklogAuthor")
@@ -203,6 +234,11 @@ model CustomerOrganization {
   industry         String?   @db.VarChar(100)
   level            String?   @db.VarChar(20)
   notes            String?
+  websiteUrl            String?              @map("website_url") @db.VarChar(500)
+  wikiRef               String?              @map("wiki_ref") @db.VarChar(500)
+  background            String?
+  applicationScenarios  String?              @map("application_scenarios")
+  projectNeeds          String?              @map("project_needs")
   technicalOwnerId String?   @db.Uuid @map("technical_owner_id")
   businessOwnerId  String?   @db.Uuid @map("business_owner_id")
   technicalOwner   User?     @relation("TechnicalOwner", fields: [technicalOwnerId], references: [id], onDelete: SetNull)
@@ -214,6 +250,8 @@ model CustomerOrganization {
   workItems        WorkItem[]
   worklogs         Worklog[]
   portalUsers      User[]    @relation("CustomerPortalUsers")
+  loanOrders       LoanOrder[]
+  repairOrders     RepairOrder[]
   createdAt        DateTime  @default(now()) @map("created_at")
   updatedAt        DateTime  @updatedAt @map("updated_at")
 
@@ -233,6 +271,8 @@ model Contact {
   wechat         String?              @db.VarChar(100)
   isPrimary      Boolean              @default(false) @map("is_primary")
   tickets        Ticket[]
+  loanOrders     LoanOrder[]
+  repairOrders   RepairOrder[]
   createdAt      DateTime             @default(now()) @map("created_at")
   updatedAt      DateTime             @updatedAt @map("updated_at")
 
@@ -252,8 +292,13 @@ model Device {
   sdkVersion     String?              @map("sdk_version") @db.VarChar(80)
   firmware       String?              @db.VarChar(80)
   location       String?              @db.VarChar(200)
+  status         DeviceStatus         @default(IN_STOCK)
+  purchaseDate   DateTime?            @map("purchase_date") @db.Date
+  warrantyUntil  DateTime?            @map("warranty_until") @db.Date
   notes          String?
   tickets        Ticket[]
+  loanItems      LoanItem[]
+  repairOrders   RepairOrder[]
   createdAt      DateTime             @default(now()) @map("created_at")
   updatedAt      DateTime             @updatedAt @map("updated_at")
 
@@ -499,6 +544,7 @@ model Attachment {
   id           String       @id @default(uuid()) @db.Uuid
   ticketId     String?      @db.Uuid @map("ticket_id")
   ticketEventId String?     @db.Uuid @map("ticket_event_id")
+  repairOrderId String?     @db.Uuid @map("repair_order_id")
   storageKey   String       @unique @map("storage_key") @db.VarChar(300)
   originalName String       @map("original_name") @db.VarChar(255)
   mimeType     String       @map("mime_type") @db.VarChar(120)
@@ -506,11 +552,102 @@ model Attachment {
   visibility   Visibility   @default(INTERNAL)
   ticket       Ticket?      @relation(fields: [ticketId], references: [id], onDelete: Cascade)
   ticketEvent  TicketEvent? @relation(fields: [ticketEventId], references: [id], onDelete: Cascade)
+  repairOrder  RepairOrder? @relation(fields: [repairOrderId], references: [id], onDelete: Cascade)
   createdAt    DateTime     @default(now()) @map("created_at")
   updatedAt    DateTime     @updatedAt @map("updated_at")
 
   @@index([ticketId])
+  @@index([repairOrderId])
   @@map("attachments")
+}
+
+model LoanOrder {
+  id          String     @id @default(uuid()) @db.Uuid
+  loanNo      String     @unique @map("loan_no") @db.VarChar(32)
+  organizationId String  @db.Uuid @map("organization_id")
+  contactId   String?    @db.Uuid @map("contact_id")
+  assigneeId  String?    @db.Uuid @map("assignee_id")
+  purpose     String     @db.VarChar(500)
+  status      LoanStatus @default(ONGOING)
+  loanedAt    DateTime   @map("loaned_at") @db.Date
+  dueAt       DateTime   @map("due_at") @db.Date
+  returnedAt  DateTime?  @map("returned_at")
+  agreementNo String?    @map("agreement_no") @db.VarChar(100)
+  note        String?
+  createdById String     @db.Uuid @map("created_by_id")
+  organization CustomerOrganization @relation(fields: [organizationId], references: [id])
+  contact     Contact?   @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  assignee    User?      @relation("LoanAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  items       LoanItem[]
+  createdAt   DateTime   @default(now()) @map("created_at")
+  updatedAt   DateTime   @updatedAt @map("updated_at")
+
+  @@index([organizationId])
+  @@index([assigneeId, status])
+  @@index([status, dueAt])
+  @@map("loan_orders")
+}
+
+model LoanItem {
+  id            String     @id @default(uuid()) @db.Uuid
+  loanOrderId   String     @db.Uuid @map("loan_order_id")
+  deviceId      String     @db.Uuid @map("device_id")
+  returnedAt    DateTime?  @map("returned_at")
+  conditionNote String?    @map("condition_note")
+  loanOrder     LoanOrder  @relation(fields: [loanOrderId], references: [id], onDelete: Cascade)
+  device        Device     @relation(fields: [deviceId], references: [id])
+  createdAt     DateTime   @default(now()) @map("created_at")
+
+  @@unique([loanOrderId, deviceId])
+  @@index([deviceId])
+  @@map("loan_items")
+}
+
+model RepairOrder {
+  id          String       @id @default(uuid()) @db.Uuid
+  repairNo    String       @unique @map("repair_no") @db.VarChar(32)
+  deviceId    String       @db.Uuid @map("device_id")
+  organizationId String    @db.Uuid @map("organization_id")
+  contactId   String?      @db.Uuid @map("contact_id")
+  assigneeId  String?      @db.Uuid @map("assignee_id")
+  symptom     String       @db.VarChar(1000)
+  faultCause  String?      @map("fault_cause")
+  status      RepairStatus @default(RECEIVED)
+  inWarranty  Boolean?     @map("in_warranty")
+  receivedAt  DateTime     @map("received_at") @db.Date
+  shippedAt   DateTime?    @map("shipped_at")
+  closedAt    DateTime?    @map("closed_at")
+  trackingNo  String?      @map("tracking_no") @db.VarChar(100)
+  resolution  String?
+  note        String?
+  createdById String       @db.Uuid @map("created_by_id")
+  device      Device       @relation(fields: [deviceId], references: [id])
+  organization CustomerOrganization @relation(fields: [organizationId], references: [id])
+  contact     Contact?     @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  assignee    User?        @relation("RepairAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  events      RepairEvent[]
+  attachments Attachment[]
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
+
+  @@index([organizationId])
+  @@index([deviceId])
+  @@index([assigneeId, status])
+  @@map("repair_orders")
+}
+
+model RepairEvent {
+  id            String      @id @default(uuid()) @db.Uuid
+  repairOrderId String      @db.Uuid @map("repair_order_id")
+  authorId      String      @db.Uuid @map("author_id")
+  type          String      @db.VarChar(60)
+  content       String
+  metadata      Json?
+  repairOrder   RepairOrder @relation(fields: [repairOrderId], references: [id], onDelete: Cascade)
+  createdAt     DateTime    @default(now()) @map("created_at")
+
+  @@index([repairOrderId, createdAt])
+  @@map("repair_events")
 }
 
 model SystemSetting {

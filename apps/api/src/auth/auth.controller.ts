@@ -4,6 +4,7 @@ import { AuthService } from './auth.service.js';
 import type { AuthUser } from './auth.types.js';
 import { CurrentUser } from './current-user.decorator.js';
 import { LoginDto } from './dto/login.dto.js';
+import { RegisterDto } from './dto/register.dto.js';
 import { Public } from './public.decorator.js';
 
 @Controller('auth')
@@ -18,6 +19,12 @@ export class AuthController {
       httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/', maxAge: result.ttlHours * 3_600_000,
     });
     return { user: result.user };
+  }
+
+  @Public()
+  @Post('register')
+  register(@Body() dto: RegisterDto, @Req() request: Request) {
+    return this.auth.register(dto, request.ip ?? 'unknown', request.get('user-agent'));
   }
 
   @Get('me')
