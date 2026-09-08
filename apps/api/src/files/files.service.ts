@@ -11,13 +11,15 @@ export class FilesService {
   async register(user: AuthUser, ticketId: string, file: Express.Multer.File, requestedVisibility?: Visibility) {
     await this.access.requireTicket(user, ticketId);
     const visibility = user.role === 'customer' ? Visibility.CUSTOMER : (requestedVisibility ?? Visibility.INTERNAL);
-    const attachment = await this.prisma.attachment.create({
+    return this.prisma.$transaction(async (tx) => {
+    const attachment = await tx.attachment.create({
       data: { ticketId, storageKey: file.filename, originalName: file.originalname, mimeType: file.mimetype, sizeBytes: file.size, visibility },
     });
-    await this.prisma.ticketEvent.create({
+    await tx.ticketEvent.create({
       data: { ticketId, authorId: user.id, type: 'ATTACHMENT', visibility, content: `上传附件：${file.originalname}`, metadata: { attachmentId: attachment.id } },
     });
     return attachment;
+    });
   }
 
   async registerRepair(user: AuthUser, repairOrderId: string, file: Express.Multer.File) {
@@ -25,13 +27,15 @@ export class FilesService {
     if (!repair) throw new NotFoundException('返修单不存在');
     const allowed = user.role === 'admin' || user.role === 'support' || repair.assigneeId === user.id || repair.createdById === user.id;
     if (!allowed) throw new NotFoundException('返修单不存在');
-    const attachment = await this.prisma.attachment.create({
+    return this.prisma.$transaction(async (tx) => {
+    const attachment = await tx.attachment.create({
       data: { repairOrderId, storageKey: file.filename, originalName: file.originalname, mimeType: file.mimetype, sizeBytes: file.size, visibility: Visibility.INTERNAL },
     });
-    await this.prisma.repairEvent.create({
+    await tx.repairEvent.create({
       data: { repairOrderId, authorId: user.id, type: 'ATTACHMENT', content: `上传附件：${file.originalname}`, metadata: { attachmentId: attachment.id } },
     });
     return attachment;
+    });
   }
 
   async getForDownload(user: AuthUser, id: string) {
@@ -50,4 +54,3 @@ export class FilesService {
     throw new NotFoundException('附件不存在');
   }
 }
-

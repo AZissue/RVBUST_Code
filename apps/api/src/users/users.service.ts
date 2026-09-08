@@ -59,6 +59,9 @@ export class UsersService {
     const role = dto.role ? await this.prisma.role.findUnique({ where: { name: dto.role } }) : null;
     if (dto.role && !role) throw new BadRequestException('角色不存在');
     const nextRole = dto.role ?? current.role.name;
+    if (id === actorId && nextRole !== current.role.name) {
+      throw new BadRequestException('不能修改当前登录账号的角色，请由其他管理员操作');
+    }
     const nextOrg = dto.customerOrganizationId === undefined ? current.customerOrganizationId : dto.customerOrganizationId;
     if (nextRole === 'customer' && !nextOrg) throw new BadRequestException('客户账号必须绑定客户公司');
     const roleChanged = Boolean(role && role.id !== current.roleId);
@@ -102,7 +105,9 @@ export class UsersService {
     if (!current) throw new NotFoundException('用户不存在');
     if (current.status !== expected) throw new BadRequestException(`当前状态为「${zhUserStatus(current.status)}」，不能变更为「${zhUserStatus(next)}」`);
     return this.prisma.$transaction(async (tx) => {
-      const updated = await tx.user.update({ where: { id }, data: { status: next }, select: publicUserSelect });
+      const changed = await tx.user.updateMany({ where: { id, status: expected }, data: { status: next } });
+      if (changed.count !== 1) throw new ConflictException('用户状态已变化，请刷新后重试');
+      const updated = await tx.user.findUniqueOrThrow({ where: { id }, select: publicUserSelect });
       // 状态切换时吊销该用户全部会话
       await tx.authSession.deleteMany({ where: { userId: id } });
       return updated;

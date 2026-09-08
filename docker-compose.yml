@@ -25,6 +25,7 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
       API_PORT: 3001
+      UPLOAD_DIR: /app/uploads
     depends_on:
       postgres:
         condition: service_healthy
@@ -46,4 +47,3 @@ services:
 volumes:
   postgres_data:
   uploads_data:
-
