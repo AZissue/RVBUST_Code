@@ -85,7 +85,7 @@ export class TicketsService {
     const collaboratorIds = user.role === 'customer' ? [] : [...new Set(dto.collaboratorIds ?? [])];
     const assigneeId = user.role === 'customer' ? undefined : (dto.assigneeId ?? user.id);
     const data: Omit<Prisma.TicketCreateInput, 'number'> = {
-      source: dto.source, category: dto.category, title: dto.title,
+      source: dto.source ?? 'AFTER_SALES_INCIDENT', category: dto.category, title: dto.title,
       rawText: dto.rawText, requestKey: dto.requestKey,
       description: dto.description, priority: dto.priority, cameraModel: dto.cameraModel,
       serialNumber: dto.serialNumber, sdkVersion: dto.sdkVersion, systemEnvironment: dto.systemEnvironment,

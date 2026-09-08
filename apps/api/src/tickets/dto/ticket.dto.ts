@@ -5,7 +5,7 @@ import { IsArray, IsDateString, IsEnum, IsOptional, IsString, IsUUID, Length } f
 export class CreateTicketDto {
   @IsOptional() @IsString() @Length(1, 20000) rawText?: string;
   @IsOptional() @IsUUID() requestKey?: string;
-  @IsEnum(TicketSource) source!: TicketSource;
+  @IsOptional() @IsEnum(TicketSource) source?: TicketSource;
   @IsUUID() organizationId!: string;
   @IsOptional() @IsUUID() contactId?: string;
   @IsOptional() @IsUUID() deviceId?: string;
