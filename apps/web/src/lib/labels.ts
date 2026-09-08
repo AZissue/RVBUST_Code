@@ -3,6 +3,7 @@ import type { DeviceOwnerType, DeviceStatus, LoanStatus, RepairStatus, Role, Tic
 export const ticketStatusLabels: Record<TicketStatus, string> = { PENDING: '待处理', IN_PROGRESS: '处理中', WAITING_CUSTOMER: '等待客户', WAITING_RND: '等待研发', RESOLVED: '已解决', CLOSED: '已关闭' }
 export const ticketPriorityLabels: Record<TicketPriority, string> = { LOW: '低', MEDIUM: '中', HIGH: '高', URGENT: '紧急' }
 export const ticketSourceLabels: Record<string, string> = { CUSTOMER_INQUIRY: '客户咨询', PRE_SALES_SELECTION: '售前选型', AFTER_SALES_INCIDENT: '售后故障', ON_SITE_DEBUGGING: '现场调试', INTERNAL_TESTING: '内部测试', TRAINING: '培训', SDK_SOFTWARE: 'SDK与软件', OTHER: '其他' }
+export const TICKET_CATEGORIES = ['售前咨询', '客户培训', '点云调试', 'SDK 开发', '手眼标定', '硬件故障', '其他'] as const
 export const ticketEventTypeLabels: Record<string, string> = { CUSTOMER_REPLY: '客户回复', INTERNAL_NOTE: '跟进记录', STATUS_CHANGE: '状态变更', ASSIGNMENT: '指派', ATTACHMENT: '附件', WORK_RECORD: '工作记录', RESOLUTION: '解决方案' }
 export const workItemStatusLabels: Record<WorkItemStatus, string> = { TODO: '待办', IN_PROGRESS: '进行中', WAITING_FEEDBACK: '等待反馈', COMPLETED: '已完成', CANCELED: '已取消' }
 export const workItemPriorityLabels: Record<WorkItemPriority, string> = ticketPriorityLabels

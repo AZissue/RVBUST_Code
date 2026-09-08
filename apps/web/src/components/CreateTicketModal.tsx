@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Modal } from './Modal'
 import { useRemote } from '../hooks/useRemote'
 import { api } from '../lib/api'
+import { TICKET_CATEGORIES } from '../lib/labels'
 import type { Customer, Device, Ticket } from '../types'
 
 const normalized = (value: string) => value.trim().toLocaleLowerCase()
@@ -62,7 +63,7 @@ export function CreateTicketModal({ onClose, onCreated, defaultAssigneeId }: { o
       <label>负责人{users.data ? <select name="assigneeId" defaultValue={defaultAssigneeId ?? ''}><option value="">我自己</option>{users.data.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select> : <span>加载中…</span>}</label>
       {!customers.loading && !customers.error && customerName.trim() && !customer && <label className="span-2 checkbox-row"><input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} />确认新建客户「{customerName.trim()}」</label>}
       <label>问题标题<input name="title" required minLength={3} maxLength={240} /></label>
-      <label>问题分类<select name="category" defaultValue="其他">{['售前咨询', '客户培训', '点云调试', 'SDK 开发', '手眼标定', '硬件故障', '其他'].map(item => <option key={item} value={item}>{item}</option>)}</select></label>
+      <label>问题分类<select name="category" defaultValue="其他">{TICKET_CATEGORIES.map(item => <option key={item} value={item}>{item}</option>)}</select></label>
       <label className="span-2">问题描述<textarea name="description" required minLength={3} maxLength={20000} rows={4} /></label>
       <details className="span-2"><summary>补充信息</summary><div className="form-grid">
         <label>关联设备<input value={deviceText} onChange={event => setDeviceText(event.target.value)} list="ticket-devices" disabled={!currentDetail} placeholder="搜索设备名称或序列号" /><datalist id="ticket-devices">{currentDetail?.devices?.map(item => <option key={item.id} value={deviceLabel(item)} />)}</datalist></label>
