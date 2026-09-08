@@ -32,3 +32,12 @@
 .bug-desc { margin: 6px 0 0; color: var(--text); font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; white-space: pre-wrap; }
 .bug-actions { display: flex; flex-direction: column; gap: 6px; flex: 0 0 auto; }
 @media (max-width: 720px) { .bug-row { flex-direction: column; } .bug-actions { flex-direction: row; } }
+.image-dropzone { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; min-height: 104px; padding: 16px; color: var(--muted); background: var(--surface-2); border: 1.5px dashed var(--border-strong); border-radius: 8px; cursor: pointer; text-align: center; transition: border-color .15s ease, background .15s ease; }
+.image-dropzone span { font-size: 12px; font-weight: 600; }
+.image-dropzone small { font-size: 10px; }
+.image-dropzone:hover, .image-dropzone.dragging { color: var(--brand); border-color: var(--brand); background: var(--brand-soft); }
+.image-previews { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.image-thumb { position: relative; width: 72px; height: 72px; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.image-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.image-thumb button { position: absolute; top: 3px; right: 3px; width: 18px; height: 18px; display: grid; place-items: center; padding: 0; color: #fff; background: rgba(0,0,0,.55); border: 0; border-radius: 50%; cursor: pointer; }
+.image-thumb button:hover { background: var(--brand); }

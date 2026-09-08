@@ -1,5 +1,5 @@
-import { Bug, CheckCircle2, Paperclip, X } from 'lucide-react'
-import { useRef, useState, type FormEvent } from 'react'
+import { Bug, CheckCircle2, ImagePlus, Paperclip, X } from 'lucide-react'
+import { useEffect, useRef, useState, type DragEvent, type FormEvent } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { useRemote } from '../hooks/useRemote'
 import { api, formatDate } from '../lib/api'
@@ -11,6 +11,31 @@ const filters: Array<{ key: '' | BugStatus | 'mine'; label: string }> = [
   { key: '', label: '全部' }, { key: 'OPEN', label: '待处理' }, { key: 'IN_PROGRESS', label: '修复中' }, { key: 'FIXED', label: '已修复' }, { key: 'mine', label: '我提交的' },
 ]
 
+const MAX_EDGE = 1600
+
+/** 过大图片用 canvas 等比压缩为 JPEG；小图原样返回 */
+async function compressImage(file: File): Promise<File> {
+  if (file.size <= 500 * 1024) return file
+  const bitmap = await createImageBitmap(file).catch(() => null)
+  if (!bitmap) return file
+  const scale = Math.min(1, MAX_EDGE / Math.max(bitmap.width, bitmap.height))
+  if (scale >= 1 && file.size <= 1024 * 1024) { bitmap.close(); return file }
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale))
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale))
+  const context = canvas.getContext('2d')
+  if (!context) { bitmap.close(); return file }
+  context.fillStyle = '#fff'
+  context.fillRect(0, 0, canvas.width, canvas.height)
+  context.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+  bitmap.close()
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.85))
+  if (!blob || blob.size >= file.size) return file
+  return new File([blob], file.name.replace(/\.(png|webp)$/i, '.jpg'), { type: 'image/jpeg' })
+}
+
+interface PendingImage { id: string; file: File; url: string }
+
 export function BugsPage() {
   const { user } = useAuth()
   const isAdmin = user?.role === 'admin'
@@ -19,8 +44,40 @@ export function BugsPage() {
   const remote = useRemote(() => api<BugReport[]>(`/bugs${query ? `?${query}` : ''}`), [query], true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [file, setFile] = useState<File | null>(null)
+  const [images, setImages] = useState<PendingImage[]>([])
+  const [dragging, setDragging] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
+
+  const addImages = async (files: Iterable<File>) => {
+    const added: PendingImage[] = []
+    for (const raw of files) {
+      if (!raw.type.startsWith('image/')) continue
+      const file = await compressImage(raw)
+      added.push({ id: crypto.randomUUID(), file, url: URL.createObjectURL(file) })
+    }
+    if (added.length) setImages((current) => [...current, ...added])
+  }
+
+  const removeImage = (id: string) => setImages((current) => {
+    const target = current.find((item) => item.id === id)
+    if (target) URL.revokeObjectURL(target.url)
+    return current.filter((item) => item.id !== id)
+  })
+
+  // Ctrl+V 粘贴截图（页面挂载期间生效）
+  useEffect(() => {
+    const onPaste = (event: ClipboardEvent) => {
+      const files = [...(event.clipboardData?.items ?? [])].filter((item) => item.type.startsWith('image/')).map((item) => item.getAsFile()).filter((file): file is File => Boolean(file))
+      if (files.length) { event.preventDefault(); void addImages(files) }
+    }
+    document.addEventListener('paste', onPaste)
+    return () => document.removeEventListener('paste', onPaste)
+  }, [])
+
+  const onDrop = (event: DragEvent) => {
+    event.preventDefault(); setDragging(false)
+    void addImages(event.dataTransfer.files)
+  }
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault(); setBusy(true); setError('')
@@ -29,11 +86,12 @@ export function BugsPage() {
     const description = String(form.get('description') ?? '').trim()
     try {
       const created = await api<BugReport>('/bugs', { method: 'POST', body: JSON.stringify({ title, description }) })
-      if (file) {
-        const body = new FormData(); body.append('file', file)
+      for (const image of images) {
+        const body = new FormData(); body.append('file', image.file)
         await api(`/files/bugs/${created.id}`, { method: 'POST', body })
       }
-      setFile(null); if (fileInput.current) fileInput.current.value = ''
+      images.forEach((image) => URL.revokeObjectURL(image.url))
+      setImages([]); if (fileInput.current) fileInput.current.value = ''
       event.currentTarget.reset()
       await remote.refresh()
     } catch (reason) { setError(reason instanceof Error ? reason.message : '提交失败') } finally { setBusy(false) }
@@ -52,7 +110,14 @@ export function BugsPage() {
       <form onSubmit={submit} className="stack-form">
         <label>问题标题<input name="title" required minLength={3} maxLength={240} placeholder="一句话概括问题" /></label>
         <label>问题描述<textarea name="description" required minLength={3} rows={4} placeholder="复现步骤、期望行为、实际现象等" /></label>
-        <label>截图<input ref={fileInput} type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setFile(event.target.files?.[0] ?? null)} /></label>
+        <label>截图<div className={`image-dropzone ${dragging ? 'dragging' : ''}`} onClick={() => fileInput.current?.click()} onDragOver={(event) => { event.preventDefault(); setDragging(true) }} onDragLeave={() => setDragging(false)} onDrop={onDrop}>
+            <ImagePlus size={22} />
+            <span>点击上传、拖拽或粘贴图片（Ctrl+V）</span>
+            <small>支持 JPG/PNG/WebP，多张，自动压缩</small>
+          </div>
+          <input ref={fileInput} type="file" accept="image/jpeg,image/png,image/webp" multiple hidden onChange={(event) => { void addImages(event.target.files ?? []); event.target.value = '' }} />
+          {!!images.length && <div className="image-previews">{images.map((image) => <div className="image-thumb" key={image.id}><img src={image.url} alt="截图预览" /><button type="button" title="移除" onClick={() => removeImage(image.id)}><X size={12} /></button></div>)}</div>}
+        </label>
         <div className="drawer-actions"><button className="button primary" disabled={busy}>{busy ? '提交中' : '提交 BUG'}</button></div>
       </form>
     </section>
