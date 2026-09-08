@@ -38,8 +38,17 @@ export class FilesService {
     });
   }
 
+  async registerBug(bugReportId: string, file: Express.Multer.File) {
+    const bug = await this.prisma.bugReport.findUnique({ where: { id: bugReportId }, select: { id: true } });
+    if (!bug) throw new NotFoundException('BUG 记录不存在');
+    return this.prisma.attachment.create({
+      data: { bugReportId, storageKey: file.filename, originalName: file.originalname, mimeType: file.mimetype, sizeBytes: file.size, visibility: Visibility.INTERNAL },
+    });
+  }
+
   async getForDownload(user: AuthUser, id: string) {
-    const attachment = await this.prisma.attachment.findUnique({ where: { id }, include: { ticket: { select: { id: true } }, repairOrder: { select: { id: true, assigneeId: true, createdById: true } } } });
+    const attachment = await this.prisma.attachment.findUnique({ where: { id }, include: { ticket: { select: { id: true } }, repairOrder: { select: { id: true, assigneeId: true, createdById: true } }, bugReport: { select: { id: true } } } });
+    if (attachment?.bugReport) return attachment;
     if (attachment?.ticket) {
       await this.access.requireTicket(user, attachment.ticket.id);
       if (user.role === 'customer' && attachment.visibility !== Visibility.CUSTOMER) throw new NotFoundException('附件不存在');

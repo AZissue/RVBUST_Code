@@ -38,6 +38,13 @@ export class FilesController {
     return this.files.registerRepair(user, repairOrderId, file);
   }
 
+  @Post('bugs/:bugReportId')
+  @UseInterceptors(FileInterceptor('file', uploadOptions))
+  uploadBug(@Param('bugReportId') bugReportId: string, @UploadedFile() file: Express.Multer.File) {
+    if (!file) throw new BadRequestException('请选择文件');
+    return this.files.registerBug(bugReportId, file);
+  }
+
   @Get(':id')
   async download(@CurrentUser() user: AuthUser, @Param('id') id: string, @Res() response: Response) {
     const attachment = await this.files.getForDownload(user, id);

@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import { AppShell } from './components/AppShell'
 import { useAuth } from './context/AuthContext'
 import { AuditPage } from './pages/AuditPage'
+import { BugsPage } from './pages/BugsPage'
 import { CustomerProfilePage } from './pages/CustomerProfilePage'
 import { CustomersPage } from './pages/CustomersPage'
 import { DashboardPage } from './pages/DashboardPage'
@@ -50,6 +51,7 @@ export default function App() {
       <Route path="settings" element={<SettingsPage />} />
       <Route path="settings/ai" element={<AISettingsPage />} />
       <Route path="audit" element={<AuditPage />} />
+      <Route path="bugs" element={<BugsPage />} />
     </Route>
     <Route path="*" element={<Navigate to="/" replace />} />
   </Routes>

@@ -1,4 +1,4 @@
-import type { DeviceOwnerType, DeviceStatus, LoanStatus, RepairStatus, Role, TicketCategory, TicketPriority, TicketStatus, UserStatus, WorkItemPriority, WorkItemStatus } from '../types'
+import type { BugStatus, DeviceOwnerType, DeviceStatus, LoanStatus, RepairStatus, Role, TicketCategory, TicketPriority, TicketStatus, UserStatus, WorkItemPriority, WorkItemStatus } from '../types'
 
 export const ticketStatusLabels: Record<TicketStatus, string> = { PENDING: '待处理', IN_PROGRESS: '处理中', WAITING_CUSTOMER: '等待客户', WAITING_RND: '等待研发', RESOLVED: '已解决', CLOSED: '已关闭' }
 export const ticketPriorityLabels: Record<TicketPriority, string> = { LOW: '低', MEDIUM: '中', HIGH: '高', URGENT: '紧急' }
@@ -16,6 +16,7 @@ export const deviceStatusLabels: Record<DeviceStatus, string> = { IN_STOCK: '在
 export const deviceOwnerLabels: Record<DeviceOwnerType, string> = { COMPANY: '公司样机', CUSTOMER: '客户资产' }
 export const loanStatusLabels: Record<LoanStatus, string> = { ONGOING: '借出中', OVERDUE: '已逾期', RETURNED: '已归还', CANCELLED: '已取消' }
 export const repairStatusLabels: Record<RepairStatus, string> = { RECEIVED: '已收货', DIAGNOSING: '检测中', REPAIRING: '维修中', SHIPPED: '已寄回', CLOSED: '已关闭' }
+export const bugStatusLabels: Record<BugStatus, string> = { OPEN: '待处理', IN_PROGRESS: '修复中', FIXED: '已修复' }
 export const notificationSeverityLabels: Record<string, string> = { INFO: '提示', WARNING: '警告', CRITICAL: '紧急' }
 
 const lookup = (labels: Record<string, string>, value: string | null | undefined): string => (value ? labels[value] ?? value : '-')
@@ -38,6 +39,7 @@ export function deviceStatusLabelByOwner(status: string, ownerType?: DeviceOwner
 }
 export const loanStatusLabel = (status: string) => lookup(loanStatusLabels, status)
 export const repairStatusLabel = (status: string) => lookup(repairStatusLabels, status)
+export const bugStatusLabel = (status: string) => lookup(bugStatusLabels, status)
 export const notificationSeverityLabel = (severity: string) => lookup(notificationSeverityLabels, severity)
 
 const statusChangeValues: Record<string, string> = { ...ticketStatusLabels, ...repairStatusLabels }

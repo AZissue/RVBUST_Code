@@ -1,4 +1,4 @@
-import { BarChart3, Bell, BookOpen, Bot, Building2, ChevronDown, ClipboardList, FileClock, FileText, Gauge, LogOut, Menu, Monitor, Moon, NotebookPen, Package, PanelLeftClose, Settings, Share2, Sun, Users, Wrench, X } from 'lucide-react'
+import { BarChart3, Bell, BookOpen, Bot, Bug, Building2, ChevronDown, ClipboardList, FileClock, FileText, Gauge, LogOut, Menu, Monitor, Moon, NotebookPen, Package, PanelLeftClose, Settings, Share2, Sun, Users, Wrench, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
@@ -38,6 +38,7 @@ export function AppShell() {
         {isAdmin && <div className="nav-group"><div className="nav-label">系统</div>
           <NavLink to="/users"><Users size={17} />用户管理</NavLink><NavLink to="/teams"><Users size={17} />团队管理</NavLink><NavLink to="/settings"><Settings size={17} />系统设置</NavLink><NavLink to="/audit"><FileClock size={17} />操作日志</NavLink>
         </div>}
+        <div className="nav-group"><div className="nav-label">反馈</div><NavLink to="/bugs"><Bug size={17} />BUG 反馈</NavLink></div>
       </nav>
       <button className="collapse-hint"><PanelLeftClose size={16} />V2 第一阶段</button>
     </aside>

@@ -134,6 +134,12 @@ enum RepairStatus {
   CLOSED
 }
 
+enum BugStatus {
+  OPEN
+  IN_PROGRESS
+  FIXED
+}
+
 model Role {
   id          String           @id @default(uuid()) @db.Uuid
   name        String           @unique @db.VarChar(40)
@@ -219,6 +225,8 @@ model User {
   auditLogs              AuditLog[]
   technicalCustomers     CustomerOrganization[] @relation("TechnicalOwner")
   businessCustomers      CustomerOrganization[] @relation("BusinessOwner")
+  reportedBugs           BugReport[]           @relation("BugAuthor")
+  resolvedBugs           BugReport[]           @relation("BugResolver")
   createdAt              DateTime              @default(now()) @map("created_at")
   updatedAt              DateTime              @updatedAt @map("updated_at")
 
@@ -569,6 +577,7 @@ model Attachment {
   ticketId     String?      @db.Uuid @map("ticket_id")
   ticketEventId String?     @db.Uuid @map("ticket_event_id")
   repairOrderId String?     @db.Uuid @map("repair_order_id")
+  bugReportId  String?      @db.Uuid @map("bug_report_id")
   storageKey   String       @unique @map("storage_key") @db.VarChar(300)
   originalName String       @map("original_name") @db.VarChar(255)
   mimeType     String       @map("mime_type") @db.VarChar(120)
@@ -577,11 +586,13 @@ model Attachment {
   ticket       Ticket?      @relation(fields: [ticketId], references: [id], onDelete: Cascade)
   ticketEvent  TicketEvent? @relation(fields: [ticketEventId], references: [id], onDelete: Cascade)
   repairOrder  RepairOrder? @relation(fields: [repairOrderId], references: [id], onDelete: Cascade)
+  bugReport    BugReport?   @relation(fields: [bugReportId], references: [id], onDelete: Cascade)
   createdAt    DateTime     @default(now()) @map("created_at")
   updatedAt    DateTime     @updatedAt @map("updated_at")
 
   @@index([ticketId])
   @@index([repairOrderId])
+  @@index([bugReportId])
   @@map("attachments")
 }
 
@@ -672,6 +683,26 @@ model RepairEvent {
 
   @@index([repairOrderId, createdAt])
   @@map("repair_events")
+}
+
+model BugReport {
+  id          String    @id @default(uuid()) @db.Uuid
+  bugNo       String    @unique @map("bug_no") @db.VarChar(32)
+  title       String    @db.VarChar(240)
+  description String    @db.VarChar(20000)
+  status      BugStatus @default(OPEN)
+  authorId    String    @db.Uuid @map("author_id")
+  resolverId  String?   @db.Uuid @map("resolver_id")
+  resolvedAt  DateTime? @map("resolved_at")
+  author      User      @relation("BugAuthor", fields: [authorId], references: [id])
+  resolver    User?     @relation("BugResolver", fields: [resolverId], references: [id], onDelete: SetNull)
+  attachments Attachment[]
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  @@index([status])
+  @@index([authorId])
+  @@map("bug_reports")
 }
 
 model SystemSetting {

@@ -6,6 +6,7 @@ import { AuditModule } from './audit/audit.module.js';
 import { AuthGuard } from './auth/auth.guard.js';
 import { AuthModule } from './auth/auth.module.js';
 import { RolesGuard } from './auth/roles.guard.js';
+import { BugsModule } from './bugs/bugs.module.js';
 import { CustomersModule } from './customers/customers.module.js';
 import { DashboardModule } from './dashboard/dashboard.module.js';
 import { DevicesModule } from './devices/devices.module.js';
@@ -23,7 +24,7 @@ import { WorktypesModule } from './worktypes/worktypes.module.js';
 import { HealthController } from './health.controller.js';
 
 @Module({
-  imports: [ConfigModule.forRoot({ isGlobal: true, envFilePath: ['../../.env', '.env'] }), PrismaModule, AuditModule, AuthModule, UsersModule, CustomersModule, TicketsModule, WorkitemsModule, WorklogsModule, WorktypesModule, DashboardModule, NotificationsModule, FilesModule, SystemModule, DevicesModule, LoansModule, RepairsModule],
+  imports: [ConfigModule.forRoot({ isGlobal: true, envFilePath: ['../../.env', '.env'] }), PrismaModule, AuditModule, AuthModule, UsersModule, CustomersModule, TicketsModule, WorkitemsModule, WorklogsModule, WorktypesModule, DashboardModule, NotificationsModule, FilesModule, SystemModule, DevicesModule, LoansModule, RepairsModule, BugsModule],
   controllers: [HealthController],
   providers: [
     { provide: APP_GUARD, useClass: AuthGuard },

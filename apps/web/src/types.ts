@@ -61,6 +61,19 @@ export interface LoanOrder {
 }
 
 export type RepairStatus = 'RECEIVED' | 'DIAGNOSING' | 'REPAIRING' | 'SHIPPED' | 'CLOSED'
+export type BugStatus = 'OPEN' | 'IN_PROGRESS' | 'FIXED'
+export interface BugReport {
+  id: string
+  bugNo: string
+  title: string
+  description: string
+  status: BugStatus
+  author: { id: string; name: string }
+  resolver?: { id: string; name: string } | null
+  resolvedAt?: string | null
+  attachments: Attachment[]
+  createdAt: string
+}
 export interface RepairEvent { id: string; type: string; content: string; createdAt: string }
 export interface Attachment { id: string; originalName: string; mimeType: string; sizeBytes: number; createdAt: string }
 export interface RepairOrder {
