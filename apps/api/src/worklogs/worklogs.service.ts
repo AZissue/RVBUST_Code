@@ -19,9 +19,9 @@ const include = {
 export class WorklogsService {
   constructor(private readonly prisma: PrismaService, private readonly access: AccessPolicyService) {}
 
-  list(user: AuthUser) {
+  list(user: AuthUser, ticketId?: string) {
     this.access.requireInternal(user);
-    return this.prisma.worklog.findMany({ where: this.access.worklogWhere(user), include, orderBy: { occurredAt: 'desc' }, take: 500 });
+    return this.prisma.worklog.findMany({ where: { AND: [this.access.worklogWhere(user), ...(ticketId ? [{ ticketId }] : [])] }, include, orderBy: { occurredAt: 'desc' }, take: 500 });
   }
 
   async create(user: AuthUser, dto: CreateWorklogDto) {

@@ -22,6 +22,10 @@ export class CreateWorklogDto {
 
 export class UpdateWorklogDto extends PartialType(CreateWorklogDto) {}
 
+export class ListWorklogsDto {
+  @IsOptional() @IsUUID() ticketId?: string;
+}
+
 export class CreateWorklogDraftsDto {
   @IsString() @Length(2, 20000) rawText!: string;
   @IsDateString() occurredAt!: string;
