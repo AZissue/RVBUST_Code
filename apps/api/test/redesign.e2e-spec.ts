@@ -184,7 +184,7 @@ describe('Redesign v1 flows (e2e)', () => {
   });
 
   it('applies ticket visibility and edit rights by creator, assignee and admin', async () => {
-    const base = { source: 'AFTER_SALES_INCIDENT', category: '权限测试', organizationId: orgId, title: '权限模型改造验证', description: '权限模型改造验证' };
+    const base = { source: 'AFTER_SALES_INCIDENT', category: '其他', organizationId: orgId, title: '权限模型改造验证', description: '权限模型改造验证' };
     // 创建时不指定负责人 → 默认为创建人
     const t1 = (await employee.post('/api/tickets').send(base).expect(201)).body;
     expect(t1.assignee?.id).toBe(employeeId);
@@ -221,7 +221,7 @@ describe('Redesign v1 flows (e2e)', () => {
   });
 
   it('allows any internal member to append internal notes but not customer replies on others tickets', async () => {
-    const t = (await support.post('/api/tickets').send({ source: 'AFTER_SALES_INCIDENT', category: '协作备注', organizationId: orgId, title: '协作备注验证工单', description: '协作备注验证工单' }).expect(201)).body;
+    const t = (await support.post('/api/tickets').send({ source: 'AFTER_SALES_INCIDENT', category: '其他', organizationId: orgId, title: '协作备注验证工单', description: '协作备注验证工单' }).expect(201)).body;
     // employee 非创建人/负责人：INTERNAL_NOTE 允许（协作排查），强制内部可见
     const note = await employee.post(`/api/tickets/${t.id}/events`).send({ type: 'INTERNAL_NOTE', visibility: 'CUSTOMER', content: '协作排查备注' }).expect(201);
     expect(note.body.type).toBe('INTERNAL_NOTE');

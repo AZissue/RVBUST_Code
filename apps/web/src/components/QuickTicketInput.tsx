@@ -19,6 +19,21 @@ interface Parsed {
 }
 type Similar = Ticket & { similarity: number }
 
+/** 快速记录按关键词推断问题分类（与 TICKET_CATEGORIES 白名单对应） */
+const CATEGORY_KEYWORDS: Array<[string, readonly string[]]> = [
+  ['售前咨询', ['售前', '选型', '报价', '购买']],
+  ['客户培训', ['培训', '教程', '教学']],
+  ['点云调试', ['点云', '拍摄', '无点云', '深度图', '标定数据']],
+  ['SDK 开发', ['sdk', 'api', '接口', '开发', '代码', '调试程序']],
+  ['手眼标定', ['手眼', '标定', 'eye-to-hand', 'eye-in-hand']],
+  ['硬件故障', ['硬件', '故障', '维修', '损坏', '连不上', '超时', '掉线']],
+]
+const inferCategory = (text: string) => {
+  const lower = text.toLocaleLowerCase()
+  for (const [category, keywords] of CATEGORY_KEYWORDS) if (keywords.some((keyword) => lower.includes(keyword))) return category
+  return '其他'
+}
+
 export function QuickTicketInput() {
   const { user } = useAuth()
   const [rawText, setRawText] = useState('')
@@ -86,7 +101,7 @@ function QuickTicketConfirm({ parsed, canCreateCustomer, onClose, onSaved }: { p
     if (existing && !window.confirm(`确认更新 ${existing.number}？将追加内部处理记录，并更新负责人和优先级；原描述和状态保持不变。`)) return
     setBusy(true); setError('')
     try {
-      const ticket = existing ? await api<Ticket>(`/tickets/${existing.id}/quick-update`, { method: 'POST', body: JSON.stringify({ organizationId, assigneeId, priority, issue, rawText: parsed.rawText, expectedUpdatedAt: existing.updatedAt }) }) : await api<Ticket>('/tickets', { method: 'POST', body: JSON.stringify({ source: 'AFTER_SALES_INCIDENT', category: '技术问题', organizationId, assigneeId, priority, title: title.trim(), description: issue.trim(), rawText: parsed.rawText, requestKey, cameraModel: model || undefined, deviceId: deviceId || undefined }) })
+      const ticket = existing ? await api<Ticket>(`/tickets/${existing.id}/quick-update`, { method: 'POST', body: JSON.stringify({ organizationId, assigneeId, priority, issue, rawText: parsed.rawText, expectedUpdatedAt: existing.updatedAt }) }) : await api<Ticket>('/tickets', { method: 'POST', body: JSON.stringify({ source: 'AFTER_SALES_INCIDENT', category: inferCategory(`${parsed.rawText} ${title} ${issue}`), organizationId, assigneeId, priority, title: title.trim(), description: issue.trim(), rawText: parsed.rawText, requestKey, cameraModel: model || undefined, deviceId: deviceId || undefined }) })
       onSaved(ticket, Boolean(existing))
     } catch (e) { setError(e instanceof Error ? e.message : '保存失败'); setRetry((n) => n + 1) } finally { setBusy(false) }
   }
