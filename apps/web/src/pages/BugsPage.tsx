@@ -1,5 +1,6 @@
 import { Bug, CheckCircle2, ImagePlus, Paperclip, X } from 'lucide-react'
 import { useEffect, useRef, useState, type DragEvent, type FormEvent } from 'react'
+import { Modal } from '../components/Modal'
 import { useAuth } from '../context/AuthContext'
 import { useRemote } from '../hooks/useRemote'
 import { api, formatDate } from '../lib/api'
@@ -36,6 +37,27 @@ async function compressImage(file: File): Promise<File> {
 
 interface PendingImage { id: string; file: File; url: string }
 
+/** 附件图片需带会话拉取为 blob 后本地展示（下载接口带 attachment 头，直接 <img> 会触发下载） */
+function useAttachmentUrl(id: string): string | null {
+  const [url, setUrl] = useState<string | null>(null)
+  useEffect(() => {
+    let objectUrl: string | null = null
+    let cancelled = false
+    void fetch(`/api/files/${id}`)
+      .then((response) => (response.ok ? response.blob() : Promise.reject(new Error('附件加载失败'))))
+      .then((blob) => { if (cancelled) return; objectUrl = URL.createObjectURL(blob); setUrl(objectUrl) })
+      .catch(() => undefined)
+    return () => { cancelled = true; if (objectUrl) URL.revokeObjectURL(objectUrl) }
+  }, [id])
+  return url
+}
+
+function AttachmentImage({ id, alt }: { id: string; alt: string }) {
+  const url = useAttachmentUrl(id)
+  if (!url) return <span className="shot-placeholder" />
+  return <img src={url} alt={alt} />
+}
+
 export function BugsPage() {
   const { user } = useAuth()
   const isAdmin = user?.role === 'admin'
@@ -46,6 +68,7 @@ export function BugsPage() {
   const [error, setError] = useState('')
   const [images, setImages] = useState<PendingImage[]>([])
   const [dragging, setDragging] = useState(false)
+  const [preview, setPreview] = useState<Attachment | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
 
   const addImages = async (files: Iterable<File>) => {
@@ -81,7 +104,8 @@ export function BugsPage() {
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault(); setBusy(true); setError('')
-    const form = new FormData(event.currentTarget)
+    const formEl = event.currentTarget
+    const form = new FormData(formEl)
     const title = String(form.get('title') ?? '').trim()
     const description = String(form.get('description') ?? '').trim()
     try {
@@ -92,7 +116,7 @@ export function BugsPage() {
       }
       images.forEach((image) => URL.revokeObjectURL(image.url))
       setImages([]); if (fileInput.current) fileInput.current.value = ''
-      event.currentTarget.reset()
+      formEl.reset()
       await remote.refresh()
     } catch (reason) { setError(reason instanceof Error ? reason.message : '提交失败') } finally { setBusy(false) }
   }
@@ -128,13 +152,19 @@ export function BugsPage() {
           <div className="bug-title"><span className={`badge ${statusBadgeClass[bug.status]}`}>{bugStatusLabel(bug.status)}</span><strong>{bug.title}</strong><span className="mono muted">{bug.bugNo}</span></div>
           <p className="bug-desc">{bug.description}</p>
           <div className="inline-meta"><span>{bug.author.name} 提交于 {formatDate(bug.createdAt)}</span>{bug.status === 'FIXED' && bug.resolver && <span>由 {bug.resolver.name} 修复于 {formatDate(bug.resolvedAt ?? undefined)}</span>}</div>
-          {!!bug.attachments.length && <div className="thumb-list">{bug.attachments.map((item: Attachment) => <a key={item.id} href={`/api/files/${item.id}`} target="_blank" rel="noreferrer"><Paperclip size={13} />{item.originalName}</a>)}</div>}
+          {bug.attachments.some((item) => !item.mimeType.startsWith('image/')) && <div className="thumb-list">{bug.attachments.filter((item) => !item.mimeType.startsWith('image/')).map((item) => <a key={item.id} href={`/api/files/${item.id}`} target="_blank" rel="noreferrer"><Paperclip size={13} />{item.originalName}</a>)}</div>}
         </div>
-        {isAdmin && bug.status !== 'FIXED' && <div className="bug-actions">
-          {bug.status === 'OPEN' && <button className="button small" onClick={() => void markStatus(bug.id, 'IN_PROGRESS')}>开始修复</button>}
-          <button className="button small primary" onClick={() => void markStatus(bug.id, 'FIXED')}><CheckCircle2 size={14} />标记已修复</button>
+        {(!!bug.attachments.length || (isAdmin && bug.status !== 'FIXED')) && <div className="bug-side">
+          {!!bug.attachments.length && <div className="bug-shots">{bug.attachments.filter((item) => item.mimeType.startsWith('image/')).map((item) => <button key={item.id} className="bug-shot" title={`查看 ${item.originalName}`} onClick={() => setPreview(item)}><AttachmentImage id={item.id} alt={item.originalName} /></button>)}</div>}
+          {isAdmin && bug.status !== 'FIXED' && <div className="bug-actions">
+            {bug.status === 'OPEN' && <button className="button small" onClick={() => void markStatus(bug.id, 'IN_PROGRESS')}>开始修复</button>}
+            <button className="button small primary" onClick={() => void markStatus(bug.id, 'FIXED')}><CheckCircle2 size={14} />标记已修复</button>
+          </div>}
         </div>}
       </article>)}{!bugs.length && <div className="empty-compact">暂无 BUG 记录</div>}</div>
     </section>
+    {preview && <Modal title={preview.originalName} wide onClose={() => setPreview(null)}>
+      <div className="shot-view"><AttachmentImage id={preview.id} alt={preview.originalName} /></div>
+    </Modal>}
   </div>
 }
