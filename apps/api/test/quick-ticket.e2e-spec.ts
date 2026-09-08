@@ -71,6 +71,18 @@ describe('Quick tickets and single-source personal work', () => {
     const dashboard = (await admin.get('/api/dashboard').expect(200)).body;
     const mine = (await admin.get('/api/tickets?mine=1').expect(200)).body;
     expect(dashboard.ticketCounts.inProgress).toBe(mine.filter((t: { status: string }) => t.status === 'IN_PROGRESS').length);
+    // 工作台汇总包含借测/返修计数与需要关注分组
+    expect(typeof dashboard.overdueLoanCount).toBe('number');
+    expect(typeof dashboard.repairingCount).toBe('number');
+    expect(Array.isArray(dashboard.alerts.stale)).toBe(true);
+    expect(Array.isArray(dashboard.alerts.overduePlan)).toBe(true);
+    expect(Array.isArray(dashboard.alerts.waitingTimeout)).toBe(true);
+    // 计划逾期未兑现的未解决工单进入 alerts.overduePlan
+    const overdue = (await admin.post('/api/tickets').send({ source: 'OTHER', category: '测试', organizationId: orgId, assigneeId: adminId, title: '逾期计划验证', description: '逾期计划验证', plannedAt: new Date(Date.now() - 86400000).toISOString() }).expect(201)).body;
+    const dash2 = (await admin.get('/api/dashboard').expect(200)).body;
+    expect(dash2.alerts.overduePlan.some((t: { id: string }) => t.id === overdue.id)).toBe(true);
+    expect(dash2.alerts.stale.some((t: { id: string }) => t.id === overdue.id)).toBe(false);
+    await db.ticket.deleteMany({ where: { id: overdue.id } });
     await admin.post(`/api/tickets/${ticketId}/status`).send({ status: 'WAITING_RND' }).expect(201);
     await admin.post(`/api/tickets/${ticketId}/status`).send({ status: 'RESOLVED' }).expect(201);
     expect((await admin.get('/api/dashboard').expect(200)).body.ticketCounts.todayCompleted).toBeGreaterThan(0);
