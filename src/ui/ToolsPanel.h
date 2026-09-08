@@ -8,6 +8,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QSpinBox>
 #include <QTextEdit>
 #include <QString>
 #include <QWidget>
@@ -21,12 +22,23 @@ class ToolsPanel : public QDialog {
 public:
     explicit ToolsPanel(QWidget* parent = nullptr);
 
+    void setRobotStatus(const QString& text, bool ok);
+    void setRobotConnected(bool connected);
+
+signals:
+    void robotConnectRequested(const QString& host, quint16 port,
+                               int format, double scale,
+                               quint8 unitId, quint16 startAddress);
+    void robotDisconnectRequested();
+    void robotSimulateConnectRequested();
+
 private:
     void buildUi();
     void buildDistancePage(QStackedWidget* stack);
     void buildPixelTo3DPage(QStackedWidget* stack);
     void buildCalibrationPage(QStackedWidget* stack);
     void buildTransformPage(QStackedWidget* stack);
+    void buildRobotCommPage(QStackedWidget* stack);
     void updateDistanceResult();
     void updatePixelTo3DResult();
     void updateCalibrationResult();
@@ -90,4 +102,16 @@ private:
     QPushButton* m_transformCalcBtn = nullptr;
     QPushButton* m_transformCopyBtn = nullptr;
     QString m_transformValues;  // last computed base coords (values only)
+
+    // Robot communication tool (Modbus TCP)
+    QComboBox* m_robotProtocol = nullptr;
+    QLineEdit* m_robotHost = nullptr;
+    QSpinBox* m_robotPort = nullptr;
+    QSpinBox* m_robotStartAddr = nullptr;
+    QComboBox* m_robotFormat = nullptr;
+    QLineEdit* m_robotScale = nullptr;
+    QSpinBox* m_robotUnitId = nullptr;
+    QPushButton* m_btnRobotConnect = nullptr;
+    QPushButton* m_btnRobotSimulate = nullptr;
+    QLabel* m_robotStatus = nullptr;
 };

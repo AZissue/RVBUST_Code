@@ -28,7 +28,11 @@
 #include <QMessageBox>
 #include <QDialog>
 #include <QApplication>
+#include <QGuiApplication>
 #include <QCloseEvent>
+#include <QShowEvent>
+#include <QPushButton>
+#include <QCheckBox>
 #include <QKeySequence>
 #include <QScreen>
 #include <QVariantMap>
@@ -47,17 +51,10 @@ MainWindow::MainWindow(QWidget* parent)
     m_config.load();
 
     setWindowTitle(QStringLiteral("手眼标定数据收集助手 V1.0"));
-    auto geom = m_config.windowGeometry();
-    if (geom.x() >= 0 && geom.y() >= 0)
-        setGeometry(geom);
-    else {
-        auto screenGeo = QApplication::primaryScreen()->availableGeometry();
-        int w = screenGeo.width() * 3 / 4;
-        int h = screenGeo.height() * 3 / 4;
-        resize(w, h);
-        move((screenGeo.width() - w) / 2, (screenGeo.height() - h) / 2);
-    }
+    // Size/position is finalized in showEvent() (after the window frame exists)
+    // so the window is centered and its title bar is never stranded off-screen.
     setMinimumSize(1280, 720);
+    resize(1280, 720);
 
     // Create owned objects
     m_camera = new CameraManager(this);
@@ -184,6 +181,37 @@ void MainWindow::buildUi()
     m_dataInput = new DataInputArea(this);
     leftLayout->addWidget(m_dataInput);
 
+    // Robot read bar — hidden until a robot connection is established.  The
+    // 「读取戳点位姿」button additionally requires 戳点标定 mode (see
+    // updateRobotReadBar()).
+    m_robotReadBar = new QWidget(this);
+    auto* readBarLayout = new QHBoxLayout(m_robotReadBar);
+    readBarLayout->setContentsMargins(0, 0, 0, 0);
+    readBarLayout->setSpacing(12);
+
+    m_btnReadCapturePose = new QPushButton(QStringLiteral("读取拍照位姿"), m_robotReadBar);
+    m_btnReadCapturePose->setFixedHeight(40);
+    m_btnReadCapturePose->setMinimumWidth(96);
+    m_btnReadCapturePose->setStyleSheet(Theme::secondaryButtonStyle());
+    readBarLayout->addWidget(m_btnReadCapturePose);
+
+    m_robotAutoReadCheck = new QCheckBox(QStringLiteral("拍照时自动读取"), m_robotReadBar);
+    m_robotAutoReadCheck->setChecked(false);
+    m_robotAutoReadCheck->setStyleSheet(QStringLiteral(
+        "font-size: %1px; color: %2;")
+        .arg(Theme::FONT_BODY).arg(Theme::TEXT_BODY));
+    readBarLayout->addWidget(m_robotAutoReadCheck);
+
+    m_btnReadTouchPose = new QPushButton(QStringLiteral("读取戳点位姿"), m_robotReadBar);
+    m_btnReadTouchPose->setFixedHeight(40);
+    m_btnReadTouchPose->setMinimumWidth(96);
+    m_btnReadTouchPose->setStyleSheet(Theme::secondaryButtonStyle());
+    readBarLayout->addWidget(m_btnReadTouchPose);
+
+    readBarLayout->addStretch();
+    m_robotReadBar->setVisible(false);
+    leftLayout->addWidget(m_robotReadBar);
+
     m_actionButtons = new ActionButtons(this);
     leftLayout->addWidget(m_actionButtons);
 
@@ -280,13 +308,18 @@ void MainWindow::wireSignals()
         m_actionButtons->setCalcEnabled(m_data->count() > 0);
     });
     // Robot communication (isolated; wiring is inert until the user connects)
-    connect(m_sidePanel, &SidePanel::robotConnectRequested,
+    connect(m_toolsPanel, &ToolsPanel::robotConnectRequested,
             this, &MainWindow::onRobotConnect);
-    connect(m_sidePanel, &SidePanel::robotDisconnectRequested,
+    connect(m_toolsPanel, &ToolsPanel::robotDisconnectRequested,
             this, &MainWindow::onRobotDisconnect);
-    connect(m_sidePanel, &SidePanel::robotReadRequested,
+    connect(m_toolsPanel, &ToolsPanel::robotSimulateConnectRequested,
+            this, &MainWindow::onRobotSimulateConnect);
+    // Main-interface read buttons (visible only while connected)
+    connect(m_btnReadCapturePose, &QPushButton::clicked,
             this, &MainWindow::onRobotRead);
-    connect(m_sidePanel, &SidePanel::robotAutoReadToggled, this,
+    connect(m_btnReadTouchPose, &QPushButton::clicked,
+            this, &MainWindow::onRobotReadTouch);
+    connect(m_robotAutoReadCheck, &QCheckBox::toggled, this,
             [this](bool on) { m_robotAutoRead = on; });
     connect(m_flow, &CaptureFlow::imageCaptured, this,
             [this](const QImage& img) {
@@ -479,6 +512,7 @@ void MainWindow::onModeChanged(bool eyeInHand, bool markerType, bool concentric)
 
     m_dataInput->updateVisibility(eyeInHand, markerType);
     m_sidePanel->updateFilePreview(eyeInHand, markerType, m_data->allRecords());
+    updateRobotReadBar();
 
     if (typeChanged) {
         resetSession();
@@ -636,9 +670,9 @@ void MainWindow::onCapture()
     }
     // Optional: read the robot pose right before capturing when auto-read is
     // enabled.  This never affects the capture pipeline itself.
-    if (m_robotAutoRead && m_robotReader.isConnected()) {
+    if (m_robotAutoRead && m_robotConnected) {
         RobotPose::Pose pose;
-        if (m_robotReader.readPose(pose) == RobotPose::Status::Ok) {
+        if (readRobotPose(pose)) {
             auto* card = m_dataInput->card(QStringLiteral("robot_capture_pose"));
             if (card) {
                 card->setValue(QStringLiteral("%1 %2 %3 %4 %5 %6")
@@ -835,37 +869,73 @@ void MainWindow::onRobotConnect(const QString& host, quint16 port,
     m_robotReader.setConfig(cfg);
 
     if (!m_robotReader.connect(host, port)) {
-        m_sidePanel->setRobotStatus(
-            QStringLiteral("连接失败"), true);
+        m_robotSimulated = false;
+        m_robotConnected = false;
+        m_toolsPanel->setRobotStatus(QStringLiteral("连接失败"), true);
         m_sidePanel->setTip(
             QStringLiteral("机器人连接失败：%1").arg(m_robotReader.lastError()),
             true);
         m_logger->error(QStringLiteral("机器人连接失败：%1")
                             .arg(m_robotReader.lastError()));
+        updateRobotReadBar();
         return;
     }
-    m_sidePanel->setRobotConnected(true);
-    m_sidePanel->setRobotStatus(QStringLiteral("已连接"), false);
+    m_robotSimulated = false;
+    m_robotConnected = true;
+    m_toolsPanel->setRobotConnected(true);
+    m_toolsPanel->setRobotStatus(QStringLiteral("已连接"), false);
     m_sidePanel->setTip(QStringLiteral("机器人已连接（%1:%2）").arg(host).arg(port), false);
     m_logger->success(QStringLiteral("机器人已连接（%1:%2）").arg(host).arg(port));
+    updateRobotReadBar();
 }
 
 void MainWindow::onRobotDisconnect()
 {
     m_robotReader.disconnect();
-    m_sidePanel->setRobotConnected(false);
-    m_sidePanel->setRobotStatus(QStringLiteral("未连接"), false);
+    m_robotConnected = false;
+    m_robotSimulated = false;
+    m_toolsPanel->setRobotConnected(false);
+    m_toolsPanel->setRobotStatus(QStringLiteral("未连接"), false);
     m_logger->info(QStringLiteral("机器人已断开"));
+    updateRobotReadBar();
+}
+
+void MainWindow::onRobotSimulateConnect()
+{
+    // "模拟连接成功" — no real Modbus socket; only sets the logical connected
+    // state so the read buttons / cards can be exercised in the UI.
+    m_robotReader.disconnect();
+    m_robotSimulated = true;
+    m_robotConnected = true;
+    m_toolsPanel->setRobotConnected(true);
+    m_toolsPanel->setRobotStatus(QStringLiteral("已连接（模拟）"), false);
+    m_sidePanel->setTip(QStringLiteral("机器人已模拟连接（无真机）"), false);
+    m_logger->success(QStringLiteral("机器人模拟连接成功"));
+    updateRobotReadBar();
+}
+
+bool MainWindow::readRobotPose(RobotPose::Pose& pose)
+{
+    if (m_robotSimulated) {
+        // Deterministic dummy pose so the read buttons / cards can be verified
+        // without real Modbus hardware.
+        static int n = 0;
+        const double base = 100.0 + (n++ % 50) * 10.0;
+        pose.xyz = { base, base + 1.0, base + 2.0 };
+        pose.rpy = { 0.0, 0.0, 0.0 };
+        return true;
+    }
+    return m_robotReader.readPose(pose) == RobotPose::Status::Ok;
 }
 
 void MainWindow::onRobotRead()
 {
-    if (!m_robotReader.isConnected()) {
+    if (!m_robotConnected) {
         m_sidePanel->setTip(QStringLiteral("请先连接机器人"), true);
         return;
     }
     RobotPose::Pose pose;
-    if (m_robotReader.readPose(pose) != RobotPose::Status::Ok) {
+    if (!readRobotPose(pose)) {
         m_sidePanel->setTip(
             QStringLiteral("机器人位姿读取失败：%1")
                 .arg(m_robotReader.lastError()),
@@ -886,6 +956,43 @@ void MainWindow::onRobotRead()
         card->setValue(value);
     m_sidePanel->setTip(QStringLiteral("已读取机器人位姿并填入卡片"), false);
     m_logger->info(QStringLiteral("机器人位姿读取成功: %1").arg(value));
+}
+
+void MainWindow::onRobotReadTouch()
+{
+    if (!m_robotConnected) {
+        m_sidePanel->setTip(QStringLiteral("请先连接机器人"), true);
+        return;
+    }
+    RobotPose::Pose pose;
+    if (!readRobotPose(pose)) {
+        m_sidePanel->setTip(
+            QStringLiteral("机器人位姿读取失败：%1")
+                .arg(m_robotReader.lastError()),
+            true);
+        m_logger->error(QStringLiteral("机器人位姿读取失败：%1")
+                            .arg(m_robotReader.lastError()));
+        return;
+    }
+    const QString value = QStringLiteral("%1 %2 %3")
+        .arg(pose.xyz[0], 0, 'f', 3)
+        .arg(pose.xyz[1], 0, 'f', 3)
+        .arg(pose.xyz[2], 0, 'f', 3);
+    auto* card = m_dataInput->card(QStringLiteral("robot_target_xyz"));
+    if (card)
+        card->setValue(value);
+    m_sidePanel->setTip(QStringLiteral("已读取机器人 TCP 点并填入卡片"), false);
+    m_logger->info(QStringLiteral("机器人 TCP 点读取成功: %1").arg(value));
+}
+
+void MainWindow::updateRobotReadBar()
+{
+    if (!m_robotReadBar)
+        return;
+    const bool tcp = (m_calibType == CalibType::TcpTouch);
+    m_robotReadBar->setVisible(m_robotConnected);
+    if (m_btnReadTouchPose)
+        m_btnReadTouchPose->setVisible(m_robotConnected && tcp);
 }
 
 // ── Card Updates ──────────────────────────────────────────────────────
@@ -989,6 +1096,7 @@ void MainWindow::showSettingsDialog()
             m_eyeHandMode == EyeHandMode::EyeInHand,
             m_calibType == CalibType::Marker,
             m_data->allRecords());
+        updateRobotReadBar();
 
         m_config.setLastMode(
             m_eyeHandMode == EyeHandMode::EyeInHand,
@@ -1005,6 +1113,53 @@ void MainWindow::showSettingsDialog()
 }
 
 // ── Window Events ─────────────────────────────────────────────────────
+
+void MainWindow::showEvent(QShowEvent* event)
+{
+    QMainWindow::showEvent(event);
+
+    if (m_windowPositioned)
+        return;
+    m_windowPositioned = true;
+
+    // Finalize size/position here rather than in the constructor: before show()
+    // the window frame does not exist yet, so any centering math that ran
+    // pre-show used the wrong geometry and could strand the title bar above the
+    // desktop on first launch (higher-DPI / smaller screens).  Doing it in
+    // showEvent() — after the frame is materialized — fixes that.
+    QScreen* screen = QGuiApplication::primaryScreen();
+    if (!screen)
+        return;                     // no screen yet; keep the default geometry
+
+    const QRect avail = screen->availableGeometry();
+
+    const QRect saved = m_config.windowGeometry();
+    int w = saved.width()  > 0 ? saved.width()  : 1280;
+    int h = saved.height() > 0 ? saved.height() : 720;
+    w = qMin(w, avail.width());
+    h = qMin(h, avail.height());
+    resize(w, h);
+
+    // x()/y() of a top-level window include the frame, so center using the
+    // frame geometry to keep the window truly centered.
+    const QRect frame = frameGeometry();
+    int x = avail.x() + (avail.width()  - frame.width())  / 2;
+    int y = avail.y() + (avail.height() - frame.height()) / 2;
+
+    const bool savedOnScreen =
+        saved.x() >= 0 && saved.y() >= 0
+        && saved.x() < avail.x() + avail.width()  - 40
+        && saved.y() < avail.y() + avail.height() - 40;
+    if (savedOnScreen) {
+        x = saved.x();
+        y = saved.y();
+    }
+
+    // Clamp so the title bar is always reachable, whatever the resolution.
+    x = qMax(avail.x(), qMin(x, avail.x() + avail.width()  - frame.width()));
+    y = qMax(avail.y(), qMin(y, avail.y() + avail.height() - frame.height()));
+    move(x, y);
+}
 
 void MainWindow::changeEvent(QEvent* event)
 {

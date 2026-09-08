@@ -103,6 +103,7 @@ void ToolsPanel::buildUi()
     m_toolList->addItem(QStringLiteral("像素→3D"));
     m_toolList->addItem(QStringLiteral("手眼标定"));
     m_toolList->addItem(QStringLiteral("坐标转换"));
+    m_toolList->addItem(QStringLiteral("机器人通信"));
     m_toolList->setStyleSheet(QStringLiteral(
         "QListWidget { background: %1; border: 1px solid %2; border-radius: %3px;"
         " font-size: %4px; }"
@@ -117,6 +118,7 @@ void ToolsPanel::buildUi()
     buildPixelTo3DPage(m_stack);
     buildCalibrationPage(m_stack);
     buildTransformPage(m_stack);
+    buildRobotCommPage(m_stack);
     layout->addWidget(m_stack, 1);
 
     connect(m_toolList, &QListWidget::currentRowChanged,
@@ -924,4 +926,139 @@ void ToolsPanel::updateTransformResult()
     m_transformValues = QStringLiteral("%1, %2, %3")
         .arg(bx, 0, 'f', 3).arg(by, 0, 'f', 3).arg(bz, 0, 'f', 3);
     m_transformResult->setText(m_transformValues);
+}
+
+void ToolsPanel::buildRobotCommPage(QStackedWidget* stack)
+{
+    auto* page = new QWidget(stack);
+    auto* pageLayout = new QVBoxLayout(page);
+
+    auto* group = new QGroupBox(QStringLiteral("机器人通信（Modbus TCP）"), page);
+    auto* form = new QFormLayout(group);
+    form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+
+    // Protocol + connection status
+    auto* protoRow = new QHBoxLayout();
+    protoRow->setSpacing(8);
+    m_robotProtocol = new ArrowComboBox(group);
+    m_robotProtocol->addItem(QStringLiteral("Modbus TCP"));
+    m_robotProtocol->setStyleSheet(Theme::comboBoxStyle());
+    protoRow->addWidget(m_robotProtocol, 1);
+    m_robotStatus = new QLabel(QStringLiteral("未连接"), group);
+    m_robotStatus->setStyleSheet(QStringLiteral(
+        "font-size: %1px; color: %2;")
+        .arg(Theme::FONT_HINT).arg(Theme::TEXT_HINT));
+    protoRow->addWidget(m_robotStatus);
+    form->addRow(QStringLiteral("协议"), protoRow);
+
+    // Host + port
+    auto* hostRow = new QHBoxLayout();
+    hostRow->setSpacing(8);
+    m_robotHost = makeTextInput(group);
+    m_robotHost->setText(QStringLiteral("192.168.0.1"));
+    m_robotHost->setPlaceholderText(QStringLiteral("机器人 IP 地址"));
+    hostRow->addWidget(m_robotHost, 1);
+    m_robotPort = new QSpinBox(group);
+    m_robotPort->setRange(1, 65535);
+    m_robotPort->setValue(502);
+    m_robotPort->setStyleSheet(Theme::spinBoxStyle());
+    hostRow->addWidget(m_robotPort);
+    form->addRow(QStringLiteral("IP / 端口"), hostRow);
+
+    // Format + scale
+    auto* fmtRow = new QHBoxLayout();
+    fmtRow->setSpacing(8);
+    m_robotFormat = new ArrowComboBox(group);
+    m_robotFormat->addItem(QStringLiteral("Float32"));
+    m_robotFormat->addItem(QStringLiteral("Int32×系数"));
+    m_robotFormat->addItem(QStringLiteral("Int16×系数"));
+    m_robotFormat->setStyleSheet(Theme::comboBoxStyle());
+    fmtRow->addWidget(m_robotFormat, 1);
+    m_robotScale = makeTextInput(group);
+    m_robotScale->setText(QStringLiteral("1.0"));
+    m_robotScale->setFixedWidth(72);
+    fmtRow->addWidget(m_robotScale);
+    form->addRow(QStringLiteral("格式 / 系数"), fmtRow);
+
+    // Start address + unit id
+    auto* addrRow = new QHBoxLayout();
+    addrRow->setSpacing(8);
+    m_robotStartAddr = new QSpinBox(group);
+    m_robotStartAddr->setRange(0, 65535);
+    m_robotStartAddr->setValue(0);
+    m_robotStartAddr->setStyleSheet(Theme::spinBoxStyle());
+    addrRow->addWidget(m_robotStartAddr);
+    m_robotUnitId = new QSpinBox(group);
+    m_robotUnitId->setRange(1, 255);
+    m_robotUnitId->setValue(1);
+    m_robotUnitId->setStyleSheet(Theme::spinBoxStyle());
+    addrRow->addWidget(m_robotUnitId);
+    addrRow->addStretch();
+    form->addRow(QStringLiteral("起始寄存器 / 站号"), addrRow);
+
+    // Action buttons
+    auto* btnRow = new QHBoxLayout();
+    btnRow->setSpacing(8);
+    m_btnRobotConnect = new QPushButton(QStringLiteral("连接"), group);
+    m_btnRobotConnect->setStyleSheet(Theme::primaryButtonStyle());
+    btnRow->addWidget(m_btnRobotConnect);
+    m_btnRobotSimulate = new QPushButton(QStringLiteral("模拟连接成功"), group);
+    m_btnRobotSimulate->setStyleSheet(Theme::secondaryButtonStyle());
+    btnRow->addWidget(m_btnRobotSimulate);
+    btnRow->addStretch();
+    form->addRow(QString(), btnRow);
+
+    auto* hint = new QLabel(group);
+    hint->setWordWrap(true);
+    hint->setStyleSheet(QStringLiteral(
+        "color: %1; font-size: %2px;")
+        .arg(Theme::TEXT_HINT).arg(Theme::FONT_HINT));
+    hint->setText(QStringLiteral(
+        "连接成功后，主界面会显示「读取拍照位姿」与「读取戳点位姿」按钮。"
+        "无真机时可点击「模拟连接成功」验证按钮显示与样式。"));
+    form->addRow(QString(), hint);
+
+    pageLayout->addWidget(group);
+    pageLayout->addStretch();
+    stack->addWidget(page);
+
+    connect(m_btnRobotConnect, &QPushButton::clicked, this, [this]() {
+        if (m_btnRobotConnect->text() == QStringLiteral("连接")) {
+            bool okScale = false;
+            const double scale = m_robotScale->text().trimmed().toDouble(&okScale);
+            if (!okScale) {
+                setRobotStatus(QStringLiteral("系数格式无效"), true);
+                return;
+            }
+            emit robotConnectRequested(
+                m_robotHost->text().trimmed(),
+                static_cast<quint16>(m_robotPort->value()),
+                m_robotFormat->currentIndex(), scale,
+                static_cast<quint8>(m_robotUnitId->value()),
+                static_cast<quint16>(m_robotStartAddr->value()));
+        } else {
+            emit robotDisconnectRequested();
+        }
+    });
+    connect(m_btnRobotSimulate, &QPushButton::clicked, this,
+            [this]() { emit robotSimulateConnectRequested(); });
+}
+
+void ToolsPanel::setRobotStatus(const QString& text, bool ok)
+{
+    if (!m_robotStatus)
+        return;
+    m_robotStatus->setText(text);
+    m_robotStatus->setStyleSheet(QStringLiteral(
+        "font-size: %1px; color: %2;")
+        .arg(Theme::FONT_HINT)
+        .arg(ok ? Theme::ERROR : Theme::TEXT_HINT));
+}
+
+void ToolsPanel::setRobotConnected(bool connected)
+{
+    if (!m_btnRobotConnect)
+        return;
+    m_btnRobotConnect->setText(connected ? QStringLiteral("断开")
+                                         : QStringLiteral("连接"));
 }

@@ -425,22 +425,17 @@ VisSceneView::VisSceneView(QWidget* parent)
     m_imageOverlay->setStyleSheet(QStringLiteral("border: none; background-color: transparent;"));
     m_imageOverlay->hide();
 
-    // Title bar
-    m_titleBar = new QWidget(m_containerWidget);
-    m_titleBar->setFixedHeight(28);
-    m_titleBar->setStyleSheet(QStringLiteral("background-color: rgba(245,245,245,0.92); "
-                              "border-top-left-radius: %1px; border-top-right-radius: %1px;")
-                              .arg(Theme::BORDER_RADIUS));
-    auto* titleLayout = new QHBoxLayout(m_titleBar);
-    titleLayout->setContentsMargins(12, 0, 8, 0);
-
-    auto* title = new QLabel(QStringLiteral("3D 标定场景"), m_titleBar);
-    title->setStyleSheet(QStringLiteral("font-size: %1px; font-weight: 600; color: %2; border: none;")
-                         .arg(Theme::FONT_BODY).arg(Theme::TEXT_TITLE));
-    titleLayout->addWidget(title);
-    titleLayout->addStretch();
-
+    // No title bar — the "3D 标定场景" label lives inside the view (the
+    // placeholder), so the scene fills the whole widget and can grow larger.
     setupToolbar();
+
+    // Debounced native-window resize: during an edge-drag the OSG child window
+    // resize (a synchronous Vis command) is deferred until the resize settles,
+    // so dragging the window edge stays smooth.
+    m_resizeTimer = new QTimer(this);
+    m_resizeTimer->setSingleShot(true);
+    m_resizeTimer->setInterval(80);
+    connect(m_resizeTimer, &QTimer::timeout, this, &VisSceneView::applyVisGeometry);
 
     m_hoverTimer = new QTimer(this);
     m_hoverTimer->setSingleShot(true);
@@ -466,11 +461,12 @@ VisSceneView::~VisSceneView() { shutdown(); }
 
 void VisSceneView::setupToolbar()
 {
+    // Transparent, borderless toolbar — it floats over the bottom edge of the
+    // 3D scene instead of reserving a strip of its own.
     m_toolbar = new QWidget(m_containerWidget);
     m_toolbar->setFixedHeight(28);
-    m_toolbar->setStyleSheet(QStringLiteral("background-color: rgba(0,0,0,0.5); "
-                             "border-bottom-left-radius: %1px; border-bottom-right-radius: %1px;")
-                             .arg(Theme::BORDER_RADIUS));
+    m_toolbar->setAttribute(Qt::WA_TransparentForMouseEvents, false);
+    m_toolbar->setStyleSheet(QStringLiteral("background: transparent; border: none;"));
     auto* btnLayout = new QHBoxLayout(m_toolbar);
     btnLayout->setContentsMargins(8, 0, 8, 0);
     btnLayout->setSpacing(4);
@@ -479,9 +475,9 @@ void VisSceneView::setupToolbar()
     btnReset->setFixedHeight(24);
     btnReset->setToolTip(QStringLiteral("复位到默认视角"));
     btnReset->setStyleSheet(QStringLiteral(R"(
-        QPushButton { color: #CCC; background: transparent; border: 1px solid #555;
+        QPushButton { color: #CCC; background: rgba(0,0,0,0.45); border: none;
                       border-radius: 4px; font-size: 12px; padding: 0 8px; }
-        QPushButton:hover { border-color: %1; color: %1; }
+        QPushButton:hover { color: %1; background: rgba(0,0,0,0.6); }
     )").arg(Theme::PRIMARY));
     QObject::connect(btnReset, SIGNAL(clicked()), this, SLOT(resetViewNoAnim()));
     btnLayout->addWidget(btnReset);
@@ -1192,6 +1188,30 @@ void VisSceneView::shutdown()
 // Qt Events
 // ═══════════════════════════════════════════════════════════════
 
+void VisSceneView::applyVisGeometry()
+{
+#ifdef HAS_RVBUST_VIS
+    if (m_shuttingDown || !d || !m_containerWidget)
+        return;
+
+    const int cw = m_containerWidget->width();
+    const int ch = m_containerWidget->height();
+    if (cw <= 0 || ch <= 0)
+        return;
+
+    // Viewport fills the whole container (no title bar; the toolbar floats).
+    if (d->initialized && d->visHwnd) {
+        d->view->WindowSetRectangle(0, 0, cw, ch);
+        positionVisWindow(*d, m_viewport);
+    } else if (!d->initialized) {
+        initVisEmbedding(*d, m_viewport, this);
+        positionVisWindow(*d, m_viewport);
+    }
+#else
+    (void)0;
+#endif
+}
+
 void VisSceneView::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
@@ -1200,32 +1220,20 @@ void VisSceneView::resizeEvent(QResizeEvent* event)
     int cw = m_containerWidget->width();
     int ch = m_containerWidget->height();
 
-    if (m_titleBar)
-        m_titleBar->setGeometry(0, 0, cw, m_titleBar->height());
+    // Qt overlays reposition immediately (cheap).  The native Vis window
+    // resize is deferred to applyVisGeometry() via m_resizeTimer so edge-drag
+    // never blocks on a synchronous Vis command.
     if (m_toolbar)
         m_toolbar->setGeometry(0, ch - m_toolbar->height(), cw, m_toolbar->height());
     if (m_placeholder)
         m_placeholder->setGeometry(0, 0, cw, ch);
     if (m_imageOverlay)
         m_imageOverlay->setGeometry(0, 0, cw, ch);
-
-    int vpTop = m_titleBar ? m_titleBar->height() : 28;
-    int vpBottom = m_toolbar ? m_toolbar->height() : 28;
-    int vpH = ch - vpTop - vpBottom;
-    if (vpH < 0) vpH = 0;
     if (m_viewport)
-        m_viewport->setGeometry(0, vpTop, cw, vpH);
+        m_viewport->setGeometry(0, 0, cw, ch);
 
-#ifdef HAS_RVBUST_VIS
-    if (m_shuttingDown) return;
-    if (d && d->initialized && d->visHwnd) {
-        d->view->WindowSetRectangle(0, 0, cw, vpH);
-        positionVisWindow(*d, m_viewport);
-    } else if (d && !d->initialized && vpH > 0) {
-        initVisEmbedding(*d, m_viewport, this);
-        positionVisWindow(*d, m_viewport);
-    }
-#endif
+    if (m_resizeTimer)
+        m_resizeTimer->start();
 }
 
 void VisSceneView::showEvent(QShowEvent* event)
@@ -1233,16 +1241,7 @@ void VisSceneView::showEvent(QShowEvent* event)
     QWidget::showEvent(event);
 #ifdef HAS_RVBUST_VIS
     if (m_shuttingDown) return;
-    if (d && !d->initialized) {
-        int cw = m_containerWidget->width();
-        int ch = m_containerWidget->height();
-        int vpTop = m_titleBar ? m_titleBar->height() : 28;
-        int vpBottom = m_toolbar ? m_toolbar->height() : 28;
-        int vpH = ch - vpTop - vpBottom;
-        if (vpH > 0 && cw > 0) {
-            initVisEmbedding(*d, m_viewport, this);
-            positionVisWindow(*d, m_viewport);
-        }
-    }
+    if (d && !d->initialized)
+        applyVisGeometry();   // first show: embed the Vis window immediately
 #endif
 }

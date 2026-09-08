@@ -25,6 +25,9 @@ class ActionButtons;
 class SidePanel;
 class ToastOverlay;
 class ToolsPanel;
+class QPushButton;
+class QCheckBox;
+class QShowEvent;
 struct DeviceEntry;
 
 // MainWindow is the UI assembler / signal adapter.  Business logic of the
@@ -40,6 +43,7 @@ public:
 protected:
     void changeEvent(QEvent* event) override;
     void closeEvent(QCloseEvent* event) override;
+    void showEvent(QShowEvent* event) override;
 
 private:
     // UI construction
@@ -69,6 +73,10 @@ private:
                         quint8 unitId, quint16 startAddress);
     void onRobotDisconnect();
     void onRobotRead();
+    void onRobotReadTouch();
+    void onRobotSimulateConnect();
+    bool readRobotPose(RobotPose::Pose& pose);
+    void updateRobotReadBar();
 
     // Card updates
     void onCardChanged(const QString& field, const QString& value);
@@ -127,4 +135,15 @@ private:
     // Stage 8: robot communication (isolated, default off)
     RobotPose::ModbusTcpReader m_robotReader;
     bool m_robotAutoRead = false;
+    bool m_robotConnected = false;     // logical connection (real or simulated)
+    bool m_robotSimulated = false;     // "模拟连接成功" — no real socket
+
+    // Main-interface robot read bar (visible only while connected)
+    QWidget*      m_robotReadBar = nullptr;
+    QPushButton*  m_btnReadCapturePose = nullptr;
+    QPushButton*  m_btnReadTouchPose = nullptr;
+    QCheckBox*    m_robotAutoReadCheck = nullptr;
+
+    // Window centering (restore/clamp once on first show)
+    bool m_windowPositioned = false;
 };

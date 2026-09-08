@@ -96,6 +96,7 @@ public slots:
 
 private:
     void setupToolbar();
+    void applyVisGeometry();   // debounced native Vis window resize/init
     // Marker picking state (GUI thread only)
     struct PickMarker {
         int index = -1;
@@ -117,7 +118,6 @@ private:
     void showHoverResult(const PickResult& result);
     void handleClickResult(const PickResult& result);
 
-    QWidget* m_titleBar = nullptr;
     QWidget* m_toolbar = nullptr;
     QWidget* m_containerWidget = nullptr;
     QWidget* m_viewport = nullptr;
@@ -129,6 +129,7 @@ private:
     bool m_shuttingDown = false;
 
     QTimer* m_hoverTimer = nullptr;
+    QTimer* m_resizeTimer = nullptr;
     std::vector<PickMarker> m_pickMarkers;
     bool m_pickEnabled = false;
 

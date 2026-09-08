@@ -34,6 +34,7 @@ private:
     void render();
 
     QLabel* m_imageLabel;
+    QLabel* m_titleLabel;
     QLabel* m_zoomLabel;
 
     QPixmap m_originalPixmap;

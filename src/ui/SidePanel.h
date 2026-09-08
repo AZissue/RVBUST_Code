@@ -4,10 +4,6 @@
 #include <QLabel>
 #include <QTextEdit>
 #include <QPushButton>
-#include <QComboBox>
-#include <QSpinBox>
-#include <QLineEdit>
-#include <QCheckBox>
 #include "models/CaptureRecord.h"
 
 class SidePanel : public QWidget {
@@ -17,18 +13,8 @@ public:
 
     void setTip(const QString& text, bool isError = false);
     void setCalibrationResult(const QString& text);
-    void setRobotStatus(const QString& text, bool ok);
-    void setRobotConnected(bool connected);
     void updateFilePreview(bool eyeInHand, bool markerType,
                            const std::vector<CaptureRecord>& records);
-
-signals:
-    void robotConnectRequested(const QString& host, quint16 port,
-                               int format, double scale,
-                               quint8 unitId, quint16 startAddress);
-    void robotDisconnectRequested();
-    void robotReadRequested();
-    void robotAutoReadToggled(bool on);
 
 private:
     // Card 1: Tips
@@ -47,20 +33,6 @@ private:
     QPushButton* m_tabRobotPose;
     QPushButton* m_tabRobotTarget;
     QPushButton* m_tabCalibResult;
-
-    // Card 4: robot communication (isolated, off by default)
-    QFrame* m_robotCard = nullptr;
-    QComboBox* m_robotProtocol = nullptr;
-    QLineEdit* m_robotHost = nullptr;
-    QSpinBox* m_robotPort = nullptr;
-    QSpinBox* m_robotStartAddr = nullptr;
-    QComboBox* m_robotFormat = nullptr;
-    QLineEdit* m_robotScale = nullptr;
-    QSpinBox* m_robotUnitId = nullptr;
-    QPushButton* m_btnRobotConnect = nullptr;
-    QPushButton* m_btnRobotRead = nullptr;
-    QCheckBox* m_robotAutoRead = nullptr;
-    QLabel* m_robotStatus = nullptr;
 
     void showMarkerPreview(const std::vector<CaptureRecord>& records);
     void showTcpPreview(const QString& key, bool eyeInHand,

@@ -23,33 +23,27 @@ Image2DView::Image2DView(QWidget* parent)
     mainLayout->setContentsMargins(0, 0, 0, 0);
     mainLayout->setSpacing(0);
 
-    // Title bar — compact overlay style matching 3D view
-    auto* titleBar = new QWidget(this);
-    titleBar->setFixedHeight(28);
-    titleBar->setStyleSheet(QStringLiteral("background-color: %1; border-top-left-radius: %2px; border-top-right-radius: %2px;")
-                            .arg(Theme::BG_CARD).arg(Theme::BORDER_RADIUS));
-    auto* titleLayout = new QHBoxLayout(titleBar);
-    titleLayout->setContentsMargins(12, 0, 12, 0);
-
-    auto* title = new QLabel(QStringLiteral("2D 实时图像"), titleBar);
-    title->setStyleSheet(QStringLiteral("font-size: %1px; font-weight: 600; color: %2; border: none;")
-                         .arg(Theme::FONT_BODY).arg(Theme::TEXT_TITLE));
-    titleLayout->addWidget(title);
-    titleLayout->addStretch();
-
-    m_zoomLabel = new QLabel(QStringLiteral("适应"), titleBar);
-    m_zoomLabel->setStyleSheet(QStringLiteral("font-size: %1px; color: %2; border: none;")
-                               .arg(Theme::FONT_HINT).arg(Theme::TEXT_HINT));
-    titleLayout->addWidget(m_zoomLabel);
-
-    mainLayout->addWidget(titleBar);
-
-    // Image display area
+    // Image display area — fills the whole view (no title bar), so the image
+    // gets as much space as possible.
     m_imageLabel = new QLabel(this);
     m_imageLabel->setAlignment(Qt::AlignCenter);
     m_imageLabel->setStyleSheet(QStringLiteral("background-color: %1; border: none;").arg(Theme::BG_DARK_2D));
     m_imageLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     mainLayout->addWidget(m_imageLabel, 1);
+
+    // Overlay labels (title top-left, zoom top-right) float over the image and
+    // are transparent to mouse events so pixel picking still works through them.
+    m_titleLabel = new QLabel(QStringLiteral("2D 实时图像"), this);
+    m_titleLabel->setStyleSheet(QStringLiteral(
+        "color: #FFF; background: rgba(0,0,0,0.45); border: none; border-radius: 4px; "
+        "padding: 3px 8px; font-size: %1px; font-weight: 600;").arg(Theme::FONT_HINT));
+    m_titleLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
+
+    m_zoomLabel = new QLabel(QStringLiteral("适应"), this);
+    m_zoomLabel->setStyleSheet(QStringLiteral(
+        "color: #FFF; background: rgba(0,0,0,0.45); border: none; border-radius: 4px; "
+        "padding: 3px 8px; font-size: %1px;").arg(Theme::FONT_HINT));
+    m_zoomLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
 
     // Zoom-drag uses a fast (nearest-neighbor) scale; a short debounce timer
     // then re-renders the final frame with smooth scaling.
@@ -275,9 +269,26 @@ void Image2DView::mouseDoubleClickEvent(QMouseEvent* event)
 void Image2DView::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
+
+    // Reposition the overlay labels (kept out of the layout so they float).
+    if (m_titleLabel) {
+        m_titleLabel->adjustSize();
+        m_titleLabel->move(8, 8);
+        m_titleLabel->raise();
+    }
+    if (m_zoomLabel) {
+        m_zoomLabel->adjustSize();
+        m_zoomLabel->move(width() - m_zoomLabel->width() - 8, 8);
+        m_zoomLabel->raise();
+    }
+
     if (m_autoFit) {
         fitZoom();
     }
+    // Live resize uses a fast nearest-neighbor render; a smooth re-render fires
+    // 200ms after the resize settles, keeping edge-drag silky.
+    m_smoothRender = false;
+    m_smoothTimer->start();
     render();
 }
 
