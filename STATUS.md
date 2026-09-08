@@ -1,6 +1,6 @@
 # STATUS.md — 进度状态（每次会话结束必须更新）
 
-> 最后更新：2026-08-25
+> 最后更新：2026-09-08
 > 只保留「当前快照」，不积累历史；旧条目删除即可，git 历史里仍可追溯。
 
 ## ⏭ 交接块（新会话先读这里）
@@ -15,6 +15,11 @@
 
 ## ✅ 已完成
 
+- [x] 2026-09-08 代码审查 + BUG 修复 + 去重造轮子：修复 4 处 BUG（AppConfig 载入默认值
+  与 getter 不一致、CalibrationService 误差数组越界读、PlyPointReader 非 vertex 标量属性
+  误收集、DetectionEngine::extractColors 未清空输出）；抽公共 countValidPoints2D 替换两处
+  重复计数循环；RobotPose 手写大端字节解析改为 QDataStream（Float32 显式 SinglePrecision）；
+  补 2 项回归单测，AICode 与 D 工作区构建+单测全绿。
 - [x] 2026-08-25 文档体系按新模板重构：AGENTS/PROJECT/PLAN/STATUS + SESSION_PROMPTS，
   双工作区同步，git 首次文档提交（回退路线按 PLAN 各阶段）。
 - [x] 2026-08-25 删除旧备忘 PROJECT_NOTES.md（半成品备忘已被新文档体系取代）。

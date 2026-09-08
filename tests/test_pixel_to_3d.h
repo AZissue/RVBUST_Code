@@ -14,4 +14,5 @@ private slots:
     void plyReaderAscii();
     void plyReaderBinaryFloat();
     void plyReaderBadInputs();
+    void plyReaderSkipsNonVertexScalarProperties();
 };

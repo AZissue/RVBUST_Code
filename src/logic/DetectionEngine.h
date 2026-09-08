@@ -65,6 +65,11 @@ public:
     static std::vector<float> firstValidPoint3d(
         const std::vector<std::array<float, 3>>& pts3d);
 
+    // Count the leading valid 2D points in a flat [x0,y0,x1,y1,...] buffer.
+    // Detection APIs fill the tail with (0,0) after the last real point, so
+    // this stops at the first invalid (zero, or NaN) entry.
+    static int countValidPoints2D(const std::vector<float>& pixelXy, int maxPoints);
+
 private:
     // RVC native concentric detection
     static std::pair<std::vector<std::pair<float, float>>,

@@ -109,7 +109,8 @@ inline Result read(const std::string& path)
     }
 
     detail::Format fmt = detail::Format::Ascii;
-    long long vertexCount = 0;
+    long long vertexCount = -1;
+    bool inVertex = false;   // only collect properties while inside "element vertex"
     std::vector<detail::Property> vertexProps;
     bool headerDone = false;
     while (std::getline(f, line)) {
@@ -135,11 +136,12 @@ inline Result read(const std::string& path)
             std::string name;
             long long count = 0;
             ls >> name >> count;
-            if (name == "vertex")
+            inVertex = (name == "vertex");
+            if (inVertex)
                 vertexCount = count;
-            // other elements are skipped as a whole block later
+            // non-vertex elements are skipped entirely
         } else if (token == "property") {
-            if (vertexCount >= 0) {
+            if (inVertex) {
                 std::string type, name;
                 ls >> type >> name;
                 detail::Property p;

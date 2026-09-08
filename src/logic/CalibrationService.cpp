@@ -9,6 +9,7 @@
 #include <QFileInfo>
 #include <QSaveFile>
 #include <QTextStream>
+#include <algorithm>
 
 namespace CalibrationService {
 
@@ -135,7 +136,10 @@ Result calibrateMarker(const QString& folder,
     for (int i = 0; i < 16; ++i)
         out.matrix[static_cast<std::size_t>(i)] = sdkResult.matrix[i];
     out.totalMeanError = sdkResult.totalMeanError;
-    const std::size_t n = poseLines.size();
+    // The SDK's per-frame result arrays are fixed at 100 entries (HandEye.h);
+    // clamp the copy to that bound so more than 100 sets never reads past them.
+    const std::size_t n = std::min(
+        poseLines.size(), static_cast<std::size_t>(100));
     out.errors.assign(sdkResult.error, sdkResult.error + n);
     out.success2D.assign(sdkResult.success2D, sdkResult.success2D + n);
     out.success3D.assign(sdkResult.success3D, sdkResult.success3D + n);

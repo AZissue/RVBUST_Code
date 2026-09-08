@@ -11,5 +11,6 @@ private slots:
     void formatMarkersForOverlayLabelsAndHighlights();
     void firstValidPoint3dSkipsNan();
     void firstValidPoint3dReturnsEmpty();
+    void countValidPoints2DCountsLeadingValid();
     void detectConcentricRegressionOnTestData();
 };

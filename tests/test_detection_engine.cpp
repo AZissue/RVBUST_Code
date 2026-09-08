@@ -85,6 +85,30 @@ void TestDetectionEngine::firstValidPoint3dReturnsEmpty()
     QVERIFY(DetectionEngine::firstValidPoint3d(allNan).empty());
 }
 
+void TestDetectionEngine::countValidPoints2DCountsLeadingValid()
+{
+    // Flat [x,y,...] pairs; the detection API zero-pads the tail.
+    const std::vector<float> px = {
+        10.0f, 20.0f,
+        30.0f, 40.0f,
+        0.0f, 0.0f,     // stop here
+        50.0f, 60.0f    // ignored
+    };
+    QCOMPARE(DetectionEngine::countValidPoints2D(px, 4), 2);
+
+    // NaN also stops counting
+    const std::vector<float> withNan = {
+        1.0f, 2.0f,
+        NAN, 3.0f,
+        4.0f, 5.0f
+    };
+    QCOMPARE(DetectionEngine::countValidPoints2D(withNan, 3), 1);
+
+    // maxPoints bounds the scan
+    QCOMPARE(DetectionEngine::countValidPoints2D(px, 1), 1);
+    QCOMPARE(DetectionEngine::countValidPoints2D({}, 4), 0);
+}
+
 void TestDetectionEngine::detectConcentricRegressionOnTestData()
 {
     if (qEnvironmentVariableIsEmpty("HAND_EYE_TEST_REGRESSION"))

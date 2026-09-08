@@ -3,7 +3,6 @@
 #include <QTcpSocket>
 #include <QDataStream>
 #include <QThread>
-#include <cstring>
 
 namespace RobotPose {
 
@@ -18,32 +17,6 @@ QString statusText(Status s)
     }
     return {};
 }
-
-namespace {
-
-quint16 be16(const QByteArray& d, int off)
-{
-    return (static_cast<quint16>(static_cast<unsigned char>(d[off])) << 8)
-         | static_cast<quint16>(static_cast<unsigned char>(d[off + 1]));
-}
-
-quint32 be32(const QByteArray& d, int off)
-{
-    return (static_cast<quint32>(static_cast<unsigned char>(d[off])) << 24)
-         | (static_cast<quint32>(static_cast<unsigned char>(d[off + 1])) << 16)
-         | (static_cast<quint32>(static_cast<unsigned char>(d[off + 2])) << 8)
-         | static_cast<quint32>(static_cast<unsigned char>(d[off + 3]));
-}
-
-float beFloat32(const QByteArray& d, int off)
-{
-    const quint32 raw = be32(d, off);
-    float f = 0.0f;
-    std::memcpy(&f, &raw, sizeof(f));
-    return f;
-}
-
-} // namespace
 
 ModbusTcpReader::~ModbusTcpReader()
 {
@@ -137,18 +110,29 @@ Status ModbusTcpReader::readRegisters(quint16 count, QByteArray& data)
 Status ModbusTcpReader::parseRegisters(const QByteArray& data,
                                        std::array<double, 6>& out) const
 {
-    if (m_cfg.format == RegisterFormat::Int16Scaled) {
-        for (int i = 0; i < 6; ++i)
-            out[static_cast<std::size_t>(i)] =
-                static_cast<qint16>(be16(data, 9 + i * 2)) * m_cfg.scale;
-    } else if (m_cfg.format == RegisterFormat::Int32Scaled) {
-        for (int i = 0; i < 6; ++i)
-            out[static_cast<std::size_t>(i)] =
-                static_cast<qint32>(be32(data, 9 + i * 4)) * m_cfg.scale;
-    } else {
-        for (int i = 0; i < 6; ++i)
-            out[static_cast<std::size_t>(i)] =
-                static_cast<double>(beFloat32(data, 9 + i * 4));
+    // Decode the register payload (byte 9 of the Modbus TCP ADU: 7-byte MBAP
+    // header + function code + byte count) as big-endian values.
+    QDataStream ds(data);
+    ds.setByteOrder(QDataStream::BigEndian);
+    // Modbus Float32 registers are IEEE 754 single precision (4 bytes each);
+    // QDataStream's default DoublePrecision would otherwise read floats as 8.
+    ds.setFloatingPointPrecision(QDataStream::SinglePrecision);
+    ds.skipRawData(9);
+
+    for (int i = 0; i < 6; ++i) {
+        if (m_cfg.format == RegisterFormat::Int16Scaled) {
+            qint16 v = 0;
+            ds >> v;
+            out[static_cast<std::size_t>(i)] = static_cast<double>(v) * m_cfg.scale;
+        } else if (m_cfg.format == RegisterFormat::Int32Scaled) {
+            qint32 v = 0;
+            ds >> v;
+            out[static_cast<std::size_t>(i)] = static_cast<double>(v) * m_cfg.scale;
+        } else {  // Float32
+            float f = 0.0f;
+            ds >> f;
+            out[static_cast<std::size_t>(i)] = static_cast<double>(f);
+        }
     }
     return Status::Ok;
 }

@@ -211,3 +211,32 @@ void TestPixelTo3D::plyReaderBadInputs()
     const auto r = PlyPointReader::read(noXyz.toStdString());
     QVERIFY(r.ok == false);
 }
+
+void TestPixelTo3D::plyReaderSkipsNonVertexScalarProperties()
+{
+    // A non-vertex element (face) declared *before* the vertex element, with
+    // scalar (non-list) properties, must not be collected as vertex properties.
+    // Regression: the old parser tracked element association via a 0-initialized
+    // vertexCount, which made it collect face scalar properties and mis-parse xyz.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.path() + QStringLiteral("/face_first.ply");
+    QFile f(path);
+    QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Text));
+    f.write("ply\nformat ascii 1.0\n"
+            "element face 2\n"
+            "property uchar red\nproperty uchar green\nproperty uchar blue\n"
+            "element vertex 3\n"
+            "property float x\nproperty float y\nproperty float z\n"
+            "end_header\n"
+            "1.0 2.0 3.0\n4.0 5.0 6.0\n7.0 8.0 9.0\n"
+            "255 0 0\n0 255 0\n");
+    f.close();
+
+    const auto r = PlyPointReader::read(path.toStdString());
+    QVERIFY2(r.ok, r.error.c_str());
+    QCOMPARE(r.xyz.size(), static_cast<std::size_t>(9));
+    QCOMPARE(r.xyz[0], 1.0);
+    QCOMPARE(r.xyz[4], 5.0);
+    QCOMPARE(r.xyz[8], 9.0);
+}

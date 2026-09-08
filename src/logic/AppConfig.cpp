@@ -45,13 +45,13 @@ void AppConfig::load()
         m_data["camera_params"] = QVariantMap{};
     }
     if (!m_data.contains("caliboard_pattern_w")) {
-        m_data["caliboard_pattern_w"] = 11;
+        m_data["caliboard_pattern_w"] = 4;     // columns, short side
     }
     if (!m_data.contains("caliboard_pattern_h")) {
-        m_data["caliboard_pattern_h"] = 4;
+        m_data["caliboard_pattern_h"] = 11;    // rows, long side, must be odd
     }
     if (!m_data.contains("caliboard_circle_step")) {
-        m_data["caliboard_circle_step"] = 15.0;
+        m_data["caliboard_circle_step"] = 7.0; // A9
     }
     if (!m_data.contains("caliboard_error_threshold")) {
         m_data["caliboard_error_threshold"] = 5.0;

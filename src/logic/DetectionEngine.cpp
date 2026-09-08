@@ -187,13 +187,7 @@ DetectionEngine::detectCaliboardNative(const std::string& pngPath, const std::st
 
     if (err != 0) return {};
 
-    // Count valid 2D points (non-zero)
-    int validCount = 0;
-    for (int i = 0; i < num; ++i) {
-        float x = circle2d[i * 2], y = circle2d[i * 2 + 1];
-        if ((x == 0.0f && y == 0.0f) || std::isnan(x) || std::isnan(y)) break;
-        ++validCount;
-    }
+    const int validCount = countValidPoints2D(circle2d, num);
     if (validCount == 0) return {};
 
     CaliboardResult result;
@@ -251,13 +245,7 @@ DetectionEngine::detectCaliboardHandEye(const std::string& pngPath, const std::s
     if (r.pixelXy.empty()) return result;
 
     // Count valid entries (non-zero, non-NaN)
-    int expected = patternW * patternH * 2;
-    int validCount = 0;
-    for (int i = 0; i < expected && i < static_cast<int>(r.pixelXy.size()); i += 2) {
-        float x = r.pixelXy[i], y = r.pixelXy[i + 1];
-        if ((x == 0.0f && y == 0.0f) || std::isnan(x) || std::isnan(y)) break;
-        ++validCount;
-    }
+    const int validCount = countValidPoints2D(r.pixelXy, patternW * patternH);
     if (validCount == 0) return result;
 
     result.pixelXy.assign(r.pixelXy.begin(), r.pixelXy.begin() + validCount * 2);
@@ -276,6 +264,26 @@ DetectionEngine::detectCaliboardHandEye(const std::string& pngPath, const std::s
     }
 
     return result;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Point counting utilities
+// ═══════════════════════════════════════════════════════════════
+
+int DetectionEngine::countValidPoints2D(const std::vector<float>& pixelXy, int maxPoints)
+{
+    if (maxPoints <= 0)
+        return 0;
+    const int n = std::min(maxPoints, static_cast<int>(pixelXy.size() / 2));
+    int count = 0;
+    for (int i = 0; i < n; ++i) {
+        const float x = pixelXy[static_cast<std::size_t>(i * 2)];
+        const float y = pixelXy[static_cast<std::size_t>(i * 2 + 1)];
+        if ((x == 0.0f && y == 0.0f) || std::isnan(x) || std::isnan(y))
+            break;
+        ++count;
+    }
+    return count;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -326,6 +334,7 @@ void DetectionEngine::extractColors(const RVC::Image& img, std::vector<float>& r
                     img.GetType() == RVC::ImageType::RGB8) ? 3 : 1;
     auto* data = reinterpret_cast<const uint8_t*>(img.GetDataPtr());
 
+    rgbOut.clear();
     rgbOut.reserve(total * 3);
     for (int i = 0; i < total; ++i) {
         if (channels >= 3) {
