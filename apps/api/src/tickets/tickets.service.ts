@@ -20,12 +20,12 @@ const ticketInclude = {
 } as const;
 
 const transitions: Record<TicketStatus, TicketStatus[]> = {
-  PENDING: [TicketStatus.IN_PROGRESS, TicketStatus.CLOSED],
-  IN_PROGRESS: [TicketStatus.WAITING_CUSTOMER, TicketStatus.WAITING_RND, TicketStatus.RESOLVED, TicketStatus.CLOSED],
-  WAITING_CUSTOMER: [TicketStatus.IN_PROGRESS, TicketStatus.RESOLVED, TicketStatus.CLOSED],
-  WAITING_RND: [TicketStatus.IN_PROGRESS, TicketStatus.RESOLVED, TicketStatus.CLOSED],
-  RESOLVED: [TicketStatus.IN_PROGRESS, TicketStatus.CLOSED],
-  CLOSED: [TicketStatus.IN_PROGRESS],
+  PENDING: [TicketStatus.IN_PROGRESS, TicketStatus.WAITING_CUSTOMER, TicketStatus.WAITING_RND, TicketStatus.RESOLVED, TicketStatus.CLOSED],
+  IN_PROGRESS: [TicketStatus.PENDING, TicketStatus.WAITING_CUSTOMER, TicketStatus.WAITING_RND, TicketStatus.RESOLVED, TicketStatus.CLOSED],
+  WAITING_CUSTOMER: [TicketStatus.PENDING, TicketStatus.IN_PROGRESS, TicketStatus.WAITING_RND, TicketStatus.RESOLVED, TicketStatus.CLOSED],
+  WAITING_RND: [TicketStatus.PENDING, TicketStatus.IN_PROGRESS, TicketStatus.WAITING_CUSTOMER, TicketStatus.RESOLVED, TicketStatus.CLOSED],
+  RESOLVED: [TicketStatus.PENDING, TicketStatus.IN_PROGRESS, TicketStatus.WAITING_CUSTOMER, TicketStatus.WAITING_RND, TicketStatus.CLOSED],
+  CLOSED: [TicketStatus.PENDING, TicketStatus.IN_PROGRESS, TicketStatus.WAITING_CUSTOMER, TicketStatus.WAITING_RND, TicketStatus.RESOLVED],
 };
 
 @Injectable()
@@ -145,7 +145,7 @@ export class TicketsService {
   async changeStatus(user: AuthUser, id: string, dto: ChangeStatusDto) {
     if (user.role === 'customer') throw new ForbiddenException('客户账号不能修改工单状态');
     const ticket = await this.access.requireTicket(user, id);
-    if (!this.access.canEditTicket(user, ticket)) throw new ForbiddenException('仅创建人、负责人或管理员可以更新该工单');
+    if (user.role !== 'admin' && ticket.assigneeId !== user.id) throw new ForbiddenException('仅当前负责人或管理员可以变更工单状态');
     if (!transitions[ticket.status].includes(dto.status)) throw new BadRequestException(`不允许从「${zhStatus(ticket.status)}」变更为「${zhStatus(dto.status)}」`);
     return this.prisma.$transaction(async (tx) => {
       const updated = await tx.ticket.update({
