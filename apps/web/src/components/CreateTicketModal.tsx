@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Modal } from './Modal'
 import { useRemote } from '../hooks/useRemote'
 import { api } from '../lib/api'
-import { ticketSourceLabels } from '../lib/labels'
 import type { Customer, Device, Ticket } from '../types'
 
 const normalized = (value: string) => value.trim().toLocaleLowerCase()
@@ -64,8 +63,7 @@ export function CreateTicketModal({ onClose, onCreated, defaultAssigneeId }: { o
       {!customers.loading && !customers.error && customerName.trim() && !customer && <label className="span-2 checkbox-row"><input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} />确认新建客户「{customerName.trim()}」</label>}
       <label className="span-2">问题标题<input name="title" required minLength={3} maxLength={240} /></label>
       <label className="span-2">问题描述<textarea name="description" required minLength={3} maxLength={20000} rows={4} /></label>
-      <label>问题来源<select name="source" defaultValue="AFTER_SALES_INCIDENT">{Object.entries(ticketSourceLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-      <label>问题分类<input name="category" maxLength={100} defaultValue="其他" /></label>
+      <label className="span-2">问题分类<input name="category" maxLength={100} defaultValue="其他" placeholder="如：网络连接、点云异常、标定问题" /></label>
       <details className="span-2"><summary>补充信息</summary><div className="form-grid">
         <label>关联设备<input value={deviceText} onChange={event => setDeviceText(event.target.value)} list="ticket-devices" disabled={!currentDetail} placeholder="搜索设备名称或序列号" /><datalist id="ticket-devices">{currentDetail?.devices?.map(item => <option key={item.id} value={deviceLabel(item)} />)}</datalist></label>
         <label>联系人<select value={contactId} onChange={event => setContactId(event.target.value)} disabled={!currentDetail}><option value="">未关联</option>{currentDetail?.contacts?.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
