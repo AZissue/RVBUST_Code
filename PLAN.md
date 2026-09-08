@@ -116,8 +116,8 @@
 ## 阶段 8：采集提质（机器人通信已实现；姿态引导/质检/板位姿待确认）
 - 目标：机器人位姿自动读取（统一接口+Modbus TCP）；姿态引导/数据质检/
   板位姿可视化（待确认后实现）。
-- 涉及文件：logic/RobotPose.*、ui/SidePanel.cpp（机器人通信卡）、
-  app/MainWindow.cpp（接线）、tests/test_robot_pose.*。
+- 涉及文件：logic/RobotPose.*、ui/ToolsPanel.cpp（机器人通信页）、
+  ui/ActionButtons.*（连接态读取按钮）、app/MainWindow.cpp（接线）、tests/test_robot_pose.*。
 - DoD：
   - [x] RobotPose 单测全绿（Float32/Int32/Int16/超时/未连接）
   - [x] 通信卡默认关闭、不影响现有链路；读取位姿填入卡片

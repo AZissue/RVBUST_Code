@@ -34,10 +34,12 @@ ActionButtons::ActionButtons(QWidget* parent)
 
     // Robot read buttons — live in the same action row (same style/font), but
     // are hidden until a robot connection is established (see MainWindow).
-    m_btnReadCapturePose = makeBtn(QStringLiteral("读取拍照位姿"), Theme::secondaryButtonStyle());
-    m_btnReadTouchPose   = makeBtn(QStringLiteral("读取戳点位姿"), Theme::secondaryButtonStyle());
-    m_btnReadCapturePose->setMinimumWidth(120);
-    m_btnReadTouchPose->setMinimumWidth(120);
+    m_btnReadCapturePose = makeBtn(QStringLiteral("拍照位姿"), Theme::secondaryButtonCompactStyle());
+    m_btnReadTouchPose   = makeBtn(QStringLiteral("戳点位姿"), Theme::secondaryButtonCompactStyle());
+    m_btnReadCapturePose->setMinimumWidth(88);
+    m_btnReadTouchPose->setMinimumWidth(88);
+    m_btnReadCapturePose->setToolTip(QStringLiteral("读取机器人拍照位姿"));
+    m_btnReadTouchPose->setToolTip(QStringLiteral("读取机器人戳点位姿"));
     m_btnReadCapturePose->hide();
     m_btnReadTouchPose->hide();
 

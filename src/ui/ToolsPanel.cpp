@@ -1020,7 +1020,7 @@ void ToolsPanel::buildRobotCommPage(QStackedWidget* stack)
         "color: %1; font-size: %2px;")
         .arg(Theme::TEXT_HINT).arg(Theme::FONT_HINT));
     hint->setText(QStringLiteral(
-        "连接成功后，主界面会显示「读取拍照位姿」与「读取戳点位姿」按钮。"
+        "连接成功后，主界面会显示「拍照位姿」与「戳点位姿」按钮。"
         "无真机时可点击「模拟连接成功」验证按钮显示与样式。"));
     form->addRow(QString(), hint);
 

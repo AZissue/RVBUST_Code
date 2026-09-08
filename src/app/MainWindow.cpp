@@ -955,7 +955,7 @@ void MainWindow::onRobotReadTouch()
 void MainWindow::updateRobotReadBar()
 {
     // The read buttons live in the ActionButtons row; show them only while a
-    // robot connection is active, and 「读取戳点位姿」 additionally only in
+    // robot connection is active, and 「戳点位姿」 additionally only in
     // 戳点标定 mode.
     const bool tcp = (m_calibType == CalibType::TcpTouch);
     if (m_actionButtons) {

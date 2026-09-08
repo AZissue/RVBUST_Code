@@ -40,6 +40,9 @@ inline constexpr const char* ACTIVE_SHADOW = "0 4px 12px rgba(22, 119, 255, 0.15
 QString globalStylesheet();
 QString primaryButtonStyle();
 QString secondaryButtonStyle();
+// secondary style with reduced horizontal padding — for longer labels (e.g.
+// the robot read buttons) so they stay compact when the window is narrow.
+QString secondaryButtonCompactStyle();
 QString secondaryEmphasisButtonStyle();
 QString dangerButtonStyle();
 // In-progress state: translucent sky-blue gradient that stays visible even

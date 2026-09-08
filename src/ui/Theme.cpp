@@ -92,6 +92,30 @@ QString secondaryButtonStyle()
     .arg(BG_CARD);
 }
 
+QString secondaryButtonCompactStyle()
+{
+    return QStringLiteral(R"(
+        QPushButton {
+            background-color: %1;
+            color: %2;
+            border: 1px solid %3;
+            border-radius: %4px;
+            padding: 0 12px;
+            font-size: %5px;
+            font-weight: 500;
+            height: 40px;
+        }
+        QPushButton:hover { background-color: %6; }
+        QPushButton:disabled { opacity: 0.5; }
+    )")
+    .arg(BG_MAIN)
+    .arg(TEXT_BODY)
+    .arg(BORDER_DEFAULT)
+    .arg(BORDER_RADIUS)
+    .arg(FONT_BODY)
+    .arg(BG_CARD);
+}
+
 QString secondaryEmphasisButtonStyle()
 {
     return QStringLiteral(R"(
