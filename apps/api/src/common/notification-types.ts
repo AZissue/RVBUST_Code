@@ -1,0 +1,9 @@
+/** 通知类型常量（Notification.type 的单一事实源，禁止在业务代码中散落字面量） */
+export const NOTIFICATION_TYPES = {
+  TICKET_ASSIGNED: 'TICKET_ASSIGNED',
+  USER_REGISTRATION: 'USER_REGISTRATION',
+  LOAN_ASSIGNED: 'LOAN_ASSIGNED',
+  LOAN_OVERDUE: 'LOAN_OVERDUE',
+  REPAIR_ASSIGNED: 'REPAIR_ASSIGNED',
+} as const
+export type NotificationType = (typeof NOTIFICATION_TYPES)[keyof typeof NOTIFICATION_TYPES]

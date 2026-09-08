@@ -44,7 +44,6 @@ export function CreateTicketModal({ onClose, onCreated, defaultAssigneeId }: { o
         requestKey, organizationId: selected.id, contactId: contactId || undefined, deviceId: device?.id,
         assigneeId: value('assigneeId') || undefined, title: value('title'), description: value('description'),
         category: value('category') || 'OTHER', priority: value('priority') || 'MEDIUM',
-        source: value('source') || 'AFTER_SALES_INCIDENT',
         cameraModel: device?.cameraModel || value('cameraModel') || undefined,
         serialNumber: device?.serialNumber || value('serialNumber') || undefined,
         sdkVersion: device?.sdkVersion || value('sdkVersion') || undefined,

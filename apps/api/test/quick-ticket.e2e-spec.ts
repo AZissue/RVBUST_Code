@@ -37,7 +37,7 @@ describe('Quick tickets and single-source personal work', () => {
     expect(await db.ticket.count()).toBe(before);
   });
   it('creates a real ticket exactly once and scopes my work by assignee only', async () => {
-    const dto = { source: 'AFTER_SALES_INCIDENT', category: 'HARDWARE_FAILURE', organizationId: orgId, deviceId, assigneeId: supportId, cameraModel: 'M2600', title: 'M2600连接超时', description: 'M2600连接超时', rawText: '浙江智享 M2600连接超时 李四 紧急', priority: 'URGENT', requestKey: randomUUID() };
+    const dto = { category: 'HARDWARE_FAILURE', organizationId: orgId, deviceId, assigneeId: supportId, cameraModel: 'M2600', title: 'M2600连接超时', description: 'M2600连接超时', rawText: '浙江智享 M2600连接超时 李四 紧急', priority: 'URGENT', requestKey: randomUUID() };
     const ticket = (await admin.post('/api/tickets').send(dto).expect(201)).body; ticketId = ticket.id;
     expect((await admin.post('/api/tickets').send(dto).expect(201)).body.id).toBe(ticketId);
     expect((await admin.get('/api/tickets?mine=1').expect(200)).body.some((t: { id: string }) => t.id === ticketId)).toBe(false);
@@ -78,7 +78,7 @@ describe('Quick tickets and single-source personal work', () => {
     expect(Array.isArray(dashboard.alerts.overduePlan)).toBe(true);
     expect(Array.isArray(dashboard.alerts.waitingTimeout)).toBe(true);
     // 计划逾期未兑现的未解决工单进入 alerts.overduePlan
-    const overdue = (await admin.post('/api/tickets').send({ source: 'OTHER', category: 'OTHER', organizationId: orgId, assigneeId: adminId, title: '逾期计划验证', description: '逾期计划验证', plannedAt: new Date(Date.now() - 86400000).toISOString() }).expect(201)).body;
+    const overdue = (await admin.post('/api/tickets').send({ category: 'OTHER', organizationId: orgId, assigneeId: adminId, title: '逾期计划验证', description: '逾期计划验证', plannedAt: new Date(Date.now() - 86400000).toISOString() }).expect(201)).body;
     const dash2 = (await admin.get('/api/dashboard').expect(200)).body;
     expect(dash2.alerts.overduePlan.some((t: { id: string }) => t.id === overdue.id)).toBe(true);
     expect(dash2.alerts.stale.some((t: { id: string }) => t.id === overdue.id)).toBe(false);
@@ -88,7 +88,7 @@ describe('Quick tickets and single-source personal work', () => {
     expect((await admin.get('/api/dashboard').expect(200)).body.ticketCounts.todayCompleted).toBeGreaterThan(0);
   });
   it('rejects missing customer, invalid assignee, cross-customer device and blank descriptions', async () => {
-    const dto = { source: 'OTHER', category: 'OTHER', organizationId: orgId, title: 'M2600无点云', description: 'M2600无点云' };
+    const dto = { category: 'OTHER', organizationId: orgId, title: 'M2600无点云', description: 'M2600无点云' };
     await admin.post('/api/tickets').send({ ...dto, organizationId: undefined }).expect(400);
     await admin.post('/api/tickets').send({ ...dto, assigneeId: randomUUID() }).expect(400);
     await admin.post('/api/tickets').send({ ...dto, organizationId: org2, deviceId }).expect(400);

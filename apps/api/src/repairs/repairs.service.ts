@@ -1,8 +1,9 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { RepairStatus, type Prisma } from '@prisma/client';
-import { randomInt } from 'node:crypto';
+import { RepairEventType, RepairStatus, type Prisma } from '@prisma/client';
 import type { AuthUser } from '../auth/auth.types.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
+import { NOTIFICATION_TYPES } from '../common/notification-types.js';
+import { dateSerialPrefix, nextSerial } from '../common/numbering.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AssignRepairDto, CreateRepairDto, TransitionRepairDto, UpdateRepairDto } from './dto/repair.dto.js';
 import { zhStatus } from '../common/status-labels.js';
@@ -67,11 +68,15 @@ export class RepairsService {
         contactId: dto.contactId || null, symptom: dto.symptom, faultCause: dto.faultCause || null,
         resolution: dto.resolution || null, note: dto.note || null, inWarranty,
         receivedAt: dto.receivedAt ? new Date(dto.receivedAt) : new Date(),
-        events: { create: { authorId: user.id, type: 'STATUS_CHANGE', content: '返修单已创建，状态：已收货' } },
+        events: { create: { authorId: user.id, type: RepairEventType.STATUS_CHANGE, content: '返修单已创建，状态：已收货' } },
       };
       let repair;
       for (let attempt = 0; attempt < 4; attempt++) {
-        try { repair = await tx.repairOrder.create({ data: { ...data, repairNo: this.generateNo() }, include: repairInclude }); break; }
+        try {
+          const prefix = dateSerialPrefix('RP');
+          const last = await tx.repairOrder.findFirst({ where: { repairNo: { startsWith: prefix } }, orderBy: { repairNo: 'desc' }, select: { repairNo: true } });
+          repair = await tx.repairOrder.create({ data: { ...data, repairNo: nextSerial(last?.repairNo ?? null, prefix) }, include: repairInclude }); break;
+        }
         catch (error) { if ((error as { code?: string }).code !== 'P2002' || attempt === 3) throw error; }
       }
       await tx.device.update({ where: { id: device.id }, data: { status: 'REPAIRING' } });
@@ -114,7 +119,7 @@ export class RepairsService {
         include: repairInclude,
       });
       await tx.repairEvent.create({
-        data: { repairOrderId: id, authorId: user.id, type: 'STATUS_CHANGE', content: `状态变更：${statusLabel[repair.status]} → ${statusLabel[dto.status]}${dto.content ? `，${dto.content}` : ''}`, metadata: { from: repair.status, to: dto.status } },
+        data: { repairOrderId: id, authorId: user.id, type: RepairEventType.STATUS_CHANGE, content: `状态变更：${statusLabel[repair.status]} → ${statusLabel[dto.status]}${dto.content ? `，${dto.content}` : ''}`, metadata: { from: repair.status, to: dto.status } },
       });
       if (dto.status === RepairStatus.CLOSED) await tx.device.update({ where: { id: repair.deviceId }, data: { status: 'IN_STOCK' } });
       return updated;
@@ -127,12 +132,7 @@ export class RepairsService {
     const assignee = await this.prisma.user.findFirst({ where: { id: dto.assigneeId, status: 'ACTIVE', role: { name: { in: ['admin', 'support', 'employee'] } } } });
     if (!assignee) throw new BadRequestException('被指派者不存在或不是内部成员');
     const updated = await this.prisma.repairOrder.update({ where: { id }, data: { assigneeId: dto.assigneeId }, include: repairInclude });
-    await this.notifications.notify({ recipientId: dto.assigneeId, type: 'REPAIR_ASSIGNED', title: '返修单已指派给你', body: `返修单 ${repair.repairNo} 已指派给你跟进。`, dedupeKey: `repair-assign:${repair.id}:${dto.assigneeId}` });
+    await this.notifications.notify({ recipientId: dto.assigneeId, type: NOTIFICATION_TYPES.REPAIR_ASSIGNED, title: '返修单已指派给你', body: `返修单 ${repair.repairNo} 已指派给你跟进。`, dedupeKey: `repair-assign:${repair.id}:${dto.assigneeId}` });
     return updated;
-  }
-
-  private generateNo() {
-    const date = new Date().toISOString().slice(2, 10).replaceAll('-', '');
-    return `RP-${date}${randomInt(0, 1000).toString().padStart(3, '0')}`;
   }
 }

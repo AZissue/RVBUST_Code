@@ -1,8 +1,9 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { LoanStatus, type Prisma } from '@prisma/client';
-import { randomInt } from 'node:crypto';
 import type { AuthUser } from '../auth/auth.types.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
+import { NOTIFICATION_TYPES } from '../common/notification-types.js';
+import { dateSerialPrefix, nextSerial } from '../common/numbering.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AssignLoanDto, CreateLoanDto, ReturnLoanDto, UpdateLoanDto } from './dto/loan.dto.js';
 
@@ -33,7 +34,7 @@ export class LoansService {
     if (!overdue.length) return;
     await this.prisma.loanOrder.updateMany({ where: { id: { in: overdue.map((loan) => loan.id) }, status: LoanStatus.ONGOING, dueAt: { lt: now } }, data: { status: LoanStatus.OVERDUE } });
     await Promise.all(overdue.flatMap((loan) => [...new Set([loan.createdById, loan.assigneeId].filter(Boolean) as string[])].map((recipientId) =>
-      this.notifications.notify({ recipientId, type: 'LOAN_OVERDUE', severity: 'WARNING', title: '借出单已逾期', body: `借出单 ${loan.loanNo} 已超过应还日期，请尽快跟进归还。`, dedupeKey: `loan-overdue:${loan.id}` }),
+      this.notifications.notify({ recipientId, type: NOTIFICATION_TYPES.LOAN_OVERDUE, severity: 'WARNING', title: '借出单已逾期', body: `借出单 ${loan.loanNo} 已超过应还日期，请尽快跟进归还。`, dedupeKey: `loan-overdue:${loan.id}` }),
     )));
   }
 
@@ -79,7 +80,11 @@ export class LoansService {
       };
       let loan;
       for (let attempt = 0; attempt < 4; attempt++) {
-        try { loan = await tx.loanOrder.create({ data: { ...data, loanNo: this.generateNo() }, include: loanInclude }); break; }
+        try {
+          const prefix = dateSerialPrefix('LN');
+          const last = await tx.loanOrder.findFirst({ where: { loanNo: { startsWith: prefix } }, orderBy: { loanNo: 'desc' }, select: { loanNo: true } });
+          loan = await tx.loanOrder.create({ data: { ...data, loanNo: nextSerial(last?.loanNo ?? null, prefix) }, include: loanInclude }); break;
+        }
         catch (error) { if ((error as { code?: string }).code !== 'P2002' || attempt === 3) throw error; }
       }
       // 公司样机临时挂靠到借测客户名下
@@ -110,7 +115,7 @@ export class LoansService {
     const assignee = await this.prisma.user.findFirst({ where: { id: dto.assigneeId, status: 'ACTIVE', role: { name: { in: ['admin', 'support', 'employee'] } } } });
     if (!assignee) throw new BadRequestException('被指派者不存在或不是内部成员');
     const updated = await this.prisma.loanOrder.update({ where: { id }, data: { assigneeId: dto.assigneeId }, include: loanInclude });
-    await this.notifications.notify({ recipientId: dto.assigneeId, type: 'LOAN_ASSIGNED', title: '借出单已指派给你', body: `借出单 ${loan.loanNo} 已指派给你跟进。`, dedupeKey: `loan-assign:${loan.id}:${dto.assigneeId}` });
+    await this.notifications.notify({ recipientId: dto.assigneeId, type: NOTIFICATION_TYPES.LOAN_ASSIGNED, title: '借出单已指派给你', body: `借出单 ${loan.loanNo} 已指派给你跟进。`, dedupeKey: `loan-assign:${loan.id}:${dto.assigneeId}` });
     return updated;
   }
 
@@ -136,10 +141,5 @@ export class LoansService {
       await tx.device.updateMany({ where: { id: { in: loan.items.map((item) => item.deviceId) }, ownerType: 'COMPANY' }, data: { status: 'IN_STOCK', organizationId: null } });
       return tx.loanOrder.update({ where: { id }, data: { status: LoanStatus.CANCELLED }, include: loanInclude });
     });
-  }
-
-  private generateNo() {
-    const date = new Date().toISOString().slice(2, 10).replaceAll('-', '');
-    return `L-${date}${randomInt(0, 1000).toString().padStart(3, '0')}`;
   }
 }

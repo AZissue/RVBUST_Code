@@ -1,11 +1,11 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import {
+  CustomerLevel,
   PrismaClient,
   TicketCategory,
   TicketEventType,
   TicketPriority,
-  TicketSource,
   TicketStatus,
   Visibility,
   WorklogSource,
@@ -94,16 +94,18 @@ async function main() {
   }
 
   const customerMap = new Map<string, string>();
+  const customerLevels: CustomerLevel[] = [CustomerLevel.A, CustomerLevel.B, CustomerLevel.C, CustomerLevel.D];
   for (const legacyCustomer of customers) {
     const name = text(legacyCustomer.name);
     if (!name) continue;
+    const legacyLevel = text(legacyCustomer.level);
     const customer = await prisma.customerOrganization.upsert({
       where: { name },
       update: {},
       create: {
         name,
         industry: text(legacyCustomer.industry) || undefined,
-        level: text(legacyCustomer.level) || undefined,
+        level: customerLevels.find((lv) => lv === legacyLevel),
         notes: text(legacyCustomer.address) ? `V1 地址：${text(legacyCustomer.address)}` : '从 V1 导入',
         contacts: text(legacyCustomer.contact) ? { create: {
           name: text(legacyCustomer.contact),
@@ -144,7 +146,6 @@ async function main() {
       update: {},
       create: {
         number: legacyId,
-        source: TicketSource.OTHER,
         organizationId,
         category: ticketCategoryMap[category.trim()] ?? TicketCategory.OTHER,
         title: text(legacyTicket.title),
