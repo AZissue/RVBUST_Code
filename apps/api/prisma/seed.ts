@@ -75,7 +75,7 @@ async function main() {
     create: {
       number: 'TS-DEMO-0001', source: TicketSource.AFTER_SALES_INCIDENT, organizationId: organization.id,
       contactId: contact.id, deviceId: device.id, projectId: project.id, cameraModel: 'M2600', serialNumber: device.serialNumber,
-      sdkVersion: device.sdkVersion, systemEnvironment: 'Windows 11 / 千兆网卡 / RVC SDK 2.3.0', category: '硬件故障',
+      sdkVersion: device.sdkVersion, systemEnvironment: 'Windows 11 / 千兆网卡 / RVC SDK 2.3.0', category: 'HARDWARE_FAILURE',
       title: 'M2600 连接超时', description: '相机可以被发现，但连接时偶发超时。', priority: TicketPriority.HIGH,
       status: TicketStatus.IN_PROGRESS, assigneeId: support.id, createdById: admin.id,
       plannedAt: new Date(Date.now() + 20 * 60 * 60 * 1000), collaborators: { create: { userId: employee.id } },

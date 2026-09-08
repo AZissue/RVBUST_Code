@@ -34,6 +34,16 @@ enum TicketPriority {
   URGENT
 }
 
+enum TicketCategory {
+  PRE_SALES
+  TRAINING
+  POINTCLOUD_DEBUG
+  SDK_DEVELOPMENT
+  HAND_EYE_CALIBRATION
+  HARDWARE_FAILURE
+  OTHER
+}
+
 enum TicketEventType {
   CUSTOMER_REPLY
   INTERNAL_NOTE
@@ -409,7 +419,7 @@ model Ticket {
   serialNumber      String?              @map("serial_number") @db.VarChar(120)
   sdkVersion        String?              @map("sdk_version") @db.VarChar(80)
   systemEnvironment String?              @map("system_environment")
-  category          String               @db.VarChar(100)
+  category          TicketCategory       @default(OTHER)
   title             String               @db.VarChar(240)
   description       String
   priority          TicketPriority       @default(MEDIUM)
