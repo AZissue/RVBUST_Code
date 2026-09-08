@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { api } from '../lib/api'
 import { ticketPriorityLabels } from '../lib/labels'
-import type { Customer, Device, Ticket, TicketPriority } from '../types'
+import type { Customer, Device, Ticket, TicketCategory, TicketPriority } from '../types'
 import { Modal } from './Modal'
 import { StatusBadge } from './Status'
 import { SimpleFormModal } from '../pages/CustomersPage'
@@ -19,19 +19,19 @@ interface Parsed {
 }
 type Similar = Ticket & { similarity: number }
 
-/** 快速记录按关键词推断问题分类（与 TICKET_CATEGORIES 白名单对应） */
-const CATEGORY_KEYWORDS: Array<[string, readonly string[]]> = [
-  ['售前咨询', ['售前', '选型', '报价', '购买']],
-  ['客户培训', ['培训', '教程', '教学']],
-  ['点云调试', ['点云', '拍摄', '无点云', '深度图', '标定数据']],
-  ['SDK 开发', ['sdk', 'api', '接口', '开发', '代码', '调试程序']],
-  ['手眼标定', ['手眼', '标定', 'eye-to-hand', 'eye-in-hand']],
-  ['硬件故障', ['硬件', '故障', '维修', '损坏', '连不上', '超时', '掉线']],
+/** 快速记录按关键词推断问题分类枚举（与后端 TicketCategory 对应） */
+const CATEGORY_KEYWORDS: Array<[TicketCategory, readonly string[]]> = [
+  ['PRE_SALES', ['售前', '选型', '报价', '购买']],
+  ['TRAINING', ['培训', '教程', '教学']],
+  ['POINTCLOUD_DEBUG', ['点云', '拍摄', '无点云', '深度图', '标定数据']],
+  ['SDK_DEVELOPMENT', ['sdk', 'api', '接口', '开发', '代码', '调试程序']],
+  ['HAND_EYE_CALIBRATION', ['手眼', '标定', 'eye-to-hand', 'eye-in-hand']],
+  ['HARDWARE_FAILURE', ['硬件', '故障', '维修', '损坏', '连不上', '超时', '掉线']],
 ]
-const inferCategory = (text: string) => {
+const inferCategory = (text: string): TicketCategory => {
   const lower = text.toLocaleLowerCase()
   for (const [category, keywords] of CATEGORY_KEYWORDS) if (keywords.some((keyword) => lower.includes(keyword))) return category
-  return '其他'
+  return 'OTHER'
 }
 
 export function QuickTicketInput() {

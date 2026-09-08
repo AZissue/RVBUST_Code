@@ -8,6 +8,7 @@ import { ChangeStatusDto } from './dto/change-status.dto.js';
 import { zhStatus } from '../common/status-labels.js';
 import { CreateTicketEventDto } from './dto/ticket-event.dto.js';
 import { CreateTicketDto, UpdateTicketDto, ChangeCreatorDto } from './dto/ticket.dto.js';
+import { ticketCategoryFromLabel } from '../common/ticket-categories.js';
 
 const ticketInclude = {
   organization: { select: { id: true, name: true, level: true } },
@@ -223,7 +224,7 @@ export class TicketsService {
       const item = await tx.workItem.findUniqueOrThrow({ where: { id }, include: { workType: true, collaborators: true, worklogs: true } });
       if (item.convertedTicketId) return tx.ticket.findUniqueOrThrow({ where: { id: item.convertedTicketId }, include: ticketInclude });
       if (item.worklogs.some((log) => log.ticketId || (log.organizationId && log.organizationId !== organizationId))) throw new ConflictException('关联记录已有工单或客户冲突，请先整理后转换');
-      const created = await this.create(user, { source: 'OTHER', organizationId, projectId: item.projectId ?? undefined, title: item.title.length >= 3 ? item.title : `事项：${item.title}`, description: item.description || item.title.padEnd(3, ' '), category: item.workType.label, assigneeId: item.ownerId, priority: item.priority, plannedAt: item.dueDate?.toISOString(), collaboratorIds: item.collaborators.map((c) => c.userId) }, tx);
+      const created = await this.create(user, { source: 'OTHER', organizationId, projectId: item.projectId ?? undefined, title: item.title.length >= 3 ? item.title : `事项：${item.title}`, description: item.description || item.title.padEnd(3, ' '), category: ticketCategoryFromLabel(item.workType.label), assigneeId: item.ownerId, priority: item.priority, plannedAt: item.dueDate?.toISOString(), collaboratorIds: item.collaborators.map((c) => c.userId) }, tx);
       if (!created) throw new BadRequestException('转换失败');
       const status: TicketStatus = ({ TODO: 'PENDING', IN_PROGRESS: 'IN_PROGRESS', WAITING_FEEDBACK: 'WAITING_CUSTOMER', COMPLETED: 'RESOLVED', CANCELED: 'CLOSED' } as const)[item.status];
       await tx.ticket.update({ where: { id: created.id }, data: { status, resolvedAt: item.completedAt } });

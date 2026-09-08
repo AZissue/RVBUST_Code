@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import {
   PrismaClient,
+  TicketCategory,
   TicketEventType,
   TicketPriority,
   TicketSource,
@@ -36,6 +37,16 @@ const priorityMap: Record<string, TicketPriority> = {
   medium: TicketPriority.MEDIUM,
   high: TicketPriority.HIGH,
   urgent: TicketPriority.URGENT,
+};
+/** V1 中文分类 → 枚举代码（无法识别归 OTHER），与 apps/api/src/common/ticket-categories.ts 保持一致 */
+const ticketCategoryMap: Record<string, TicketCategory> = {
+  售前咨询: TicketCategory.PRE_SALES,
+  客户培训: TicketCategory.TRAINING,
+  点云调试: TicketCategory.POINTCLOUD_DEBUG,
+  'SDK 开发': TicketCategory.SDK_DEVELOPMENT,
+  SDK开发: TicketCategory.SDK_DEVELOPMENT,
+  手眼标定: TicketCategory.HAND_EYE_CALIBRATION,
+  硬件故障: TicketCategory.HARDWARE_FAILURE,
 };
 
 function text(value: unknown, fallback = '') {
@@ -127,14 +138,15 @@ async function main() {
     const assigneeId = userMap.get(text(legacyTicket.engineerId)) ?? fallbackOwner.id;
     const createdById = userMap.get(text(legacyTicket.creatorId)) ?? fallbackOwner.id;
     const status = statusMap[text(legacyTicket.status).toLowerCase()] ?? TicketStatus.PENDING;
-    const ticket = await prisma.ticket.upsert({
+    const category = text(legacyTicket.category, 'V1 导入')
+  const ticket = await prisma.ticket.upsert({
       where: { number: legacyId },
       update: {},
       create: {
         number: legacyId,
         source: TicketSource.OTHER,
         organizationId,
-        category: text(legacyTicket.category, 'V1 导入'),
+        category: ticketCategoryMap[category.trim()] ?? TicketCategory.OTHER,
         title: text(legacyTicket.title),
         description: text(legacyTicket.description, '从 V1 导入'),
         priority: priorityMap[text(legacyTicket.priority).toLowerCase()] ?? TicketPriority.MEDIUM,

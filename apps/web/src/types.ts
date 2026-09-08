@@ -121,13 +121,14 @@ export interface WorkItem {
 
 export type TicketStatus = 'PENDING' | 'IN_PROGRESS' | 'WAITING_CUSTOMER' | 'WAITING_RND' | 'RESOLVED' | 'CLOSED'
 export type TicketPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT'
+export type TicketCategory = 'PRE_SALES' | 'TRAINING' | 'POINTCLOUD_DEBUG' | 'SDK_DEVELOPMENT' | 'HAND_EYE_CALIBRATION' | 'HARDWARE_FAILURE' | 'OTHER'
 
 export interface Ticket {
   rawText?: string
   id: string
   number: string
   source: string
-  category: string
+  category: TicketCategory
   title: string
   description: string
   status: TicketStatus
