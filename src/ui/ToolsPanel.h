@@ -31,6 +31,7 @@ signals:
                                quint8 unitId, quint16 startAddress);
     void robotDisconnectRequested();
     void robotSimulateConnectRequested();
+    void robotAutoReadToggled(bool on);
 
 private:
     void buildUi();
@@ -114,4 +115,5 @@ private:
     QPushButton* m_btnRobotConnect = nullptr;
     QPushButton* m_btnRobotSimulate = nullptr;
     QLabel* m_robotStatus = nullptr;
+    QCheckBox* m_robotAutoReadCheck = nullptr;
 };

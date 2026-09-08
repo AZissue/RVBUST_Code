@@ -31,8 +31,6 @@
 #include <QGuiApplication>
 #include <QCloseEvent>
 #include <QShowEvent>
-#include <QPushButton>
-#include <QCheckBox>
 #include <QKeySequence>
 #include <QScreen>
 #include <QVariantMap>
@@ -181,37 +179,6 @@ void MainWindow::buildUi()
     m_dataInput = new DataInputArea(this);
     leftLayout->addWidget(m_dataInput);
 
-    // Robot read bar — hidden until a robot connection is established.  The
-    // 「读取戳点位姿」button additionally requires 戳点标定 mode (see
-    // updateRobotReadBar()).
-    m_robotReadBar = new QWidget(this);
-    auto* readBarLayout = new QHBoxLayout(m_robotReadBar);
-    readBarLayout->setContentsMargins(0, 0, 0, 0);
-    readBarLayout->setSpacing(12);
-
-    m_btnReadCapturePose = new QPushButton(QStringLiteral("读取拍照位姿"), m_robotReadBar);
-    m_btnReadCapturePose->setFixedHeight(40);
-    m_btnReadCapturePose->setMinimumWidth(96);
-    m_btnReadCapturePose->setStyleSheet(Theme::secondaryButtonStyle());
-    readBarLayout->addWidget(m_btnReadCapturePose);
-
-    m_robotAutoReadCheck = new QCheckBox(QStringLiteral("拍照时自动读取"), m_robotReadBar);
-    m_robotAutoReadCheck->setChecked(false);
-    m_robotAutoReadCheck->setStyleSheet(QStringLiteral(
-        "font-size: %1px; color: %2;")
-        .arg(Theme::FONT_BODY).arg(Theme::TEXT_BODY));
-    readBarLayout->addWidget(m_robotAutoReadCheck);
-
-    m_btnReadTouchPose = new QPushButton(QStringLiteral("读取戳点位姿"), m_robotReadBar);
-    m_btnReadTouchPose->setFixedHeight(40);
-    m_btnReadTouchPose->setMinimumWidth(96);
-    m_btnReadTouchPose->setStyleSheet(Theme::secondaryButtonStyle());
-    readBarLayout->addWidget(m_btnReadTouchPose);
-
-    readBarLayout->addStretch();
-    m_robotReadBar->setVisible(false);
-    leftLayout->addWidget(m_robotReadBar);
-
     m_actionButtons = new ActionButtons(this);
     leftLayout->addWidget(m_actionButtons);
 
@@ -314,13 +281,13 @@ void MainWindow::wireSignals()
             this, &MainWindow::onRobotDisconnect);
     connect(m_toolsPanel, &ToolsPanel::robotSimulateConnectRequested,
             this, &MainWindow::onRobotSimulateConnect);
-    // Main-interface read buttons (visible only while connected)
-    connect(m_btnReadCapturePose, &QPushButton::clicked,
-            this, &MainWindow::onRobotRead);
-    connect(m_btnReadTouchPose, &QPushButton::clicked,
-            this, &MainWindow::onRobotReadTouch);
-    connect(m_robotAutoReadCheck, &QCheckBox::toggled, this,
+    connect(m_toolsPanel, &ToolsPanel::robotAutoReadToggled, this,
             [this](bool on) { m_robotAutoRead = on; });
+    // Robot read buttons live in the ActionButtons row (visible while connected)
+    connect(m_actionButtons, &ActionButtons::readCapturePoseClicked,
+            this, &MainWindow::onRobotRead);
+    connect(m_actionButtons, &ActionButtons::readTouchPoseClicked,
+            this, &MainWindow::onRobotReadTouch);
     connect(m_flow, &CaptureFlow::imageCaptured, this,
             [this](const QImage& img) {
                 m_view2d->updateFrame(img);
@@ -987,12 +954,14 @@ void MainWindow::onRobotReadTouch()
 
 void MainWindow::updateRobotReadBar()
 {
-    if (!m_robotReadBar)
-        return;
+    // The read buttons live in the ActionButtons row; show them only while a
+    // robot connection is active, and 「读取戳点位姿」 additionally only in
+    // 戳点标定 mode.
     const bool tcp = (m_calibType == CalibType::TcpTouch);
-    m_robotReadBar->setVisible(m_robotConnected);
-    if (m_btnReadTouchPose)
-        m_btnReadTouchPose->setVisible(m_robotConnected && tcp);
+    if (m_actionButtons) {
+        m_actionButtons->setReadCapturePoseVisible(m_robotConnected);
+        m_actionButtons->setReadTouchPoseVisible(m_robotConnected && tcp);
+    }
 }
 
 // ── Card Updates ──────────────────────────────────────────────────────

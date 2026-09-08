@@ -32,6 +32,15 @@ ActionButtons::ActionButtons(QWidget* parent)
     m_btnUndo    = makeBtn(QStringLiteral("撤销"),  Theme::secondaryButtonStyle());
     m_btnCalc->setEnabled(false);
 
+    // Robot read buttons — live in the same action row (same style/font), but
+    // are hidden until a robot connection is established (see MainWindow).
+    m_btnReadCapturePose = makeBtn(QStringLiteral("读取拍照位姿"), Theme::secondaryButtonStyle());
+    m_btnReadTouchPose   = makeBtn(QStringLiteral("读取戳点位姿"), Theme::secondaryButtonStyle());
+    m_btnReadCapturePose->setMinimumWidth(120);
+    m_btnReadTouchPose->setMinimumWidth(120);
+    m_btnReadCapturePose->hide();
+    m_btnReadTouchPose->hide();
+
     layout->addStretch();
 
     connect(m_btnPreview, &QPushButton::clicked, this, [this]() {
@@ -42,6 +51,8 @@ ActionButtons::ActionButtons(QWidget* parent)
     connect(m_btnSave,    &QPushButton::clicked, this, &ActionButtons::saveClicked);
     connect(m_btnCalc,    &QPushButton::clicked, this, &ActionButtons::calcClicked);
     connect(m_btnUndo,    &QPushButton::clicked, this, &ActionButtons::undoClicked);
+    connect(m_btnReadCapturePose, &QPushButton::clicked, this, &ActionButtons::readCapturePoseClicked);
+    connect(m_btnReadTouchPose,   &QPushButton::clicked, this, &ActionButtons::readTouchPoseClicked);
     // Quick actions: flash once while they execute (they are fast/synchronous).
     connect(m_btnSave, &QPushButton::clicked, this, [this]() { flash(m_btnSave); });
     connect(m_btnCalc, &QPushButton::clicked, this, [this]() { flash(m_btnCalc); });
@@ -177,4 +188,14 @@ void ActionButtons::setPreviewEnabled(bool enabled)
 {
     m_previewEnabled = enabled;
     applyEnabledStates();
+}
+
+void ActionButtons::setReadCapturePoseVisible(bool visible)
+{
+    m_btnReadCapturePose->setVisible(visible);
+}
+
+void ActionButtons::setReadTouchPoseVisible(bool visible)
+{
+    m_btnReadTouchPose->setVisible(visible);
 }

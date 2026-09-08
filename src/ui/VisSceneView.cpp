@@ -461,35 +461,34 @@ VisSceneView::~VisSceneView() { shutdown(); }
 
 void VisSceneView::setupToolbar()
 {
-    // Transparent, borderless toolbar — it floats over the bottom edge of the
-    // 3D scene instead of reserving a strip of its own.
-    m_toolbar = new QWidget(m_containerWidget);
-    m_toolbar->setFixedHeight(28);
-    m_toolbar->setAttribute(Qt::WA_TransparentForMouseEvents, false);
-    m_toolbar->setStyleSheet(QStringLiteral("background: transparent; border: none;"));
-    auto* btnLayout = new QHBoxLayout(m_toolbar);
-    btnLayout->setContentsMargins(8, 0, 8, 0);
-    btnLayout->setSpacing(4);
+    // Floating overlays that must render ABOVE the native OSG child window.
+    // Native widgets always stack above alien siblings, so the reset button and
+    // pick hint are made native themselves; WA_DontCreateNativeAncestors mirrors
+    // m_viewport so the alien m_containerWidget is not forced native (which the
+    // Vis embedding relies on).  WA_TranslucentBackground lets the rounded pill
+    // corners blend into the scene instead of showing an opaque rectangle.
+    m_resetButton = new QPushButton(QStringLiteral("复位"), m_containerWidget);
+    m_resetButton->setCursor(Qt::PointingHandCursor);
+    m_resetButton->setToolTip(QStringLiteral("复位到默认视角"));
+    m_resetButton->setAttribute(Qt::WA_NativeWindow, true);
+    m_resetButton->setAttribute(Qt::WA_DontCreateNativeAncestors, true);
+    m_resetButton->setAttribute(Qt::WA_TranslucentBackground, true);
+    m_resetButton->setStyleSheet(QStringLiteral(
+        "QPushButton { color: #FFF; background: rgba(0,0,0,0.5); border: none; "
+        "border-radius: 4px; padding: 4px 12px; font-size: %1px; }"
+        "QPushButton:hover { background: rgba(0,0,0,0.65); color: %2; }")
+        .arg(Theme::FONT_HINT).arg(Theme::PRIMARY));
+    QObject::connect(m_resetButton, SIGNAL(clicked()), this, SLOT(resetViewNoAnim()));
 
-    auto* btnReset = new QPushButton(QStringLiteral("复位"), this);
-    btnReset->setFixedHeight(24);
-    btnReset->setToolTip(QStringLiteral("复位到默认视角"));
-    btnReset->setStyleSheet(QStringLiteral(R"(
-        QPushButton { color: #CCC; background: rgba(0,0,0,0.45); border: none;
-                      border-radius: 4px; font-size: 12px; padding: 0 8px; }
-        QPushButton:hover { color: %1; background: rgba(0,0,0,0.6); }
-    )").arg(Theme::PRIMARY));
-    QObject::connect(btnReset, SIGNAL(clicked()), this, SLOT(resetViewNoAnim()));
-    btnLayout->addWidget(btnReset);
-
-    m_pickHint = new QLabel(QStringLiteral("识别后可点击场景中的点选择填充"), this);
+    m_pickHint = new QLabel(QStringLiteral("识别后可点击场景中的点选择填充"), m_containerWidget);
+    m_pickHint->setAttribute(Qt::WA_NativeWindow, true);
+    m_pickHint->setAttribute(Qt::WA_DontCreateNativeAncestors, true);
+    m_pickHint->setAttribute(Qt::WA_TranslucentBackground, true);
     m_pickHint->setStyleSheet(QStringLiteral(
-        "color: %1; background: transparent; border: none; font-size: 11px;")
+        "color: %1; background: rgba(0,0,0,0.5); border: none; border-radius: 4px; "
+        "padding: 3px 8px; font-size: 11px;")
         .arg(Theme::PRIMARY));
     m_pickHint->hide();
-    btnLayout->addWidget(m_pickHint);
-
-    btnLayout->addStretch();
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1223,14 +1222,25 @@ void VisSceneView::resizeEvent(QResizeEvent* event)
     // Qt overlays reposition immediately (cheap).  The native Vis window
     // resize is deferred to applyVisGeometry() via m_resizeTimer so edge-drag
     // never blocks on a synchronous Vis command.
-    if (m_toolbar)
-        m_toolbar->setGeometry(0, ch - m_toolbar->height(), cw, m_toolbar->height());
     if (m_placeholder)
         m_placeholder->setGeometry(0, 0, cw, ch);
     if (m_imageOverlay)
         m_imageOverlay->setGeometry(0, 0, cw, ch);
     if (m_viewport)
         m_viewport->setGeometry(0, 0, cw, ch);
+
+    // Floating "复位" button (bottom-left) + optional pick hint next to it.
+    if (m_resetButton) {
+        m_resetButton->adjustSize();
+        m_resetButton->move(8, ch - m_resetButton->height() - 8);
+        m_resetButton->raise();
+    }
+    if (m_pickHint) {
+        m_pickHint->adjustSize();
+        const int hintX = 8 + (m_resetButton ? m_resetButton->width() + 8 : 0);
+        m_pickHint->move(hintX, ch - m_pickHint->height() - 8);
+        m_pickHint->raise();
+    }
 
     if (m_resizeTimer)
         m_resizeTimer->start();

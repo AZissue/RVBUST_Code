@@ -17,6 +17,9 @@ public:
     void setCalcEnabled(bool enabled);
     void setPreviewActive(bool active);
     void setPreviewEnabled(bool enabled);
+    // Robot read buttons — shown only while a robot connection is active.
+    void setReadCapturePoseVisible(bool visible);
+    void setReadTouchPoseVisible(bool visible);
 
 signals:
     void captureClicked();
@@ -25,6 +28,8 @@ signals:
     void undoClicked();
     void calcClicked();
     void previewToggled(bool on);
+    void readCapturePoseClicked();
+    void readTouchPoseClicked();
 
 private:
     void applyEnabledStates();
@@ -39,6 +44,8 @@ private:
     QPushButton* m_btnSave;
     QPushButton* m_btnUndo;
     QPushButton* m_btnCalc;
+    QPushButton* m_btnReadCapturePose;
+    QPushButton* m_btnReadTouchPose;
     bool m_busy = false;
     BusyTarget m_busyTarget = BusyTarget::Capture;
     bool m_previewActive = false;

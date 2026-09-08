@@ -996,6 +996,12 @@ void ToolsPanel::buildRobotCommPage(QStackedWidget* stack)
     addrRow->addStretch();
     form->addRow(QStringLiteral("起始寄存器 / 站号"), addrRow);
 
+    // Auto-read on capture (kept here in the tools panel, not on the main UI)
+    m_robotAutoReadCheck = new QCheckBox(
+        QStringLiteral("拍照时自动读取机器人位姿"), group);
+    m_robotAutoReadCheck->setChecked(false);
+    form->addRow(QString(), m_robotAutoReadCheck);
+
     // Action buttons
     auto* btnRow = new QHBoxLayout();
     btnRow->setSpacing(8);
@@ -1042,6 +1048,8 @@ void ToolsPanel::buildRobotCommPage(QStackedWidget* stack)
     });
     connect(m_btnRobotSimulate, &QPushButton::clicked, this,
             [this]() { emit robotSimulateConnectRequested(); });
+    connect(m_robotAutoReadCheck, &QCheckBox::toggled, this,
+            [this](bool on) { emit robotAutoReadToggled(on); });
 }
 
 void ToolsPanel::setRobotStatus(const QString& text, bool ok)

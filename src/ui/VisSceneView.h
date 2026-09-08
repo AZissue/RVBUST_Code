@@ -118,7 +118,7 @@ private:
     void showHoverResult(const PickResult& result);
     void handleClickResult(const PickResult& result);
 
-    QWidget* m_toolbar = nullptr;
+    QPushButton* m_resetButton = nullptr;
     QWidget* m_containerWidget = nullptr;
     QWidget* m_viewport = nullptr;
     QLabel* m_placeholder = nullptr;

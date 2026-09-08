@@ -25,8 +25,6 @@ class ActionButtons;
 class SidePanel;
 class ToastOverlay;
 class ToolsPanel;
-class QPushButton;
-class QCheckBox;
 class QShowEvent;
 struct DeviceEntry;
 
@@ -137,12 +135,6 @@ private:
     bool m_robotAutoRead = false;
     bool m_robotConnected = false;     // logical connection (real or simulated)
     bool m_robotSimulated = false;     // "模拟连接成功" — no real socket
-
-    // Main-interface robot read bar (visible only while connected)
-    QWidget*      m_robotReadBar = nullptr;
-    QPushButton*  m_btnReadCapturePose = nullptr;
-    QPushButton*  m_btnReadTouchPose = nullptr;
-    QCheckBox*    m_robotAutoReadCheck = nullptr;
 
     // Window centering (restore/clamp once on first show)
     bool m_windowPositioned = false;
