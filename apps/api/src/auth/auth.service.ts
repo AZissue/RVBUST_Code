@@ -2,6 +2,7 @@ import { HttpException, HttpStatus, Injectable, UnauthorizedException } from '@n
 import { compare, hash } from 'bcryptjs';
 import { createHash, randomBytes } from 'node:crypto';
 import { NotificationsService } from '../notifications/notifications.service.js';
+import { NOTIFICATION_TYPES } from '../common/notification-types.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { LoginDto } from './dto/login.dto.js';
 import { RegisterDto } from './dto/register.dto.js';
@@ -88,7 +89,7 @@ export class AuthService {
     await this.writeAudit(userId, 'REGISTER', ipAddress, userAgent, { username, success: true });
     const admins = await this.prisma.user.findMany({ where: { status: 'ACTIVE', role: { name: 'admin' } }, select: { id: true } });
     await Promise.all(admins.map((admin) => this.notifications.notify({
-      recipientId: admin.id, type: 'USER_REGISTRATION', title: '新用户注册待审批',
+      recipientId: admin.id, type: NOTIFICATION_TYPES.USER_REGISTRATION, title: '新用户注册待审批',
       body: `用户 ${dto.name}（${username}）提交了注册申请，请在用户管理中审批。`,
       dedupeKey: `user-reg:${userId}`,
     })));

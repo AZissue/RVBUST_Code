@@ -7,17 +7,6 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum TicketSource {
-  CUSTOMER_INQUIRY
-  PRE_SALES_SELECTION
-  AFTER_SALES_INCIDENT
-  ON_SITE_DEBUGGING
-  INTERNAL_TESTING
-  TRAINING
-  SDK_SOFTWARE
-  OTHER
-}
-
 enum TicketStatus {
   PENDING
   IN_PROGRESS
@@ -42,6 +31,26 @@ enum TicketCategory {
   HAND_EYE_CALIBRATION
   HARDWARE_FAILURE
   OTHER
+}
+
+enum CustomerLevel {
+  A
+  B
+  C
+  D
+}
+
+enum ProjectStatus {
+  IN_PROGRESS
+  DELIVERED
+  PAUSED
+  TERMINATED
+}
+
+enum RepairEventType {
+  STATUS_CHANGE
+  ATTACHMENT
+  NOTE
 }
 
 enum TicketEventType {
@@ -247,7 +256,7 @@ model CustomerOrganization {
   name             String    @unique @db.VarChar(200)
   region           String?   @db.VarChar(100)
   industry         String?   @db.VarChar(100)
-  level            String?   @db.VarChar(20)
+  level            CustomerLevel?
   notes            String?
   websiteUrl            String?              @map("website_url") @db.VarChar(500)
   wikiRef               String?              @map("wiki_ref") @db.VarChar(500)
@@ -330,7 +339,7 @@ model Project {
   organization   CustomerOrganization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
   name           String               @db.VarChar(200)
   application    String?
-  status         String?              @db.VarChar(40)
+  status         ProjectStatus?
   notes          String?
   tickets        Ticket[]
   workItems      WorkItem[]
@@ -410,7 +419,6 @@ model Ticket {
   requestKey        String?              @unique @db.Uuid @map("request_key")
   convertedWorkItem WorkItem?
   number            String               @unique @db.VarChar(32)
-  source            TicketSource
   organizationId    String               @db.Uuid @map("organization_id")
   contactId         String?              @db.Uuid @map("contact_id")
   deviceId          String?              @db.Uuid @map("device_id")
@@ -656,7 +664,7 @@ model RepairEvent {
   id            String      @id @default(uuid()) @db.Uuid
   repairOrderId String      @db.Uuid @map("repair_order_id")
   authorId      String      @db.Uuid @map("author_id")
-  type          String      @db.VarChar(60)
+  type          RepairEventType
   content       String
   metadata      Json?
   repairOrder   RepairOrder @relation(fields: [repairOrderId], references: [id], onDelete: Cascade)

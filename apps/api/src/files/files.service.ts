@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { Visibility } from '@prisma/client';
+import { RepairEventType, Visibility } from '@prisma/client';
 import { AccessPolicyService } from '../auth/access-policy.service.js';
 import type { AuthUser } from '../auth/auth.types.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -32,7 +32,7 @@ export class FilesService {
       data: { repairOrderId, storageKey: file.filename, originalName: file.originalname, mimeType: file.mimetype, sizeBytes: file.size, visibility: Visibility.INTERNAL },
     });
     await tx.repairEvent.create({
-      data: { repairOrderId, authorId: user.id, type: 'ATTACHMENT', content: `上传附件：${file.originalname}`, metadata: { attachmentId: attachment.id } },
+      data: { repairOrderId, authorId: user.id, type: RepairEventType.ATTACHMENT, content: `上传附件：${file.originalname}`, metadata: { attachmentId: attachment.id } },
     });
     return attachment;
     });

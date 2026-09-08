@@ -127,7 +127,6 @@ export interface Ticket {
   rawText?: string
   id: string
   number: string
-  source: string
   category: TicketCategory
   title: string
   description: string

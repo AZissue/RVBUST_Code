@@ -1,11 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { statusChangeLabel, ticketEventTypeLabel, ticketSourceLabel, ticketStatusLabel } from './labels'
+import { statusChangeLabel, ticketEventTypeLabel, ticketStatusLabel } from './labels'
 
 describe('labels', () => {
   it('映射已知枚举为中文，未知值原样返回', () => {
     expect(ticketStatusLabel('PENDING')).toBe('待处理')
     expect(ticketStatusLabel('UNKNOWN')).toBe('UNKNOWN')
-    expect(ticketSourceLabel('AFTER_SALES_INCIDENT')).toBe('售后故障')
     expect(ticketEventTypeLabel('WORK_RECORD')).toBe('工作记录')
     expect(ticketEventTypeLabel('CUSTOM')).toBe('CUSTOM')
   })

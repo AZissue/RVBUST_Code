@@ -1,11 +1,10 @@
 import { PartialType } from '@nestjs/mapped-types';
-import { TicketCategory, TicketPriority, TicketSource } from '@prisma/client';
+import { TicketCategory, TicketPriority } from '@prisma/client';
 import { IsArray, IsDateString, IsEnum, IsOptional, IsString, IsUUID, Length } from 'class-validator';
 
 export class CreateTicketDto {
   @IsOptional() @IsString() @Length(1, 20000) rawText?: string;
   @IsOptional() @IsUUID() requestKey?: string;
-  @IsOptional() @IsEnum(TicketSource) source?: TicketSource;
   @IsUUID() organizationId!: string;
   @IsOptional() @IsUUID() contactId?: string;
   @IsOptional() @IsUUID() deviceId?: string;

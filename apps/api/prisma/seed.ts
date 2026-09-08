@@ -1,4 +1,4 @@
-import { PrismaClient, TicketEventType, TicketPriority, TicketSource, TicketStatus, Visibility, WorkItemPriority, WorkItemStatus } from '@prisma/client';
+import { PrismaClient, TicketEventType, TicketPriority, TicketStatus, Visibility, WorkItemPriority, WorkItemStatus } from '@prisma/client';
 import { hash } from 'bcryptjs';
 
 const prisma = new PrismaClient();
@@ -63,7 +63,7 @@ async function main() {
   const project = await prisma.project.upsert({
     where: { organizationId_name: { organizationId: organization.id, name: '机器人抓取项目' } },
     update: {},
-    create: { organizationId: organization.id, name: '机器人抓取项目', application: '无序抓取与点云定位', status: '调试中' },
+    create: { organizationId: organization.id, name: '机器人抓取项目', application: '无序抓取与点云定位', status: 'IN_PROGRESS' },
   });
   await prisma.user.upsert({
     where: { username: 'customer' }, update: { customerOrganizationId: organization.id },
@@ -73,7 +73,7 @@ async function main() {
   const ticket = await prisma.ticket.upsert({
     where: { number: 'TS-DEMO-0001' }, update: {},
     create: {
-      number: 'TS-DEMO-0001', source: TicketSource.AFTER_SALES_INCIDENT, organizationId: organization.id,
+      number: 'TS-DEMO-0001', organizationId: organization.id,
       contactId: contact.id, deviceId: device.id, projectId: project.id, cameraModel: 'M2600', serialNumber: device.serialNumber,
       sdkVersion: device.sdkVersion, systemEnvironment: 'Windows 11 / 千兆网卡 / RVC SDK 2.3.0', category: 'HARDWARE_FAILURE',
       title: 'M2600 连接超时', description: '相机可以被发现，但连接时偶发超时。', priority: TicketPriority.HIGH,

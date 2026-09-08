@@ -101,7 +101,7 @@ function QuickTicketConfirm({ parsed, canCreateCustomer, onClose, onSaved }: { p
     if (existing && !window.confirm(`确认更新 ${existing.number}？将追加内部处理记录，并更新负责人和优先级；原描述和状态保持不变。`)) return
     setBusy(true); setError('')
     try {
-      const ticket = existing ? await api<Ticket>(`/tickets/${existing.id}/quick-update`, { method: 'POST', body: JSON.stringify({ organizationId, assigneeId, priority, issue, rawText: parsed.rawText, expectedUpdatedAt: existing.updatedAt }) }) : await api<Ticket>('/tickets', { method: 'POST', body: JSON.stringify({ source: 'AFTER_SALES_INCIDENT', category: inferCategory(`${parsed.rawText} ${title} ${issue}`), organizationId, assigneeId, priority, title: title.trim(), description: issue.trim(), rawText: parsed.rawText, requestKey, cameraModel: model || undefined, deviceId: deviceId || undefined }) })
+      const ticket = existing ? await api<Ticket>(`/tickets/${existing.id}/quick-update`, { method: 'POST', body: JSON.stringify({ organizationId, assigneeId, priority, issue, rawText: parsed.rawText, expectedUpdatedAt: existing.updatedAt }) }) : await api<Ticket>('/tickets', { method: 'POST', body: JSON.stringify({ category: inferCategory(`${parsed.rawText} ${title} ${issue}`), organizationId, assigneeId, priority, title: title.trim(), description: issue.trim(), rawText: parsed.rawText, requestKey, cameraModel: model || undefined, deviceId: deviceId || undefined }) })
       onSaved(ticket, Boolean(existing))
     } catch (e) { setError(e instanceof Error ? e.message : '保存失败'); setRetry((n) => n + 1) } finally { setBusy(false) }
   }

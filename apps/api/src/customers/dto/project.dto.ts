@@ -1,10 +1,11 @@
 import { PartialType } from '@nestjs/mapped-types';
-import { IsOptional, IsString, Length } from 'class-validator';
+import { ProjectStatus } from '@prisma/client';
+import { IsEnum, IsOptional, IsString, Length } from 'class-validator';
 
 export class CreateProjectDto {
   @IsString() @Length(1, 200) name!: string;
   @IsOptional() @IsString() @Length(0, 4000) application?: string;
-  @IsOptional() @IsString() @Length(0, 40) status?: string;
+  @IsOptional() @IsEnum(ProjectStatus) status?: ProjectStatus;
   @IsOptional() @IsString() @Length(0, 4000) notes?: string;
 }
 

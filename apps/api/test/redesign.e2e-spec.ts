@@ -75,7 +75,7 @@ describe('Redesign v1 flows (e2e)', () => {
     const d1 = await db.device.create({ data: { ownerType: 'COMPANY', name: '借测相机1', serialNumber: `LN1-${suffix}` } });
     const d2 = await db.device.create({ data: { ownerType: 'COMPANY', name: '借测相机2', serialNumber: `LN2-${suffix}` } });
     const created = (await support.post('/api/loans').send({ organizationId: orgId, purpose: '现场评估', dueAt: '2030-01-01', deviceIds: [d1.id, d2.id] }).expect(201)).body;
-    expect(created.loanNo).toMatch(/^L-\d{6}\d{3}$/);
+    expect(created.loanNo).toMatch(/^LN-\d{6}-\d{3}$/);
     // 借测创建后设备临时挂靠到借测客户、状态 LOANED
     const loaned1 = await db.device.findUniqueOrThrow({ where: { id: d1.id } });
     expect(loaned1.status).toBe('LOANED');
@@ -126,7 +126,7 @@ describe('Redesign v1 flows (e2e)', () => {
     const future = new Date(Date.now() + 365 * 86400_000);
     const device = await db.device.create({ data: { organizationId: orgId, name: '返修相机', serialNumber: `RP-${suffix}`, warrantyUntil: future } });
     const created = (await support.post('/api/repairs').send({ organizationId: orgId, serialNumber: device.serialNumber, symptom: '无法出图' }).expect(201)).body;
-    expect(created.repairNo).toMatch(/^RP-\d{6}\d{3}$/);
+    expect(created.repairNo).toMatch(/^RP-\d{6}-\d{3}$/);
     expect(created.inWarranty).toBe(true);
     expect((await db.device.findUniqueOrThrow({ where: { id: device.id } })).status).toBe('REPAIRING');
     // 非法跳级流转
@@ -184,7 +184,7 @@ describe('Redesign v1 flows (e2e)', () => {
   });
 
   it('applies ticket visibility and edit rights by creator, assignee and admin', async () => {
-    const base = { source: 'AFTER_SALES_INCIDENT', category: 'OTHER', organizationId: orgId, title: '权限模型改造验证', description: '权限模型改造验证' };
+    const base = { category: 'OTHER', organizationId: orgId, title: '权限模型改造验证', description: '权限模型改造验证' };
     // 创建时不指定负责人 → 默认为创建人
     const t1 = (await employee.post('/api/tickets').send(base).expect(201)).body;
     expect(t1.assignee?.id).toBe(employeeId);
@@ -221,7 +221,7 @@ describe('Redesign v1 flows (e2e)', () => {
   });
 
   it('allows any internal member to append internal notes but not customer replies on others tickets', async () => {
-    const t = (await support.post('/api/tickets').send({ source: 'AFTER_SALES_INCIDENT', category: 'OTHER', organizationId: orgId, title: '协作备注验证工单', description: '协作备注验证工单' }).expect(201)).body;
+    const t = (await support.post('/api/tickets').send({ category: 'OTHER', organizationId: orgId, title: '协作备注验证工单', description: '协作备注验证工单' }).expect(201)).body;
     // employee 非创建人/负责人：INTERNAL_NOTE 允许（协作排查），强制内部可见
     const note = await employee.post(`/api/tickets/${t.id}/events`).send({ type: 'INTERNAL_NOTE', visibility: 'CUSTOMER', content: '协作排查备注' }).expect(201);
     expect(note.body.type).toBe('INTERNAL_NOTE');
