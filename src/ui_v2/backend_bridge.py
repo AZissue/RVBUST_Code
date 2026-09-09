@@ -16,6 +16,7 @@ ui_v2.backend_bridge —— ui_v2 空壳与现有 core 模块的桥接器。
 from __future__ import annotations
 
 import os
+import json
 import subprocess
 import threading
 from typing import Dict, List, Optional, Set, Tuple
@@ -1565,7 +1566,6 @@ class BackendBridge(QObject):
                 ply_path = None
 
             json_path = os.path.join(session_dir, "error_report.json")
-            import json
             with open(json_path, "w", encoding="utf-8") as f:
                 json.dump(report, f, ensure_ascii=False, indent=2)
 
@@ -1699,7 +1699,6 @@ class BackendBridge(QObject):
 
     def _save_turntable_session(self) -> Tuple[bool, str]:
         """保存转台 360° 拼接会话（序列帧 + 标定元数据）。"""
-        import json
         ws = self.shell.workspace_turntable()
         session = ws.session
         frames = session.get_all_frames()
