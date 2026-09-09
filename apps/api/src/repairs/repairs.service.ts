@@ -64,7 +64,8 @@ export class RepairsService {
       const device = dto.manualSerialNumber ? null : dto.deviceId
         ? await tx.device.findUnique({ where: { id: dto.deviceId } })
         : dto.serialNumber
-          ? await tx.device.findFirst({ where: { serialNumber: dto.serialNumber, organizationId: dto.organizationId } })
+          // 序列号建单：匹配本客户或尚未归属客户的设备（无归属客户资产在创建返修单时回填归属）
+          ? await tx.device.findFirst({ where: { serialNumber: dto.serialNumber, OR: [{ organizationId: dto.organizationId }, { organizationId: null }] } })
           : null;
       if (!device && !dto.manualSerialNumber) throw new BadRequestException('设备不存在，请选择已有设备或使用手动填写模式');
       const serialNumber = dto.manualSerialNumber ? manualSN : device?.serialNumber;
