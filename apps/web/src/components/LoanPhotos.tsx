@@ -1,6 +1,7 @@
 import { ImagePlus, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../lib/api'
+import { AttachmentPreview } from './AttachmentPreview'
 import type { LoanItem, LoanPhoto } from '../types'
 
 export const photoGroups = { VIEWS: { label: '设备六面图', max: 9 }, ACCESSORIES: { label: '配件图', max: 5 }, SERIAL: { label: '序列号图', max: 1 } } as const
@@ -18,7 +19,7 @@ export function PhotoPicker({ value, onChange, existing = [], disabled = false }
   return <div className="photo-groups">{(Object.keys(photoGroups) as PhotoCategory[]).map(category => <section className="photo-group" key={category}>
     <header><strong>{photoGroups[category].label}</strong><span>{value.filter(p => p.category === category).length + existing.filter(p => p.photoCategory === category).length} / {photoGroups[category].max}</span></header>
     <div className="photo-grid">
-      {existing.filter(p => p.photoCategory === category).map(p => <a key={p.id} href={`/api/files/${p.id}`} target="_blank" rel="noreferrer" title={p.originalName}><img src={`/api/files/${p.id}`} alt={p.originalName} /></a>)}
+      {existing.filter(p => p.photoCategory === category).map(p => <AttachmentPreview key={p.id} item={p} />)}
       {value.filter(p => p.category === category).map(p => <div className="photo-thumb" key={p.key}><img src={p.url} alt={p.file.name} /><button type="button" className="icon-button" title={`移除 ${p.file.name}`} disabled={disabled} onClick={() => { URL.revokeObjectURL(p.url); onChange(value.filter(item => item.key !== p.key)) }}><X size={14} /></button></div>)}
       <label className="photo-add" title={`添加${photoGroups[category].label}`}><ImagePlus size={22} /><input aria-label={`上传${photoGroups[category].label}`} type="file" accept="image/jpeg,image/png,image/webp" multiple={category !== 'SERIAL'} disabled={disabled || value.filter(p => p.category === category).length + existing.filter(p => p.photoCategory === category).length >= photoGroups[category].max} onChange={e => { add(category, Array.from(e.target.files ?? [])); e.target.value = '' }} /></label>
     </div>

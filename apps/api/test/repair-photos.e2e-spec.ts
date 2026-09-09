@@ -47,10 +47,30 @@ describe('Return PDF and loan photos', () => {
     await admin.post('/api/repairs').send({ organizationId: original.organizationId, manualSerialNumber: true, serialNumber: ' ', symptom: '空 SN' }).expect(400);
     await admin.post('/api/repairs').send({ organizationId: original.organizationId, manualSerialNumber: true, serialNumber: sn, deviceId: original.deviceId, symptom: '模式冲突' }).expect(400);
   });
+  it('allows audited reopening, protects device state and rejects unauthorized or stale changes', async () => {
+    for (const status of ['DIAGNOSING', 'REPAIRING', 'SHIPPED', 'CLOSED']) await admin.post(`/api/repairs/${repairId}/transition`).send({ status, trackingNo: 'SF-TEST' }).expect(201);
+    await admin.patch(`/api/repairs/${repairId}`).send({ note: '关闭后补充信息' }).expect(200);
+    await admin.post(`/api/repairs/${repairId}/transition`).send({ status: 'REPAIRING' }).expect(400);
+    await employee.post(`/api/repairs/${repairId}/transition`).send({ status: 'REPAIRING', content: '测试' }).expect(403);
+    const repair = await db.repairOrder.findUniqueOrThrow({ where: { id: repairId } });
+    await db.device.update({ where: { id: repair.deviceId! }, data: { status: 'LOANED' } });
+    await admin.post(`/api/repairs/${repairId}/transition`).send({ status: 'REPAIRING', content: '补充维修' }).expect(400);
+    expect((await db.device.findUniqueOrThrow({ where: { id: repair.deviceId! } })).status).toBe('LOANED');
+    await db.device.update({ where: { id: repair.deviceId! }, data: { status: 'IN_STOCK' } });
+    const reopened = (await admin.post(`/api/repairs/${repairId}/transition`).send({ status: 'REPAIRING', expectedStatus: 'CLOSED', content: '客户反馈问题复现' }).expect(201)).body;
+    expect(reopened.closedAt).toBeNull(); expect(reopened.shippedAt).toBeNull(); expect(reopened.device.status).toBe('REPAIRING');
+    await admin.post(`/api/repairs/${repairId}/transition`).send({ status: 'DIAGNOSING', expectedStatus: 'CLOSED', content: '过期请求' }).expect(409);
+    const event = await db.repairEvent.findFirstOrThrow({ where: { repairOrderId: repairId, content: { contains: '客户反馈问题复现' } } });
+    expect(event.authorId).toBeTruthy();
+  });
   it('persists all form fields and archives a downloadable PDF with an event', async () => {
     const pdf = (await admin.post(`/api/repairs/${repairId}/pdf`).expect(201)).body;
     expect(pdf.mimeType).toBe('application/pdf');
     const response = await admin.get(`/api/files/${pdf.id}`).expect(200);
+    expect(response.headers['content-disposition']).toMatch(/^attachment/);
+    const preview = await admin.get(`/api/files/${pdf.id}?preview=1`).expect(200);
+    expect(preview.headers['content-disposition']).toMatch(/^inline/);
+    await employee.get(`/api/files/${pdf.id}?preview=1`).expect(404);
     expect(response.body.subarray(0, 4).toString()).toBe('%PDF');
     await writeFile(resolve(process.env.UPLOAD_DIR!, 'sample-return.pdf'), response.body);
     const detail = (await admin.get(`/api/repairs/${repairId}`).expect(200)).body;
@@ -62,6 +82,7 @@ describe('Return PDF and loan photos', () => {
     const key = randomUUID();
     const first = (await upload('VIEWS', key).expect(201)).body;
     photoId = first.id;
+    expect((await admin.get(`/api/files/${photoId}?preview=1`).expect(200)).headers['content-disposition']).toMatch(/^inline/);
     expect((await upload('VIEWS', key).expect(201)).body.id).toBe(first.id);
     for (let i = 1; i < 9; i++) await upload('VIEWS').expect(201);
     await upload('VIEWS').expect(400);

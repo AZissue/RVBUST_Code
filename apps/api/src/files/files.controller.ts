@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Param, Post, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Param, Post, Query, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import { randomUUID } from 'node:crypto';
@@ -62,10 +62,13 @@ export class FilesController {
   }
 
   @Get(':id')
-  async download(@CurrentUser() user: AuthUser, @Param('id') id: string, @Res() response: Response) {
+  async download(@CurrentUser() user: AuthUser, @Param('id') id: string, @Query('preview') preview: string | undefined, @Res() response: Response) {
     const attachment = await this.files.getForDownload(user, id);
     response.setHeader('Content-Type', attachment.mimeType);
-    response.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(attachment.originalName)}`);
+    const inline = preview === '1' && ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'].includes(attachment.mimeType);
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    response.setHeader('Cache-Control', 'private, no-store');
+    response.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(attachment.originalName)}`);
     return response.sendFile(attachment.storageKey, { root: resolve(process.env.UPLOAD_DIR ?? './uploads') });
   }
 }

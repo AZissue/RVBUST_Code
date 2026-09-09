@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { RepairEventType, RepairStatus, type Prisma } from '@prisma/client';
 import type { AuthUser } from '../auth/auth.types.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
@@ -20,7 +20,7 @@ const repairInclude = {
   assignee: { select: { id: true, name: true } },
 } as const;
 
-// 状态机：RECEIVED→DIAGNOSING→REPAIRING→SHIPPED→CLOSED 单向流转
+// 非顺序调整需要原因，所有变更保留历史。
 const order: RepairStatus[] = [RepairStatus.RECEIVED, RepairStatus.DIAGNOSING, RepairStatus.REPAIRING, RepairStatus.SHIPPED, RepairStatus.CLOSED];
 const statusLabel: Record<RepairStatus, string> = { RECEIVED: '已收货', DIAGNOSING: '诊断中', REPAIRING: '维修中', SHIPPED: '已寄回', CLOSED: '已关闭' };
 
@@ -120,7 +120,6 @@ export class RepairsService {
 
   async update(user: AuthUser, id: string, dto: UpdateRepairDto) {
     const repair = await this.get(user, id);
-    if (repair.status === RepairStatus.CLOSED) throw new BadRequestException('已关闭的返修单不能修改');
     if (repair.device && dto.returnForm && dto.returnForm.serialNumber.trim() !== repair.device.serialNumber?.trim()) throw new BadRequestException('返厂单 SN 与关联设备不一致');
     if (dto.contactId && !await this.prisma.contact.findFirst({ where: { id: dto.contactId, organizationId: repair.organizationId }, select: { id: true } })) throw new BadRequestException('联系人不属于该客户');
     return this.prisma.repairOrder.update({
@@ -132,34 +131,42 @@ export class RepairsService {
 
   async transition(user: AuthUser, id: string, dto: TransitionRepairDto) {
     const repair = await this.get(user, id);
+    if (dto.expectedStatus && dto.expectedStatus !== repair.status) throw new ConflictException('状态已被其他人修改，请刷新后重试');
     const from = order.indexOf(repair.status);
     const to = order.indexOf(dto.status);
-    if (to !== from + 1) throw new BadRequestException(`不允许从「${zhStatus(repair.status)}」变更为「${zhStatus(dto.status)}」，仅支持逐级单向流转`);
+    if (to === from) throw new BadRequestException('请选择不同的状态');
+    if (to !== from + 1 && !dto.content?.trim()) throw new BadRequestException('回退或跳转状态时请填写调整原因');
     const trackingNo = dto.trackingNo ?? repair.trackingNo;
     if (dto.status === RepairStatus.SHIPPED && !trackingNo) throw new BadRequestException('寄回时必须填写物流单号');
     const now = new Date();
     return this.prisma.$transaction(async (tx) => {
-      const updated = await tx.repairOrder.update({
-        where: { id },
+      if (repair.deviceId) {
+        await tx.$queryRaw`SELECT id FROM devices WHERE id = ${repair.deviceId}::uuid FOR UPDATE`;
+        const device = await tx.device.findUniqueOrThrow({ where: { id: repair.deviceId } });
+        const other = await tx.repairOrder.count({ where: { deviceId: repair.deviceId, id: { not: id }, status: { not: RepairStatus.CLOSED } } });
+        if (dto.status !== RepairStatus.CLOSED && (other || ['LOANED', 'RETIRED'].includes(device.status))) throw new BadRequestException('设备已借出、报废或存在其他未关闭返修单，不能回退；请先处理设备当前业务');
+        if (dto.status !== RepairStatus.CLOSED) await tx.device.update({ where: { id: device.id }, data: { status: 'REPAIRING' } });
+        else if (!other && device.status === 'REPAIRING') await tx.device.update({ where: { id: device.id }, data: { status: 'IN_STOCK' } });
+      }
+      const changed = await tx.repairOrder.updateMany({
+        where: { id, status: repair.status, updatedAt: repair.updatedAt },
         data: {
           status: dto.status,
           trackingNo: dto.trackingNo,
-          shippedAt: dto.status === RepairStatus.SHIPPED ? now : undefined,
-          closedAt: dto.status === RepairStatus.CLOSED ? now : undefined,
+          shippedAt: to < order.indexOf(RepairStatus.SHIPPED) ? null : dto.status === RepairStatus.SHIPPED ? now : undefined,
+          closedAt: dto.status === RepairStatus.CLOSED ? now : null,
         },
-        include: repairInclude,
       });
+      if (changed.count !== 1) throw new ConflictException('返修单已被其他人修改，请刷新后重试');
       await tx.repairEvent.create({
-        data: { repairOrderId: id, authorId: user.id, type: RepairEventType.STATUS_CHANGE, content: `状态变更：${statusLabel[repair.status]} → ${statusLabel[dto.status]}${dto.content ? `，${dto.content}` : ''}`, metadata: { from: repair.status, to: dto.status } },
+        data: { repairOrderId: id, authorId: user.id, type: RepairEventType.STATUS_CHANGE, content: `${user.name} 修改状态：${statusLabel[repair.status]} → ${statusLabel[dto.status]}${dto.content ? `，${dto.content.trim()}` : ''}`, metadata: { from: repair.status, to: dto.status } },
       });
-      if (dto.status === RepairStatus.CLOSED && repair.deviceId) await tx.device.update({ where: { id: repair.deviceId }, data: { status: 'IN_STOCK' } });
-      return updated;
+      return tx.repairOrder.findUniqueOrThrow({ where: { id }, include: repairInclude });
     });
   }
 
   async assign(user: AuthUser, id: string, dto: AssignRepairDto) {
     const repair = await this.get(user, id);
-    if (repair.status === RepairStatus.CLOSED) throw new BadRequestException('已关闭的返修单不能指派');
     const assignee = await this.prisma.user.findFirst({ where: { id: dto.assigneeId, status: 'ACTIVE', role: { name: { in: ['admin', 'support', 'employee'] } } } });
     if (!assignee) throw new BadRequestException('被指派者不存在或不是内部成员');
     const updated = await this.prisma.repairOrder.update({ where: { id }, data: { assigneeId: dto.assigneeId }, include: repairInclude });

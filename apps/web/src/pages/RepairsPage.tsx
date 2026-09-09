@@ -1,4 +1,7 @@
-import { Download, FileText, Paperclip, Plus, Upload, X } from 'lucide-react'
+import { Download, FileText, Plus, Upload, X } from 'lucide-react'
+import { AttachmentPreview } from '../components/AttachmentPreview'
+import { RepairStatusEditor } from '../components/RepairStatusEditor'
+import { useAuth } from '../context/AuthContext'
 import { useRef, useState, type FormEvent } from 'react'
 import { ReturnRepairForm, downloadRepairPdf } from '../components/ReturnRepairForm'
 import { Modal } from '../components/Modal'
@@ -40,6 +43,8 @@ export function RepairsPage() {
 }
 
 function RepairDetailDrawer({ id, onClose, onChanged }: { id: string; onClose: () => void; onChanged: () => Promise<void> }) {
+  const { user } = useAuth()
+  const canEdit = user?.role === 'admin' || user?.role === 'support'
   const detail = useRemote(() => api<RepairOrder>(`/repairs/${id}`), [id], true)
   const users = useRemote(() => api<User[]>('/users'), [])
   const fileInput = useRef<HTMLInputElement>(null)
@@ -65,7 +70,8 @@ function RepairDetailDrawer({ id, onClose, onChanged }: { id: string; onClose: (
   return <div className="drawer-backdrop" onClick={onClose}><aside className="drawer" onClick={(event) => event.stopPropagation()}>
     <header><div><span className="mono eyebrow">{repair.repairNo}</span><h2>{repair.device?.name ?? '手动登记设备'}（{repair.serialNumber || repair.device?.serialNumber || '无 SN'}）</h2><div className="inline-meta"><RepairStatusBadge status={repair.status} /><span>{repair.organization.name}</span><span>{repair.inWarranty == null ? '保修待判定' : repair.inWarranty ? '保内' : '保外'}</span></div></div><button className="icon-button" title="关闭" onClick={onClose}><X size={19} /></button></header>
     {error && <div className="form-error"><button onClick={() => setError('')}><X size={14} /></button>{error}</div>}
-    <div className="drawer-actions"><button className="button" onClick={() => setEditingReturn(true)} disabled={repair.status === 'CLOSED'}><FileText size={15} />填写返厂表单</button><button className="button primary" disabled={busy || !repair.returnForm} onClick={async () => { setBusy(true); setError(''); try { await downloadRepairPdf(id); await refresh() } catch (e) { setError(e instanceof Error ? e.message : '导出失败') } finally { setBusy(false) } }}><Download size={15} />生成 PDF</button></div>
+    {canEdit && <RepairStatusEditor key={repair.status} repair={repair} onSaved={refresh} />}
+    <div className="drawer-actions"><button className="button" onClick={() => setEditingReturn(true)} disabled={!canEdit}><FileText size={15} />填写返厂表单</button><button className="button primary" disabled={busy || !repair.returnForm} onClick={async () => { setBusy(true); setError(''); try { await downloadRepairPdf(id); await refresh() } catch (e) { setError(e instanceof Error ? e.message : '导出失败') } finally { setBusy(false) } }}><Download size={15} />生成 PDF</button></div>
     {editingReturn && <ReturnRepairForm repair={repair} onClose={() => setEditingReturn(false)} onSaved={async () => { setEditingReturn(false); await refresh() }} />}
     <section className="drawer-logs"><div className="section-heading"><div><h3>状态时间线</h3><p>{repair.events?.length ?? 0} 条记录</p></div></div><div className="timeline">{repair.events?.map((event) => <article key={event.id}><div className="timeline-dot" /><header><strong>{ticketEventTypeLabel(event.type)}</strong><time>{formatDate(event.createdAt)}</time></header><p>{event.type === 'STATUS_CHANGE' ? statusChangeLabel(event.content) : event.content}</p></article>)}{!repair.events?.length && <Empty text="暂无记录" />}</div></section>
     <form onSubmit={save} className="drawer-form">
@@ -78,7 +84,7 @@ function RepairDetailDrawer({ id, onClose, onChanged }: { id: string; onClose: (
     </form>
     <section className="drawer-logs"><div className="section-heading"><div><h3>附件与返厂 PDF</h3><p>上传返修设备外观照片</p></div><button className="button small" onClick={() => fileInput.current?.click()}><Upload size={14} />上传</button></div>
       <input ref={fileInput} type="file" accept="image/*" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) void upload(file); event.target.value = '' }} />
-      <div className="thumb-list">{attachments.map((item) => <a key={item.id} href={`/api/files/${item.id}`} target="_blank" rel="noreferrer"><Paperclip size={13} />{item.originalName}</a>)}{!attachments.length && <Empty text="暂无图片" />}</div>
+      <div className="attachment-gallery">{attachments.map((item) => <AttachmentPreview key={item.id} item={item} />)}{!attachments.length && <Empty text="暂无图片" />}</div>
     </section>
     <footer>
       {next && (next.status === 'SHIPPED' ? <button className="button primary" onClick={() => setShipping(true)}>{next.label}</button> : <button className="button primary" onClick={() => void transition(next.status)}>{next.label}</button>)}

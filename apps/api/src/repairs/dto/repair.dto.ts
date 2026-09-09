@@ -31,6 +31,7 @@ export class UpdateRepairDto {
 }
 
 export class TransitionRepairDto {
+  @IsOptional() @IsEnum(RepairStatus) expectedStatus?: RepairStatus;
   @IsEnum(RepairStatus) status!: RepairStatus;
   @IsOptional() @IsString() @Length(0, 100) trackingNo?: string;
   @IsOptional() @IsString() @Length(0, 2000) content?: string;
