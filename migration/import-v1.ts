@@ -29,6 +29,7 @@ const fallbackUsername = args.find((arg) => arg.startsWith('--owner='))?.slice('
 const statusMap: Record<string, TicketStatus> = {
   pending: TicketStatus.PENDING,
   processing: TicketStatus.IN_PROGRESS,
+  waiting: TicketStatus.WAITING_CUSTOMER,
   resolved: TicketStatus.RESOLVED,
   closed: TicketStatus.CLOSED,
 };
@@ -41,12 +42,21 @@ const priorityMap: Record<string, TicketPriority> = {
 /** V1 中文分类 → 枚举代码（无法识别归 OTHER），与 apps/api/src/common/ticket-categories.ts 保持一致 */
 const ticketCategoryMap: Record<string, TicketCategory> = {
   售前咨询: TicketCategory.PRE_SALES,
+  相机选型: TicketCategory.PRE_SALES,
+  售前评估: TicketCategory.PRE_SALES,
+  项目评估: TicketCategory.PRE_SALES,
+  需求沟通: TicketCategory.PRE_SALES,
   客户培训: TicketCategory.TRAINING,
+  资料提供: TicketCategory.TRAINING,
   点云调试: TicketCategory.POINTCLOUD_DEBUG,
+  点云质量: TicketCategory.POINTCLOUD_DEBUG,
+  远程调试: TicketCategory.POINTCLOUD_DEBUG,
   'SDK 开发': TicketCategory.SDK_DEVELOPMENT,
   SDK开发: TicketCategory.SDK_DEVELOPMENT,
+  软件问题: TicketCategory.SDK_DEVELOPMENT,
   手眼标定: TicketCategory.HAND_EYE_CALIBRATION,
   硬件故障: TicketCategory.HARDWARE_FAILURE,
+  返修: TicketCategory.HARDWARE_FAILURE,
 };
 
 function text(value: unknown, fallback = '') {
@@ -64,7 +74,8 @@ async function main() {
   const tickets = Array.isArray(raw.tickets) ? raw.tickets : [];
   const worklogs = Array.isArray(raw.worklogs) ? raw.worklogs : [];
   const users = Array.isArray(raw.users) ? raw.users : [];
-  const invalidTickets = tickets.filter((item) => !text(item.id) || !text(item.customerId) || !text(item.title));
+  const customerIds = new Set(customers.map((item) => text(item.id)));
+  const invalidTickets = tickets.filter((item) => !text(item.id) || !customerIds.has(text(item.customerId)) || !text(item.title));
   const invalidWorklogs = worklogs.filter((item) => !text(item.content) || !item.time);
 
   console.log(JSON.stringify({
@@ -94,6 +105,7 @@ async function main() {
   }
 
   const customerMap = new Map<string, string>();
+  const customerNameMap = new Map<string, string>();
   const customerLevels: CustomerLevel[] = [CustomerLevel.A, CustomerLevel.B, CustomerLevel.C, CustomerLevel.D];
   for (const legacyCustomer of customers) {
     const name = text(legacyCustomer.name);
@@ -116,6 +128,7 @@ async function main() {
       },
     });
     customerMap.set(text(legacyCustomer.id), customer.id);
+    if (!customerNameMap.has(name)) customerNameMap.set(name, customer.id);
 
     const devices = Array.isArray(legacyCustomer.devices) ? legacyCustomer.devices as LegacyRecord[] : [];
     for (const device of devices) {
@@ -155,6 +168,8 @@ async function main() {
         assigneeId,
         createdById,
         plannedAt: legacyTicket.dueDate ? date(legacyTicket.dueDate) : undefined,
+        // 补录原发生时间：ticketDate（YYYY-MM-DD）优先，其次 updatedAt；编号保留 V1 原值便于追溯
+        createdAt: date(legacyTicket.ticketDate, date(legacyTicket.updatedAt)),
         resolvedAt: status === TicketStatus.RESOLVED || status === TicketStatus.CLOSED ? date(legacyTicket.updatedAt) : undefined,
       },
     });
@@ -183,7 +198,7 @@ async function main() {
     await prisma.worklog.create({ data: {
       authorId: userMap.get(text(legacyWorklog.userId)) ?? fallbackOwner.id,
       workTypeId: otherWorkType.id,
-      organizationId: customerMap.get(text(legacyWorklog.customerId)),
+      organizationId: customerNameMap.get(text(legacyWorklog.customer)),
       ticketId: ticketMap.get(text(legacyWorklog.ticketId)),
       occurredAt: date(legacyWorklog.time),
       summary: summary.slice(0, 240),
