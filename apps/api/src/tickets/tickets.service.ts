@@ -89,8 +89,12 @@ export class TicketsService {
     const assigneeId = user.role === 'customer' ? undefined : (dto.assigneeId ?? user.id);
     // 补录历史工单：occurredAt（本地日期）决定 createdAt 与编号日期
     const occurredAt = dto.occurredAt ? parseKey(dto.occurredAt) : undefined;
+    // 内部用户可指定创建时状态（补录场景）；客户账号恒为待处理
+    const initialStatus = user.role === 'customer' ? undefined : dto.status;
     const data: Omit<Prisma.TicketCreateInput, 'number'> = {
       createdAt: occurredAt,
+      status: initialStatus,
+      resolvedAt: initialStatus === TicketStatus.RESOLVED ? (occurredAt ?? new Date()) : undefined,
       category: dto.category, title: dto.title,
       rawText: dto.rawText, requestKey: dto.requestKey,
       description: dto.description, priority: dto.priority, cameraModel: dto.cameraModel,
@@ -102,7 +106,7 @@ export class TicketsService {
       project: dto.projectId ? { connect: { id: dto.projectId } } : undefined,
       assignee: assigneeId ? { connect: { id: assigneeId } } : undefined,
       collaborators: collaboratorIds.length ? { create: collaboratorIds.map((userId) => ({ user: { connect: { id: userId } } })) } : undefined,
-      events: { create: { author: { connect: { id: user.id } }, type: TicketEventType.WORK_RECORD, visibility: user.role === 'customer' ? Visibility.CUSTOMER : Visibility.INTERNAL, content: '工单已创建' } },
+      events: { create: { author: { connect: { id: user.id } }, type: TicketEventType.WORK_RECORD, visibility: user.role === 'customer' ? Visibility.CUSTOMER : Visibility.INTERNAL, content: initialStatus ? `工单已创建（${zhStatus(initialStatus)}）` : '工单已创建' } },
     };
     for (let attempt = 0; attempt < 4; attempt++) {
       try {

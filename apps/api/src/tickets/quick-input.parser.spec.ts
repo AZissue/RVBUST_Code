@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extractDateExpression, matchCustomers, matchPeople, parseQuickTicketInput, ticketSimilarity } from './quick-input.parser.js';
+import { extractDateExpression, extractStatusExpression, matchCustomers, matchPeople, parseQuickTicketInput, ticketSimilarity } from './quick-input.parser.js';
 const context = { customers: [{ id: 'c1', name: '浙江智享机器人' }, { id: 'c2', name: '工布公司' }], users: [{ id: 'u1', name: '张伟' }, { id: 'u2', name: '李四' }], currentUserId: 'u1' };
 describe('local quick ticket parser', () => {
   it.each([
@@ -46,6 +46,34 @@ describe('local quick ticket parser', () => {
     expect(result.occurredAt).toBe('2026-09-07');
     expect(result.text).toContain('浙江智享');
     expect(result.text).not.toContain('本周一');
+  });
+  it.each([
+    ['本周一 浙江智享 M2600无点云 已解决', 'RESOLVED'],
+    ['浙江智享 M2600无点云 等待客户反馈', 'WAITING_CUSTOMER'],
+    ['浙江智享 M2600无点云 等待客户回复', 'WAITING_CUSTOMER'],
+    ['浙江智享 M2600无点云 等反馈', 'WAITING_CUSTOMER'],
+    ['浙江智享 M2600无点云 正在处理', 'IN_PROGRESS'],
+    ['浙江智享 M2600无点云 处理中', 'IN_PROGRESS'],
+    ['浙江智享 M2600无点云 跟进中', 'IN_PROGRESS'],
+    ['浙江智享 M2600无点云 等待研发', 'WAITING_RND'],
+    ['浙江智享 M2600无点云 已关闭', 'CLOSED'],
+    ['浙江智享 M2600无点云 待处理', 'PENDING'],
+  ])('extracts status keyword from %s', (raw, status) => {
+    const result = extractStatusExpression(raw);
+    expect(result.status).toBe(status);
+    expect(result.text).not.toMatch(/已解决|等待客户|处理中|跟进中|等待研发|已关闭|待处理/);
+  });
+  it('keeps text without status keyword untouched', () => {
+    const result = extractStatusExpression('浙江智享 M2600无点云 张伟 紧急');
+    expect(result.status).toBeNull();
+    expect(result.text).toBe('浙江智享 M2600无点云 张伟 紧急');
+  });
+  it('combines date and status extraction', () => {
+    const dated = extractDateExpression('0907 浙江智享 M2600无点云 已解决', new Date(2026, 8, 9));
+    expect(dated.occurredAt).toBe('2026-09-07');
+    const status = extractStatusExpression(dated.text);
+    expect(status.status).toBe('RESOLVED');
+    expect(status.text).toContain('浙江智享');
   });
   it('does not select ambiguous customers or surnames', () => {
     const result = parseQuickTicketInput('浙江智享 M2600无点云 张工 紧急', { ...context, customers: [...context.customers, { id: 'c3', name: '浙江智享科技' }], users: [...context.users, { id: 'u3', name: '张三' }] });

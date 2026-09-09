@@ -60,6 +60,20 @@ describe('Quick tickets and single-source personal work', () => {
     await db.ticket.delete({ where: { id: backdated.id } });
     await db.ticket.delete({ where: { id: second.id } });
   });
+  it('creates tickets with explicit initial status and resolvedAt for RESOLVED', async () => {
+    const parsed = (await admin.post('/api/tickets/quick/parse').send({ rawText: '0907 浙江智享 M2600连接超时 已解决' }).expect(201)).body;
+    expect(parsed.status).toBe('RESOLVED');
+    expect(parsed.occurredAt).toBeTruthy();
+    expect(parsed.issue).not.toContain('已解决');
+    const resolved = (await admin.post('/api/tickets').send({ category: 'HARDWARE_FAILURE', organizationId: orgId, title: '补录已解决问题', description: '补录已解决问题', occurredAt: parsed.occurredAt, status: 'RESOLVED', requestKey: randomUUID() }).expect(201)).body;
+    expect(resolved.status).toBe('RESOLVED');
+    expect(resolved.resolvedAt).toBeTruthy();
+    const waiting = (await admin.post('/api/tickets').send({ category: 'HARDWARE_FAILURE', organizationId: orgId, title: '补录等待客户', description: '补录等待客户', status: 'WAITING_CUSTOMER', requestKey: randomUUID() }).expect(201)).body;
+    expect(waiting.status).toBe('WAITING_CUSTOMER');
+    expect(waiting.resolvedAt).toBeNull();
+    await db.ticket.delete({ where: { id: resolved.id } });
+    await db.ticket.delete({ where: { id: waiting.id } });
+  });
   it('detects similar same-customer tickets without leaking cross-customer tickets', async () => {
     const dto = { organizationId: orgId, issue: 'M2600连接不上', cameraModel: 'M2600' };
     const matches = (await admin.post('/api/tickets/quick/similar').send(dto).expect(201)).body;

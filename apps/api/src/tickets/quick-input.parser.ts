@@ -151,6 +151,33 @@ export function extractDateExpression(rawText: string, now = new Date()): { text
 }
 export { parseKey };
 
+/** 状态关键词 → TicketStatus（按短语长度降序，先匹配长的避免截断） */
+const STATUS_PHRASES: Array<[string, string]> = [
+  ['WAITING_CUSTOMER', '等待客户反馈|等待客户回复|等待客户确认|等客户反馈|等客户回复|待客户反馈|待客户回复|等待反馈|等反馈|客户未回复|等待客户'],
+  ['WAITING_RND', '等待研发|等研发处理|等研发|转研发|需研发处理'],
+  ['IN_PROGRESS', '正在处理中|正在处理|处理中|跟进中|排查中|调试中'],
+  ['RESOLVED', '已经解决|已解决|已修复|已排除|已搞定|已处理好'],
+  ['CLOSED', '已关闭|已完结|已结案'],
+  ['PENDING', '待处理'],
+];
+const STATUS_PATTERN = new RegExp(STATUS_PHRASES.map(([, p]) => `(?:${p})`).join('|'), 'g');
+
+/**
+ * 提取状态关键词（等待客户反馈/处理中/跟进中/已解决等），返回剥离后的文本与状态枚举值。
+ * 命中第一个关键词即采用；无命中返回 null。
+ */
+export function extractStatusExpression(rawText: string): { text: string; status: string | null } {
+  STATUS_PATTERN.lastIndex = 0;
+  const match = STATUS_PATTERN.exec(rawText);
+  if (!match) return { text: rawText, status: null };
+  for (const [status, phrases] of STATUS_PHRASES) {
+    if (new RegExp(phrases).test(match[0])) {
+      return { text: clean(rawText.slice(0, match.index) + ' ' + rawText.slice(match.index + match[0].length)), status };
+    }
+  }
+  return { text: rawText, status: null };
+}
+
 export function ticketSimilarity(issue: string, candidate: string, model: string, candidateModel: string, active: boolean) {
   const normalizeIssue = (s: string) => s.toLowerCase().replace(/连接不上|连接超时|无法连接|连接失败|连接不了/g, '连接异常').replace(/没有点云|无点云|点云为空/g, '无点云').replace(/\s|[，,。；;]/g, '');
   const a = normalizeIssue(issue).slice(0, 500); const b = normalizeIssue(candidate).slice(0, 500);
