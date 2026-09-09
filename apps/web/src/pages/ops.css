@@ -50,3 +50,9 @@
 .shot-view { display: grid; place-items: center; min-height: 200px; }
 .shot-view img { max-width: 100%; max-height: 70vh; border-radius: 6px; }
 @media (max-width: 720px) { .bug-side { flex-direction: row; align-items: center; } .bug-shots { justify-content: flex-start; } }
+.import-summary p { margin: 0 0 10px; font-size: 13px; }
+.import-summary strong { color: var(--success); }
+.import-failed-count { color: var(--brand); font-weight: 700; }
+.import-failures { display: flex; flex-direction: column; gap: 6px; max-height: 320px; overflow-y: auto; }
+.import-failures > div { display: grid; grid-template-columns: 64px minmax(0, 1fr) minmax(0, 1.4fr); gap: 8px; padding: 7px 9px; background: var(--surface-2); border-radius: 5px; font-size: 11px; }
+.import-failures .muted { color: var(--muted); }

@@ -1,7 +1,17 @@
 # 标准文档（Excel）导出/导入功能设计说明
 
-状态：待实现（后期完善功能）｜ 日期：2026-09-08
-关联代码：`apps/api/src/tickets/quick-input.parser.ts`、`ai.parser.ts`、`quick-tickets.service.ts`、`apps/web/src/components/QuickTicketInput.tsx`
+状态：**首版已实现（2026-09-09）**｜ 日期：2026-09-08
+关联代码：`apps/api/src/tickets/tickets-excel.service.ts`、`tickets.controller.ts`、`apps/web/src/pages/DashboardPage.tsx`
+
+## 0. 实现与本文档的差异（以实现为准）
+
+- 模板在 A 列新增 **时间**（必填），工单编号按填写时间生成（`RVC-YYMMDD-NNN`），`createdAt` 记为该行时间，支持历史工单补录；
+- 首版为**直接导入**（上传 → 逐行校验 → 成功行落库 → 汇总弹窗显示失败行及原因），未做第 5.3 节的逐行确认弹窗；后续如需人工校对再叠加确认层（解析输出已与行号对应，扩展成本低）；
+- 表头按名称自动识别（支持别名、列顺序可调），必填列缺失直接拒绝；
+- 客户名称匹配不到时自动新建客户（备注"Excel 批量导入创建"）；
+- 入口在**仪表盘**头部（导出模版 / 批量导入工单），导出仅 `GET /tickets/import-template`，导入 `POST /tickets/import`（xlsx ≤ 2MB、≤ 200 行）。
+
+---
 
 ---
 
