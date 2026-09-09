@@ -8,6 +8,10 @@ import type { AuthUser } from '../auth/auth.types.js';
 import { CurrentUser } from '../auth/current-user.decorator.js';
 import { UploadFileDto } from './dto/upload-file.dto.js';
 import { FilesService } from './files.service.js';
+import { LoanPhotoDto } from './dto/loan-photo.dto.js';
+import { plainToInstance } from 'class-transformer';
+import { validate } from 'class-validator';
+import { unlink } from 'node:fs/promises';
 
 const allowedTypes = new Set(['image/jpeg', 'image/png', 'image/webp', 'text/plain', 'application/pdf', 'application/zip', 'application/x-zip-compressed']);
 
@@ -23,6 +27,18 @@ const uploadOptions = {
 @Controller('files')
 export class FilesController {
   constructor(private readonly files: FilesService) {}
+
+  @Post('loan-items/:itemId')
+  @UseInterceptors(FileInterceptor('file', uploadOptions))
+  async uploadLoan(@CurrentUser() user: AuthUser, @Param('itemId') itemId: string, @UploadedFile() file: Express.Multer.File, @Body() body: Record<string, unknown>) {
+    if (!file) throw new BadRequestException('请选择图片');
+    const dto = plainToInstance(LoanPhotoDto, body);
+    if ((await validate(dto, { whitelist: true, forbidNonWhitelisted: true })).length || !/^[0-9a-f-]{36}$/i.test(itemId)) {
+      await unlink(file.path).catch(() => {});
+      throw new BadRequestException('图片类别或上传标识无效');
+    }
+    return this.files.registerLoanPhoto(user, itemId, file, dto);
+  }
 
   @Post('tickets/:ticketId')
   @UseInterceptors(FileInterceptor('file', uploadOptions))
@@ -53,4 +69,3 @@ export class FilesController {
     return response.sendFile(attachment.storageKey, { root: resolve(process.env.UPLOAD_DIR ?? './uploads') });
   }
 }
-

@@ -150,13 +150,22 @@ export class TicketsService {
     if (user.role !== 'admin' && ticket.assigneeId !== user.id) throw new ForbiddenException('仅当前负责人或管理员可以变更工单状态');
     if (!transitions[ticket.status].includes(dto.status)) throw new BadRequestException(`不允许从「${zhStatus(ticket.status)}」变更为「${zhStatus(dto.status)}」`);
     return this.prisma.$transaction(async (tx) => {
-      const updated = await tx.ticket.update({
-        where: { id }, data: { status: dto.status, resolvedAt: dto.status === TicketStatus.RESOLVED ? new Date() : dto.status === TicketStatus.IN_PROGRESS ? null : undefined },
-        include: ticketInclude,
+      const changed = await tx.ticket.updateMany({
+        where: { id, status: ticket.status, updatedAt: ticket.updatedAt },
+        data: { status: dto.status, resolvedAt: dto.status === TicketStatus.RESOLVED ? new Date() : dto.status === TicketStatus.CLOSED ? undefined : null },
       });
-      await tx.ticketEvent.create({
+      if (changed.count !== 1) throw new ConflictException('工单已被其他人修改，请刷新后重试');
+      const updated = await tx.ticket.findUniqueOrThrow({ where: { id }, include: ticketInclude });
+      const event = await tx.ticketEvent.create({
         data: { ticketId: id, authorId: user.id, type: TicketEventType.STATUS_CHANGE, visibility: Visibility.INTERNAL, content: `${ticket.status} -> ${dto.status}${dto.reason ? `：${dto.reason}` : ''}`, metadata: { from: ticket.status, to: dto.status } },
       });
+      const recipients = [...new Set([updated.createdBy.id, updated.assignee?.id, ...updated.collaborators.map((item) => item.user.id)])].filter((id): id is string => Boolean(id) && id !== user.id);
+      await tx.notification.createMany({ data: recipients.map((recipientId) => ({
+        recipientId, ticketId: id, type: NOTIFICATION_TYPES.TICKET_STATUS_CHANGED,
+        title: '工单状态已更新',
+        body: `${user.name} 将工单 ${updated.number}「${updated.title}」从「${zhStatus(ticket.status)}」改为「${zhStatus(dto.status)}」`,
+        dedupeKey: `ticket-status:${event.id}:${recipientId}`,
+      })) });
       return updated;
     });
   }

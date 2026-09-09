@@ -7,6 +7,11 @@ import { dateSerialPrefix, nextSerial } from '../common/numbering.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AssignRepairDto, CreateRepairDto, TransitionRepairDto, UpdateRepairDto } from './dto/repair.dto.js';
 import { zhStatus } from '../common/status-labels.js';
+import { createReturnPdf } from './return-pdf.js';
+import type { ReturnFormDto } from './dto/return-form.dto.js';
+import { mkdir, writeFile, unlink } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import { randomUUID } from 'node:crypto';
 
 const repairInclude = {
   device: { select: { id: true, name: true, serialNumber: true, cameraModel: true, status: true, warrantyUntil: true } },
@@ -59,11 +64,13 @@ export class RepairsService {
           ? await tx.device.findFirst({ where: { serialNumber: dto.serialNumber } })
           : null;
       if (!device) throw new BadRequestException('设备不存在（需提供 deviceId 或 serialNumber）');
+      if (dto.returnForm && dto.returnForm.serialNumber.trim() !== device.serialNumber?.trim()) throw new BadRequestException('返厂单 SN 与关联设备不一致');
       if (device.status === 'REPAIRING' || device.status === 'RETIRED') throw new BadRequestException(`设备当前状态为「${zhStatus(device.status)}」，不能创建返修单`);
       if (!await tx.customerOrganization.findUnique({ where: { id: dto.organizationId }, select: { id: true } })) throw new BadRequestException('客户组织不存在');
       if (dto.contactId && !await tx.contact.findFirst({ where: { id: dto.contactId, organizationId: dto.organizationId }, select: { id: true } })) throw new BadRequestException('联系人不属于该客户');
       const inWarranty = dto.inWarranty ?? (device.warrantyUntil ? device.warrantyUntil >= new Date(new Date().toDateString()) : null);
       const data = {
+        returnForm: dto.returnForm ? { ...dto.returnForm } : undefined,
         deviceId: device.id, organizationId: dto.organizationId, createdById: user.id,
         contactId: dto.contactId || null, symptom: dto.symptom, faultCause: dto.faultCause || null,
         resolution: dto.resolution || null, note: dto.note || null, inWarranty,
@@ -88,13 +95,32 @@ export class RepairsService {
     });
   }
 
+  async exportPdf(user: AuthUser, id: string) {
+    const repair = await this.get(user, id);
+    if (!repair.returnForm) throw new BadRequestException('请先补全并保存返厂表单');
+    const bytes = await createReturnPdf(repair.returnForm as unknown as ReturnFormDto, repair.symptom, repair.repairNo);
+    const root = resolve(process.env.UPLOAD_DIR ?? './uploads');
+    await mkdir(root, { recursive: true });
+    const storageKey = `${randomUUID()}.pdf`;
+    const path = resolve(root, storageKey);
+    await writeFile(path, bytes, { flag: 'wx' });
+    try {
+      return await this.prisma.$transaction(async tx => {
+        const attachment = await tx.attachment.create({ data: { repairOrderId: id, storageKey, originalName: `${repair.repairNo}-返厂维修单.pdf`, mimeType: 'application/pdf', sizeBytes: bytes.length, visibility: 'INTERNAL' } });
+        await tx.repairEvent.create({ data: { repairOrderId: id, authorId: user.id, type: 'ATTACHMENT', content: '生成并归档返厂维修单 PDF', metadata: { attachmentId: attachment.id, sourceUpdatedAt: repair.updatedAt.toISOString() } } });
+        return attachment;
+      });
+    } catch (error) { await unlink(path).catch(() => {}); throw error; }
+  }
+
   async update(user: AuthUser, id: string, dto: UpdateRepairDto) {
     const repair = await this.get(user, id);
     if (repair.status === RepairStatus.CLOSED) throw new BadRequestException('已关闭的返修单不能修改');
+    if (dto.returnForm && dto.returnForm.serialNumber.trim() !== repair.device.serialNumber?.trim()) throw new BadRequestException('返厂单 SN 与关联设备不一致');
     if (dto.contactId && !await this.prisma.contact.findFirst({ where: { id: dto.contactId, organizationId: repair.organizationId }, select: { id: true } })) throw new BadRequestException('联系人不属于该客户');
     return this.prisma.repairOrder.update({
       where: { id },
-      data: { symptom: dto.symptom, faultCause: dto.faultCause, resolution: dto.resolution, trackingNo: dto.trackingNo, note: dto.note, inWarranty: dto.inWarranty, contactId: dto.contactId },
+      data: { returnForm: dto.returnForm ? { ...dto.returnForm } : undefined, symptom: dto.symptom, faultCause: dto.faultCause, resolution: dto.resolution, trackingNo: dto.trackingNo, note: dto.note, inWarranty: dto.inWarranty, contactId: dto.contactId },
       include: repairInclude,
     });
   }

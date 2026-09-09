@@ -1,0 +1,29 @@
+.badge.status-pending, select.status-pending { color: #8a5100; background: #fff3d6; }
+.badge.status-in_progress, select.status-in_progress { color: #1254a0; background: #e8f2ff; }
+.badge.status-waiting_customer, select.status-waiting_customer { color: #956012; background: #fff3dd; }
+.badge.status-waiting_rnd, select.status-waiting_rnd { color: #6b3da4; background: #f2eafa; }
+.badge.status-resolved, select.status-resolved { color: #187044; background: #e5f5eb; }
+.badge.status-closed, select.status-closed { color: #52606b; background: #edf0f2; }
+.status-transition { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.status-transition .badge { font-size: 12px; min-height: 28px; }
+select.status-select { font-weight: 600; min-width: 150px; }
+.branded-login { position: relative; isolation: isolate; display: flex; min-height: 100svh; background: #fff; color: #202124; overflow: hidden; align-items: center; }
+.login-product-scene { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; z-index: -1; }
+.branded-login .login-panel { width: min(360px, 32%); margin: 64px 0 100px 9%; padding: 0; }
+.branded-login .login-brand { margin-bottom: 54px; }
+.branded-login .login-brand img { width: 220px; max-width: 100%; height: auto; }
+.branded-login .login-heading h1 { font-size: 30px; letter-spacing: 0; }
+.branded-login .login-heading p, .branded-login .security-note { color: #64676b; font-size: 13px; }
+.branded-login input { color: #202124; background: #fff; border-color: #c9cdd2; min-height: 46px; }
+.branded-login label { color: #41454a; }
+.branded-login .button { min-height: 46px; }
+.login-footer { position: absolute; bottom: 28px; left: 9%; color: #6b6e72; font-size: 12px; }
+@media (max-width: 760px) {
+  .branded-login { display: flex; flex-direction: column; justify-content: flex-start; overflow: visible; }
+  .branded-login .login-panel { order: 0; width: min(360px, calc(100% - 48px)); margin: 36px auto 12px; }
+  .branded-login .login-brand { margin-bottom: 30px; }
+  .branded-login .login-heading h1 { font-size: 26px; }
+  .login-product-scene { position: relative; order: 1; inset: auto; width: 180%; max-width: none; height: 250px; object-fit: contain; align-self: flex-end; margin-right: 0; }
+  .branded-login { overflow-x: clip; }
+  .login-footer { position: static; order: 2; margin: 12px 0 24px; }
+}

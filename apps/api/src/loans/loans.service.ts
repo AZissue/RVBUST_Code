@@ -11,7 +11,7 @@ const loanInclude = {
   organization: { select: { id: true, name: true } },
   contact: { select: { id: true, name: true, phone: true } },
   assignee: { select: { id: true, name: true } },
-  items: { include: { device: { select: { id: true, name: true, serialNumber: true, cameraModel: true, status: true } } } },
+  items: { include: { attachments: { orderBy: { photoSlot: 'asc' as const } }, device: { select: { id: true, name: true, serialNumber: true, cameraModel: true, status: true } } } },
 } as const;
 
 @Injectable()

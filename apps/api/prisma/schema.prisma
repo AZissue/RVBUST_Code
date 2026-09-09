@@ -578,6 +578,10 @@ model Attachment {
   ticketEventId String?     @db.Uuid @map("ticket_event_id")
   repairOrderId String?     @db.Uuid @map("repair_order_id")
   bugReportId  String?      @db.Uuid @map("bug_report_id")
+  loanItemId   String?      @db.Uuid @map("loan_item_id")
+  photoCategory String?    @map("photo_category") @db.VarChar(20)
+  photoSlot    Int?        @map("photo_slot")
+  photoKey     String?     @unique @db.Uuid @map("photo_key")
   storageKey   String       @unique @map("storage_key") @db.VarChar(300)
   originalName String       @map("original_name") @db.VarChar(255)
   mimeType     String       @map("mime_type") @db.VarChar(120)
@@ -587,12 +591,14 @@ model Attachment {
   ticketEvent  TicketEvent? @relation(fields: [ticketEventId], references: [id], onDelete: Cascade)
   repairOrder  RepairOrder? @relation(fields: [repairOrderId], references: [id], onDelete: Cascade)
   bugReport    BugReport?   @relation(fields: [bugReportId], references: [id], onDelete: Cascade)
+  loanItem     LoanItem?    @relation(fields: [loanItemId], references: [id], onDelete: Cascade)
   createdAt    DateTime     @default(now()) @map("created_at")
   updatedAt    DateTime     @updatedAt @map("updated_at")
 
   @@index([ticketId])
   @@index([repairOrderId])
   @@index([bugReportId])
+  @@unique([loanItemId, photoCategory, photoSlot])
   @@map("attachments")
 }
 
@@ -629,6 +635,7 @@ model LoanItem {
   deviceId      String     @db.Uuid @map("device_id")
   returnedAt    DateTime?  @map("returned_at")
   conditionNote String?    @map("condition_note")
+  attachments   Attachment[]
   loanOrder     LoanOrder  @relation(fields: [loanOrderId], references: [id], onDelete: Cascade)
   device        Device     @relation(fields: [deviceId], references: [id])
   createdAt     DateTime   @default(now()) @map("created_at")
@@ -641,6 +648,7 @@ model LoanItem {
 model RepairOrder {
   id          String       @id @default(uuid()) @db.Uuid
   repairNo    String       @unique @map("repair_no") @db.VarChar(32)
+  returnForm  Json?        @map("return_form")
   deviceId    String       @db.Uuid @map("device_id")
   organizationId String    @db.Uuid @map("organization_id")
   contactId   String?      @db.Uuid @map("contact_id")

@@ -1,5 +1,6 @@
 import { ChevronDown, ChevronRight, Plus, X } from 'lucide-react'
-import { Fragment, useEffect, useState, type FormEvent } from 'react'
+import { Fragment, useEffect, useRef, useState, type FormEvent } from 'react'
+import { LoanPhotoPanel, PhotoPicker, uploadLoanPhoto, type PendingPhoto } from '../components/LoanPhotos'
 import { Modal } from '../components/Modal'
 import { useRemote } from '../hooks/useRemote'
 import { api, formatDate } from '../lib/api'
@@ -50,6 +51,7 @@ export function LoansPage() {
           <dt>备注</dt><dd className="pre-wrap">{loan.note || '-'}</dd>
         </dl></section></dl>
         <div className="table-wrap"><table><thead><tr><th>设备</th><th>SN</th><th>归还状态</th><th>归还备注</th></tr></thead><tbody>{loan.items.map((item) => <tr key={item.id}><td>{item.device.name}</td><td className="mono">{item.device.serialNumber || '-'}</td><td>{item.returnedAt ? <span className="badge ok">已归还 {formatDate(item.returnedAt)}</span> : <span className="badge warn">未归还</span>}</td><td>{item.conditionNote || '-'}</td></tr>)}</tbody></table></div>
+        {loan.items.map(item => <LoanPhotoPanel key={item.id} item={item} onChanged={remote.refresh} />)}
       </td></tr>}
     </Fragment>)}</tbody></table>{!loans.length && <Empty text="暂无借测单" />}</div></section>
     {creating && <CreateLoanModal onClose={() => setCreating(false)} onCreated={async () => { setCreating(false); await remote.refresh() }} />}
@@ -64,6 +66,12 @@ function CreateLoanModal({ onClose, onCreated }: { onClose: () => void; onCreate
   const [contacts, setContacts] = useState<Contact[]>([])
   const [devices, setDevices] = useState<Device[]>([])
   const [selected, setSelected] = useState<string[]>([])
+  const [photos, setPhotos] = useState<Record<string, PendingPhoto[]>>({})
+  const created = useRef<LoanOrder | null>(null)
+  const lock = useRef(false)
+  const completed = useRef(new Set<string>())
+  const urls = useRef<string[]>([])
+  useEffect(() => () => urls.current.forEach(url => URL.revokeObjectURL(url)), [])
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   useEffect(() => {
@@ -81,16 +89,21 @@ function CreateLoanModal({ onClose, onCreated }: { onClose: () => void; onCreate
     setSelected([])
   }, [organizationId])
   const submit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault(); setBusy(true); setError('')
+    event.preventDefault(); if (lock.current) return; lock.current = true; setBusy(true); setError('')
     const form = new FormData(event.currentTarget)
     const value = (key: string) => String(form.get(key) ?? '').trim()
-    if (!selected.length) { setError('请至少选择一台设备'); setBusy(false); return }
+    if (!selected.length) { setError('请至少选择一台设备'); setBusy(false); lock.current = false; return }
     try {
-      await api('/loans', { method: 'POST', body: JSON.stringify({ organizationId: value('organizationId'), contactId: value('contactId') || undefined, purpose: value('purpose'), loanedAt: value('loanedAt'), dueAt: value('dueAt'), agreementNo: value('agreementNo') || undefined, note: value('note') || undefined, deviceIds: selected }) })
+      if (!created.current) created.current = await api<LoanOrder>('/loans', { method: 'POST', body: JSON.stringify({ organizationId: value('organizationId'), contactId: value('contactId') || undefined, purpose: value('purpose'), loanedAt: value('loanedAt'), dueAt: value('dueAt'), agreementNo: value('agreementNo') || undefined, note: value('note') || undefined, deviceIds: selected }) })
+      for (const item of created.current!.items) {
+        for (const photo of photos[item.device.id] ?? []) {
+          if (!completed.current.has(photo.key)) { await uploadLoanPhoto(item.id, photo); completed.current.add(photo.key) }
+        }
+      }
       await onCreated()
-    } catch (reason) { setError(reason instanceof Error ? reason.message : '创建失败') } finally { setBusy(false) }
+    } catch (reason) { setError(reason instanceof Error ? reason.message : '创建失败') } finally { setBusy(false); lock.current = false }
   }
-  return <Modal title="新建借测单" onClose={onClose} wide><form className="form-grid" onSubmit={submit}>
+  return <Modal title="新建借测单" onClose={() => { if (!busy) onClose() }} wide><form onSubmit={submit}><fieldset className="return-form-fields form-grid" disabled={busy || Boolean(created.current)}>
     <label>客户<select name="organizationId" required value={organizationId} onChange={(event) => setOrganizationId(event.target.value)}><option value="" disabled>选择客户</option>{customers.data?.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
     <label>联系人<select name="contactId" defaultValue=""><option value="">不指定</option>{contacts.map((contact) => <option key={contact.id} value={contact.id}>{contact.name}</option>)}</select></label>
     <label>借出日期<input name="loanedAt" type="date" required /></label>
@@ -99,8 +112,11 @@ function CreateLoanModal({ onClose, onCreated }: { onClose: () => void; onCreate
     <label>协议编号<input name="agreementNo" /></label>
     <label>备注<input name="note" /></label>
     <label className="span-2">可借设备（勾选借出）<div className="checkbox-list">{devices.map((device) => <label key={device.id}><input type="checkbox" checked={selected.includes(device.id)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, device.id] : current.filter((id) => id !== device.id))} />{device.name}<span className="mono">{device.serialNumber || '-'}</span>{device.cameraModel ? ` · ${device.cameraModel}` : ''} · {deviceOwnerLabel(device.ownerType)}</label>)}{organizationId && !devices.length && <span className="placeholder-text">暂无可借设备（需要在库公司样机）</span>}{!organizationId && <span className="placeholder-text">请先选择客户</span>}</div></label>
-    {error && <div className="form-error span-2">{error}</div>}
-    <div className="form-actions span-2"><button type="button" className="button" onClick={onClose}>取消</button><button className="button primary" disabled={busy}>{busy ? '正在创建' : '确认创建'}</button></div>
+    {selected.map(id => <section className="span-2 loan-device-photos" key={id}><h3>{devices.find(d => d.id === id)?.name} · {devices.find(d => d.id === id)?.serialNumber}</h3><PhotoPicker value={photos[id] ?? []} onChange={next => { urls.current.push(...next.map(p => p.url)); setPhotos(current => ({ ...current, [id]: next })) }} disabled={busy || Boolean(created.current)} /></section>)}
+    </fieldset>
+    {created.current && <p className="success-text">借测单 {created.current.loanNo} 已保存，照片上传失败时可重试。</p>}
+    {error && <div className="form-error">{error}</div>}
+    <div className="form-actions"><button type="button" className="button" disabled={busy} onClick={onClose}>关闭</button><button className="button primary" disabled={busy}>{busy ? '保存中' : created.current ? '重试剩余照片' : '确认创建'}</button></div>
   </form></Modal>
 }
 
@@ -110,7 +126,7 @@ function ReturnLoanModal({ loan, onClose, onDone }: { loan: LoanOrder; onClose: 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault(); setBusy(true); setError('')
     const form = new FormData(event.currentTarget)
-    const items = pending.map((item) => ({ itemId: item.id, conditionNote: String(form.get(`note-${item.id}`) ?? '').trim() || undefined }))
+    const items = pending.map((item) => ({ deviceId: item.device.id, conditionNote: String(form.get(`note-${item.id}`) ?? '').trim() || undefined }))
     try { await api(`/loans/${loan.id}/return`, { method: 'POST', body: JSON.stringify({ items }) }); await onDone() } catch (reason) { setError(reason instanceof Error ? reason.message : '归还失败') } finally { setBusy(false) }
   }
   return <Modal title={`归还登记：${loan.loanNo}`} onClose={onClose}><form className="form-grid" onSubmit={submit}>

@@ -25,7 +25,15 @@ export function AppShell() {
   const isAdmin = user?.role === 'admin'
 
   const loadNotifications = () => api<Notification[]>('/notifications').then(setNotifications).catch(() => setNotifications([]))
-  useEffect(() => { void loadNotifications() }, [])
+  useEffect(() => {
+    let active = true
+    const refresh = () => { if (!document.hidden) void api<Notification[]>('/notifications').then((items) => { if (active) setNotifications(items) }).catch(() => {}) }
+    refresh()
+    const timer = window.setInterval(refresh, 10000)
+    window.addEventListener('focus', refresh)
+    document.addEventListener('visibilitychange', refresh)
+    return () => { active = false; window.clearInterval(timer); window.removeEventListener('focus', refresh); document.removeEventListener('visibilitychange', refresh) }
+  }, [user?.id])
   const unread = notifications.filter((item) => !item.readAt).length
   const setTheme = (next: ThemeMode) => setMode(next)
 
@@ -54,7 +62,7 @@ export function AppShell() {
             <button className={mode === 'system' ? 'active' : ''} onClick={() => setTheme('system')} title="跟随系统"><Monitor size={15} /></button>
           </div>
           <div className="popover-wrap">
-            <button className="icon-button notification-button" onClick={() => setNotificationsOpen(!notificationsOpen)} title="通知"><Bell size={18} />{unread > 0 && <span>{unread}</span>}</button>
+            <button className="icon-button notification-button" onClick={() => setNotificationsOpen(!notificationsOpen)} title="通知"><Bell size={18} />{unread > 0 && <span aria-live="polite" aria-label={`${unread} 条未读通知`}>{unread}</span>}</button>
             {notificationsOpen && <div className="popover notification-popover"><div className="popover-title"><strong>站内通知</strong><button onClick={async () => { await api('/notifications/read-all', { method: 'POST' }); await loadNotifications() }}>全部已读</button></div>
               {notifications.length ? notifications.slice(0, 8).map((item) => <button key={item.id} className={`notification-row ${item.readAt ? '' : 'unread'}`} onClick={async () => { await api(`/notifications/${item.id}/read`, { method: 'PATCH' }); if (item.ticket) navigate(`/tickets/${item.ticket.id}`); setNotificationsOpen(false); await loadNotifications() }}><strong>{item.title}</strong><span>{item.body}</span><small>{formatDate(item.createdAt)}</small></button>) : <div className="empty-compact">暂无通知</div>}
             </div>}

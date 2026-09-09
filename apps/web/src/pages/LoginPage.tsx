@@ -16,10 +16,11 @@ export function LoginPage() {
     event.preventDefault(); setError(''); setBusy(true)
     try { await login(username, password); navigate('/') } catch (reason) { setError(reason instanceof Error ? reason.message : '登录失败') } finally { setBusy(false) }
   }
-  return <main className="login-page">
+  return <main className="login-page branded-login">
+    <img className="login-product-scene" src="/brand/cameras.png" alt="如本科技相机产品全家福" />
     <section className="login-panel">
-      <div className="login-brand"><div className="brand-mark">TS</div><div><strong>技术支持系统</strong><span>安全内部工作台</span></div></div>
-      <div className="login-heading"><LockKeyhole size={22} /><h1>登录工作区</h1><p>使用分配给你的内部账号继续。</p></div>
+      <div className="login-brand"><img src="/brand/logo.png" alt="如本科技" /></div>
+      <div className="login-heading"><LockKeyhole size={22} /><h1>技术支持系统</h1><p>Support Operations V2</p></div>
       {registered && <div className="success-text">注册成功，等待管理员审批</div>}
       <form onSubmit={submit}>
         <label>账号<input autoFocus autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} /></label>
@@ -29,6 +30,6 @@ export function LoginPage() {
       </form>
       <p className="security-note">还没有账号？<Link to="/register">注册账号</Link></p>
     </section>
-    <aside className="login-aside"><div><span className="eyebrow">SUPPORT OPERATIONS</span><h2>把技术问题处理过程，变成可追踪的团队资产。</h2><div className="login-metrics"><div><strong>6</strong><span>标准工单状态</span></div><div><strong>4</strong><span>后端角色权限</span></div><div><strong>100%</strong><span>操作可审计</span></div></div></div></aside>
+    <footer className="login-footer">RVBUST · 技术支持工作区</footer>
   </main>
 }

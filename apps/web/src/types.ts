@@ -43,7 +43,9 @@ export interface Device { id: string; name: string; product?: string; cameraMode
 export interface Project { id: string; name: string; application?: string; status?: string; organization?: { id: string; name: string } }
 
 export type LoanStatus = 'ONGOING' | 'OVERDUE' | 'RETURNED' | 'CANCELLED'
-export interface LoanItem { id: string; returnedAt?: string | null; conditionNote?: string | null; device: { id: string; name: string; serialNumber?: string | null; cameraModel?: string | null } }
+export interface LoanItem { id: string; attachments?: LoanPhoto[]; returnedAt?: string | null; conditionNote?: string | null; device: { id: string; name: string; serialNumber?: string | null; cameraModel?: string | null } }
+export interface LoanPhoto extends Attachment { photoCategory: 'VIEWS' | 'ACCESSORIES' | 'SERIAL'; photoKey: string }
+export interface ReturnForm { companyName: string; reportedAt: string; reporterName: string; reporterPhone: string; serialNumber: string; appearance: string; returnAddress: string; salesContact: string; afterSalesContact: string }
 export interface LoanOrder {
   id: string
   loanNo: string
@@ -77,6 +79,7 @@ export interface BugReport {
 export interface RepairEvent { id: string; type: string; content: string; createdAt: string }
 export interface Attachment { id: string; originalName: string; mimeType: string; sizeBytes: number; createdAt: string }
 export interface RepairOrder {
+  returnForm?: ReturnForm | null
   id: string
   repairNo: string
   symptom: string
