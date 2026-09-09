@@ -20,6 +20,8 @@ export class CreateTicketDto {
   @IsOptional() @IsUUID() assigneeId?: string;
   @IsOptional() @IsArray() @IsUUID('4', { each: true }) collaboratorIds?: string[];
   @IsOptional() @IsDateString() plannedAt?: string;
+  /** 工单发生/记录时间（本地日期），决定 createdAt 与编号日期；缺省为当前时间 */
+  @IsOptional() @IsDateString() occurredAt?: string;
 }
 
 export class UpdateTicketDto extends PartialType(CreateTicketDto) {}

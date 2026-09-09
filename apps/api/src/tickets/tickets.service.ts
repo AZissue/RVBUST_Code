@@ -10,6 +10,7 @@ import { CreateTicketEventDto } from './dto/ticket-event.dto.js';
 import { CreateTicketDto, UpdateTicketDto, ChangeCreatorDto } from './dto/ticket.dto.js';
 import { ticketCategoryFromLabel } from '../common/ticket-categories.js';
 import { NOTIFICATION_TYPES } from '../common/notification-types.js';
+import { parseKey } from './quick-input.parser.js';
 
 const ticketInclude = {
   organization: { select: { id: true, name: true, level: true } },
@@ -86,7 +87,10 @@ export class TicketsService {
     await this.validateRelations(organizationId, dto);
     const collaboratorIds = user.role === 'customer' ? [] : [...new Set(dto.collaboratorIds ?? [])];
     const assigneeId = user.role === 'customer' ? undefined : (dto.assigneeId ?? user.id);
+    // 补录历史工单：occurredAt（本地日期）决定 createdAt 与编号日期
+    const occurredAt = dto.occurredAt ? parseKey(dto.occurredAt) : undefined;
     const data: Omit<Prisma.TicketCreateInput, 'number'> = {
+      createdAt: occurredAt,
       category: dto.category, title: dto.title,
       rawText: dto.rawText, requestKey: dto.requestKey,
       description: dto.description, priority: dto.priority, cameraModel: dto.cameraModel,
@@ -102,7 +106,7 @@ export class TicketsService {
     };
     for (let attempt = 0; attempt < 4; attempt++) {
       try {
-        const created = await db.ticket.create({ data: { ...data, number: await this.generateNumber(db) }, include: ticketInclude });
+        const created = await db.ticket.create({ data: { ...data, number: await this.generateNumber(db, occurredAt) }, include: ticketInclude });
         // 事务内调用（如事项转换）跳过通知，由外层在事务提交后补发，避免引用未提交工单
         if (db === this.prisma && assigneeId && assigneeId !== user.id) await this.notifyAssignee(created.id, created.number, assigneeId);
         return created;
@@ -213,10 +217,9 @@ export class TicketsService {
     try { await Promise.all(checks); } catch { throw new BadRequestException('联系人、设备或项目不属于所选客户'); }
   }
 
-  /** RVC-YYMMDD-NNN：按本地日期当日顺序编号。并发冲突由 number 唯一约束 + 上层 P2002 重试兜底 */
-  private async generateNumber(db: Prisma.TransactionClient) {
-    const now = new Date();
-    const ymd = `${String(now.getFullYear()).slice(2)}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+  /** RVC-YYMMDD-NNN：按本地日期当日顺序编号（可指定补录日期）。并发冲突由 number 唯一约束 + 上层 P2002 重试兜底 */
+  private async generateNumber(db: Prisma.TransactionClient, date = new Date()) {
+    const ymd = `${String(date.getFullYear()).slice(2)}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`;
     const prefix = `RVC-${ymd}-`;
     const last = await db.ticket.findFirst({ where: { number: { startsWith: prefix } }, orderBy: { number: 'desc' }, select: { number: true } });
     const seq = last ? Number(last.number.slice(prefix.length)) + 1 : 1;

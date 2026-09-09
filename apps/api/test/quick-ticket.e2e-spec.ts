@@ -45,6 +45,21 @@ describe('Quick tickets and single-source personal work', () => {
     const stored = (await admin.get(`/api/tickets/${ticketId}`).expect(200)).body;
     expect(stored.rawText).toBe(dto.rawText); expect(stored.device.id).toBe(deviceId);
   });
+  it('parses backdate expressions and backdates number/createdAt on create', async () => {
+    const parsed = (await admin.post('/api/tickets/quick/parse').send({ rawText: '本周一 浙江智享 M2600连接超时 李四' }).expect(201)).body;
+    expect(parsed.occurredAt).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(parsed.issue).not.toContain('本周一');
+    // 明确指定历史日期：createdAt 与编号都按该日期
+    const backdated = (await admin.post('/api/tickets').send({ category: 'HARDWARE_FAILURE', organizationId: orgId, assigneeId: supportId, title: '补录历史连接超时', description: '补录历史连接超时', occurredAt: '2026-09-07', requestKey: randomUUID() }).expect(201)).body;
+    expect(backdated.number).toMatch(/^RVC-260907-\d{3}$/);
+    const created = new Date(backdated.createdAt);
+    expect(`${created.getFullYear()}-${String(created.getMonth() + 1).padStart(2, '0')}-${String(created.getDate()).padStart(2, '0')}`).toBe('2026-09-07');
+    // 编号顺序仍按当日递增
+    const second = (await admin.post('/api/tickets').send({ category: 'HARDWARE_FAILURE', organizationId: orgId, title: '补录历史连接超时2', description: '补录历史连接超时2', occurredAt: '2026-09-07', requestKey: randomUUID() }).expect(201)).body;
+    expect(Number(second.number.slice(-3))).toBe(Number(backdated.number.slice(-3)) + 1);
+    await db.ticket.delete({ where: { id: backdated.id } });
+    await db.ticket.delete({ where: { id: second.id } });
+  });
   it('detects similar same-customer tickets without leaking cross-customer tickets', async () => {
     const dto = { organizationId: orgId, issue: 'M2600连接不上', cameraModel: 'M2600' };
     const matches = (await admin.post('/api/tickets/quick/similar').send(dto).expect(201)).body;

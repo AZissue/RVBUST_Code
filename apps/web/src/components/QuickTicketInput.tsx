@@ -16,6 +16,8 @@ interface Parsed {
   matchedCustomer: Candidate | null; customerCandidates: Candidate[]; customerText: string
   matchedAssignee: Candidate | null; assigneeCandidates: Candidate[]; assigneeText: string; assigneeDefaulted: boolean
   matchedDevice: Device | null
+  /** 解析出的工单时间（本地日期 YYYY-MM-DD），null 表示当天 */
+  occurredAt: string | null
 }
 type Similar = Ticket & { similarity: number }
 
@@ -47,7 +49,7 @@ export function QuickTicketInput() {
     catch (e) { setError(e instanceof Error ? e.message : '解析失败') } finally { setBusy(false) }
   }
   return <section className="workspace-section quick-capture-panel"><div className="section-heading"><h2>快速记录</h2></div>
-    <textarea aria-label="快速工单输入" maxLength={4000} value={rawText} onChange={(e) => setRawText(e.target.value)} rows={7} placeholder="浙江智享机器人 M2600拍摄3D无点云，负责人张伟，紧急" />
+    <textarea aria-label="快速工单输入" maxLength={4000} value={rawText} onChange={(e) => setRawText(e.target.value)} rows={7} placeholder={'开头可写工单时间补录历史单：0907 / 本周一 / 9月7日 / 昨天\n浙江智享机器人 M2600拍摄3D无点云，负责人张伟，紧急'} />
     {error && <div role="alert" className="form-error">{error}</div>}
     <button className="button primary" disabled={busy || rawText.trim().length < 3} onClick={() => void parse()}><Plus size={15} />{busy ? '正在解析' : '解析并创建工单'}</button>
     {success && <div className="quick-success" role="status">工单 {success.ticket.number} {success.updated ? '更新' : '创建'}成功 <Link to={`/tickets/${success.ticket.id}`}>查看工单</Link></div>}
@@ -66,6 +68,7 @@ function QuickTicketConfirm({ parsed, canCreateCustomer, onClose, onSaved }: { p
   const [title, setTitle] = useState(parsed.title)
   const [priority, setPriority] = useState(parsed.priority)
   const [model, setModel] = useState(parsed.deviceText)
+  const [date, setDate] = useState(parsed.occurredAt ?? '')
   const [similar, setSimilar] = useState<Similar[]>([])
   const [checkedKey, setCheckedKey] = useState('')
   const [error, setError] = useState('')
@@ -101,7 +104,7 @@ function QuickTicketConfirm({ parsed, canCreateCustomer, onClose, onSaved }: { p
     if (existing && !window.confirm(`确认更新 ${existing.number}？将追加内部处理记录，并更新负责人和优先级；原描述和状态保持不变。`)) return
     setBusy(true); setError('')
     try {
-      const ticket = existing ? await api<Ticket>(`/tickets/${existing.id}/quick-update`, { method: 'POST', body: JSON.stringify({ organizationId, assigneeId, priority, issue, rawText: parsed.rawText, expectedUpdatedAt: existing.updatedAt }) }) : await api<Ticket>('/tickets', { method: 'POST', body: JSON.stringify({ category: inferCategory(`${parsed.rawText} ${title} ${issue}`), organizationId, assigneeId, priority, title: title.trim(), description: issue.trim(), rawText: parsed.rawText, requestKey, cameraModel: model || undefined, deviceId: deviceId || undefined }) })
+      const ticket = existing ? await api<Ticket>(`/tickets/${existing.id}/quick-update`, { method: 'POST', body: JSON.stringify({ organizationId, assigneeId, priority, issue, rawText: parsed.rawText, expectedUpdatedAt: existing.updatedAt }) }) : await api<Ticket>('/tickets', { method: 'POST', body: JSON.stringify({ category: inferCategory(`${parsed.rawText} ${title} ${issue}`), organizationId, assigneeId, priority, title: title.trim(), description: issue.trim(), rawText: parsed.rawText, requestKey, cameraModel: model || undefined, deviceId: deviceId || undefined, occurredAt: date || undefined }) })
       onSaved(ticket, Boolean(existing))
     } catch (e) { setError(e instanceof Error ? e.message : '保存失败'); setRetry((n) => n + 1) } finally { setBusy(false) }
   }
@@ -115,6 +118,7 @@ function QuickTicketConfirm({ parsed, canCreateCustomer, onClose, onSaved }: { p
       <label className="span-2">问题标题<input aria-label="确认标题" maxLength={240} value={title} onChange={(e) => setTitle(e.target.value)} /></label>
       <label className="span-2">问题描述<textarea aria-label="确认问题" rows={3} maxLength={4000} value={issue} onChange={(e) => setIssue(e.target.value)} /></label>
       <label>优先级<select aria-label="确认优先级" value={priority} onChange={(e) => setPriority(e.target.value as TicketPriority)}>{Object.entries(ticketPriorityLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+      <label>工单时间<input aria-label="确认工单时间" type="date" value={date} onChange={(e) => setDate(e.target.value)} /><small>{date ? '编号按此日期生成，留空为今天' : '未指定，按今天记录'}</small></label>
       <label>设备型号<input maxLength={100} value={model} onChange={(e) => { setModel(e.target.value); setDeviceId('') }} /></label>
       <label className="span-2">关联设备<select value={deviceId} onChange={(e) => setDeviceId(e.target.value)}><option value="">不关联设备</option>{devices.map((d) => <option key={d.id} value={d.id}>{d.name} {d.serialNumber ?? ''}</option>)}</select></label>
     </fieldset>
