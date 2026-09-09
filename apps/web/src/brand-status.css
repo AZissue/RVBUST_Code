@@ -5,7 +5,7 @@
 .badge.status-resolved, select.status-resolved { color: #187044; background: #e5f5eb; }
 .badge.status-closed, select.status-closed { color: #52606b; background: #edf0f2; }
 .status-transition { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.status-transition .badge { font-size: 12px; min-height: 28px; }
+.status-transition .badge { font-size: 13px; min-height: 28px; }
 select.status-select { font-weight: 600; min-width: 150px; }
 .branded-login { position: relative; isolation: isolate; display: flex; min-height: 100svh; background: #fff; color: #202124; overflow: hidden; align-items: center; }
 .login-product-scene { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; z-index: -1; }

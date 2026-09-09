@@ -94,11 +94,12 @@ function QuickTicketConfirm({ parsed, canCreateCustomer, onClose, onSaved }: { p
   }, [organizationId, retry])
   useEffect(() => {
     let current = true
-    setCheckedKey(''); setLookupError(''); setSimilar([])
+    setLookupError('')
+    // 600ms 防抖；重查期间保留旧列表不清空，避免输入过程 UI 跳动
     const timer = window.setTimeout(() => {
-      if (!organizationId || !issue.trim()) return
+      if (!organizationId || !issue.trim()) { if (current) { setSimilar([]); setCheckedKey(key) } return }
       void api<Similar[]>('/tickets/quick/similar', { method: 'POST', body: JSON.stringify({ organizationId, issue, cameraModel: model }) }).then((items) => { if (current) { setSimilar(items); setCheckedKey(key) } }).catch((e: Error) => { if (current) setLookupError(e.message) })
-    }, 250)
+    }, 600)
     return () => { current = false; window.clearTimeout(timer) }
   }, [organizationId, issue, model, retry, key])
   const ready = Boolean(organizationId && assigneeId && issue.trim().length >= 3 && title.trim().length >= 3 && checkedKey === key && !busy)
