@@ -26,7 +26,14 @@ const importUploadOptions = {
 @Controller('tickets')
 export class TicketsController {
   constructor(private readonly tickets: TicketsService, private readonly quick: QuickTicketsService, private readonly excel: TicketsExcelService) {}
-  @Get() list(@CurrentUser() user: AuthUser, @Query('search') search?: string, @Query('status') status?: TicketStatus, @Query('mine') mine?: string) { return this.tickets.list(user, search, status, mine === '1'); }
+  @Get() list(@CurrentUser() user: AuthUser, @Query('search') search?: string, @Query('status') statusRaw?: string, @Query('mine') mine?: string, @Query('page') pageRaw?: string, @Query('all') all?: string) {
+    const statuses = statusRaw ? statusRaw.split(',').filter(Boolean) : [];
+    if (statuses.some((item) => !Object.values(TicketStatus).includes(item as TicketStatus))) throw new BadRequestException('工单状态无效');
+    // all=1 保持数组返回，供引用数据下拉（如工作记录关联工单）使用；默认分页返回 { items, total, page, pageSize, byStatus }
+    if (all === '1') return this.tickets.listAll(user, search, statuses as TicketStatus[], mine === '1');
+    const page = Math.max(1, Number.parseInt(pageRaw ?? '1', 10) || 1);
+    return this.tickets.list(user, search, statuses as TicketStatus[], mine === '1', page);
+  }
   @Roles('admin', 'support', 'employee') @Post('quick/parse') parse(@CurrentUser() user: AuthUser, @Body() dto: ParseQuickTicketDto) { return this.quick.parse(user, dto.rawText); }
   @Roles('admin', 'support', 'employee') @Post('quick/similar') similar(@CurrentUser() user: AuthUser, @Body() dto: SimilarTicketsDto) { return this.quick.similar(user, dto); }
   @Roles('admin', 'support', 'employee') @Post(':id/quick-update') quickUpdate(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: UpdateQuickTicketDto) { return this.quick.update(user, id, dto); }

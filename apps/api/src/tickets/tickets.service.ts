@@ -31,28 +31,42 @@ const transitions: Record<TicketStatus, TicketStatus[]> = {
   CLOSED: [TicketStatus.PENDING, TicketStatus.IN_PROGRESS, TicketStatus.WAITING_CUSTOMER, TicketStatus.WAITING_RND, TicketStatus.RESOLVED],
 };
 
+const PAGE_SIZE = 20;
+
 @Injectable()
 export class TicketsService {
   constructor(private readonly prisma: PrismaService, private readonly access: AccessPolicyService, private readonly notifications: NotificationsService) {}
 
-  private notifyAssignee(ticketId: string, number: string, assigneeId: string) {
-    return this.notifications.notify({
+  private notifyAssignee(ticketId: string, number: string, assigneeId: string) {    return this.notifications.notify({
       recipientId: assigneeId, ticketId, type: NOTIFICATION_TYPES.TICKET_ASSIGNED, title: '工单已指派给你',
       body: `工单 ${number} 已指派给你处理。`, dedupeKey: `ticket-assign:${ticketId}:${assigneeId}`,
     });
   }
 
-  list(user: AuthUser, search?: string, status?: TicketStatus, mine = false) {
-    if (status && !Object.values(TicketStatus).includes(status)) throw new BadRequestException('工单状态无效');
-    return this.prisma.ticket.findMany({
-      where: {
-        AND: [this.access.ticketWhere(user), ...(mine ? [{ assigneeId: user.id }] : [])], status,
-        ...(search ? { OR: [{ number: { contains: search, mode: 'insensitive' } }, { title: { contains: search, mode: 'insensitive' } }, { description: { contains: search, mode: 'insensitive' } }, { cameraModel: { contains: search, mode: 'insensitive' } }, { device: { name: { contains: search, mode: 'insensitive' } } }, { organization: { name: { contains: search, mode: 'insensitive' } } }] } : {}),
-      },
-      include: ticketInclude,
-      omit: { rawText: user.role === 'customer', requestKey: true },
-      orderBy: [{ priority: 'desc' }, { updatedAt: 'desc' }],
-    });
+  private buildWhere(user: AuthUser, search: string | undefined, statuses: TicketStatus[] | undefined, mine: boolean): Prisma.TicketWhereInput {
+    return {
+      AND: [this.access.ticketWhere(user), ...(mine ? [{ assigneeId: user.id }] : [])],
+      ...(statuses?.length ? { status: { in: statuses } } : {}),
+      ...(search ? { OR: [{ number: { contains: search, mode: 'insensitive' } }, { title: { contains: search, mode: 'insensitive' } }, { description: { contains: search, mode: 'insensitive' } }, { cameraModel: { contains: search, mode: 'insensitive' } }, { device: { name: { contains: search, mode: 'insensitive' } } }, { organization: { name: { contains: search, mode: 'insensitive' } } }] } : {}),
+    };
+  }
+
+  /** 分页列表：20 条/页，附带总数与状态分布（工作台指标用） */
+  async list(user: AuthUser, search: string | undefined, statuses: TicketStatus[] | undefined, mine: boolean, page: number) {
+    const where = this.buildWhere(user, search, statuses, mine);
+    const safePage = Math.max(1, Math.min(page, 10000));
+    const statusList = Object.values(TicketStatus);
+    const [total, items, ...statusCounts] = await this.prisma.$transaction([
+      this.prisma.ticket.count({ where }),
+      this.prisma.ticket.findMany({ where, include: ticketInclude, omit: { rawText: user.role === 'customer', requestKey: true }, orderBy: [{ priority: 'desc' }, { updatedAt: 'desc' }], skip: (safePage - 1) * PAGE_SIZE, take: PAGE_SIZE }),
+      ...statusList.map((status) => this.prisma.ticket.count({ where: { AND: [where, { status }] } })),
+    ]);
+    return { items, total, page: safePage, pageSize: PAGE_SIZE, byStatus: Object.fromEntries(statusList.map((status, index) => [status, statusCounts[index]])) as Partial<Record<TicketStatus, number>> };
+  }
+
+  /** 全量列表（引用数据下拉用，如工作记录关联工单）；数据量大时请改用分页 list */
+  listAll(user: AuthUser, search?: string, statuses?: TicketStatus[], mine = false) {
+    return this.prisma.ticket.findMany({ where: this.buildWhere(user, search, statuses, mine), include: ticketInclude, omit: { rawText: user.role === 'customer', requestKey: true }, orderBy: [{ priority: 'desc' }, { updatedAt: 'desc' }] });
   }
 
   async get(user: AuthUser, id: string) {

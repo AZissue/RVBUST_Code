@@ -40,8 +40,8 @@ describe('Quick tickets and single-source personal work', () => {
     const dto = { category: 'HARDWARE_FAILURE', organizationId: orgId, deviceId, assigneeId: supportId, cameraModel: 'M2600', title: 'M2600连接超时', description: 'M2600连接超时', rawText: '浙江智享 M2600连接超时 李四 紧急', priority: 'URGENT', requestKey: randomUUID() };
     const ticket = (await admin.post('/api/tickets').send(dto).expect(201)).body; ticketId = ticket.id;
     expect((await admin.post('/api/tickets').send(dto).expect(201)).body.id).toBe(ticketId);
-    expect((await admin.get('/api/tickets?mine=1').expect(200)).body.some((t: { id: string }) => t.id === ticketId)).toBe(false);
-    expect((await support.get('/api/tickets?mine=1').expect(200)).body.some((t: { id: string }) => t.id === ticketId)).toBe(true);
+    expect((await admin.get('/api/tickets?mine=1').expect(200)).body.items.some((t: { id: string }) => t.id === ticketId)).toBe(false);
+    expect((await support.get('/api/tickets?mine=1').expect(200)).body.items.some((t: { id: string }) => t.id === ticketId)).toBe(true);
     const stored = (await admin.get(`/api/tickets/${ticketId}`).expect(200)).body;
     expect(stored.rawText).toBe(dto.rawText); expect(stored.device.id).toBe(deviceId);
   });
@@ -74,6 +74,29 @@ describe('Quick tickets and single-source personal work', () => {
     await db.ticket.delete({ where: { id: resolved.id } });
     await db.ticket.delete({ where: { id: waiting.id } });
   });
+  it('paginates ticket list 20 per page with server-side search and status counts', async () => {
+    // 串行创建避免并发编号冲突
+    const ids: string[] = [];
+    for (let i = 0; i < 25; i++) ids.push((await admin.post('/api/tickets').send({ category: 'OTHER', organizationId: orgId, title: `分页验证工单${i}号`, description: `分页验证工单${i}号描述`, requestKey: randomUUID() }).expect(201)).body.id as string);
+    const page1 = (await admin.get('/api/tickets').expect(200)).body;
+    expect(page1.items.length).toBe(20);
+    expect(page1.pageSize).toBe(20);
+    expect(page1.total).toBeGreaterThanOrEqual(25);
+    expect(Object.values(page1.byStatus).reduce((sum: number, count) => sum + (count as number), 0)).toBe(page1.total);
+    const page2 = (await admin.get('/api/tickets?page=2').expect(200)).body;
+    expect(page2.page).toBe(2);
+    expect(page2.items.length).toBe(Math.min(20, page2.total - 20));
+    // 服务端搜索命中编号/标题
+    const found = (await admin.get(`/api/tickets?search=${encodeURIComponent('分页验证工单7号')}`).expect(200)).body;
+    expect(found.items.some((t: { id: string }) => ids.includes(t.id))).toBe(true);
+    // 状态过滤 + 非法状态
+    const pending = (await admin.get('/api/tickets?status=PENDING,CLOSED').expect(200)).body;
+    expect(pending.items.every((t: { status: string }) => ['PENDING', 'CLOSED'].includes(t.status))).toBe(true);
+    await admin.get('/api/tickets?status=NOPE').expect(400);
+    // all=1 保持数组形态（引用数据下拉）
+    expect(Array.isArray((await admin.get('/api/tickets?all=1').expect(200)).body)).toBe(true);
+    await db.ticket.deleteMany({ where: { id: { in: ids } } });
+  });
   it('detects similar same-customer tickets without leaking cross-customer tickets', async () => {
     const dto = { organizationId: orgId, issue: 'M2600连接不上', cameraModel: 'M2600' };
     const matches = (await admin.post('/api/tickets/quick/similar').send(dto).expect(201)).body;
@@ -92,13 +115,13 @@ describe('Quick tickets and single-source personal work', () => {
     const updated = (await admin.get(`/api/tickets/${ticketId}`).expect(200)).body;
     expect(updated.description).toBe(before.description); expect(updated.status).toBe(before.status);
     expect(updated.events.at(-1).content).toBe(dto.issue);
-    expect((await support.get('/api/tickets?mine=1').expect(200)).body.some((t: { id: string }) => t.id === ticketId)).toBe(false);
-    expect((await admin.get('/api/tickets?mine=1').expect(200)).body.some((t: { id: string }) => t.id === ticketId)).toBe(true);
+    expect((await support.get('/api/tickets?mine=1').expect(200)).body.items.some((t: { id: string }) => t.id === ticketId)).toBe(false);
+    expect((await admin.get('/api/tickets?mine=1').expect(200)).body.items.some((t: { id: string }) => t.id === ticketId)).toBe(true);
   });
   it('updates personal and dashboard status from the same ticket', async () => {
     await admin.post(`/api/tickets/${ticketId}/status`).send({ status: 'IN_PROGRESS' }).expect(201);
     const dashboard = (await admin.get('/api/dashboard').expect(200)).body;
-    const mine = (await admin.get('/api/tickets?mine=1').expect(200)).body;
+    const mine = (await admin.get('/api/tickets?mine=1').expect(200)).body.items;
     expect(dashboard.ticketCounts.inProgress).toBe(mine.filter((t: { status: string }) => t.status === 'IN_PROGRESS').length);
     // 工作台汇总包含借测/返修计数与需要关注分组
     expect(typeof dashboard.overdueLoanCount).toBe('number');

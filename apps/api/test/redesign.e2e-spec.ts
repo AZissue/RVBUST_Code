@@ -190,7 +190,7 @@ describe('Redesign v1 flows (e2e)', () => {
     expect(t1.assignee?.id).toBe(employeeId);
     // 内部角色可见全部工单：employee 能看到 support 的工单
     const t2 = (await support.post('/api/tickets').send(base).expect(201)).body;
-    expect((await employee.get('/api/tickets').expect(200)).body.some((t: { id: string }) => t.id === t2.id)).toBe(true);
+    expect((await employee.get('/api/tickets').expect(200)).body.items.some((t: { id: string }) => t.id === t2.id)).toBe(true);
     await employee.get(`/api/tickets/${t2.id}`).expect(200);
     // employee 非创建人/负责人：PATCH / status / 客户回复均 403
     await employee.patch(`/api/tickets/${t2.id}`).send({ title: '越权修改标题' }).expect(403);
