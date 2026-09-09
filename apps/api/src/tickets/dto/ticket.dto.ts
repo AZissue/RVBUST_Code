@@ -19,6 +19,10 @@ export class CreateTicketDto {
   @IsOptional() @IsEnum(TicketPriority) priority?: TicketPriority;
   @IsOptional() @IsUUID() assigneeId?: string;
   @IsOptional() @IsArray() @IsUUID('4', { each: true }) collaboratorIds?: string[];
+  /** 创建工单时邀请协助的对象（系统已有账号的内部成员），被邀请人需接受后生效 */
+  @IsOptional() @IsArray() @IsUUID('4', { each: true }) assistTargetIds?: string[];
+  /** 邀请协助时填写的说明 */
+  @IsOptional() @IsString() @Length(0, 2000) assistMessage?: string;
   @IsOptional() @IsDateString() plannedAt?: string;
   /** 工单发生/记录时间（本地日期），决定 createdAt 与编号日期；缺省为当前时间 */
   @IsOptional() @IsDateString() occurredAt?: string;
@@ -30,4 +34,8 @@ export class UpdateTicketDto extends PartialType(CreateTicketDto) {}
 
 export class ChangeCreatorDto {
   @IsUUID() createdById!: string;
+}
+
+export class DeleteTicketDto {
+  @IsOptional() @IsString() @Length(0, 1000) reason?: string;
 }

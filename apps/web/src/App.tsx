@@ -14,6 +14,7 @@ import { RepairsPage } from './pages/RepairsPage'
 import { ReportsPage } from './pages/ReportsPage'
 import { SettingsPage, TeamsPage } from './pages/SystemPages'
 import { TicketDetailPage, TicketsPage } from './pages/TicketsPage'
+import { RecycleBinPage } from './pages/RecycleBinPage'
 import { UsersPage } from './pages/UsersPage'
 import { WorklogsPage } from './pages/WorklogsPage'
 import { WorkItemsPage } from './pages/WorkItemsPage'
@@ -37,6 +38,7 @@ export default function App() {
       <Route path="my-work" element={<TicketsPage mine />} />
       <Route path="work-items" element={<WorkItemsPage />} />
       <Route path="tickets" element={<TicketsPage />} />
+      <Route path="tickets/recycle-bin" element={<RecycleBinPage />} />
       <Route path="tickets/:id" element={<TicketDetailPage />} />
       <Route path="customers" element={<CustomersPage />} />
       <Route path="customers/:id" element={<CustomerProfilePage />} />

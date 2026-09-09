@@ -8,7 +8,8 @@ import { CurrentUser } from '../auth/current-user.decorator.js';
 import { Roles } from '../auth/roles.decorator.js';
 import { ChangeStatusDto } from './dto/change-status.dto.js';
 import { CreateTicketEventDto } from './dto/ticket-event.dto.js';
-import { CreateTicketDto, UpdateTicketDto, ChangeCreatorDto } from './dto/ticket.dto.js';
+import { CreateTicketDto, UpdateTicketDto, ChangeCreatorDto, DeleteTicketDto } from './dto/ticket.dto.js';
+import { CreateAssistRequestDto, RejectAssistRequestDto } from './dto/assist.dto.js';
 import { TicketsService } from './tickets.service.js';
 import { TicketsExcelService } from './tickets-excel.service.js';
 import { QuickTicketsService } from './quick-tickets.service.js';
@@ -49,11 +50,18 @@ export class TicketsController {
     if (!file) throw new BadRequestException('请选择 xlsx 文件');
     return this.excel.importBuffer(user, file.buffer);
   }
+  @Roles('admin', 'support') @Get('recycle-bin') recycle(@CurrentUser() user: AuthUser, @Query('search') search?: string, @Query('page') pageRaw?: string) { return this.tickets.listDeleted(user, search, Math.max(1, Number.parseInt(pageRaw ?? '1', 10) || 1)); }
   @Get(':id') get(@CurrentUser() user: AuthUser, @Param('id') id: string) { return this.tickets.get(user, id); }
   @Post() create(@CurrentUser() user: AuthUser, @Body() dto: CreateTicketDto) { return this.tickets.create(user, dto); }
   @Roles('admin', 'support', 'employee') @Patch(':id') update(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: UpdateTicketDto) { return this.tickets.update(user, id, dto); }
   @Roles('admin') @Post(':id/created-by') changeCreator(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: ChangeCreatorDto) { return this.tickets.changeCreator(user, id, dto); }
   @Roles('admin', 'support', 'employee') @Post(':id/status') changeStatus(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: ChangeStatusDto) { return this.tickets.changeStatus(user, id, dto); }
   @Post(':id/events') addEvent(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: CreateTicketEventDto) { return this.tickets.addEvent(user, id, dto); }
-  @Roles('admin') @Delete(':id') remove(@Param('id') id: string) { return this.tickets.remove(id); }
+  @Roles('admin', 'support', 'employee') @Delete(':id') remove(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: DeleteTicketDto) { return this.tickets.softDelete(user, id, dto.reason); }
+  @Roles('admin') @Delete(':id/purge') purge(@CurrentUser() user: AuthUser, @Param('id') id: string) { return this.tickets.purge(user, id); }
+  @Roles('admin', 'support', 'employee') @Post(':id/restore') restore(@CurrentUser() user: AuthUser, @Param('id') id: string) { return this.tickets.restore(user, id); }
+  @Roles('admin', 'support', 'employee') @Post(':id/assist-requests') createAssistRequest(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: CreateAssistRequestDto) { return this.tickets.createAssistRequests(user, id, dto); }
+  @Roles('admin', 'support', 'employee') @Post(':id/assist-requests/:requestId/accept') acceptAssist(@CurrentUser() user: AuthUser, @Param('requestId') requestId: string) { return this.tickets.acceptAssist(user, requestId); }
+  @Roles('admin', 'support', 'employee') @Post(':id/assist-requests/:requestId/reject') rejectAssist(@CurrentUser() user: AuthUser, @Param('requestId') requestId: string, @Body() dto: RejectAssistRequestDto) { return this.tickets.rejectAssist(user, requestId, dto); }
+  @Roles('admin', 'support', 'employee') @Post(':id/assist-requests/:requestId/cancel') cancelAssist(@CurrentUser() user: AuthUser, @Param('requestId') requestId: string) { return this.tickets.cancelAssist(user, requestId); }
 }

@@ -139,6 +139,22 @@ export interface WorkItem {
 export type TicketStatus = 'PENDING' | 'IN_PROGRESS' | 'WAITING_CUSTOMER' | 'WAITING_RND' | 'RESOLVED' | 'CLOSED'
 export type TicketPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT'
 export type TicketCategory = 'PRE_SALES' | 'TRAINING' | 'POINTCLOUD_DEBUG' | 'SDK_DEVELOPMENT' | 'HAND_EYE_CALIBRATION' | 'HARDWARE_FAILURE' | 'OTHER'
+export type TicketAssistStatus = 'PENDING' | 'ACCEPTED' | 'REJECTED' | 'CANCELLED'
+
+export interface TicketAssistRequest {
+  id: string
+  ticketId: string
+  requesterId: string
+  targetUserId: string
+  status: TicketAssistStatus
+  message?: string | null
+  acceptedAt?: string | null
+  rejectedAt?: string | null
+  rejectReason?: string | null
+  createdAt: string
+  requester: { id: string; name: string }
+  targetUser: { id: string; name: string }
+}
 
 export interface Ticket {
   rawText?: string
@@ -158,6 +174,9 @@ export interface Ticket {
   solution?: string
   createdAt: string
   updatedAt: string
+  deletedAt?: string | null
+  deletedBy?: { id: string; name: string } | null
+  deletedReason?: string | null
   organization: { id: string; name: string; level?: string }
   contact?: Contact
   device?: Device
@@ -165,6 +184,7 @@ export interface Ticket {
   assignee?: { id: string; name: string }
   createdBy?: { id: string; name: string }
   collaborators?: Array<{ user: { id: string; name: string } }>
+  assistRequests?: TicketAssistRequest[]
   events?: TicketEvent[]
 }
 

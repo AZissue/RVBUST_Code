@@ -1,5 +1,5 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable } from '@nestjs/common';
-import { TicketEventType, TicketStatus, Visibility, type Prisma } from '@prisma/client';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { TicketAssistStatus, TicketEventType, TicketStatus, Visibility, type Prisma } from '@prisma/client';
 import { AccessPolicyService } from '../auth/access-policy.service.js';
 import type { AuthUser } from '../auth/auth.types.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
@@ -8,6 +8,7 @@ import { ChangeStatusDto } from './dto/change-status.dto.js';
 import { zhStatus } from '../common/status-labels.js';
 import { CreateTicketEventDto } from './dto/ticket-event.dto.js';
 import { CreateTicketDto, UpdateTicketDto, ChangeCreatorDto } from './dto/ticket.dto.js';
+import { CreateAssistRequestDto, RejectAssistRequestDto } from './dto/assist.dto.js';
 import { ticketCategoryFromLabel } from '../common/ticket-categories.js';
 import { NOTIFICATION_TYPES } from '../common/notification-types.js';
 import { parseKey } from './quick-input.parser.js';
@@ -19,7 +20,9 @@ const ticketInclude = {
   project: true,
   assignee: { select: { id: true, name: true } },
   createdBy: { select: { id: true, name: true } },
+  deletedBy: { select: { id: true, name: true } },
   collaborators: { include: { user: { select: { id: true, name: true } } } },
+  assistRequests: { include: { requester: { select: { id: true, name: true } }, targetUser: { select: { id: true, name: true } } }, orderBy: { createdAt: 'desc' } },
 } as const;
 
 const transitions: Record<TicketStatus, TicketStatus[]> = {
@@ -45,6 +48,8 @@ export class TicketsService {
 
   private buildWhere(user: AuthUser, search: string | undefined, statuses: TicketStatus[] | undefined, mine: boolean): Prisma.TicketWhereInput {
     return {
+      // 回收站：普通列表只显示未删除工单
+      deletedAt: null,
       AND: [this.access.ticketWhere(user), ...(mine ? [{ assigneeId: user.id }] : [])],
       ...(statuses?.length ? { status: { in: statuses } } : {}),
       ...(search ? { OR: [{ number: { contains: search, mode: 'insensitive' } }, { title: { contains: search, mode: 'insensitive' } }, { description: { contains: search, mode: 'insensitive' } }, { cameraModel: { contains: search, mode: 'insensitive' } }, { device: { name: { contains: search, mode: 'insensitive' } } }, { organization: { name: { contains: search, mode: 'insensitive' } } }] } : {}),
@@ -101,6 +106,8 @@ export class TicketsService {
     await this.validateRelations(organizationId, dto);
     const collaboratorIds = user.role === 'customer' ? [] : [...new Set(dto.collaboratorIds ?? [])];
     const assigneeId = user.role === 'customer' ? undefined : (dto.assigneeId ?? user.id);
+    const assistTargetIds = user.role === 'customer' ? [] : [...new Set(dto.assistTargetIds ?? [])];
+    const assistTargets = await this.resolveAssistTargets(this.prisma, user.id, assistTargetIds);
     // 补录历史工单：occurredAt（本地日期）决定 createdAt 与编号日期
     const occurredAt = dto.occurredAt ? parseKey(dto.occurredAt) : undefined;
     // 内部用户可指定创建时状态（补录场景）；客户账号恒为待处理
@@ -122,27 +129,64 @@ export class TicketsService {
       collaborators: collaboratorIds.length ? { create: collaboratorIds.map((userId) => ({ user: { connect: { id: userId } } })) } : undefined,
       events: { create: { author: { connect: { id: user.id } }, type: TicketEventType.WORK_RECORD, visibility: user.role === 'customer' ? Visibility.CUSTOMER : Visibility.INTERNAL, content: initialStatus ? `工单已创建（${zhStatus(initialStatus)}）` : '工单已创建' } },
     };
-    for (let attempt = 0; attempt < 4; attempt++) {
-      try {
-        const created = await db.ticket.create({ data: { ...data, number: await this.generateNumber(db, occurredAt) }, include: ticketInclude });
-        // 事务内调用（如事项转换）跳过通知，由外层在事务提交后补发，避免引用未提交工单
-        if (db === this.prisma && assigneeId && assigneeId !== user.id) await this.notifyAssignee(created.id, created.number, assigneeId);
-        return created;
-      }
-      catch (error) {
-        if ((error as { code?: string }).code !== 'P2002' || attempt === 3) throw error;
-        if (dto.requestKey) {
-          const existing = await db.ticket.findUnique({ where: { requestKey: dto.requestKey }, include: ticketInclude });
-          if (existing?.createdById === user.id) return existing;
-          if (existing) throw new ConflictException('提交标识已使用');
+    const createRecord = async (client: Prisma.TransactionClient) => {
+      for (let attempt = 0; attempt < 4; attempt++) {
+        try {
+          return await client.ticket.create({ data: { ...data, number: await this.generateNumber(client, occurredAt) }, include: ticketInclude });
+        }
+        catch (error) {
+          if ((error as { code?: string }).code !== 'P2002' || attempt === 3) throw error;
+          if (dto.requestKey) {
+            const existing = await client.ticket.findUnique({ where: { requestKey: dto.requestKey }, include: ticketInclude });
+            if (existing?.createdById === user.id) return existing;
+            if (existing) throw new ConflictException('提交标识已使用');
+          }
         }
       }
+      throw new ConflictException('工单编号生成失败，请重试');
+    };
+    // 创建工单并同时邀请协助：工单与协助请求在同一个事务内写入，避免产生孤儿工单
+    if (assistTargets.length && db === this.prisma) {
+      const created = await this.prisma.$transaction(async (tx) => {
+        const ticket = await createRecord(tx);
+        await this.writeAssistRequests(tx, user, ticket, assistTargets, dto.assistMessage);
+        // 重新查询以返回已写入的协助请求（事务内先建工单再写协助）
+        return tx.ticket.findUniqueOrThrow({ where: { id: ticket.id }, include: ticketInclude });
+      });
+      if (assigneeId && assigneeId !== user.id) await this.notifyAssignee(created.id, created.number, assigneeId);
+      return created;
     }
+    const created = await createRecord(db);
+    // 事务内调用（如事项转换）跳过通知，由外层在事务提交后补发，避免引用未提交工单
+    if (db === this.prisma && assigneeId && assigneeId !== user.id) await this.notifyAssignee(created.id, created.number, assigneeId);
+    return created;
+  }
+
+  /** 校验并返回可协助的内部成员（去重、排除本人、需为启用账号）；否则抛错 */
+  private async resolveAssistTargets(db: Prisma.TransactionClient, requesterId: string, targetIds: string[]) {
+    if (!targetIds.length) return [];
+    const unique = [...new Set(targetIds)];
+    if (unique.includes(requesterId)) throw new BadRequestException('不能邀请自己协助');
+    const targets = await db.user.findMany({ where: { id: { in: unique }, status: 'ACTIVE', role: { name: { in: ['admin', 'support', 'employee'] } } }, select: { id: true } });
+    const found = new Set(targets.map((item) => item.id));
+    const valid = unique.filter((id) => found.has(id));
+    const invalid = unique.filter((id) => !found.has(id));
+    if (invalid.length) throw new BadRequestException('协助对象不存在、已停用或不是内部成员');
+    return valid;
+  }
+
+  /** 事务内写入协助请求、时间线与站内通知 */
+  private async writeAssistRequests(client: Prisma.TransactionClient, requester: AuthUser, ticket: { id: string; number: string; title: string }, targetIds: string[], message?: string) {
+    if (!targetIds.length) return;
+    await client.ticketAssistRequest.createMany({ data: targetIds.map((userId) => ({ ticketId: ticket.id, requesterId: requester.id, targetUserId: userId, message: message || null })) });
+    await client.ticketEvent.create({ data: { ticketId: ticket.id, authorId: requester.id, type: TicketEventType.ASSIST_REQUEST, visibility: Visibility.INTERNAL, content: `邀请协助：${targetIds.length} 人${message ? `，说明：${message}` : ''}`, metadata: { targetUserIds: targetIds } } });
+    await client.notification.createMany({ data: targetIds.map((userId) => ({ recipientId: userId, ticketId: ticket.id, type: NOTIFICATION_TYPES.TICKET_ASSIST_REQUESTED, title: '邀请你协助工单', body: `${requester.name} 邀请你协助工单 ${ticket.number}「${ticket.title}」${message ? `：${message}` : ''}` })) });
   }
 
   async update(user: AuthUser, id: string, dto: UpdateTicketDto) {
     if (user.role === 'customer') throw new ForbiddenException('客户账号不能修改工单内部字段');
     const current = await this.access.requireTicket(user, id);
+    this.assertActive(current);
     if (!this.access.canEditTicket(user, current)) throw new ForbiddenException('仅创建人、负责人或管理员可以更新该工单');
     if (dto.assigneeId && dto.assigneeId !== current.assigneeId && user.role !== 'admin' && current.assigneeId !== user.id) throw new ForbiddenException('仅当前负责人或管理员可以转交工单');
     const organizationId = dto.organizationId ?? current.organizationId;
@@ -169,6 +213,7 @@ export class TicketsService {
   async changeStatus(user: AuthUser, id: string, dto: ChangeStatusDto) {
     if (user.role === 'customer') throw new ForbiddenException('客户账号不能修改工单状态');
     const ticket = await this.access.requireTicket(user, id);
+    this.assertActive(ticket);
     if (user.role !== 'admin' && ticket.assigneeId !== user.id) throw new ForbiddenException('仅当前负责人或管理员可以变更工单状态');
     if (!transitions[ticket.status].includes(dto.status)) throw new BadRequestException(`不允许从「${zhStatus(ticket.status)}」变更为「${zhStatus(dto.status)}」`);
     return this.prisma.$transaction(async (tx) => {
@@ -194,6 +239,7 @@ export class TicketsService {
 
   async addEvent(user: AuthUser, id: string, dto: CreateTicketEventDto) {
     const ticket = await this.access.requireTicket(user, id);
+    this.assertActive(ticket);
     // 内部备注（排查过程）允许所有内部成员在任何工单下追加，便于协作排查；
     // 客户可见回复及其他类型的写入仍仅限创建人、负责人或管理员。
     const isInternalNote = user.role !== 'customer' && dto.type === TicketEventType.INTERNAL_NOTE;
@@ -206,6 +252,7 @@ export class TicketsService {
 
   async changeCreator(user: AuthUser, id: string, dto: ChangeCreatorDto) {
     const current = await this.access.requireTicket(user, id);
+    this.assertActive(current);
     const target = await this.prisma.user.findFirst({ where: { id: dto.createdById, status: 'ACTIVE', role: { name: { in: ['admin', 'support', 'employee'] } } }, select: { id: true, name: true } });
     if (!target) throw new BadRequestException('目标用户不存在、已停用或不是内部成员');
     if (target.id === current.createdById) return this.prisma.ticket.findUniqueOrThrow({ where: { id }, include: ticketInclude });
@@ -217,10 +264,115 @@ export class TicketsService {
     });
   }
 
-  async remove(id: string) {
+  /** 移入回收站（软删除）：保留数据与操作记录 */
+  async softDelete(user: AuthUser, id: string, reason?: string) {
+    if (user.role === 'customer') throw new ForbiddenException('客户账号不能删除工单');
+    const ticket = await this.access.requireTicket(user, id);
+    if (!this.access.canEditTicket(user, ticket)) throw new ForbiddenException('仅创建人、负责人或管理员可以删除该工单');
+    if (ticket.deletedAt) throw new BadRequestException('工单已在回收站中');
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.ticket.update({ where: { id }, data: { deletedAt: new Date(), deletedById: user.id, deletedReason: reason || null }, include: ticketInclude });
+      await tx.ticketEvent.create({ data: { ticketId: id, authorId: user.id, type: TicketEventType.DELETE, visibility: Visibility.INTERNAL, content: `工单被移入回收站${reason ? `，原因：${reason}` : ''}` } });
+      const recipients = [...new Set([updated.createdBy.id, updated.assignee?.id])].filter((recipientId): recipientId is string => Boolean(recipientId) && recipientId !== user.id);
+      if (recipients.length) await tx.notification.createMany({ data: recipients.map((recipientId) => ({ recipientId, ticketId: id, type: NOTIFICATION_TYPES.TICKET_DELETED, title: '工单被移入回收站', body: `${user.name} 将工单 ${updated.number}「${updated.title}」移入回收站${reason ? `，原因：${reason}` : ''}`, dedupeKey: `ticket-deleted:${id}:${recipientId}` })) });
+      return updated;
+    });
+  }
+
+  /** 回收站列表（仅显示已删除工单） */
+  async listDeleted(user: AuthUser, search: string | undefined, page: number) {
+    const where: Prisma.TicketWhereInput = {
+      deletedAt: { not: null },
+      ...(search ? { OR: [{ number: { contains: search, mode: 'insensitive' } }, { title: { contains: search, mode: 'insensitive' } }, { description: { contains: search, mode: 'insensitive' } }, { organization: { name: { contains: search, mode: 'insensitive' } } }] } : {}),
+    };
+    const safePage = Math.max(1, Math.min(page, 10000));
+    const [total, items] = await this.prisma.$transaction([
+      this.prisma.ticket.count({ where }),
+      this.prisma.ticket.findMany({ where, include: ticketInclude, omit: { rawText: true, requestKey: true }, orderBy: { deletedAt: 'desc' }, skip: (safePage - 1) * PAGE_SIZE, take: PAGE_SIZE }),
+    ]);
+    return { items, total, page: safePage, pageSize: PAGE_SIZE };
+  }
+
+  /** 从回收站恢复工单 */
+  async restore(user: AuthUser, id: string) {
+    if (user.role === 'customer') throw new ForbiddenException('客户账号不能恢复工单');
+    const ticket = await this.access.requireTicket(user, id);
+    if (!ticket.deletedAt) throw new BadRequestException('工单不在回收站中');
+    if (user.role !== 'admin' && user.role !== 'support' && user.id !== ticket.deletedById && !this.access.canEditTicket(user, ticket)) throw new ForbiddenException('仅管理员、支持人员或相关负责人可以恢复该工单');
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.ticket.update({ where: { id }, data: { deletedAt: null, deletedById: null, deletedReason: null }, include: ticketInclude });
+      await tx.ticketEvent.create({ data: { ticketId: id, authorId: user.id, type: TicketEventType.RESTORE, visibility: Visibility.INTERNAL, content: '工单已从回收站恢复' } });
+      return updated;
+    });
+  }
+
+  /** 彻底删除回收站中的工单（仅管理员） */
+  async purge(user: AuthUser, id: string) {
+    if (user.role !== 'admin') throw new ForbiddenException('仅管理员可以彻底删除工单');
+    const ticket = await this.prisma.ticket.findUnique({ where: { id }, select: { deletedAt: true } });
+    if (!ticket) throw new NotFoundException('工单不存在');
+    if (!ticket.deletedAt) throw new BadRequestException('仅回收站中的工单可以彻底删除');
     try { await this.prisma.ticket.delete({ where: { id } }); }
-    catch (error) { if ((error as { code?: string }).code === 'P2003') throw new ConflictException('工单关联历史事项，不能删除追溯关系'); throw error; }
+    catch (error) { if ((error as { code?: string }).code === 'P2003') throw new ConflictException('工单关联历史事项，不能彻底删除追溯关系'); throw error; }
     return { success: true };
+  }
+
+  /** 在已有工单上创建协助（邀请）请求 */
+  async createAssistRequests(user: AuthUser, id: string, dto: CreateAssistRequestDto) {
+    if (user.role === 'customer') throw new ForbiddenException('客户账号不能邀请协助');
+    const ticket = await this.access.requireTicket(user, id);
+    this.assertActive(ticket);
+    if (!this.access.canEditTicket(user, ticket)) throw new ForbiddenException('仅创建人、负责人或管理员可以邀请协助');
+    const targets = await this.resolveAssistTargets(this.prisma, user.id, dto.targetUserIds);
+    if (!targets.length) throw new BadRequestException('请选择协助对象');
+    await this.prisma.$transaction(async (tx) => {
+      await this.writeAssistRequests(tx, user, { id: ticket.id, number: ticket.number, title: ticket.title }, targets, dto.message);
+    });
+    return this.prisma.ticket.findUniqueOrThrow({ where: { id }, include: ticketInclude });
+  }
+
+  /** 被邀请人接受协助：加入协作人，可见完整工单并协助 */
+  async acceptAssist(user: AuthUser, requestId: string) {
+    const request = await this.prisma.ticketAssistRequest.findUnique({ where: { id: requestId }, include: { ticket: { include: ticketInclude } } });
+    if (!request) throw new NotFoundException('协助请求不存在');
+    if (request.targetUserId !== user.id) throw new ForbiddenException('只有被邀请人可以接受该协助请求');
+    if (request.status !== TicketAssistStatus.PENDING) throw new BadRequestException('该协助请求已被处理');
+    return this.prisma.$transaction(async (tx) => {
+      await tx.ticketCollaborator.upsert({ where: { ticketId_userId: { ticketId: request.ticketId, userId: user.id } }, update: {}, create: { ticketId: request.ticketId, userId: user.id } });
+      await tx.ticketAssistRequest.update({ where: { id: requestId }, data: { status: TicketAssistStatus.ACCEPTED, acceptedAt: new Date() } });
+      await tx.ticketEvent.create({ data: { ticketId: request.ticketId, authorId: user.id, type: TicketEventType.ASSIST_ACCEPT, visibility: Visibility.INTERNAL, content: `${user.name} 接受了协助邀请` } });
+      await tx.notification.create({ data: { recipientId: request.requesterId, ticketId: request.ticketId, type: NOTIFICATION_TYPES.TICKET_ASSIST_ACCEPTED, title: '协助已被接受', body: `${user.name} 接受了工单 ${request.ticket.number}「${request.ticket.title}」的协助邀请` } });
+      return tx.ticket.findUniqueOrThrow({ where: { id: request.ticketId }, include: ticketInclude });
+    });
+  }
+
+  /** 被邀请人驳回协助请求并填写意见 */
+  async rejectAssist(user: AuthUser, requestId: string, dto: RejectAssistRequestDto) {
+    const request = await this.prisma.ticketAssistRequest.findUnique({ where: { id: requestId }, include: { ticket: { include: ticketInclude } } });
+    if (!request) throw new NotFoundException('协助请求不存在');
+    if (request.targetUserId !== user.id) throw new ForbiddenException('只有被邀请人可以驳回该协助请求');
+    if (request.status !== TicketAssistStatus.PENDING) throw new BadRequestException('该协助请求已被处理');
+    return this.prisma.$transaction(async (tx) => {
+      await tx.ticketAssistRequest.update({ where: { id: requestId }, data: { status: TicketAssistStatus.REJECTED, rejectedAt: new Date(), rejectReason: dto.reason } });
+      await tx.ticketEvent.create({ data: { ticketId: request.ticketId, authorId: user.id, type: TicketEventType.ASSIST_REJECT, visibility: Visibility.INTERNAL, content: `${user.name} 驳回了协助邀请：${dto.reason}` } });
+      await tx.notification.create({ data: { recipientId: request.requesterId, ticketId: request.ticketId, type: NOTIFICATION_TYPES.TICKET_ASSIST_REJECTED, title: '协助被驳回', body: `${user.name} 驳回了工单 ${request.ticket.number}「${request.ticket.title}」的协助邀请：${dto.reason}` } });
+      return tx.ticket.findUniqueOrThrow({ where: { id: request.ticketId }, include: ticketInclude });
+    });
+  }
+
+  /** 撤销（取消）尚未处理的协助请求 */
+  async cancelAssist(user: AuthUser, requestId: string) {
+    const request = await this.prisma.ticketAssistRequest.findUnique({ where: { id: requestId }, include: { ticket: { include: ticketInclude }, requester: { select: { id: true } } } });
+    if (!request) throw new NotFoundException('协助请求不存在');
+    if (request.requesterId !== user.id && !this.access.canEditTicket(user, request.ticket)) throw new ForbiddenException('仅发起人或相关负责人可以撤销协助请求');
+    if (request.status !== TicketAssistStatus.PENDING) throw new BadRequestException('该协助请求已被处理');
+    await this.prisma.ticketAssistRequest.update({ where: { id: requestId }, data: { status: TicketAssistStatus.CANCELLED } });
+    return this.prisma.ticket.findUniqueOrThrow({ where: { id: request.ticketId }, include: ticketInclude });
+  }
+
+  /** 禁止对已移入回收站的工单继续做常规更新 */
+  private assertActive(ticket: { deletedAt?: Date | null }) {
+    if (ticket.deletedAt) throw new BadRequestException('工单已在回收站中，请先恢复');
   }
 
   private async validateRelations(organizationId: string, dto: Partial<CreateTicketDto>) {

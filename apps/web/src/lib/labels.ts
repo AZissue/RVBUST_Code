@@ -1,11 +1,12 @@
-import type { BugStatus, DeviceOwnerType, DeviceStatus, LoanStatus, RepairStatus, Role, TicketCategory, TicketPriority, TicketStatus, UserStatus, WorkItemPriority, WorkItemStatus } from '../types'
+import type { BugStatus, DeviceOwnerType, DeviceStatus, LoanStatus, RepairStatus, Role, TicketAssistStatus, TicketCategory, TicketPriority, TicketStatus, UserStatus, WorkItemPriority, WorkItemStatus } from '../types'
 
 export const ticketStatusLabels: Record<TicketStatus, string> = { PENDING: '待处理', IN_PROGRESS: '处理中', WAITING_CUSTOMER: '等待客户', WAITING_RND: '等待研发', RESOLVED: '已解决', CLOSED: '已关闭' }
 export const ticketPriorityLabels: Record<TicketPriority, string> = { LOW: '低', MEDIUM: '中', HIGH: '高', URGENT: '紧急' }
 export const ticketCategoryLabels: Record<TicketCategory, string> = { PRE_SALES: '售前咨询', TRAINING: '客户培训', POINTCLOUD_DEBUG: '点云调试', SDK_DEVELOPMENT: 'SDK 开发', HAND_EYE_CALIBRATION: '手眼标定', HARDWARE_FAILURE: '硬件故障', OTHER: '其他' }
 export const TICKET_CATEGORIES = Object.keys(ticketCategoryLabels) as TicketCategory[]
 export const ticketCategoryLabel = (category: string) => ticketCategoryLabels[category as TicketCategory] ?? category
-export const ticketEventTypeLabels: Record<string, string> = { CUSTOMER_REPLY: '客户回复', INTERNAL_NOTE: '跟进记录', STATUS_CHANGE: '状态变更', ASSIGNMENT: '指派', ATTACHMENT: '附件', WORK_RECORD: '工作记录', RESOLUTION: '解决方案' }
+export const ticketEventTypeLabels: Record<string, string> = { CUSTOMER_REPLY: '客户回复', INTERNAL_NOTE: '跟进记录', STATUS_CHANGE: '状态变更', ASSIGNMENT: '指派', ATTACHMENT: '附件', WORK_RECORD: '工作记录', RESOLUTION: '解决方案', ASSIST_REQUEST: '协助邀请', ASSIST_ACCEPT: '接受协助', ASSIST_REJECT: '驳回协助', DELETE: '移入回收站', RESTORE: '恢复工单' }
+export const ticketAssistStatusLabels: Record<TicketAssistStatus, string> = { PENDING: '待处理', ACCEPTED: '已接受', REJECTED: '已驳回', CANCELLED: '已撤销' }
 export const workItemStatusLabels: Record<WorkItemStatus, string> = { TODO: '待办', IN_PROGRESS: '进行中', WAITING_FEEDBACK: '等待反馈', COMPLETED: '已完成', CANCELED: '已取消' }
 export const workItemPriorityLabels: Record<WorkItemPriority, string> = ticketPriorityLabels
 export const worklogStatusLabels: Record<string, string> = { DRAFT: '草稿', CONFIRMED: '已确认' }
@@ -24,6 +25,7 @@ const lookup = (labels: Record<string, string>, value: string | null | undefined
 export const ticketStatusLabel = (status: string) => lookup(ticketStatusLabels, status)
 export const ticketPriorityLabel = (priority: string) => lookup(ticketPriorityLabels, priority)
 export const ticketEventTypeLabel = (type: string) => lookup(ticketEventTypeLabels, type)
+export const ticketAssistStatusLabel = (status: string) => lookup(ticketAssistStatusLabels, status)
 export const workItemStatusLabel = (status: string) => lookup(workItemStatusLabels, status)
 export const workItemPriorityLabel = (priority: string) => lookup(workItemPriorityLabels, priority)
 export const worklogStatusLabel = (status: string) => lookup(worklogStatusLabels, status)

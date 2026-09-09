@@ -15,6 +15,8 @@ export function CreateTicketModal({ onClose, onCreated, defaultAssigneeId }: { o
   const [confirmed, setConfirmed] = useState(false)
   const [deviceText, setDeviceText] = useState('')
   const [contactId, setContactId] = useState('')
+  const [assistTargetIds, setAssistTargetIds] = useState<string[]>([])
+  const [assistMessage, setAssistMessage] = useState('')
   const [busy, setBusy] = useState(false)
   const lock = useRef(false)
   const [requestKey] = useState(() => crypto.randomUUID())
@@ -23,6 +25,7 @@ export function CreateTicketModal({ onClose, onCreated, defaultAssigneeId }: { o
   const detail = useRemote(() => customer ? api<Customer>(`/customers/${customer.id}`) : Promise.resolve(null), [customer?.id])
   const currentDetail = detail.data?.id === customer?.id ? detail.data : null
   const device = currentDetail?.devices?.find(item => deviceLabel(item) === deviceText)
+  const toggleAssist = (userId: string) => setAssistTargetIds(previous => previous.includes(userId) ? previous.filter(item => item !== userId) : [...previous, userId])
   useEffect(() => { setDeviceText(''); setContactId('') }, [customer?.id])
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -49,6 +52,8 @@ export function CreateTicketModal({ onClose, onCreated, defaultAssigneeId }: { o
         sdkVersion: device?.sdkVersion || value('sdkVersion') || undefined,
         systemEnvironment: value('systemEnvironment') || undefined,
         plannedAt: value('plannedAt') ? new Date(value('plannedAt')).toISOString() : undefined,
+        assistTargetIds: assistTargetIds.length ? assistTargetIds : undefined,
+        assistMessage: assistMessage.trim() || undefined,
       }) })
       onCreated(ticket, notice)
     } catch (reason) { setError(reason instanceof Error ? reason.message : '创建失败') }
@@ -64,6 +69,9 @@ export function CreateTicketModal({ onClose, onCreated, defaultAssigneeId }: { o
       <label>问题标题<input name="title" required minLength={3} maxLength={240} /></label>
       <label>问题分类<select name="category" defaultValue="OTHER">{TICKET_CATEGORIES.map(item => <option key={item} value={item}>{ticketCategoryLabels[item]}</option>)}</select></label>
       <label className="span-2">问题描述<textarea name="description" required minLength={3} maxLength={20000} rows={4} /></label>
+      <label className="span-2 checkbox-row"><input type="checkbox" checked={assistTargetIds.length > 0} onChange={event => setAssistTargetIds(event.target.checked ? (users.data ?? []).map(item => item.id) : [])} />需要协助：邀请系统内已创建账号的同事协助处理，对方接受后可查看工单</label>
+      {assistTargetIds.length > 0 && <label className="span-2">协助对象<div className="assist-user-list">{users.data?.map(item => <label key={item.id} className="checkbox-row"><input type="checkbox" checked={assistTargetIds.includes(item.id)} onChange={() => toggleAssist(item.id)} />{item.name}</label>) ?? <span>加载中…</span>}</div></label>}
+      {assistTargetIds.length > 0 && <label className="span-2">协助说明<input value={assistMessage} onChange={event => setAssistMessage(event.target.value)} maxLength={2000} placeholder="如：需要协助排查硬件环境问题" /></label>}
       <details className="span-2"><summary>补充信息</summary><div className="form-grid">
         <label>关联设备<input value={deviceText} onChange={event => setDeviceText(event.target.value)} list="ticket-devices" disabled={!currentDetail} placeholder="搜索设备名称或序列号" /><datalist id="ticket-devices">{currentDetail?.devices?.map(item => <option key={item.id} value={deviceLabel(item)} />)}</datalist></label>
         <label>联系人<select value={contactId} onChange={event => setContactId(event.target.value)} disabled={!currentDetail}><option value="">未关联</option>{currentDetail?.contacts?.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
