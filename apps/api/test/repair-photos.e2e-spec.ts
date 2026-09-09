@@ -31,6 +31,22 @@ describe('Return PDF and loan photos', () => {
     repairId = repair.id;
   });
   afterAll(async () => { await app?.close(); });
+  it('supports standalone manual SN, PDF export, edits and full lifecycle without a device', async () => {
+    const original = await db.repairOrder.findUniqueOrThrow({ where: { id: repairId } });
+    const before = await db.device.count();
+    const sn = `MANUAL-${suffix}`;
+    const form = { ...(original.returnForm as Record<string, unknown>), serialNumber: sn };
+    const repair = (await admin.post('/api/repairs').send({ organizationId: original.organizationId, manualSerialNumber: true, serialNumber: sn, symptom: '手工报修', returnForm: form }).expect(201)).body;
+    expect(repair.device).toBeNull(); expect(repair.serialNumber).toBe(sn);
+    expect(await db.device.count()).toBe(before);
+    await admin.post(`/api/repairs/${repair.id}/pdf`).expect(201);
+    const updated = (await admin.patch(`/api/repairs/${repair.id}`).send({ returnForm: { ...form, serialNumber: sn + '-FIX' } }).expect(200)).body;
+    expect(updated.serialNumber).toBe(sn + '-FIX');
+    for (const status of ['DIAGNOSING', 'REPAIRING', 'SHIPPED', 'CLOSED']) await admin.post(`/api/repairs/${repair.id}/transition`).send({ status, trackingNo: 'SF-TEST' }).expect(201);
+    expect(await db.device.count()).toBe(before);
+    await admin.post('/api/repairs').send({ organizationId: original.organizationId, manualSerialNumber: true, serialNumber: ' ', symptom: '空 SN' }).expect(400);
+    await admin.post('/api/repairs').send({ organizationId: original.organizationId, manualSerialNumber: true, serialNumber: sn, deviceId: original.deviceId, symptom: '模式冲突' }).expect(400);
+  });
   it('persists all form fields and archives a downloadable PDF with an event', async () => {
     const pdf = (await admin.post(`/api/repairs/${repairId}/pdf`).expect(201)).body;
     expect(pdf.mimeType).toBe('application/pdf');

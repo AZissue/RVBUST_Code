@@ -5,6 +5,7 @@ import { Type } from 'class-transformer';
 import { ReturnFormDto } from './return-form.dto.js';
 
 export class CreateRepairDto {
+  @IsOptional() @IsBoolean() manualSerialNumber?: boolean;
   @IsOptional() @IsObject() @ValidateNested() @Type(() => ReturnFormDto) returnForm?: ReturnFormDto;
   @IsUUID() organizationId!: string;
   @IsOptional() @IsUUID() deviceId?: string;

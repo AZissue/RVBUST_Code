@@ -649,7 +649,8 @@ model RepairOrder {
   id          String       @id @default(uuid()) @db.Uuid
   repairNo    String       @unique @map("repair_no") @db.VarChar(32)
   returnForm  Json?        @map("return_form")
-  deviceId    String       @db.Uuid @map("device_id")
+  deviceId    String?      @db.Uuid @map("device_id")
+  serialNumber String?    @db.VarChar(120) @map("serial_number")
   organizationId String    @db.Uuid @map("organization_id")
   contactId   String?      @db.Uuid @map("contact_id")
   assigneeId  String?      @db.Uuid @map("assignee_id")
@@ -664,7 +665,7 @@ model RepairOrder {
   resolution  String?
   note        String?
   createdById String       @db.Uuid @map("created_by_id")
-  device      Device       @relation(fields: [deviceId], references: [id])
+  device      Device?      @relation(fields: [deviceId], references: [id])
   organization CustomerOrganization @relation(fields: [organizationId], references: [id])
   contact     Contact?     @relation(fields: [contactId], references: [id], onDelete: SetNull)
   assignee    User?        @relation("RepairAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)

@@ -1,4 +1,7 @@
 .return-form-fields { padding: 0; border: 0; min-width: 0; margin: 0 0 16px; }
+.serial-mode { display: flex; flex-wrap: wrap; gap: 20px; }
+.serial-mode label { display: flex; flex-direction: row; align-items: center; gap: 8px; }
+.serial-mode input { width: 16px; height: 16px; margin: 0; }
 .return-notes { font-size: 12px; line-height: 1.7; color: var(--muted); margin: 12px 0; }
 .photo-groups { display: grid; gap: 16px; }
 .photo-group { min-width: 0; }

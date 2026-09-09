@@ -57,21 +57,25 @@ export class RepairsService {
   }
 
   async create(user: AuthUser, dto: CreateRepairDto) {
+    if (dto.manualSerialNumber && dto.deviceId) throw new BadRequestException('手动填写模式不能同时关联设备');
+    const manualSN = dto.serialNumber?.trim();
+    if (dto.manualSerialNumber && !manualSN) throw new BadRequestException('请填写序列号');
     return this.prisma.$transaction(async (tx) => {
-      const device = dto.deviceId
+      const device = dto.manualSerialNumber ? null : dto.deviceId
         ? await tx.device.findUnique({ where: { id: dto.deviceId } })
         : dto.serialNumber
-          ? await tx.device.findFirst({ where: { serialNumber: dto.serialNumber } })
+          ? await tx.device.findFirst({ where: { serialNumber: dto.serialNumber, organizationId: dto.organizationId } })
           : null;
-      if (!device) throw new BadRequestException('设备不存在（需提供 deviceId 或 serialNumber）');
-      if (dto.returnForm && dto.returnForm.serialNumber.trim() !== device.serialNumber?.trim()) throw new BadRequestException('返厂单 SN 与关联设备不一致');
-      if (device.status === 'REPAIRING' || device.status === 'RETIRED') throw new BadRequestException(`设备当前状态为「${zhStatus(device.status)}」，不能创建返修单`);
+      if (!device && !dto.manualSerialNumber) throw new BadRequestException('设备不存在，请选择已有设备或使用手动填写模式');
+      const serialNumber = dto.manualSerialNumber ? manualSN : device?.serialNumber;
+      if (dto.returnForm && dto.returnForm.serialNumber.trim() !== serialNumber?.trim()) throw new BadRequestException('返厂单 SN 与所选序列号不一致');
+      if (device && (device.status === 'REPAIRING' || device.status === 'RETIRED')) throw new BadRequestException(`设备当前状态为「${zhStatus(device.status)}」，不能创建返修单`);
       if (!await tx.customerOrganization.findUnique({ where: { id: dto.organizationId }, select: { id: true } })) throw new BadRequestException('客户组织不存在');
       if (dto.contactId && !await tx.contact.findFirst({ where: { id: dto.contactId, organizationId: dto.organizationId }, select: { id: true } })) throw new BadRequestException('联系人不属于该客户');
-      const inWarranty = dto.inWarranty ?? (device.warrantyUntil ? device.warrantyUntil >= new Date(new Date().toDateString()) : null);
+      const inWarranty = dto.inWarranty ?? (device?.warrantyUntil ? device.warrantyUntil >= new Date(new Date().toDateString()) : null);
       const data = {
         returnForm: dto.returnForm ? { ...dto.returnForm } : undefined,
-        deviceId: device.id, organizationId: dto.organizationId, createdById: user.id,
+        deviceId: device?.id ?? null, serialNumber, organizationId: dto.organizationId, createdById: user.id,
         contactId: dto.contactId || null, symptom: dto.symptom, faultCause: dto.faultCause || null,
         resolution: dto.resolution || null, note: dto.note || null, inWarranty,
         receivedAt: dto.receivedAt ? new Date(dto.receivedAt) : new Date(),
@@ -86,9 +90,9 @@ export class RepairsService {
         }
         catch (error) { if ((error as { code?: string }).code !== 'P2002' || attempt === 3) throw error; }
       }
-      await tx.device.update({ where: { id: device.id }, data: { status: 'REPAIRING' } });
+      if (device) await tx.device.update({ where: { id: device.id }, data: { status: 'REPAIRING' } });
       // 返修确认客户资产：客户资产设备无所属客户时，回填为返修单客户；公司样机保持原归属不动
-      if (device.ownerType === 'CUSTOMER' && !device.organizationId) {
+      if (device?.ownerType === 'CUSTOMER' && !device.organizationId) {
         await tx.device.update({ where: { id: device.id }, data: { organizationId: dto.organizationId } });
       }
       return repair;
@@ -116,11 +120,11 @@ export class RepairsService {
   async update(user: AuthUser, id: string, dto: UpdateRepairDto) {
     const repair = await this.get(user, id);
     if (repair.status === RepairStatus.CLOSED) throw new BadRequestException('已关闭的返修单不能修改');
-    if (dto.returnForm && dto.returnForm.serialNumber.trim() !== repair.device.serialNumber?.trim()) throw new BadRequestException('返厂单 SN 与关联设备不一致');
+    if (repair.device && dto.returnForm && dto.returnForm.serialNumber.trim() !== repair.device.serialNumber?.trim()) throw new BadRequestException('返厂单 SN 与关联设备不一致');
     if (dto.contactId && !await this.prisma.contact.findFirst({ where: { id: dto.contactId, organizationId: repair.organizationId }, select: { id: true } })) throw new BadRequestException('联系人不属于该客户');
     return this.prisma.repairOrder.update({
       where: { id },
-      data: { returnForm: dto.returnForm ? { ...dto.returnForm } : undefined, symptom: dto.symptom, faultCause: dto.faultCause, resolution: dto.resolution, trackingNo: dto.trackingNo, note: dto.note, inWarranty: dto.inWarranty, contactId: dto.contactId },
+      data: { serialNumber: dto.returnForm?.serialNumber.trim(), returnForm: dto.returnForm ? { ...dto.returnForm } : undefined, symptom: dto.symptom, faultCause: dto.faultCause, resolution: dto.resolution, trackingNo: dto.trackingNo, note: dto.note, inWarranty: dto.inWarranty, contactId: dto.contactId },
       include: repairInclude,
     });
   }
@@ -147,7 +151,7 @@ export class RepairsService {
       await tx.repairEvent.create({
         data: { repairOrderId: id, authorId: user.id, type: RepairEventType.STATUS_CHANGE, content: `状态变更：${statusLabel[repair.status]} → ${statusLabel[dto.status]}${dto.content ? `，${dto.content}` : ''}`, metadata: { from: repair.status, to: dto.status } },
       });
-      if (dto.status === RepairStatus.CLOSED) await tx.device.update({ where: { id: repair.deviceId }, data: { status: 'IN_STOCK' } });
+      if (dto.status === RepairStatus.CLOSED && repair.deviceId) await tx.device.update({ where: { id: repair.deviceId }, data: { status: 'IN_STOCK' } });
       return updated;
     });
   }

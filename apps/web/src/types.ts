@@ -80,6 +80,7 @@ export interface RepairEvent { id: string; type: string; content: string; create
 export interface Attachment { id: string; originalName: string; mimeType: string; sizeBytes: number; createdAt: string }
 export interface RepairOrder {
   returnForm?: ReturnForm | null
+  serialNumber?: string | null
   id: string
   repairNo: string
   symptom: string
@@ -92,7 +93,7 @@ export interface RepairOrder {
   receivedAt: string
   shippedAt?: string | null
   closedAt?: string | null
-  device: { id: string; name: string; serialNumber?: string | null; cameraModel?: string | null }
+  device: { id: string; name: string; serialNumber?: string | null; cameraModel?: string | null } | null
   organization: { id: string; name: string }
   contact?: { id: string; name: string } | null
   assignee?: { id: string; name: string } | null
