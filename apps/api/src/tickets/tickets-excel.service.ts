@@ -71,6 +71,19 @@ export class TicketsExcelService {
       errorTitle: '问题分类', error: `请选择：${TICKET_CATEGORIES.map((c) => TICKET_CATEGORY_LABELS[c]).join('/')}`,
     });
     validations.add(`G2:G${lastRow}`, { type: 'list', allowBlank: true, showErrorMessage: true, formulae: ['"低,中,高,紧急"'] });
+    // 日期校验：桌面版 Excel 靠日期格式+校验约束输入；Excel 网页版/手机版点击单元格会出现日历选择器
+    // 注意：exceljs 写 date 校验公式时会 new Date(formula) 再转序列号，所以必须传 Date 对象而不是序列号数字
+    validations.add(`A2:A${lastRow}`, {
+      type: 'date', operator: 'between', allowBlank: false, showInputMessage: true,
+      formulae: [new Date(2020, 0, 1), new Date(2100, 11, 31)],
+      promptTitle: '时间', prompt: '决定工单编号日期（RVC-YYMMDD-NNN）；Excel 网页版/手机版点击本单元格会出现日历选择；桌面版请按 YYYY-MM-DD 输入',
+      showErrorMessage: true, errorTitle: '时间格式', error: '请输入有效日期，如 2026-09-08',
+    });
+    validations.add(`L2:L${lastRow}`, {
+      type: 'date', operator: 'between', allowBlank: true, showErrorMessage: true,
+      formulae: [new Date(2020, 0, 1), new Date(2100, 11, 31)],
+      errorTitle: '计划完成时间', error: '请输入有效日期，如 2026-09-30',
+    });
     // 示例行（导入时整行忽略）
     const example = sheet.getRow(2);
     example.values = ['2026-09-08', '示例客户公司（示例行，导入时自动忽略）', 'M2600 连接超时（示例，请删除本行）', '相机通电后网络搜索不到设备，已换网线复现（示例）', '硬件故障', '', '高', 'M2600', 'SN123456', 'RVC 2.8', 'Windows 11 / 千兆网', '', ''];
