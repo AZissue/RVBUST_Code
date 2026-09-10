@@ -11,6 +11,7 @@ import type { Ticket, Worklog } from '../types'
 interface ImportResult { created: number; failed: Array<{ row: number; customer: string; reason: string }> }
 
 interface Summary {
+  pendingAssistCount: number
   ticketCounts: { todayTodo: number; pending: number; inProgress: number; highPriority: number; waitingCustomer: number; waitingRnd: number; todayCompleted: number }
   myTickets: Ticket[]; todayWorklogs: Worklog[]
   overdueLoanCount: number; repairingCount: number
@@ -36,13 +37,14 @@ export function DashboardPage() {
   if (!data) return <PageError message={remote.error} retry={remote.refresh} />
   const c = data.ticketCounts
   const metrics: Array<[string, number, typeof CircleDot, string]> = [
-    ['今日待办', c.todayTodo, CircleDot, '/my-work?status=PENDING'],
-    ['待处理工单', c.pending, Clock3, '/tickets?status=PENDING'],
+    ['待我接受', data.pendingAssistCount, MessageSquare, '/my-work?view=invited'],
+    ['今日待办', c.todayTodo, CircleDot, '/my-work?view=today-todo'],
+    ['我的待处理', c.pending, Clock3, '/my-work?status=PENDING'],
     ['处理中工单', c.inProgress, RefreshCw, '/my-work?status=IN_PROGRESS'],
     ['等待反馈', c.waitingCustomer + c.waitingRnd, MessageSquare, '/my-work?status=WAITING'],
-    ['今日已完成', c.todayCompleted, CheckCircle2, '/my-work?status=DONE'],
+    ['今日已完成', c.todayCompleted, CheckCircle2, '/my-work?view=today-done'],
     ['我的借测逾期', data.overdueLoanCount, Share2, '/loans?status=OVERDUE&mine=1'],
-    ['返修进行中', data.repairingCount, Wrench, '/repairs?mine=1'],
+    ['返修进行中', data.repairingCount, Wrench, '/repairs?active=1'],
   ]
   const alertGroups = [
     { label: '计划逾期', items: data.alerts.overduePlan, hint: (t: Ticket) => `计划完成 ${formatDate(t.plannedAt)}` },

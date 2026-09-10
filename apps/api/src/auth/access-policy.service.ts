@@ -13,7 +13,7 @@ export class AccessPolicyService {
   }
 
   ticketWhere(user: AuthUser): Prisma.TicketWhereInput {
-    if (user.role === 'customer') return { organizationId: user.customerOrganizationId ?? '__none__' };
+    if (user.role === 'customer') return { organizationId: user.customerOrganizationId ?? '__none__', deletedAt: null };
     // 内部角色（admin/support/employee）可查看全部工单
     return {};
   }

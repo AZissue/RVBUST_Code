@@ -6,7 +6,7 @@ const service = new AccessPolicyService(prisma);
 
 describe('AccessPolicyService', () => {
   it('keeps customer ticket data inside its organization', () => {
-    expect(service.ticketWhere({ id: 'u1', username: 'customer', name: '客户', email: null, role: 'customer', customerOrganizationId: 'org-1', permissions: [] })).toEqual({ organizationId: 'org-1' });
+    expect(service.ticketWhere({ id: 'u1', username: 'customer', name: '客户', email: null, role: 'customer', customerOrganizationId: 'org-1', permissions: [] })).toEqual({ organizationId: 'org-1', deletedAt: null });
   });
 
   it('lets all internal roles see every ticket', () => {

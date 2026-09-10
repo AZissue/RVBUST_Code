@@ -7,3 +7,7 @@ export class CreateTicketEventDto {
   @IsString() @Length(1, 20000) content!: string;
 }
 
+export class DeleteTicketEventDto {
+  @IsString() @Length(1, 1000) reason!: string;
+}
+

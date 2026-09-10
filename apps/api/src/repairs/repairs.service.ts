@@ -37,11 +37,11 @@ export class RepairsService {
     if (user.role === 'customer') throw new BadRequestException('客户账号不能访问返修单');
   }
 
-  list(user: AuthUser, query: { status?: RepairStatus; organizationId?: string; assigneeId?: string; mine?: boolean }) {
+  list(user: AuthUser, query: { status?: RepairStatus; organizationId?: string; assigneeId?: string; mine?: boolean; active?: boolean }) {
     this.requireInternal(user);
     if (query.status && !Object.values(RepairStatus).includes(query.status)) throw new BadRequestException('返修单状态无效');
     return this.prisma.repairOrder.findMany({
-      where: { AND: [this.scopeWhere(user)], status: query.status, organizationId: query.organizationId, assigneeId: query.mine ? user.id : query.assigneeId },
+      where: { AND: [this.scopeWhere(user)], status: query.active ? { in: [RepairStatus.RECEIVED, RepairStatus.DIAGNOSING, RepairStatus.REPAIRING] } : query.status, organizationId: query.organizationId, assigneeId: query.mine ? user.id : query.assigneeId },
       include: repairInclude, orderBy: { updatedAt: 'desc' }, take: 500,
     });
   }

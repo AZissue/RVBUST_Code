@@ -11,8 +11,8 @@ import { RepairsService } from './repairs.service.js';
 export class RepairsController {
   constructor(private readonly repairs: RepairsService) {}
 
-  @Get() list(@CurrentUser() user: AuthUser, @Query('status') status?: RepairStatus, @Query('organizationId') organizationId?: string, @Query('assigneeId') assigneeId?: string, @Query('mine') mine?: string) {
-    return this.repairs.list(user, { status, organizationId, assigneeId, mine: mine === '1' });
+  @Get() list(@CurrentUser() user: AuthUser, @Query('status') status?: RepairStatus, @Query('organizationId') organizationId?: string, @Query('assigneeId') assigneeId?: string, @Query('mine') mine?: string, @Query('active') active?: string) {
+    return this.repairs.list(user, { status, organizationId, assigneeId, mine: mine === '1', active: active === '1' });
   }
 
   @Get(':id') get(@CurrentUser() user: AuthUser, @Param('id') id: string) { return this.repairs.get(user, id); }

@@ -156,7 +156,9 @@ describe('Quick tickets and single-source personal work', () => {
     expect((await db.workItem.findUniqueOrThrow({ where: { id: item.id } })).progress).toBe(60);
     expect((await db.worklog.findUniqueOrThrow({ where: { id: log.id } })).ticketId).toBe(converted.id);
     await admin.patch(`/api/work-items/${item.id}`).send({ title: '不要修改' }).expect(409);
-    await admin.delete(`/api/tickets/${converted.id}`).expect(409);
+    await admin.delete(`/api/tickets/${converted.id}`).expect(200);
+    await admin.delete(`/api/tickets/${converted.id}/purge`).expect(409);
+    await admin.post(`/api/tickets/${converted.id}/restore`).expect(201);
     await admin.post('/api/worklogs').send({ workTypeId: type.id, workItemId: item.id, occurredAt: new Date().toISOString(), summary: '转换后的新记录' }).expect(403);
     await db.worklog.delete({ where: { id: log.id } });
     await db.workItem.delete({ where: { id: legacyId } }); legacyId = '';

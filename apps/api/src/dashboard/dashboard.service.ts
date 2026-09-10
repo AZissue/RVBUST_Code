@@ -9,7 +9,7 @@ export class DashboardService {
   constructor(private readonly prisma: PrismaService, private readonly access: AccessPolicyService) {}
 
   async summary(user: AuthUser) {
-    const mine = { AND: [this.access.ticketWhere(user), { assigneeId: user.id }] };
+    const mine = { deletedAt: null, AND: [this.access.ticketWhere(user), { assigneeId: user.id }] };
     const unresolved = { ...mine, status: { notIn: [TicketStatus.RESOLVED, TicketStatus.CLOSED] } };
     const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
     const dayEnd = new Date(dayStart); dayEnd.setDate(dayStart.getDate() + 1);
@@ -35,7 +35,9 @@ export class DashboardService {
       this.prisma.ticket.findMany({ where: { ...unresolved, plannedAt: { lt: now } }, include, orderBy: { plannedAt: 'asc' }, take: 5 }),
       this.prisma.ticket.findMany({ where: { ...mine, status: { in: ['WAITING_CUSTOMER', 'WAITING_RND'] }, updatedAt: { lt: staleBefore } }, include, orderBy: { updatedAt: 'asc' }, take: 5 }),
     ]);
+    const pendingAssistCount = isCustomer ? 0 : await this.prisma.ticket.count({ where: { deletedAt: null, assistRequests: { some: { targetUserId: user.id, status: 'PENDING' } } } });
     return {
+      pendingAssistCount,
       ticketCounts: { todayTodo, pending, inProgress, highPriority, waitingCustomer, waitingRnd, todayCompleted },
       myTickets,
       todayWorklogs,
@@ -49,7 +51,7 @@ export class DashboardService {
   async reports(user: AuthUser) {
     this.access.requireInternal(user);
     const worklogScope = this.access.worklogWhere(user);
-    const ticketScope = this.access.ticketWhere(user);
+    const ticketScope = { deletedAt: null, AND: [this.access.ticketWhere(user)] };
     const workItemScope = this.access.workItemWhere(user);
     const today = new Date(); today.setHours(0, 0, 0, 0);
     const weekStart = new Date(today); weekStart.setDate(today.getDate() - 6);

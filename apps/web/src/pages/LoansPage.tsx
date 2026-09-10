@@ -1,4 +1,5 @@
 import { ChevronDown, ChevronRight, Plus, X } from 'lucide-react'
+import { useSearchParams } from 'react-router-dom'
 import { Fragment, useEffect, useRef, useState, type FormEvent } from 'react'
 import { LoanPhotoPanel, PhotoPicker, uploadLoanPhoto, type PendingPhoto } from '../components/LoanPhotos'
 import { Modal } from '../components/Modal'
@@ -14,8 +15,9 @@ export function LoanStatusBadge({ status }: { status: LoanStatus }) {
 }
 
 export function LoansPage() {
-  const [status, setStatus] = useState('')
-  const [mine, setMine] = useState(false)
+  const [params] = useSearchParams()
+  const [status, setStatus] = useState(() => Object.keys(loanStatusLabels).includes(params.get('status') ?? '') ? params.get('status')! : '')
+  const [mine, setMine] = useState(() => params.get('mine') === '1')
   const [creating, setCreating] = useState(false)
   const [returning, setReturning] = useState<LoanOrder | null>(null)
   const [assigning, setAssigning] = useState<LoanOrder | null>(null)

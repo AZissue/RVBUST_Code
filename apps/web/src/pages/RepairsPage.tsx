@@ -2,6 +2,7 @@ import { Download, FileText, Plus, Upload, X } from 'lucide-react'
 import { AttachmentPreview } from '../components/AttachmentPreview'
 import { RepairStatusEditor } from '../components/RepairStatusEditor'
 import { useAuth } from '../context/AuthContext'
+import { useSearchParams } from 'react-router-dom'
 import { useRef, useState, type FormEvent } from 'react'
 import { ReturnRepairForm, downloadRepairPdf } from '../components/ReturnRepairForm'
 import { Modal } from '../components/Modal'
@@ -23,16 +24,17 @@ const nextStep: Partial<Record<RepairStatus, { status: RepairStatus; label: stri
 }
 
 export function RepairsPage() {
-  const [status, setStatus] = useState('')
+  const [params] = useSearchParams()
+  const [status, setStatus] = useState(() => params.get('active') === '1' ? 'ACTIVE' : '')
   const [creating, setCreating] = useState(false)
   const [detailId, setDetailId] = useState<string | null>(null)
-  const remote = useRemote(() => api<RepairOrder[]>(`/repairs${status ? `?status=${status}` : ''}`), [status], true)
+  const remote = useRemote(() => api<RepairOrder[]>(`/repairs${status === 'ACTIVE' ? '?active=1' : status ? `?status=${status}` : ''}`), [status], true)
   if (remote.loading) return <PageLoading />
   if (remote.error) return <PageError message={remote.error} retry={remote.refresh} />
   const repairs = remote.data ?? []
   return <div className="page-stack">
     <header className="page-header"><div><span className="eyebrow">REPAIR ORDERS</span><h1>返修管理</h1><p>从收货、检测、维修到寄回关闭的完整返修流水。</p></div><button className="button primary" onClick={() => setCreating(true)}><Plus size={16} />新建返厂单</button></header>
-    <section className="toolbar"><select aria-label="返修状态筛选" value={status} onChange={(event) => setStatus(event.target.value)}><option value="">全部状态</option>{Object.entries(repairStatusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><span className="result-count">{repairs.length} 张返修单</span></section>
+    <section className="toolbar"><select aria-label="返修状态筛选" value={status} onChange={(event) => setStatus(event.target.value)}><option value="">全部状态</option><option value="ACTIVE">返修进行中</option>{Object.entries(repairStatusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><span className="result-count">{repairs.length} 张返修单</span></section>
     <section className="panel no-padding"><div className="table-wrap"><table><thead><tr><th>单号</th><th>SN</th><th>型号</th><th>客户</th><th>故障现象</th><th>状态</th><th>跟进工程师</th><th>收货日期</th><th>操作</th></tr></thead><tbody>{repairs.map((repair) => <tr key={repair.id}>
       <td className="mono">{repair.repairNo}</td><td className="mono">{repair.serialNumber || repair.device?.serialNumber || '-'}</td><td>{repair.device?.cameraModel || '-'}</td><td>{repair.organization.name}</td><td className="truncate-cell" title={repair.symptom}>{repair.symptom}</td><td><RepairStatusBadge status={repair.status} /></td><td>{repair.assignee?.name ?? '未指派'}</td><td>{formatDate(repair.receivedAt)}</td>
       <td><button className="button small" onClick={() => setDetailId(repair.id)}>详情</button></td>
