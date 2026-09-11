@@ -7,6 +7,9 @@
 #include "logic/PixelTo3DTools.h"
 #include "logic/DataManager.h"
 #include "logic/LogManager.h"
+#include "logic/PoseGuide.h"
+#include "logic/DataQualityCheck.h"
+#include "logic/ToolInputParser.h"
 #include "ui/TopNavBar.h"
 #include "ui/ModeSelector.h"
 #include "ui/Image2DView.h"
@@ -295,6 +298,9 @@ void MainWindow::wireSignals()
                 // markers until the new frame is recognized again.
                 m_view3d->setMarkerPickEnabled(false);
                 m_view3d->setSelectableMarkers({}, {});
+                // Stale board pose until the new frame is recognized.
+                m_view3d->clearBoardFrame();
+                m_pendingBoardPose = BoardPoseFit::Pose{};
             });
     connect(m_flow, &CaptureFlow::pointCloudReady, this,
             [this](const std::vector<float>& pts, const std::vector<float>& cols) {
@@ -309,6 +315,7 @@ void MainWindow::wireSignals()
                 m_view3d->highlightPoints(highlights3d);
                 m_view3d->setSelectableMarkers(highlights3d, highlightIndices);
                 m_view3d->setMarkerPickEnabled(true);
+                onBoardMarkers(highlights3d);
             });
     connect(m_view3d, &VisSceneView::markerPicked, this,
             [this](int index, float x, float y, float z) {
@@ -328,6 +335,8 @@ void MainWindow::wireSignals()
             m_view2d, &Image2DView::clearMarkers);
     connect(m_flow, &CaptureFlow::tipRequested,
             m_sidePanel, &SidePanel::setTip);
+    connect(m_sidePanel, &SidePanel::qualityCheckRequested,
+            this, &MainWindow::refreshQualityReport);
     connect(m_flow, &CaptureFlow::toastRequested, this,
             [this](const QString& text, bool success) {
                 m_toast->showMessage(text, success);
@@ -411,6 +420,11 @@ void MainWindow::wireSignals()
             m_eyeHandMode == EyeHandMode::EyeInHand,
             m_calibType == CalibType::Marker,
             m_data->allRecords());
+        syncBoardHistory();
+        // Refresh pose guidance too (每保存/读入一帧刷新「当前 vs 最近已采」).
+        auto* poseCard = m_dataInput->card(QStringLiteral("robot_capture_pose"));
+        if (poseCard)
+            updatePoseGuide(poseCard->value());
     });
 
     // Log manager
@@ -544,6 +558,15 @@ void MainWindow::resetSession()
     m_actionButtons->setUndoEnabled(false);
     m_sidePanel->setTip(QStringLiteral("请移动机器人到下一个位姿并点击拍照"));
     m_flow->reset();
+
+    // Stage 8 advisory state resets with the session.
+    m_boardFrames.clear();
+    m_pendingBoardPose = BoardPoseFit::Pose{};
+    m_sidePanel->setPoseGuide(
+        QStringLiteral("读取机器人位姿后显示与已采位姿的差异"), false);
+    m_sidePanel->setQualityReport(
+        QStringLiteral("<span style='color:%1'>采集数据后点击「运行质检」查看结果</span>")
+            .arg(Theme::TEXT_HINT));
 }
 
 // ── Camera ────────────────────────────────────────────────────────────
@@ -642,18 +665,20 @@ void MainWindow::onCapture()
         if (readRobotPose(pose)) {
             auto* card = m_dataInput->card(QStringLiteral("robot_capture_pose"));
             if (card) {
-                card->setValue(QStringLiteral("%1 %2 %3 %4 %5 %6")
+                const QString value = QStringLiteral("%1 %2 %3 %4 %5 %6")
                     .arg(pose.xyz[0], 0, 'f', 3)
                     .arg(pose.xyz[1], 0, 'f', 3)
                     .arg(pose.xyz[2], 0, 'f', 3)
                     .arg(pose.rpy[0], 0, 'f', 3)
                     .arg(pose.rpy[1], 0, 'f', 3)
-                    .arg(pose.rpy[2], 0, 'f', 3));
+                    .arg(pose.rpy[2], 0, 'f', 3);
+                card->setValue(value);
+                updatePoseGuide(value);
             }
         } else {
             m_sidePanel->setTip(
                 QStringLiteral("机器人位姿读取失败：%1")
-                    .arg(m_robotReader.lastError()),
+                    .arg(robotLastError()),
                 true);
         }
     }
@@ -756,6 +781,10 @@ void MainWindow::onCalibrate()
         return;
     }
 
+    // Advisory quality check runs once before calibrating — reports only, it
+    // never blocks the calibration (PROJECT.md "质量告警不拦截").
+    refreshQualityReport();
+
     std::vector<QString> poseLines;
     poseLines.reserve(records.size());
     for (const auto& r : records)
@@ -820,9 +849,36 @@ void MainWindow::onCalibrationFinished()
 }
 
 void MainWindow::onRobotConnect(const QString& host, quint16 port,
-                                int format, double scale,
+                                int protocol, int format, double scale,
                                 quint8 unitId, quint16 startAddress)
 {
+    m_robotProtocol = protocol;
+
+    if (protocol == 1) {
+        // UR Realtime interface: no register format/scale to configure.
+        m_urReader.setTimeoutMs(1500);
+        if (!m_urReader.connect(host, port)) {
+            m_robotSimulated = false;
+            m_robotConnected = false;
+            m_toolsPanel->setRobotStatus(QStringLiteral("连接失败"), true);
+            m_sidePanel->setTip(
+                QStringLiteral("机器人连接失败：%1").arg(m_urReader.lastError()),
+                true);
+            m_logger->error(QStringLiteral("机器人连接失败：%1")
+                                .arg(m_urReader.lastError()));
+            updateRobotReadBar();
+            return;
+        }
+        m_robotSimulated = false;
+        m_robotConnected = true;
+        m_toolsPanel->setRobotConnected(true);
+        m_toolsPanel->setRobotStatus(QStringLiteral("已连接"), false);
+        m_sidePanel->setTip(QStringLiteral("机器人已连接（%1:%2，UR Realtime）").arg(host).arg(port), false);
+        m_logger->success(QStringLiteral("机器人已连接（%1:%2，UR Realtime）").arg(host).arg(port));
+        updateRobotReadBar();
+        return;
+    }
+
     RobotPose::ModbusConfig cfg;
     switch (format) {
     case 1:  cfg.format = RobotPose::RegisterFormat::Int32Scaled; break;
@@ -859,6 +915,7 @@ void MainWindow::onRobotConnect(const QString& host, quint16 port,
 void MainWindow::onRobotDisconnect()
 {
     m_robotReader.disconnect();
+    m_urReader.disconnect();
     m_robotConnected = false;
     m_robotSimulated = false;
     m_toolsPanel->setRobotConnected(false);
@@ -872,6 +929,7 @@ void MainWindow::onRobotSimulateConnect()
     // "模拟连接成功" — no real Modbus socket; only sets the logical connected
     // state so the read buttons / cards can be exercised in the UI.
     m_robotReader.disconnect();
+    m_urReader.disconnect();
     m_robotSimulated = true;
     m_robotConnected = true;
     m_toolsPanel->setRobotConnected(true);
@@ -892,7 +950,14 @@ bool MainWindow::readRobotPose(RobotPose::Pose& pose)
         pose.rpy = { 0.0, 0.0, 0.0 };
         return true;
     }
+    if (m_robotProtocol == 1)
+        return m_urReader.readPose(pose) == RobotPose::Status::Ok;
     return m_robotReader.readPose(pose) == RobotPose::Status::Ok;
+}
+
+QString MainWindow::robotLastError() const
+{
+    return m_robotProtocol == 1 ? m_urReader.lastError() : m_robotReader.lastError();
 }
 
 void MainWindow::onRobotRead()
@@ -905,10 +970,10 @@ void MainWindow::onRobotRead()
     if (!readRobotPose(pose)) {
         m_sidePanel->setTip(
             QStringLiteral("机器人位姿读取失败：%1")
-                .arg(m_robotReader.lastError()),
+                .arg(robotLastError()),
             true);
         m_logger->error(QStringLiteral("机器人位姿读取失败：%1")
-                            .arg(m_robotReader.lastError()));
+                            .arg(robotLastError()));
         return;
     }
     const QString value = QStringLiteral("%1 %2 %3 %4 %5 %6")
@@ -921,6 +986,7 @@ void MainWindow::onRobotRead()
     auto* card = m_dataInput->card(QStringLiteral("robot_capture_pose"));
     if (card)
         card->setValue(value);
+    updatePoseGuide(value);
     m_sidePanel->setTip(QStringLiteral("已读取机器人位姿并填入卡片"), false);
     m_logger->info(QStringLiteral("机器人位姿读取成功: %1").arg(value));
 }
@@ -935,10 +1001,10 @@ void MainWindow::onRobotReadTouch()
     if (!readRobotPose(pose)) {
         m_sidePanel->setTip(
             QStringLiteral("机器人位姿读取失败：%1")
-                .arg(m_robotReader.lastError()),
+                .arg(robotLastError()),
             true);
         m_logger->error(QStringLiteral("机器人位姿读取失败：%1")
-                            .arg(m_robotReader.lastError()));
+                            .arg(robotLastError()));
         return;
     }
     const QString value = QStringLiteral("%1 %2 %3")
@@ -968,6 +1034,11 @@ void MainWindow::updateRobotReadBar()
 
 void MainWindow::onCardChanged(const QString& field, const QString& value)
 {
+    // Advisory pose guidance refreshes on the robot capture pose (current vs
+    // nearest collected).  Report-only; never blocks the edit.
+    if (field == QStringLiteral("robot_capture_pose"))
+        updatePoseGuide(value);
+
     // Real-time format hint: calibration data must use ASCII numbers separated
     // by spaces / English commas.  Saving is blocked separately in
     // CaptureFlow::validateSaveInputs.
@@ -984,6 +1055,171 @@ void MainWindow::onCardChanged(const QString& field, const QString& value)
     int idx = m_data->currentIndex();
     if (idx > 0)
         m_data->updateRecord(idx, field, value);
+}
+
+// ── Stage 8 Advisory Features ─────────────────────────────────────────
+// Pose guide, quality check and board-pose overlay are all report-only:
+// they never gate capture / save / calibrate (see PROJECT.md).
+
+namespace {
+PoseGuide::Pose poseGuideFromText(const QString& text, bool& ok)
+{
+    PoseGuide::Pose p;
+    const auto parsed = ToolInputParser::parseNumberList(text.toStdString(), 6);
+    ok = (parsed.status == ToolInputParser::ParseStatus::Ok);
+    if (ok) {
+        for (int i = 0; i < 3; ++i) p.xyz[i] = parsed.values[static_cast<std::size_t>(i)];
+        for (int i = 0; i < 3; ++i) p.rpyDeg[i] = parsed.values[static_cast<std::size_t>(3 + i)];
+    }
+    return p;
+}
+} // namespace
+
+void MainWindow::updatePoseGuide(const QString& poseText)
+{
+    bool ok = false;
+    const PoseGuide::Pose current = poseGuideFromText(poseText, ok);
+    if (!ok) {
+        m_sidePanel->setPoseGuide(
+            QStringLiteral("机器人拍照位姿需为 6 个数值（x y z rx ry rz）"), false);
+        return;
+    }
+
+    std::vector<PoseGuide::Pose> collected;
+    collected.reserve(static_cast<std::size_t>(m_data->count()));
+    for (const auto& r : m_data->allRecords()) {
+        bool cok = false;
+        const PoseGuide::Pose cp = poseGuideFromText(r.robotCapturePose, cok);
+        if (cok) collected.push_back(cp);
+    }
+
+    if (collected.empty()) {
+        m_sidePanel->setPoseGuide(
+            QStringLiteral("暂无已采位姿参考，可自由采集"), false);
+        return;
+    }
+
+    const PoseGuide::Guide g = PoseGuide::guide(current, collected);
+    if (g.tooClose) {
+        m_sidePanel->setPoseGuide(
+            QStringLiteral("与第 %1 组位姿过于接近（间距 %2 mm / 角差 %3°），建议拉开位置或旋转角度")
+                .arg(g.refIndex + 1)
+                .arg(g.distanceMm, 0, 'f', 1)
+                .arg(g.angleDeg, 0, 'f', 1),
+            true);
+    } else {
+        m_sidePanel->setPoseGuide(
+            QStringLiteral("最近第 %1 组：间距 %2 mm / 角差 %3°，分散度良好")
+                .arg(g.refIndex + 1)
+                .arg(g.distanceMm, 0, 'f', 1)
+                .arg(g.angleDeg, 0, 'f', 1),
+            false);
+    }
+}
+
+void MainWindow::refreshQualityReport()
+{
+    std::vector<DataQualityCheck::Record> records;
+    for (const auto& r : m_data->allRecords()) {
+        records.push_back(DataQualityCheck::recordFromText(
+            r.robotCapturePose, r.cameraErrorPct, r.markerCount));
+    }
+
+    const DataQualityCheck::Report rep = DataQualityCheck::run(records);
+
+    auto levelColor = [](DataQualityCheck::Level lvl) -> QString {
+        switch (lvl) {
+        case DataQualityCheck::Level::Pass: return QStringLiteral("#52C41A");
+        case DataQualityCheck::Level::Warn: return QStringLiteral("#FAAD14");
+        case DataQualityCheck::Level::Fail: return QStringLiteral("#F5222D");
+        }
+        return QStringLiteral("#8C8C8C");
+    };
+    auto levelTag = [](DataQualityCheck::Level lvl) -> QString {
+        switch (lvl) {
+        case DataQualityCheck::Level::Pass: return QStringLiteral("通过");
+        case DataQualityCheck::Level::Warn: return QStringLiteral("提示");
+        case DataQualityCheck::Level::Fail: return QStringLiteral("不足");
+        }
+        return QStringLiteral("—");
+    };
+
+    QString html = QStringLiteral("<p style='margin:2px 0;'><b>总体：%1</b></p>")
+                       .arg(rep.overall.toHtmlEscaped());
+
+    auto appendCheck = [&](const QString& name, const DataQualityCheck::Check& c) {
+        html += QStringLiteral("<p style='margin:3px 0; color:%1;'>%2 <b>%3</b>：%4</p>")
+                    .arg(levelColor(c.level),
+                         levelTag(c.level),
+                         name,
+                         c.summary.toHtmlEscaped());
+        for (const auto& d : c.details)
+            html += QStringLiteral("<p style='margin:1px 0 1px 12px; font-size:11px; color:#8C8C8C;'>· %1</p>")
+                        .arg(d.toHtmlEscaped());
+    };
+
+    appendCheck(QStringLiteral("数量"), rep.count);
+    appendCheck(QStringLiteral("近重复"), rep.nearDup);
+    appendCheck(QStringLiteral("离群"), rep.outlier);
+    appendCheck(QStringLiteral("单帧误差"), rep.frameError);
+    appendCheck(QStringLiteral("分散度"), rep.spread);
+
+    m_sidePanel->setQualityReport(html);
+}
+
+void MainWindow::onBoardMarkers(const std::vector<std::array<float, 3>>& pts3d)
+{
+    const BoardPoseFit::Pose pose = BoardPoseFit::fit(pts3d);
+    if (!pose.valid) {
+        m_view3d->clearBoardFrame();
+        m_pendingBoardPose = BoardPoseFit::Pose{};
+        return;
+    }
+
+    m_pendingBoardPose = pose;
+
+    VisSceneView::BoardFrame frame;
+    frame.frameNo = 0;                     // current frame
+    frame.centerMM = pose.center;
+    frame.quat = pose.quat;
+    frame.extentXMM = pose.extentX;
+    frame.extentYMM = pose.extentY;
+    m_view3d->setBoardFrame(frame);
+}
+
+void MainWindow::syncBoardHistory()
+{
+    const int n = m_data->count();
+    // Grow: one record was saved since the last sync — record its fitted pose.
+    while (static_cast<int>(m_boardFrames.size()) < n) {
+        BoardFrameEntry entry;
+        entry.frameNo = static_cast<int>(m_boardFrames.size()) + 1;
+        entry.pose = m_pendingBoardPose;   // may be invalid (no board fitted)
+        m_boardFrames.push_back(entry);
+        m_pendingBoardPose = BoardPoseFit::Pose{};
+    }
+    // Shrink: records were removed (undo) — drop trailing history frames.
+    while (static_cast<int>(m_boardFrames.size()) > n)
+        m_boardFrames.pop_back();
+
+    refreshBoardOverlay();
+}
+
+void MainWindow::refreshBoardOverlay()
+{
+    std::vector<VisSceneView::BoardFrame> frames;
+    frames.reserve(m_boardFrames.size());
+    for (const auto& e : m_boardFrames) {
+        if (!e.pose.valid) continue;
+        VisSceneView::BoardFrame f;
+        f.frameNo = e.frameNo;
+        f.centerMM = e.pose.center;
+        f.quat = e.pose.quat;
+        f.extentXMM = e.pose.extentX;
+        f.extentYMM = e.pose.extentY;
+        frames.push_back(f);
+    }
+    m_view3d->setBoardHistory(frames);
 }
 
 // ── State Helpers ─────────────────────────────────────────────────────
@@ -1139,6 +1375,15 @@ void MainWindow::changeEvent(QEvent* event)
         } else if (m_camera && m_camera->isConnected()) {
             m_camera->resumePreview();
         }
+    } else if (event->type() == QEvent::ActivationChange) {
+        // The embedded native Vis child (VisSceneView, SetParent'd in) is
+        // z-ordered with SetWindowPos(..., HWND_BOTTOM, ...); on some Windows
+        // setups this leaves the top-level frame itself behind other apps
+        // when the user re-selects it (taskbar/Alt-Tab) instead of coming to
+        // the front like a normal window. Force the frame to the top of the
+        // z-order whenever Windows marks it active.
+        if (isActiveWindow())
+            raise();
     }
 }
 

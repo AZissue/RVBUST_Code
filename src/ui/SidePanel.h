@@ -4,6 +4,7 @@
 #include <QLabel>
 #include <QTextEdit>
 #include <QPushButton>
+#include <QScrollArea>
 #include "models/CaptureRecord.h"
 
 class SidePanel : public QWidget {
@@ -16,17 +17,28 @@ public:
     void updateFilePreview(bool eyeInHand, bool markerType,
                            const std::vector<CaptureRecord>& records);
 
+    // ── Stage 8 advisory cards (report only, never block the workflow) ──
+    // Pose guidance: "current vs nearest collected" distance + suggestion.
+    void setPoseGuide(const QString& text, bool warning = false);
+    // Quality report: graded HTML (Pass/Warn/Fail + overall conclusion).
+    void setQualityReport(const QString& html);
+
+signals:
+    void qualityCheckRequested();
+
 private:
-    // Card 1: Tips
-    QFrame* m_tipsCard;
-    QLabel* m_tipsContent;
+    // Top area: merged "操作日志" (notes + tips + pose guide + quality check),
+    // append-only, auto-scrolls to the latest entry.  Default content on
+    // startup is the former "标定注意事项" text (tagged [注意事项]); tips /
+    // pose guide / quality check entries are appended below it as they occur.
+    // Kept inside a QTextEdit so users can still scroll back to earlier
+    // entries.  Shares vertical space equally with the file preview card.
+    QFrame* m_timelineCard;
+    QPushButton* m_btnRunQuality;
+    QTextEdit* m_timeline;
+    void appendTimeline(const QString& label, const QString& colorHex, const QString& text);
 
-    // Card 2: Notes (collapsible)
-    QFrame* m_notesCard;
-    QPushButton* m_btnCollapseNotes;
-    QWidget* m_notesContent;
-
-    // Card 3: File preview
+    // Bottom area: file preview (shares space equally with the log above).
     QFrame* m_previewCard;
     QTextEdit* m_previewText;
     QPushButton* m_tabCamTarget;

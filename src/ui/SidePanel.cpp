@@ -18,85 +18,58 @@ SidePanel::SidePanel(QWidget* parent)
     mainLayout->setContentsMargins(0, 0, 24, 0);
     mainLayout->setSpacing(12);
 
-    // ── Card 1: Tips (elastic) ──
-    m_tipsCard = new QFrame(this);
-    m_tipsCard->setMinimumHeight(70);
-    m_tipsCard->setMaximumHeight(140);
-    m_tipsCard->setStyleSheet(QStringLiteral("background: %1; border: 1px solid %2; border-radius: %3px;")
-                              .arg(Theme::BG_MAIN).arg(Theme::BORDER_DEFAULT).arg(Theme::BORDER_RADIUS));
-    auto* tipsLayout = new QVBoxLayout(m_tipsCard);
-    tipsLayout->setContentsMargins(12, 10, 12, 10);
-    tipsLayout->setSpacing(4);
+    // ── Top area: merged "操作日志" (notes + tips + pose guide + quality) ──
+    // Elastic (shares vertical space equally with the file preview card
+    // below); append-only log with a scrollbar so users can scroll back to
+    // earlier entries while new ones auto-scroll into view. On startup this
+    // defaults to the former "标定注意事项" content, tagged [注意事项].
+    m_timelineCard = new QFrame(this);
+    m_timelineCard->setStyleSheet(QStringLiteral("background: %1; border: 1px solid %2; border-radius: %3px;")
+                                  .arg(Theme::BG_MAIN).arg(Theme::BORDER_DEFAULT).arg(Theme::BORDER_RADIUS));
+    auto* tlLayout = new QVBoxLayout(m_timelineCard);
+    tlLayout->setContentsMargins(12, 10, 12, 10);
+    tlLayout->setSpacing(6);
 
-    auto* tipsTitle = new QLabel(QStringLiteral("当前操作提示"), m_tipsCard);
-    tipsTitle->setStyleSheet(QStringLiteral("font-size: %1px; font-weight: 600; color: %2; border: none;")
-                             .arg(Theme::FONT_BODY).arg(Theme::PRIMARY));
-    tipsLayout->addWidget(tipsTitle);
+    auto* tlHeader = new QHBoxLayout();
+    auto* tlTitle = new QLabel(QStringLiteral("操作日志"), m_timelineCard);
+    tlTitle->setStyleSheet(QStringLiteral("font-size: %1px; font-weight: 600; color: %2; border: none;")
+                           .arg(Theme::FONT_BODY).arg(Theme::PRIMARY));
+    tlHeader->addWidget(tlTitle);
+    tlHeader->addStretch();
+    m_btnRunQuality = new QPushButton(QStringLiteral("运行质检"), m_timelineCard);
+    m_btnRunQuality->setFixedHeight(26);
+    m_btnRunQuality->setCursor(Qt::PointingHandCursor);
+    m_btnRunQuality->setStyleSheet(QStringLiteral(R"(
+        QPushButton { color: %1; background: %2; border: 1px solid %1; border-radius: 4px;
+                      font-size: %3px; padding: 0 10px; }
+        QPushButton:hover { background: %4; }
+    )").arg(Theme::PRIMARY).arg(Theme::BG_MAIN).arg(Theme::FONT_HINT).arg(Theme::PRIMARY_LIGHT));
+    tlHeader->addWidget(m_btnRunQuality);
+    tlLayout->addLayout(tlHeader);
 
-    m_tipsContent = new QLabel(QStringLiteral("请连接相机并选择标定模式"), m_tipsCard);
-    m_tipsContent->setWordWrap(true);
-    m_tipsContent->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-    m_tipsContent->setStyleSheet(QStringLiteral("font-size: %1px; color: %2; border: none;")
-                                 .arg(Theme::FONT_BODY).arg(Theme::TEXT_BODY));
-    tipsLayout->addWidget(m_tipsContent, 1);
-    mainLayout->addWidget(m_tipsCard);
+    m_timeline = new QTextEdit(m_timelineCard);
+    m_timeline->setReadOnly(true);
+    m_timeline->setStyleSheet(QStringLiteral("background: %1; border: 1px solid %2; border-radius: 4px; "
+                                             "font-size: %3px; color: %4;")
+                              .arg(Theme::BG_CARD).arg(Theme::BORDER_DEFAULT)
+                              .arg(Theme::FONT_HINT).arg(Theme::TEXT_BODY));
+    // Default content on first open: the former "标定注意事项" text, tagged
+    // [注意事项] so it reads consistently with later [提示]/[姿态引导]/
+    // [数据质检] entries appended by setTip()/setPoseGuide()/setQualityReport().
+    appendTimeline(QStringLiteral("注意事项"), Theme::TEXT_TITLE,
+                   QStringLiteral("标定过程中严禁移动相机和机器人基座"));
+    appendTimeline(QStringLiteral("注意事项"), Theme::TEXT_TITLE,
+                   QStringLiteral("标定板应尽量充满相机视野的不同区域"));
+    appendTimeline(QStringLiteral("注意事项"), Theme::WARNING,
+                   QStringLiteral("建议采集 15-20 组不同位姿的数据"));
+    appendTimeline(QStringLiteral("注意事项"), Theme::TEXT_TITLE,
+                   QStringLiteral("位姿应包含不同的角度和距离"));
+    tlLayout->addWidget(m_timeline, 1);
+    mainLayout->addWidget(m_timelineCard, 1);
 
-    // ── Card 2: Notes (collapsible) ──
-    m_notesCard = new QFrame(this);
-    m_notesCard->setStyleSheet(QStringLiteral("background: %1; border: 1px solid %2; border-radius: %3px;")
-                               .arg(Theme::BG_MAIN).arg(Theme::BORDER_DEFAULT).arg(Theme::BORDER_RADIUS));
-    auto* notesLayout = new QVBoxLayout(m_notesCard);
-    notesLayout->setContentsMargins(0, 0, 0, 0);
-    notesLayout->setSpacing(0);
+    connect(m_btnRunQuality, &QPushButton::clicked, this, &SidePanel::qualityCheckRequested);
 
-    // Header with collapse button
-    auto* notesHeader = new QWidget(m_notesCard);
-    notesHeader->setFixedHeight(32);
-    notesHeader->setStyleSheet(QStringLiteral("background-color: %1; "
-                               "border-top-left-radius: %2px; border-top-right-radius: %2px;")
-                               .arg(Theme::PRIMARY).arg(Theme::BORDER_RADIUS));
-    auto* hdrLayout = new QHBoxLayout(notesHeader);
-    hdrLayout->setContentsMargins(12, 0, 4, 0);
-
-    auto* notesTitle = new QLabel(QStringLiteral("标定注意事项"), notesHeader);
-    notesTitle->setStyleSheet(QStringLiteral("color: #FFF; font-size: %1px; font-weight: 600; border: none;")
-                              .arg(Theme::FONT_BODY));
-    hdrLayout->addWidget(notesTitle);
-    hdrLayout->addStretch();
-
-    m_btnCollapseNotes = new QPushButton(QStringLiteral("−"), notesHeader);
-    m_btnCollapseNotes->setFixedSize(24, 24);
-    m_btnCollapseNotes->setStyleSheet(QStringLiteral(
-        "QPushButton { color: #FFF; background: transparent; border: none; font-size: 16px; font-weight: bold; }"
-        "QPushButton:hover { background: rgba(255,255,255,0.15); border-radius: 4px; }"));
-    hdrLayout->addWidget(m_btnCollapseNotes);
-    notesLayout->addWidget(notesHeader);
-
-    // Collapsible content
-    m_notesContent = new QWidget(m_notesCard);
-    auto* ncLayout = new QVBoxLayout(m_notesContent);
-    ncLayout->setContentsMargins(12, 10, 12, 10);
-    auto* ncLabel = new QLabel(m_notesContent);
-    ncLabel->setWordWrap(true);
-    ncLabel->setText(QStringLiteral(
-        "<p style='line-height:20px;'><b>标定过程中严禁移动相机和机器人基座</b></p>"
-        "<p style='line-height:20px;'>标定板应尽量充满相机视野的不同区域</p>"
-        "<p style='line-height:20px; color:#FAAD14;'><b>建议采集 15-20 组不同位姿的数据</b></p>"
-        "<p style='line-height:20px;'>位姿应包含不同的角度和距离</p>"));
-    ncLabel->setStyleSheet(QStringLiteral("font-size: %1px; color: %2; border: none;")
-                           .arg(Theme::FONT_BODY).arg(Theme::TEXT_BODY));
-    ncLayout->addWidget(ncLabel);
-    notesLayout->addWidget(m_notesContent);
-
-    connect(m_btnCollapseNotes, &QPushButton::clicked, this, [this]() {
-        bool collapsed = m_notesContent->isVisible();
-        m_notesContent->setVisible(!collapsed);
-        m_btnCollapseNotes->setText(collapsed ? QStringLiteral("−") : QStringLiteral("+"));
-    });
-
-    mainLayout->addWidget(m_notesCard);
-
-    // ── Card 3: File Preview (gets remaining space) ──
+    // ── Bottom area: file preview (shares space equally with 操作日志) ──
     m_previewCard = new QFrame(this);
     m_previewCard->setStyleSheet(QStringLiteral("background: %1; border: 1px solid %2; border-radius: %3px;")
                                  .arg(Theme::BG_MAIN).arg(Theme::BORDER_DEFAULT).arg(Theme::BORDER_RADIUS));
@@ -171,16 +144,23 @@ SidePanel::SidePanel(QWidget* parent)
     connect(m_tabCalibResult, &QPushButton::clicked, this, [onTab]() { onTab("calib_result"); });
 }
 
+void SidePanel::appendTimeline(const QString& label, const QString& colorHex, const QString& text)
+{
+    const QString html = QStringLiteral(
+        "<div style='margin-bottom:6px;'>"
+        "<span style='color:%1; font-weight:600;'>[%2]</span> "
+        "<span style='color:%3;'>%4</span>"
+        "</div>")
+        .arg(colorHex).arg(label).arg(Theme::TEXT_BODY).arg(text.toHtmlEscaped());
+    m_timeline->append(html);
+    QScrollBar* bar = m_timeline->verticalScrollBar();
+    if (bar)
+        bar->setValue(bar->maximum());
+}
+
 void SidePanel::setTip(const QString& text, bool isError)
 {
-    m_tipsContent->setText(text);
-    if (isError) {
-        m_tipsContent->setStyleSheet(QStringLiteral("font-size: %1px; color: %2; border: none;")
-                                     .arg(Theme::FONT_BODY).arg(Theme::ERROR));
-    } else {
-        m_tipsContent->setStyleSheet(QStringLiteral("font-size: %1px; color: %2; border: none;")
-                                     .arg(Theme::FONT_BODY).arg(Theme::TEXT_BODY));
-    }
+    appendTimeline(QStringLiteral("提示"), isError ? Theme::ERROR : Theme::PRIMARY, text);
 }
 
 void SidePanel::setCalibrationResult(const QString& text)
@@ -188,6 +168,16 @@ void SidePanel::setCalibrationResult(const QString& text)
     m_calibResult = text;
     if (m_activeTab == QStringLiteral("calib_result"))
         showCalibrationResult();
+}
+
+void SidePanel::setPoseGuide(const QString& text, bool warning)
+{
+    appendTimeline(QStringLiteral("姿态引导"), warning ? Theme::WARNING : Theme::TEXT_TITLE, text);
+}
+
+void SidePanel::setQualityReport(const QString& html)
+{
+    appendTimeline(QStringLiteral("数据质检"), Theme::TEXT_TITLE, html);
 }
 
 void SidePanel::updateFilePreview(bool eyeInHand, bool markerType,
