@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { api } from '../lib/api'
-import { ticketPriorityLabels, ticketStatusLabels } from '../lib/labels'
+import { ticketCategoryLabels, ticketPriorityLabels, ticketStatusLabels } from '../lib/labels'
 import type { Customer, Device, Ticket, TicketCategory, TicketPriority, TicketStatus } from '../types'
 import { Modal } from './Modal'
 import { StatusBadge } from './Status'
@@ -72,6 +72,7 @@ function QuickTicketConfirm({ parsed, canCreateCustomer, onClose, onSaved }: { p
   const [model, setModel] = useState(parsed.deviceText)
   const [date, setDate] = useState(parsed.occurredAt ?? '')
   const [status, setStatus] = useState<TicketStatus>(parsed.status ?? 'PENDING')
+  const [category, setCategory] = useState<TicketCategory>(() => inferCategory(parsed.rawText))
   const [similar, setSimilar] = useState<Similar[]>([])
   const [checkedKey, setCheckedKey] = useState('')
   const [error, setError] = useState('')
@@ -117,7 +118,7 @@ function QuickTicketConfirm({ parsed, canCreateCustomer, onClose, onSaved }: { p
     if (existing && !window.confirm(`确认更新 ${existing.number}？将追加内部处理记录，并更新负责人和优先级；原描述和状态保持不变。`)) return
     setBusy(true); setError('')
     try {
-      const ticket = existing ? await api<Ticket>(`/tickets/${existing.id}/quick-update`, { method: 'POST', body: JSON.stringify({ organizationId, assigneeId, priority, issue, rawText: parsed.rawText, expectedUpdatedAt: existing.updatedAt }) }) : await api<Ticket>('/tickets', { method: 'POST', body: JSON.stringify({ category: inferCategory(`${parsed.rawText} ${title} ${issue}`), organizationId, assigneeId, priority, title: title.trim(), description: issue.trim(), rawText: parsed.rawText, requestKey, cameraModel: model || undefined, deviceId: deviceId || undefined, occurredAt: date || undefined, status: status === 'PENDING' ? undefined : status }) })
+      const ticket = existing ? await api<Ticket>(`/tickets/${existing.id}/quick-update`, { method: 'POST', body: JSON.stringify({ organizationId, assigneeId, priority, issue, rawText: parsed.rawText, expectedUpdatedAt: existing.updatedAt }) }) : await api<Ticket>('/tickets', { method: 'POST', body: JSON.stringify({ category, organizationId, assigneeId, priority, title: title.trim(), description: issue.trim(), rawText: parsed.rawText, requestKey, cameraModel: model || undefined, deviceId: deviceId || undefined, occurredAt: date || undefined, status: status === 'PENDING' ? undefined : status }) })
       onSaved(ticket, Boolean(existing))
     } catch (e) { setError(e instanceof Error ? e.message : '保存失败'); setRetry((n) => n + 1) } finally { setBusy(false) }
   }
@@ -130,10 +131,11 @@ function QuickTicketConfirm({ parsed, canCreateCustomer, onClose, onSaved }: { p
       {!parsed.matchedAssignee && <div className="span-2 match-options"><strong>负责人：未匹配{parsed.assigneeText ? `（${parsed.assigneeText}）` : ''}</strong>{parsed.assigneeCandidates.map((u) => <label key={u.id}><input type="radio" name="assignee-candidate" checked={assigneeId === u.id} onChange={() => setAssigneeId(u.id)} />{u.name}</label>)}</div>}
       <label className="span-2">问题标题<input aria-label="确认标题" maxLength={240} value={title} onChange={(e) => setTitle(e.target.value)} /></label>
       <label className="span-2">问题描述<textarea aria-label="确认问题" rows={3} maxLength={4000} value={issue} onChange={(e) => setIssue(e.target.value)} /></label>
+      <label>问题分类<select aria-label="确认问题分类" value={category} onChange={(e) => setCategory(e.target.value as TicketCategory)}>{Object.entries(ticketCategoryLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><small>按关键词初步识别，可修改</small></label>
       <label>优先级<select aria-label="确认优先级" value={priority} onChange={(e) => setPriority(e.target.value as TicketPriority)}>{Object.entries(ticketPriorityLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
       <label>状态<select aria-label="确认状态" value={status} onChange={(e) => setStatus(e.target.value as TicketStatus)}>{Object.entries(ticketStatusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><small>识别「已解决/处理中/等待客户反馈」等关键词</small></label>
       <label>工单时间<input aria-label="确认工单时间" type="date" value={date} onChange={(e) => setDate(e.target.value)} /><small>{date ? '编号按此日期生成，留空为今天' : '未指定，按今天记录'}</small></label>
-      <label>设备型号<input maxLength={100} value={model} onChange={(e) => { setModel(e.target.value); setDeviceId('') }} /></label>
+      <label className="span-2">设备型号<input maxLength={100} value={model} onChange={(e) => { setModel(e.target.value); setDeviceId('') }} /></label>
       <label className="span-2">关联设备<select value={deviceId} onChange={(e) => setDeviceId(e.target.value)}><option value="">不关联设备</option>{devices.map((d) => <option key={d.id} value={d.id}>{d.name} {d.serialNumber ?? ''}</option>)}</select></label>
     </fieldset>
     {lookupError && <div role="alert" className="form-error">相似工单检查失败：{lookupError}<button className="button" onClick={() => setRetry((n) => n + 1)}>重试</button></div>}
