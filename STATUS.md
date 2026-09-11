@@ -17,16 +17,20 @@
   Modbus 联调；阶段 5/6/9/10 未开工。
 - 正在进行的文件：无（本轮 UI 改动已完成）。
 - 卡点 / 风险：无新增。
-- 上次会话结束已提交/推送：是。2026-09-11 按 AICode 公约把当前版本同步到
-  keybord317/AICode 的 HandEyeTools 分支（提交 e38d0ab）：项目内容落在 monorepo 的
-  handeye-calib-tool/ 目录，快进推送、无强推；AICode 工作区构建 + ctest 全绿。
-  两处工作区源文件逐文件一致（.vs/build 等构建物未推送）。
+- 上次会话结束已提交/推送：是。2026-09-11 双线推送：①AICode 的 HandEyeTools 分支按
+  用户要求强推为 D 工作区原样历史（项目在仓库根，tip c0fd3f3；已清理 .vs 并写入
+  .gitignore）；②AICode main 同步到当前版本（monorepo 的 handeye-calib-tool/ 目录，
+  提交 2098477）。两处构建 + ctest 全绿。
+- 待用户确认：是否把 AICode 的项目目录 handeye-calib-tool 改名为 HandEyeTools（与公约
+  「目录名只用小写+连字符」冲突，需同时改根 README 与 AGENTS/GOVERNANCE）。
 
 ## ✅ 已完成
 
-- [x] 2026-09-11 推送当前版本到 AICode：把 D 工作区已验证版本同步进 AICode monorepo 的
-  handeye-calib-tool/（提交 e38d0ab），遵循公约目录结构与提交规范（Conventional
-  Commits / AI-codex / 英文信息），排除 .vs/build 等构建物；构建 + ctest 全绿。
+- [x] 2026-09-11 推送当前版本到 AICode：①HandEyeTools 分支强推为 D 工作区历史
+  （c0fd3f3，项目在仓库根）；②main 同步当前版本（handeye-calib-tool/，提交 2098477）。
+  同时清理 D 仓库 170 个 .vs 缓存（1.9 MB）并加入 .gitignore，删除 AICode 本地过期分支
+  handeye-calib-tool/tools-panel（b7a78a4）与已被强推取代的 HandEyeTools（b6301b4）；
+  构建 + ctest 全绿。
 - [x] 2026-09-10 阶段 8 UI 优化与修复（前台激活+日志布局+启动默认显示）：①SidePanel
   布局从三卡片（时间线+折叠注意事项+预览）改为两主卡片（"操作日志"+"文件预览"等分空间，
   去掉固定 220px）；操作日志启动时默认显示 [注意事项] 四条建议，后续操作/引导/质检追加
