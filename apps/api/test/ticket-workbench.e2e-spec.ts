@@ -23,30 +23,37 @@ describe('Ticket workbench safety', () => {
   });
   afterAll(async () => { await app?.close(); });
   const create = async () => (await admin.post('/api/tickets').send({ organizationId: orgId, category: 'OTHER', title: '回归工单' + Date.now(), description: '工作台回归测试', assigneeId: employeeId }).expect(201)).body;
-  it('only admins hide individual timeline records with audit and without changing state', async () => {
+  it('lets admins and record authors hide timeline records with audit and without changing state', async () => {
     const t = await create();
+    const note = (await employee.post(`/api/tickets/${t.id}/events`).send({ type: 'INTERNAL_NOTE', visibility: 'INTERNAL', content: '员工误填的记录' }).expect(201)).body;
     await admin.post(`/api/tickets/${t.id}/assist-requests`).send({ targetUserIds: [employeeId], message: '测试邀请' }).expect(201);
-    const event = await db.ticketEvent.findFirstOrThrow({ where: { ticketId: t.id, type: 'ASSIST_REQUEST' } });
-    const endpoint = `/api/tickets/${t.id}/events/${event.id}`;
-    await employee.delete(endpoint).send({ reason: '测试记录' }).expect(403);
+    const inviteEvent = await db.ticketEvent.findFirstOrThrow({ where: { ticketId: t.id, type: 'ASSIST_REQUEST' } });
+    const endpoint = `/api/tickets/${t.id}/events/${inviteEvent.id}`;
+    // 非作者的内部成员与客户均不能删除
+    await employee.delete(endpoint).send({ reason: '不是作者' }).expect(403);
     await customer.delete(endpoint).send({ reason: '测试记录' }).expect(403);
     await admin.delete(endpoint).send({ reason: '  ' }).expect(400);
     const another = await create();
-    await admin.delete(`/api/tickets/${another.id}/events/${event.id}`).send({ reason: '不属于此工单' }).expect(404);
+    await admin.delete(`/api/tickets/${another.id}/events/${inviteEvent.id}`).send({ reason: '不属于此工单' }).expect(404);
     await db.ticket.update({ where: { id: t.id }, data: { status: 'CLOSED' } });
     const before = await db.ticket.findUniqueOrThrow({ where: { id: t.id } });
     await admin.delete(endpoint).send({ reason: '清理测试邀请的时间线' }).expect(200);
     const detail = (await admin.get(`/api/tickets/${t.id}`).expect(200)).body;
-    expect(detail.events.some((item: { id: string }) => item.id === event.id)).toBe(false);
+    expect(detail.events.some((item: { id: string }) => item.id === inviteEvent.id)).toBe(false);
     expect(detail.status).toBe('CLOSED');
-    expect(detail.assistRequests[0].status).toBe('PENDING');
+    // 邀请直接生效为协作人，删除时间线不影响协作关系与工单时间戳
+    expect(detail.collaborators.map((item: { user: { id: string } }) => item.user.id)).toContain(employeeId);
     expect((await db.ticket.findUniqueOrThrow({ where: { id: t.id } })).updatedAt).toEqual(before.updatedAt);
-    const stored = await db.ticketEvent.findUniqueOrThrow({ where: { id: event.id } });
-    expect(stored.content).toBe(event.content);
-    const audit = await db.auditLog.findFirstOrThrow({ where: { action: 'ticket.event.delete', entityId: event.id } });
+    const stored = await db.ticketEvent.findUniqueOrThrow({ where: { id: inviteEvent.id } });
+    expect(stored.content).toBe(inviteEvent.content);
+    const audit = await db.auditLog.findFirstOrThrow({ where: { action: 'ticket.event.delete', entityId: inviteEvent.id } });
     expect(JSON.stringify(audit.metadata)).toContain('清理测试邀请的时间线');
-    expect(JSON.stringify(audit.metadata)).toContain(event.content);
+    expect(JSON.stringify(audit.metadata)).toContain(inviteEvent.content);
     await admin.delete(endpoint).send({ reason: '再次删除' }).expect(409);
+    // 记录作者可以删除自己的误填记录
+    await employee.delete(`/api/tickets/${t.id}/events/${note.id}`).send({ reason: '误填，自行删除' }).expect(200);
+    const after = (await admin.get(`/api/tickets/${t.id}`).expect(200)).body;
+    expect(after.events.some((item: { id: string }) => item.id === note.id)).toBe(false);
   });
   it('keeps internal invitations out of customer detail and lists', async () => {
     const t = await create();
@@ -67,33 +74,29 @@ describe('Ticket workbench safety', () => {
     await admin.delete(`/api/tickets/${t.id}`).send({ reason: '再次删除' }).expect(200);
     expect(await db.notification.count({ where: { ticketId: t.id, recipientId: employeeId, type: 'TICKET_DELETED' } })).toBe(2);
   });
-  it('prevents duplicate invitations and accepts only one concurrent outcome', async () => {
+  it('prevents duplicate collaborators and supports removal', async () => {
     const t = await create();
     await admin.post(`/api/tickets/${t.id}/assist-requests`).send({ targetUserIds: [employeeId] }).expect(201);
     await admin.post(`/api/tickets/${t.id}/assist-requests`).send({ targetUserIds: [employeeId] }).expect(409);
-    const invite = await db.ticketAssistRequest.findFirstOrThrow({ where: { ticketId: t.id } });
-    const results = await Promise.all([
-      employee.post(`/api/tickets/${t.id}/assist-requests/${invite.id}/accept`),
-      employee.post(`/api/tickets/${t.id}/assist-requests/${invite.id}/reject`).send({ reason: '当前无法协助' }),
-    ]);
-    expect(results.filter(r => r.status === 201)).toHaveLength(1);
-    expect(results.filter(r => [400, 409].includes(r.status))).toHaveLength(1);
-    const final = await db.ticketAssistRequest.findUniqueOrThrow({ where: { id: invite.id } });
-    expect(await db.ticketCollaborator.count({ where: { ticketId: t.id, userId: employeeId } })).toBe(final.status === 'ACCEPTED' ? 1 : 0);
+    const detail = (await admin.get(`/api/tickets/${t.id}`).expect(200)).body;
+    expect(detail.collaborators.map((item: { user: { id: string } }) => item.user.id)).toContain(employeeId);
+    // 简化后不再产生待处理请求记录
+    expect(await db.ticketAssistRequest.count({ where: { ticketId: t.id } })).toBe(0);
+    await admin.delete(`/api/tickets/${t.id}/collaborators/${employeeId}`).expect(200);
+    expect((await admin.get(`/api/tickets/${t.id}`).expect(200)).body.collaborators).toHaveLength(0);
+    await admin.delete(`/api/tickets/${t.id}/collaborators/${employeeId}`).expect(404);
   });
-  it('does not allow accepting an invitation on a deleted ticket', async () => {
+  it('does not allow adding a collaborator on a deleted ticket', async () => {
     const t = await create();
-    await admin.post(`/api/tickets/${t.id}/assist-requests`).send({ targetUserIds: [employeeId] }).expect(201);
-    const invite = await db.ticketAssistRequest.findFirstOrThrow({ where: { ticketId: t.id } });
     await admin.delete(`/api/tickets/${t.id}`).send({}).expect(200);
-    await employee.post(`/api/tickets/${t.id}/assist-requests/${invite.id}/accept`).expect(400);
+    await admin.post(`/api/tickets/${t.id}/assist-requests`).send({ targetUserIds: [employeeId] }).expect(400);
     expect(await db.ticketCollaborator.count({ where: { ticketId: t.id, userId: employeeId } })).toBe(0);
   });
-  it('filters invitations and preserves metrics when a status is selected', async () => {
+  it('filters collaborating view and preserves metrics when a status is selected', async () => {
     const t = await create();
     await admin.post(`/api/tickets/${t.id}/assist-requests`).send({ targetUserIds: [employeeId] }).expect(201);
-    const invited = (await employee.get(`/api/tickets?view=invited&search=${t.number}`).expect(200)).body;
-    expect(invited.items.map((item: { id: string }) => item.id)).toContain(t.id);
+    const collaborating = (await employee.get(`/api/tickets?view=collaborating&search=${t.number}`).expect(200)).body;
+    expect(collaborating.items.map((item: { id: string }) => item.id)).toContain(t.id);
     const hidden = (await employee.get(`/api/tickets?view=assigned&search=${t.number}&status=RESOLVED`).expect(200)).body;
     expect(hidden.items).toHaveLength(0); expect(hidden.byStatus.PENDING).toBe(1);
     const todo = (await employee.get('/api/tickets?view=today-todo').expect(200)).body.total;

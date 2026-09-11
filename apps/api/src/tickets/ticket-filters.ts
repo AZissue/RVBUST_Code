@@ -6,7 +6,6 @@ export function ticketViewWhere(userId: string, view?: string, now = new Date())
   switch (view) {
     case 'assigned': return { assigneeId: userId };
     case 'collaborating': return { collaborators: { some: { userId } } };
-    case 'invited': return { assistRequests: { some: { targetUserId: userId, status: 'PENDING' } } };
     case 'created': return { createdById: userId };
     case 'today-todo': return { assigneeId: userId, status: 'PENDING', OR: [{ plannedAt: null }, { plannedAt: { lt: end } }] };
     case 'today-done': return { assigneeId: userId, status: { in: ['RESOLVED', 'CLOSED'] }, resolvedAt: { gte: start, lt: end } };

@@ -9,7 +9,7 @@ import { Roles } from '../auth/roles.decorator.js';
 import { ChangeStatusDto } from './dto/change-status.dto.js';
 import { CreateTicketEventDto, DeleteTicketEventDto } from './dto/ticket-event.dto.js';
 import { CreateTicketDto, UpdateTicketDto, ChangeCreatorDto, DeleteTicketDto } from './dto/ticket.dto.js';
-import { CreateAssistRequestDto, RejectAssistRequestDto } from './dto/assist.dto.js';
+import { CreateAssistRequestDto } from './dto/assist.dto.js';
 import { TicketsService } from './tickets.service.js';
 import { TicketsExcelService } from './tickets-excel.service.js';
 import { QuickTicketsService } from './quick-tickets.service.js';
@@ -58,12 +58,10 @@ export class TicketsController {
   @Roles('admin') @Post(':id/created-by') changeCreator(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: ChangeCreatorDto) { return this.tickets.changeCreator(user, id, dto); }
   @Roles('admin', 'support', 'employee') @Post(':id/status') changeStatus(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: ChangeStatusDto) { return this.tickets.changeStatus(user, id, dto); }
   @Post(':id/events') addEvent(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: CreateTicketEventDto) { return this.tickets.addEvent(user, id, dto); }
-  @Roles('admin') @Delete(':id/events/:eventId') removeEvent(@CurrentUser() user: AuthUser, @Param('id') id: string, @Param('eventId') eventId: string, @Body() dto: DeleteTicketEventDto) { return this.tickets.removeEvent(user, id, eventId, dto.reason); }
+  @Roles('admin', 'support', 'employee') @Delete(':id/events/:eventId') removeEvent(@CurrentUser() user: AuthUser, @Param('id') id: string, @Param('eventId') eventId: string, @Body() dto: DeleteTicketEventDto) { return this.tickets.removeEvent(user, id, eventId, dto.reason); }
   @Roles('admin', 'support', 'employee') @Delete(':id') remove(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: DeleteTicketDto) { return this.tickets.softDelete(user, id, dto.reason); }
   @Roles('admin') @Delete(':id/purge') purge(@CurrentUser() user: AuthUser, @Param('id') id: string) { return this.tickets.purge(user, id); }
   @Roles('admin', 'support', 'employee') @Post(':id/restore') restore(@CurrentUser() user: AuthUser, @Param('id') id: string) { return this.tickets.restore(user, id); }
   @Roles('admin', 'support', 'employee') @Post(':id/assist-requests') createAssistRequest(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: CreateAssistRequestDto) { return this.tickets.createAssistRequests(user, id, dto); }
-  @Roles('admin', 'support', 'employee') @Post(':id/assist-requests/:requestId/accept') acceptAssist(@CurrentUser() user: AuthUser, @Param('requestId') requestId: string) { return this.tickets.acceptAssist(user, requestId); }
-  @Roles('admin', 'support', 'employee') @Post(':id/assist-requests/:requestId/reject') rejectAssist(@CurrentUser() user: AuthUser, @Param('requestId') requestId: string, @Body() dto: RejectAssistRequestDto) { return this.tickets.rejectAssist(user, requestId, dto); }
-  @Roles('admin', 'support', 'employee') @Post(':id/assist-requests/:requestId/cancel') cancelAssist(@CurrentUser() user: AuthUser, @Param('requestId') requestId: string) { return this.tickets.cancelAssist(user, requestId); }
+  @Roles('admin', 'support', 'employee') @Delete(':id/collaborators/:userId') removeCollaborator(@CurrentUser() user: AuthUser, @Param('id') id: string, @Param('userId') userId: string) { return this.tickets.removeCollaborator(user, id, userId); }
 }
