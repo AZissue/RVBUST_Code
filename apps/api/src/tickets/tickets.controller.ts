@@ -13,7 +13,7 @@ import { CreateAssistRequestDto } from './dto/assist.dto.js';
 import { TicketsService } from './tickets.service.js';
 import { TicketsExcelService } from './tickets-excel.service.js';
 import { QuickTicketsService } from './quick-tickets.service.js';
-import { ParseQuickTicketDto, SimilarTicketsDto, UpdateQuickTicketDto, ConvertWorkItemDto } from './dto/quick-ticket.dto.js';
+import { ParseQuickTicketDto, SimilarTicketsDto, SuggestTitleDto, UpdateQuickTicketDto, ConvertWorkItemDto } from './dto/quick-ticket.dto.js';
 
 const importUploadOptions = {
   storage: memoryStorage(),
@@ -39,6 +39,7 @@ export class TicketsController {
   @Roles('admin', 'support', 'employee') @Post('quick/parse') parse(@CurrentUser() user: AuthUser, @Body() dto: ParseQuickTicketDto) { return this.quick.parse(user, dto.rawText); }
   @Roles('admin', 'support', 'employee') @Post('quick/similar') similar(@CurrentUser() user: AuthUser, @Body() dto: SimilarTicketsDto) { return this.quick.similar(user, dto); }
   @Roles('admin', 'support', 'employee') @Post(':id/quick-update') quickUpdate(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: UpdateQuickTicketDto) { return this.quick.update(user, id, dto); }
+  @Roles('admin', 'support', 'employee') @Post('suggest-title') suggestTitle(@CurrentUser() user: AuthUser, @Body() dto: SuggestTitleDto) { return this.quick.suggestTitle(user, dto); }
   @Roles('admin', 'support', 'employee') @Post('from-work-item/:id') convert(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: ConvertWorkItemDto) { return this.tickets.convertWorkItem(user, id, dto.organizationId); }
   @Roles('admin', 'support', 'employee') @Get('import-template') async importTemplate(@Res() response: Response) {
     const buffer = await this.excel.buildTemplateBuffer();

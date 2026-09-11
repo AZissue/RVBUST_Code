@@ -1,4 +1,4 @@
-import { Plus } from 'lucide-react'
+import { Plus, Sparkles } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
@@ -78,6 +78,7 @@ function QuickTicketConfirm({ parsed, canCreateCustomer, onClose, onSaved }: { p
   const [error, setError] = useState('')
   const [lookupError, setLookupError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [summarizing, setSummarizing] = useState(false)
   const [creatingCustomer, setCreatingCustomer] = useState(false)
   const [retry, setRetry] = useState(0)
   const [requestKey] = useState(() => crypto.randomUUID())
@@ -112,6 +113,15 @@ function QuickTicketConfirm({ parsed, canCreateCustomer, onClose, onSaved }: { p
       setCustomers((list) => [...list, c]); setOrganizationId(c.id); setDeviceId('')
     } catch (e) { setError(e instanceof Error ? e.message : '创建客户失败') } finally { setBusy(false) }
   }
+  const suggestTitle = async () => {
+    const description = issue.trim() || parsed.rawText.trim()
+    if (description.length < 3) return
+    setSummarizing(true); setError('')
+    try {
+      const result = await api<{ title: string }>('/tickets/suggest-title', { method: 'POST', body: JSON.stringify({ description: description.slice(0, 4000) }) })
+      setTitle(result.title.slice(0, 240))
+    } catch (e) { setError(e instanceof Error ? e.message : 'AI 总结失败') } finally { setSummarizing(false) }
+  }
   const ready = Boolean(organizationId && assigneeId && issue.trim().length >= 3 && title.trim().length >= 3 && checkedKey === key && !busy)
   const save = async (existing?: Similar) => {
     if (!ready) return
@@ -129,7 +139,10 @@ function QuickTicketConfirm({ parsed, canCreateCustomer, onClose, onSaved }: { p
       <label>负责人<select aria-label="确认负责人" value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)}><option value="">负责人：未匹配</option>{users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</select>{parsed.assigneeDefaulted && parsed.matchedAssignee && <small>默认当前用户：{parsed.matchedAssignee.name}</small>}</label>
       {!parsed.matchedCustomer && <div className="span-2 match-options">{parsed.customerCandidates.length ? <><strong>可能的客户</strong>{parsed.customerCandidates.map((c) => <label key={c.id}><input type="radio" name="customer-candidate" checked={organizationId === c.id} onChange={() => { setOrganizationId(c.id); setDeviceId('') }} />{c.name}</label>)}</> : <strong>未匹配到现有客户{parsed.customerText ? `：${parsed.customerText}` : ''}</strong>}{canCreateCustomer && <button type="button" className="button" disabled={busy} onClick={() => void createCustomer()}><Plus size={14} />创建新客户</button>}</div>}
       {!parsed.matchedAssignee && <div className="span-2 match-options"><strong>负责人：未匹配{parsed.assigneeText ? `（${parsed.assigneeText}）` : ''}</strong>{parsed.assigneeCandidates.map((u) => <label key={u.id}><input type="radio" name="assignee-candidate" checked={assigneeId === u.id} onChange={() => setAssigneeId(u.id)} />{u.name}</label>)}</div>}
-      <label className="span-2">问题标题<input aria-label="确认标题" maxLength={240} value={title} onChange={(e) => setTitle(e.target.value)} /></label>
+      <div className="span-2 field-with-action">
+        <label>问题标题<input aria-label="确认标题" maxLength={240} value={title} onChange={(e) => setTitle(e.target.value)} /></label>
+        <button type="button" className="button" disabled={summarizing || busy || issue.trim().length < 3} onClick={() => void suggestTitle()}><Sparkles size={14} />{summarizing ? '正在总结' : 'AI 总结'}</button>
+      </div>
       <label>问题分类<select aria-label="确认问题分类" value={category} onChange={(e) => setCategory(e.target.value as TicketCategory)}>{Object.entries(ticketCategoryLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><small>按关键词初步识别，可修改</small></label>
       <label>优先级<select aria-label="确认优先级" value={priority} onChange={(e) => setPriority(e.target.value as TicketPriority)}>{Object.entries(ticketPriorityLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
       <label className="span-2">问题描述<textarea aria-label="确认问题" rows={3} maxLength={4000} value={issue} onChange={(e) => setIssue(e.target.value)} /></label>

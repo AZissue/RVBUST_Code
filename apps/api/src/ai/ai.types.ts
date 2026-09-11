@@ -1,5 +1,6 @@
 export const FEATURES = {
-  quick_ticket_parser: '快速工单语义解析', work_record_summary: '工作记录整理',
+  quick_ticket_parser: '快速工单语义解析', ticket_title_summary: '工单标题总结',
+  work_record_summary: '工作记录整理',
   daily_report: '日报生成', weekly_report: '周报生成', monthly_report: '月报生成',
   ai_assistant: 'AI 助手', knowledge_qa: '知识库问答',
 } as const;

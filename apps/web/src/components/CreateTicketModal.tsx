@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { Sparkles } from 'lucide-react'
 import { Modal } from './Modal'
 import { useRemote } from '../hooks/useRemote'
 import { api } from '../lib/api'
@@ -18,7 +19,10 @@ export function CreateTicketModal({ onClose, onCreated, defaultAssigneeId }: { o
   const [assistTargetIds, setAssistTargetIds] = useState<string[]>([])
   const [assistMessage, setAssistMessage] = useState('')
   const [busy, setBusy] = useState(false)
+  const [summarizing, setSummarizing] = useState(false)
   const lock = useRef(false)
+  const titleRef = useRef<HTMLInputElement>(null)
+  const descriptionRef = useRef<HTMLTextAreaElement>(null)
   const [requestKey] = useState(() => crypto.randomUUID())
   const [error, setError] = useState('')
   const customer = customers.data?.find(item => normalized(item.name) === normalized(customerName))
@@ -26,6 +30,15 @@ export function CreateTicketModal({ onClose, onCreated, defaultAssigneeId }: { o
   const currentDetail = detail.data?.id === customer?.id ? detail.data : null
   const device = currentDetail?.devices?.find(item => deviceLabel(item) === deviceText)
   const toggleAssist = (userId: string) => setAssistTargetIds(previous => previous.includes(userId) ? previous.filter(item => item !== userId) : [...previous, userId])
+  const suggestTitle = async () => {
+    const description = descriptionRef.current?.value.trim() ?? ''
+    if (description.length < 3) { setError('请先填写问题描述，至少 3 个字符'); return }
+    setSummarizing(true); setError('')
+    try {
+      const result = await api<{ title: string }>('/tickets/suggest-title', { method: 'POST', body: JSON.stringify({ description: description.slice(0, 4000) }) })
+      if (titleRef.current) titleRef.current.value = result.title.slice(0, 240)
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'AI 总结失败') } finally { setSummarizing(false) }
+  }
   useEffect(() => { setDeviceText(''); setContactId('') }, [customer?.id])
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -66,9 +79,12 @@ export function CreateTicketModal({ onClose, onCreated, defaultAssigneeId }: { o
       </label>
       <label>负责人{users.data ? <select name="assigneeId" defaultValue={defaultAssigneeId ?? ''}><option value="">我自己</option>{users.data.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select> : <span>加载中…</span>}</label>
       {!customers.loading && !customers.error && customerName.trim() && !customer && <label className="span-2 checkbox-row"><input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} />确认新建客户「{customerName.trim()}」</label>}
-      <label>问题标题<input name="title" required minLength={3} maxLength={240} /></label>
+      <div className="field-with-action">
+        <label>问题标题<input ref={titleRef} name="title" required minLength={3} maxLength={240} /></label>
+        <button type="button" className="button" disabled={summarizing} onClick={() => void suggestTitle()}><Sparkles size={14} />{summarizing ? '正在总结' : 'AI 总结'}</button>
+      </div>
       <label>问题分类<select name="category" defaultValue="OTHER">{TICKET_CATEGORIES.map(item => <option key={item} value={item}>{ticketCategoryLabels[item]}</option>)}</select></label>
-      <label className="span-2">问题描述<textarea name="description" required minLength={3} maxLength={20000} rows={4} /></label>
+      <label className="span-2">问题描述<textarea ref={descriptionRef} name="description" required minLength={3} maxLength={20000} rows={4} /></label>
       <label className="span-2 checkbox-row"><input type="checkbox" checked={assistTargetIds.length > 0} onChange={event => setAssistTargetIds(event.target.checked ? (users.data ?? []).map(item => item.id) : [])} />需要协作：添加系统内同事为协作人，共同跟进处理该工单</label>
       {assistTargetIds.length > 0 && <label className="span-2">协作人<div className="assist-user-list">{users.data?.map(item => <label key={item.id} className="checkbox-row"><input type="checkbox" checked={assistTargetIds.includes(item.id)} onChange={() => toggleAssist(item.id)} />{item.name}</label>) ?? <span>加载中…</span>}</div></label>}
       {assistTargetIds.length > 0 && <label className="span-2">协助说明<input value={assistMessage} onChange={event => setAssistMessage(event.target.value)} maxLength={2000} placeholder="如：需要协助排查硬件环境问题" /></label>}

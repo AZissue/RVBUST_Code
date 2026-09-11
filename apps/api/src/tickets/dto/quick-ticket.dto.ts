@@ -20,3 +20,6 @@ export class UpdateQuickTicketDto {
 export class ConvertWorkItemDto {
   @IsUUID() organizationId!: string;
 }
+export class SuggestTitleDto {
+  @IsString() @Length(3, 4000) description!: string;
+}
