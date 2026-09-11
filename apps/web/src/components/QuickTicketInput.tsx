@@ -102,6 +102,15 @@ function QuickTicketConfirm({ parsed, canCreateCustomer, onClose, onSaved }: { p
     }, 600)
     return () => { current = false; window.clearTimeout(timer) }
   }, [organizationId, issue, model, retry, key])
+  const createCustomer = async () => {
+    const name = parsed.customerText?.trim()
+    if (!name) { setCreatingCustomer(true); return }
+    setBusy(true); setError('')
+    try {
+      const c = await api<Customer>('/customers', { method: 'POST', body: JSON.stringify({ name }) })
+      setCustomers((list) => [...list, c]); setOrganizationId(c.id); setDeviceId('')
+    } catch (e) { setError(e instanceof Error ? e.message : '创建客户失败') } finally { setBusy(false) }
+  }
   const ready = Boolean(organizationId && assigneeId && issue.trim().length >= 3 && title.trim().length >= 3 && checkedKey === key && !busy)
   const save = async (existing?: Similar) => {
     if (!ready) return
@@ -117,7 +126,7 @@ function QuickTicketConfirm({ parsed, canCreateCustomer, onClose, onSaved }: { p
     <fieldset disabled={busy} className="form-grid">
       <label>客户<select aria-label="确认客户" value={organizationId} onChange={(e) => { setOrganizationId(e.target.value); setDeviceId('') }}><option value="">选择现有客户</option>{customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
       <label>负责人<select aria-label="确认负责人" value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)}><option value="">负责人：未匹配</option>{users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</select>{parsed.assigneeDefaulted && parsed.matchedAssignee && <small>默认当前用户：{parsed.matchedAssignee.name}</small>}</label>
-      {!parsed.matchedCustomer && <div className="span-2 match-options">{parsed.customerCandidates.length ? <><strong>可能的客户</strong>{parsed.customerCandidates.map((c) => <label key={c.id}><input type="radio" name="customer-candidate" checked={organizationId === c.id} onChange={() => { setOrganizationId(c.id); setDeviceId('') }} />{c.name}</label>)}</> : <strong>未匹配到现有客户{parsed.customerText ? `：${parsed.customerText}` : ''}</strong>}{canCreateCustomer && <button type="button" className="button" onClick={() => setCreatingCustomer(true)}><Plus size={14} />创建新客户</button>}</div>}
+      {!parsed.matchedCustomer && <div className="span-2 match-options">{parsed.customerCandidates.length ? <><strong>可能的客户</strong>{parsed.customerCandidates.map((c) => <label key={c.id}><input type="radio" name="customer-candidate" checked={organizationId === c.id} onChange={() => { setOrganizationId(c.id); setDeviceId('') }} />{c.name}</label>)}</> : <strong>未匹配到现有客户{parsed.customerText ? `：${parsed.customerText}` : ''}</strong>}{canCreateCustomer && <button type="button" className="button" disabled={busy} onClick={() => void createCustomer()}><Plus size={14} />创建新客户</button>}</div>}
       {!parsed.matchedAssignee && <div className="span-2 match-options"><strong>负责人：未匹配{parsed.assigneeText ? `（${parsed.assigneeText}）` : ''}</strong>{parsed.assigneeCandidates.map((u) => <label key={u.id}><input type="radio" name="assignee-candidate" checked={assigneeId === u.id} onChange={() => setAssigneeId(u.id)} />{u.name}</label>)}</div>}
       <label className="span-2">问题标题<input aria-label="确认标题" maxLength={240} value={title} onChange={(e) => setTitle(e.target.value)} /></label>
       <label className="span-2">问题描述<textarea aria-label="确认问题" rows={3} maxLength={4000} value={issue} onChange={(e) => setIssue(e.target.value)} /></label>
