@@ -14,9 +14,10 @@
 | `CodedCircleRegistration_v2` | **编码圆拼接工具 v2** | Python + PySide6 + Open3D + RVC SDK | 基于 RVC 深度相机的编码圆点云拼接系统，支持多帧自动配准与彩色融合 |
 | `rvc-vision-studio` | **RvcVisionStudio** | C++ / Qt6 + QtNodes + PCL / VTK | 拖拽式零代码 3D 点云流程编排与测量平台，支持 ROI 框选、几何拟合、尺寸测量、多视窗与异步执行引擎 |
 | `pointcloud-search` | **PointCloudSearch** | C++20 + Qt 6.8 + VTK + PCL | 模块化点云查找 / 分析桌面程序（节点式图形化流程编排）+ C++ SDK，面向 RVC 3D 相机客户，支持 ROI 框选、降采样、聚类、平面检测、方案保存加载等 |
+| `HandEyeTools` | **手眼标定数据采集助手** | C++17 / Qt5 + RVC SDK + HandEyeSDK + Vis(OSG) | 面向 RVC X1/X2 相机的手眼标定数据采集工具：连接相机 → 采集 2D+3D → 标定板识别 → 数据保存/备份 → 辅助工具（测量、坐标转换、像素→3D、标定计算、机器人通信），以绿色免安装包交付 |
 | `master` | **CRM 早期版本归档** | Node.js + 纯 HTML/JS | CRM 系统早期版本归档（含历史部署脚本），已由 `crm_system` / `crm_system_v2` 替代 |
 
-> 手眼标定相关工具（HandEyeManager 数据采集助手等）代码保存在本地 `D:\RVC_SRC\hand-eye-tools`，未纳入本仓库。
+> 手眼标定相关工具（HandEyeManager 数据采集助手等）代码现已纳入本仓库 `HandEyeTools` 分支；早期 Python 版本仍保存在本地 `D:\RVC_SRC\hand-eye-tools`。
 
 ---
 
@@ -40,6 +41,9 @@ git checkout rvc-vision-studio
 
 # PointCloudSearch（模块化点云查找/分析桌面程序）
 git checkout pointcloud-search
+
+# 手眼标定数据采集助手
+git checkout HandEyeTools
 
 # CRM 早期版本归档
 git checkout master
