@@ -23,9 +23,15 @@
   小写+连字符命名）；③AZissue/RVBUST_Code 的 HandEyeTools 分支同样推为 D 工作区历史
   （该仓库约定「一个项目一个分支、项目放分支根」），并在其 main 的总览 README 登记。
   构建 + ctest 全绿。
+- 文档约定：项目根目录只保留 `README.md` / `PLAN.md` / `PROJECT.md` / `STATUS.md` 四份
+  md（2026-09-11 按用户要求清理，其余 13 份已删，含 AGENTS.md；需要时用
+  `git checkout <commit> -- AGENTS.md` 可从历史找回）。
 
 ## ✅ 已完成
 
+- [x] 2026-09-11 精简项目根文档：只保留 README/PLAN/PROJECT/STATUS 四份 md，删除
+  00_README、INDEX、START_HERE、SESSION_PROMPTS、PUSH_GUIDE、AGENTS 及各类代码审查 /
+  改进计划文档共 13 份（git 历史可回溯）。
 - [x] 2026-09-11 推送当前版本到 AICode / RVBUST_Code 并改名项目：①AICode 的 HandEyeTools
   分支强推为 D 工作区历史（项目在仓库根）；②AICode main 同步当前版本，项目目录
   handeye-calib-tool → handeye-tools（根 README 索引、AGENTS/SESSION_PROMPTS 的 scope
