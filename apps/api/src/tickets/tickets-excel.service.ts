@@ -15,6 +15,7 @@ const COLUMNS = [
   { header: '问题标题', key: 'title', required: false, width: 30, comment: '留空则取问题描述前 50 字' },
   { header: '问题描述', key: 'description', required: true, width: 46, comment: '问题现象、复现步骤等' },
   { header: '问题分类', key: 'category', required: false, width: 14, comment: `下拉选择：${TICKET_CATEGORIES.map((c) => TICKET_CATEGORY_LABELS[c]).join('/')}` },
+  { header: '状态', key: 'status', required: false, width: 12, comment: '下拉选择：待处理/处理中/等待客户/等待研发/已解决/已关闭，留空为待处理' },
   { header: '负责人', key: 'assignee', required: false, width: 12, comment: '姓名，留空则为导入人' },
   { header: '优先级', key: 'priority', required: false, width: 10, comment: '低/中/高/紧急，留空为中' },
   { header: '相机型号', key: 'cameraModel', required: false, width: 14, comment: '如 M2600' },
@@ -32,6 +33,7 @@ const HEADER_ALIASES: Record<ColumnKey, string[]> = {
   title: ['问题标题', '标题'],
   description: ['问题描述', '描述', '详细描述', '问题详情'],
   category: ['问题分类', '分类'],
+  status: ['状态', '工单状态'],
   assignee: ['负责人', '处理人', '工程师', '指派'],
   priority: ['优先级', '紧急程度'],
   cameraModel: ['相机型号', '型号', '相机'],
@@ -43,6 +45,12 @@ const HEADER_ALIASES: Record<ColumnKey, string[]> = {
 };
 const normalizeHeader = (value: unknown) => String(value ?? '').replace(/[*＊\s]/g, '');
 const PRIORITY_LABELS: Record<string, TicketPriority> = { 低: TicketPriority.LOW, 中: TicketPriority.MEDIUM, 普通: TicketPriority.MEDIUM, 高: TicketPriority.HIGH, 紧急: TicketPriority.URGENT };
+const STATUS_LABELS: Record<string, TicketStatus> = {
+  待处理: TicketStatus.PENDING, 处理中: TicketStatus.IN_PROGRESS,
+  等待客户: TicketStatus.WAITING_CUSTOMER, 等待客户反馈: TicketStatus.WAITING_CUSTOMER,
+  等待研发: TicketStatus.WAITING_RND, 已解决: TicketStatus.RESOLVED, 已关闭: TicketStatus.CLOSED,
+};
+const STATUS_LABEL_OPTIONS = ['待处理', '处理中', '等待客户', '等待研发', '已解决', '已关闭'];
 const MAX_ROWS = 200;
 
 const ymdOf = (date: Date) => `${String(date.getFullYear()).slice(2)}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`;
@@ -70,7 +78,8 @@ export class TicketsExcelService {
       formulae: [`"${TICKET_CATEGORIES.map((c) => TICKET_CATEGORY_LABELS[c]).join(',')}"`],
       errorTitle: '问题分类', error: `请选择：${TICKET_CATEGORIES.map((c) => TICKET_CATEGORY_LABELS[c]).join('/')}`,
     });
-    validations.add(`G2:G${lastRow}`, { type: 'list', allowBlank: true, showErrorMessage: true, formulae: ['"低,中,高,紧急"'] });
+    validations.add(`G2:G${lastRow}`, { type: 'list', allowBlank: true, showErrorMessage: true, formulae: [`"${STATUS_LABEL_OPTIONS.join(',')}"`], errorTitle: '状态', error: `请选择：${STATUS_LABEL_OPTIONS.join('/')}` });
+    validations.add(`H2:H${lastRow}`, { type: 'list', allowBlank: true, showErrorMessage: true, formulae: ['"低,中,高,紧急"'] });
     // 日期校验：桌面版 Excel 靠日期格式+校验约束输入；Excel 网页版/手机版点击单元格会出现日历选择器
     // 注意：exceljs 写 date 校验公式时会 new Date(formula) 再转序列号，所以必须传 Date 对象而不是序列号数字
     validations.add(`A2:A${lastRow}`, {
@@ -79,14 +88,14 @@ export class TicketsExcelService {
       promptTitle: '时间', prompt: '决定工单编号日期（RVC-YYMMDD-NNN）；Excel 网页版/手机版点击本单元格会出现日历选择；桌面版请按 YYYY-MM-DD 输入',
       showErrorMessage: true, errorTitle: '时间格式', error: '请输入有效日期，如 2026-09-08',
     });
-    validations.add(`L2:L${lastRow}`, {
+    validations.add(`M2:M${lastRow}`, {
       type: 'date', operator: 'between', allowBlank: true, showErrorMessage: true,
       formulae: [new Date(2020, 0, 1), new Date(2100, 11, 31)],
       errorTitle: '计划完成时间', error: '请输入有效日期，如 2026-09-30',
     });
     // 示例行（导入时整行忽略）
     const example = sheet.getRow(2);
-    example.values = ['2026-09-08', '示例客户公司（示例行，导入时自动忽略）', 'M2600 连接超时（示例，请删除本行）', '相机通电后网络搜索不到设备，已换网线复现（示例）', '硬件故障', '', '高', 'M2600', 'SN123456', 'RVC 2.8', 'Windows 11 / 千兆网', '', ''];
+    example.values = ['2026-09-08', '示例客户公司（示例行，导入时自动忽略）', 'M2600 连接超时（示例，请删除本行）', '相机通电后网络搜索不到设备，已换网线复现（示例）', '硬件故障', '处理中', '', '高', 'M2600', 'SN123456', 'RVC 2.8', 'Windows 11 / 千兆网', '', ''];
     example.eachCell((cell) => { cell.font = { color: { argb: 'FF979797' }, italic: true }; });
 
     const guide = workbook.addWorksheet('填写说明');
@@ -211,6 +220,9 @@ export class TicketsExcelService {
       const assigneeName = text(row, 'assignee');
       const assigneeId = await resolveAssignee(assigneeName);
       if (assigneeName && !assigneeId) { fail(`负责人「${assigneeName}」不存在`); continue; }
+      const statusLabel = text(row, 'status');
+      const status = statusLabel ? STATUS_LABELS[statusLabel] : undefined;
+      if (statusLabel && !status) { fail(`状态「${statusLabel}」无效，可选：${STATUS_LABEL_OPTIONS.join('/')}`); continue; }
       const plannedAt = dateCell(row, 'plannedAt');
 
       const organizationId = await getOrgId(customerName);
@@ -228,7 +240,8 @@ export class TicketsExcelService {
                 rawText: rawText || undefined,
                 plannedAt: plannedAt ?? undefined,
                 createdAt: occurredAt,
-                status: TicketStatus.PENDING,
+                status: status ?? TicketStatus.PENDING,
+                resolvedAt: status === TicketStatus.RESOLVED || status === TicketStatus.CLOSED ? occurredAt : undefined,
                 organization: { connect: { id: organizationId } },
                 createdBy: { connect: { id: user.id } },
                 assignee: { connect: { id: assigneeId ?? user.id } },

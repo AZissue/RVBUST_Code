@@ -43,15 +43,15 @@ describe('Ticket excel template export and batch import (e2e)', () => {
     const adminName = (await db.user.findUniqueOrThrow({ where: { username: 'admin' }, select: { name: true } })).name;
     // 示例行应被导入忽略
     const row3 = sheet.getRow(3);
-    row3.values = ['2026-09-01', `Excel导入客户-${suffix}`, 'M2600 连接超时', '相机通电后搜索不到设备，换网线复现', '硬件故障', adminName, '高', 'M2600', `SN-${suffix}`, 'RVC 2.8', 'Windows 11', '2026-09-10', '原始描述A'];
+    row3.values = ['2026-09-01', `Excel导入客户-${suffix}`, 'M2600 连接超时', '相机通电后搜索不到设备，换网线复现', '硬件故障', '处理中', adminName, '高', 'M2600', `SN-${suffix}`, 'RVC 2.8', 'Windows 11', '2026-09-10', '原始描述A'];
     const row4 = sheet.getRow(4);
-    row4.values = ['2026-09-01', `Excel导入客户-${suffix}`, '', '第二个问题描述内容', '', '', '', '', '', '', '', '', ''];
+    row4.values = ['2026-09-01', `Excel导入客户-${suffix}`, '', '第二个问题描述内容', '', '', '', '', '', '', '', '', '', ''];
     const row5 = sheet.getRow(5);
-    row5.values = ['2026-08-28', `Excel导入客户-${suffix}`, '历史问题', '八月底的历史工单', '售前咨询', '', '', '', '', '', '', '', ''];
+    row5.values = ['2026-08-28', `Excel导入客户-${suffix}`, '历史问题', '八月底的历史工单', '售前咨询', '已解决', '', '', '', '', '', '', '', '', ''];
     const row6 = sheet.getRow(6);
-    row6.values = ['2026-09-02', `Excel导入客户-${suffix}`, '坏分类行', '这行分类非法应失败', '不存在的分类', '', '', '', '', '', '', '', ''];
+    row6.values = ['2026-09-02', `Excel导入客户-${suffix}`, '坏分类行', '这行分类非法应失败', '不存在的分类', '', '', '', '', '', '', '', '', ''];
     const row7 = sheet.getRow(7);
-    row7.values = ['2026-09-02', '', '无客户行', '这行缺客户应失败', '', '', '', '', '', '', '', '', ''];
+    row7.values = ['2026-09-02', '', '无客户行', '这行缺客户应失败', '', '', '', '', '', '', '', '', '', ''];
     const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
 
     const result = (await admin.post('/api/tickets/import').attach('file', buffer, 'import.xlsx').expect(201)).body as { created: number; failed: Array<{ row: number; reason: string }> };
@@ -64,7 +64,12 @@ describe('Ticket excel template export and batch import (e2e)', () => {
     const org = await db.customerOrganization.findFirstOrThrow({ where: { name: `Excel导入客户-${suffix}` } });
     const tickets = await db.ticket.findMany({ where: { organizationId: org.id }, orderBy: { number: 'asc' } });
     expect(tickets.map((t) => t.number)).toEqual([`RVC-260828-001`, `RVC-260901-001`, `RVC-260901-002`]);
+    // 导入时指定状态：历史单以「已解决」导入并回写解决时间；指定「处理中」的同步生效
+    const historical = await db.ticket.findUniqueOrThrow({ where: { id: tickets[0].id } });
+    expect(historical.status).toBe('RESOLVED');
+    expect(historical.resolvedAt).not.toBeNull();
     const first = await db.ticket.findUniqueOrThrow({ where: { id: tickets[1].id }, include: { organization: true, events: true } });
+    expect(first.status).toBe('IN_PROGRESS');
     const firstDate = first.createdAt
     expect(`${firstDate.getFullYear()}-${firstDate.getMonth() + 1}-${firstDate.getDate()}`).toBe('2026-9-1');
     expect(first.organization.name).toBe(`Excel导入客户-${suffix}`);
