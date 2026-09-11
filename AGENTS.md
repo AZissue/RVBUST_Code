@@ -1,7 +1,7 @@
 # AGENTS.md — 手眼标定数据收集助手（项目规则，每次会话自动加载）
 
 > 本文件只放稳定不变的信息；详细状态/计划/需求按需读取下方索引，禁止一次全读。
-> 双工作区：源码真源 = `AICode/handeye-calib-tool`；运行/构建副本 = `D:\MyCode\MyHandEyeTools`。
+> 双工作区：源码真源 = `AICode/handeye-tools`；运行/构建副本 = `D:\MyCode\MyHandEyeTools`。
 > 修改先在 AICode 完成并构建+单测全绿，再同步到 D 工作区构建+单测。
 
 ## 项目一句话
@@ -15,7 +15,7 @@
 - 技术栈：C++17 / Qt 5.14.2 (msvc2017_64) / CMake + Visual Studio 2026 /
   RVC SDK / HandEyeSDK / RVBUST Vis(OSG) / Qt5 Network。
 - 构建（AICode）：
-  `cmake --build "C:\Users\rvbust\Documents\Codex\AICode\handeye-calib-tool\build" --config Release`
+  `cmake --build "C:\Users\rvbust\Documents\Codex\AICode\handeye-tools\build" --config Release`
 - 构建（运行工作区）：
   `cmake --build "D:\MyCode\MyHandEyeTools\build" --config Release`
 - 测试（两处相同）：`ctest --test-dir <上述 build 目录> -C Release --output-on-failure`
@@ -62,7 +62,7 @@
 - 提交前构建+ctest 全绿；两处工作区都验证。
 - 单位约定：卡片与工具默认 mm + 度；FANUC WPR 按 RVC 导出实测顺序
   （WPR=绕 Z,Y,X，与标准手册相反，见 PROJECT.md ADR）。
-- 提交信息：Conventional Commits，scope=`handeye-calib-tool`，身份 `AI-codex`；
+- 提交信息：Conventional Commits，scope=`handeye-tools`，身份 `AI-codex`；
   提交信息默认英文。
 
 ## 边界与禁止事项

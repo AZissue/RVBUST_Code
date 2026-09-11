@@ -21,7 +21,7 @@
 2. 检查 PROJECT.md / PLAN.md 是否因本次工作需要同步修改（需求变更、技术决策、
    阶段完成），需要则一并更新；
 3. 运行两处工作区构建与测试，确认无回归；
-4. 本地提交（Conventional Commits，scope=handeye-calib-tool）；不 push，
+4. 本地提交（Conventional Commits，scope=handeye-tools）；不 push，
    除非我明确说「推送」。
 全程禁止破坏性命令，除非用户明确要求。
 ```

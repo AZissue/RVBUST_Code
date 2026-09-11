@@ -1,5 +1,10 @@
 # 推送指南（2026-09-10）
 
+> ⚠️ 已过时（2026-09-11）：本文件记录的 `handeye-calib-tool/tools-panel` 推送流程已被
+> 取代。当前状态见 STATUS.md —— 分支 `HandEyeTools` 保存 D 工作区原样历史（在 D 工作区
+> `git push AICode HandEyeTools` 即为快进推送），`main` 上的项目目录已改名为
+> `handeye-tools/`。
+
 ## 当前状态
 
 本地已提交改动（commit: `85429c3`）到 `hand-eye-tools` 分支，包括：

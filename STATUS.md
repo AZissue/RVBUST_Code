@@ -18,17 +18,17 @@
 - 正在进行的文件：无（本轮 UI 改动已完成）。
 - 卡点 / 风险：无新增。
 - 上次会话结束已提交/推送：是。2026-09-11 双线推送：①AICode 的 HandEyeTools 分支按
-  用户要求强推为 D 工作区原样历史（项目在仓库根，tip c0fd3f3；已清理 .vs 并写入
-  .gitignore）；②AICode main 同步到当前版本（monorepo 的 handeye-calib-tool/ 目录，
-  提交 2098477）。两处构建 + ctest 全绿。
-- 待用户确认：是否把 AICode 的项目目录 handeye-calib-tool 改名为 HandEyeTools（与公约
-  「目录名只用小写+连字符」冲突，需同时改根 README 与 AGENTS/GOVERNANCE）。
+  用户要求强推为 D 工作区原样历史（项目在仓库根，tip 9588a42；已清理 .vs 并写入
+  .gitignore）；②AICode main 同步当前版本，并把 monorepo 里的项目目录由
+  `handeye-calib-tool` 改名为 `handeye-tools`（符合公约小写+连字符命名）。两处构建 +
+  ctest 全绿。
 
 ## ✅ 已完成
 
-- [x] 2026-09-11 推送当前版本到 AICode：①HandEyeTools 分支强推为 D 工作区历史
-  （c0fd3f3，项目在仓库根）；②main 同步当前版本（handeye-calib-tool/，提交 2098477）。
-  同时清理 D 仓库 170 个 .vs 缓存（1.9 MB）并加入 .gitignore，删除 AICode 本地过期分支
+- [x] 2026-09-11 推送当前版本到 AICode 并改名项目：①HandEyeTools 分支强推为 D 工作区
+  历史（项目在仓库根）；②main 同步当前版本，项目目录 handeye-calib-tool → handeye-tools
+  （根 README 索引、AGENTS/SESSION_PROMPTS 的 scope 与构建路径同步更新）。同时清理 D
+  仓库 170 个 .vs 缓存（1.9 MB）并加入 .gitignore，删除 AICode 本地过期分支
   handeye-calib-tool/tools-panel（b7a78a4）与已被强推取代的 HandEyeTools（b6301b4）；
   构建 + ctest 全绿。
 - [x] 2026-09-10 阶段 8 UI 优化与修复（前台激活+日志布局+启动默认显示）：①SidePanel

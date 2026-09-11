@@ -21,7 +21,7 @@
 ```
 
 ## 阶段 0：仓库导入与公约（已完成）
-- 目标：v1.0 全功能导入 AICode monorepo（handeye-calib-tool 目录 + README + 根索引）。
+- 目标：v1.0 全功能导入 AICode monorepo（handeye-tools 目录 + README + 根索引）。
 - 涉及文件：AICode 根 README、项目 README、src/、tests/。
 - 验证：`feat(handeye-calib-tool): import ...` 已提交；门禁（无密钥/大文件）通过。
 - 依赖：无。
