@@ -66,7 +66,7 @@ export class TicketsService {
     const statusList = Object.values(TicketStatus);
     const [total, items, ...statusCounts] = await this.prisma.$transaction([
       this.prisma.ticket.count({ where }),
-      this.prisma.ticket.findMany({ where, include: visibleInclude(user), omit: { rawText: user.role === 'customer', requestKey: true, deletedReason: user.role === 'customer' }, orderBy: [{ priority: 'desc' }, { updatedAt: 'desc' }], skip: (safePage - 1) * PAGE_SIZE, take: PAGE_SIZE }),
+      this.prisma.ticket.findMany({ where, include: visibleInclude(user), omit: { rawText: user.role === 'customer', requestKey: true, deletedReason: user.role === 'customer' }, orderBy: [{ number: 'desc' }], skip: (safePage - 1) * PAGE_SIZE, take: PAGE_SIZE }),
       ...statusList.map((status) => this.prisma.ticket.count({ where: { AND: [metricsWhere, { status }] } })),
     ]);
     return { items, total, page: safePage, pageSize: PAGE_SIZE, byStatus: Object.fromEntries(statusList.map((status, index) => [status, statusCounts[index]])) as Partial<Record<TicketStatus, number>> };
@@ -74,7 +74,7 @@ export class TicketsService {
 
   /** 全量列表（引用数据下拉用，如工作记录关联工单）；数据量大时请改用分页 list */
   listAll(user: AuthUser, search?: string, statuses?: TicketStatus[], mine = false) {
-    return this.prisma.ticket.findMany({ where: this.buildWhere(user, search, statuses, mine), include: visibleInclude(user), omit: { rawText: user.role === 'customer', requestKey: true, deletedReason: user.role === 'customer' }, orderBy: [{ priority: 'desc' }, { updatedAt: 'desc' }] });
+    return this.prisma.ticket.findMany({ where: this.buildWhere(user, search, statuses, mine), include: visibleInclude(user), omit: { rawText: user.role === 'customer', requestKey: true, deletedReason: user.role === 'customer' }, orderBy: [{ number: 'desc' }] });
   }
 
   async get(user: AuthUser, id: string) {
