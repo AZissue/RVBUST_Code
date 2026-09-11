@@ -18,7 +18,15 @@ namespace RobotPose {
 
 struct Pose {
     std::array<double, 3> xyz{};   // mm
-    std::array<double, 3> rpy{};   // degrees, static XYZ
+    // Modbus adapters: degrees, static XYZ euler angles (R = Rz*Ry*Rx).
+    // UR Realtime adapter (URRealtimeReader): UR reports actual_tcp_pose as a
+    // rotation VECTOR (axis-angle, radians), not a static-XYZ euler angle.
+    // We do NOT convert it to degrees/euler here (units would be wrong if we
+    // just relabeled radians as degrees). Callers reading from the UR adapter
+    // must treat rpy as (rx, ry, rz) axis-angle in radians and label it as
+    // such in the UI/log; do not feed it into eyeToHand/eyeInHand transforms
+    // that assume static-XYZ degrees without an explicit conversion.
+    std::array<double, 3> rpy{};   // degrees, static XYZ (Modbus) OR axis-angle radians (UR)
 };
 
 enum class Status {

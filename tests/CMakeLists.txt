@@ -12,6 +12,9 @@ set(TEST_SOURCES
     test_pixel_to_3d.cpp
     test_calibration_service.cpp
     test_robot_pose.cpp
+    test_pose_guide.cpp
+    test_data_quality_check.cpp
+    test_board_pose_fit.cpp
 )
 
 add_executable(unit_tests ${TEST_SOURCES}
@@ -21,6 +24,7 @@ add_executable(unit_tests ${TEST_SOURCES}
     ${CMAKE_SOURCE_DIR}/src/logic/DataManager.cpp
     ${CMAKE_SOURCE_DIR}/src/logic/CalibrationService.cpp
     ${CMAKE_SOURCE_DIR}/src/logic/RobotPose.cpp
+    ${CMAKE_SOURCE_DIR}/src/logic/URRealtimeReader.cpp
 )
 
 target_include_directories(unit_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)

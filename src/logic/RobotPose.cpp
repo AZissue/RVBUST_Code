@@ -1,6 +1,7 @@
 #include "logic/RobotPose.h"
 
 #include <QTcpSocket>
+#include <QNetworkProxy>
 #include <QDataStream>
 #include <QThread>
 
@@ -27,6 +28,11 @@ bool ModbusTcpReader::connect(const QString& host, quint16 port)
 {
     disconnect();
     m_socket = new QTcpSocket;
+    // Some environments (notably VMs) have Qt auto-detect a system proxy that
+    // does not support raw TCP sockets, failing with "The proxy type is
+    // invalid for this operation" even though there is no real proxy in the
+    // way. Force no proxy for this direct robot connection.
+    m_socket->setProxy(QNetworkProxy::NoProxy);
     m_socket->connectToHost(host, port);
     if (!m_socket->waitForConnected(m_cfg.timeoutMs)) {
         m_error = QStringLiteral("连接 %1:%2 失败: %3")

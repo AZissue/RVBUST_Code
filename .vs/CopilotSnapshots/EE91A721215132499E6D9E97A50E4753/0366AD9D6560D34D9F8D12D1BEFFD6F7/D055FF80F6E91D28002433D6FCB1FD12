@@ -1,0 +1,62 @@
+﻿#pragma once
+#include <QWidget>
+#include <QFrame>
+#include <QLabel>
+#include <QTextEdit>
+#include <QPushButton>
+#include <QScrollArea>
+#include "models/CaptureRecord.h"
+
+class SidePanel : public QWidget {
+    Q_OBJECT
+public:
+    explicit SidePanel(QWidget* parent = nullptr);
+
+    void setTip(const QString& text, bool isError = false);
+    void setCalibrationResult(const QString& text);
+    void updateFilePreview(bool eyeInHand, bool markerType,
+                           const std::vector<CaptureRecord>& records);
+
+    // ── Stage 8 advisory cards (report only, never block the workflow) ──
+    // Pose guidance: "current vs nearest collected" distance + suggestion.
+    void setPoseGuide(const QString& text, bool warning = false);
+    // Quality report: graded HTML (Pass/Warn/Fail + overall conclusion).
+    void setQualityReport(const QString& html);
+
+signals:
+    void qualityCheckRequested();
+
+private:
+    // Top area: merged timeline (tips + pose guide + quality check), append-only,
+    // auto-scrolls to the latest entry. Kept inside a QScrollArea so users can
+    // still scroll back to previous entries.
+    QFrame* m_timelineCard;
+    QPushButton* m_btnRunQuality;
+    QTextEdit* m_timeline;
+    void appendTimeline(const QString& label, const QString& colorHex, const QString& text);
+
+    // Middle area: notes (collapsible, default collapsed; scrollable content).
+    QFrame* m_notesCard;
+    QPushButton* m_btnCollapseNotes;
+    QScrollArea* m_notesScroll;
+    QWidget* m_notesContent;
+
+    // Bottom area: file preview (fixed).
+    QFrame* m_previewCard;
+    QTextEdit* m_previewText;
+    QPushButton* m_tabCamTarget;
+    QPushButton* m_tabRobotPose;
+    QPushButton* m_tabRobotTarget;
+    QPushButton* m_tabCalibResult;
+
+    void showMarkerPreview(const std::vector<CaptureRecord>& records);
+    void showTcpPreview(const QString& key, bool eyeInHand,
+                        const std::vector<CaptureRecord>& records);
+    void showCalibrationResult();
+
+    bool m_eyeInHand = true;
+    bool m_markerType = true;
+    QString m_activeTab;
+    QString m_calibResult;
+    std::vector<CaptureRecord> m_cachedRecords;
+};

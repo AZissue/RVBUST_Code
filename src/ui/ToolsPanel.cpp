@@ -933,7 +933,7 @@ void ToolsPanel::buildRobotCommPage(QStackedWidget* stack)
     auto* page = new QWidget(stack);
     auto* pageLayout = new QVBoxLayout(page);
 
-    auto* group = new QGroupBox(QStringLiteral("机器人通信（Modbus TCP）"), page);
+    auto* group = new QGroupBox(QStringLiteral("机器人通信"), page);
     auto* form = new QFormLayout(group);
     form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
 
@@ -942,6 +942,7 @@ void ToolsPanel::buildRobotCommPage(QStackedWidget* stack)
     protoRow->setSpacing(8);
     m_robotProtocol = new ArrowComboBox(group);
     m_robotProtocol->addItem(QStringLiteral("Modbus TCP"));
+    m_robotProtocol->addItem(QStringLiteral("UR Realtime (30003)"));
     m_robotProtocol->setStyleSheet(Theme::comboBoxStyle());
     protoRow->addWidget(m_robotProtocol, 1);
     m_robotStatus = new QLabel(QStringLiteral("未连接"), group);
@@ -965,36 +966,44 @@ void ToolsPanel::buildRobotCommPage(QStackedWidget* stack)
     hostRow->addWidget(m_robotPort);
     form->addRow(QStringLiteral("IP / 端口"), hostRow);
 
+    // Modbus-only fields, grouped so they can be hidden together for UR.
+    m_modbusFieldsWidget = new QWidget(group);
+    auto* modbusLayout = new QFormLayout(m_modbusFieldsWidget);
+    modbusLayout->setContentsMargins(0, 0, 0, 0);
+    modbusLayout->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+
     // Format + scale
     auto* fmtRow = new QHBoxLayout();
     fmtRow->setSpacing(8);
-    m_robotFormat = new ArrowComboBox(group);
+    m_robotFormat = new ArrowComboBox(m_modbusFieldsWidget);
     m_robotFormat->addItem(QStringLiteral("Float32"));
     m_robotFormat->addItem(QStringLiteral("Int32×系数"));
     m_robotFormat->addItem(QStringLiteral("Int16×系数"));
     m_robotFormat->setStyleSheet(Theme::comboBoxStyle());
     fmtRow->addWidget(m_robotFormat, 1);
-    m_robotScale = makeTextInput(group);
+    m_robotScale = makeTextInput(m_modbusFieldsWidget);
     m_robotScale->setText(QStringLiteral("1.0"));
     m_robotScale->setFixedWidth(72);
     fmtRow->addWidget(m_robotScale);
-    form->addRow(QStringLiteral("格式 / 系数"), fmtRow);
+    modbusLayout->addRow(QStringLiteral("格式 / 系数"), fmtRow);
 
     // Start address + unit id
     auto* addrRow = new QHBoxLayout();
     addrRow->setSpacing(8);
-    m_robotStartAddr = new QSpinBox(group);
+    m_robotStartAddr = new QSpinBox(m_modbusFieldsWidget);
     m_robotStartAddr->setRange(0, 65535);
     m_robotStartAddr->setValue(0);
     m_robotStartAddr->setStyleSheet(Theme::spinBoxStyle());
     addrRow->addWidget(m_robotStartAddr);
-    m_robotUnitId = new QSpinBox(group);
+    m_robotUnitId = new QSpinBox(m_modbusFieldsWidget);
     m_robotUnitId->setRange(1, 255);
     m_robotUnitId->setValue(1);
     m_robotUnitId->setStyleSheet(Theme::spinBoxStyle());
     addrRow->addWidget(m_robotUnitId);
     addrRow->addStretch();
-    form->addRow(QStringLiteral("起始寄存器 / 站号"), addrRow);
+    modbusLayout->addRow(QStringLiteral("起始寄存器 / 站号"), addrRow);
+
+    form->addRow(QString(), m_modbusFieldsWidget);
 
     // Auto-read on capture (kept here in the tools panel, not on the main UI)
     m_robotAutoReadCheck = new QCheckBox(
@@ -1021,6 +1030,7 @@ void ToolsPanel::buildRobotCommPage(QStackedWidget* stack)
         .arg(Theme::TEXT_HINT).arg(Theme::FONT_HINT));
     hint->setText(QStringLiteral(
         "连接成功后，主界面会显示「拍照位姿」与「戳点位姿」按钮。"
+        "UR Realtime 协议下机器人主动推流，读取到的姿态分量为轴角(弧度)而非欧拉角度数。"
         "无真机时可点击「模拟连接成功」验证按钮显示与样式。"));
     form->addRow(QString(), hint);
 
@@ -1028,17 +1038,28 @@ void ToolsPanel::buildRobotCommPage(QStackedWidget* stack)
     pageLayout->addStretch();
     stack->addWidget(page);
 
+    auto updateProtocolFields = [this](int index) {
+        const bool isModbus = (index == 0);
+        m_modbusFieldsWidget->setVisible(isModbus);
+        m_robotPort->setValue(isModbus ? 502 : 30003);
+    };
+    connect(m_robotProtocol, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, updateProtocolFields);
+    updateProtocolFields(0);
+
     connect(m_btnRobotConnect, &QPushButton::clicked, this, [this]() {
         if (m_btnRobotConnect->text() == QStringLiteral("连接")) {
+            const int protocol = m_robotProtocol->currentIndex();
             bool okScale = false;
             const double scale = m_robotScale->text().trimmed().toDouble(&okScale);
-            if (!okScale) {
+            if (protocol == 0 && !okScale) {
                 setRobotStatus(QStringLiteral("系数格式无效"), true);
                 return;
             }
             emit robotConnectRequested(
                 m_robotHost->text().trimmed(),
                 static_cast<quint16>(m_robotPort->value()),
+                protocol,
                 m_robotFormat->currentIndex(), scale,
                 static_cast<quint8>(m_robotUnitId->value()),
                 static_cast<quint16>(m_robotStartAddr->value()));

@@ -13,6 +13,7 @@ set(SOURCES
     logic/PointCloudUtils.cpp
     logic/CalibrationService.cpp
     logic/RobotPose.cpp
+    logic/URRealtimeReader.cpp
     logic/GeometryTools.h
     sdk/HandEyeSDKBridge.cpp
     ui/Theme.cpp

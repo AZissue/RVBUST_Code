@@ -11,4 +11,5 @@ private slots:
     void modbusTimeout();
     void notConnected();
     void statusTextMapped();
+    void urRealtimePose();
 };

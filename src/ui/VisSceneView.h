@@ -59,6 +59,23 @@ public:
     void setObjectColor(int handle, const std::array<float, 3>& color);
     void setObjectTransparency(int handle, float alpha);
 
+    // ── Board-pose overlay (stage 8, advisory) ──
+    // A fitted calibration-board frame (center + orientation + in-plane size).
+    struct BoardFrame {
+        int frameNo = 0;                     // 0 = current frame; >0 = history
+        std::array<float, 3> centerMM{};
+        std::array<float, 4> quat{};         // (x, y, z, w), same as addPlane
+        float extentXMM = 0.0f;              // along board x-axis
+        float extentYMM = 0.0f;              // along board y-axis
+    };
+    // Current captured frame's fitted board: semi-transparent plane + RGB axes.
+    void setBoardFrame(const BoardFrame& frame);
+    void clearBoardFrame();
+    // Optional overlay of past saved frames (semi-transparent planes + labels).
+    void setBoardHistory(const std::vector<BoardFrame>& frames);
+    void clearBoardHistory();
+    void setBoardHistoryVisible(bool visible);
+
     // 2D image overlay (for stereo camera right-eye preview)
     void showImage(const QImage& img);
     void hideImage();
@@ -85,6 +102,7 @@ protected:
 
 private slots:
     void resetViewNoAnim();
+    void onHistoryToggled(bool visible);
 
 public slots:
     // Called from the native WNDPROC (render thread) via queued invocation.
@@ -119,6 +137,7 @@ private:
     void handleClickResult(const PickResult& result);
 
     QPushButton* m_resetButton = nullptr;
+    QPushButton* m_historyButton = nullptr;   // toggles board-history overlay
     QWidget* m_containerWidget = nullptr;
     QWidget* m_viewport = nullptr;
     QLabel* m_placeholder = nullptr;
@@ -127,6 +146,11 @@ private:
     QLabel* m_hoverTip = nullptr;   // light-weight hover label (white text +
                                     // black outline, no tooltip window)
     bool m_shuttingDown = false;
+
+    // Board-pose overlay state (stage 8)
+    std::vector<int> m_boardFrameHandles;     // current-frame objects
+    std::vector<int> m_boardHistoryHandles;   // history-frame objects
+    bool m_boardHistoryVisible = false;
 
     QTimer* m_hoverTimer = nullptr;
     QTimer* m_resizeTimer = nullptr;

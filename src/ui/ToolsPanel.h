@@ -27,7 +27,7 @@ public:
 
 signals:
     void robotConnectRequested(const QString& host, quint16 port,
-                               int format, double scale,
+                               int protocol, int format, double scale,
                                quint8 unitId, quint16 startAddress);
     void robotDisconnectRequested();
     void robotSimulateConnectRequested();
@@ -104,10 +104,11 @@ private:
     QPushButton* m_transformCopyBtn = nullptr;
     QString m_transformValues;  // last computed base coords (values only)
 
-    // Robot communication tool (Modbus TCP)
+    // Robot communication tool (Modbus TCP / UR Realtime)
     QComboBox* m_robotProtocol = nullptr;
     QLineEdit* m_robotHost = nullptr;
     QSpinBox* m_robotPort = nullptr;
+    QWidget* m_modbusFieldsWidget = nullptr;   // Modbus-only rows (hidden for UR)
     QSpinBox* m_robotStartAddr = nullptr;
     QComboBox* m_robotFormat = nullptr;
     QLineEdit* m_robotScale = nullptr;

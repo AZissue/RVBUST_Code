@@ -11,6 +11,9 @@
 #include "test_pixel_to_3d.h"
 #include "test_calibration_service.h"
 #include "test_robot_pose.h"
+#include "test_pose_guide.h"
+#include "test_data_quality_check.h"
+#include "test_board_pose_fit.h"
 
 int main(int argc, char** argv)
 {
@@ -56,6 +59,18 @@ int main(int argc, char** argv)
     {
         TestRobotPose t9;
         status |= QTest::qExec(&t9, argc, argv);
+    }
+    {
+        TestPoseGuide t10;
+        status |= QTest::qExec(&t10, argc, argv);
+    }
+    {
+        TestDataQualityCheck t11;
+        status |= QTest::qExec(&t11, argc, argv);
+    }
+    {
+        TestBoardPoseFit t12;
+        status |= QTest::qExec(&t12, argc, argv);
     }
     return status;
 }

@@ -1,0 +1,108 @@
+﻿set(SOURCES
+    main.cpp
+    app/MainWindow.cpp
+    models/CalibrationMode.h
+    models/CaptureRecord.h
+    logic/AppConfig.cpp
+    logic/LogManager.cpp
+    logic/DataManager.cpp
+    logic/CameraManager.cpp
+    logic/RuntimeLog.cpp
+    logic/DetectionEngine.cpp
+    logic/CaptureFlow.cpp
+    logic/PointCloudUtils.cpp
+    logic/CalibrationService.cpp
+    logic/RobotPose.cpp
+    logic/URRealtimeReader.cpp
+    logic/GeometryTools.h
+    sdk/HandEyeSDKBridge.cpp
+    ui/Theme.cpp
+    ui/ToastOverlay.cpp
+    ui/DataInputCard.cpp
+    ui/DataInputArea.cpp
+    ui/ActionButtons.cpp
+    ui/TopNavBar.cpp
+    ui/ModeSelector.cpp
+    ui/SidePanel.cpp
+    ui/Image2DView.cpp
+    ui/VisSceneView.cpp
+    ui/ToolsPanel.cpp
+    ui/DeviceListDialog.cpp
+    ui/SettingsDialog.cpp
+)
+
+add_executable(${PROJECT_NAME} ${SOURCES})
+
+target_include_directories(${PROJECT_NAME} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/..
+)
+
+target_link_libraries(${PROJECT_NAME} PRIVATE
+    Qt5::Widgets
+    Qt5::Core
+    Qt5::Gui
+    Qt5::Concurrent
+    Qt5::Network
+    RVC::RVC
+    HandEyeSDK::HandEyeSDK
+)
+
+set(THIRD_PARTY "${CMAKE_SOURCE_DIR}/third_party")
+
+if(RVBUSTVis_FOUND)
+    target_link_libraries(${PROJECT_NAME} PRIVATE RVBUSTVis::Vis)
+
+    if(WIN32)
+        file(GLOB OSG_DLLS      "${THIRD_PARTY}/OSG/bin/*.dll")
+        file(GLOB OSG_PLUGINS   "${THIRD_PARTY}/OSG/bin/osgPlugins-3.6.5/*.dll")
+
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${OSG_DLLS} $<TARGET_FILE_DIR:${PROJECT_NAME}>
+            COMMAND ${CMAKE_COMMAND} -E make_directory
+                "$<TARGET_FILE_DIR:${PROJECT_NAME}>/osgPlugins-3.6.5"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${OSG_PLUGINS}
+                "$<TARGET_FILE_DIR:${PROJECT_NAME}>/osgPlugins-3.6.5/"
+            COMMENT "Deploying OSG 3.6.5 runtime DLLs..."
+        )
+    endif()
+endif()
+
+if(WIN32)
+    set_target_properties(${PROJECT_NAME} PROPERTIES
+        WIN32_EXECUTABLE TRUE
+    )
+
+    file(GLOB QT5_DLLS      "${THIRD_PARTY}/Qt5/bin/*.dll")
+    file(GLOB RVC_DLLS      "${THIRD_PARTY}/RVC/runtime/*.dll")
+    file(GLOB HANDEYE_DLLS  "${THIRD_PARTY}/HandEyeSDK/bin/*.dll")
+
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        # Qt5 runtime DLLs (Release + Debug)
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${QT5_DLLS} $<TARGET_FILE_DIR:${PROJECT_NAME}>
+        # Qt5 platform plugin
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            "$<TARGET_FILE_DIR:${PROJECT_NAME}>/platforms"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${THIRD_PARTY}/Qt5/plugins/platforms/qwindows$<$<CONFIG:Debug>:d>.dll"
+            "$<TARGET_FILE_DIR:${PROJECT_NAME}>/platforms/"
+        # RVC + HandEyeSDK
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${RVC_DLLS} $<TARGET_FILE_DIR:${PROJECT_NAME}>
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${HANDEYE_DLLS} $<TARGET_FILE_DIR:${PROJECT_NAME}>
+        COMMENT "Deploying Qt5 + RVC + HandEyeSDK runtime DLLs..."
+    )
+
+    # VC++ runtime (app-local deployment): the target PC needs no vc_redist.
+    # The exe requires MSVCP140/VCRUNTIME140/VCRUNTIME140_1; HandEyeSDK.dll
+    # additionally needs MSVCP140_2, VCOMP140 and CONCRT140.
+    foreach(_vcrt msvcp140.dll msvcp140_2.dll vcruntime140.dll vcruntime140_1.dll
+                  VCOMP140.dll CONCRT140.dll)
+        if(EXISTS "C:/Windows/System32/${_vcrt}")
+            add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "C:/Windows/System32/${_vcrt}" "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
+                COMMENT "Deploying VC runtime ${_vcrt}")
+        endif()
+    endforeach()
+endif()

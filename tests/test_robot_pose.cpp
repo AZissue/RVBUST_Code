@@ -7,6 +7,7 @@
 #include <winsock2.h>
 
 #include "logic/RobotPose.h"
+#include "logic/URRealtimeReader.h"
 
 using namespace RobotPose;
 
@@ -169,6 +170,99 @@ private:
     std::thread m_thread;
 };
 
+// Minimal UR "Primary"/Realtime interface mock: on accept, pushes a single
+// length-prefixed packet whose actual_tcp_pose block (6 big-endian doubles,
+// at the fixed offset used by URRealtimeReader) carries a known pose, then
+// closes. Meters/radians, matching the real protocol's units.
+class MockURServer {
+public:
+    ~MockURServer() { stop(); }
+
+    bool start()
+    {
+        WSADATA wsa;
+        if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
+            return false;
+        m_listen = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (m_listen == INVALID_SOCKET)
+            return false;
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        addr.sin_port = 0;
+        if (bind(m_listen, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR)
+            return false;
+        if (listen(m_listen, 4) == SOCKET_ERROR)
+            return false;
+        sockaddr_in bound{};
+        int len = sizeof(bound);
+        if (getsockname(m_listen, reinterpret_cast<sockaddr*>(&bound), &len) == SOCKET_ERROR)
+            return false;
+        m_port = ntohs(bound.sin_port);
+        m_thread = std::thread([this]() { serve(); });
+        return true;
+    }
+
+    quint16 port() const { return m_port; }
+
+    void stop()
+    {
+        if (m_listen != INVALID_SOCKET) {
+            closesocket(m_listen);
+            m_listen = INVALID_SOCKET;
+        }
+        if (m_thread.joinable())
+            m_thread.join();
+        WSACleanup();
+    }
+
+private:
+    static void pushBE(QByteArray& out, double v)
+    {
+        quint64 raw = 0;
+        std::memcpy(&raw, &v, sizeof(raw));
+        for (int shift = 56; shift >= 0; shift -= 8)
+            out.push_back(static_cast<char>((raw >> shift) & 0xFF));
+    }
+
+    void serve()
+    {
+        SOCKET c = accept(m_listen, nullptr, nullptr);
+        if (c == INVALID_SOCKET)
+            return;
+
+        // body layout must match URRealtimeReader::kPoseOffset (8 + 48*4):
+        // timestamp(8) + target_q(48) + target_qd(48) + target_tcp_pose(48) +
+        // actual_q(48) + actual_tcp_pose(48)
+        QByteArray body;
+        pushBE(body, 12345.6789);              // timestamp
+        for (int i = 0; i < 6; ++i) pushBE(body, 0.0);   // target_q
+        for (int i = 0; i < 6; ++i) pushBE(body, 0.0);   // target_qd
+        for (int i = 0; i < 6; ++i) pushBE(body, 0.0);   // target_tcp_pose
+        for (int i = 0; i < 6; ++i) pushBE(body, 0.0);   // actual_q
+        // actual_tcp_pose: x,y,z in meters + rx,ry,rz axis-angle radians
+        pushBE(body, 0.1);
+        pushBE(body, 0.2);
+        pushBE(body, 0.3);
+        pushBE(body, 1.5707963267948966); // pi/2
+        pushBE(body, 0.0);
+        pushBE(body, 0.0);
+
+        QByteArray packet;
+        const quint32 msgLen = static_cast<quint32>(body.size() + 4);
+        for (int shift = 24; shift >= 0; shift -= 8)
+            packet.push_back(static_cast<char>((msgLen >> shift) & 0xFF));
+        packet.append(body);
+
+        ::send(c, packet.constData(), static_cast<int>(packet.size()), 0);
+        closesocket(c);
+    }
+
+    SOCKET m_listen = INVALID_SOCKET;
+    quint16 m_port = 0;
+    std::thread m_thread;
+};
+
 } // namespace
 
 void TestRobotPose::modbusFloat32()
@@ -254,4 +348,25 @@ void TestRobotPose::statusTextMapped()
     QVERIFY(statusText(Status::Ok).contains(QStringLiteral("成功")));
     QVERIFY(statusText(Status::Timeout).contains(QStringLiteral("超时")));
     QVERIFY(statusText(Status::NotConnected).contains(QStringLiteral("未连接")));
+}
+
+void TestRobotPose::urRealtimePose()
+{
+    MockURServer server;
+    QVERIFY(server.start());
+    URRealtimeReader reader;
+    reader.setTimeoutMs(2000);
+    QVERIFY(reader.connect(QStringLiteral("127.0.0.1"), server.port()));
+    Pose pose;
+    QCOMPARE(reader.readPose(pose), Status::Ok);
+    // meters -> millimeters
+    QCOMPARE(pose.xyz[0], 100.0);
+    QCOMPARE(pose.xyz[1], 200.0);
+    QCOMPARE(pose.xyz[2], 300.0);
+    // axis-angle radians, passed through unchanged (NOT converted to degrees)
+    QVERIFY(qAbs(pose.rpy[0] - 1.5707963267948966) < 1e-9);
+    QCOMPARE(pose.rpy[1], 0.0);
+    QCOMPARE(pose.rpy[2], 0.0);
+    reader.disconnect();
+    server.stop();
 }

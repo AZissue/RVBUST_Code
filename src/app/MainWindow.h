@@ -9,6 +9,8 @@
 #include "logic/AppConfig.h"
 #include "logic/CalibrationService.h"
 #include "logic/RobotPose.h"
+#include "logic/URRealtimeReader.h"
+#include "logic/BoardPoseFit.h"
 #include "ui/ActionButtons.h"
 
 // Forward declarations
@@ -67,17 +69,25 @@ private:
     void onCalibrate();
     void onCalibrationFinished();
     void onRobotConnect(const QString& host, quint16 port,
-                        int format, double scale,
+                        int protocol, int format, double scale,
                         quint8 unitId, quint16 startAddress);
     void onRobotDisconnect();
     void onRobotRead();
     void onRobotReadTouch();
     void onRobotSimulateConnect();
     bool readRobotPose(RobotPose::Pose& pose);
+    QString robotLastError() const;
     void updateRobotReadBar();
 
     // Card updates
     void onCardChanged(const QString& field, const QString& value);
+
+    // Stage 8 advisory features (report only, never block the workflow)
+    void updatePoseGuide(const QString& poseText);
+    void refreshQualityReport();
+    void onBoardMarkers(const std::vector<std::array<float, 3>>& pts3d);
+    void syncBoardHistory();
+    void refreshBoardOverlay();
 
     // State helpers
     void setBusy(const QString& text, ActionButtons::BusyTarget target);
@@ -130,8 +140,18 @@ private:
     // Stage 7: in-app calibration (async, UI stays responsive)
     QFutureWatcher<CalibrationService::Result>* m_calibWatcher = nullptr;
 
+    // Stage 8: board-pose overlay (advisory visualization)
+    struct BoardFrameEntry {
+        int frameNo = 0;
+        BoardPoseFit::Pose pose;
+    };
+    std::vector<BoardFrameEntry> m_boardFrames;      // one fitted pose per saved frame
+    BoardPoseFit::Pose m_pendingBoardPose;           // last detected frame's board pose
+
     // Stage 8: robot communication (isolated, default off)
     RobotPose::ModbusTcpReader m_robotReader;
+    RobotPose::URRealtimeReader m_urReader;
+    int m_robotProtocol = 0;           // 0 = Modbus TCP, 1 = UR Realtime
     bool m_robotAutoRead = false;
     bool m_robotConnected = false;     // logical connection (real or simulated)
     bool m_robotSimulated = false;     // "模拟连接成功" — no real socket

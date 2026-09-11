@@ -17,6 +17,7 @@
 #include <QtConcurrent/QtConcurrentRun>
 #include "logic/PointCloudUtils.h"
 #include "logic/RuntimeLog.h"
+#include "logic/TransformTools.h"
 
 // Light-weight hover label: transparent background, white text with a black
 // outline, so it stays readable over any scene content — no tooltip window,
@@ -480,6 +481,23 @@ void VisSceneView::setupToolbar()
         .arg(Theme::FONT_HINT).arg(Theme::PRIMARY));
     QObject::connect(m_resetButton, SIGNAL(clicked()), this, SLOT(resetViewNoAnim()));
 
+    // "叠加历史" toggle: shows/hides the accumulated board-pose history frames.
+    m_historyButton = new QPushButton(QStringLiteral("叠加历史"), m_containerWidget);
+    m_historyButton->setCheckable(true);
+    m_historyButton->setChecked(m_boardHistoryVisible);
+    m_historyButton->setCursor(Qt::PointingHandCursor);
+    m_historyButton->setToolTip(QStringLiteral("叠加显示历史帧的标定板姿态"));
+    m_historyButton->setAttribute(Qt::WA_NativeWindow, true);
+    m_historyButton->setAttribute(Qt::WA_DontCreateNativeAncestors, true);
+    m_historyButton->setAttribute(Qt::WA_TranslucentBackground, true);
+    m_historyButton->setStyleSheet(QStringLiteral(
+        "QPushButton { color: #FFF; background: rgba(0,0,0,0.5); border: none; "
+        "border-radius: 4px; padding: 4px 12px; font-size: %1px; }"
+        "QPushButton:hover { background: rgba(0,0,0,0.65); color: %2; }"
+        "QPushButton:checked { color: #000; background: %2; }")
+        .arg(Theme::FONT_HINT).arg(Theme::PRIMARY));
+    QObject::connect(m_historyButton, SIGNAL(toggled(bool)), this, SLOT(onHistoryToggled(bool)));
+
     m_pickHint = new QLabel(QStringLiteral("识别后可点击场景中的点选择填充"), m_containerWidget);
     m_pickHint->setAttribute(Qt::WA_NativeWindow, true);
     m_pickHint->setAttribute(Qt::WA_DontCreateNativeAncestors, true);
@@ -811,6 +829,10 @@ void VisSceneView::clear()
     d->reverseMap.clear();
     d->nextHandle = 1;
 
+    // Board-pose overlay handles are gone with the scene.
+    m_boardFrameHandles.clear();
+    m_boardHistoryHandles.clear();
+
     d->view->Clear();
 
     d->groundHandle.Reset();
@@ -1100,6 +1122,122 @@ void VisSceneView::setObjectTransparency(int handle, float alpha)
 }
 
 // ═══════════════════════════════════════════════════════════════
+// Board-pose overlay (stage 8, advisory)
+// ═══════════════════════════════════════════════════════════════
+
+void VisSceneView::setBoardFrame(const BoardFrame& frame)
+{
+#ifdef HAS_RVBUST_VIS
+    if (!d || !d->initialized) return;
+    clearBoardFrame();
+
+    // Rotate the board's local axes into the camera frame via its quaternion.
+    const TransformTools::Rot3 r = TransformTools::quatToRot(
+        frame.quat[0], frame.quat[1], frame.quat[2], frame.quat[3]);
+    const std::array<float, 3> xAxis = { static_cast<float>(r[0]), static_cast<float>(r[3]), static_cast<float>(r[6]) };
+    const std::array<float, 3> yAxis = { static_cast<float>(r[1]), static_cast<float>(r[4]), static_cast<float>(r[7]) };
+    const std::array<float, 3> zAxis = { static_cast<float>(r[2]), static_cast<float>(r[5]), static_cast<float>(r[8]) };
+
+    // Semi-transparent board plane, sized to the detected board.
+    int h = addPlane(frame.extentXMM * MM_TO_M, frame.extentYMM * MM_TO_M,
+                     1, 1, &frame.centerMM, &frame.quat, {0.25f, 0.65f, 1.0f});
+    if (h >= 0) {
+        m_boardFrameHandles.push_back(h);
+        setObjectTransparency(h, 0.35f);
+    }
+
+    // RGB coordinate axes at the board center (x=red, y=green, z=blue).
+    const float axisLen = (std::max)(1.0f, (std::max)(frame.extentXMM, frame.extentYMM) * 0.6f);
+    auto arrowEnd = [&](const std::array<float, 3>& dir) -> std::array<float, 3> {
+        return { frame.centerMM[0] + dir[0] * axisLen,
+                 frame.centerMM[1] + dir[1] * axisLen,
+                 frame.centerMM[2] + dir[2] * axisLen };
+    };
+    h = addArrow(frame.centerMM, arrowEnd(xAxis), 1.0f, {1.0f, 0.2f, 0.2f});
+    if (h >= 0) m_boardFrameHandles.push_back(h);
+    h = addArrow(frame.centerMM, arrowEnd(yAxis), 1.0f, {0.2f, 1.0f, 0.2f});
+    if (h >= 0) m_boardFrameHandles.push_back(h);
+    h = addArrow(frame.centerMM, arrowEnd(zAxis), 1.0f, {0.2f, 0.4f, 1.0f});
+    if (h >= 0) m_boardFrameHandles.push_back(h);
+#else
+    (void)frame;
+#endif
+}
+
+void VisSceneView::clearBoardFrame()
+{
+    for (int h : m_boardFrameHandles)
+        removeObject(h);
+    m_boardFrameHandles.clear();
+}
+
+void VisSceneView::setBoardHistory(const std::vector<BoardFrame>& frames)
+{
+#ifdef HAS_RVBUST_VIS
+    if (!d || !d->initialized) return;
+    clearBoardHistory();
+
+    // Distinct palette cycles so consecutive frames stay distinguishable.
+    static const std::array<std::array<float, 3>, 6> palette = {{
+        {0.90f, 0.55f, 0.10f},  // orange
+        {0.10f, 0.70f, 0.90f},  // cyan
+        {0.55f, 0.90f, 0.10f},  // lime
+        {0.90f, 0.10f, 0.55f},  // magenta
+        {0.75f, 0.75f, 0.10f},  // yellow
+        {0.45f, 0.55f, 0.95f},  // periwinkle
+    }};
+
+    for (const auto& f : frames) {
+        const auto& col = palette[static_cast<std::size_t>(f.frameNo % 6)];
+        int h = addPlane(f.extentXMM * MM_TO_M, f.extentYMM * MM_TO_M,
+                         1, 1, &f.centerMM, &f.quat, col);
+        if (h >= 0) {
+            m_boardHistoryHandles.push_back(h);
+            setObjectTransparency(h, 0.40f);
+            setVisible(h, m_boardHistoryVisible);
+        }
+        // Frame-number label, offset slightly along the board normal.
+        const TransformTools::Rot3 r = TransformTools::quatToRot(
+            f.quat[0], f.quat[1], f.quat[2], f.quat[3]);
+        const std::array<float, 3> n = { static_cast<float>(r[2]), static_cast<float>(r[5]), static_cast<float>(r[8]) };
+        const std::array<float, 3> labelPos = {
+            f.centerMM[0] + n[0] * 3.0f,
+            f.centerMM[1] + n[1] * 3.0f,
+            f.centerMM[2] + n[2] * 3.0f,
+        };
+        int t = addText(QString::number(f.frameNo), labelPos, 0.015f, {1.0f, 1.0f, 1.0f});
+        if (t >= 0) {
+            m_boardHistoryHandles.push_back(t);
+            setVisible(t, m_boardHistoryVisible);
+        }
+    }
+#else
+    (void)frames;
+#endif
+}
+
+void VisSceneView::clearBoardHistory()
+{
+    for (int h : m_boardHistoryHandles)
+        removeObject(h);
+    m_boardHistoryHandles.clear();
+}
+
+void VisSceneView::setBoardHistoryVisible(bool visible)
+{
+    m_boardHistoryVisible = visible;
+    for (int h : m_boardHistoryHandles)
+        setVisible(h, visible);
+    if (m_historyButton)
+        m_historyButton->setChecked(visible);
+}
+
+void VisSceneView::onHistoryToggled(bool visible)
+{
+    setBoardHistoryVisible(visible);
+}
+
+// ═══════════════════════════════════════════════════════════════
 // 2D Image overlay
 // ═══════════════════════════════════════════════════════════════
 
@@ -1229,15 +1367,22 @@ void VisSceneView::resizeEvent(QResizeEvent* event)
     if (m_viewport)
         m_viewport->setGeometry(0, 0, cw, ch);
 
-    // Floating "复位" button (bottom-left) + optional pick hint next to it.
+    // Floating "复位" button (bottom-left) + "叠加历史" toggle + pick hint.
     if (m_resetButton) {
         m_resetButton->adjustSize();
         m_resetButton->move(8, ch - m_resetButton->height() - 8);
         m_resetButton->raise();
     }
+    if (m_historyButton) {
+        m_historyButton->adjustSize();
+        m_historyButton->move(8 + (m_resetButton ? m_resetButton->width() + 8 : 0),
+                              ch - m_historyButton->height() - 8);
+        m_historyButton->raise();
+    }
     if (m_pickHint) {
         m_pickHint->adjustSize();
-        const int hintX = 8 + (m_resetButton ? m_resetButton->width() + 8 : 0);
+        const int hintX = 8 + (m_resetButton ? m_resetButton->width() + 8 : 0)
+                            + (m_historyButton ? m_historyButton->width() + 8 : 0);
         m_pickHint->move(hintX, ch - m_pickHint->height() - 8);
         m_pickHint->raise();
     }
