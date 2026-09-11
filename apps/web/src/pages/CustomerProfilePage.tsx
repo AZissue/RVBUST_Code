@@ -75,9 +75,10 @@ function ProfileEditModal({ customer, onClose, onSaved }: { customer: CustomerPr
     event.preventDefault(); setBusy(true); setError('')
     const form = new FormData(event.currentTarget)
     const value = (key: string) => String(form.get(key) ?? '').trim()
-    try { await api(`/customers/${customer.id}`, { method: 'PATCH', body: JSON.stringify({ websiteUrl: value('websiteUrl') || null, wikiRef: value('wikiRef') || null, background: value('background') || null, applicationScenarios: value('applicationScenarios') || null, projectNeeds: value('projectNeeds') || null }) }); await onSaved() } catch (reason) { setError(reason instanceof Error ? reason.message : '保存失败') } finally { setBusy(false) }
+    try { await api(`/customers/${customer.id}`, { method: 'PATCH', body: JSON.stringify({ name: value('name'), websiteUrl: value('websiteUrl') || null, wikiRef: value('wikiRef') || null, background: value('background') || null, applicationScenarios: value('applicationScenarios') || null, projectNeeds: value('projectNeeds') || null }) }); await onSaved() } catch (reason) { setError(reason instanceof Error ? reason.message : '保存失败') } finally { setBusy(false) }
   }
   return <Modal title="编辑客户资料" onClose={onClose} wide><form className="form-grid" onSubmit={submit}>
+    <label className="span-2">客户名称<input name="name" required minLength={2} maxLength={200} defaultValue={customer.name} /></label>
     <label>官网链接<input name="websiteUrl" type="url" defaultValue={customer.websiteUrl ?? ''} placeholder="https://" /></label>
     <label>百科链接<input name="wikiRef" type="url" defaultValue={customer.wikiRef ?? ''} placeholder="https://" /></label>
     <label className="span-2">背景介绍<textarea name="background" rows={4} defaultValue={customer.background ?? ''} /></label>
