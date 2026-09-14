@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { LoanStatus, RepairStatus, TicketStatus, WorkItemStatus, WorklogStatus } from '@prisma/client';
 import { AccessPolicyService } from '../auth/access-policy.service.js';
 import type { AuthUser } from '../auth/auth.types.js';
@@ -47,6 +47,21 @@ export class DashboardService {
     };
   }
 
+
+  /** 当前用户负责的工单（报表日历用）：按创建时间（即工单时间）过滤，返回轻量字段 */
+  async myTickets(user: AuthUser, fromRaw?: string, toRaw?: string) {
+    this.access.requireInternal(user);
+    const from = new Date(`${fromRaw ?? ''}T00:00:00`);
+    const to = new Date(`${toRaw ?? ''}T00:00:00`);
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) throw new BadRequestException('日期格式无效，应为 YYYY-MM-DD');
+    to.setDate(to.getDate() + 1);
+    if (to <= from) throw new BadRequestException('结束日期不能早于开始日期');
+    return this.prisma.ticket.findMany({
+      where: { deletedAt: null, assigneeId: user.id, createdAt: { gte: from, lt: to } },
+      select: { id: true, number: true, title: true, status: true, category: true, createdAt: true, resolvedAt: true, organization: { select: { id: true, name: true } } },
+      orderBy: [{ createdAt: 'desc' }],
+    });
+  }
 
   async reports(user: AuthUser) {
     this.access.requireInternal(user);

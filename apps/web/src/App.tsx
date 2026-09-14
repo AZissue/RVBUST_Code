@@ -12,6 +12,7 @@ import { LoginPage } from './pages/LoginPage'
 import { RegisterPage } from './pages/RegisterPage'
 import { RepairsPage } from './pages/RepairsPage'
 import { ReportsPage } from './pages/ReportsPage'
+import { ReportCalendarPage } from './pages/ReportCalendarPage'
 import { SettingsPage, TeamsPage } from './pages/SystemPages'
 import { TicketDetailPage, TicketsPage } from './pages/TicketsPage'
 import { RecycleBinPage } from './pages/RecycleBinPage'
@@ -46,7 +47,7 @@ export default function App() {
       <Route path="loans" element={<LoansPage />} />
       <Route path="repairs" element={<RepairsPage />} />
       <Route path="worklogs" element={<WorklogsPage />} />
-      <Route path="reports" element={<ReportsPage />} />
+      <Route path="reports" element={<ReportCalendarPage />} />
       <Route path="stats" element={<ReportsPage />} />
       <Route path="users" element={<UsersPage />} />
       <Route path="teams" element={<TeamsPage />} />
