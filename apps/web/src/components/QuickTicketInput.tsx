@@ -38,7 +38,7 @@ const inferCategory = (text: string): TicketCategory => {
   return 'OTHER'
 }
 
-export function QuickTicketInput() {
+export function QuickTicketInput({ embedded = false, heading = '快速记录', defaultDate, onSaved }: { embedded?: boolean; heading?: string; defaultDate?: string; onSaved?: (ticket: Ticket, updated: boolean) => void }) {
   const { user } = useAuth()
   const [rawText, setRawText] = useState('')
   const [parsed, setParsed] = useState<Parsed | null>(null)
@@ -50,16 +50,18 @@ export function QuickTicketInput() {
     try { setParsed(await api<Parsed>('/tickets/quick/parse', { method: 'POST', body: JSON.stringify({ rawText }) })) }
     catch (e) { setError(e instanceof Error ? e.message : '解析失败') } finally { setBusy(false) }
   }
-  return <section className="workspace-section quick-capture-panel"><div className="section-heading"><h2>快速记录</h2></div>
+  const inner = <>{!embedded && <div className="section-heading"><h2>{heading}</h2></div>}
     <textarea aria-label="快速工单输入" maxLength={4000} value={rawText} onChange={(e) => setRawText(e.target.value)} rows={7} placeholder={'开头可写工单时间补录历史单：0907 / 本周一 / 9月7日 / 昨天，可带状态：已解决 / 处理中 / 等待客户反馈\n浙江智享机器人 M2600拍摄3D无点云，负责人张伟，紧急'} />
     {error && <div role="alert" className="form-error">{error}</div>}
     <button className="button primary" disabled={busy || rawText.trim().length < 3} onClick={() => void parse()}><Plus size={15} />{busy ? '正在解析' : '解析并创建工单'}</button>
     {success && <div className="quick-success" role="status">工单 {success.ticket.number} {success.updated ? '更新' : '创建'}成功 <Link to={`/tickets/${success.ticket.id}`}>查看工单</Link></div>}
-    {parsed && <QuickTicketConfirm parsed={parsed} canCreateCustomer={user?.role === 'admin' || user?.role === 'support'} onClose={() => setParsed(null)} onSaved={(ticket, updated) => { setSuccess({ ticket, updated }); setParsed(null); setRawText('') }} />}
-  </section>
+    {parsed && <QuickTicketConfirm parsed={parsed} defaultDate={defaultDate} canCreateCustomer={user?.role === 'admin' || user?.role === 'support'} onClose={() => setParsed(null)} onSaved={(ticket, updated) => { setSuccess({ ticket, updated }); setParsed(null); setRawText(''); onSaved?.(ticket, updated) }} />}
+  </>
+  if (embedded) return <div className="quick-capture-embedded">{inner}</div>
+  return <section className="workspace-section quick-capture-panel">{inner}</section>
 }
 
-function QuickTicketConfirm({ parsed, canCreateCustomer, onClose, onSaved }: { parsed: Parsed; canCreateCustomer: boolean; onClose: () => void; onSaved: (ticket: Ticket, updated: boolean) => void }) {
+function QuickTicketConfirm({ parsed, defaultDate, canCreateCustomer, onClose, onSaved }: { parsed: Parsed; defaultDate?: string; canCreateCustomer: boolean; onClose: () => void; onSaved: (ticket: Ticket, updated: boolean) => void }) {
   const [customers, setCustomers] = useState<Customer[]>([])
   const [users, setUsers] = useState<Array<{ id: string; name: string }>>([])
   const [devices, setDevices] = useState<Device[]>([])
@@ -70,7 +72,7 @@ function QuickTicketConfirm({ parsed, canCreateCustomer, onClose, onSaved }: { p
   const [title, setTitle] = useState(parsed.title)
   const [priority, setPriority] = useState(parsed.priority)
   const [model, setModel] = useState(parsed.deviceText)
-  const [date, setDate] = useState(parsed.occurredAt ?? '')
+  const [date, setDate] = useState(parsed.occurredAt ?? defaultDate ?? '')
   const [status, setStatus] = useState<TicketStatus>(parsed.status ?? 'PENDING')
   const [category, setCategory] = useState<TicketCategory>(() => inferCategory(parsed.rawText))
   const [similar, setSimilar] = useState<Similar[]>([])

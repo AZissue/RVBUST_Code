@@ -1,6 +1,8 @@
-import { CalendarDays, ChevronLeft, ChevronRight, Download } from 'lucide-react'
+import { CalendarDays, ChevronLeft, ChevronRight, Download, Plus } from 'lucide-react'
 import { Fragment, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { Modal } from '../components/Modal'
+import { QuickTicketInput } from '../components/QuickTicketInput'
 import { StatusBadge, statusLabel } from '../components/Status'
 import { useAuth } from '../context/AuthContext'
 import { useRemote } from '../hooks/useRemote'
@@ -54,6 +56,7 @@ export function ReportCalendarPage() {
   const navigate = useNavigate();
   const [cursor, setCursor] = useState(() => startOfMonth(new Date()));
   const [selection, setSelection] = useState<Selection>({ type: 'day', date: new Date() });
+  const [quickOpen, setQuickOpen] = useState(false);
   const monthFirst = startOfMonth(cursor);
   const monthLast = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0);
   const weeks = buildWeeks(monthFirst, monthLast);
@@ -114,9 +117,11 @@ export function ReportCalendarPage() {
       <div className="reports-calendar">
         <section className="panel no-padding calendar-panel">
           <div className="calendar-head">
-            <button type="button" className="icon-button" aria-label="上一月" onClick={() => shiftMonth(-1)}><ChevronLeft size={20} /></button>
-            <strong>{cursor.getFullYear()} 年 {cursor.getMonth() + 1} 月</strong>
-            <button type="button" className="icon-button" aria-label="下一月" onClick={() => shiftMonth(1)}><ChevronRight size={20} /></button>
+            <div className="calendar-nav">
+              <button type="button" className="icon-button" aria-label="上一月" onClick={() => shiftMonth(-1)}><ChevronLeft size={20} /></button>
+              <strong>{cursor.getFullYear()} 年 {cursor.getMonth() + 1} 月</strong>
+              <button type="button" className="icon-button" aria-label="下一月" onClick={() => shiftMonth(1)}><ChevronRight size={20} /></button>
+            </div>
           </div>
           <div className="calendar-grid">
             <span className="cal-weekday">周</span>
@@ -149,7 +154,7 @@ export function ReportCalendarPage() {
             })}
           </div>
           <div className="calendar-foot">
-            <button type="button" className={`button small ${selection.type === 'month' ? 'primary' : ''}`} onClick={() => setSelection({ type: 'month', date: monthFirst })}>查看全月</button>
+            <button type="button" className={`button small ${selection.type === 'month' ? 'primary' : ''}`} onClick={() => setSelection({ type: 'month', date: monthFirst })}><CalendarDays size={14} />查看全月数据</button>
           </div>
         </section>
 
@@ -159,7 +164,10 @@ export function ReportCalendarPage() {
               <h2>{SCOPE_NAMES[selection.type]} · {scopeTitle(selection, cursor)}</h2>
               <p>仅我负责的工单{remote.loading ? '，加载中…' : ''}</p>
             </div>
-            <button type="button" className="button small" disabled={!inWindow.length} onClick={exportReport}><Download size={14} />导出{SCOPE_NAMES[selection.type]}</button>
+            <div className="report-side-actions">
+              <button type="button" className="button small" disabled={!inWindow.length} onClick={exportReport}><Download size={14} />导出{SCOPE_NAMES[selection.type]}</button>
+              <button type="button" className="button small primary" onClick={() => setQuickOpen(true)}><Plus size={14} />新建工单</button>
+            </div>
           </div>
           <div className="report-stats">
             <div><span>工单</span><strong>{inWindow.length}</strong></div>
@@ -182,6 +190,16 @@ export function ReportCalendarPage() {
           </div>
         </aside>
       </div>
+      {quickOpen && (
+        <Modal title="快速解析工单" onClose={() => setQuickOpen(false)} wide>
+          <QuickTicketInput
+            embedded
+            heading="快速记录"
+            defaultDate={ymd(selection.date)}
+            onSaved={() => remote.refresh()}
+          />
+        </Modal>
+      )}
     </div>
   );
 }

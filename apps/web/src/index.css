@@ -202,11 +202,15 @@ input, textarea, select { width: 100%; color: var(--text); background: var(--sur
 .reports-calendar { display: grid; grid-template-columns: minmax(0, 1fr) 420px; gap: 14px; align-items: start; }
 .content:has(> .reports-calendar-page) { max-width: none; }
 .calendar-panel { padding: 14px 16px; }
-.calendar-head { display: grid; grid-template-columns: 44px 1fr 44px; align-items: center; margin-bottom: 14px; }
-.calendar-head strong { text-align: center; font-size: 20px; }
-.calendar-head .icon-button:first-child { justify-self: start; }
-.calendar-head .icon-button:last-child { justify-self: end; }
+.calendar-head { display: flex; justify-content: center; margin-bottom: 14px; }
+.calendar-nav { display: flex; align-items: center; gap: 4px; padding: 4px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
+.calendar-nav strong { min-width: 120px; text-align: center; font-size: 19px; }
+.calendar-nav .icon-button { border-radius: 6px; }
 .calendar-foot { display: flex; justify-content: flex-end; margin-top: 12px; }
+.calendar-foot .button { display: inline-flex; align-items: center; gap: 6px; }
+.report-side-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.quick-capture-embedded { display: flex; flex-direction: column; gap: 12px; }
+.quick-capture-embedded textarea { width: 100%; }
 .calendar-grid { display: grid; grid-template-columns: 72px repeat(7, minmax(0, 1fr)); gap: 8px; }
 .cal-weekday { display: grid; place-items: center; height: 34px; color: var(--muted); font-size: 13px; font-weight: 700; }
 .cal-weekno { height: 96px; display: grid; place-items: center; border: 1px dashed var(--border); border-radius: 8px; background: var(--surface-2); color: var(--muted); font-size: 13px; font-weight: 650; cursor: pointer; transition: border-color .15s ease, color .15s ease; }
