@@ -13,3 +13,6 @@ uploads/
 *.tsbuildinfo
 .DS_Store
 Thumbs.db
+
+# 本地导出的批量导入文件
+exports/
