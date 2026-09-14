@@ -108,16 +108,15 @@ export function ReportCalendarPage() {
         </div>
         <div className="header-actions">
           <button type="button" className="button" onClick={goToday}><CalendarDays size={15} />今天</button>
-          <button type="button" className="button" onClick={() => shiftMonth(-1)}><ChevronLeft size={15} />上一月</button>
-          <button type="button" className="button" onClick={() => shiftMonth(1)}>下一月<ChevronRight size={15} /></button>
         </div>
       </header>
 
       <div className="reports-calendar">
         <section className="panel no-padding calendar-panel">
           <div className="calendar-head">
+            <button type="button" className="icon-button" aria-label="上一月" onClick={() => shiftMonth(-1)}><ChevronLeft size={20} /></button>
             <strong>{cursor.getFullYear()} 年 {cursor.getMonth() + 1} 月</strong>
-            <button type="button" className={`button small ${selection.type === 'month' ? 'primary' : ''}`} onClick={() => setSelection({ type: 'month', date: monthFirst })}>查看全月</button>
+            <button type="button" className="icon-button" aria-label="下一月" onClick={() => shiftMonth(1)}><ChevronRight size={20} /></button>
           </div>
           <div className="calendar-grid">
             <span className="cal-weekday">周</span>
@@ -148,6 +147,9 @@ export function ReportCalendarPage() {
                 </Fragment>
               );
             })}
+          </div>
+          <div className="calendar-foot">
+            <button type="button" className={`button small ${selection.type === 'month' ? 'primary' : ''}`} onClick={() => setSelection({ type: 'month', date: monthFirst })}>查看全月</button>
           </div>
         </section>
 
