@@ -4,6 +4,7 @@ import { AccessPolicyService } from '../auth/access-policy.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AIService } from '../ai/ai.service.js';
 import { PROMPT_TEMPLATES } from '../ai/prompt-templates.js';
+import { summarizeTitleLocally } from './title-summarizer.js';
 import { QUICK_INPUT_PARSER, extractDateExpression, extractStatusExpression, type QuickInputParser, ticketSimilarity } from './quick-input.parser.js';
 import { SimilarTicketsDto, SuggestTitleDto, UpdateQuickTicketDto } from './dto/quick-ticket.dto.js';
 
@@ -27,7 +28,7 @@ export class QuickTicketsService {
     return { ...result, rawText, occurredAt: extracted.occurredAt, status: withStatus.status, deviceCandidates: devices, matchedDevice: devices.length === 1 ? devices[0] : null, similarTickets };
   }
 
-  /** AI 将问题描述总结为简短工单标题；未配置 AI 时抛错由前端提示 */
+  /** AI 将问题描述总结为简短工单标题；AI 未配置/失败时自动退回本地规则总结 */
   async suggestTitle(user: AuthUser, dto: SuggestTitleDto) {
     this.access.requireInternal(user);
     const response = await this.ai.chat<{ title: string }>({
@@ -44,8 +45,8 @@ export class QuickTicketsService {
         return { title: trimmed };
       },
     });
-    if (!response.success) throw new BadRequestException(response.error);
-    return { title: response.data.title };
+    if (!response.success) return { title: summarizeTitleLocally(dto.description), source: 'rule' as const };
+    return { title: response.data.title, source: 'ai' as const };
   }
 
   async similar(user: AuthUser, dto: SimilarTicketsDto) {
