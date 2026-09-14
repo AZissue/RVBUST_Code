@@ -9,7 +9,7 @@ import { useRemote } from '../hooks/useRemote'
 import { api } from '../lib/api'
 import { ticketCategoryLabel } from '../lib/labels'
 import type { TicketStatus } from '../types'
-import { PageError, PageLoading } from './DashboardPage'
+import { PageError } from './DashboardPage'
 
 interface MyTicket {
   id: string; number: string; title: string; status: TicketStatus; category: string
