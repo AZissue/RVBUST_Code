@@ -22,6 +22,11 @@ export interface Customer {
   region?: string
   industry?: string
   level?: string
+  /** 等级来源：manual 手动指定(S) / locked 手动固定 / auto 按近3月工单量自动评估 */
+  levelSource?: 'manual' | 'locked' | 'auto'
+  levelLocked?: boolean
+  /** 当月工单数（自动评估依据） */
+  monthTicketCount?: number
   notes?: string
   websiteUrl?: string | null
   wikiRef?: string | null

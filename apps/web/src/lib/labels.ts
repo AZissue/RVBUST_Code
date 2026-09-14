@@ -50,3 +50,12 @@ export function statusChangeLabel(content: string): string {
   if (parts.length < 2 || !parts.every((part) => statusChangeValues[part])) return content
   return parts.map((part) => statusChangeValues[part]).join(' → ')
 }
+export const customerLevelLabels: Record<string, string> = { S: '重点大客户', A: '潜在大客户', B: '活跃客户', C: '新客户' }
+export const customerLevelSourceLabels: Record<string, string> = { manual: '手动指定', locked: '已固定', auto: '自动评估' }
+export const customerLevelLabel = (level: string | null | undefined) => (level ? customerLevelLabels[level] ?? level : '-')
+export const customerLevelBadgeTitle = (customer: { level?: string; levelSource?: string; monthTicketCount?: number }) => {
+  if (!customer.level) return '未分级'
+  const source = customerLevelSourceLabels[customer.levelSource ?? 'auto'] ?? ''
+  const extra = customer.levelSource === 'auto' ? `，本月 ${customer.monthTicketCount ?? 0} 单` : ''
+  return `${customer.level} 级 · ${customerLevelLabel(customer.level)}（${source}${extra}）`
+}

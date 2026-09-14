@@ -34,6 +34,7 @@ enum TicketCategory {
 }
 
 enum CustomerLevel {
+  S
   A
   B
   C
@@ -280,6 +281,8 @@ model CustomerOrganization {
   region           String?   @db.VarChar(100)
   industry         String?   @db.VarChar(100)
   level            CustomerLevel?
+  /** A/B/C 自动评估；手动固定后锁定，不再随工单量升降 */
+  levelLocked      Boolean   @default(false) @map("level_locked")
   notes            String?
   websiteUrl            String?              @map("website_url") @db.VarChar(500)
   wikiRef               String?              @map("wiki_ref") @db.VarChar(500)

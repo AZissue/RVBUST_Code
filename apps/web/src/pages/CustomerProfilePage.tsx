@@ -6,7 +6,7 @@ import { StatusBadge } from '../components/Status'
 import { useAuth } from '../context/AuthContext'
 import { useRemote } from '../hooks/useRemote'
 import { api, formatDate } from '../lib/api'
-import { deviceStatusLabelByOwner } from '../lib/labels'
+import { customerLevelBadgeTitle, customerLevelSourceLabels, deviceStatusLabelByOwner } from '../lib/labels'
 import type { CustomerProfile } from '../types'
 import { Empty, PageError, PageLoading } from './DashboardPage'
 import { DeviceStatusBadge } from './DevicesPage'
@@ -34,7 +34,8 @@ export function CustomerProfilePage() {
   const textCard = (title: string, text?: string | null) => <section className="panel"><div className="section-heading"><div><h2>{title}</h2></div></div>{text ? <p className="pre-wrap">{text}</p> : <p className="placeholder-text">待补充</p>}</section>
   return <div className="page-stack">
     <header className="detail-header"><button className="icon-button" onClick={() => navigate('/customers')}><ArrowLeft size={20} /></button>
-      <div><span className="eyebrow">客户 360</span><h1>{customer.name}</h1><div className="inline-meta"><span className="level">{customer.level || '-'}</span><span>{customer.industry || '未设置行业'}</span><span>{customer.region || '未设置地区'}</span>
+      <div><span className="eyebrow">客户 360</span><h1>{customer.name}</h1><div className="inline-meta"><span className={`level level-${(customer.level ?? '').toLowerCase()}`} title={customerLevelBadgeTitle(customer)}>{customer.level || '-'}</span><span className="mini-tag">{customerLevelSourceLabels[customer.levelSource ?? 'auto']}</span><span>{customer.industry || '未设置行业'}</span><span>{customer.region || '未设置地区'}</span>
+        {customer.levelSource === 'auto' && <span>本月 {customer.monthTicketCount ?? 0} 单</span>}
         {customer.websiteUrl && <a className="link-ext" href={customer.websiteUrl} target="_blank" rel="noreferrer">官网<ExternalLink size={12} /></a>}
         {customer.wikiRef && <a className="link-ext" href={customer.wikiRef} target="_blank" rel="noreferrer">百科<ExternalLink size={12} /></a>}
       </div></div>
@@ -71,14 +72,22 @@ export function CustomerProfilePage() {
 
 function ProfileEditModal({ customer, onClose, onSaved }: { customer: CustomerProfile['organization']; onClose: () => void; onSaved: () => Promise<void> }) {
   const [error, setError] = useState(''); const [busy, setBusy] = useState(false)
+  const levelMode = customer.level === 'S' ? 'S' : customer.levelLocked ? 'FIX_A' : 'AUTO'
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault(); setBusy(true); setError('')
     const form = new FormData(event.currentTarget)
     const value = (key: string) => String(form.get(key) ?? '').trim()
-    try { await api(`/customers/${customer.id}`, { method: 'PATCH', body: JSON.stringify({ name: value('name'), websiteUrl: value('websiteUrl') || null, wikiRef: value('wikiRef') || null, background: value('background') || null, applicationScenarios: value('applicationScenarios') || null, projectNeeds: value('projectNeeds') || null }) }); await onSaved() } catch (reason) { setError(reason instanceof Error ? reason.message : '保存失败') } finally { setBusy(false) }
+    const mode = value('levelMode')
+    const levelPayload = mode === 'S' ? { level: 'S', levelLocked: false } : mode === 'FIX_A' ? { level: 'A', levelLocked: true } : { level: null, levelLocked: false }
+    try { await api(`/customers/${customer.id}`, { method: 'PATCH', body: JSON.stringify({ name: value('name'), websiteUrl: value('websiteUrl') || null, wikiRef: value('wikiRef') || null, background: value('background') || null, applicationScenarios: value('applicationScenarios') || null, projectNeeds: value('projectNeeds') || null, ...levelPayload }) }); await onSaved() } catch (reason) { setError(reason instanceof Error ? reason.message : '保存失败') } finally { setBusy(false) }
   }
   return <Modal title="编辑客户资料" onClose={onClose} wide><form className="form-grid" onSubmit={submit}>
     <label className="span-2">客户名称<input name="name" required minLength={2} maxLength={200} defaultValue={customer.name} /></label>
+    <label>客户等级<select name="levelMode" defaultValue={levelMode}>
+      <option value="AUTO">自动评估（按近 3 个月工单量）</option>
+      <option value="S">S 级 · 重点大客户（手动指定）</option>
+      <option value="FIX_A">固定 A 级（不再自动降级）</option>
+    </select><small>自动规则：当月工单突破 10 单升 B，连续 3 个月每月突破 10 单升 A，未固定的等级随工单量动态升降</small></label>
     <label>官网链接<input name="websiteUrl" type="url" defaultValue={customer.websiteUrl ?? ''} placeholder="https://" /></label>
     <label>百科链接<input name="wikiRef" type="url" defaultValue={customer.wikiRef ?? ''} placeholder="https://" /></label>
     <label className="span-2">背景介绍<textarea name="background" rows={4} defaultValue={customer.background ?? ''} /></label>

@@ -237,3 +237,10 @@ input, textarea, select { width: 100%; color: var(--text); background: var(--sur
 .report-ticket strong { font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
 .report-ticket small { color: var(--muted); font-size: 11px; }
 @media (max-width: 1080px) { .reports-calendar { grid-template-columns: 1fr; } }
+.level-s { color: #fff; background: var(--brand); }
+.level-a { color: var(--brand); background: var(--brand-soft); box-shadow: inset 0 0 0 1px var(--brand); }
+.level-b { color: var(--success); background: color-mix(in srgb, var(--success) 14%, transparent); }
+.level-c, .level-d { color: var(--muted); }
+.pager { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.pager-buttons { display: flex; align-items: center; gap: 8px; }
+.pager-buttons .button { display: inline-flex; align-items: center; gap: 4px; }

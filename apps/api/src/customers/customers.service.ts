@@ -1,8 +1,9 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import type { Prisma } from '@prisma/client';
+import type { CustomerLevel, Prisma } from '@prisma/client';
 import { AccessPolicyService } from '../auth/access-policy.service.js';
 import type { AuthUser } from '../auth/auth.types.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { computeCustomerLevel, recentMonthKeys } from './customer-level.js';
 import { CreateContactDto, UpdateContactDto } from './dto/contact.dto.js';
 import { CreateCustomerDto, UpdateCustomerDto } from './dto/customer.dto.js';
 import { CreateDeviceDto, UpdateDeviceDto } from './dto/device.dto.js';
@@ -21,8 +22,12 @@ const detailInclude = {
 export class CustomersService {
   constructor(private readonly prisma: PrismaService, private readonly access: AccessPolicyService) {}
 
-  list(user: AuthUser, search?: string) {
-    return this.prisma.customerOrganization.findMany({
+  /**
+   * 客户列表。不传 page 时保持旧行为返回全部数组（快速录入等下拉场景）；
+   * 传 page 时返回分页对象 { items, total, page, pageSize }，支持 level 筛选（S/A/B/C，按有效等级）。
+   */
+  async list(user: AuthUser, search?: string, page?: number, pageSize = 20, levelFilter?: string) {
+    const customers = await this.prisma.customerOrganization.findMany({
       where: {
         ...this.access.customerWhere(user),
         ...(search ? { OR: [{ name: { contains: search, mode: 'insensitive' } }, { industry: { contains: search, mode: 'insensitive' } }] } : {}),
@@ -30,11 +35,44 @@ export class CustomersService {
       include: { contacts: { where: { isPrimary: true }, take: 1 }, _count: { select: { devices: true, projects: true, tickets: true } } },
       orderBy: { updatedAt: 'desc' },
     });
+    const graded = await this.withLevels(customers);
+    // 重点客户排前，同级按最近更新
+    const rank = { S: 0, A: 1, B: 2, C: 3 } as const;
+    graded.sort((a, b) => rank[a.level as keyof typeof rank] - rank[b.level as keyof typeof rank] || b.updatedAt.getTime() - a.updatedAt.getTime());
+    if (page === undefined) return graded;
+    const filtered = levelFilter ? graded.filter((customer) => customer.level === levelFilter) : graded;
+    const start = (page - 1) * pageSize;
+    return { items: filtered.slice(start, start + pageSize), total: filtered.length, page, pageSize };
+  }
+
+  /** 批量计算有效等级：覆盖 level 字段，并附 levelSource / levelLocked / monthTicketCount */
+  private async withLevels<T extends { id: string; level: CustomerLevel | null; levelLocked: boolean }>(customers: T[]) {
+    const keys = recentMonthKeys(new Date());
+    const start = new Date(new Date().getFullYear(), new Date().getMonth() - 2, 1);
+    const tickets = customers.length
+      ? await this.prisma.ticket.findMany({
+          where: { organizationId: { in: customers.map((customer) => customer.id) }, deletedAt: null, createdAt: { gte: start } },
+          select: { organizationId: true, createdAt: true },
+        })
+      : [];
+    const monthKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    return customers.map((customer) => {
+      const monthly: [number, number, number] = [0, 0, 0];
+      for (const ticket of tickets) {
+        if (ticket.organizationId !== customer.id) continue;
+        const index = keys.indexOf(monthKey(ticket.createdAt) as (typeof keys)[number]);
+        if (index >= 0) monthly[index] += 1;
+      }
+      const { level, source } = computeCustomerLevel({ storedLevel: customer.level, levelLocked: customer.levelLocked, monthlyTicketCounts: monthly });
+      return { ...customer, level, levelSource: source, monthTicketCount: monthly[0] };
+    });
   }
 
   async get(user: AuthUser, id: string) {
     await this.access.requireCustomer(user, id);
-    return this.prisma.customerOrganization.findUnique({ where: { id }, include: detailInclude });
+    const customer = await this.prisma.customerOrganization.findUnique({ where: { id }, include: detailInclude });
+    if (!customer) throw new NotFoundException('客户不存在');
+    return (await this.withLevels([customer]))[0];
   }
 
   async profile(user: AuthUser, id: string) {
@@ -42,14 +80,15 @@ export class CustomersService {
     if (!organization) throw new NotFoundException('客户不存在');
     if (user.role === 'customer' && user.customerOrganizationId !== id) throw new NotFoundException('客户不存在');
     if (user.role === 'employee' && organization.technicalOwnerId !== user.id && organization.businessOwnerId !== user.id) throw new NotFoundException('客户不存在');
-    const [contacts, devices, tickets, loanOrders, repairOrders] = await Promise.all([
+    const [graded, contacts, devices, tickets, loanOrders, repairOrders] = await Promise.all([
+      this.withLevels([organization]),
       this.prisma.contact.findMany({ where: { organizationId: id }, orderBy: [{ isPrimary: 'desc' }, { name: 'asc' }] }),
       this.prisma.device.findMany({ where: { organizationId: id }, orderBy: { createdAt: 'desc' } }),
       this.prisma.ticket.findMany({ where: { organizationId: id }, select: { id: true, number: true, title: true, status: true, priority: true, createdAt: true, assignee: { select: { id: true, name: true } } }, orderBy: { createdAt: 'desc' }, take: 20 }),
       this.prisma.loanOrder.findMany({ where: { organizationId: id }, include: { contact: { select: { id: true, name: true } }, assignee: { select: { id: true, name: true } }, items: { include: { device: { select: { id: true, name: true, serialNumber: true } } } } }, orderBy: { createdAt: 'desc' }, take: 50 }),
       this.prisma.repairOrder.findMany({ where: { organizationId: id }, include: { device: { select: { id: true, name: true, serialNumber: true } }, contact: { select: { id: true, name: true } }, assignee: { select: { id: true, name: true } } }, orderBy: { createdAt: 'desc' }, take: 50 }),
     ]);
-    return { organization, contacts, devices, tickets, loanOrders, repairOrders };
+    return { organization: graded[0], contacts, devices, tickets, loanOrders, repairOrders };
   }
 
   listDevices(user: AuthUser) {
@@ -65,13 +104,14 @@ export class CustomersService {
   }
 
   async create(dto: CreateCustomerDto) {
-    try { return await this.prisma.customerOrganization.create({ data: this.clean(dto), include: detailInclude }); }
+    try { const customer = await this.prisma.customerOrganization.create({ data: this.clean(dto), include: detailInclude }); return (await this.withLevels([customer]))[0]; }
     catch (error) { if ((error as { code?: string }).code === 'P2002') throw new ConflictException('客户公司名称已存在'); throw error; }
   }
 
   async update(id: string, dto: UpdateCustomerDto) {
     await this.ensureExists(id);
-    return this.prisma.customerOrganization.update({ where: { id }, data: this.clean(dto), include: detailInclude });
+    const customer = await this.prisma.customerOrganization.update({ where: { id }, data: this.clean(dto), include: detailInclude });
+    return (await this.withLevels([customer]))[0];
   }
 
   async remove(id: string) {

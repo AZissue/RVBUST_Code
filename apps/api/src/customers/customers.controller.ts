@@ -12,7 +12,11 @@ import { CreateProjectDto, UpdateProjectDto } from './dto/project.dto.js';
 export class CustomersController {
   constructor(private readonly customers: CustomersService) {}
 
-  @Get('customers') list(@CurrentUser() user: AuthUser, @Query('search') search?: string) { return this.customers.list(user, search); }
+  @Get('customers') list(@CurrentUser() user: AuthUser, @Query('search') search?: string, @Query('page') page?: string, @Query('pageSize') pageSize?: string, @Query('level') level?: string) {
+    const parsedPage = page ? Math.max(1, Number(page) || 1) : undefined;
+    const parsedPageSize = pageSize ? Math.min(100, Math.max(1, Number(pageSize) || 20)) : undefined;
+    return this.customers.list(user, search, parsedPage, parsedPageSize, level);
+  }
   @Get('customers/:id') get(@CurrentUser() user: AuthUser, @Param('id') id: string) { return this.customers.get(user, id); }
   @Get('customers/:id/profile') profile(@CurrentUser() user: AuthUser, @Param('id') id: string) { return this.customers.profile(user, id); }
   @Roles('admin', 'support', 'employee') @Post('customers') create(@Body() dto: CreateCustomerDto) { return this.customers.create(dto); }
