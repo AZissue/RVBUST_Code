@@ -4,6 +4,7 @@ import { useAuth } from './context/AuthContext'
 import { AuditPage } from './pages/AuditPage'
 import { BugsPage } from './pages/BugsPage'
 import { CustomerProfilePage } from './pages/CustomerProfilePage'
+import { DeviceDetailPage } from './pages/DeviceDetailPage'
 import { CustomersPage } from './pages/CustomersPage'
 import { DashboardPage } from './pages/DashboardPage'
 import { DevicesPage } from './pages/DevicesPage'
@@ -44,6 +45,7 @@ export default function App() {
       <Route path="customers" element={<CustomersPage />} />
       <Route path="customers/:id" element={<CustomerProfilePage />} />
       <Route path="devices" element={<DevicesPage />} />
+      <Route path="devices/:id" element={<DeviceDetailPage />} />
       <Route path="loans" element={<LoansPage />} />
       <Route path="repairs" element={<RepairsPage />} />
       <Route path="worklogs" element={<WorklogsPage />} />

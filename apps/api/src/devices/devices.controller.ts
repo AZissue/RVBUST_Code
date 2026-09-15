@@ -14,6 +14,7 @@ export class DevicesController {
   }
 
   @Get(':id') get(@Param('id') id: string) { return this.devices.get(id); }
+  @Get(':id/detail') detail(@Param('id') id: string) { return this.devices.detail(id); }
   @Roles('admin', 'support') @Post() create(@Body() dto: CreateDeviceDto) { return this.devices.create(dto); }
   @Roles('admin', 'support') @Patch(':id') update(@Param('id') id: string, @Body() dto: UpdateDeviceDto) { return this.devices.update(id, dto); }
   @Roles('admin', 'support') @Patch(':id/status') changeStatus(@Param('id') id: string, @Body() dto: ChangeDeviceStatusDto) { return this.devices.changeStatus(id, dto); }

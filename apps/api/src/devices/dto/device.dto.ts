@@ -9,6 +9,7 @@ export class CreateDeviceDto {
   @IsOptional() @IsString() @Length(0, 120) product?: string;
   @IsOptional() @IsString() @Length(0, 100) cameraModel?: string;
   @IsOptional() @IsString() @Length(0, 120) serialNumber?: string;
+  @IsOptional() @IsString() @Length(0, 120) assetNo?: string;
   @IsOptional() @IsString() @Length(0, 80) sdkVersion?: string;
   @IsOptional() @IsString() @Length(0, 80) firmware?: string;
   @IsOptional() @IsString() @Length(0, 200) location?: string;

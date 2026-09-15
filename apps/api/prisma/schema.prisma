@@ -340,6 +340,8 @@ model Device {
   product        String?              @db.VarChar(120)
   cameraModel    String?              @map("camera_model") @db.VarChar(100)
   serialNumber   String?              @map("serial_number") @db.VarChar(120)
+  /** 公司资产编号（仅公司样机使用） */
+  assetNo        String?              @map("asset_no") @db.VarChar(120)
   sdkVersion     String?              @map("sdk_version") @db.VarChar(80)
   firmware       String?              @db.VarChar(80)
   location       String?              @db.VarChar(200)

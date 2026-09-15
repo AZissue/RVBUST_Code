@@ -1,4 +1,4 @@
-import type { BugStatus, DeviceOwnerType, DeviceStatus, LoanStatus, RepairStatus, Role, TicketAssistStatus, TicketCategory, TicketPriority, TicketStatus, UserStatus, WorkItemPriority, WorkItemStatus } from '../types'
+import type { BugStatus, DeviceHealth, DeviceOwnerType, DeviceStatus, LoanStatus, RepairStatus, Role, TicketAssistStatus, TicketCategory, TicketPriority, TicketStatus, UserStatus, WorkItemPriority, WorkItemStatus } from '../types'
 
 export const ticketStatusLabels: Record<TicketStatus, string> = { PENDING: '待处理', IN_PROGRESS: '处理中', WAITING_CUSTOMER: '等待客户', WAITING_RND: '等待研发', RESOLVED: '已解决', CLOSED: '已关闭' }
 export const ticketPriorityLabels: Record<TicketPriority, string> = { LOW: '低', MEDIUM: '中', HIGH: '高', URGENT: '紧急' }
@@ -14,6 +14,7 @@ export const worklogSourceLabels: Record<string, string> = { WEB: '网页录入'
 export const userStatusLabels: Record<UserStatus, string> = { PENDING: '待审批', ACTIVE: '正常', DISABLED: '已禁用' }
 export const roleLabels: Record<Role, string> = { admin: '管理员', support: '技术支持', employee: '员工', customer: '客户' }
 export const deviceStatusLabels: Record<DeviceStatus, string> = { IN_STOCK: '在库', LOANED: '借测中', REPAIRING: '返修中', RETIRED: '已报废' }
+export const deviceHealthLabels: Record<DeviceHealth, string> = { OK: '正常', ATTENTION: '关注', CHECK: '建议检查' }
 export const deviceOwnerLabels: Record<DeviceOwnerType, string> = { COMPANY: '公司样机', CUSTOMER: '客户资产' }
 export const loanStatusLabels: Record<LoanStatus, string> = { ONGOING: '借出中', OVERDUE: '已逾期', RETURNED: '已归还', CANCELLED: '已取消' }
 export const repairStatusLabels: Record<RepairStatus, string> = { RECEIVED: '已收货', DIAGNOSING: '检测中', REPAIRING: '维修中', SHIPPED: '已寄回', CLOSED: '已关闭' }

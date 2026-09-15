@@ -244,3 +244,52 @@ input, textarea, select { width: 100%; color: var(--text); background: var(--sur
 .pager { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .pager-buttons { display: flex; align-items: center; gap: 8px; }
 .pager-buttons .button { display: inline-flex; align-items: center; gap: 4px; }
+
+/* 设备健康度与详情页 */
+.health-ok { color: var(--success); background: color-mix(in srgb, var(--success) 12%, transparent); }
+.health-attention { color: var(--warning); background: color-mix(in srgb, var(--warning) 12%, transparent); }
+.health-check { color: var(--brand); background: var(--brand-soft); box-shadow: inset 0 0 0 1px var(--brand); }
+.clickable-row { cursor: pointer; }
+.clickable-row:hover td { background: var(--surface-2); }
+.danger-tag { color: var(--brand); background: var(--brand-soft); }
+.warn-tag { color: var(--warning); background: color-mix(in srgb, var(--warning) 12%, transparent); }
+.link-like { display: inline-flex; align-items: center; gap: 4px; padding: 0; border: 0; color: var(--brand); font-size: 11px; font-weight: 650; background: none; cursor: pointer; }
+.link-like:hover { text-decoration: underline; }
+.two-columns { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 12px; align-items: start; }
+.device-summary { grid-template-columns: repeat(5, 1fr) 1.6fr; }
+.device-summary > div { justify-content: center; }
+.device-summary span { display: inline-flex; align-items: center; gap: 4px; }
+.device-summary strong { display: flex; align-items: center; }
+.info-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 20px; margin: 0; font-size: 12px; }
+.info-grid > div { display: flex; flex-direction: column; gap: 4px; }
+.info-grid dt { color: var(--muted); font-size: 10px; }
+.info-grid dd { margin: 0; overflow-wrap: anywhere; }
+.muted-notes { margin: 12px 0 0; padding-top: 10px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12px; white-space: pre-wrap; }
+.muted-text { margin: 8px 0 0; color: var(--muted); font-size: 11px; }
+.history-list { display: flex; flex-direction: column; }
+.history-link { display: block; width: 100%; padding: 0; border: 0; border-top: 1px solid var(--border); background: none; text-align: left; cursor: pointer; }
+.history-link:first-child { border-top: 0; }
+.history-link:hover .history-row { background: var(--surface-2); }
+.history-row { display: flex; align-items: flex-start; gap: 10px; padding: 10px 2px; font-size: 12px; }
+.history-main { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 3px; }
+.history-main strong { overflow-wrap: anywhere; }
+.history-meta { color: var(--muted); font-size: 11px; }
+.history-no { font-size: 11px; }
+.history-side { flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.history-date { color: var(--muted); font-size: 10px; }
+.kind-ticket { color: var(--brand); background: var(--brand-soft); }
+.kind-loan { color: var(--success); background: color-mix(in srgb, var(--success) 12%, transparent); }
+.kind-repair { color: var(--warning); background: color-mix(in srgb, var(--warning) 12%, transparent); }
+.chain-list { display: flex; flex-direction: column; gap: 2px; margin-top: 10px; }
+.chain-node { position: relative; display: flex; align-items: center; gap: 10px; padding: 8px 0 8px 4px; }
+.chain-node > div { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.chain-node strong { font-size: 12px; }
+.chain-node span:not(.chain-order) { color: var(--muted); font-size: 10px; }
+.chain-order { flex: 0 0 20px; width: 20px; height: 20px; display: grid; place-items: center; border-radius: 50%; color: #fff; background: var(--brand); font-size: 10px; font-weight: 700; }
+.chain-arrow { position: absolute; left: 13px; bottom: -8px; color: var(--muted); transform: rotate(90deg); }
+@media (max-width: 1100px) {
+  .two-columns { grid-template-columns: 1fr; }
+  .device-summary { grid-template-columns: repeat(2, 1fr); }
+  .device-summary .wide { grid-column: span 2; }
+  .device-summary > div { border-bottom: 1px solid var(--border); }
+}
