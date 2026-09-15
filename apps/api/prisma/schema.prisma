@@ -133,10 +133,22 @@ enum DeviceOwnerType {
 }
 
 enum LoanStatus {
+  QUEUED
   ONGOING
   OVERDUE
   RETURNED
   CANCELLED
+}
+
+enum DeviceSource {
+  MANUAL
+  REPAIR
+}
+
+enum FollowUpSource {
+  WEB
+  IMPORT
+  SYSTEM
 }
 
 enum RepairStatus {
@@ -229,6 +241,8 @@ model User {
   assignedTickets        Ticket[]              @relation("TicketAssignee")
   assignedLoans          LoanOrder[]           @relation("LoanAssignee")
   assignedRepairs        RepairOrder[]         @relation("RepairAssignee")
+  advancedLoans          LoanOrder[]           @relation("LoanAdvancedBy")
+  followUps              FollowUp[]
   ticketCollaborations   TicketCollaborator[]
   ticketEvents           TicketEvent[]
   deletedTickets         Ticket[]              @relation("TicketDeleter")
@@ -346,6 +360,7 @@ model Device {
   firmware       String?              @db.VarChar(80)
   location       String?              @db.VarChar(200)
   status         DeviceStatus         @default(IN_STOCK)
+  source         DeviceSource         @default(MANUAL) @map("source")
   purchaseDate   DateTime?            @map("purchase_date") @db.Date
   warrantyUntil  DateTime?            @map("warranty_until") @db.Date
   notes          String?
@@ -355,7 +370,7 @@ model Device {
   createdAt      DateTime             @default(now()) @map("created_at")
   updatedAt      DateTime             @updatedAt @map("updated_at")
 
-  @@unique([organizationId, serialNumber])
+  @@unique([serialNumber])
   @@index([organizationId])
   @@index([cameraModel])
   @@map("devices")
@@ -478,6 +493,9 @@ model Ticket {
   worklogs          Worklog[]
   notifications     Notification[]
   attachments       Attachment[]
+  loanOrders        LoanOrder[]
+  repairOrders      RepairOrder[]
+  followUps         FollowUp[]
   createdAt         DateTime             @default(now()) @map("created_at")
   updatedAt         DateTime             @updatedAt @map("updated_at")
   deletedAt         DateTime?            @map("deleted_at")
@@ -653,27 +671,48 @@ model Attachment {
 model LoanOrder {
   id          String     @id @default(uuid()) @db.Uuid
   loanNo      String     @unique @map("loan_no") @db.VarChar(32)
+  ticketId    String?    @db.Uuid @map("ticket_id")
   organizationId String  @db.Uuid @map("organization_id")
   contactId   String?    @db.Uuid @map("contact_id")
   assigneeId  String?    @db.Uuid @map("assignee_id")
   purpose     String     @db.VarChar(500)
-  status      LoanStatus @default(ONGOING)
-  loanedAt    DateTime   @map("loaned_at") @db.Date
-  dueAt       DateTime   @map("due_at") @db.Date
+  status      LoanStatus @default(QUEUED)
+  loanedAt    DateTime?  @map("loaned_at") @db.Date
+  dueAt       DateTime?  @map("due_at") @db.Date
   returnedAt  DateTime?  @map("returned_at")
   agreementNo String?    @map("agreement_no") @db.VarChar(100)
   note        String?
   createdById String     @db.Uuid @map("created_by_id")
+  // 借测评估与排队（需求先入队，信息完善后按评分排序；手动提前需填原因留痕）
+  infoComplete   Boolean   @default(false) @map("info_complete")
+  score          Int?      @map("score")
+  scoreDetail    Json?     @map("score_detail")
+  scoreRuleVersion String? @map("score_rule_version") @db.VarChar(40)
+  assessmentResult String? @map("assessment_result") @db.VarChar(2000)
+  advanceReason  String?   @map("advance_reason") @db.VarChar(500)
+  advancedById   String?   @db.Uuid @map("advanced_by_id")
+  advancedAt     DateTime? @map("advanced_at")
+  deletedAt      DateTime? @map("deleted_at")
+  // 双向物流
+  outboundCarrier  String? @map("outbound_carrier") @db.VarChar(50)
+  outboundTracking String? @map("outbound_tracking") @db.VarChar(100)
+  returnCarrier    String? @map("return_carrier") @db.VarChar(50)
+  returnTracking   String? @map("return_tracking") @db.VarChar(100)
+  ticket      Ticket?    @relation(fields: [ticketId], references: [id], onDelete: SetNull)
+  advancedBy  User?      @relation("LoanAdvancedBy", fields: [advancedById], references: [id], onDelete: SetNull)
   organization CustomerOrganization @relation(fields: [organizationId], references: [id])
   contact     Contact?   @relation(fields: [contactId], references: [id], onDelete: SetNull)
   assignee    User?      @relation("LoanAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
   items       LoanItem[]
+  followUps   FollowUp[]
   createdAt   DateTime   @default(now()) @map("created_at")
   updatedAt   DateTime   @updatedAt @map("updated_at")
 
   @@index([organizationId])
   @@index([assigneeId, status])
   @@index([status, dueAt])
+  @@index([ticketId])
+  @@index([deletedAt])
   @@map("loan_orders")
 }
 
@@ -683,6 +722,7 @@ model LoanItem {
   deviceId      String     @db.Uuid @map("device_id")
   returnedAt    DateTime?  @map("returned_at")
   conditionNote String?    @map("condition_note")
+  accessories   String?    @map("accessories") @db.VarChar(200)
   attachments   Attachment[]
   loanOrder     LoanOrder  @relation(fields: [loanOrderId], references: [id], onDelete: Cascade)
   device        Device     @relation(fields: [deviceId], references: [id])
@@ -713,18 +753,27 @@ model RepairOrder {
   resolution  String?
   note        String?
   createdById String       @db.Uuid @map("created_by_id")
+  ticketId    String?      @db.Uuid @map("ticket_id")
+  inboundCarrier  String?  @map("inbound_carrier") @db.VarChar(50)
+  inboundTracking String?  @map("inbound_tracking") @db.VarChar(100)
+  outboundCarrier String?  @map("outbound_carrier") @db.VarChar(50)
+  partsReturned   String?  @map("parts_returned") @db.VarChar(500)
+  deletedAt   DateTime?    @map("deleted_at")
+  ticket      Ticket?      @relation(fields: [ticketId], references: [id], onDelete: SetNull)
   device      Device?      @relation(fields: [deviceId], references: [id])
   organization CustomerOrganization @relation(fields: [organizationId], references: [id])
   contact     Contact?     @relation(fields: [contactId], references: [id], onDelete: SetNull)
   assignee    User?        @relation("RepairAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
   events      RepairEvent[]
   attachments Attachment[]
+  followUps   FollowUp[]
   createdAt   DateTime     @default(now()) @map("created_at")
   updatedAt   DateTime     @updatedAt @map("updated_at")
 
   @@index([organizationId])
   @@index([deviceId])
   @@index([assigneeId, status])
+  @@index([deletedAt])
   @@map("repair_orders")
 }
 
@@ -828,4 +877,37 @@ model AIUsageLog {
   @@index([createdAt])
   @@index([feature, createdAt])
   @@map("ai_usage_logs")
+}
+
+model FollowUp {
+  id           String         @id @default(uuid()) @db.Uuid
+  loanOrderId  String?        @db.Uuid @map("loan_order_id")
+  repairOrderId String?       @db.Uuid @map("repair_order_id")
+  ticketId     String?        @db.Uuid @map("ticket_id")
+  authorId     String         @db.Uuid @map("author_id")
+  occurredAt   DateTime       @map("occurred_at")
+  content      String         @db.VarChar(2000)
+  source       FollowUpSource @default(WEB)
+  loanOrder    LoanOrder?     @relation(fields: [loanOrderId], references: [id], onDelete: Cascade)
+  repairOrder  RepairOrder?   @relation(fields: [repairOrderId], references: [id], onDelete: Cascade)
+  ticket       Ticket?        @relation(fields: [ticketId], references: [id], onDelete: SetNull)
+  author       User           @relation(fields: [authorId], references: [id])
+  createdAt    DateTime       @default(now()) @map("created_at")
+
+  @@index([loanOrderId])
+  @@index([repairOrderId])
+  @@index([ticketId])
+  @@map("follow_ups")
+}
+
+model LoanScoreRule {
+  id          String   @id @default(uuid()) @db.Uuid
+  version     String   @unique @db.VarChar(40)
+  dimensions  Json
+  isActive    Boolean  @default(false) @map("is_active")
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("loan_score_rules")
 }

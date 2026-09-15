@@ -3,7 +3,7 @@ import { LoanStatus } from '@prisma/client';
 import ExcelJS from 'exceljs';
 import { PrismaService } from '../prisma/prisma.service.js';
 
-const LOAN_STATUS_LABELS: Record<LoanStatus, string> = { ONGOING: '借测中', OVERDUE: '已逾期', RETURNED: '已归还', CANCELLED: '已取消' };
+const LOAN_STATUS_LABELS: Record<LoanStatus, string> = { QUEUED: '排队中', ONGOING: '借测中', OVERDUE: '已逾期', RETURNED: '已归还', CANCELLED: '已取消' };
 const dayMs = 86400000;
 const dayOf = (date: Date) => Math.floor((Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) - Date.UTC(1970, 0, 1)) / dayMs);
 const overdueDays = (dueAt: Date) => dayOf(new Date()) - dayOf(dueAt);
@@ -43,11 +43,11 @@ export class LoansExcelService {
         contact: order.contact?.name ?? '',
         assignee: order.assignee?.name ?? '',
         devices: order.items.map((item) => item.device.serialNumber || item.device.name).join('，'),
-        loanedAt: order.loanedAt.toISOString().slice(0, 10),
-        dueAt: order.dueAt.toISOString().slice(0, 10),
+        loanedAt: order.loanedAt ? order.loanedAt.toISOString().slice(0, 10) : '',
+        dueAt: order.dueAt ? order.dueAt.toISOString().slice(0, 10) : '',
         returnedAt: order.returnedAt ? order.returnedAt.toISOString().slice(0, 10) : '',
         status: LOAN_STATUS_LABELS[order.status],
-        overdue: active ? Math.max(0, overdueDays(order.dueAt)) : '',
+        overdue: active && order.dueAt ? Math.max(0, overdueDays(order.dueAt)) : '',
         purpose: order.purpose,
         agreementNo: order.agreementNo ?? '',
         note: order.note ?? '',
@@ -59,10 +59,10 @@ export class LoansExcelService {
 
     // 统计汇总
     const active = orders.filter((o) => o.status === LoanStatus.ONGOING || o.status === LoanStatus.OVERDUE);
-    const overdueList = active.filter((o) => overdueDays(o.dueAt) > 0);
-    const dueSoonList = active.filter((o) => { const d = overdueDays(o.dueAt); return d >= 0 && d <= 7 });
+    const overdueList = active.filter((o) => o.dueAt && overdueDays(o.dueAt) > 0);
+    const dueSoonList = active.filter((o) => o.dueAt && (() => { const d = overdueDays(o.dueAt as Date); return d >= 0 && d <= 7 })());
     const returned = orders.filter((o) => o.status === LoanStatus.RETURNED);
-    const avgDays = active.length ? Math.round(active.reduce((sum, o) => sum + overdueDays(o.loanedAt), 0) / active.length) : 0;
+    const avgDays = active.length ? Math.round(active.filter((o) => o.loanedAt).reduce((sum, o) => sum + overdueDays(o.loanedAt as Date), 0) / active.length) : 0;
     const modelCount = new Map<string, number>();
     for (const o of active) for (const item of o.items) { const m = item.device.cameraModel || '未登记型号'; modelCount.set(m, (modelCount.get(m) ?? 0) + 1) }
     const topModel = [...modelCount.entries()].sort((a, b) => b[1] - a[1])[0];

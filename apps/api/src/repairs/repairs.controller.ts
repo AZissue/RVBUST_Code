@@ -4,7 +4,7 @@ import type { Response } from 'express';
 import type { AuthUser } from '../auth/auth.types.js';
 import { CurrentUser } from '../auth/current-user.decorator.js';
 import { Roles } from '../auth/roles.decorator.js';
-import { AssignRepairDto, CreateRepairDto, TransitionRepairDto, UpdateRepairDto } from './dto/repair.dto.js';
+import { AddRepairFollowUpDto, AssignRepairDto, CreateRepairDto, TransitionRepairDto, UpdateRepairDto } from './dto/repair.dto.js';
 import { RepairsExcelService } from './repairs-excel.service.js';
 import { RepairsService } from './repairs.service.js';
 
@@ -29,4 +29,5 @@ export class RepairsController {
   @Roles('admin', 'support') @Patch(':id') update(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: UpdateRepairDto) { return this.repairs.update(user, id, dto); }
   @Roles('admin', 'support') @Post(':id/transition') transition(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: TransitionRepairDto) { return this.repairs.transition(user, id, dto); }
   @Roles('admin', 'support') @Post(':id/assign') assign(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: AssignRepairDto) { return this.repairs.assign(user, id, dto); }
+  @Post(':id/follow-ups') addFollowUp(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: AddRepairFollowUpDto) { return this.repairs.addFollowUp(user, id, dto); }
 }

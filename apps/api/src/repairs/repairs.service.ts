@@ -5,7 +5,7 @@ import { NotificationsService } from '../notifications/notifications.service.js'
 import { NOTIFICATION_TYPES } from '../common/notification-types.js';
 import { dateSerialPrefix, nextSerial } from '../common/numbering.js';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { AssignRepairDto, CreateRepairDto, TransitionRepairDto, UpdateRepairDto } from './dto/repair.dto.js';
+import { AssignRepairDto, AddRepairFollowUpDto, CreateRepairDto, TransitionRepairDto, UpdateRepairDto } from './dto/repair.dto.js';
 import { zhStatus } from '../common/status-labels.js';
 import { createReturnPdf } from './return-pdf.js';
 import type { ReturnFormDto } from './dto/return-form.dto.js';
@@ -18,6 +18,8 @@ const repairInclude = {
   organization: { select: { id: true, name: true } },
   contact: { select: { id: true, name: true, phone: true } },
   assignee: { select: { id: true, name: true } },
+  ticket: { select: { id: true, number: true, title: true } },
+  followUps: { include: { author: { select: { id: true, name: true } } }, orderBy: { occurredAt: 'desc' as const } },
 } as const;
 
 // 非顺序调整需要原因，所有变更保留历史。
@@ -60,25 +62,40 @@ export class RepairsService {
     if (dto.manualSerialNumber && dto.deviceId) throw new BadRequestException('手动填写模式不能同时关联设备');
     const manualSN = dto.serialNumber?.trim();
     if (dto.manualSerialNumber && !manualSN) throw new BadRequestException('请填写序列号');
+    if (dto.ticketId && !await this.prisma.ticket.findUnique({ where: { id: dto.ticketId }, select: { id: true } })) throw new BadRequestException('关联工单不存在');
     return this.prisma.$transaction(async (tx) => {
-      const device = dto.manualSerialNumber ? null : dto.deviceId
+      let device = dto.manualSerialNumber ? null : dto.deviceId
         ? await tx.device.findUnique({ where: { id: dto.deviceId } })
         : dto.serialNumber
           // 序列号建单：匹配本客户或尚未归属客户的设备（无归属客户资产在创建返修单时回填归属）
           ? await tx.device.findFirst({ where: { serialNumber: dto.serialNumber, OR: [{ organizationId: dto.organizationId }, { organizationId: null }] } })
           : null;
+      // SN 未建档：以返修单为准自动补建客户资产设备，逐步完善客户设备台账
+      let autoCreated = false;
+      if (!device && !dto.manualSerialNumber && dto.serialNumber?.trim()) {
+        device = await tx.device.create({
+          data: {
+            name: `返修设备 ${manualSN}`, serialNumber: manualSN, ownerType: 'CUSTOMER', source: 'REPAIR',
+            organizationId: dto.organizationId, status: 'REPAIRING', notes: '由返修单自动建档',
+          },
+        });
+        autoCreated = true;
+      }
       if (!device && !dto.manualSerialNumber) throw new BadRequestException('设备不存在，请选择已有设备或使用手动填写模式');
       const serialNumber = dto.manualSerialNumber ? manualSN : device?.serialNumber;
       if (dto.returnForm && dto.returnForm.serialNumber.trim() !== serialNumber?.trim()) throw new BadRequestException('返厂单 SN 与所选序列号不一致');
-      if (device && (device.status === 'REPAIRING' || device.status === 'RETIRED')) throw new BadRequestException(`设备当前状态为「${zhStatus(device.status)}」，不能创建返修单`);
+      if (!autoCreated && device && (device.status === 'REPAIRING' || device.status === 'RETIRED')) throw new BadRequestException(`设备当前状态为「${zhStatus(device.status)}」，不能创建返修单`);
       if (!await tx.customerOrganization.findUnique({ where: { id: dto.organizationId }, select: { id: true } })) throw new BadRequestException('客户组织不存在');
       if (dto.contactId && !await tx.contact.findFirst({ where: { id: dto.contactId, organizationId: dto.organizationId }, select: { id: true } })) throw new BadRequestException('联系人不属于该客户');
       const inWarranty = dto.inWarranty ?? (device?.warrantyUntil ? device.warrantyUntil >= new Date(new Date().toDateString()) : null);
       const data = {
         returnForm: dto.returnForm ? { ...dto.returnForm } : undefined,
         deviceId: device?.id ?? null, serialNumber, organizationId: dto.organizationId, createdById: user.id,
+        ticketId: dto.ticketId || null,
         contactId: dto.contactId || null, symptom: dto.symptom, faultCause: dto.faultCause || null,
         resolution: dto.resolution || null, note: dto.note || null, inWarranty,
+        inboundCarrier: dto.inboundCarrier || null, inboundTracking: dto.inboundTracking || null,
+        outboundCarrier: dto.outboundCarrier || null, partsReturned: dto.partsReturned || null,
         receivedAt: dto.receivedAt ? new Date(dto.receivedAt) : new Date(),
         events: { create: { authorId: user.id, type: RepairEventType.STATUS_CHANGE, content: '返修单已创建，状态：已收货' } },
       };
@@ -122,10 +139,36 @@ export class RepairsService {
     const repair = await this.get(user, id);
     if (repair.device && dto.returnForm && dto.returnForm.serialNumber.trim() !== repair.device.serialNumber?.trim()) throw new BadRequestException('返厂单 SN 与关联设备不一致');
     if (dto.contactId && !await this.prisma.contact.findFirst({ where: { id: dto.contactId, organizationId: repair.organizationId }, select: { id: true } })) throw new BadRequestException('联系人不属于该客户');
+    if (dto.ticketId && !await this.prisma.ticket.findUnique({ where: { id: dto.ticketId }, select: { id: true } })) throw new BadRequestException('关联工单不存在');
     return this.prisma.repairOrder.update({
       where: { id },
-      data: { serialNumber: dto.returnForm?.serialNumber.trim(), returnForm: dto.returnForm ? { ...dto.returnForm } : undefined, symptom: dto.symptom, faultCause: dto.faultCause, resolution: dto.resolution, trackingNo: dto.trackingNo, note: dto.note, inWarranty: dto.inWarranty, contactId: dto.contactId },
+      data: {
+        serialNumber: dto.returnForm?.serialNumber.trim(), returnForm: dto.returnForm ? { ...dto.returnForm } : undefined,
+        symptom: dto.symptom, faultCause: dto.faultCause, resolution: dto.resolution, trackingNo: dto.trackingNo, note: dto.note,
+        inWarranty: dto.inWarranty, contactId: dto.contactId, ticketId: dto.ticketId,
+        inboundCarrier: dto.inboundCarrier, inboundTracking: dto.inboundTracking,
+        outboundCarrier: dto.outboundCarrier, partsReturned: dto.partsReturned,
+      },
       include: repairInclude,
+    });
+  }
+
+  /** 跟进记录：写入返修跟进并同步到关联工单时间线（闭环） */
+  async addFollowUp(user: AuthUser, id: string, dto: AddRepairFollowUpDto) {
+    const repair = await this.get(user, id);
+    const occurredAt = dto.occurredAt ? new Date(dto.occurredAt) : new Date();
+    const content = dto.content.trim();
+    return this.prisma.$transaction(async (tx) => {
+      const followUp = await tx.followUp.create({
+        data: { repairOrderId: id, authorId: user.id, occurredAt, content },
+        include: { author: { select: { id: true, name: true } } },
+      });
+      if (repair.ticketId) {
+        await tx.ticketEvent.create({
+          data: { ticketId: repair.ticketId, authorId: user.id, type: 'WORK_RECORD', visibility: 'INTERNAL', content: `【返修跟进 · ${repair.repairNo}】${content}` },
+        });
+      }
+      return followUp;
     });
   }
 

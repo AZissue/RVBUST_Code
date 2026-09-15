@@ -48,17 +48,19 @@ export interface Device { id: string; name: string; product?: string; cameraMode
 export type DeviceHealth = 'OK' | 'ATTENTION' | 'CHECK'
 export interface Project { id: string; name: string; application?: string; status?: string; organization?: { id: string; name: string } }
 
-export type LoanStatus = 'ONGOING' | 'OVERDUE' | 'RETURNED' | 'CANCELLED'
-export interface LoanItem { id: string; attachments?: LoanPhoto[]; returnedAt?: string | null; conditionNote?: string | null; device: { id: string; name: string; serialNumber?: string | null; cameraModel?: string | null } }
+export type LoanStatus = 'QUEUED' | 'ONGOING' | 'OVERDUE' | 'RETURNED' | 'CANCELLED'
+export interface LoanItem { id: string; attachments?: LoanPhoto[]; returnedAt?: string | null; conditionNote?: string | null; accessories?: string | null; device: { id: string; name: string; serialNumber?: string | null; cameraModel?: string | null } }
 export interface LoanPhoto extends Attachment { photoCategory: 'VIEWS' | 'ACCESSORIES' | 'SERIAL'; photoKey: string }
 export interface ReturnForm { companyName: string; reportedAt: string; reporterName: string; reporterPhone: string; serialNumber: string; appearance: string; returnAddress: string; salesContact: string; afterSalesContact: string }
+export interface FollowUp { id: string; content: string; occurredAt: string; author: { id: string; name: string } }
+export interface LoanScoreRule { id: string; version: string; isActive: boolean; description?: string | null; dimensions: unknown; createdAt: string }
 export interface LoanOrder {
   id: string
   loanNo: string
   purpose: string
   status: LoanStatus
-  loanedAt: string
-  dueAt: string
+  loanedAt?: string | null
+  dueAt?: string | null
   returnedAt?: string | null
   updatedAt?: string
   agreementNo?: string | null
@@ -66,7 +68,18 @@ export interface LoanOrder {
   organization: { id: string; name: string }
   contact?: { id: string; name: string } | null
   assignee?: { id: string; name: string } | null
+  ticket?: { id: string; number: string; title: string } | null
+  infoComplete?: boolean
+  score?: number | null
+  scoreDetail?: Record<string, number> | null
+  scoreRuleVersion?: string | null
+  assessmentResult?: string | null
+  advanceReason?: string | null
+  advancedBy?: { id: string; name: string } | null
+  advancedAt?: string | null
+  followUps?: FollowUp[]
   items: LoanItem[]
+  createdAt: string
 }
 
 export type RepairStatus = 'RECEIVED' | 'DIAGNOSING' | 'REPAIRING' | 'SHIPPED' | 'CLOSED'
@@ -106,6 +119,12 @@ export interface RepairOrder {
   assignee?: { id: string; name: string } | null
   events?: RepairEvent[]
   attachments?: Attachment[]
+  ticket?: { id: string; number: string; title: string } | null
+  inboundCarrier?: string | null
+  inboundTracking?: string | null
+  outboundCarrier?: string | null
+  partsReturned?: string | null
+  followUps?: FollowUp[]
 }
 
 export interface CustomerProfile {

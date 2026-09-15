@@ -10,6 +10,7 @@ export class CreateRepairDto {
   @IsUUID() organizationId!: string;
   @IsOptional() @IsUUID() deviceId?: string;
   @IsOptional() @IsString() @Length(1, 120) serialNumber?: string;
+  @IsOptional() @IsUUID() ticketId?: string;
   @IsString() @Length(1, 1000) symptom!: string;
   @IsOptional() @IsString() @Length(0, 4000) faultCause?: string;
   @IsOptional() @IsString() @Length(0, 4000) resolution?: string;
@@ -17,6 +18,10 @@ export class CreateRepairDto {
   @IsOptional() @IsUUID() contactId?: string;
   @IsOptional() @IsDateString() receivedAt?: string;
   @IsOptional() @IsString() @Length(0, 4000) note?: string;
+  @IsOptional() @IsString() @Length(0, 50) inboundCarrier?: string;
+  @IsOptional() @IsString() @Length(0, 100) inboundTracking?: string;
+  @IsOptional() @IsString() @Length(0, 50) outboundCarrier?: string;
+  @IsOptional() @IsString() @Length(0, 500) partsReturned?: string;
 }
 
 export class UpdateRepairDto {
@@ -28,6 +33,16 @@ export class UpdateRepairDto {
   @IsOptional() @IsString() @Length(0, 4000) note?: string;
   @IsOptional() @IsBoolean() inWarranty?: boolean;
   @IsOptional() @IsUUID() contactId?: string;
+  @IsOptional() @IsUUID() ticketId?: string;
+  @IsOptional() @IsString() @Length(0, 50) inboundCarrier?: string;
+  @IsOptional() @IsString() @Length(0, 100) inboundTracking?: string;
+  @IsOptional() @IsString() @Length(0, 50) outboundCarrier?: string;
+  @IsOptional() @IsString() @Length(0, 500) partsReturned?: string;
+}
+
+export class AddRepairFollowUpDto {
+  @IsString() @Length(1, 2000) content!: string;
+  @IsOptional() @IsDateString() occurredAt?: string;
 }
 
 export class TransitionRepairDto {

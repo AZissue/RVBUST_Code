@@ -43,7 +43,7 @@ export function DevicesPage() {
   const allDevices = remote.data ?? []
   const allLoans = loansRemote.data ?? []
   const activeLoans = allLoans.filter((loan) => loan.status === 'ONGOING' || loan.status === 'OVERDUE')
-  const dueState = (loan: LoanOrder) => Math.ceil((new Date(loan.dueAt).getTime() - Date.now()) / 86400000)
+  const dueState = (loan: LoanOrder) => loan.dueAt ? Math.ceil((new Date(loan.dueAt).getTime() - Date.now()) / 86400000) : Number.POSITIVE_INFINITY
   const overdueLoans = activeLoans.filter((loan) => dueState(loan) < 0).sort((a, b) => dueState(a) - dueState(b))
   const dueSoonLoans = activeLoans.filter((loan) => { const d = dueState(loan); return d >= 0 && d <= 7 }).sort((a, b) => dueState(a) - dueState(b))
   const staleLoans = activeLoans.filter((loan) => !loan.updatedAt || Date.now() - new Date(loan.updatedAt).getTime() >= 14 * 86400000)
