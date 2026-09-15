@@ -44,7 +44,7 @@ export interface Customer {
 export interface Contact { id: string; name: string; title?: string; phone?: string; email?: string; wechat?: string; isPrimary: boolean }
 export type DeviceStatus = 'IN_STOCK' | 'LOANED' | 'REPAIRING' | 'RETIRED'
 export type DeviceOwnerType = 'COMPANY' | 'CUSTOMER'
-export interface Device { id: string; name: string; product?: string; cameraModel?: string; serialNumber?: string; assetNo?: string | null; sdkVersion?: string; location?: string; status?: DeviceStatus; ownerType: DeviceOwnerType; organizationId?: string | null; purchaseDate?: string; warrantyUntil?: string; notes?: string; health?: DeviceHealth; organization?: { id: string; name: string } | null }
+export interface Device { id: string; name: string; product?: string; cameraModel?: string; serialNumber?: string; assetNo?: string | null; sdkVersion?: string; location?: string; status?: DeviceStatus; ownerType: DeviceOwnerType; organizationId?: string | null; purchaseDate?: string; warrantyUntil?: string; notes?: string; health?: DeviceHealth; loanCount?: number; repairCount?: number; organization?: { id: string; name: string } | null }
 export type DeviceHealth = 'OK' | 'ATTENTION' | 'CHECK'
 export interface Project { id: string; name: string; application?: string; status?: string; organization?: { id: string; name: string } }
 
@@ -60,6 +60,7 @@ export interface LoanOrder {
   loanedAt: string
   dueAt: string
   returnedAt?: string | null
+  updatedAt?: string
   agreementNo?: string | null
   note?: string | null
   organization: { id: string; name: string }

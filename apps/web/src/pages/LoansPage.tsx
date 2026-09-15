@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, Plus, X } from 'lucide-react'
+import { ChevronDown, ChevronRight, Download, Plus, Search, X } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
 import { Fragment, useEffect, useRef, useState, type FormEvent } from 'react'
 import { LoanPhotoPanel, PhotoPicker, uploadLoanPhoto, type PendingPhoto } from '../components/LoanPhotos'
@@ -10,6 +10,12 @@ import type { Contact, Customer, Device, LoanOrder, LoanStatus, User } from '../
 import { Empty, PageError, PageLoading } from './DashboardPage'
 
 export { loanStatusLabels }
+export function LoanDueBadge({ days }: { days: number }) {
+  if (days < 0) return <span className="badge danger">已逾期 {-days} 天</span>
+  if (days === 0) return <span className="badge warn">今天到期</span>
+  if (days <= 7) return <span className="badge warn">{days} 天后到期</span>
+  return <span className="badge status-in_progress">借测中</span>
+}
 export function LoanStatusBadge({ status }: { status: LoanStatus }) {
   return <span className={`badge ${status === 'OVERDUE' ? 'danger' : status === 'ONGOING' ? 'status-in_progress' : status === 'RETURNED' ? 'ok' : ''}`}>{loanStatusLabels[status]}</span>
 }
@@ -22,17 +28,31 @@ export function LoansPage() {
   const [returning, setReturning] = useState<LoanOrder | null>(null)
   const [assigning, setAssigning] = useState<LoanOrder | null>(null)
   const [expanded, setExpanded] = useState<string | null>(null)
+  const [search, setSearch] = useState('')
+  const [sort, setSort] = useState<'default' | 'dueAsc' | 'dueDesc'>('default')
   const [error, setError] = useState('')
   const remote = useRemote(() => api<LoanOrder[]>(`/loans?${status ? `status=${status}&` : ''}${mine ? 'mine=1' : ''}`), [status, mine], true)
   if (remote.loading) return <PageLoading />
   if (remote.error) return <PageError message={remote.error} retry={remote.refresh} />
-  const loans = remote.data ?? []
+  const dueState = (loan: LoanOrder) => Math.ceil((new Date(loan.dueAt).getTime() - Date.now()) / 86400000)
+  const loans = (remote.data ?? []).filter((loan) => {
+    if (!search.trim()) return true
+    const haystack = `${loan.loanNo} ${loan.organization.name} ${loan.contact?.name ?? ''} ${loan.assignee?.name ?? ''} ${loan.items.map((item) => `${item.device.serialNumber ?? ''} ${item.device.name} ${item.device.cameraModel ?? ''}`).join(' ')} ${loan.agreementNo ?? ''}`.toLowerCase()
+    return haystack.includes(search.trim().toLowerCase())
+  })
+  loans.sort((a, b) => {
+    if (sort === 'dueAsc') return dueState(a) - dueState(b)
+    if (sort === 'dueDesc') return dueState(b) - dueState(a)
+    return 0
+  })
   const run = async (action: () => Promise<unknown>) => { setError(''); try { await action(); await remote.refresh() } catch (reason) { setError(reason instanceof Error ? reason.message : '操作失败') } }
   return <div className="page-stack">
-    <header className="page-header"><div><span className="eyebrow">LOAN ORDERS</span><h1>借测管理</h1><p>设备借测从借出到归还全程可追踪。</p></div><button className="button primary" onClick={() => setCreating(true)}><Plus size={16} />新建借测单</button></header>
+    <header className="page-header"><div><span className="eyebrow">LOAN ORDERS</span><h1>借测管理</h1><p>设备借测从借出到归还全程可追踪。</p></div><div className="header-actions"><a className="button" href="/api/loans/export" download><Download size={16} />导出数据</a><button className="button primary" onClick={() => setCreating(true)}><Plus size={16} />新建借测单</button></div></header>
     {error && <div className="form-error"><button onClick={() => setError('')}><X size={14} /></button>{error}</div>}
     <section className="toolbar">
+      <div className="searchbox"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索单号、客户、SN、型号或工程师" /></div>
       <select aria-label="借测状态筛选" value={status} onChange={(event) => setStatus(event.target.value)}><option value="">全部状态</option>{Object.entries(loanStatusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+      <select aria-label="排序方式" value={sort} onChange={(event) => setSort(event.target.value as typeof sort)}><option value="default">默认排序</option><option value="dueAsc">最近到期优先</option><option value="dueDesc">最远到期优先</option></select>
       <label><input type="checkbox" checked={mine} onChange={(event) => setMine(event.target.checked)} />只看我的</label>
       <span className="result-count">{loans.length} 张借测单</span>
     </section>
@@ -41,7 +61,7 @@ export function LoansPage() {
         <td><button className="icon-button" onClick={() => setExpanded(expanded === loan.id ? null : loan.id)}>{expanded === loan.id ? <ChevronDown size={15} /> : <ChevronRight size={15} />}</button></td>
         <td className="mono">{loan.loanNo}</td><td>{loan.organization.name}</td>
         <td className="mono truncate-cell">{loan.items.map((item) => item.device.serialNumber || item.device.name).join(', ')}</td>
-        <td>{loan.assignee?.name ?? '未指派'}</td><td>{formatDate(loan.loanedAt)}</td><td>{formatDate(loan.dueAt)}</td><td><LoanStatusBadge status={loan.status} /></td>
+        <td>{loan.assignee?.name ?? '未指派'}</td><td>{formatDate(loan.loanedAt)}</td><td>{formatDate(loan.dueAt)}</td><td>{loan.status === 'ONGOING' ? <LoanDueBadge days={dueState(loan)} /> : <LoanStatusBadge status={loan.status} />}</td>
         <td>{(loan.status === 'ONGOING' || loan.status === 'OVERDUE') && <div className="row-actions"><button className="button small" onClick={() => setReturning(loan)}>归还</button><button className="button small" onClick={() => setAssigning(loan)}>指派</button><button className="button small" onClick={() => void run(() => api(`/loans/${loan.id}/cancel`, { method: 'POST' }))}>取消</button></div>}</td>
       </tr>
       {expanded === loan.id && <tr><td className="expanded-cell" colSpan={9}>

@@ -36,7 +36,11 @@ export class DevicesService {
     ]);
     const loanMap = new Map(loanGroups.map(g => [g.deviceId, g._count._all]));
     const repairMap = new Map(repairGroups.map(g => [g.deviceId, g._count._all]));
-    return devices.map(d => ({ ...d, health: deviceHealth(loanMap.get(d.id) ?? 0, repairMap.get(d.id) ?? 0) }));
+    return devices.map(d => {
+      const loanCount = loanMap.get(d.id) ?? 0;
+      const repairCount = repairMap.get(d.id) ?? 0;
+      return { ...d, loanCount, repairCount, health: deviceHealth(loanCount, repairCount) };
+    });
   }
 
   async get(id: string) {
