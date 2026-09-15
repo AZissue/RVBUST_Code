@@ -2,15 +2,13 @@ import { BadRequestException, ConflictException, ForbiddenException, Inject, Inj
 import type { AuthUser } from '../auth/auth.types.js';
 import { AccessPolicyService } from '../auth/access-policy.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { AIService } from '../ai/ai.service.js';
-import { PROMPT_TEMPLATES } from '../ai/prompt-templates.js';
 import { summarizeTitleLocally } from './title-summarizer.js';
 import { QUICK_INPUT_PARSER, extractDateExpression, extractStatusExpression, type QuickInputParser, ticketSimilarity } from './quick-input.parser.js';
 import { SimilarTicketsDto, SuggestTitleDto, UpdateQuickTicketDto } from './dto/quick-ticket.dto.js';
 
 @Injectable()
 export class QuickTicketsService {
-  constructor(private readonly prisma: PrismaService, private readonly access: AccessPolicyService, @Inject(QUICK_INPUT_PARSER) private readonly parser: QuickInputParser, private readonly ai: AIService) {}
+  constructor(private readonly prisma: PrismaService, private readonly access: AccessPolicyService, @Inject(QUICK_INPUT_PARSER) private readonly parser: QuickInputParser) {}
 
   async parse(user: AuthUser, rawText: string) {
     this.access.requireInternal(user);
@@ -28,25 +26,10 @@ export class QuickTicketsService {
     return { ...result, rawText, occurredAt: extracted.occurredAt, status: withStatus.status, deviceCandidates: devices, matchedDevice: devices.length === 1 ? devices[0] : null, similarTickets };
   }
 
-  /** AI 将问题描述总结为简短工单标题；AI 未配置/失败时自动退回本地规则总结 */
+  /** 将问题描述总结为简短工单标题（本地规则总结） */
   async suggestTitle(user: AuthUser, dto: SuggestTitleDto) {
     this.access.requireInternal(user);
-    const response = await this.ai.chat<{ title: string }>({
-      userId: user.id, feature: 'ticket_title_summary', maxTokens: 128,
-      messages: [
-        { role: 'system', content: PROMPT_TEMPLATES.ticket_title_summary },
-        { role: 'user', content: dto.description.slice(0, 4000) },
-      ],
-      validate: (value) => {
-        const title = (value as { title?: unknown })?.title;
-        if (typeof title !== 'string') throw new Error('Invalid schema');
-        const trimmed = title.trim().replace(/[。！？.!?,，、;；:：\s]+$/, '');
-        if (trimmed.length < 2 || trimmed.length > 64) throw new Error('Invalid length');
-        return { title: trimmed };
-      },
-    });
-    if (!response.success) return { title: summarizeTitleLocally(dto.description), source: 'rule' as const };
-    return { title: response.data.title, source: 'ai' as const };
+    return { title: summarizeTitleLocally(dto.description), source: 'rule' as const };
   }
 
   async similar(user: AuthUser, dto: SimilarTicketsDto) {

@@ -11,7 +11,7 @@ import { SimpleFormModal } from '../pages/CustomersPage'
 
 interface Candidate { id: string; name: string; score: number }
 interface Parsed {
-  parser?: 'ai' | 'rule'; fallbackReason?: string; model?: string
+  parser?: 'rule'; fallbackReason?: string
   rawText: string; issue: string; title: string; priority: TicketPriority; deviceText: string
   matchedCustomer: Candidate | null; customerCandidates: Candidate[]; customerText: string
   matchedAssignee: Candidate | null; assigneeCandidates: Candidate[]; assigneeText: string; assigneeDefaulted: boolean
@@ -122,7 +122,7 @@ function QuickTicketConfirm({ parsed, defaultDate, canCreateCustomer, onClose, o
     try {
       const result = await api<{ title: string }>('/tickets/suggest-title', { method: 'POST', body: JSON.stringify({ description: description.slice(0, 4000) }) })
       setTitle(result.title.slice(0, 240))
-    } catch (e) { setError(e instanceof Error ? e.message : 'AI 总结失败') } finally { setSummarizing(false) }
+    } catch (e) { setError(e instanceof Error ? e.message : '总结失败') } finally { setSummarizing(false) }
   }
   const ready = Boolean(organizationId && assigneeId && issue.trim().length >= 3 && title.trim().length >= 3 && checkedKey === key && !busy)
   const save = async (existing?: Similar) => {
@@ -135,7 +135,7 @@ function QuickTicketConfirm({ parsed, defaultDate, canCreateCustomer, onClose, o
     } catch (e) { setError(e instanceof Error ? e.message : '保存失败'); setRetry((n) => n + 1) } finally { setBusy(false) }
   }
   return <Modal title="解析结果确认" onClose={() => { if (!busy) onClose() }} wide><div className="quick-confirm">
-    <div role="status" className="muted">{parsed.parser === 'ai' ? `AI 解析 · ${parsed.model}` : `规则解析${parsed.fallbackReason ? ` · ${parsed.fallbackReason}` : ''}`}</div>
+    <div role="status" className="muted">智能语义解析（本地规则引擎）{parsed.fallbackReason ? ` · ${parsed.fallbackReason}` : ''}</div>
     <fieldset disabled={busy} className="form-grid">
       <label>客户<select aria-label="确认客户" value={organizationId} onChange={(e) => { setOrganizationId(e.target.value); setDeviceId('') }}><option value="">选择现有客户</option>{customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
       <label>负责人<select aria-label="确认负责人" value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)}><option value="">负责人：未匹配</option>{users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</select>{parsed.assigneeDefaulted && parsed.matchedAssignee && <small>默认当前用户：{parsed.matchedAssignee.name}</small>}</label>
@@ -143,7 +143,7 @@ function QuickTicketConfirm({ parsed, defaultDate, canCreateCustomer, onClose, o
       {!parsed.matchedAssignee && <div className="span-2 match-options"><strong>负责人：未匹配{parsed.assigneeText ? `（${parsed.assigneeText}）` : ''}</strong>{parsed.assigneeCandidates.map((u) => <label key={u.id}><input type="radio" name="assignee-candidate" checked={assigneeId === u.id} onChange={() => setAssigneeId(u.id)} />{u.name}</label>)}</div>}
       <div className="span-2 field-with-action">
         <label>问题标题<input aria-label="确认标题" maxLength={240} value={title} onChange={(e) => setTitle(e.target.value)} /></label>
-        <button type="button" className="button" disabled={summarizing || busy || issue.trim().length < 3} onClick={() => void suggestTitle()}><Sparkles size={14} />{summarizing ? '正在总结' : 'AI 总结'}</button>
+        <button type="button" className="button" disabled={summarizing || busy || issue.trim().length < 3} onClick={() => void suggestTitle()}><Sparkles size={14} />{summarizing ? '正在总结' : '自动总结'}</button>
       </div>
       <label>问题分类<select aria-label="确认问题分类" value={category} onChange={(e) => setCategory(e.target.value as TicketCategory)}>{Object.entries(ticketCategoryLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><small>按关键词初步识别，可修改</small></label>
       <label>优先级<select aria-label="确认优先级" value={priority} onChange={(e) => setPriority(e.target.value as TicketPriority)}>{Object.entries(ticketPriorityLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>

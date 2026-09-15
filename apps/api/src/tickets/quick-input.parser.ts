@@ -1,3 +1,4 @@
+import { Injectable } from '@nestjs/common';
 import { TicketPriority } from '@prisma/client';
 
 export interface Candidate { id: string; name: string; score: number }
@@ -91,6 +92,7 @@ export function parseQuickTicketInput(rawText: string, context: ParserContext) {
     confidence: { customer: matchedCustomer?.score ?? 0, assignee: matchedAssignee?.score ?? 0 } };
 }
 
+@Injectable()
 export class RuleBasedParser implements QuickInputParser { parse(rawText: string, context: ParserContext) { return parseQuickTicketInput(rawText, context); } }
 export const QUICK_INPUT_PARSER = Symbol('QuickInputParser');
 

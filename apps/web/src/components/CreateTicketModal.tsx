@@ -37,7 +37,7 @@ export function CreateTicketModal({ onClose, onCreated, defaultAssigneeId }: { o
     try {
       const result = await api<{ title: string }>('/tickets/suggest-title', { method: 'POST', body: JSON.stringify({ description: description.slice(0, 4000) }) })
       if (titleRef.current) titleRef.current.value = result.title.slice(0, 240)
-    } catch (reason) { setError(reason instanceof Error ? reason.message : 'AI 总结失败') } finally { setSummarizing(false) }
+    } catch (reason) { setError(reason instanceof Error ? reason.message : '总结失败') } finally { setSummarizing(false) }
   }
   useEffect(() => { setDeviceText(''); setContactId('') }, [customer?.id])
   const submit = async (event: FormEvent<HTMLFormElement>) => {
@@ -81,7 +81,7 @@ export function CreateTicketModal({ onClose, onCreated, defaultAssigneeId }: { o
       {!customers.loading && !customers.error && customerName.trim() && !customer && <label className="span-2 checkbox-row"><input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} />确认新建客户「{customerName.trim()}」</label>}
       <div className="field-with-action">
         <label>问题标题<input ref={titleRef} name="title" required minLength={3} maxLength={240} /></label>
-        <button type="button" className="button" disabled={summarizing} onClick={() => void suggestTitle()}><Sparkles size={14} />{summarizing ? '正在总结' : 'AI 总结'}</button>
+        <button type="button" className="button" disabled={summarizing} onClick={() => void suggestTitle()}><Sparkles size={14} />{summarizing ? '正在总结' : '自动总结'}</button>
       </div>
       <label>问题分类<select name="category" defaultValue="OTHER">{TICKET_CATEGORIES.map(item => <option key={item} value={item}>{ticketCategoryLabels[item]}</option>)}</select></label>
       <label className="span-2">问题描述<textarea ref={descriptionRef} name="description" required minLength={3} maxLength={20000} rows={4} /></label>

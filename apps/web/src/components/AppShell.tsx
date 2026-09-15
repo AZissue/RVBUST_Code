@@ -1,4 +1,4 @@
-import { BarChart3, Bell, BookOpen, Bot, Bug, Building2, ChevronDown, ClipboardList, FileClock, FileText, Gauge, LogOut, Menu, Monitor, Moon, NotebookPen, Package, PanelLeftClose, Settings, Share2, Sun, Trash2, Users, Wrench, X } from 'lucide-react'
+import { BarChart3, Bell, BookOpen, Bug, Building2, ChevronDown, ClipboardList, FileClock, FileText, Gauge, LogOut, Menu, Monitor, Moon, NotebookPen, Package, PanelLeftClose, Settings, Share2, Sun, Trash2, Users, Wrench, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
@@ -43,7 +43,7 @@ export function AppShell() {
       <div className="brand"><div className="brand-mark">TS</div><div><strong>技术支持系统</strong><span>Support Operations V2</span></div><button className="icon-button mobile-only" onClick={() => setMenuOpen(false)}><X size={18} /></button></div>
       <nav>
         {groups.map((group) => <div className="nav-group" key={group.label}><div className="nav-label">{group.label}</div>{group.items.map((item) => <NavLink end={item.to === '/'} key={item.to} to={item.to} onClick={() => setMenuOpen(false)}><item.icon size={17} />{item.label}</NavLink>)}</div>)}
-        <div className="nav-group"><div className="nav-label">知识</div><button className="nav-disabled" title="后续阶段开放"><BookOpen size={17} />知识库<span>后续</span></button><button className="nav-disabled" title="后续阶段开放"><Bot size={17} />AI 助手<span>后续</span></button></div>
+        <div className="nav-group"><div className="nav-label">知识</div><button className="nav-disabled" title="后续阶段开放"><BookOpen size={17} />知识库<span>后续</span></button></div>
         {isAdmin && <div className="nav-group"><div className="nav-label">系统</div>
           <NavLink to="/users"><Users size={17} />用户管理</NavLink><NavLink to="/teams"><Users size={17} />团队管理</NavLink><NavLink to="/settings"><Settings size={17} />系统设置</NavLink><NavLink to="/audit"><FileClock size={17} />操作日志</NavLink>
         </div>}
