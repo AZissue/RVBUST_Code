@@ -1,6 +1,7 @@
-import { ChevronDown, ChevronRight, Download, Plus, Search, X } from 'lucide-react'
+import { AlarmClock, CalendarClock, CheckCircle2, ChevronDown, ChevronRight, Download, FileClock, Plus, Search, Share2, X } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
 import { Fragment, useEffect, useRef, useState, type FormEvent } from 'react'
+import { useAuth } from '../context/AuthContext'
 import { LoanPhotoPanel, PhotoPicker, uploadLoanPhoto, type PendingPhoto } from '../components/LoanPhotos'
 import { Modal } from '../components/Modal'
 import { useRemote } from '../hooks/useRemote'
@@ -31,11 +32,19 @@ export function LoansPage() {
   const [search, setSearch] = useState('')
   const [sort, setSort] = useState<'default' | 'dueAsc' | 'dueDesc'>('default')
   const [error, setError] = useState('')
-  const remote = useRemote(() => api<LoanOrder[]>(`/loans?${status ? `status=${status}&` : ''}${mine ? 'mine=1' : ''}`), [status, mine], true)
+  const { user } = useAuth()
+  const remote = useRemote(() => api<LoanOrder[]>('/loans'), [], true)
   if (remote.loading) return <PageLoading />
   if (remote.error) return <PageError message={remote.error} retry={remote.refresh} />
   const dueState = (loan: LoanOrder) => Math.ceil((new Date(loan.dueAt).getTime() - Date.now()) / 86400000)
-  const loans = (remote.data ?? []).filter((loan) => {
+  const allLoans = remote.data ?? []
+  const activeLoans = allLoans.filter((loan) => loan.status === 'ONGOING' || loan.status === 'OVERDUE')
+  const overdueLoans = activeLoans.filter((loan) => dueState(loan) < 0)
+  const dueSoonLoans = activeLoans.filter((loan) => { const d = dueState(loan); return d >= 0 && d <= 7 })
+  const loans = allLoans.filter((loan) => {
+    if (mine && loan.assignee?.id !== user?.id) return false
+    if (status === 'DUE_SOON') { const d = dueState(loan); if (!(loan.status === 'ONGOING' && d >= 0 && d <= 7)) return false }
+    else if (status && loan.status !== status) return false
     if (!search.trim()) return true
     const haystack = `${loan.loanNo} ${loan.organization.name} ${loan.contact?.name ?? ''} ${loan.assignee?.name ?? ''} ${loan.items.map((item) => `${item.device.serialNumber ?? ''} ${item.device.name} ${item.device.cameraModel ?? ''}`).join(' ')} ${loan.agreementNo ?? ''}`.toLowerCase()
     return haystack.includes(search.trim().toLowerCase())
@@ -46,18 +55,28 @@ export function LoansPage() {
     return 0
   })
   const run = async (action: () => Promise<unknown>) => { setError(''); try { await action(); await remote.refresh() } catch (reason) { setError(reason instanceof Error ? reason.message : '操作失败') } }
+  const kpi = [
+    { key: '', label: '全部借测单', value: allLoans.length, icon: FileClock, hint: '' },
+    { key: 'ONGOING', label: '借测中', value: activeLoans.length, icon: Share2, hint: `${activeLoans.reduce((sum, loan) => sum + loan.items.length, 0)} 台设备在借` },
+    { key: 'OVERDUE', label: '已逾期', value: overdueLoans.length, icon: AlarmClock, hint: overdueLoans.length ? `最长逾期 ${Math.max(...overdueLoans.map((loan) => -dueState(loan)))} 天` : '' },
+    { key: 'DUE_SOON', label: '7天内到期', value: dueSoonLoans.length, icon: CalendarClock, hint: '' },
+    { key: 'RETURNED', label: '已归还', value: allLoans.filter((loan) => loan.status === 'RETURNED').length, icon: CheckCircle2, hint: '' },
+  ]
   return <div className="page-stack">
     <header className="page-header"><div><span className="eyebrow">LOAN ORDERS</span><h1>借测管理</h1><p>设备借测从借出到归还全程可追踪。</p></div><div className="header-actions"><a className="button" href="/api/loans/export" download><Download size={16} />导出数据</a><button className="button primary" onClick={() => setCreating(true)}><Plus size={16} />新建借测单</button></div></header>
     {error && <div className="form-error"><button onClick={() => setError('')}><X size={14} /></button>{error}</div>}
+    <section className="metric-strip five">{kpi.map((item) => <button key={item.key} className={`metric clickable ${status === item.key ? 'filter-active' : ''}`} onClick={() => setStatus(status === item.key ? '' : item.key)} title={`筛选：${item.label}`}>
+      <item.icon size={17} /><span>{item.label}</span><strong>{item.value}{item.hint ? <em> {item.hint}</em> : null}</strong>
+    </button>)}</section>
     <section className="toolbar">
       <div className="searchbox"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索单号、客户、SN、型号或工程师" /></div>
-      <select aria-label="借测状态筛选" value={status} onChange={(event) => setStatus(event.target.value)}><option value="">全部状态</option>{Object.entries(loanStatusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+      <select aria-label="借测状态筛选" value={status} onChange={(event) => setStatus(event.target.value)}><option value="">全部状态</option><option value="ONGOING">借测中</option><option value="OVERDUE">已逾期</option><option value="DUE_SOON">7天内到期</option><option value="RETURNED">已归还</option><option value="CANCELLED">已取消</option></select>
       <select aria-label="排序方式" value={sort} onChange={(event) => setSort(event.target.value as typeof sort)}><option value="default">默认排序</option><option value="dueAsc">最近到期优先</option><option value="dueDesc">最远到期优先</option></select>
       <label><input type="checkbox" checked={mine} onChange={(event) => setMine(event.target.checked)} />只看我的</label>
       <span className="result-count">{loans.length} 张借测单</span>
     </section>
     <section className="panel no-padding"><div className="table-wrap"><table><thead><tr><th></th><th>单号</th><th>客户</th><th>设备（SN）</th><th>跟进工程师</th><th>借出日期</th><th>预计归还</th><th>状态</th><th>操作</th></tr></thead><tbody>{loans.map((loan) => <Fragment key={loan.id}>
-      <tr className={loan.status === 'OVERDUE' ? 'danger-row' : ''}>
+      <tr className={loan.status === 'OVERDUE' || (loan.status === 'ONGOING' && dueState(loan) < 0) ? 'danger-row' : ''}>
         <td><button className="icon-button" onClick={() => setExpanded(expanded === loan.id ? null : loan.id)}>{expanded === loan.id ? <ChevronDown size={15} /> : <ChevronRight size={15} />}</button></td>
         <td className="mono">{loan.loanNo}</td><td>{loan.organization.name}</td>
         <td className="mono truncate-cell">{loan.items.map((item) => item.device.serialNumber || item.device.name).join(', ')}</td>

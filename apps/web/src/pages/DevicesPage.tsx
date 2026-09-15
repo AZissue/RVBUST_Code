@@ -1,4 +1,4 @@
-import { Cpu, Handshake, Plus, Search, Wrench, X } from 'lucide-react'
+import { Building2, CalendarClock, Cpu, Handshake, Package, Plus, Search, Wrench, X } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Modal } from '../components/Modal'
@@ -61,19 +61,29 @@ export function DevicesPage() {
     <header className="page-header"><div><span className="eyebrow">DEVICE OVERVIEW</span><h1>设备总览</h1><p>统一管理中心库存、客户资产、借测与维修中的设备。</p></div><button className="button primary" onClick={() => setCreating(true)}><Plus size={16} />新增设备</button></header>
     {error && <div className="form-error"><button onClick={() => setError('')}><X size={14} /></button>{error}</div>}
     <section className="metric-strip">
-      <button className="metric" onClick={() => navigate('/devices')}><span>设备总数</span><strong>{allDevices.length}</strong></button>
-      <button className="metric" onClick={() => navigate('/loans?status=ONGOING')}><span><Handshake size={12} /> 借测中</span><strong>{loanedCount}</strong></button>
-      <button className="metric" onClick={() => navigate('/repairs?active=1')}><span><Wrench size={12} /> 维修中</span><strong>{repairingCount}</strong></button>
-      <button className={`metric due-card ${dueSoonLoans.length ? 'due-active' : ''}`} onClick={() => navigate('/loans')}><span>7天内到期</span><strong>{dueSoonLoans.length}</strong></button>
+      <button className="metric clickable" onClick={() => navigate('/devices')}><Cpu size={17} /><span>设备总数</span><strong>{allDevices.length}<em> 台档案</em></strong></button>
+      <button className={`metric clickable ${status === 'IN_STOCK' ? 'filter-active' : ''}`} onClick={() => setStatus(status === 'IN_STOCK' ? '' : 'IN_STOCK')}><Package size={17} /><span>在库</span><strong>{allDevices.filter((item) => item.status === 'IN_STOCK').length}</strong></button>
+      <button className="metric clickable" onClick={() => navigate('/loans?status=ONGOING')}><Handshake size={17} /><span>借测中</span><strong>{loanedCount}</strong></button>
+      <button className="metric clickable" onClick={() => navigate('/repairs?active=1')}><Wrench size={17} /><span>维修中</span><strong>{repairingCount}</strong></button>
+      <button className={`metric clickable due-card ${dueSoonLoans.length ? 'due-active' : ''}`} onClick={() => navigate('/loans')}><CalendarClock size={17} /><span>7天内到期</span><strong>{dueSoonLoans.length}</strong></button>
+      <button className={`metric clickable ${ownerType === 'COMPANY' ? 'filter-active' : ''}`} onClick={() => setOwnerType(ownerType === 'COMPANY' ? '' : 'COMPANY')}><Building2 size={17} /><span>公司样机</span><strong>{allDevices.filter((item) => item.ownerType === 'COMPANY').length}</strong></button>
     </section>
-    <section className="panel"><div className="section-heading"><div><h2>借测待办</h2><p>逾期与临期借测需要优先跟进</p></div><button className="button small" onClick={() => navigate('/loans')}>进入借测管理</button></div>
-      <div className="action-tabs">{(['overdue', 'dueSoon', 'stale'] as const).map((key) => <button key={key} className={`action-tab ${todoTab === key ? 'active' : ''}`} onClick={() => setTodoTab(key)}>{todoLabels[key]}<span className="count-badge">{todoLists[key].length}</span></button>)}</div>
-      {!todoList.length && <Empty text={`当前没有${todoLabels[todoTab]}的借测单`} />}
-      <div className="compact-list">{todoList.slice(0, 8).map((loan) => { const d = dueState(loan); const sn = loan.items.map((item) => item.device.serialNumber || item.device.name).join(', '); return <button className="compact-item" key={loan.id} onClick={() => navigate('/loans')}>
-        <div><strong>{loan.organization.name} · {loan.items[0]?.device.cameraModel || '未登记型号'}</strong><span className="mono">{sn || '未关联设备'} · {loan.loanNo} · {loan.assignee?.name ?? '未指派'}</span></div>
-        <span className={`mini-tag ${d < 0 ? 'danger-tag' : d <= 7 ? 'warn-tag' : ''}`}>{d < 0 ? `已逾期 ${-d} 天` : d === 0 ? '今天到期' : `${d} 天后到期`}</span>
-      </button> })}</div>
-    </section>
+    <div className="two-columns overview-columns">
+      <section className="panel"><div className="section-heading"><div><h2>借测待办</h2><p>逾期与临期借测需要优先跟进</p></div><button className="button small" onClick={() => navigate('/loans')}>进入借测管理</button></div>
+        <div className="action-tabs">{(['overdue', 'dueSoon', 'stale'] as const).map((key) => <button key={key} className={`action-tab ${todoTab === key ? 'active' : ''}`} onClick={() => setTodoTab(key)}>{todoLabels[key]}<span className="count-badge">{todoLists[key].length}</span></button>)}</div>
+        {!todoList.length && <Empty text={`当前没有${todoLabels[todoTab]}的借测单`} />}
+        <div className="compact-list">{todoList.slice(0, 8).map((loan) => { const d = dueState(loan); const sn = loan.items.map((item) => item.device.serialNumber || item.device.name).join(', '); return <button className="compact-item" key={loan.id} onClick={() => navigate('/loans')}>
+          <div><strong>{loan.organization.name} · {loan.items[0]?.device.cameraModel || '未登记型号'}</strong><span className="mono">{sn || '未关联设备'} · {loan.loanNo} · {loan.assignee?.name ?? '未指派'}</span></div>
+          <span className={`mini-tag ${d < 0 ? 'danger-tag' : d <= 7 ? 'warn-tag' : ''}`}>{d < 0 ? `已逾期 ${-d} 天` : d === 0 ? '今天到期' : `${d} 天后到期`}</span>
+        </button> })}</div>
+      </section>
+      <section className="panel"><div className="section-heading"><div><h2>健康度分布</h2><p>按借测/维修周转自动评估</p></div></div>
+        {(['CHECK', 'ATTENTION', 'OK'] as const).map((key) => { const count = allDevices.filter((item) => item.health === key).length; const colors = { OK: 'var(--success)', ATTENTION: 'var(--warning)', CHECK: 'var(--brand)' }; return <div className="donut-row" key={key}><span className="donut-dot" style={{ background: colors[key] }} />{deviceHealthLabels[key]}<strong>{count} 台</strong></div> })}
+        <div className="section-heading" style={{ marginTop: 16 }}><div><h2>归属分布</h2></div></div>
+        <div className="donut-row"><span className="donut-dot" style={{ background: 'var(--brand)' }} />客户资产<strong>{allDevices.filter((item) => item.ownerType === 'CUSTOMER').length} 台</strong></div>
+        <div className="donut-row"><span className="donut-dot" style={{ background: 'var(--muted)' }} />公司样机<strong>{allDevices.filter((item) => item.ownerType === 'COMPANY').length} 台</strong></div>
+      </section>
+    </div>
     <section className="toolbar"><div className="searchbox"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索名称、型号、SN 或客户" /></div><select aria-label="设备状态筛选" value={status} onChange={(event) => setStatus(event.target.value)}><option value="">全部状态</option>{Object.entries(deviceStatusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><select aria-label="设备归属筛选" value={ownerType} onChange={(event) => setOwnerType(event.target.value)}><option value="">全部归属</option><option value="COMPANY">公司样机</option><option value="CUSTOMER">客户资产</option></select><span className="result-count">{devices.length} 台设备</span></section>
     <section className="panel no-padding"><div className="table-wrap"><table><thead><tr><th>名称</th><th>型号</th><th>SN</th><th>归属</th><th>所属客户</th><th>状态</th><th>周转（借测/维修）</th><th>健康度</th><th>保修到期</th><th>操作</th></tr></thead><tbody>{devices.map((item) => <tr key={item.id} className="clickable-row" onClick={() => navigate(`/devices/${item.id}`)}>
       <td><strong className="with-icon"><Cpu size={15} />{item.name}</strong></td><td>{item.cameraModel || item.product || '-'}</td><td className="mono">{item.serialNumber || '-'}</td><td>{deviceOwnerLabel(item.ownerType)}</td><td>{item.organization?.name ?? '-'}</td><td><DeviceStatusBadge status={item.status} ownerType={item.ownerType} /></td><td className="muted">借测 {item.loanCount ?? 0} 次 / 维修 {item.repairCount ?? 0} 次</td><td><DeviceHealthBadge health={item.health} /></td>

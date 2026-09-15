@@ -1,4 +1,4 @@
-import { Download, FileText, Plus, Search, Upload, X } from 'lucide-react'
+import { CheckCircle2, Download, FileClock, FileText, PackageSearch, Plus, Search, Truck, Upload, Wrench, X } from 'lucide-react'
 import { AttachmentPreview } from '../components/AttachmentPreview'
 import { RepairStatusEditor } from '../components/RepairStatusEditor'
 import { useAuth } from '../context/AuthContext'
@@ -29,16 +29,29 @@ export function RepairsPage() {
   const [creating, setCreating] = useState(false)
   const [detailId, setDetailId] = useState<string | null>(null)
   const [search, setSearch] = useState('')
-  const remote = useRemote(() => api<RepairOrder[]>(`/repairs${status === 'ACTIVE' ? '?active=1' : status ? `?status=${status}` : ''}`), [status], true)
+  const remote = useRemote(() => api<RepairOrder[]>('/repairs'), [], true)
   if (remote.loading) return <PageLoading />
   if (remote.error) return <PageError message={remote.error} retry={remote.refresh} />
-  const repairs = (remote.data ?? []).filter((repair) => {
+  const allRepairs = remote.data ?? []
+  const activeRepairs = allRepairs.filter((repair) => repair.status !== 'CLOSED')
+  const repairs = allRepairs.filter((repair) => {
+    if (status === 'ACTIVE' ? repair.status === 'CLOSED' : status && repair.status !== status) return false
     if (!search.trim()) return true
     const haystack = `${repair.repairNo} ${repair.organization.name} ${repair.contact?.name ?? ''} ${repair.assignee?.name ?? ''} ${repair.serialNumber ?? ''} ${repair.device?.serialNumber ?? ''} ${repair.device?.cameraModel ?? ''} ${repair.trackingNo ?? ''} ${repair.symptom}`.toLowerCase()
     return haystack.includes(search.trim().toLowerCase())
   })
+  const kpi = [
+    { key: '', label: '全部维修单', value: allRepairs.length, icon: FileClock, hint: '' },
+    { key: 'ACTIVE', label: '进行中', value: activeRepairs.length, icon: Wrench, hint: '' },
+    { key: 'RECEIVED', label: '待检测', value: allRepairs.filter((repair) => repair.status === 'RECEIVED').length, icon: PackageSearch, hint: '' },
+    { key: 'SHIPPED', label: '已寄回', value: allRepairs.filter((repair) => repair.status === 'SHIPPED').length, icon: Truck, hint: '' },
+    { key: 'CLOSED', label: '已关闭', value: allRepairs.filter((repair) => repair.status === 'CLOSED').length, icon: CheckCircle2, hint: '' },
+  ]
   return <div className="page-stack">
     <header className="page-header"><div><span className="eyebrow">REPAIR ORDERS</span><h1>维修管理</h1><p>从收货、检测、维修到寄回关闭的完整返修流水。</p></div><div className="header-actions"><a className="button" href="/api/repairs/export" download><Download size={16} />导出数据</a><button className="button primary" onClick={() => setCreating(true)}><Plus size={16} />新建返厂单</button></div></header>
+    <section className="metric-strip five">{kpi.map((item) => <button key={item.key} className={`metric clickable ${status === item.key ? 'filter-active' : ''}`} onClick={() => setStatus(status === item.key ? '' : item.key)} title={`筛选：${item.label}`}>
+      <item.icon size={17} /><span>{item.label}</span><strong>{item.value}{item.hint ? <em> {item.hint}</em> : null}</strong>
+    </button>)}</section>
     <section className="toolbar"><div className="searchbox"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索单号、客户、SN、型号或物流单号" /></div><select aria-label="返修状态筛选" value={status} onChange={(event) => setStatus(event.target.value)}><option value="">全部状态</option><option value="ACTIVE">返修进行中</option>{Object.entries(repairStatusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><span className="result-count">{repairs.length} 张返修单</span></section>
     <section className="panel no-padding"><div className="table-wrap"><table><thead><tr><th>单号</th><th>SN</th><th>型号</th><th>客户</th><th>故障现象</th><th>状态</th><th>跟进工程师</th><th>收货日期</th><th>操作</th></tr></thead><tbody>{repairs.map((repair) => <tr key={repair.id}>
       <td className="mono">{repair.repairNo}</td><td className="mono">{repair.serialNumber || repair.device?.serialNumber || '-'}</td><td>{repair.device?.cameraModel || '-'}</td><td>{repair.organization.name}</td><td className="truncate-cell" title={repair.symptom}>{repair.symptom}</td><td><RepairStatusBadge status={repair.status} /></td><td>{repair.assignee?.name ?? '未指派'}</td><td>{formatDate(repair.receivedAt)}</td>
