@@ -1,5 +1,5 @@
 import { PartialType } from '@nestjs/mapped-types';
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsObject, IsOptional, IsString, IsUUID, Length, Max, Min, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsObject, IsOptional, IsString, IsUUID, Length, Max, Min, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 
 /** 常用物流承运商（下拉选项，允许其他） */
@@ -23,13 +23,19 @@ export class UpdateLoanDto extends PartialType(CreateLoanDto) {
   @IsOptional() @IsDateString() dueAt?: string;
 }
 
+export class ManualLoanDeviceDto {
+  @IsString() @Length(1, 120) serialNumber!: string;
+  @IsOptional() @IsString() @Length(0, 100) cameraModel?: string;
+}
+
 export class ShipLoanDto {
-  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(50) @IsUUID('4', { each: true }) deviceIds!: string[];
+  @IsArray() @ArrayMaxSize(50) @IsUUID('4', { each: true }) deviceIds!: string[];
   @IsDateString() loanedAt!: string;
   @IsDateString() dueAt!: string;
   @IsOptional() @IsString() @Length(0, 100) agreementNo?: string;
   @IsOptional() @IsIn(LOAN_CARRIERS) outboundCarrier?: string;
   @IsOptional() @IsString() @Length(0, 100) outboundTracking?: string;
+  @IsOptional() @IsArray() @ArrayMaxSize(50) @ValidateNested({ each: true }) @Type(() => ManualLoanDeviceDto) manualDevices?: ManualLoanDeviceDto[];
 }
 
 export class AdvanceLoanDto {

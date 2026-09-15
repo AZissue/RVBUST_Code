@@ -191,21 +191,33 @@ function CreateLoanModal({ onClose, onCreated }: { onClose: () => void; onCreate
   </form></Modal>
 }
 
-/** 借出：排队单 → 进行中，选择在库公司样机并登记日期与物流 */
+/** 借出：排队单 → 进行中，选择在库公司样机或手动登记 SN（自动建档为公司样机） */
 function ShipLoanModal({ loan, onClose, onDone }: { loan: LoanOrder; onClose: () => void; onDone: () => Promise<void> }) {
   const devices = useRemote(() => api<Device[]>('/devices?ownerType=COMPANY&status=IN_STOCK'), [])
   const [selected, setSelected] = useState<string[]>([])
+  const [manualList, setManualList] = useState<{ serialNumber: string; cameraModel: string }[]>([])
+  const [sn, setSn] = useState('')
+  const [model, setModel] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const today = new Date().toISOString().slice(0, 10)
   const defaultDue = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10)
+  const addManual = () => {
+    const serialNumber = sn.trim()
+    if (!serialNumber) return
+    const duplicated = manualList.some((item) => item.serialNumber === serialNumber) || (devices.data ?? []).some((device) => device.serialNumber === serialNumber && selected.includes(device.id))
+    if (duplicated) { setError(`SN ${serialNumber} 已在清单中`); return }
+    setError('')
+    setManualList((current) => [...current, { serialNumber, cameraModel: model.trim() }])
+    setSn(''); setModel('')
+  }
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault(); if (busy) return; setBusy(true); setError('')
     const form = new FormData(event.currentTarget)
     const value = (key: string) => String(form.get(key) ?? '').trim()
-    if (!selected.length) { setError('请至少选择一台设备'); setBusy(false); return }
+    if (!selected.length && !manualList.length) { setError('请勾选在库样机，或在下方手动登记 SN'); setBusy(false); return }
     try {
-      await api(`/loans/${loan.id}/ship`, { method: 'POST', body: JSON.stringify({ deviceIds: selected, loanedAt: value('loanedAt'), dueAt: value('dueAt'), agreementNo: value('agreementNo') || undefined, outboundCarrier: value('outboundCarrier') || undefined, outboundTracking: value('outboundTracking') || undefined }) })
+      await api(`/loans/${loan.id}/ship`, { method: 'POST', body: JSON.stringify({ deviceIds: selected, manualDevices: manualList.length ? manualList : undefined, loanedAt: value('loanedAt'), dueAt: value('dueAt'), agreementNo: value('agreementNo') || undefined, outboundCarrier: value('outboundCarrier') || undefined, outboundTracking: value('outboundTracking') || undefined }) })
       await onDone()
     } catch (reason) { setError(reason instanceof Error ? reason.message : '借出失败') } finally { setBusy(false) }
   }
@@ -215,7 +227,17 @@ function ShipLoanModal({ loan, onClose, onDone }: { loan: LoanOrder; onClose: ()
     <label>协议编号<input name="agreementNo" defaultValue={loan.agreementNo ?? ''} /></label>
     <label>承运商<select name="outboundCarrier" defaultValue=""><option value="">不填写</option>{CARRIERS.map((carrier) => <option key={carrier} value={carrier}>{carrier}</option>)}</select></label>
     <label>物流单号<input name="outboundTracking" /></label>
-    <label className="span-2">在库公司样机（勾选借出）<div className="checkbox-list">{devices.data?.map((device) => <label key={device.id}><input type="checkbox" checked={selected.includes(device.id)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, device.id] : current.filter((id) => id !== device.id))} />{device.name}<span className="mono">{device.serialNumber || '-'}</span>{device.cameraModel ? ` · ${device.cameraModel}` : ''}</label>)}{devices.data && !devices.data.length && <span className="placeholder-text">暂无在库公司样机</span>}</div></label>
+    <label className="span-2">在库公司样机（勾选借出）<div className="checkbox-list">{devices.data?.map((device) => <label key={device.id}><input type="checkbox" checked={selected.includes(device.id)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, device.id] : current.filter((id) => id !== device.id))} />{device.name}<span className="mono">{device.serialNumber || '-'}</span>{device.cameraModel ? ` · ${device.cameraModel}` : ''}</label>)}{devices.data && !devices.data.length && <span className="placeholder-text">暂无在库公司样机，可在下方手动登记 SN，保存后自动建档</span>}</div></label>
+    <div className="span-2 manual-device-entry">
+      <strong>手动登记新样机（SN 自动建档为公司样机）</strong>
+      <div className="manual-device-inputs">
+        <label>SN 码<input value={sn} onChange={(event) => setSn(event.target.value)} list="ship-device-sns" placeholder="输入或选择 SN，已建档的自动关联" /></label>
+        <datalist id="ship-device-sns">{(devices.data ?? []).filter((device) => device.serialNumber).map((device) => <option key={device.id} value={device.serialNumber!}>{device.cameraModel || device.name}</option>)}</datalist>
+        <label>相机型号<input value={model} onChange={(event) => setModel(event.target.value)} placeholder="如 M2600（选填）" /></label>
+        <button type="button" className="button" onClick={addManual}><Plus size={14} />加入清单</button>
+      </div>
+      {manualList.length > 0 && <div className="manual-device-chips">{manualList.map((item) => <span key={item.serialNumber} className="badge">{item.cameraModel ? `${item.cameraModel} · ` : ''}{item.serialNumber}<button type="button" className="icon-button" aria-label={`移除 ${item.serialNumber}`} onClick={() => setManualList((current) => current.filter((entry) => entry.serialNumber !== item.serialNumber))}><X size={12} /></button></span>)}</div>}
+    </div>
     </fieldset>
     {error && <div className="form-error">{error}</div>}
     <div className="form-actions"><button type="button" className="button" disabled={busy} onClick={onClose}>取消</button><button className="button primary" disabled={busy}>{busy ? '提交中' : '确认借出'}</button></div>

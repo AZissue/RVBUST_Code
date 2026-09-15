@@ -340,3 +340,29 @@ tr.danger-row:hover td { background: color-mix(in srgb, var(--brand) 9%, var(--s
 .followup-list p { margin: 0; font-size: 13px; }
 .followup-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: end; }
 .followup-form textarea { resize: vertical; }
+
+.manual-device-entry {
+  border-top: 1px dashed var(--border);
+  padding-top: 10px;
+  display: grid;
+  gap: 8px;
+}
+.manual-device-entry > strong {
+  font-size: 12px;
+}
+.manual-device-inputs {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+.manual-device-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.manual-device-chips .badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}

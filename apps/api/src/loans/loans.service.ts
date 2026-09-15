@@ -145,10 +145,39 @@ export class LoansService {
   }
 
   /** 借出：排队单 → 进行中，校验设备并建立借用明细 */
+  /** 手动登记的新样机：SN 已建档则关联校验，未建档自动创建公司样机 */
+  private async resolveManualDevices(tx: Prisma.TransactionClient, manual: { serialNumber: string; cameraModel?: string }[], organizationId: string): Promise<string[]> {
+    const normalized = [...new Map(manual.map((item) => [item.serialNumber.trim(), { serialNumber: item.serialNumber.trim(), cameraModel: item.cameraModel?.trim() || null }])).values()];
+    const ids: string[] = [];
+    for (const item of normalized) {
+      let device = await tx.device.findUnique({ where: { serialNumber: item.serialNumber } });
+      if (device && device.ownerType !== 'COMPANY') throw new BadRequestException(`SN ${item.serialNumber} 已登记为客户资产，不能作为公司样机借出`);
+      if (device && device.status !== 'IN_STOCK') throw new BadRequestException(`SN ${item.serialNumber} 当前状态不可借出`);
+      if (!device) {
+        try {
+          device = await tx.device.create({
+            data: {
+              name: item.cameraModel ? `${item.cameraModel} 样机` : '借测样机', serialNumber: item.serialNumber,
+              cameraModel: item.cameraModel, ownerType: 'COMPANY', source: 'MANUAL', status: 'LOANED', organizationId,
+              notes: '借出登记时手动建档',
+            },
+          });
+        } catch (error) {
+          if ((error as { code?: string }).code !== 'P2002') throw error;
+          device = await tx.device.findUniqueOrThrow({ where: { serialNumber: item.serialNumber } });
+          if (device.ownerType !== 'COMPANY' || device.status !== 'IN_STOCK') throw new BadRequestException(`SN ${item.serialNumber} 已被占用或当前不可借出`);
+        }
+      }
+      ids.push(device.id);
+    }
+    return ids;
+  }
+
   async ship(user: AuthUser, id: string, dto: ShipLoanDto) {
     const loan = await this.get(user, id);
     if (loan.status !== LoanStatus.QUEUED) throw new BadRequestException('仅排队中的借测单可以执行借出');
     const deviceIds = [...new Set(dto.deviceIds)];
+    if (!deviceIds.length && !dto.manualDevices?.length) throw new BadRequestException('请选择或在下方手动登记至少一台设备');
     const dueAt = new Date(dto.dueAt);
     if (dueAt < new Date(dto.loanedAt)) throw new BadRequestException('预计归还日期不能早于借出日期');
     return this.prisma.$transaction(async (tx) => {
@@ -158,6 +187,9 @@ export class LoansService {
         if (device.ownerType !== 'COMPANY') throw new BadRequestException('客户资产不能创建借测单');
         if (device.status !== 'IN_STOCK') throw new BadRequestException(`设备 ${device.name}（${device.serialNumber ?? device.id}）当前不可借出`);
       }
+      // 手动登记的 SN：已建档则并入校验，未建档自动创建公司样机（挂靠借测客户）
+      const manualIds = dto.manualDevices?.length ? await this.resolveManualDevices(tx, dto.manualDevices, loan.organizationId) : [];
+      const allIds = [...new Set([...deviceIds, ...manualIds])];
       const changed = await tx.loanOrder.updateMany({
         where: { id, status: LoanStatus.QUEUED },
         data: {
@@ -167,9 +199,9 @@ export class LoansService {
         },
       });
       if (changed.count !== 1) throw new BadRequestException('借测单状态已变化，请刷新后重试');
-      await tx.loanItem.createMany({ data: deviceIds.map((deviceId) => ({ loanOrderId: id, deviceId })) });
+      await tx.loanItem.createMany({ data: allIds.map((deviceId) => ({ loanOrderId: id, deviceId })) });
       // 公司样机临时挂靠到借测客户名下
-      await tx.device.updateMany({ where: { id: { in: deviceIds } }, data: { status: 'LOANED', organizationId: loan.organizationId } });
+      await tx.device.updateMany({ where: { id: { in: allIds } }, data: { status: 'LOANED', organizationId: loan.organizationId } });
       return tx.loanOrder.findUniqueOrThrow({ where: { id }, include: loanInclude });
     });
   }
