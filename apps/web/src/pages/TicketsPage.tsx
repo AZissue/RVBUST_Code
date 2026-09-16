@@ -139,6 +139,9 @@ function TicketLinkageCard({ ticket, isDeleted, onCreated }: { ticket: Ticket; i
   const repairOrders = ticket.repairOrders ?? []
   const hasActiveLoan = loanOrders.some(item => ACTIVE_LOAN_STATUSES.includes(item.status))
   const hasActiveRepair = repairOrders.some(item => item.status !== 'CLOSED')
+  // 存在已完结关联单、且无进行中单据、工单未解决/关闭时提示可标记解决
+  const hasFinishedLinkage = loanOrders.some(item => item.status === 'RETURNED' || item.status === 'CANCELLED') || repairOrders.some(item => item.status === 'CLOSED')
+  const showResolveHint = hasFinishedLinkage && !hasActiveLoan && !hasActiveRepair && ticket.status !== 'RESOLVED' && ticket.status !== 'CLOSED'
   const showLoanButton = !isDeleted && (ticket.category === 'PRE_SALES' || ticket.category === 'LOAN_REQUEST') && !hasActiveLoan
   const showRepairButton = !isDeleted && ticket.category === 'HARDWARE_FAILURE' && !hasActiveRepair
   const create = async (kind: 'loan' | 'repair') => {
@@ -157,6 +160,7 @@ function TicketLinkageCard({ ticket, isDeleted, onCreated }: { ticket: Ticket; i
   if (!loanOrders.length && !repairOrders.length && !showLoanButton && !showRepairButton) return null
   return <section className="panel linkage-panel">
     <div className="section-heading"><div><h2>业务联动</h2><p>由该工单发起的借测 / 维修单据</p></div></div>
+    {showResolveHint && <div className="form-error" style={{ borderColor: 'var(--success, #2e7d32)', background: 'rgba(46,125,50,.08)', color: 'var(--success, #2e7d32)' }}>关联业务已完结，可标记解决并关闭工单</div>}
     {(loanOrders.length > 0 || repairOrders.length > 0) && <div className="linkage-list">
       {loanOrders.map(loan => <div key={loan.id} className={`linkage-item${loan.status === 'RETURNED' || loan.status === 'CANCELLED' ? ' is-done' : ''}`}>
         <header><Link className="mono" to={`/loans/${loan.id}`}>{loan.loanNo}</Link><span className="muted">借测单</span><LoanStatusBadge status={loan.status} />{loan.infoComplete === false && <span className="badge warn">待完善信息</span>}</header>

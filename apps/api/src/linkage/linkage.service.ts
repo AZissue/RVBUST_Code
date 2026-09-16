@@ -2,9 +2,11 @@ import { Injectable } from '@nestjs/common';
 import { LoanStatus, RepairStatus, TicketEventType, Visibility } from '@prisma/client';
 import { AccessPolicyService } from '../auth/access-policy.service.js';
 import type { AuthUser } from '../auth/auth.types.js';
+import { NOTIFICATION_TYPES } from '../common/notification-types.js';
 import { LoansService } from '../loans/loans.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { RepairsService } from '../repairs/repairs.service.js';
+import { LinkageNotifyService } from './linkage-notify.service.js';
 
 // 进行中的单据状态集合（与迁移里的部分唯一索引一致）：同工单仅允许一张进行中同类单据
 const ACTIVE_LOAN_STATUSES: LoanStatus[] = [LoanStatus.QUEUED, LoanStatus.ONGOING, LoanStatus.OVERDUE];
@@ -19,6 +21,7 @@ export class LinkageService {
     private readonly loans: LoansService,
     private readonly repairs: RepairsService,
     private readonly access: AccessPolicyService,
+    private readonly linkageNotify: LinkageNotifyService,
   ) {}
 
   /** 从工单创建借测单（幂等）：已有进行中借测单直接返回，不重复创建 */
@@ -47,6 +50,14 @@ export class LinkageService {
         metadata: { linkType: 'loan', linkId: loan.id, linkNo: loan.loanNo },
       },
     });
+    // 通知工单负责人（无负责人退化为创建人）与所有 admin，完善借测信息并评分
+    const ownerId = ticket.assigneeId ?? ticket.createdById;
+    const recipients = [...new Set([ownerId, ...(await this.linkageNotify.adminIds())])].filter((id): id is string => Boolean(id));
+    await Promise.all(recipients.map((recipientId) => this.linkageNotify.safeNotifyUnreadOnce({
+      recipientId, ticketId, type: NOTIFICATION_TYPES.LINK_LOAN_CREATED,
+      title: '借测单已入队', body: `借测单 ${loan.loanNo} 已入队，请完善借测信息并评分（/loans/${loan.id}）。`,
+      dedupeKey: `link-loan-created:${loan.id}`,
+    })));
     return { loan, created: true };
   }
 
@@ -78,6 +89,13 @@ export class LinkageService {
         metadata: { linkType: 'repair', linkId: repair.id, linkNo: repair.repairNo },
       },
     });
+    // 维修详情为抽屉组件，链接到 /repairs 列表并带单号标识；通知所有 admin 受理
+    const admins = await this.linkageNotify.adminIds();
+    await Promise.all(admins.map((recipientId) => this.linkageNotify.safeNotifyUnreadOnce({
+      recipientId, ticketId, type: NOTIFICATION_TYPES.LINK_REPAIR_CREATED,
+      title: '新维修单待受理', body: `新维修单 ${repair.repairNo} 待受理，请前往 /repairs 处理（单号 ${repair.repairNo}）。`,
+      dedupeKey: `link-repair-created:${repair.id}`,
+    })));
     return { repair, created: true };
   }
 

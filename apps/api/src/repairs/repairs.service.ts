@@ -21,6 +21,7 @@ const repairInclude = {
   contact: { select: { id: true, name: true, phone: true } },
   assignee: { select: { id: true, name: true } },
   ticket: { select: { id: true, number: true, title: true } },
+  resolution: true,
   followUps: { include: { author: { select: { id: true, name: true } } }, orderBy: { occurredAt: 'desc' as const } },
 } as const;
 
@@ -200,7 +201,7 @@ export class RepairsService {
       });
       return tx.repairOrder.findUniqueOrThrow({ where: { id }, include: repairInclude });
     }).then((updated) => {
-      this.events.emit(LINKAGE_EVENTS.repairStatusChanged, { repairId: id, repairNo: repair.repairNo, ticketId: repair.ticketId, actorId: user.id, from: repair.status, to: dto.status });
+      this.events.emit(LINKAGE_EVENTS.repairStatusChanged, { repairId: id, repairNo: repair.repairNo, ticketId: repair.ticketId, actorId: user.id, from: repair.status, to: dto.status, resolution: repair.resolution });
       return updated;
     });
   }

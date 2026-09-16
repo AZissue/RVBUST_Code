@@ -1,7 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { LoanStatus, RepairStatus, TicketEventType, Visibility, type Prisma } from '@prisma/client';
+import { NOTIFICATION_TYPES } from '../common/notification-types.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { LinkageConfigService } from './linkage-config.service.js';
+import { LinkageNotifyService } from './linkage-notify.service.js';
 import {
   LINKAGE_EVENTS,
   type LoanFollowUpAddedPayload,
@@ -17,14 +20,21 @@ import {
 const LOAN_SYNC_LABELS: Record<LoanStatus, string> = { QUEUED: '排队中', ONGOING: '已借出', OVERDUE: '已逾期', RETURNED: '已归还', CANCELLED: '已取消' };
 const REPAIR_SYNC_LABELS: Record<RepairStatus, string> = { RECEIVED: '已受理', DIAGNOSING: '诊断中', REPAIRING: '维修中', SHIPPED: '已发货', CLOSED: '已关闭' };
 
+const ACTIVE_LOAN_STATUSES: LoanStatus[] = [LoanStatus.QUEUED, LoanStatus.ONGOING, LoanStatus.OVERDUE];
+const ACTIVE_REPAIR_STATUSES: RepairStatus[] = [RepairStatus.RECEIVED, RepairStatus.DIAGNOSING, RepairStatus.REPAIRING, RepairStatus.SHIPPED];
+
 const truncate = (text: string, max: number) => (text.length > max ? text.slice(0, max) : text);
 
-/** 联动监听器：把子单动态回写为工单时间线（LINK_UPDATE），并把工单客户回复正向同步为子单 FollowUp */
+/** 联动监听器：把子单动态回写为工单时间线（LINK_UPDATE），正向同步工单客户回复为子单 FollowUp，并发送联动通知 */
 @Injectable()
 export class LinkageListener {
   private readonly logger = new Logger(LinkageListener.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly linkageNotify: LinkageNotifyService,
+    private readonly config: LinkageConfigService,
+  ) {}
 
   private async writeTicketEvent(ticketId: string | null, authorId: string, content: string, metadata: Prisma.InputJsonValue) {
     if (!ticketId) return;
@@ -34,6 +44,27 @@ export class LinkageListener {
       });
     } catch (error) {
       this.logger.error(`回写工单时间线失败（${content}）`, error instanceof Error ? error.stack : String(error));
+    }
+  }
+
+  /** 子单全部完结时提醒工单负责人可以关单（仍有进行中子单则不发） */
+  private async notifyIfAllCompleted(ticketId: string | null) {
+    if (!ticketId) return;
+    try {
+      const [activeLoans, activeRepairs] = await Promise.all([
+        this.prisma.loanOrder.count({ where: { ticketId, deletedAt: null, status: { in: ACTIVE_LOAN_STATUSES } } }),
+        this.prisma.repairOrder.count({ where: { ticketId, deletedAt: null, status: { in: ACTIVE_REPAIR_STATUSES } } }),
+      ]);
+      if (activeLoans || activeRepairs) return;
+      const ownerId = await this.linkageNotify.ticketOwnerId(ticketId);
+      if (!ownerId) return;
+      await this.linkageNotify.safeNotifyUnreadOnce({
+        recipientId: ownerId, ticketId, type: NOTIFICATION_TYPES.LINK_ALL_COMPLETED,
+        title: '工单关联业务已完结', body: '工单关联业务已完结，可标记解决并关闭工单',
+        dedupeKey: `link-all-done:${ticketId}:${ownerId}`,
+      });
+    } catch (error) {
+      this.logger.error(`子单完结提醒失败（工单 ${ticketId}）`, error instanceof Error ? error.stack : String(error));
     }
   }
 
@@ -63,6 +94,19 @@ export class LinkageListener {
       `借测单 ${payload.loanNo} ${LOAN_SYNC_LABELS[payload.to]}`,
       { linkType: 'loan', linkId: payload.loanId, linkNo: payload.loanNo, syncedFrom: 'linkage', from: payload.from, to: payload.to },
     );
+    if (payload.to === LoanStatus.OVERDUE && payload.ticketId) {
+      // 逾期通知受 linkage.notifyOnOverdue 开关控制
+      const notifyOnOverdue = (await this.config.getAll()).notifyOnOverdue;
+      if (!notifyOnOverdue) return;
+      const ownerId = await this.linkageNotify.ticketOwnerId(payload.ticketId);
+      if (!ownerId) return;
+      await this.linkageNotify.safeNotifyUnreadOnce({
+        recipientId: ownerId, ticketId: payload.ticketId, type: NOTIFICATION_TYPES.LINK_LOAN_OVERDUE, severity: 'WARNING',
+        title: '借测单已逾期', body: `借测单 ${payload.loanNo} 已逾期，需联系客户（/loans/${payload.loanId}）。`,
+        dedupeKey: `link-loan-overdue:${payload.loanId}:${ownerId}`,
+      });
+    }
+    if (payload.to === LoanStatus.RETURNED || payload.to === LoanStatus.CANCELLED) await this.notifyIfAllCompleted(payload.ticketId);
   }
 
   @OnEvent(LINKAGE_EVENTS.loanFollowUpAdded)
@@ -78,11 +122,16 @@ export class LinkageListener {
 
   @OnEvent(LINKAGE_EVENTS.repairStatusChanged)
   async onRepairStatusChanged(payload: RepairStatusChangedPayload) {
+    // 闭环事件：带处理结论时写明「已完结并返回客户 + 结论」，否则保持「已关闭」文案
+    const label = payload.to === RepairStatus.CLOSED && payload.resolution?.trim()
+      ? `已完结并返回客户，结论：${truncate(payload.resolution.trim(), 200)}`
+      : REPAIR_SYNC_LABELS[payload.to];
     await this.writeTicketEvent(
       payload.ticketId, payload.actorId,
-      `维修单 ${payload.repairNo} ${REPAIR_SYNC_LABELS[payload.to]}`,
+      `维修单 ${payload.repairNo} ${label}`,
       { linkType: 'repair', linkId: payload.repairId, linkNo: payload.repairNo, syncedFrom: 'linkage', from: payload.from, to: payload.to },
     );
+    if (payload.to === RepairStatus.CLOSED) await this.notifyIfAllCompleted(payload.ticketId);
   }
 
   @OnEvent(LINKAGE_EVENTS.repairFollowUpAdded)

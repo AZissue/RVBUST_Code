@@ -32,6 +32,42 @@ describe('ticket status notifications', () => {
   });
 });
 
+describe('ticket RESOLVED blocked by active linkage', () => {
+  function setupResolved(children: { loans?: object[]; repairs?: object[] } = {}) {
+    const ticket = { id: 'ticket', status: 'IN_PROGRESS', updatedAt: new Date(), assigneeId: 'actor' };
+    const updated = { number: 'TS-1', title: 'Test', createdBy: { id: 'creator' }, assignee: { id: 'actor' }, collaborators: [] };
+    const tx = {
+      loanOrder: { findMany: vi.fn().mockResolvedValue(children.loans ?? []) },
+      repairOrder: { findMany: vi.fn().mockResolvedValue(children.repairs ?? []) },
+      ticket: { updateMany: vi.fn().mockResolvedValue({ count: 1 }), findUniqueOrThrow: vi.fn().mockResolvedValue(updated) },
+      ticketEvent: { create: vi.fn().mockResolvedValue({ id: 'event' }) },
+      notification: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
+    };
+    const prisma = { $transaction: (fn: (db: typeof tx) => unknown) => fn(tx) };
+    const access = { requireTicket: vi.fn().mockResolvedValue(ticket) };
+    const service = new TicketsService(prisma as never, access as never, {} as never, {} as never, { emit: vi.fn() } as never);
+    const change = () => service.changeStatus({ id: 'actor', name: 'Alice', role: 'employee' } as never, 'ticket', { status: 'RESOLVED' as never });
+    return { tx, change };
+  }
+
+  it('有进行中借测单和维修单时拦截，message 含两类单号', async () => {
+    const { tx, change } = setupResolved({ loans: [{ loanNo: 'LN-260916-001' }], repairs: [{ repairNo: 'RP-260916-001' }] });
+    await expect(change()).rejects.toThrow('存在进行中的借测单 LN-260916-001 / 维修单 RP-260916-001，完结关联业务后才能标记解决');
+    expect(tx.ticket.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('仅有进行中维修单时只列维修单', async () => {
+    const { change } = setupResolved({ repairs: [{ repairNo: 'RP-260916-002' }] });
+    await expect(change()).rejects.toThrow('存在进行中的维修单 RP-260916-002，完结关联业务后才能标记解决');
+  });
+
+  it('无进行中子单时正常流转到 RESOLVED', async () => {
+    const { tx, change } = setupResolved();
+    await change();
+    expect(tx.ticket.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: 'ticket' }) }));
+  });
+});
+
 describe('ticket create with loan/repair linkage', () => {
   function setupCreate(linkageOverrides: Record<string, unknown> = {}) {
     const ticket = { id: 'ticket-1', number: 'RVC-260916-001' };

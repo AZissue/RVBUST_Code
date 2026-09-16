@@ -26,11 +26,20 @@ export function CreateTicketModal({ onClose, onCreated, defaultAssigneeId }: { o
   const [requestKey] = useState(() => crypto.randomUUID())
   const [error, setError] = useState('')
   const [category, setCategory] = useState<TicketCategory>('OTHER')
+  const [linkageDefaults, setLinkageDefaults] = useState({ loan: false, repair: false })
   const [createLinkedLoan, setCreateLinkedLoan] = useState(false)
   const [createLinkedRepair, setCreateLinkedRepair] = useState(false)
+  // 弹窗打开时读取联动默认配置；接口失败时静默回落 false
+  useEffect(() => {
+    let cancelled = false
+    api<{ defaultCreate: { loan: boolean; repair: boolean } }>('/system/linkage-config')
+      .then(config => { if (!cancelled) setLinkageDefaults({ loan: Boolean(config.defaultCreate?.loan), repair: Boolean(config.defaultCreate?.repair) }) })
+      .catch(() => { /* 静默回落默认 false */ })
+    return () => { cancelled = true }
+  }, [])
   const showLoanOption = category === 'PRE_SALES' || category === 'LOAN_REQUEST'
   const showRepairOption = category === 'HARDWARE_FAILURE'
-  const changeCategory = (value: TicketCategory) => { setCategory(value); setCreateLinkedLoan(false); setCreateLinkedRepair(false) }
+  const changeCategory = (value: TicketCategory) => { setCategory(value); setCreateLinkedLoan((value === 'PRE_SALES' || value === 'LOAN_REQUEST') && linkageDefaults.loan); setCreateLinkedRepair(value === 'HARDWARE_FAILURE' && linkageDefaults.repair) }
   const customer = customers.data?.find(item => normalized(item.name) === normalized(customerName))
   const detail = useRemote(() => customer ? api<Customer>(`/customers/${customer.id}`) : Promise.resolve(null), [customer?.id])
   const currentDetail = detail.data?.id === customer?.id ? detail.data : null

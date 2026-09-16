@@ -2,15 +2,26 @@ import { describe, expect, it, vi } from 'vitest';
 import { LinkageListener } from './linkage.listener.js';
 import { LINKAGE_EVENTS, type LoanScoredPayload, type LoanStatusChangedPayload, type LoanFollowUpAddedPayload, type RepairFollowUpAddedPayload, type RepairStatusChangedPayload, type TicketCustomerReplyPayload } from './linkage.events.js';
 
-function setup(overrides: { loans?: object[]; repairs?: object[] } = {}) {
+function setup(overrides: { loans?: object[]; repairs?: object[]; activeLoans?: number; activeRepairs?: number; notifyOnOverdue?: boolean; ownerId?: string | null } = {}) {
   const prisma = {
     ticketEvent: { create: vi.fn().mockResolvedValue({ id: 'event-1' }) },
     followUp: { createMany: vi.fn().mockResolvedValue({ count: 1 }) },
-    loanOrder: { findMany: vi.fn().mockResolvedValue(overrides.loans ?? []) },
-    repairOrder: { findMany: vi.fn().mockResolvedValue(overrides.repairs ?? []) },
+    loanOrder: { findMany: vi.fn().mockResolvedValue(overrides.loans ?? []), count: vi.fn().mockResolvedValue(overrides.activeLoans ?? 0) },
+    repairOrder: { findMany: vi.fn().mockResolvedValue(overrides.repairs ?? []), count: vi.fn().mockResolvedValue(overrides.activeRepairs ?? 0) },
   };
-  const listener = new LinkageListener(prisma as never);
-  return { prisma, listener };
+  const linkageNotify = {
+    ticketOwnerId: vi.fn().mockResolvedValue(overrides.ownerId === undefined ? 'owner-1' : overrides.ownerId),
+    safeNotifyUnreadOnce: vi.fn().mockResolvedValue(undefined),
+  };
+  const config = {
+    getAll: vi.fn().mockResolvedValue({
+      defaultCreate: { loan: false, repair: false },
+      infoCompleteTimeoutHours: 24, repairFollowupTimeoutHours: 48,
+      notifyOnOverdue: overrides.notifyOnOverdue ?? true,
+    }),
+  };
+  const listener = new LinkageListener(prisma as never, linkageNotify as never, config as never);
+  return { prisma, linkageNotify, config, listener };
 }
 
 const base = { ticketId: 'ticket-1', actorId: 'user-1' };
@@ -147,6 +158,75 @@ describe('LinkageListener 正向同步（工单客户回复 → 子单跟进）'
     const { prisma, listener } = setup();
     prisma.loanOrder.findMany.mockRejectedValue(new Error('db down'));
     await expect(listener.onTicketCustomerReply({ ticketId: 'ticket-1', actorId: 'user-1', content: 'hello' })).resolves.toBeUndefined();
+  });
+});
+
+describe('LinkageListener 维修闭环事件', () => {
+  it('repair CLOSED 带 resolution → 写「已完结并返回客户，结论：前200字」', async () => {
+    const { prisma, listener } = setup();
+    const resolution = 'r'.repeat(250);
+    await listener.onRepairStatusChanged({ ...base, repairId: 'repair-1', repairNo: 'RP-1', from: 'SHIPPED' as never, to: 'CLOSED' as never, resolution });
+    const content = prisma.ticketEvent.create.mock.calls[0][0].data.content as string;
+    expect(content).toContain('维修单 RP-1 已完结并返回客户，结论：');
+    expect(content).toContain('r'.repeat(200));
+    expect(content).not.toContain('r'.repeat(201));
+  });
+
+  it('repair CLOSED 无 resolution → 保持「已关闭」文案', async () => {
+    const { prisma, listener } = setup();
+    await listener.onRepairStatusChanged({ ...base, repairId: 'repair-1', repairNo: 'RP-1', from: 'SHIPPED' as never, to: 'CLOSED' as never });
+    expect(prisma.ticketEvent.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ content: '维修单 RP-1 已关闭' }),
+    }));
+  });
+});
+
+describe('LinkageListener 联动通知', () => {
+  const overduePayload: LoanStatusChangedPayload = { ...base, loanId: 'loan-1', loanNo: 'LN-1', from: 'ONGOING' as never, to: 'OVERDUE' as never };
+
+  it('loan OVERDUE → 通知工单负责人（借测单已逾期，需联系客户）', async () => {
+    const { linkageNotify, listener } = setup();
+    await listener.onLoanStatusChanged(overduePayload);
+    expect(linkageNotify.ticketOwnerId).toHaveBeenCalledWith('ticket-1');
+    expect(linkageNotify.safeNotifyUnreadOnce).toHaveBeenCalledWith(expect.objectContaining({
+      recipientId: 'owner-1', ticketId: 'ticket-1', type: 'LINK_LOAN_OVERDUE', severity: 'WARNING',
+      body: expect.stringContaining('借测单 LN-1 已逾期，需联系客户'),
+    }));
+  });
+
+  it('linkage.notifyOnOverdue=false 时 OVERDUE 不通知', async () => {
+    const { linkageNotify, listener } = setup({ notifyOnOverdue: false });
+    await listener.onLoanStatusChanged(overduePayload);
+    expect(linkageNotify.safeNotifyUnreadOnce).not.toHaveBeenCalled();
+  });
+
+  it('工单无负责人且无创建人时 OVERDUE 不通知', async () => {
+    const { linkageNotify, listener } = setup({ ownerId: null });
+    await listener.onLoanStatusChanged(overduePayload);
+    expect(linkageNotify.safeNotifyUnreadOnce).not.toHaveBeenCalled();
+  });
+
+  it('借测单归还且无进行中子单 → 通知负责人可关单', async () => {
+    const { linkageNotify, listener } = setup();
+    await listener.onLoanStatusChanged({ ...base, loanId: 'loan-1', loanNo: 'LN-1', from: 'OVERDUE' as never, to: 'RETURNED' as never });
+    expect(linkageNotify.safeNotifyUnreadOnce).toHaveBeenCalledWith(expect.objectContaining({
+      recipientId: 'owner-1', type: 'LINK_ALL_COMPLETED',
+      body: expect.stringContaining('工单关联业务已完结，可标记解决并关闭工单'),
+    }));
+  });
+
+  it('仍有进行中维修单时归还借测单 → 不发全部完结通知', async () => {
+    const { linkageNotify, listener } = setup({ activeRepairs: 1 });
+    await listener.onLoanStatusChanged({ ...base, loanId: 'loan-1', loanNo: 'LN-1', from: 'OVERDUE' as never, to: 'RETURNED' as never });
+    expect(linkageNotify.safeNotifyUnreadOnce).not.toHaveBeenCalled();
+  });
+
+  it('维修单 CLOSED 且无进行中子单 → 通知负责人可关单', async () => {
+    const { linkageNotify, listener } = setup();
+    await listener.onRepairStatusChanged({ ...base, repairId: 'repair-1', repairNo: 'RP-1', from: 'SHIPPED' as never, to: 'CLOSED' as never, resolution: 'ok' });
+    expect(linkageNotify.safeNotifyUnreadOnce).toHaveBeenCalledWith(expect.objectContaining({
+      recipientId: 'owner-1', type: 'LINK_ALL_COMPLETED',
+    }));
   });
 });
 

@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { TicketEventType, TicketStatus, Visibility, type Prisma } from '@prisma/client';
+import { TicketEventType, TicketStatus, Visibility, LoanStatus, RepairStatus, type Prisma } from '@prisma/client';
 import { AccessPolicyService } from '../auth/access-policy.service.js';
 import type { AuthUser } from '../auth/auth.types.js';
 import { LinkageService } from '../linkage/linkage.service.js';
@@ -40,6 +40,10 @@ const transitions: Record<TicketStatus, TicketStatus[]> = {
 
 const PAGE_SIZE = 20;
 const visibleInclude = (_user: AuthUser) => ({ ...ticketInclude });
+
+// 进行中的子单状态集合（与 linkage 模块一致）：存在时不允许将工单标记为已解决
+const ACTIVE_LOAN_STATUSES: LoanStatus[] = [LoanStatus.QUEUED, LoanStatus.ONGOING, LoanStatus.OVERDUE];
+const ACTIVE_REPAIR_STATUSES: RepairStatus[] = [RepairStatus.RECEIVED, RepairStatus.DIAGNOSING, RepairStatus.REPAIRING, RepairStatus.SHIPPED];
 
 @Injectable()
 export class TicketsService {
@@ -241,6 +245,18 @@ export class TicketsService {
     if (user.role !== 'admin' && ticket.assigneeId !== user.id) throw new ForbiddenException('仅当前负责人或管理员可以变更工单状态');
     if (!transitions[ticket.status].includes(dto.status)) throw new BadRequestException(`不允许从「${zhStatus(ticket.status)}」变更为「${zhStatus(dto.status)}」`);
     return this.prisma.$transaction(async (tx) => {
+      // 关单拦截（状态汇聚）：目标为已解决时，存在进行中的借测/维修单则拒绝
+      if (dto.status === TicketStatus.RESOLVED) {
+        const [activeLoans, activeRepairs] = await Promise.all([
+          tx.loanOrder.findMany({ where: { ticketId: id, status: { in: ACTIVE_LOAN_STATUSES }, deletedAt: null }, select: { loanNo: true } }),
+          tx.repairOrder.findMany({ where: { ticketId: id, status: { in: ACTIVE_REPAIR_STATUSES }, deletedAt: null }, select: { repairNo: true } }),
+        ]);
+        const parts = [
+          activeLoans.length ? `借测单 ${activeLoans.map((loan) => loan.loanNo).join('、')}` : '',
+          activeRepairs.length ? `维修单 ${activeRepairs.map((repair) => repair.repairNo).join('、')}` : '',
+        ].filter(Boolean);
+        if (parts.length) throw new BadRequestException(`存在进行中的${parts.join(' / ')}，完结关联业务后才能标记解决`);
+      }
       const changed = await tx.ticket.updateMany({
         where: { id, status: ticket.status, updatedAt: ticket.updatedAt },
         data: { status: dto.status, resolvedAt: dto.status === TicketStatus.RESOLVED ? new Date() : dto.status === TicketStatus.CLOSED ? undefined : null },

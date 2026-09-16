@@ -49,6 +49,8 @@ interface RepairEventBase {
 export interface RepairStatusChangedPayload extends RepairEventBase {
   from: RepairStatus;
   to: RepairStatus;
+  /** 完结（CLOSED）时的处理结论，由 repairs.transition 透传，供闭环文案与通知使用 */
+  resolution?: string | null;
 }
 
 export interface RepairFollowUpAddedPayload extends RepairEventBase {
