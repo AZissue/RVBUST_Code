@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { WorklogSource, WorklogStatus } from '@prisma/client';
+import { TicketEventType, Visibility, WorkItemStatus, WorklogSource, WorklogStatus, type Prisma } from '@prisma/client';
 import { AccessPolicyService } from '../auth/access-policy.service.js';
 import type { AuthUser } from '../auth/auth.types.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -27,7 +27,43 @@ export class WorklogsService {
   async create(user: AuthUser, dto: CreateWorklogDto) {
     this.access.requireInternal(user);
     await this.validateRelations(dto.workTypeId, dto.organizationId, dto.ticketId, dto.workItemId, dto.projectId);
-    return this.prisma.worklog.create({ data: { ...dto, occurredAt: new Date(dto.occurredAt), authorId: user.id, status: dto.status ?? WorklogStatus.CONFIRMED }, include });
+    return this.prisma.$transaction(async (tx) => {
+      const created = await tx.worklog.create({ data: { ...dto, occurredAt: new Date(dto.occurredAt), authorId: user.id, status: dto.status ?? WorklogStatus.CONFIRMED }, include });
+      // ① 联动工单时间线：工作记录出现在事件流（单向，仅追加）
+      if (dto.ticketId) await this.createWorkRecordEvent(tx, dto.ticketId, user.id, created);
+      // ② 联动工作事项：TODO → IN_PROGRESS，进度兜底 ≥10（COMPLETED 不动，不改 completedAt，不自动完成）
+      if (dto.workItemId) {
+        const item = await tx.workItem.findUniqueOrThrow({ where: { id: dto.workItemId }, select: { status: true, progress: true } });
+        if (item.status !== WorkItemStatus.COMPLETED && (item.status === WorkItemStatus.TODO || item.progress < 10)) {
+          await tx.workItem.update({
+            where: { id: dto.workItemId },
+            data: { status: item.status === WorkItemStatus.TODO ? WorkItemStatus.IN_PROGRESS : undefined, progress: Math.max(item.progress, 10) },
+          });
+        }
+      }
+      return created;
+    });
+  }
+
+  private createWorkRecordEvent(tx: Prisma.TransactionClient, ticketId: string, authorId: string, worklog: { id: string; summary: string; durationMinutes: number | null }) {
+    return tx.ticketEvent.create({
+      data: {
+        ticketId, authorId,
+        type: TicketEventType.WORK_RECORD,
+        visibility: Visibility.INTERNAL,
+        content: `工作记录：${worklog.summary}`,
+        metadata: { worklogId: worklog.id, durationMinutes: worklog.durationMinutes ?? null },
+      },
+    });
+  }
+
+  /** 给联动事件打 timelineDeleted 软删标记（合并原 metadata，保留审计痕迹） */
+  private async softDeleteLinkedEvents(tx: Prisma.TransactionClient, events: Array<{ id: string; metadata: unknown }>, deletedBy: string) {
+    const deletedAt = new Date().toISOString();
+    for (const event of events) {
+      const metadata = event.metadata && typeof event.metadata === 'object' && !Array.isArray(event.metadata) ? event.metadata : {};
+      await tx.ticketEvent.update({ where: { id: event.id }, data: { metadata: { ...metadata, timelineDeleted: true, timelineDeletedAt: deletedAt, timelineDeletedBy: deletedBy } } });
+    }
   }
 
   async createDrafts(user: AuthUser, dto: CreateWorklogDraftsDto) {
@@ -53,14 +89,37 @@ export class WorklogsService {
     if (!current) throw new NotFoundException('工作记录不存在');
     if (current.authorId !== user.id && !['admin', 'support'].includes(user.role)) throw new ForbiddenException('无权修改此工作记录');
     await this.validateRelations(dto.workTypeId ?? current.workTypeId, dto.organizationId ?? current.organizationId ?? undefined, dto.ticketId ?? current.ticketId ?? undefined, dto.workItemId ?? current.workItemId ?? undefined, dto.projectId ?? current.projectId ?? undefined);
-    return this.prisma.worklog.update({ where: { id }, data: { ...dto, occurredAt: dto.occurredAt ? new Date(dto.occurredAt) : undefined }, include });
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.worklog.update({ where: { id }, data: { ...dto, occurredAt: dto.occurredAt ? new Date(dto.occurredAt) : undefined }, include });
+      // 定位联动事件（metadata.worklogId 为锚点）
+      const events = await tx.ticketEvent.findMany({ where: { type: TicketEventType.WORK_RECORD, metadata: { path: ['worklogId'], equals: id } } });
+      const nextTicketId = dto.ticketId ?? current.ticketId ?? undefined;
+      if (nextTicketId && nextTicketId !== current.ticketId) {
+        // ticketId 变更（含裸记录首次关联）：旧工单事件软删，新工单补建事件
+        await this.softDeleteLinkedEvents(tx, events, user.id);
+        await this.createWorkRecordEvent(tx, nextTicketId, user.id, updated);
+      } else if (nextTicketId) {
+        // 摘要同步：联动事件 content 跟随更新；无联动事件（裸记录补挂等）则补建
+        await tx.ticketEvent.updateMany({
+          where: { type: TicketEventType.WORK_RECORD, metadata: { path: ['worklogId'], equals: id }, ticketId: nextTicketId },
+          data: { content: `工作记录：${updated.summary}` },
+        });
+        if (!events.some((event) => event.ticketId === nextTicketId)) await this.createWorkRecordEvent(tx, nextTicketId, user.id, updated);
+      }
+      return updated;
+    });
   }
 
   async remove(user: AuthUser, id: string) {
     this.access.requireInternal(user);
     const current = await this.prisma.worklog.findFirst({ where: { id, ...this.access.worklogWhere(user) } });
     if (!current) throw new NotFoundException('工作记录不存在');
-    await this.prisma.worklog.delete({ where: { id } });
+    await this.prisma.$transaction(async (tx) => {
+      // 软删联动事件（复用时间线删除模式），再删 worklog，单事务
+      const events = await tx.ticketEvent.findMany({ where: { type: TicketEventType.WORK_RECORD, metadata: { path: ['worklogId'], equals: id } } });
+      await this.softDeleteLinkedEvents(tx, events, user.id);
+      await tx.worklog.delete({ where: { id } });
+    });
     return { success: true };
   }
 

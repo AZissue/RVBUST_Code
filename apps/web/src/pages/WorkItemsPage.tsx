@@ -31,7 +31,7 @@ export function ProgressEditor({ item, onSaved, compact = false }: { item: WorkI
 
 export function WorkItemsPage({ mine = false }: { mine?: boolean }) {
   const navigate = useNavigate(); const [creating, setCreating] = useState(false); const [selectedId, setSelectedId] = useState<string | null>(null); const [search, setSearch] = useState(''); const [status, setStatus] = useState(''); const [view, setView] = useState<'list' | 'board'>('list')
-  const remote = useRemote(() => api<WorkItem[]>(mine ? '/work-items?mine=1' : '/work-items'), [mine])
+  const remote = useRemote(() => api<WorkItem[]>(mine ? '/work-items?mine=1' : '/work-items'), [mine], true)
   const items = useMemo(() => (remote.data ?? []).filter((item) => `${item.title} ${item.description ?? ''} ${item.workType.label} ${item.organization?.name ?? ''}`.toLowerCase().includes(search.toLowerCase()) && (!status || item.status === status)), [remote.data, search, status])
   if (remote.loading) return <PageLoading />
   if (remote.error) return <PageError message={remote.error} retry={remote.refresh} />
@@ -58,7 +58,7 @@ function Board({ items, onSelect }: { items: WorkItem[]; onSelect: (id: string) 
 
 type WorkItemDetail = WorkItem & { worklogs: Worklog[] }
 function WorkItemDrawer({ id, onClose, onSaved, onComplete, onCancel, onDelete, navigateToLog }: { id: string; onClose: () => void; onSaved: () => Promise<void>; onComplete: (item: WorkItem) => Promise<void>; onCancel: (item: WorkItem) => Promise<void>; onDelete: (item: WorkItem) => Promise<void>; navigateToLog: () => void }) {
-  const detail = useRemote(() => api<WorkItemDetail>(`/work-items/${id}`), [id]); const workTypes = useRemote(() => api<WorkType[]>('/work-types'), []); const projects = useRemote(() => api<Project[]>('/projects'), []); const users = useRemote(() => api<Array<{ id: string; name: string }>>('/users/assignable'), []); const [error, setError] = useState(''); const [busy, setBusy] = useState(false); const [progress, setProgress] = useState(0)
+  const detail = useRemote(() => api<WorkItemDetail>(`/work-items/${id}`), [id], true); const workTypes = useRemote(() => api<WorkType[]>('/work-types'), []); const projects = useRemote(() => api<Project[]>('/projects'), []); const users = useRemote(() => api<Array<{ id: string; name: string }>>('/users/assignable'), []); const [error, setError] = useState(''); const [busy, setBusy] = useState(false); const [progress, setProgress] = useState(0)
   useEffect(() => { if (detail.data) setProgress(detail.data.progress) }, [detail.data])
   if (!detail.data) return <div className="drawer-backdrop" onClick={onClose}><aside className="drawer" onClick={(event) => event.stopPropagation()}><PageLoading /></aside></div>
   const item = detail.data

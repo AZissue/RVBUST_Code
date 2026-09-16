@@ -13,7 +13,7 @@ export function WorklogsPage() {
   const [creating, setCreating] = useState(params.get('create') === '1')
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('')
-  const remote = useRemote(() => api<Worklog[]>('/worklogs'), [])
+  const remote = useRemote(() => api<Worklog[]>('/worklogs'), [], true)
   useEffect(() => { if (params.get('create') === '1') setCreating(true) }, [params])
   const logs = useMemo(() => (remote.data ?? []).filter((log) => `${log.summary} ${log.workType.label} ${log.organization?.name ?? ''} ${log.result ?? ''}`.toLowerCase().includes(search.toLowerCase()) && (!status || log.status === status)), [remote.data, search, status])
   const totalMinutes = logs.filter((item) => item.status === 'CONFIRMED').reduce((sum, item) => sum + (item.durationMinutes ?? 0), 0)
