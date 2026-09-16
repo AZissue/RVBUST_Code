@@ -9,7 +9,7 @@ import { zhUserStatus } from '../common/status-labels.js';
 
 const publicUserSelect = {
   id: true, username: true, name: true, email: true, phone: true, department: true, status: true,
-  customerOrganizationId: true, createdAt: true, updatedAt: true,
+  createdAt: true, updatedAt: true,
   role: { select: { name: true, label: true } },
 } as const;
 
@@ -35,7 +35,6 @@ export class UsersService {
   }
 
   async create(dto: CreateUserDto) {
-    if (dto.role === 'customer' && !dto.customerOrganizationId) throw new BadRequestException('客户账号必须绑定客户公司');
     const role = await this.prisma.role.findUnique({ where: { name: dto.role } });
     if (!role) throw new BadRequestException('角色不存在');
     try {
@@ -43,7 +42,7 @@ export class UsersService {
         data: {
           username: dto.username.toLowerCase(), name: dto.name, passwordHash: await hash(dto.password, 12),
           roleId: role.id, email: dto.email || null, phone: dto.phone || null, department: dto.department || null,
-          status: 'ACTIVE', customerOrganizationId: dto.customerOrganizationId || null,
+          status: 'ACTIVE',
         },
         select: publicUserSelect,
       });
@@ -62,8 +61,6 @@ export class UsersService {
     if (id === actorId && nextRole !== current.role.name) {
       throw new BadRequestException('不能修改当前登录账号的角色，请由其他管理员操作');
     }
-    const nextOrg = dto.customerOrganizationId === undefined ? current.customerOrganizationId : dto.customerOrganizationId;
-    if (nextRole === 'customer' && !nextOrg) throw new BadRequestException('客户账号必须绑定客户公司');
     const roleChanged = Boolean(role && role.id !== current.roleId);
     const passwordChanged = Boolean(dto.password);
     return this.prisma.$transaction(async (tx) => {
@@ -72,7 +69,6 @@ export class UsersService {
         data: {
           username: dto.username?.toLowerCase(), name: dto.name, email: dto.email, phone: dto.phone, department: dto.department,
           roleId: role?.id,
-          customerOrganizationId: nextRole === 'customer' ? nextOrg : null,
           passwordHash: dto.password ? await hash(dto.password, 12) : undefined,
         },
         select: publicUserSelect,

@@ -7,7 +7,6 @@ const rolePermissions: Record<string, string[]> = {
   admin: ['users.manage', 'teams.manage', 'settings.manage', 'audit.read', 'customers.manage', 'tickets.manage', 'workitems.manage', 'worklogs.manage', 'notifications.manage'],
   support: ['customers.manage', 'tickets.manage', 'workitems.manage', 'worklogs.manage', 'notifications.manage'],
   employee: ['customers.read', 'tickets.participate', 'workitems.own', 'worklogs.own', 'notifications.own'],
-  customer: ['tickets.customer', 'notifications.own'],
 };
 
 function requiredPassword(name: string) {
@@ -18,7 +17,7 @@ function requiredPassword(name: string) {
 
 async function main() {
   for (const [roleName, codes] of Object.entries(rolePermissions)) {
-    const role = await prisma.role.upsert({ where: { name: roleName }, update: {}, create: { name: roleName, label: { admin: '管理员', support: '技术支持', employee: '普通员工', customer: '客户' }[roleName] ?? roleName } });
+    const role = await prisma.role.upsert({ where: { name: roleName }, update: {}, create: { name: roleName, label: { admin: '管理员', support: '技术支持', employee: '普通员工' }[roleName] ?? roleName } });
     for (const code of codes) {
       const permission = await prisma.permission.upsert({ where: { code }, update: {}, create: { code, description: code } });
       await prisma.rolePermission.upsert({ where: { roleId_permissionId: { roleId: role.id, permissionId: permission.id } }, update: {}, create: { roleId: role.id, permissionId: permission.id } });
@@ -65,11 +64,6 @@ async function main() {
     update: {},
     create: { organizationId: organization.id, name: '机器人抓取项目', application: '无序抓取与点云定位', status: 'IN_PROGRESS' },
   });
-  await prisma.user.upsert({
-    where: { username: 'customer' }, update: { customerOrganizationId: organization.id },
-    create: { username: 'customer', name: '客户测试账号', email: 'customer@example.local', passwordHash: await hash(requiredPassword('SEED_CUSTOMER_PASSWORD'), 12), roleId: roles.customer.id, status: 'ACTIVE', customerOrganizationId: organization.id },
-  });
-
   const ticket = await prisma.ticket.upsert({
     where: { number: 'TS-DEMO-0001' }, update: {},
     create: {

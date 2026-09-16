@@ -4,7 +4,6 @@ export interface AuthUser {
   name: string;
   email: string | null;
   role: string;
-  customerOrganizationId: string | null;
   permissions: string[];
 }
 

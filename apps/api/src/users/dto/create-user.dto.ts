@@ -1,12 +1,11 @@
-import { IsEmail, IsIn, IsOptional, IsString, IsUUID, Length, Matches } from 'class-validator';
+import { IsEmail, IsIn, IsOptional, IsString, Length, Matches } from 'class-validator';
 
 export class CreateUserDto {
   @IsString() @Length(3, 60) @Matches(/^[a-zA-Z0-9._-]+$/) username!: string;
   @IsString() @Length(2, 100) name!: string;
   @IsString() @Length(10, 128) password!: string;
-  @IsIn(['admin', 'support', 'employee', 'customer']) role!: string;
+  @IsIn(['admin', 'support', 'employee']) role!: string;
   @IsOptional() @IsEmail() email?: string;
   @IsOptional() @IsString() @Length(0, 40) phone?: string;
   @IsOptional() @IsString() @Length(0, 100) department?: string;
-  @IsOptional() @IsUUID() customerOrganizationId?: string;
 }

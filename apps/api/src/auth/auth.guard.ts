@@ -30,7 +30,6 @@ export class AuthGuard implements CanActivate {
       name: session.user.name,
       email: session.user.email,
       role: session.user.role.name,
-      customerOrganizationId: session.user.customerOrganizationId,
       permissions: session.user.role.permissions.map((item) => item.permission.code),
     };
     return true;

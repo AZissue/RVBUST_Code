@@ -1,4 +1,4 @@
-export type Role = 'admin' | 'support' | 'employee' | 'customer'
+export type Role = 'admin' | 'support' | 'employee'
 export type ThemeMode = 'light' | 'dark' | 'system'
 export type UserStatus = 'PENDING' | 'ACTIVE' | 'DISABLED'
 
@@ -12,7 +12,6 @@ export interface User {
   department?: string | null
   phone?: string | null
   createdAt?: string
-  customerOrganizationId: string | null
   permissions: string[]
 }
 

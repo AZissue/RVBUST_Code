@@ -78,7 +78,6 @@ export class CustomersService {
   async profile(user: AuthUser, id: string) {
     const organization = await this.prisma.customerOrganization.findUnique({ where: { id } });
     if (!organization) throw new NotFoundException('客户不存在');
-    if (user.role === 'customer' && user.customerOrganizationId !== id) throw new NotFoundException('客户不存在');
     if (user.role === 'employee' && organization.technicalOwnerId !== user.id && organization.businessOwnerId !== user.id) throw new NotFoundException('客户不存在');
     const [graded, contacts, devices, tickets, loanOrders, repairOrders] = await Promise.all([
       this.withLevels([organization]),

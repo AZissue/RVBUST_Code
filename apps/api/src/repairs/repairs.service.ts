@@ -35,9 +35,7 @@ export class RepairsService {
     return {};
   }
 
-  private requireInternal(user: AuthUser) {
-    if (user.role === 'customer') throw new BadRequestException('客户账号不能访问返修单');
-  }
+  private requireInternal(_user: AuthUser) {}
 
   list(user: AuthUser, query: { status?: RepairStatus; organizationId?: string; assigneeId?: string; mine?: boolean; active?: boolean }) {
     this.requireInternal(user);

@@ -48,7 +48,7 @@ export class AuthService {
       ttlHours,
       user: {
         id: user.id, username: user.username, name: user.name, email: user.email,
-        role: user.role.name, customerOrganizationId: user.customerOrganizationId,
+        role: user.role.name,
         permissions: user.role.permissions.map((item) => item.permission.code),
       },
     };

@@ -232,9 +232,7 @@ model User {
   department             String?               @db.VarChar(100)
   status                 UserStatus            @default(PENDING)
   roleId                 String                @db.Uuid @map("role_id")
-  customerOrganizationId String?               @db.Uuid @map("customer_organization_id")
   role                   Role                  @relation(fields: [roleId], references: [id])
-  customerOrganization   CustomerOrganization? @relation("CustomerPortalUsers", fields: [customerOrganizationId], references: [id])
   teams                  TeamMember[]
   sessions               AuthSession[]
   createdTickets         Ticket[]              @relation("TicketCreator")
@@ -261,7 +259,6 @@ model User {
   updatedAt              DateTime              @updatedAt @map("updated_at")
 
   @@index([roleId])
-  @@index([customerOrganizationId])
   @@map("users")
 }
 
@@ -313,7 +310,6 @@ model CustomerOrganization {
   tickets          Ticket[]
   workItems        WorkItem[]
   worklogs         Worklog[]
-  portalUsers      User[]    @relation("CustomerPortalUsers")
   loanOrders       LoanOrder[]
   repairOrders     RepairOrder[]
   createdAt        DateTime  @default(now()) @map("created_at")

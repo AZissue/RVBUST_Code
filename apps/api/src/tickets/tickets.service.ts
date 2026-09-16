@@ -36,7 +36,7 @@ const transitions: Record<TicketStatus, TicketStatus[]> = {
 };
 
 const PAGE_SIZE = 20;
-const visibleInclude = (user: AuthUser) => ({ ...ticketInclude, assistRequests: user.role === 'customer' ? false as const : ticketInclude.assistRequests, deletedBy: user.role === 'customer' ? false as const : ticketInclude.deletedBy });
+const visibleInclude = (_user: AuthUser) => ({ ...ticketInclude });
 
 @Injectable()
 export class TicketsService {
@@ -66,7 +66,7 @@ export class TicketsService {
     const statusList = Object.values(TicketStatus);
     const [total, items, ...statusCounts] = await this.prisma.$transaction([
       this.prisma.ticket.count({ where }),
-      this.prisma.ticket.findMany({ where, include: visibleInclude(user), omit: { rawText: user.role === 'customer', requestKey: true, deletedReason: user.role === 'customer' }, orderBy: [{ number: 'desc' }], skip: (safePage - 1) * PAGE_SIZE, take: PAGE_SIZE }),
+      this.prisma.ticket.findMany({ where, include: visibleInclude(user), omit: { rawText: false, requestKey: true, deletedReason: false }, orderBy: [{ number: 'desc' }], skip: (safePage - 1) * PAGE_SIZE, take: PAGE_SIZE }),
       ...statusList.map((status) => this.prisma.ticket.count({ where: { AND: [metricsWhere, { status }] } })),
     ]);
     return { items, total, page: safePage, pageSize: PAGE_SIZE, byStatus: Object.fromEntries(statusList.map((status, index) => [status, statusCounts[index]])) as Partial<Record<TicketStatus, number>> };
@@ -74,23 +74,21 @@ export class TicketsService {
 
   /** 全量列表（引用数据下拉用，如工作记录关联工单）；数据量大时请改用分页 list */
   listAll(user: AuthUser, search?: string, statuses?: TicketStatus[], mine = false) {
-    return this.prisma.ticket.findMany({ where: this.buildWhere(user, search, statuses, mine), include: visibleInclude(user), omit: { rawText: user.role === 'customer', requestKey: true, deletedReason: user.role === 'customer' }, orderBy: [{ number: 'desc' }] });
+    return this.prisma.ticket.findMany({ where: this.buildWhere(user, search, statuses, mine), include: visibleInclude(user), omit: { rawText: false, requestKey: true, deletedReason: false }, orderBy: [{ number: 'desc' }] });
   }
 
   async get(user: AuthUser, id: string) {
     const ticket = await this.access.requireTicket(user, id);
-    if (user.role === 'customer' && ticket.deletedAt) throw new NotFoundException('工单不存在');
     const result = await this.prisma.ticket.findUnique({
       where: { id },
-      omit: { rawText: user.role === 'customer', requestKey: true },
+      omit: { rawText: false, requestKey: true },
       include: {
         ...visibleInclude(user),
         events: {
-          where: user.role === 'customer' ? { visibility: Visibility.CUSTOMER } : {},
           include: { author: { select: { id: true, name: true, role: { select: { name: true } } } }, attachments: true },
           orderBy: { createdAt: 'asc' },
         },
-        attachments: { where: user.role === 'customer' ? { visibility: Visibility.CUSTOMER } : {} },
+        attachments: true,
       },
     });
     if (!result) return result;
@@ -121,22 +119,22 @@ export class TicketsService {
       const previous = await db.ticket.findUnique({ where: { requestKey: dto.requestKey }, include: ticketInclude });
       if (previous) {
         if (previous.createdById !== user.id) throw new ConflictException('提交标识已使用');
-        return user.role === 'customer' ? this.get(user, previous.id) : previous;
+        return previous;
       }
     }
-    const organizationId = user.role === 'customer' ? user.customerOrganizationId : dto.organizationId;
-    if (!organizationId) throw new BadRequestException('客户账号未绑定客户公司');
+    const organizationId = dto.organizationId;
+    if (!organizationId) throw new BadRequestException('请选择客户公司');
     await this.access.requireCustomer(user, organizationId);
     await this.validateRelations(organizationId, dto);
     // 协助对象直接作为协作人写入（无接受/驳回环节），与手动指定的协作人合并去重
-    const assistTargetIds = user.role === 'customer' ? [] : [...new Set(dto.assistTargetIds ?? [])];
+    const assistTargetIds = [...new Set(dto.assistTargetIds ?? [])];
     if (assistTargetIds.length) await this.resolveAssistTargets(this.prisma, user.id, assistTargetIds);
-    const collaboratorIds = user.role === 'customer' ? [] : [...new Set([...(dto.collaboratorIds ?? []), ...assistTargetIds])];
-    const assigneeId = user.role === 'customer' ? undefined : (dto.assigneeId ?? user.id);
+    const collaboratorIds = [...new Set([...(dto.collaboratorIds ?? []), ...assistTargetIds])];
+    const assigneeId = dto.assigneeId ?? user.id;
     // 补录历史工单：occurredAt（本地日期）决定 createdAt 与编号日期
     const occurredAt = dto.occurredAt ? parseKey(dto.occurredAt) : undefined;
-    // 内部用户可指定创建时状态（补录场景）；客户账号恒为待处理
-    const initialStatus = user.role === 'customer' ? undefined : dto.status;
+    // 内部用户可指定创建时状态（补录场景）
+    const initialStatus = dto.status;
     const data: Omit<Prisma.TicketCreateInput, 'number'> = {
       createdAt: occurredAt,
       status: initialStatus,
@@ -152,7 +150,7 @@ export class TicketsService {
       project: dto.projectId ? { connect: { id: dto.projectId } } : undefined,
       assignee: assigneeId ? { connect: { id: assigneeId } } : undefined,
       collaborators: collaboratorIds.length ? { create: collaboratorIds.map((userId) => ({ user: { connect: { id: userId } } })) } : undefined,
-      events: { create: { author: { connect: { id: user.id } }, type: TicketEventType.WORK_RECORD, visibility: user.role === 'customer' ? Visibility.CUSTOMER : Visibility.INTERNAL, content: initialStatus ? `工单已创建（${zhStatus(initialStatus)}）` : '工单已创建' } },
+      events: { create: { author: { connect: { id: user.id } }, type: TicketEventType.WORK_RECORD, visibility: Visibility.INTERNAL, content: initialStatus ? `工单已创建（${zhStatus(initialStatus)}）` : '工单已创建' } },
     };
     const createRecord = async (client: Prisma.TransactionClient) => {
       for (let attempt = 0; attempt < 4; attempt++) {
@@ -189,7 +187,6 @@ export class TicketsService {
   }
 
   async update(user: AuthUser, id: string, dto: UpdateTicketDto) {
-    if (user.role === 'customer') throw new ForbiddenException('客户账号不能修改工单内部字段');
     const current = await this.access.requireTicket(user, id);
     this.assertActive(current);
     if (!this.access.canEditTicket(user, current)) throw new ForbiddenException('仅创建人、负责人或管理员可以更新该工单');
@@ -216,7 +213,6 @@ export class TicketsService {
   }
 
   async changeStatus(user: AuthUser, id: string, dto: ChangeStatusDto) {
-    if (user.role === 'customer') throw new ForbiddenException('客户账号不能修改工单状态');
     const ticket = await this.access.requireTicket(user, id);
     this.assertActive(ticket);
     if (user.role !== 'admin' && ticket.assigneeId !== user.id) throw new ForbiddenException('仅当前负责人或管理员可以变更工单状态');
@@ -247,11 +243,10 @@ export class TicketsService {
     this.assertActive(ticket);
     // 内部备注（排查过程）允许所有内部成员在任何工单下追加，便于协作排查；
     // 客户可见回复及其他类型的写入仍仅限创建人、负责人或管理员。
-    const isInternalNote = user.role !== 'customer' && dto.type === TicketEventType.INTERNAL_NOTE;
-    if (user.role !== 'customer' && !isInternalNote && !this.access.canEditTicket(user, ticket)) throw new ForbiddenException('仅创建人、负责人或管理员可以更新该工单');
-    const isCustomer = user.role === 'customer';
-    const type = isCustomer ? TicketEventType.CUSTOMER_REPLY : dto.type;
-    const visibility = isCustomer ? Visibility.CUSTOMER : type === TicketEventType.INTERNAL_NOTE ? Visibility.INTERNAL : (dto.visibility ?? Visibility.INTERNAL);
+    const isInternalNote = dto.type === TicketEventType.INTERNAL_NOTE;
+    if (!isInternalNote && !this.access.canEditTicket(user, ticket)) throw new ForbiddenException('仅创建人、负责人或管理员可以更新该工单');
+    const type = dto.type;
+    const visibility = type === TicketEventType.INTERNAL_NOTE ? Visibility.INTERNAL : (dto.visibility ?? Visibility.INTERNAL);
     return this.prisma.ticketEvent.create({ data: { ticketId: id, authorId: user.id, type, visibility, content: dto.content }, include: { author: { select: { id: true, name: true } } } });
   }
 
@@ -271,7 +266,6 @@ export class TicketsService {
 
   /** 移入回收站（软删除）：保留数据与操作记录 */
   async softDelete(user: AuthUser, id: string, reason?: string) {
-    if (user.role === 'customer') throw new ForbiddenException('客户账号不能删除工单');
     const ticket = await this.access.requireTicket(user, id);
     if (!this.access.canEditTicket(user, ticket)) throw new ForbiddenException('仅创建人、负责人或管理员可以删除该工单');
     if (ticket.deletedAt) throw new BadRequestException('工单已在回收站中');
@@ -300,7 +294,6 @@ export class TicketsService {
 
   /** 从回收站恢复工单 */
   async restore(user: AuthUser, id: string) {
-    if (user.role === 'customer') throw new ForbiddenException('客户账号不能恢复工单');
     const ticket = await this.access.requireTicket(user, id);
     if (!ticket.deletedAt) throw new BadRequestException('工单不在回收站中');
     if (user.role !== 'admin' && user.role !== 'support' && user.id !== ticket.deletedById && !this.access.canEditTicket(user, ticket)) throw new ForbiddenException('仅管理员、支持人员或相关负责人可以恢复该工单');
@@ -324,7 +317,6 @@ export class TicketsService {
 
   /** 直接添加协作人：无接受/驳回环节，添加后即可查看工单并参与跟进 */
   async createAssistRequests(user: AuthUser, id: string, dto: CreateAssistRequestDto) {
-    if (user.role === 'customer') throw new ForbiddenException('客户账号不能添加协作人');
     const ticket = await this.access.requireTicket(user, id);
     this.assertActive(ticket);
     if (!this.access.canEditTicket(user, ticket)) throw new ForbiddenException('仅创建人、负责人或管理员可以添加协作人');

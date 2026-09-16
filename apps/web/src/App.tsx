@@ -28,7 +28,6 @@ function ProtectedApp() {
   const { user, loading } = useAuth()
   if (loading) return <div className="screen-center"><span className="spinner" />正在校验会话</div>
   if (!user) return <Navigate to="/login" replace />
-  if (user.role === 'customer') return <div className="screen-center"><div><h1>客户账号已启用</h1><p className="muted">客户门户将在后续阶段开放。当前账号权限和数据隔离已生效。</p></div></div>
   return <AppShell />
 }
 

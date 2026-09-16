@@ -12,7 +12,7 @@ export class FilesService {
 
   async register(user: AuthUser, ticketId: string, file: Express.Multer.File, requestedVisibility?: Visibility) {
     await this.access.requireTicket(user, ticketId);
-    const visibility = user.role === 'customer' ? Visibility.CUSTOMER : (requestedVisibility ?? Visibility.INTERNAL);
+    const visibility = requestedVisibility ?? Visibility.INTERNAL;
     return this.prisma.$transaction(async (tx) => {
     const attachment = await tx.attachment.create({
       data: { ticketId, storageKey: file.filename, originalName: file.originalname, mimeType: file.mimetype, sizeBytes: file.size, visibility },
@@ -53,12 +53,11 @@ export class FilesService {
     if (attachment?.bugReport) return attachment;
     if (attachment?.loanItem) {
       const loan = attachment.loanItem.loanOrder;
-      if (user.role === 'customer' || !(user.role === 'admin' || user.role === 'support' || loan.assigneeId === user.id || loan.createdById === user.id)) throw new NotFoundException('附件不存在');
+      if (!(user.role === 'admin' || user.role === 'support' || loan.assigneeId === user.id || loan.createdById === user.id)) throw new NotFoundException('附件不存在');
       return attachment;
     }
     if (attachment?.ticket) {
       await this.access.requireTicket(user, attachment.ticket.id);
-      if (user.role === 'customer' && attachment.visibility !== Visibility.CUSTOMER) throw new NotFoundException('附件不存在');
       return attachment;
     }
     if (attachment?.repairOrder) {
@@ -82,7 +81,7 @@ export class FilesService {
       const result = await this.prisma.$transaction(async tx => {
         const item = await tx.loanItem.findUnique({ where: { id: itemId }, include: { loanOrder: true } });
         const loan = item?.loanOrder;
-        if (!loan || user.role === 'customer' || !(user.role === 'admin' || user.role === 'support' || loan.assigneeId === user.id || loan.createdById === user.id)) throw new NotFoundException('借测设备不存在');
+        if (!loan || !(user.role === 'admin' || user.role === 'support' || loan.assigneeId === user.id || loan.createdById === user.id)) throw new NotFoundException('借测设备不存在');
         // Serialize slot allocation; the unique index and check constraint also enforce the limit.
         await tx.$queryRaw`SELECT id FROM loan_items WHERE id = ${itemId}::uuid FOR UPDATE`;
         const existing = await tx.attachment.findUnique({ where: { photoKey: dto.photoKey } });

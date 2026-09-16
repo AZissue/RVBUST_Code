@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type { AuthUser } from './auth.types.js';
@@ -7,13 +7,11 @@ import type { AuthUser } from './auth.types.js';
 export class AccessPolicyService {
   constructor(private readonly prisma: PrismaService) {}
 
-  customerWhere(user: AuthUser): Prisma.CustomerOrganizationWhereInput {
-    if (user.role === 'customer') return { id: user.customerOrganizationId ?? '__none__' };
+  customerWhere(_user: AuthUser): Prisma.CustomerOrganizationWhereInput {
     return {};
   }
 
-  ticketWhere(user: AuthUser): Prisma.TicketWhereInput {
-    if (user.role === 'customer') return { organizationId: user.customerOrganizationId ?? '__none__', deletedAt: null };
+  ticketWhere(_user: AuthUser): Prisma.TicketWhereInput {
     // 内部角色（admin/support/employee）可查看全部工单
     return {};
   }
@@ -51,7 +49,5 @@ export class AccessPolicyService {
     return workItem;
   }
 
-  requireInternal(user: AuthUser) {
-    if (user.role === 'customer') throw new ForbiddenException('客户账号不能访问内部数据');
-  }
+  requireInternal(_user: AuthUser) {}
 }

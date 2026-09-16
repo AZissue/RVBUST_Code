@@ -19,7 +19,7 @@ describe('Ticket workbench safety', () => {
     await employee.post('/api/auth/login').send({ username: 'employee', password: process.env.SEED_EMPLOYEE_PASSWORD }).expect(201);
     await customer.post('/api/auth/login').send({ username: 'customer', password: process.env.SEED_CUSTOMER_PASSWORD }).expect(201);
     employeeId = (await db.user.findUniqueOrThrow({ where: { username: 'employee' } })).id;
-    orgId = (await db.user.findUniqueOrThrow({ where: { username: 'customer' } })).customerOrganizationId!;
+    orgId = (await db.customerOrganization.findFirstOrThrow({ where: { name: '华东智能制造示例客户' } })).id;
   });
   afterAll(async () => { await app?.close(); });
   const create = async () => (await admin.post('/api/tickets').send({ organizationId: orgId, category: 'OTHER', title: '回归工单' + Date.now(), description: '工作台回归测试', assigneeId: employeeId }).expect(201)).body;

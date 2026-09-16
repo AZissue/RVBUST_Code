@@ -51,9 +51,7 @@ export class LoansService {
     return {};
   }
 
-  private requireInternal(user: AuthUser) {
-    if (user.role === 'customer') throw new BadRequestException('客户账号不能访问借还单');
-  }
+  private requireInternal(_user: AuthUser) {}
 
   // 惰性逾期修正：ONGOING 且 dueAt 已过的单置为 OVERDUE，并幂等通知创建人与负责人
   private async fixOverdue() {
