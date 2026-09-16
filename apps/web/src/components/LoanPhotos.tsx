@@ -6,7 +6,7 @@ import type { LoanItem, LoanPhoto } from '../types'
 
 export const photoGroups = { VIEWS: { label: '设备六面图', max: 9 }, ACCESSORIES: { label: '配件图', max: 5 }, SERIAL: { label: '序列号图', max: 1 } } as const
 export type PhotoCategory = keyof typeof photoGroups
-export type PendingPhoto = { key: string; category: PhotoCategory; file: File; url: string }
+export type PendingPhoto = { key: string; category: PhotoCategory | 'AGREEMENT'; file: File; url: string }
 
 export function PhotoPicker({ value, onChange, existing = [], disabled = false }: { value: PendingPhoto[]; onChange: (next: PendingPhoto[]) => void; existing?: LoanPhoto[]; disabled?: boolean }) {
   const [error, setError] = useState('')

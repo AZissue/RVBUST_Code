@@ -1,4 +1,4 @@
-import { CheckCircle2, Download, FileClock, FileText, PackageSearch, Plus, Search, Truck, Upload, Wrench, X } from 'lucide-react'
+import { Download, FileText, Plus, RefreshCw, Search, Upload, X } from 'lucide-react'
 import { AttachmentPreview } from '../components/AttachmentPreview'
 import { RepairStatusEditor } from '../components/RepairStatusEditor'
 import { useAuth } from '../context/AuthContext'
@@ -11,11 +11,13 @@ import { api, formatDate } from '../lib/api'
 import { repairStatusLabels, statusChangeLabel, ticketEventTypeLabel } from '../lib/labels'
 import type { Attachment, RepairOrder, RepairStatus, User } from '../types'
 import { Empty, PageError, PageLoading } from './DashboardPage'
+import './device-flow.css'
 
 export { repairStatusLabels }
 export function RepairStatusBadge({ status }: { status: RepairStatus }) {
   return <span className={`badge ${status === 'CLOSED' ? '' : status === 'SHIPPED' ? 'ok' : 'status-in_progress'}`}>{repairStatusLabels[status]}</span>
 }
+const STATUS_CLASS: Record<RepairStatus, string> = { RECEIVED: 'queued', DIAGNOSING: 'ongoing', REPAIRING: 'ongoing', SHIPPED: 'returned', CLOSED: 'returned' }
 const nextStep: Partial<Record<RepairStatus, { status: RepairStatus; label: string }>> = {
   RECEIVED: { status: 'DIAGNOSING', label: '收货检测' },
   DIAGNOSING: { status: 'REPAIRING', label: '开始维修' },
@@ -29,32 +31,33 @@ export function RepairsPage() {
   const [creating, setCreating] = useState(false)
   const [detailId, setDetailId] = useState<string | null>(null)
   const [search, setSearch] = useState('')
+  const [appliedSearch, setAppliedSearch] = useState('')
   const remote = useRemote(() => api<RepairOrder[]>('/repairs'), [], true)
   if (remote.loading) return <PageLoading />
   if (remote.error) return <PageError message={remote.error} retry={remote.refresh} />
   const allRepairs = remote.data ?? []
-  const activeRepairs = allRepairs.filter((repair) => repair.status !== 'CLOSED')
   const repairs = allRepairs.filter((repair) => {
     if (status === 'ACTIVE' ? repair.status === 'CLOSED' : status && repair.status !== status) return false
-    if (!search.trim()) return true
+    if (!appliedSearch.trim()) return true
     const haystack = `${repair.repairNo} ${repair.organization.name} ${repair.contact?.name ?? ''} ${repair.assignee?.name ?? ''} ${repair.serialNumber ?? ''} ${repair.device?.serialNumber ?? ''} ${repair.device?.cameraModel ?? ''} ${repair.trackingNo ?? ''} ${repair.symptom}`.toLowerCase()
-    return haystack.includes(search.trim().toLowerCase())
+    return haystack.includes(appliedSearch.trim().toLowerCase())
   })
-  const kpi = [
-    { key: '', label: '全部维修单', value: allRepairs.length, icon: FileClock, hint: '' },
-    { key: 'ACTIVE', label: '进行中', value: activeRepairs.length, icon: Wrench, hint: '' },
-    { key: 'RECEIVED', label: '待检测', value: allRepairs.filter((repair) => repair.status === 'RECEIVED').length, icon: PackageSearch, hint: '' },
-    { key: 'SHIPPED', label: '已寄回', value: allRepairs.filter((repair) => repair.status === 'SHIPPED').length, icon: Truck, hint: '' },
-    { key: 'CLOSED', label: '已关闭', value: allRepairs.filter((repair) => repair.status === 'CLOSED').length, icon: CheckCircle2, hint: '' },
-  ]
   return <div className="page-stack">
     <header className="page-header"><div><span className="eyebrow">REPAIR ORDERS</span><h1>维修管理</h1><p>从收货、检测、维修到寄回关闭的完整返修流水。</p></div><div className="header-actions"><a className="button" href="/api/repairs/export" download><Download size={16} />导出数据</a><button className="button primary" onClick={() => setCreating(true)}><Plus size={16} />新建返厂单</button></div></header>
-    <section className="metric-strip five">{kpi.map((item) => <button key={item.key} className={`metric clickable ${status === item.key ? 'filter-active' : ''}`} onClick={() => setStatus(status === item.key ? '' : item.key)} title={`筛选：${item.label}`}>
-      <item.icon size={17} /><span>{item.label}</span><strong>{item.value}{item.hint ? <em> {item.hint}</em> : null}</strong>
-    </button>)}</section>
-    <section className="toolbar"><div className="searchbox"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索单号、客户、SN、型号或物流单号" /></div><select aria-label="返修状态筛选" value={status} onChange={(event) => setStatus(event.target.value)}><option value="">全部状态</option><option value="ACTIVE">返修进行中</option>{Object.entries(repairStatusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><span className="result-count">{repairs.length} 张返修单</span></section>
-    <section className="panel no-padding"><div className="table-wrap"><table><thead><tr><th>单号</th><th>SN</th><th>型号</th><th>客户</th><th>故障现象</th><th>状态</th><th>跟进工程师</th><th>收货日期</th><th>操作</th></tr></thead><tbody>{repairs.map((repair) => <tr key={repair.id}>
-      <td className="mono">{repair.repairNo}</td><td className="mono">{repair.serialNumber || repair.device?.serialNumber || '-'}</td><td>{repair.device?.cameraModel || '-'}</td><td>{repair.organization.name}</td><td className="truncate-cell" title={repair.symptom}>{repair.symptom}</td><td><RepairStatusBadge status={repair.status} /></td><td>{repair.assignee?.name ?? '未指派'}</td><td>{formatDate(repair.receivedAt)}</td>
+    <form className="flow-toolbar" onSubmit={(event) => { event.preventDefault(); setAppliedSearch(search) }}>
+      <label className="flow-search"><Search size={16} /><input aria-label="搜索返修单" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="单号、客户、SN、型号或物流单号" /></label>
+      <button className="button" type="submit">查询</button>
+      <select aria-label="返修状态筛选" value={status} onChange={(event) => setStatus(event.target.value)}><option value="">全部状态</option><option value="ACTIVE">返修进行中</option>{Object.entries(repairStatusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+      <button className="icon-button" type="button" title="清除筛选" onClick={() => { setStatus(''); setSearch(''); setAppliedSearch('') }}><RefreshCw size={17} /></button>
+      <span className="result-count">{repairs.length} 张返修单</span>
+    </form>
+    <section className="panel no-padding"><div className="table-wrap flow-table"><table><thead><tr><th>单号</th><th>设备</th><th>客户</th><th>故障现象</th><th>物流</th><th>状态</th><th>操作</th></tr></thead><tbody>{repairs.map((repair) => <tr key={repair.id}>
+      <td><strong className="mono">{repair.repairNo}</strong><div className="muted">收货 {formatDate(repair.receivedAt)}</div>{repair.closedAt && <div className="muted">关闭 {formatDate(repair.closedAt)}</div>}</td>
+      <td className="flow-sn"><strong>{repair.device?.cameraModel || '-'}</strong><div>{repair.serialNumber || repair.device?.serialNumber || '-'}</div></td>
+      <td><strong>{repair.organization.name}</strong><div className="muted">工程师：{repair.assignee?.name ?? '未指派'}</div></td>
+      <td className="truncate-cell flow-follow-summary" title={repair.symptom}>{repair.symptom}</td>
+      <td><div>{repair.trackingNo || '—'}</div><div className="muted">{repair.inWarranty == null ? '保修待判定' : repair.inWarranty ? '保内' : '保外'}</div></td>
+      <td><span className={`badge flow-status flow-status-${STATUS_CLASS[repair.status]}`}>{repairStatusLabels[repair.status]}</span></td>
       <td><button className="button small" onClick={() => setDetailId(repair.id)}>详情</button></td>
     </tr>)}</tbody></table>{!repairs.length && <Empty text="暂无返修单" />}</div></section>
     {creating && <ReturnRepairForm onClose={() => setCreating(false)} onSaved={async () => { setCreating(false); await remote.refresh() }} />}

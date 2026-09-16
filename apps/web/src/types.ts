@@ -50,7 +50,7 @@ export interface Project { id: string; name: string; application?: string; statu
 
 export type LoanStatus = 'QUEUED' | 'ONGOING' | 'OVERDUE' | 'RETURNED' | 'CANCELLED'
 export interface LoanItem { id: string; attachments?: LoanPhoto[]; returnedAt?: string | null; conditionNote?: string | null; accessories?: string | null; device: { id: string; name: string; serialNumber?: string | null; cameraModel?: string | null } }
-export interface LoanPhoto extends Attachment { photoCategory: 'VIEWS' | 'ACCESSORIES' | 'SERIAL'; photoKey: string }
+export interface LoanPhoto extends Attachment { photoCategory: 'VIEWS' | 'ACCESSORIES' | 'SERIAL' | 'AGREEMENT'; photoKey: string }
 export interface ReturnForm { companyName: string; reportedAt: string; reporterName: string; reporterPhone: string; serialNumber: string; appearance: string; returnAddress: string; salesContact: string; afterSalesContact: string }
 export interface FollowUp { id: string; content: string; occurredAt: string; author: { id: string; name: string } }
 export interface LoanScoreRule { id: string; version: string; isActive: boolean; description?: string | null; dimensions: unknown; createdAt: string }

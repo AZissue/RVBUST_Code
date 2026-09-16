@@ -1,13 +1,13 @@
 import { ArrowLeft, ArrowRight, ChevronDown, ChevronRight, Download, Plus, RefreshCw, Search, X } from 'lucide-react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { Fragment, useEffect, useState, type FormEvent } from 'react'
 import { LoanOverdueNotice } from '../components/LoanOverdueNotice'
-import { LoanPhotoPanel } from '../components/LoanPhotos'
+import { LoanPhotoPanel, uploadLoanPhoto } from '../components/LoanPhotos'
 import { Modal } from '../components/Modal'
 import { useRemote } from '../hooks/useRemote'
 import { api, formatDate } from '../lib/api'
 import { loanStatusLabels } from '../lib/labels'
-import type { Contact, Customer, Device, LoanOrder, LoanScoreRule, LoanStatus, User } from '../types'
+import type { Device, LoanOrder, LoanScoreRule, LoanStatus, User } from '../types'
 import { Empty, PageError, PageLoading } from './DashboardPage'
 import './device-flow.css'
 
@@ -37,10 +37,10 @@ function Badge({ row }: { row: Row }) {
 }
 
 export function LoansPage() {
+  const navigate = useNavigate()
   const [params, setParams] = useSearchParams()
   const [search, setSearch] = useState(params.get('search') || '')
   const [error, setError] = useState('')
-  const [creating, setCreating] = useState(false)
   const [returning, setReturning] = useState<Row | null>(null)
   const [assigning, setAssigning] = useState<Row | null>(null)
   const [shipping, setShipping] = useState<Row | null>(null)
@@ -72,7 +72,7 @@ export function LoansPage() {
   const taskView = params.get('status')
   return <div className="page-stack">
     <LoanOverdueNotice onReview={() => { setSearch(''); setParams({ status: 'overdue', sort: 'due_soon' }) }} />
-    <header className="page-header"><div><span className="eyebrow">LOAN ORDERS</span><h1>借测管理</h1><p>借测需求先入队，完善信息后按评分排队，借出到归还全程可追踪。</p></div><div className="header-actions"><button className="button" onClick={() => void download()}><Download size={16} />导出数据</button><button className="button primary" onClick={() => setCreating(true)}><Plus size={16} />入队登记</button></div></header>
+    <header className="page-header"><div><span className="eyebrow">LOAN ORDERS</span><h1>借测管理</h1><p>借测需求先入队，完善信息后按评分排队，借出到归还全程可追踪。</p></div><div className="header-actions"><button className="button" onClick={() => void download()}><Download size={16} />导出数据</button><Link className="button primary" to="/loans/new"><Plus size={16} />新建借测工单</Link></div></header>
     {error && <div className="form-error"><button onClick={() => setError('')}><X size={14} /></button>{error}</div>}
     <form className="flow-toolbar" onSubmit={(event) => { event.preventDefault(); change('search', search) }}>
       <label className="flow-search"><Search size={16} /><input aria-label="搜索借测记录" placeholder="单号、客户、SN、型号、物流单号或跟进内容" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
@@ -98,13 +98,14 @@ export function LoansPage() {
         {rows.map((loan, index) => <Fragment key={loan.id}>
           <tr className={loan.effectiveStatus === 'OVERDUE' ? 'flow-overdue-row' : ''}>
             <td><button className="icon-button" onClick={() => setExpanded(expanded === loan.id ? null : loan.id)}>{expanded === loan.id ? <ChevronDown size={15} /> : <ChevronRight size={15} />}</button></td>
-            <td><strong>{loan.loanNo}</strong>{isQueuedView && <span className="badge warn" style={{ marginLeft: 6 }}>队列 #{(remote.data!.page - 1) * remote.data!.pageSize + index + 1}</span>}{loan.score != null && <span className="badge" style={{ marginLeft: 6 }}>评分 {loan.score}</span>}<div className="muted">借出 {date(loan.loanedAt)}</div><div className="muted">应还 {date(loan.dueAt)}</div></td>
+            <td><strong><Link to={`/loans/${loan.id}`}>{loan.loanNo}</Link></strong>{isQueuedView && <span className="badge warn" style={{ marginLeft: 6 }}>队列 #{(remote.data!.page - 1) * remote.data!.pageSize + index + 1}</span>}{loan.score != null && <span className="badge" style={{ marginLeft: 6 }}>评分 {loan.score}</span>}<div className="muted">借出 {date(loan.loanedAt)}</div><div className="muted">应还 {date(loan.dueAt)}</div></td>
             <td className="flow-sn">{loan.items.length ? <strong>{loan.items[0].device.cameraModel || loan.items[0].device.name}</strong> : <span className="placeholder-text">待借出登记</span>}{loan.items.map((item) => <div key={item.id}>{item.device.serialNumber || item.device.name}</div>)}</td>
             <td><strong>{loan.organization.name}</strong><div className="muted">{loan.contact?.name ?? '—'} {loan.contact?.phone ?? ''}</div><div className="muted">工程师：{loan.assignee?.name ?? '未指派'}</div></td>
             <td><div>寄出：{[loan.outboundCarrier, loan.outboundTracking].filter(Boolean).join(' ') || '—'}</div><div className="muted">归还：{[loan.returnCarrier, loan.returnTracking].filter(Boolean).join(' ') || '—'}</div></td>
             <td><Badge row={loan} /></td>
             <td className="flow-follow-summary">{loan.followUps?.length ? <><div>{loan.followUps[0].content}</div><small className="muted">{loan.followUps[0].author.name} · {date(loan.followUps[0].occurredAt)}</small></> : '—'}</td>
             <td><div className="row-actions">
+              <button className="button small" onClick={() => navigate(`/loans/${loan.id}`)}>详情</button>
               {loan.status === 'QUEUED' && <button className="button small primary" onClick={() => setShipping(loan)}>借出</button>}
               {loan.status === 'QUEUED' && <button className="button small" onClick={() => setScoring(loan)}>评分</button>}
               {loan.status === 'QUEUED' && <button className="button small" onClick={() => setAdvancing(loan)}>提前</button>}
@@ -141,7 +142,6 @@ export function LoansPage() {
         <button className="icon-button" title="下一页" disabled={(remote.data?.page ?? 1) * (remote.data?.pageSize ?? 20) >= (remote.data?.total ?? 0)} onClick={() => change('page', String((remote.data?.page ?? 1) + 1))}><ArrowRight size={18} /></button>
       </footer>
     </>}
-    {creating && <CreateLoanModal onClose={() => setCreating(false)} onCreated={async () => { setCreating(false); await refresh() }} />}
     {shipping && <ShipLoanModal loan={shipping} onClose={() => setShipping(null)} onDone={async () => { setShipping(null); await refresh() }} />}
     {advancing && <AdvanceLoanModal loan={advancing} onClose={() => setAdvancing(null)} onDone={async () => { setAdvancing(null); await refresh() }} />}
     {scoring && <ScoreLoanModal loan={scoring} onClose={() => setScoring(null)} onDone={async () => { setScoring(null); await refresh() }} />}
@@ -174,41 +174,6 @@ function FollowUpPanel({ loan, onChanged }: { loan: LoanOrder; onChanged: () => 
   </section>
 }
 
-/** 入队登记：借测需求先入队，暂不要求设备与日期 */
-function CreateLoanModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => Promise<void> }) {
-  const customers = useRemote(() => api<Customer[]>('/customers'), [])
-  const [organizationId, setOrganizationId] = useState('')
-  const [contacts, setContacts] = useState<Contact[]>([])
-  const [error, setError] = useState('')
-  const [busy, setBusy] = useState(false)
-  useEffect(() => {
-    if (!organizationId) { setContacts([]); return }
-    void api<Customer>(`/customers/${organizationId}`).then((customer) => setContacts(customer.contacts ?? [])).catch(() => setContacts([]))
-  }, [organizationId])
-  const submit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault(); if (busy) return; setBusy(true); setError('')
-    const form = new FormData(event.currentTarget)
-    const value = (key: string) => String(form.get(key) ?? '').trim()
-    try {
-      await api<LoanOrder>('/loans', { method: 'POST', body: JSON.stringify({ organizationId: value('organizationId'), contactId: value('contactId') || undefined, purpose: value('purpose'), assessmentResult: value('assessmentResult') || undefined, score: value('score') ? Number(value('score')) : undefined, agreementNo: value('agreementNo') || undefined, note: value('note') || undefined }) })
-      await onCreated()
-    } catch (reason) { setError(reason instanceof Error ? reason.message : '创建失败') } finally { setBusy(false) }
-  }
-  return <Modal title="借测入队登记" onClose={() => { if (!busy) onClose() }}><form onSubmit={submit}><fieldset className="form-grid" disabled={busy}>
-    <label>客户<select name="organizationId" required value={organizationId} onChange={(event) => setOrganizationId(event.target.value)}><option value="" disabled>选择客户</option>{customers.data?.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
-    <label>联系人<select name="contactId" defaultValue=""><option value="">不指定</option>{contacts.map((contact) => <option key={contact.id} value={contact.id}>{contact.name}</option>)}</select></label>
-    <label className="span-2">借测目的<textarea name="purpose" required rows={2} placeholder="客户应用场景、测试内容、期望周期" /></label>
-    <label className="span-2">售前评估结论<textarea name="assessmentResult" rows={2} placeholder="需求评估、方案匹配度、是否建议借测" /></label>
-    <label>初始评分（0-100，可后补）<input name="score" type="number" min={0} max={100} step={1} /></label>
-    <label>协议编号<input name="agreementNo" /></label>
-    <label className="span-2">备注<input name="note" /></label>
-    <p className="span-2 placeholder-text">保存后进入借测队列，可在列表中补充评分、手动提前，信息完善后按评分排序安排借出。</p>
-    </fieldset>
-    {error && <div className="form-error">{error}</div>}
-    <div className="form-actions"><button type="button" className="button" disabled={busy} onClick={onClose}>取消</button><button className="button primary" disabled={busy}>{busy ? '保存中' : '确认入队'}</button></div>
-  </form></Modal>
-}
-
 /** 借出：排队单 → 进行中，选择在库公司样机或手动登记 SN（自动建档为公司样机） */
 function ShipLoanModal({ loan, onClose, onDone }: { loan: LoanOrder; onClose: () => void; onDone: () => Promise<void> }) {
   const devices = useRemote(() => api<Device[]>('/devices?ownerType=COMPANY&status=IN_STOCK'), [])
@@ -218,6 +183,7 @@ function ShipLoanModal({ loan, onClose, onDone }: { loan: LoanOrder; onClose: ()
   const [model, setModel] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [agreement, setAgreement] = useState<File | null>(null)
   const today = new Date().toISOString().slice(0, 10)
   const defaultDue = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10)
   const addManual = () => {
@@ -229,13 +195,20 @@ function ShipLoanModal({ loan, onClose, onDone }: { loan: LoanOrder; onClose: ()
     setManualList((current) => [...current, { serialNumber, cameraModel: model.trim() }])
     setSn(''); setModel('')
   }
+  const chooseAgreement = (file?: File) => {
+    if (file && !(file.type === 'application/pdf' || ['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) ) { setError('借测协议仅支持 PDF 或 JPG、PNG、WebP 图片'); return }
+    if (file && file.size > 10 * 1024 * 1024) { setError('协议文件不能超过 10 MB'); return }
+    setError('')
+    setAgreement(file ?? null)
+  }
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault(); if (busy) return; setBusy(true); setError('')
     const form = new FormData(event.currentTarget)
     const value = (key: string) => String(form.get(key) ?? '').trim()
     if (!selected.length && !manualList.length) { setError('请勾选在库样机，或在下方手动登记 SN'); setBusy(false); return }
     try {
-      await api(`/loans/${loan.id}/ship`, { method: 'POST', body: JSON.stringify({ deviceIds: selected, manualDevices: manualList.length ? manualList : undefined, loanedAt: value('loanedAt'), dueAt: value('dueAt'), agreementNo: value('agreementNo') || undefined, outboundCarrier: value('outboundCarrier') || undefined, outboundTracking: value('outboundTracking') || undefined }) })
+      const shipped = await api<LoanOrder>(`/loans/${loan.id}/ship`, { method: 'POST', body: JSON.stringify({ deviceIds: selected, manualDevices: manualList.length ? manualList : undefined, loanedAt: value('loanedAt'), dueAt: value('dueAt'), agreementNo: value('agreementNo') || undefined, outboundCarrier: value('outboundCarrier') || undefined, outboundTracking: value('outboundTracking') || undefined }) })
+      if (agreement && shipped.items.length) await uploadLoanPhoto(shipped.items[0].id, { key: crypto.randomUUID(), category: 'AGREEMENT', file: agreement, url: '' })
       await onDone()
     } catch (reason) { setError(reason instanceof Error ? reason.message : '借出失败') } finally { setBusy(false) }
   }
@@ -243,6 +216,7 @@ function ShipLoanModal({ loan, onClose, onDone }: { loan: LoanOrder; onClose: ()
     <label>借出日期<input name="loanedAt" type="date" required defaultValue={today} /></label>
     <label>预计归还日期<input name="dueAt" type="date" required defaultValue={defaultDue} /></label>
     <label>协议编号<input name="agreementNo" defaultValue={loan.agreementNo ?? ''} /></label>
+    <label>借测协议（PDF/JPG/PNG/WebP，≤10MB）<input type="file" accept="application/pdf,image/jpeg,image/png,image/webp" onChange={(event) => chooseAgreement(event.target.files?.[0])} />{agreement && <small className="placeholder-text">已选择：{agreement.name}</small>}</label>
     <label>承运商<select name="outboundCarrier" defaultValue=""><option value="">不填写</option>{CARRIERS.map((carrier) => <option key={carrier} value={carrier}>{carrier}</option>)}</select></label>
     <label>物流单号<input name="outboundTracking" /></label>
     <label className="span-2">在库公司样机（勾选借出）<div className="checkbox-list">{devices.data?.map((device) => <label key={device.id}><input type="checkbox" checked={selected.includes(device.id)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, device.id] : current.filter((id) => id !== device.id))} />{device.name}<span className="mono">{device.serialNumber || '-'}</span>{device.cameraModel ? ` · ${device.cameraModel}` : ''}</label>)}{devices.data && !devices.data.length && <span className="placeholder-text">暂无在库公司样机，可在下方手动登记 SN，保存后自动建档</span>}</div></label>

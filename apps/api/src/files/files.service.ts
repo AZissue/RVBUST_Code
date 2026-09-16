@@ -76,8 +76,9 @@ export class FilesService {
       const bytes = await readFile(file.path);
       const actual = bytes.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10])) ? 'image/png'
         : bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255 ? 'image/jpeg'
-        : bytes.toString('ascii', 0, 4) === 'RIFF' && bytes.toString('ascii', 8, 12) === 'WEBP' ? 'image/webp' : null;
-      if (!actual || actual !== file.mimetype) throw new BadRequestException('仅支持真实的 JPG、PNG、WebP 图片');
+        : bytes.toString('ascii', 0, 4) === 'RIFF' && bytes.toString('ascii', 8, 12) === 'WEBP' ? 'image/webp'
+        : dto.category === 'AGREEMENT' && bytes.toString('ascii', 0, 5) === '%PDF-' ? 'application/pdf' : null;
+      if (!actual || actual !== file.mimetype) throw new BadRequestException(dto.category === 'AGREEMENT' ? '借测协议仅支持 PDF 或 JPG、PNG、WebP 图片' : '仅支持真实的 JPG、PNG、WebP 图片');
       const result = await this.prisma.$transaction(async tx => {
         const item = await tx.loanItem.findUnique({ where: { id: itemId }, include: { loanOrder: true } });
         const loan = item?.loanOrder;

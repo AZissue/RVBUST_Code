@@ -9,6 +9,8 @@ import { CustomersPage } from './pages/CustomersPage'
 import { DashboardPage } from './pages/DashboardPage'
 import { DevicesPage } from './pages/DevicesPage'
 import { LoansPage } from './pages/LoansPage'
+import { LoanDetailPage } from './pages/LoanDetailPage'
+import { LoanFormPage } from './pages/LoanFormPage'
 import { LoginPage } from './pages/LoginPage'
 import { RegisterPage } from './pages/RegisterPage'
 import { RepairsPage } from './pages/RepairsPage'
@@ -46,6 +48,8 @@ export default function App() {
       <Route path="devices" element={<DevicesPage />} />
       <Route path="devices/:id" element={<DeviceDetailPage />} />
       <Route path="loans" element={<LoansPage />} />
+      <Route path="loans/new" element={<LoanFormPage />} />
+      <Route path="loans/:id" element={<LoanDetailPage />} />
       <Route path="repairs" element={<RepairsPage />} />
       <Route path="worklogs" element={<WorklogsPage />} />
       <Route path="reports" element={<ReportCalendarPage />} />
