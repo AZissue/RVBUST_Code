@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Param, Post, Query, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Param, ParseUUIDPipe, Post, Query, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import { randomUUID } from 'node:crypto';
@@ -62,7 +62,7 @@ export class FilesController {
   }
 
   @Get(':id')
-  async download(@CurrentUser() user: AuthUser, @Param('id') id: string, @Query('preview') preview: string | undefined, @Res() response: Response) {
+  async download(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Query('preview') preview: string | undefined, @Res() response: Response) {
     const attachment = await this.files.getForDownload(user, id);
     response.setHeader('Content-Type', attachment.mimeType);
     const inline = preview === '1' && ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'].includes(attachment.mimeType);

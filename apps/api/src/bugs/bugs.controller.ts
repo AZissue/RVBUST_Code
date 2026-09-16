@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import type { BugStatus } from '@prisma/client';
 import type { AuthUser } from '../auth/auth.types.js';
 import { CurrentUser } from '../auth/current-user.decorator.js';
@@ -14,11 +14,11 @@ export class BugsController {
     return this.bugs.list(user, { status, mine: mine === '1' });
   }
 
-  @Get(':id') get(@Param('id') id: string) { return this.bugs.get(id); }
+  @Get(':id') get(@Param('id', ParseUUIDPipe) id: string) { return this.bugs.get(id); }
 
   @Post() create(@CurrentUser() user: AuthUser, @Body() dto: CreateBugDto) { return this.bugs.create(user, dto); }
 
-  @Roles('admin') @Patch(':id/status') updateStatus(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: UpdateBugStatusDto) {
+  @Roles('admin') @Patch(':id/status') updateStatus(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateBugStatusDto) {
     return this.bugs.updateStatus(user, id, dto);
   }
 }

@@ -94,4 +94,25 @@ describe('local quick ticket parser', () => {
     expect(ticketSimilarity('M2600连接不上', 'M2600连接超时', 'M2600', 'M2600', true)).toBe(100);
     expect(ticketSimilarity('M2600连接不上', '培训资料整理', 'M2600', '', true)).toBeLessThan(40);
   });
+  it('matches a short customer name with a one-character typo (case 3)', () => {
+    const ctx = { customers: [{ id: 'c1', name: '盈连科技' }], users: context.users, currentUserId: 'u1' };
+    const result = parseQuickTicketInput('盈联科技 M2600 相机进水', ctx);
+    expect(result.customerCandidates[0]).toMatchObject({ id: 'c1', score: .75 });
+    // 0.75 低于 0.85 自动绑定阈值：确认页给出候选一键选择，避免错字自动挂错客户
+    expect(result.matchedCustomer).toBeNull();
+    expect(result.issue).toBe('M2600 相机进水');
+  });
+  it('finds a customer name anywhere in the text and strips it (case 4)', () => {
+    const ctx = { customers: [{ id: 'c1', name: '盈连科技' }], users: context.users, currentUserId: 'u1' };
+    const result = parseQuickTicketInput('M2600 无点云 盈连科技现场反馈', ctx);
+    expect(result.matchedCustomer?.id).toBe('c1');
+    expect(result.issue).not.toContain('盈连');
+    expect(result.issue).toContain('无点云');
+  });
+  it('prefers the longest overlapping customer name and strips it fully', () => {
+    const ctx = { customers: [{ id: 'c1', name: '盈连科技' }, { id: 'c2', name: '盈连科技苏州分公司' }], users: context.users, currentUserId: 'u1' };
+    const result = parseQuickTicketInput('盈连科技苏州分公司 M2600 无点云', ctx);
+    expect(result.customerCandidates[0]?.id).toBe('c2');
+    expect(result.issue).toBe('M2600 无点云');
+  });
 });

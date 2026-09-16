@@ -27,9 +27,11 @@ export function similarity(a: string, b: string) {
 export function matchCustomers(text: string, customers: Person[]): Candidate[] {
   const query = normalize(text);
   if (query.length < 2) return [];
+  // 归一化后 ≤3 字的短名称：单字错字（盈联/盈连）编辑距离为 1，直接给 0.75，不再走 ×0.85 相似度链（0.425 会被阈值滤除）
+  const editDistance = (a: string, b: string) => Math.round((1 - similarity(a, b)) * Math.max(a.length, b.length));
   return customers.map((c) => {
     const name = normalize(c.name);
-    const score = c.name === text ? 1 : name === query ? .98 : name.includes(query) || query.includes(name) ? .9 : similarity(query, name) * .85;
+    const score = c.name === text ? 1 : name === query ? .98 : name.includes(query) || query.includes(name) ? .9 : name.length <= 3 && editDistance(query, name) <= 1 ? .75 : similarity(query, name) * .85;
     return { id: c.id, name: c.name, score };
   }).filter((c) => c.score >= .58).sort((a, b) => b.score - a.score);
 }
@@ -71,18 +73,28 @@ export function parseQuickTicketInput(rawText: string, context: ParserContext) {
   issue = clean(issue);
   const deviceText = issue.match(/\b[A-Za-z]+[- ]?\d{3,}[A-Za-z0-9-]*\b/)?.[0]?.replace(/ /g, '') ?? '';
   let customerText = '';
-  const fullName = context.customers.map((c) => c.name).sort((a, b) => b.length - a.length).find((name) => issue.startsWith(name));
-  if (fullName) customerText = fullName;
-  else {
+  // 客户名全位置扫描：所有客户名及其归一化名在全文 includes 匹配，取最长命中（候选重叠时最长优先），不限句首
+  const customerHit = context.customers
+    .flatMap((c) => [c.name, normalize(c.name)])
+    .filter((token) => token.length >= 2)
+    .map((token) => ({ token, index: issue.indexOf(token) }))
+    .filter((hit) => hit.index >= 0)
+    .sort((a, b) => b.token.length - a.token.length || a.index - b.index)[0];
+  if (customerHit) {
+    customerText = customerHit.token;
+    // 句中剥离可能在拼接处留下前导/残留标点，一并清理，保持剩余文本语义完整
+    const before = issue.slice(0, customerHit.index).replace(/[\s,，。:：;；]+$/, '');
+    const after = issue.slice(customerHit.index + customerHit.token.length).replace(/^[\s,，。:：;；]+/, '');
+    issue = clean(before + ' ' + after);
+  } else {
+    // 句首兜底：型号/标点前的片段可能是客户简称（如「智享机器人」），交给 matchCustomers 模糊匹配
     const head = clean(issue.split(/[A-Za-z]+[- ]?\d{3,}|[\s，,。；;]/)[0]);
-    if (head && head !== issue) customerText = head;
-    else {
-      const prefix = context.customers.flatMap((c) => [c.name, normalize(c.name)]).filter((n) => n.length >= 2 && issue.startsWith(n)).sort((a, b) => b.length - a.length)[0];
-      if (prefix) customerText = prefix;
+    if (head && head !== issue) {
+      customerText = head;
+      issue = clean(issue.slice(head.length));
     }
   }
   const customerCandidates = matchCustomers(customerText, context.customers);
-  if (customerText) issue = clean(issue.slice(customerText.length));
   const assigneeCandidates = assigneeText ? matchPeople(assigneeText, context.users) : context.users.filter((u) => u.id === context.currentUserId).map((u) => ({ id: u.id, name: u.name, score: 1 }));
   issue = clean(issue.replace(/[\s，,]+$/g, ''));
   const matchedCustomer = choose(customerCandidates, .85);

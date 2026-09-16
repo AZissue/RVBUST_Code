@@ -41,4 +41,24 @@ describe('title-summarizer', () => {
   it('空输入兜底', () => {
     expect(summarizeTitleLocally('')).toBe('新工单');
   });
+
+  it('多句平分时选中含型号的真实故障句而非猜测句（S1）', () => {
+    const title = summarizeTitleLocally('客户反馈：现场使用 M2600 相机拍摄3D工件时无点云输出。客户表示已重启软件并更换网线，问题依旧。现场环境为高温高湿车间，怀疑激光器散射严重。请尽快协助排查。');
+    expect(title).toContain('M2600');
+    expect(title).toContain('无点云');
+    expect(title).not.toContain('散射');
+  });
+
+  it('否定/正常语境的关键词句减分，让位真实故障句（用例12）', () => {
+    const title = summarizeTitleLocally('M2600 精度正常，M3120 点云漂移');
+    expect(title).toBe('M3120 点云漂移');
+  });
+
+  it('极短故障句不被长度过滤丢弃（用例13）', () => {
+    expect(summarizeTitleLocally('无点云。就三个字')).toContain('无点云');
+  });
+
+  it('剥离口语填充词（用例14）', () => {
+    expect(summarizeTitleLocally('具体情况是 M2600 连接超时')).toBe('M2600 连接超时');
+  });
 });

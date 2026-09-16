@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { LoanStatus, RepairStatus, TicketEventType, Visibility } from '@prisma/client';
 import { AccessPolicyService } from '../auth/access-policy.service.js';
 import type { AuthUser } from '../auth/auth.types.js';
@@ -61,6 +61,69 @@ export class LinkageService {
     return { loan, created: true };
   }
 
+  /** 维修联动前置：为工单确保可用设备档案。返回 deviceId；有序列号时返回 null（走 repairs.create 的 SN 通道）；无任何线索时返回 null */
+  private async ensureRepairDevice(ticket: {
+    id: string;
+    organizationId: string;
+    deviceId: string | null;
+    serialNumber: string | null;
+    cameraModel: string | null;
+  }): Promise<string | null> {
+    if (ticket.deviceId) return ticket.deviceId;
+    const serialNumber = ticket.serialNumber?.trim();
+    if (serialNumber) {
+      // SN 线索直接交给 repairs.create 的内建逻辑（按 SN 匹配或自动建档），此处不重复实现
+      return null; // null 表示"走 repairs.create 的 SN 通道"
+    }
+    const cameraModel = ticket.cameraModel?.trim();
+    if (cameraModel) {
+      // 无设备无 SN 但有型号：建一条手动档案占位（状态保持默认，repairs.create 会自己置为维修中）
+      const device = await this.prisma.device.create({
+        data: {
+          name: cameraModel,
+          cameraModel,
+          ownerType: 'CUSTOMER',
+          source: 'MANUAL',
+          organizationId: ticket.organizationId,
+          notes: '由工单联动创建维修单自动建档（无序列号，待补充）',
+        },
+      });
+      return device.id;
+    }
+    return null;
+  }
+
+  /** 联动失败留痕：工单事件 + 通知，避免失败信息只存在于创建接口的响应里 */
+  private async recordLinkFailure(
+    user: AuthUser,
+    ticket: { id: string; number: string; assigneeId: string | null; createdById: string },
+    linkType: 'loan' | 'repair',
+    reason: string,
+  ) {
+    const label = linkType === 'loan' ? '借测单' : '维修单';
+    await this.prisma.ticketEvent.create({
+      data: {
+        ticketId: ticket.id,
+        authorId: user.id,
+        type: TicketEventType.INTERNAL_NOTE,
+        visibility: Visibility.INTERNAL,
+        content: `联动创建${label}失败：${reason}`,
+        metadata: { linkType, linkStatus: 'FAILED' },
+      },
+    });
+    // 通知工单负责人（无负责人退化为创建人）与所有 admin
+    const ownerId = ticket.assigneeId ?? ticket.createdById;
+    const recipients = [...new Set([ownerId, ...(await this.linkageNotify.adminIds())])].filter((id): id is string => Boolean(id));
+    await Promise.all(recipients.map((recipientId) => this.linkageNotify.safeNotifyUnreadOnce({
+      recipientId,
+      ticketId: ticket.id,
+      type: NOTIFICATION_TYPES.LINK_FAILED,
+      title: '联动创建失败',
+      body: `工单 ${ticket.number} 联动创建${label}失败：${reason}`,
+      dedupeKey: `link-failed:${ticket.id}:${linkType}`,
+    })));
+  }
+
   /** 从工单创建维修单（幂等）：已有进行中维修单直接返回，不重复创建 */
   async createRepairFromTicket(user: AuthUser, ticketId: string) {
     const ticket = await this.access.requireTicket(user, ticketId);
@@ -68,10 +131,16 @@ export class LinkageService {
     if (existing) return { repair: existing, created: false };
     let repair: { id: string; repairNo: string; status: RepairStatus };
     try {
+      const deviceId = await this.ensureRepairDevice(ticket);
+      if (!deviceId && !ticket.serialNumber?.trim()) {
+        const reason = '工单未绑定设备，且没有序列号或相机型号，无法自动创建维修单';
+        await this.recordLinkFailure(user, ticket, 'repair', reason);
+        throw new BadRequestException(`${reason}；请先在工单上补充设备信息，或使用工单详情页的"创建维修单"手动入口`);
+      }
       repair = (await this.repairs.create(user, {
         organizationId: ticket.organizationId,
         contactId: ticket.contactId ?? undefined,
-        deviceId: ticket.deviceId ?? undefined,
+        deviceId: deviceId ?? undefined,
         serialNumber: ticket.serialNumber ?? undefined,
         ticketId,
         symptom: ticket.description,

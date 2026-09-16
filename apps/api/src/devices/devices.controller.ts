@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import type { DeviceOwnerType, DeviceStatus } from '@prisma/client';
 import { Roles } from '../auth/roles.decorator.js';
 import { DevicesService } from './devices.service.js';
@@ -13,10 +13,10 @@ export class DevicesController {
     return this.devices.list({ status, ownerType, organizationId, model, keyword });
   }
 
-  @Get(':id') get(@Param('id') id: string) { return this.devices.get(id); }
-  @Get(':id/detail') detail(@Param('id') id: string) { return this.devices.detail(id); }
+  @Get(':id') get(@Param('id', ParseUUIDPipe) id: string) { return this.devices.get(id); }
+  @Get(':id/detail') detail(@Param('id', ParseUUIDPipe) id: string) { return this.devices.detail(id); }
   @Roles('admin', 'support') @Post() create(@Body() dto: CreateDeviceDto) { return this.devices.create(dto); }
-  @Roles('admin', 'support') @Patch(':id') update(@Param('id') id: string, @Body() dto: UpdateDeviceDto) { return this.devices.update(id, dto); }
-  @Roles('admin', 'support') @Patch(':id/status') changeStatus(@Param('id') id: string, @Body() dto: ChangeDeviceStatusDto) { return this.devices.changeStatus(id, dto); }
-  @Roles('admin') @Delete(':id') remove(@Param('id') id: string) { return this.devices.remove(id); }
+  @Roles('admin', 'support') @Patch(':id') update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateDeviceDto) { return this.devices.update(id, dto); }
+  @Roles('admin', 'support') @Patch(':id/status') changeStatus(@Param('id', ParseUUIDPipe) id: string, @Body() dto: ChangeDeviceStatusDto) { return this.devices.changeStatus(id, dto); }
+  @Roles('admin') @Delete(':id') remove(@Param('id', ParseUUIDPipe) id: string) { return this.devices.remove(id); }
 }

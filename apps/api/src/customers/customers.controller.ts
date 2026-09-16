@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import type { AuthUser } from '../auth/auth.types.js';
 import { CurrentUser } from '../auth/current-user.decorator.js';
 import { Roles } from '../auth/roles.decorator.js';
@@ -17,20 +17,20 @@ export class CustomersController {
     const parsedPageSize = pageSize ? Math.min(100, Math.max(1, Number(pageSize) || 20)) : undefined;
     return this.customers.list(user, search, parsedPage, parsedPageSize, level);
   }
-  @Get('customers/:id') get(@CurrentUser() user: AuthUser, @Param('id') id: string) { return this.customers.get(user, id); }
-  @Get('customers/:id/profile') profile(@CurrentUser() user: AuthUser, @Param('id') id: string) { return this.customers.profile(user, id); }
+  @Get('customers/:id') get(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) { return this.customers.get(user, id); }
+  @Get('customers/:id/profile') profile(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) { return this.customers.profile(user, id); }
   @Roles('admin', 'support', 'employee') @Post('customers') create(@Body() dto: CreateCustomerDto) { return this.customers.create(dto); }
-  @Roles('admin', 'support') @Patch('customers/:id') update(@Param('id') id: string, @Body() dto: UpdateCustomerDto) { return this.customers.update(id, dto); }
-  @Roles('admin') @Delete('customers/:id') remove(@Param('id') id: string) { return this.customers.remove(id); }
+  @Roles('admin', 'support') @Patch('customers/:id') update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateCustomerDto) { return this.customers.update(id, dto); }
+  @Roles('admin') @Delete('customers/:id') remove(@Param('id', ParseUUIDPipe) id: string) { return this.customers.remove(id); }
 
-  @Roles('admin', 'support') @Post('customers/:id/contacts') addContact(@Param('id') id: string, @Body() dto: CreateContactDto) { return this.customers.addContact(id, dto); }
-  @Roles('admin', 'support') @Patch('contacts/:id') updateContact(@Param('id') id: string, @Body() dto: UpdateContactDto) { return this.customers.updateContact(id, dto); }
-  @Roles('admin', 'support') @Delete('contacts/:id') removeContact(@Param('id') id: string) { return this.customers.removeContact(id); }
+  @Roles('admin', 'support') @Post('customers/:id/contacts') addContact(@Param('id', ParseUUIDPipe) id: string, @Body() dto: CreateContactDto) { return this.customers.addContact(id, dto); }
+  @Roles('admin', 'support') @Patch('contacts/:id') updateContact(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateContactDto) { return this.customers.updateContact(id, dto); }
+  @Roles('admin', 'support') @Delete('contacts/:id') removeContact(@Param('id', ParseUUIDPipe) id: string) { return this.customers.removeContact(id); }
 
-  @Roles('admin', 'support') @Post('customers/:id/devices') addDevice(@Param('id') id: string, @Body() dto: CreateDeviceDto) { return this.customers.addDevice(id, dto); }
+  @Roles('admin', 'support') @Post('customers/:id/devices') addDevice(@Param('id', ParseUUIDPipe) id: string, @Body() dto: CreateDeviceDto) { return this.customers.addDevice(id, dto); }
   @Roles('admin', 'support', 'employee') @Get('projects') listProjects() { return this.customers.listProjects(); }
 
-  @Roles('admin', 'support') @Post('customers/:id/projects') addProject(@Param('id') id: string, @Body() dto: CreateProjectDto) { return this.customers.addProject(id, dto); }
-  @Roles('admin', 'support') @Patch('projects/:id') updateProject(@Param('id') id: string, @Body() dto: UpdateProjectDto) { return this.customers.updateProject(id, dto); }
-  @Roles('admin', 'support') @Delete('projects/:id') removeProject(@Param('id') id: string) { return this.customers.removeProject(id); }
+  @Roles('admin', 'support') @Post('customers/:id/projects') addProject(@Param('id', ParseUUIDPipe) id: string, @Body() dto: CreateProjectDto) { return this.customers.addProject(id, dto); }
+  @Roles('admin', 'support') @Patch('projects/:id') updateProject(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateProjectDto) { return this.customers.updateProject(id, dto); }
+  @Roles('admin', 'support') @Delete('projects/:id') removeProject(@Param('id', ParseUUIDPipe) id: string) { return this.customers.removeProject(id); }
 }

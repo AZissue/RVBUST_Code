@@ -16,6 +16,7 @@ describe('Ticket ↔ loan/repair linkage (e2e)', () => {
   let app: INestApplication; let db: PrismaService; let admin: Agent;
   let orgId: string;
   const ticketIds: string[] = [];
+  const deviceIds: string[] = [];
   beforeAll(async () => {
     if (!process.env.DATABASE_URL?.includes('schema=quick_ticket_test')) throw Error('isolated schema required');
     const module = await Test.createTestingModule({ imports: [AppModule] }).compile();
@@ -33,6 +34,7 @@ describe('Ticket ↔ loan/repair linkage (e2e)', () => {
     await db.loanOrder.deleteMany({ where: { ticketId: { in: ticketIds } } });
     await db.repairOrder.deleteMany({ where: { ticketId: { in: ticketIds } } });
     await db.ticket.deleteMany({ where: { id: { in: ticketIds } } });
+    await db.device.deleteMany({ where: { id: { in: deviceIds } } });
     await app?.close();
   });
   const createTicket = async (body: Record<string, unknown>) => {
@@ -94,5 +96,47 @@ describe('Ticket ↔ loan/repair linkage (e2e)', () => {
     await db.ticketEvent.findFirstOrThrow({ where: { ticketId: ticket.id, type: 'LINK_UPDATE', content: { contains: '已取消' } } });
     // 子单全部完结后可标记解决
     await admin.post(`/api/tickets/${ticket.id}/status`).send({ status: 'RESOLVED' }).expect(201);
+  });
+
+  it('repair fallback: 无设备无SN有型号时自动建 MANUAL 设备档案并创建 RP 单', async () => {
+    const ticket = await createTicket({
+      category: 'HARDWARE_FAILURE', title: 'M2600 图像花屏', description: '客户反馈相机图像花屏，需返修排查',
+      cameraModel: 'M2600', createLinkedRepair: true,
+    });
+    expect(ticket.linkageErrors).toBeUndefined();
+    const links = (await admin.get(`/api/tickets/${ticket.id}/links`).expect(200)).body;
+    expect(links.repairs).toHaveLength(1);
+    // 自动建档：MANUAL 来源、客户资产、归属本客户组织，名称/型号均为工单型号
+    const repair = await db.repairOrder.findUniqueOrThrow({ where: { id: links.repairs[0].id } });
+    const device = await db.device.findUniqueOrThrow({ where: { id: repair.deviceId! } });
+    deviceIds.push(device.id);
+    expect(device.source).toBe('MANUAL');
+    expect(device.ownerType).toBe('CUSTOMER');
+    expect(device.organizationId).toBe(orgId);
+    expect(device.name).toBe('M2600');
+    expect(device.cameraModel).toBe('M2600');
+    expect(device.notes).toContain('自动建档');
+    await db.ticketEvent.findFirstOrThrow({ where: { ticketId: ticket.id, type: 'LINK_CREATED', content: { contains: links.repairs[0].repairNo } } });
+  });
+
+  it('repair failure: 无设备无SN无型号时留痕时间线并通知（linkageErrors 反馈前端）', async () => {
+    const ticket = await createTicket({
+      category: 'HARDWARE_FAILURE', title: 'M2600 无法识别', description: '客户反馈相机无法识别，需返修排查',
+      createLinkedRepair: true,
+    });
+    expect(Array.isArray(ticket.linkageErrors)).toBe(true);
+    expect(ticket.linkageErrors[0]).toContain('维修单创建失败');
+    // 工单时间线留痕：INTERNAL_NOTE + 失败元数据
+    const failed = await db.ticketEvent.findFirstOrThrow({
+      where: { ticketId: ticket.id, type: 'INTERNAL_NOTE', content: { contains: '联动创建维修单失败' } },
+    });
+    expect(failed.visibility).toBe('INTERNAL');
+    expect(failed.metadata && JSON.stringify(failed.metadata)).toContain('FAILED');
+    // 负责人（无负责人退创建人）与 admin 收到 LINK_FAILED 通知
+    expect(await db.notification.count({ where: { ticketId: ticket.id, type: 'LINK_FAILED' } })).toBeGreaterThan(0);
+  });
+
+  it('非 UUID 路径参数返回 400 而非 500', async () => {
+    await admin.get('/api/tickets/abc').expect(400);
   });
 });

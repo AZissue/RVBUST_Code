@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import type { AuthUser } from '../auth/auth.types.js';
 import { CurrentUser } from '../auth/current-user.decorator.js';
 import { Roles } from '../auth/roles.decorator.js';
@@ -13,6 +13,6 @@ export class WorklogsController {
   @Post() create(@CurrentUser() user: AuthUser, @Body() dto: CreateWorklogDto) { return this.worklogs.create(user, dto); }
   @Post('drafts') createDrafts(@CurrentUser() user: AuthUser, @Body() dto: CreateWorklogDraftsDto) { return this.worklogs.createDrafts(user, dto); }
   @Post('drafts/:batchId/confirm') confirmDrafts(@CurrentUser() user: AuthUser, @Param('batchId') batchId: string) { return this.worklogs.confirmDrafts(user, batchId); }
-  @Patch(':id') update(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: UpdateWorklogDto) { return this.worklogs.update(user, id, dto); }
-  @Delete(':id') remove(@CurrentUser() user: AuthUser, @Param('id') id: string) { return this.worklogs.remove(user, id); }
+  @Patch(':id') update(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateWorklogDto) { return this.worklogs.update(user, id, dto); }
+  @Delete(':id') remove(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) { return this.worklogs.remove(user, id); }
 }

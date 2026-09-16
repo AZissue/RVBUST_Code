@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Query, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import type { Response } from 'express';
@@ -39,9 +39,9 @@ export class TicketsController {
   }
   @Roles('admin', 'support', 'employee') @Post('quick/parse') parse(@CurrentUser() user: AuthUser, @Body() dto: ParseQuickTicketDto) { return this.quick.parse(user, dto.rawText); }
   @Roles('admin', 'support', 'employee') @Post('quick/similar') similar(@CurrentUser() user: AuthUser, @Body() dto: SimilarTicketsDto) { return this.quick.similar(user, dto); }
-  @Roles('admin', 'support', 'employee') @Post(':id/quick-update') quickUpdate(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: UpdateQuickTicketDto) { return this.quick.update(user, id, dto); }
+  @Roles('admin', 'support', 'employee') @Post(':id/quick-update') quickUpdate(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateQuickTicketDto) { return this.quick.update(user, id, dto); }
   @Roles('admin', 'support', 'employee') @Post('suggest-title') suggestTitle(@CurrentUser() user: AuthUser, @Body() dto: SuggestTitleDto) { return this.quick.suggestTitle(user, dto); }
-  @Roles('admin', 'support', 'employee') @Post('from-work-item/:id') convert(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: ConvertWorkItemDto) { return this.tickets.convertWorkItem(user, id, dto.organizationId); }
+  @Roles('admin', 'support', 'employee') @Post('from-work-item/:id') convert(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: ConvertWorkItemDto) { return this.tickets.convertWorkItem(user, id, dto.organizationId); }
   @Roles('admin', 'support', 'employee') @Get('import-template') async importTemplate(@Res() response: Response) {
     const buffer = await this.excel.buildTemplateBuffer();
     response.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -54,25 +54,25 @@ export class TicketsController {
     return this.excel.importBuffer(user, file.buffer);
   }
   @Roles('admin', 'support') @Get('recycle-bin') recycle(@CurrentUser() user: AuthUser, @Query('search') search?: string, @Query('page') pageRaw?: string) { return this.tickets.listDeleted(user, search, Math.max(1, Number.parseInt(pageRaw ?? '1', 10) || 1)); }
-  @Get(':id') get(@CurrentUser() user: AuthUser, @Param('id') id: string) { return this.tickets.get(user, id); }
+  @Get(':id') get(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) { return this.tickets.get(user, id); }
   @Post() create(@CurrentUser() user: AuthUser, @Body() dto: CreateTicketDto) { return this.tickets.create(user, dto); }
-  @Roles('admin', 'support', 'employee') @Post(':id/loan-requests') async createLoanRequest(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+  @Roles('admin', 'support', 'employee') @Post(':id/loan-requests') async createLoanRequest(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) {
     const { loan } = await this.linkage.createLoanFromTicket(user, id);
     return { loan: { id: loan.id, loanNo: loan.loanNo, status: loan.status } };
   }
-  @Roles('admin', 'support', 'employee') @Post(':id/repair-requests') async createRepairRequest(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+  @Roles('admin', 'support', 'employee') @Post(':id/repair-requests') async createRepairRequest(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) {
     const { repair } = await this.linkage.createRepairFromTicket(user, id);
     return { repair: { id: repair.id, repairNo: repair.repairNo, status: repair.status } };
   }
-  @Roles('admin', 'support', 'employee') @Get(':id/links') links(@CurrentUser() user: AuthUser, @Param('id') id: string) { return this.linkage.listLinks(user, id); }
-  @Roles('admin', 'support', 'employee') @Patch(':id') update(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: UpdateTicketDto) { return this.tickets.update(user, id, dto); }
-  @Roles('admin') @Post(':id/created-by') changeCreator(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: ChangeCreatorDto) { return this.tickets.changeCreator(user, id, dto); }
-  @Roles('admin', 'support', 'employee') @Post(':id/status') changeStatus(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: ChangeStatusDto) { return this.tickets.changeStatus(user, id, dto); }
-  @Post(':id/events') addEvent(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: CreateTicketEventDto) { return this.tickets.addEvent(user, id, dto); }
-  @Roles('admin', 'support', 'employee') @Delete(':id/events/:eventId') removeEvent(@CurrentUser() user: AuthUser, @Param('id') id: string, @Param('eventId') eventId: string, @Body() dto: DeleteTicketEventDto) { return this.tickets.removeEvent(user, id, eventId, dto.reason); }
-  @Roles('admin', 'support', 'employee') @Delete(':id') remove(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: DeleteTicketDto) { return this.tickets.softDelete(user, id, dto.reason); }
-  @Roles('admin') @Delete(':id/purge') purge(@CurrentUser() user: AuthUser, @Param('id') id: string) { return this.tickets.purge(user, id); }
-  @Roles('admin', 'support', 'employee') @Post(':id/restore') restore(@CurrentUser() user: AuthUser, @Param('id') id: string) { return this.tickets.restore(user, id); }
-  @Roles('admin', 'support', 'employee') @Post(':id/assist-requests') createAssistRequest(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: CreateAssistRequestDto) { return this.tickets.createAssistRequests(user, id, dto); }
-  @Roles('admin', 'support', 'employee') @Delete(':id/collaborators/:userId') removeCollaborator(@CurrentUser() user: AuthUser, @Param('id') id: string, @Param('userId') userId: string) { return this.tickets.removeCollaborator(user, id, userId); }
+  @Roles('admin', 'support', 'employee') @Get(':id/links') links(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) { return this.linkage.listLinks(user, id); }
+  @Roles('admin', 'support', 'employee') @Patch(':id') update(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateTicketDto) { return this.tickets.update(user, id, dto); }
+  @Roles('admin') @Post(':id/created-by') changeCreator(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: ChangeCreatorDto) { return this.tickets.changeCreator(user, id, dto); }
+  @Roles('admin', 'support', 'employee') @Post(':id/status') changeStatus(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: ChangeStatusDto) { return this.tickets.changeStatus(user, id, dto); }
+  @Post(':id/events') addEvent(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: CreateTicketEventDto) { return this.tickets.addEvent(user, id, dto); }
+  @Roles('admin', 'support', 'employee') @Delete(':id/events/:eventId') removeEvent(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Param('eventId') eventId: string, @Body() dto: DeleteTicketEventDto) { return this.tickets.removeEvent(user, id, eventId, dto.reason); }
+  @Roles('admin', 'support', 'employee') @Delete(':id') remove(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: DeleteTicketDto) { return this.tickets.softDelete(user, id, dto.reason); }
+  @Roles('admin') @Delete(':id/purge') purge(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) { return this.tickets.purge(user, id); }
+  @Roles('admin', 'support', 'employee') @Post(':id/restore') restore(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) { return this.tickets.restore(user, id); }
+  @Roles('admin', 'support', 'employee') @Post(':id/assist-requests') createAssistRequest(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: CreateAssistRequestDto) { return this.tickets.createAssistRequests(user, id, dto); }
+  @Roles('admin', 'support', 'employee') @Delete(':id/collaborators/:userId') removeCollaborator(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Param('userId') userId: string) { return this.tickets.removeCollaborator(user, id, userId); }
 }
