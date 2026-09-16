@@ -1,3 +1,4 @@
+/* 设备管理板块样式：全部使用全局主题变量，与其他页面视觉一致（含暗色主题） */
 .flow-metrics {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -5,19 +6,24 @@
 }
 .flow-metric {
   padding: 18px;
-  border: 1px solid var(--border, #ddd);
+  border: 1px solid var(--border);
   border-radius: 6px;
   color: inherit;
   display: grid;
   gap: 8px;
   text-decoration: none;
-  background: var(--surface, #fff);
+  background: var(--surface);
+  transition: border-color .15s ease, background .15s ease;
+}
+.flow-metric:hover {
+  border-color: var(--text);
+  background: var(--surface-2);
 }
 .flow-metric strong {
   font-size: 28px;
 }
 .flow-alert strong {
-  color: #bd2525;
+  color: var(--brand);
 }
 .flow-toolbar {
   display: flex;
@@ -64,23 +70,37 @@
 }
 .flow-detail {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 32px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 24px;
+}
+.flow-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0 24px;
+  margin: 0;
 }
 .flow-fields > div {
   display: grid;
-  grid-template-columns: 100px minmax(0, 1fr);
-  padding: 12px 0;
-  border-bottom: 1px solid var(--border, #ddd);
+  grid-template-columns: 88px minmax(0, 1fr);
+  padding: 10px 0;
+  font-size: 14px;
+  border-bottom: 1px solid var(--border);
   gap: 12px;
 }
 .flow-fields dt {
-  color: var(--muted, #666);
+  color: var(--muted);
 }
 .flow-fields dd {
   margin: 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+.flow-fields .flow-field-wide {
+  grid-column: 1/-1;
+}
+.flow-detail h2 {
+  font-size: 16px;
+  margin: 0 0 12px;
 }
 .flow-detail textarea,
 .flow-edit textarea {
@@ -88,7 +108,7 @@
 }
 .flow-timeline article {
   padding: 16px 0;
-  border-bottom: 1px solid var(--border, #ddd);
+  border-bottom: 1px solid var(--border);
 }
 .flow-timeline header {
   display: flex;
@@ -112,11 +132,30 @@
 .flow-edit textarea {
   max-width: 100%;
 }
+.flow-follow-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: end;
+}
+.flow-follow-form textarea {
+  min-height: 76px;
+}
+.flow-follow-form .button-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-end;
+  margin-bottom: 4px;
+}
+.flow-detail .empty-compact {
+  text-align: left;
+  padding: 16px 0;
+}
 @media (max-width: 720px) {
   .flow-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-  .flow-detail,
   .flow-edit {
     grid-template-columns: 1fr;
   }
@@ -131,10 +170,25 @@
     gap: 6px;
   }
 }
-.prototype-flow {
-  font-family: Inter, "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
-  color: #16181d;
+@media (max-width: 1000px) {
+  .flow-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
+@media (max-width: 600px) {
+  .flow-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .flow-follow-form {
+    grid-template-columns: 1fr;
+  }
+  .flow-follow-form .button-row {
+    flex-direction: row;
+    justify-content: space-between;
+  }
+}
+
+/* 整页表单（新建借测/新建返厂）：复用全局表单控件样式 */
 .prototype-flow h1 {
   font-size: 24px;
 }
@@ -142,19 +196,13 @@
   font-size: 15px;
   margin: 0 0 16px;
 }
-.prototype-flow .button.primary {
-  background: #17191d;
-  border-color: #17191d;
-  color: white;
-}
 .prototype-flow form {
-  background: var(--surface, #fff);
   padding: 22px;
-  border-top: 1px solid #dfe3e8;
+  border-top: 1px solid var(--border);
 }
 .prototype-section {
   padding: 22px 0;
-  border-bottom: 1px solid #dfe3e8;
+  border-bottom: 1px solid var(--border);
 }
 .prototype-grid {
   display: grid;
@@ -172,30 +220,17 @@
   flex-direction: column;
   gap: 7px;
   font-size: 12px;
-  color: #626975;
+  color: var(--muted);
   font-weight: 700;
   min-width: 0;
-}
-.prototype-flow input,
-.prototype-flow select,
-.prototype-flow textarea {
-  width: 100%;
-  border: 1px solid #dfe3e8;
-  border-radius: 8px;
-  padding: 10px 11px;
-  background: #fff;
-  color: #16181d;
-  min-width: 0;
-  font-size: 14px;
-  box-sizing: border-box;
 }
 .prototype-flow textarea {
   min-height: 95px;
 }
 .prototype-semantic {
-  background: #f8f9fb;
+  background: var(--surface-2);
   padding: 18px;
-  border: 1px solid #dfe3e8;
+  border: 1px solid var(--border);
   border-radius: 8px;
 }
 .prototype-semantic output {
@@ -209,12 +244,12 @@
   flex-direction: column;
   gap: 10px;
   min-height: 135px;
-  background: #f8f9fb;
-  border: 1px dashed #a5acb7;
+  background: var(--surface-2);
+  border: 1px dashed var(--border-strong);
   border-radius: 8px;
   padding: 20px;
   cursor: pointer;
-  color: #17191d;
+  color: var(--text);
 }
 .prototype-dropzone strong {
   overflow-wrap: anywhere;
@@ -222,7 +257,7 @@
 }
 .prototype-dropzone span {
   font-size: 12px;
-  color: #747b86;
+  color: var(--muted);
 }
 .prototype-flow .button-row {
   display: flex;
@@ -236,9 +271,6 @@
   gap: 12px;
   justify-content: flex-end;
   padding: 20px 0;
-  position: static;
-  bottom: 0;
-  background: var(--surface, #fff);
 }
 .prototype-photos {
   display: grid;
@@ -247,11 +279,11 @@
 }
 .prototype-photo {
   position: relative;
-  border: 1px dashed #c4cad2;
+  border: 1px dashed var(--border-strong);
   border-radius: 8px;
   overflow: hidden;
   aspect-ratio: 1.35;
-  background: #f8f9fb;
+  background: var(--surface-2);
 }
 .prototype-photo-input {
   height: 100%;
@@ -275,7 +307,7 @@
 .prototype-photo-input span {
   position: absolute;
   bottom: 5px;
-  background: #fff;
+  background: var(--surface);
   padding: 3px 8px;
   font-size: 12px;
 }
@@ -284,7 +316,7 @@
   right: 4px;
   top: 4px;
   display: flex;
-  background: white;
+  background: var(--surface);
 }
 .prototype-preview img {
   max-width: 100%;
@@ -300,7 +332,7 @@
   width: 100%;
   height: 160px;
   object-fit: contain;
-  background: #fff;
+  background: var(--surface);
 }
 .flow-file-name {
   overflow-wrap: anywhere;
@@ -325,6 +357,8 @@
     align-items: flex-start;
   }
 }
+
+/* 设备总览 */
 .prototype-overview .flow-metrics {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
@@ -346,15 +380,18 @@
   margin: 12px 0;
 }
 .prototype-tabs button {
-  border: 1px solid #dfe3e8;
+  border: 1px solid var(--border-strong);
   border-radius: 7px;
-  background: #fff;
+  background: var(--surface);
+  color: var(--text);
   padding: 8px 12px;
   cursor: pointer;
+  font-weight: 650;
 }
 .prototype-tabs button.active {
-  background: #17191d;
-  color: #fff;
+  background: var(--text);
+  color: var(--surface);
+  border-color: var(--text);
 }
 .prototype-attention {
   max-height: 430px;
@@ -365,13 +402,24 @@
   justify-content: space-between;
   gap: 12px;
   align-items: center;
+  width: 100%;
   color: inherit;
   text-decoration: none;
   padding: 14px 0;
-  border-bottom: 1px solid #dfe3e8;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  border-left: 0;
+  border-right: 0;
+  border-top: 0;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+.prototype-attention-row:hover {
+  background: var(--surface-2);
 }
 .prototype-attention-row small {
-  color: #747b86;
+  color: var(--muted);
 }
 .prototype-attention-row > div {
   min-width: 0;
@@ -393,7 +441,7 @@
 }
 .prototype-ops-grid span {
   font-size: 12px;
-  color: #747b86;
+  color: var(--muted);
 }
 .prototype-ops-grid strong {
   font-size: 22px;
@@ -417,43 +465,41 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+/* 状态徽章：与全局 .badge.ok/.warn/.danger 同色系，自动适配暗色主题 */
 .flow-status {
   font-weight: 600;
-  border: 1px solid transparent;
   white-space: nowrap;
 }
 .flow-status-ongoing {
-  background: #fff3cd;
-  color: #795300;
-  border-color: #e7c45e;
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  background: transparent;
 }
 .flow-status-returned {
-  background: #e5f5e9;
-  color: #176b38;
-  border-color: #96caa5;
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 12%, transparent);
 }
 .flow-status-overdue {
-  background: #fde4e6;
-  color: #b31d2c;
-  border-color: #e89da5;
+  color: var(--brand);
+  background: var(--brand-soft);
 }
 .flow-status-cancelled {
-  background: var(--surface-3);
   color: var(--muted);
 }
+.flow-status-queued {
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+}
 .flow-table tr.flow-overdue-row > td {
-  background: #fff0f1;
-  color: #8f2331;
-  border-bottom-color: #efd0d4;
+  background: color-mix(in srgb, var(--brand) 7%, transparent);
+  border-bottom-color: color-mix(in srgb, var(--brand) 22%, transparent);
 }
 .flow-table tr.flow-overdue-row:hover > td {
-  background: #ffe1e4;
-}
-.flow-table tr.flow-overdue-row .muted {
-  color: #9b4851;
+  background: color-mix(in srgb, var(--brand) 12%, transparent);
 }
 .flow-table tr.flow-overdue-row > td:first-child {
-  border-left: 3px solid #ce3548;
+  border-left: 3px solid var(--brand);
 }
 .flow-task-filter {
   display: flex;
@@ -467,22 +513,22 @@
   max-height: calc(100dvh - 40px);
   overflow: auto;
   padding: 24px;
-  border: 1px solid #e49da6;
-  border-top: 4px solid #c62e42;
+  border: 1px solid color-mix(in srgb, var(--brand) 30%, transparent);
+  border-top: 4px solid var(--brand);
   border-radius: 8px;
   background: var(--surface);
   color: var(--text);
   box-sizing: border-box;
-  box-shadow: 0 18px 70px #0004;
+  box-shadow: var(--shadow);
 }
 .loan-overdue-dialog::backdrop {
-  background: #0008;
+  background: rgba(0, 0, 0, .5);
 }
 .loan-overdue-heading {
   display: flex;
   gap: 10px;
   align-items: center;
-  color: #c62e42;
+  color: var(--brand);
 }
 .loan-overdue-heading h2 {
   font-size: 20px;
@@ -493,7 +539,7 @@
   font-size: 15px;
 }
 .loan-overdue-dialog p strong {
-  color: #c62e42;
+  color: var(--brand);
 }
 .loan-overdue-dialog ul {
   list-style: none;
@@ -514,7 +560,7 @@
 }
 .loan-overdue-dialog li strong {
   flex-shrink: 0;
-  color: #b31d2c;
+  color: var(--brand);
 }
 .loan-overdue-dialog footer {
   display: flex;
@@ -522,94 +568,7 @@
   gap: 10px;
   flex-wrap: wrap;
 }
-.loan-overdue-dialog .button.primary {
-  background: #bc2639;
-  border-color: #bc2639;
-}
-.flow-detail {
-  grid-template-columns: minmax(0, 1fr);
-  gap: 24px;
-}
-.flow-fields {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0 24px;
-  margin: 0;
-}
-.flow-fields > div {
-  grid-template-columns: 88px minmax(0, 1fr);
-  padding: 10px 0;
-  font-size: 14px;
-}
-.flow-fields .flow-field-wide {
-  grid-column: 1/-1;
-}
-.flow-detail h2 {
-  font-size: 16px;
-  margin: 0 0 12px;
-}
-.flow-follow-form {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 16px;
-  align-items: end;
-}
-.flow-follow-form textarea {
-  min-height: 76px;
-}
-.flow-follow-form .button-row {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  align-items: flex-end;
-  margin-bottom: 4px;
-}
-.flow-detail .empty-compact {
-  text-align: left;
-  padding: 16px 0;
-}
-:root[data-theme="dark"] .flow-status-ongoing {
-  background: #463810;
-  color: #ffe399;
-  border-color: #826c2f;
-}
-:root[data-theme="dark"] .flow-status-returned {
-  background: #153b25;
-  color: #a2e7b9;
-  border-color: #37774c;
-}
-:root[data-theme="dark"] .flow-status-overdue {
-  background: #51212b;
-  color: #ffc0c9;
-  border-color: #a44c5d;
-}
-:root[data-theme="dark"] .flow-table tr.flow-overdue-row > td {
-  background: #341c22;
-  color: #ffd1d8;
-  border-bottom-color: #66343f;
-}
-:root[data-theme="dark"] .flow-table tr.flow-overdue-row:hover > td {
-  background: #46232c;
-}
-:root[data-theme="dark"] .flow-table tr.flow-overdue-row .muted {
-  color: #e0a0aa;
-}
-@media (max-width: 1000px) {
-  .flow-fields {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
 @media (max-width: 600px) {
-  .flow-fields {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .flow-follow-form {
-    grid-template-columns: 1fr;
-  }
-  .flow-follow-form .button-row {
-    flex-direction: row;
-    justify-content: space-between;
-  }
   .loan-overdue-dialog {
     padding: 18px;
   }
@@ -631,14 +590,4 @@
 }
 .flow-table table {
   min-width: 1040px;
-}
-:root[data-theme="dark"] .loan-overdue-heading,
-:root[data-theme="dark"] .loan-overdue-dialog p strong,
-:root[data-theme="dark"] .loan-overdue-dialog li strong {
-  color: #ffadbd;
-}
-
-.flow-status-queued {
-  color: #92400e;
-  background: #fef3c7;
 }
