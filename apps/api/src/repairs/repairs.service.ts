@@ -1,9 +1,11 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { RepairEventType, RepairStatus, type Prisma } from '@prisma/client';
 import type { AuthUser } from '../auth/auth.types.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { NOTIFICATION_TYPES } from '../common/notification-types.js';
 import { dateSerialPrefix, nextSerial } from '../common/numbering.js';
+import { LINKAGE_EVENTS } from '../linkage/linkage.events.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AssignRepairDto, AddRepairFollowUpDto, CreateRepairDto, TransitionRepairDto, UpdateRepairDto } from './dto/repair.dto.js';
 import { zhStatus } from '../common/status-labels.js';
@@ -28,7 +30,7 @@ const statusLabel: Record<RepairStatus, string> = { RECEIVED: '已收货', DIAGN
 
 @Injectable()
 export class RepairsService {
-  constructor(private readonly prisma: PrismaService, private readonly notifications: NotificationsService) {}
+  constructor(private readonly prisma: PrismaService, private readonly notifications: NotificationsService, private readonly events: EventEmitter2) {}
 
   private scopeWhere(user: AuthUser): Prisma.RepairOrderWhereInput {
     if (user.role === 'employee') return { OR: [{ assigneeId: user.id }, { createdById: user.id }] };
@@ -151,23 +153,17 @@ export class RepairsService {
     });
   }
 
-  /** 跟进记录：写入返修跟进并同步到关联工单时间线（闭环） */
+  /** 跟进记录：写入返修跟进并发出领域事件，由 linkage 监听器同步到关联工单时间线 */
   async addFollowUp(user: AuthUser, id: string, dto: AddRepairFollowUpDto) {
     const repair = await this.get(user, id);
     const occurredAt = dto.occurredAt ? new Date(dto.occurredAt) : new Date();
     const content = dto.content.trim();
-    return this.prisma.$transaction(async (tx) => {
-      const followUp = await tx.followUp.create({
-        data: { repairOrderId: id, authorId: user.id, occurredAt, content },
-        include: { author: { select: { id: true, name: true } } },
-      });
-      if (repair.ticketId) {
-        await tx.ticketEvent.create({
-          data: { ticketId: repair.ticketId, authorId: user.id, type: 'WORK_RECORD', visibility: 'INTERNAL', content: `【返修跟进 · ${repair.repairNo}】${content}` },
-        });
-      }
-      return followUp;
+    const followUp = await this.prisma.followUp.create({
+      data: { repairOrderId: id, authorId: user.id, occurredAt, content },
+      include: { author: { select: { id: true, name: true } } },
     });
+    this.events.emit(LINKAGE_EVENTS.repairFollowUpAdded, { repairId: repair.id, repairNo: repair.repairNo, ticketId: repair.ticketId, actorId: user.id, content, source: followUp.source });
+    return followUp;
   }
 
   async transition(user: AuthUser, id: string, dto: TransitionRepairDto) {
@@ -203,6 +199,9 @@ export class RepairsService {
         data: { repairOrderId: id, authorId: user.id, type: RepairEventType.STATUS_CHANGE, content: `${user.name} 修改状态：${statusLabel[repair.status]} → ${statusLabel[dto.status]}${dto.content ? `，${dto.content.trim()}` : ''}`, metadata: { from: repair.status, to: dto.status } },
       });
       return tx.repairOrder.findUniqueOrThrow({ where: { id }, include: repairInclude });
+    }).then((updated) => {
+      this.events.emit(LINKAGE_EVENTS.repairStatusChanged, { repairId: id, repairNo: repair.repairNo, ticketId: repair.ticketId, actorId: user.id, from: repair.status, to: dto.status });
+      return updated;
     });
   }
 

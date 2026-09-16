@@ -7,7 +7,7 @@ function setup(count = 1) {
   const tx = { ticket: { updateMany: vi.fn().mockResolvedValue({ count }), findUniqueOrThrow: vi.fn().mockResolvedValue(updated) }, ticketEvent: { create: vi.fn().mockResolvedValue({ id: 'event' }) }, notification: { createMany: vi.fn().mockResolvedValue({ count: 2 }) } };
   const prisma = { $transaction: (fn: (db: typeof tx) => unknown) => fn(tx) };
   const access = { requireTicket: vi.fn().mockResolvedValue(ticket) };
-  const service = new TicketsService(prisma as never, access as never, {} as never, {} as never);
+  const service = new TicketsService(prisma as never, access as never, {} as never, {} as never, { emit: vi.fn() } as never);
   const change = () => service.changeStatus({ id: 'actor', name: 'Alice', role: 'employee' } as never, 'ticket', { status: 'IN_PROGRESS' });
   return { tx, change };
 }
@@ -48,7 +48,7 @@ describe('ticket create with loan/repair linkage', () => {
       createRepairFromTicket: vi.fn().mockResolvedValue({ created: true }),
       ...linkageOverrides,
     };
-    const service = new TicketsService(prisma as never, access as never, {} as never, linkage as never);
+    const service = new TicketsService(prisma as never, access as never, {} as never, linkage as never, { emit: vi.fn() } as never);
     const dto: import('./dto/ticket.dto.js').CreateTicketDto = { organizationId: 'org-1', title: '有效标题', description: '有效的问题描述内容', category: 'OTHER' as never };
     const user = { id: 'user-1', name: 'Alice', role: 'employee' } as never;
     return { service, dto, user, linkage, ticket };

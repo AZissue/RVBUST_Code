@@ -62,6 +62,7 @@ export function CreateTicketModal({ onClose, onCreated, defaultAssigneeId }: { o
         customers.setData([...(customers.data ?? []), selected])
         notice = `已新建客户「${selected.name}」`
       }
+      if (showRepairOption && createLinkedRepair && !device?.serialNumber && !value('serialNumber').trim()) throw new Error('勾选创建维修单需要先填写设备序列号（在「补充信息」中填写）')
       const ticket = await api<Ticket>('/tickets', { method: 'POST', body: JSON.stringify({
         requestKey, organizationId: selected.id, contactId: contactId || undefined, deviceId: device?.id,
         assigneeId: value('assigneeId') || undefined, title: value('title'), description: value('description'),
@@ -77,7 +78,7 @@ export function CreateTicketModal({ onClose, onCreated, defaultAssigneeId }: { o
         assistMessage: assistMessage.trim() || undefined,
       }) })
       const linkedNotice = showLoanOption && createLinkedLoan ? '已同步创建借测单并加入排队' : showRepairOption && createLinkedRepair ? '已同步创建维修单' : undefined
-      const notices = [notice, linkedNotice].filter(Boolean)
+      const notices = [notice, linkedNotice, ...(ticket.linkageErrors ?? [])].filter(Boolean)
       onCreated(ticket, notices.length ? notices.join('；') : undefined)
     } catch (reason) { setError(reason instanceof Error ? reason.message : '创建失败') }
     finally { lock.current = false; setBusy(false) }

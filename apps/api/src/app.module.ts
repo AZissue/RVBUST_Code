@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
+import { EventEmitterModule } from '@nestjs/event-emitter';
 import { AuditInterceptor } from './audit/audit.interceptor.js';
 import { AuditModule } from './audit/audit.module.js';
 import { AuthGuard } from './auth/auth.guard.js';
@@ -24,7 +25,7 @@ import { WorktypesModule } from './worktypes/worktypes.module.js';
 import { HealthController } from './health.controller.js';
 
 @Module({
-  imports: [ConfigModule.forRoot({ isGlobal: true, envFilePath: ['../../.env', '.env'] }), PrismaModule, AuditModule, AuthModule, UsersModule, CustomersModule, TicketsModule, WorkitemsModule, WorklogsModule, WorktypesModule, DashboardModule, NotificationsModule, FilesModule, SystemModule, DevicesModule, LoansModule, RepairsModule, BugsModule],
+  imports: [ConfigModule.forRoot({ isGlobal: true, envFilePath: ['../../.env', '.env'] }), EventEmitterModule.forRoot(), PrismaModule, AuditModule, AuthModule, UsersModule, CustomersModule, TicketsModule, WorkitemsModule, WorklogsModule, WorktypesModule, DashboardModule, NotificationsModule, FilesModule, SystemModule, DevicesModule, LoansModule, RepairsModule, BugsModule],
   controllers: [HealthController],
   providers: [
     { provide: APP_GUARD, useClass: AuthGuard },

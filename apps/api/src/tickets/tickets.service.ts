@@ -1,8 +1,10 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { TicketEventType, TicketStatus, Visibility, type Prisma } from '@prisma/client';
 import { AccessPolicyService } from '../auth/access-policy.service.js';
 import type { AuthUser } from '../auth/auth.types.js';
 import { LinkageService } from '../linkage/linkage.service.js';
+import { LINKAGE_EVENTS } from '../linkage/linkage.events.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { ChangeStatusDto } from './dto/change-status.dto.js';
@@ -42,7 +44,7 @@ const visibleInclude = (_user: AuthUser) => ({ ...ticketInclude });
 @Injectable()
 export class TicketsService {
   private readonly logger = new Logger(TicketsService.name);
-  constructor(private readonly prisma: PrismaService, private readonly access: AccessPolicyService, private readonly notifications: NotificationsService, private readonly linkage: LinkageService) {}
+  constructor(private readonly prisma: PrismaService, private readonly access: AccessPolicyService, private readonly notifications: NotificationsService, private readonly linkage: LinkageService, private readonly events: EventEmitter2) {}
 
   private notifyAssignee(ticketId: string, number: string, assigneeId: string) {    return this.notifications.notify({
       recipientId: assigneeId, ticketId, type: NOTIFICATION_TYPES.TICKET_ASSIGNED, title: '工单已指派给你',
@@ -175,16 +177,24 @@ export class TicketsService {
     const created = await createRecord(db);
     // 事务内调用（如事项转换）跳过通知，由外层在事务提交后补发，避免引用未提交工单
     if (db === this.prisma && assigneeId && assigneeId !== user.id) await this.notifyAssignee(created.id, created.number, assigneeId);
-    // 联动创建借测/维修单：单个联动失败仅记录日志，不影响工单本身与另一路联动
+    // 联动创建借测/维修单：单个联动失败仅记录日志并反馈给前端，不影响工单本身与另一路联动
+    const linkageErrors: string[] = [];
     if (db === this.prisma && dto.createLinkedLoan) {
       try { await this.linkage.createLoanFromTicket(user, created.id); }
-      catch (error) { this.logger.error(`工单 ${created.number} 联动创建借测单失败`, error as Error); }
+      catch (error) {
+        this.logger.error(`工单 ${created.number} 联动创建借测单失败`, error as Error);
+        linkageErrors.push(`借测单创建失败：${(error as { message?: string }).message ?? '未知错误'}`);
+      }
     }
     if (db === this.prisma && dto.createLinkedRepair) {
       try { await this.linkage.createRepairFromTicket(user, created.id); }
-      catch (error) { this.logger.error(`工单 ${created.number} 联动创建维修单失败`, error as Error); }
+      catch (error) {
+        this.logger.error(`工单 ${created.number} 联动创建维修单失败`, error as Error);
+        linkageErrors.push(`维修单创建失败：${(error as { message?: string }).message ?? '未知错误'}`);
+      }
     }
-    return created;
+    // 联动失败信息随响应返回，前端据此提示用户补建
+    return linkageErrors.length ? Object.assign(created, { linkageErrors }) : created;
   }
 
   /** 校验并返回可协助的内部成员（去重、排除本人、需为启用账号）；否则抛错 */
@@ -260,7 +270,12 @@ export class TicketsService {
     if (!isInternalNote && !this.access.canEditTicket(user, ticket)) throw new ForbiddenException('仅创建人、负责人或管理员可以更新该工单');
     const type = dto.type;
     const visibility = type === TicketEventType.INTERNAL_NOTE ? Visibility.INTERNAL : (dto.visibility ?? Visibility.INTERNAL);
-    return this.prisma.ticketEvent.create({ data: { ticketId: id, authorId: user.id, type, visibility, content: dto.content }, include: { author: { select: { id: true, name: true } } } });
+    const event = await this.prisma.ticketEvent.create({ data: { ticketId: id, authorId: user.id, type, visibility, content: dto.content }, include: { author: { select: { id: true, name: true } } } });
+    // 客户回复正向同步到进行中的借测/维修单跟进（由 linkage 监听器落地，不回写工单，避免回声）
+    if (type === TicketEventType.CUSTOMER_REPLY) {
+      this.events.emit(LINKAGE_EVENTS.ticketCustomerReply, { ticketId: id, actorId: user.id, content: dto.content });
+    }
+    return event;
   }
 
   async changeCreator(user: AuthUser, id: string, dto: ChangeCreatorDto) {

@@ -5,7 +5,7 @@ export const ticketPriorityLabels: Record<TicketPriority, string> = { LOW: '低'
 export const ticketCategoryLabels: Record<TicketCategory, string> = { PRE_SALES: '售前咨询', LOAN_REQUEST: '借测需求', TRAINING: '客户培训', POINTCLOUD_DEBUG: '点云调试', SDK_DEVELOPMENT: 'SDK 开发', HAND_EYE_CALIBRATION: '手眼标定', HARDWARE_FAILURE: '硬件故障', OTHER: '其他' }
 export const TICKET_CATEGORIES = Object.keys(ticketCategoryLabels) as TicketCategory[]
 export const ticketCategoryLabel = (category: string) => ticketCategoryLabels[category as TicketCategory] ?? category
-export const ticketEventTypeLabels: Record<string, string> = { CUSTOMER_REPLY: '客户回复', INTERNAL_NOTE: '跟进记录', STATUS_CHANGE: '状态变更', ASSIGNMENT: '指派', ATTACHMENT: '附件', WORK_RECORD: '工作记录', RESOLUTION: '解决方案', ASSIST_REQUEST: '协助邀请', ASSIST_ACCEPT: '接受协助', ASSIST_REJECT: '驳回协助', DELETE: '移入回收站', RESTORE: '恢复工单' }
+export const ticketEventTypeLabels: Record<string, string> = { CUSTOMER_REPLY: '客户回复', INTERNAL_NOTE: '跟进记录', STATUS_CHANGE: '状态变更', ASSIGNMENT: '指派', ATTACHMENT: '附件', WORK_RECORD: '工作记录', RESOLUTION: '解决方案', ASSIST_REQUEST: '协助邀请', ASSIST_ACCEPT: '接受协助', ASSIST_REJECT: '驳回协助', DELETE: '移入回收站', RESTORE: '恢复工单', LINK_CREATED: '联动创建', LINK_UPDATE: '联动更新' }
 export const ticketAssistStatusLabels: Record<TicketAssistStatus, string> = { PENDING: '待处理', ACCEPTED: '已接受', REJECTED: '已驳回', CANCELLED: '已撤销' }
 export const workItemStatusLabels: Record<WorkItemStatus, string> = { TODO: '待办', IN_PROGRESS: '进行中', WAITING_FEEDBACK: '等待反馈', COMPLETED: '已完成', CANCELED: '已取消' }
 export const workItemPriorityLabels: Record<WorkItemPriority, string> = ticketPriorityLabels

@@ -219,7 +219,12 @@ export interface Ticket {
   loanOrders?: Array<{ id: string; loanNo: string; status: LoanStatus; infoComplete: boolean }>
   /** 关联维修单（工单详情接口返回，仅含列表所需字段） */
   repairOrders?: Array<{ id: string; repairNo: string; status: RepairStatus }>
+  /** 联动创建失败信息（如勾选创建维修单但缺序列号），仅创建接口在失败时返回 */
+  linkageErrors?: string[]
 }
 
-export interface TicketEvent { id: string; type: string; visibility: 'INTERNAL' | 'CUSTOMER'; content: string; createdAt: string; author: { id: string; name: string } }
+export type TicketEventType = 'LINK_CREATED' | 'LINK_UPDATE' | (string & {})
+/** 联动事件（LINK_CREATED / LINK_UPDATE）携带的关联单据信息 */
+export interface TicketEventMetadata { linkType?: 'loan' | 'repair'; linkId?: string; linkNo?: string; syncedFrom?: string }
+export interface TicketEvent { id: string; type: TicketEventType; visibility: 'INTERNAL' | 'CUSTOMER'; content: string; createdAt: string; author: { id: string; name: string }; metadata?: TicketEventMetadata | null }
 export interface Worklog { id: string; occurredAt: string; summary: string; problem?: string; actions?: string; result?: string; nextStep?: string; durationMinutes?: number; rawText?: string; aiExtractionId?: string; source: string; status: 'DRAFT' | 'CONFIRMED'; workType: WorkType; organization?: { id: string; name: string }; ticket?: { id: string; number: string; title: string }; workItem?: { id: string; title: string }; project?: Project; author: { id: string; name: string } }

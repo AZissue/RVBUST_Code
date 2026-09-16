@@ -1,10 +1,12 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { LoanStatus, type Prisma } from '@prisma/client';
 import ExcelJS from 'exceljs';
 import type { AuthUser } from '../auth/auth.types.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { NOTIFICATION_TYPES } from '../common/notification-types.js';
 import { dateSerialPrefix, nextSerial } from '../common/numbering.js';
+import { LINKAGE_EVENTS } from '../linkage/linkage.events.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AddFollowUpDto, AdvanceLoanDto, AssignLoanDto, CreateLoanDto, ReturnLoanDto, ScoreLoanDto, ShipLoanDto, UpdateLoanDto } from './dto/loan.dto.js';
 
@@ -44,7 +46,7 @@ const LOAN_STATUS_LABELS: Record<LoanStatus, string> = { QUEUED: '排队中', ON
 
 @Injectable()
 export class LoansService {
-  constructor(private readonly prisma: PrismaService, private readonly notifications: NotificationsService) {}
+  constructor(private readonly prisma: PrismaService, private readonly notifications: NotificationsService, private readonly events: EventEmitter2) {}
 
   private scopeWhere(user: AuthUser): Prisma.LoanOrderWhereInput {
     if (user.role === 'employee') return { OR: [{ assigneeId: user.id }, { createdById: user.id }] };
@@ -56,9 +58,13 @@ export class LoansService {
   // 惰性逾期修正：ONGOING 且 dueAt 已过的单置为 OVERDUE，并幂等通知创建人与负责人
   private async fixOverdue() {
     const now = new Date();
-    const overdue = await this.prisma.loanOrder.findMany({ where: { status: LoanStatus.ONGOING, dueAt: { lt: now } }, select: { id: true, loanNo: true, createdById: true, assigneeId: true } });
+    const overdue = await this.prisma.loanOrder.findMany({ where: { status: LoanStatus.ONGOING, dueAt: { lt: now } }, select: { id: true, loanNo: true, ticketId: true, createdById: true, assigneeId: true } });
     if (!overdue.length) return;
     await this.prisma.loanOrder.updateMany({ where: { id: { in: overdue.map((loan) => loan.id) }, status: LoanStatus.ONGOING, dueAt: { lt: now } }, data: { status: LoanStatus.OVERDUE } });
+    for (const loan of overdue) {
+      // 无操作人上下文（惰性批处理），以创建人作为回写时间线的作者
+      this.events.emit(LINKAGE_EVENTS.loanStatusChanged, { loanId: loan.id, loanNo: loan.loanNo, ticketId: loan.ticketId, actorId: loan.createdById, from: LoanStatus.ONGOING, to: LoanStatus.OVERDUE });
+    }
     await Promise.all(overdue.flatMap((loan) => [...new Set([loan.createdById, loan.assigneeId].filter(Boolean) as string[])].map((recipientId) =>
       this.notifications.notify({ recipientId, type: NOTIFICATION_TYPES.LOAN_OVERDUE, severity: 'WARNING', title: '借出单已逾期', body: `借出单 ${loan.loanNo} 已超过应还日期，请尽快跟进归还。`, dedupeKey: `loan-overdue:${loan.id}` }),
     )));
@@ -328,7 +334,8 @@ export class LoansService {
     if (loan.status !== LoanStatus.QUEUED && loan.status !== LoanStatus.ONGOING) throw new BadRequestException('仅排队中或进行中的借测单可以评分');
     const detail = dto.scoreDetail ? (dto.scoreDetail as Prisma.InputJsonValue) : undefined;
     const derived = dto.score ?? (dto.scoreDetail ? Object.values(dto.scoreDetail).reduce((sum, v) => sum + (Number(v) || 0), 0) : undefined);
-    return this.prisma.loanOrder.update({
+    const infoCompleted = !loan.infoComplete && (dto.infoComplete ?? (derived != null ? true : loan.infoComplete));
+    const updated = await this.prisma.loanOrder.update({
       where: { id },
       data: {
         score: derived, scoreDetail: detail,
@@ -338,6 +345,13 @@ export class LoansService {
       },
       include: loanInclude,
     });
+    if (derived != null) {
+      this.events.emit(LINKAGE_EVENTS.loanScored, { loanId: loan.id, loanNo: loan.loanNo, ticketId: loan.ticketId, actorId: user.id, score: derived, assessmentResult: dto.assessmentResult ?? null });
+    }
+    if (infoCompleted) {
+      this.events.emit(LINKAGE_EVENTS.loanInfoCompleted, { loanId: loan.id, loanNo: loan.loanNo, ticketId: loan.ticketId, actorId: user.id });
+    }
+    return updated;
   }
 
   /** 手动提前：必须填写提前原因，留痕操作人 */
@@ -410,26 +424,23 @@ export class LoansService {
       // 公司样机临时挂靠到借测客户名下
       await tx.device.updateMany({ where: { id: { in: allIds } }, data: { status: 'LOANED', organizationId: loan.organizationId } });
       return tx.loanOrder.findUniqueOrThrow({ where: { id }, include: loanInclude });
+    }).then((updated) => {
+      this.events.emit(LINKAGE_EVENTS.loanStatusChanged, { loanId: id, loanNo: loan.loanNo, ticketId: loan.ticketId, actorId: user.id, from: LoanStatus.QUEUED, to: LoanStatus.ONGOING });
+      return updated;
     });
   }
 
-  /** 跟进记录：写入借测跟进并同步到关联工单时间线（闭环） */
+  /** 跟进记录：写入借测跟进并发出领域事件，由 linkage 监听器同步到关联工单时间线 */
   async addFollowUp(user: AuthUser, id: string, dto: AddFollowUpDto) {
     const loan = await this.get(user, id);
     const occurredAt = dto.occurredAt ? new Date(dto.occurredAt) : new Date();
     const content = dto.content.trim();
-    return this.prisma.$transaction(async (tx) => {
-      const followUp = await tx.followUp.create({
-        data: { loanOrderId: id, authorId: user.id, occurredAt, content },
-        include: { author: { select: { id: true, name: true } } },
-      });
-      if (loan.ticketId) {
-        await tx.ticketEvent.create({
-          data: { ticketId: loan.ticketId, authorId: user.id, type: 'WORK_RECORD', visibility: 'INTERNAL', content: `【借测跟进 · ${loan.loanNo}】${content}` },
-        });
-      }
-      return followUp;
+    const followUp = await this.prisma.followUp.create({
+      data: { loanOrderId: id, authorId: user.id, occurredAt, content },
+      include: { author: { select: { id: true, name: true } } },
     });
+    this.events.emit(LINKAGE_EVENTS.loanFollowUpAdded, { loanId: loan.id, loanNo: loan.loanNo, ticketId: loan.ticketId, actorId: user.id, content, source: followUp.source });
+    return followUp;
   }
 
   async update(user: AuthUser, id: string, dto: UpdateLoanDto) {
@@ -439,6 +450,9 @@ export class LoansService {
     if (dto.contactId && !await this.prisma.contact.findFirst({ where: { id: dto.contactId, organizationId: loan.organizationId }, select: { id: true } })) throw new BadRequestException('联系人不属于该客户');
     if (dto.ticketId && !await this.prisma.ticket.findUnique({ where: { id: dto.ticketId }, select: { id: true } })) throw new BadRequestException('关联工单不存在');
     const detail = dto.scoreDetail ? (dto.scoreDetail as Prisma.InputJsonValue) : undefined;
+    if (dto.score != null && !loan.infoComplete) {
+      this.events.emit(LINKAGE_EVENTS.loanInfoCompleted, { loanId: loan.id, loanNo: loan.loanNo, ticketId: dto.ticketId ?? loan.ticketId, actorId: user.id });
+    }
     return this.prisma.loanOrder.update({
       where: { id },
       data: {
@@ -476,6 +490,9 @@ export class LoansService {
       // 公司样机归还后回公司库存（解除临时挂靠）；客户资产不会出现在借测单中，防御性排除
       await tx.device.updateMany({ where: { id: { in: loan.items.map((item) => item.deviceId) }, ownerType: 'COMPANY' }, data: { status: 'IN_STOCK', organizationId: null } });
       return tx.loanOrder.update({ where: { id }, data: { status: LoanStatus.RETURNED, returnedAt: now }, include: loanInclude });
+    }).then((updated) => {
+      this.events.emit(LINKAGE_EVENTS.loanStatusChanged, { loanId: id, loanNo: loan.loanNo, ticketId: loan.ticketId, actorId: user.id, from: loan.status, to: LoanStatus.RETURNED });
+      return updated;
     });
   }
 
@@ -485,6 +502,9 @@ export class LoansService {
     return this.prisma.$transaction(async (tx) => {
       await tx.device.updateMany({ where: { id: { in: loan.items.map((item) => item.deviceId) }, ownerType: 'COMPANY' }, data: { status: 'IN_STOCK', organizationId: null } });
       return tx.loanOrder.update({ where: { id }, data: { status: LoanStatus.CANCELLED }, include: loanInclude });
+    }).then((updated) => {
+      this.events.emit(LINKAGE_EVENTS.loanStatusChanged, { loanId: id, loanNo: loan.loanNo, ticketId: loan.ticketId, actorId: user.id, from: loan.status, to: LoanStatus.CANCELLED });
+      return updated;
     });
   }
 }

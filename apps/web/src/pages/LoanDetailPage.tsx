@@ -48,7 +48,8 @@ export function LoanDetailPage() {
     <header className="page-header">
       <div><Link to="/loans"><ArrowLeft size={16} />借测记录</Link>
         <h1>{loan.organization.name}</h1>
-        <span className={`badge flow-status flow-status-${display.status.toLowerCase()}`}>{label}{display.overdueDays > 0 ? ` ${display.overdueDays} 天` : ''}</span></div>
+        <span className={`badge flow-status flow-status-${display.status.toLowerCase()}`}>{label}{display.overdueDays > 0 ? ` ${display.overdueDays} 天` : ''}</span>
+        {loan.ticket && <span className="flow-source-ticket">来源工单：<Link className="mono" to={`/tickets/${loan.ticket.id}`} title={loan.ticket.title}>{loan.ticket.number}</Link></span>}</div>
       <button className="button" onClick={() => setEditing(true)}><Pencil size={15} />编辑档案</button>
     </header>
     <div className="flow-detail">

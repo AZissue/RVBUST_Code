@@ -573,6 +573,9 @@
   margin: 8px 0;
   overflow-wrap: anywhere;
 }
+.flow-source-ticket { margin-left: 10px; color: var(--muted); font-size: 12px; }
+.flow-source-ticket a { color: var(--brand); font-weight: 700; }
+.flow-source-ticket a:hover { text-decoration: underline; }
 .flow-table {
   max-width: 100%;
   overflow-x: auto;
