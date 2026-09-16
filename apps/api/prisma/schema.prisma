@@ -31,6 +31,7 @@ enum TicketCategory {
   HAND_EYE_CALIBRATION
   HARDWARE_FAILURE
   OTHER
+  LOAN_REQUEST
 }
 
 enum CustomerLevel {
@@ -67,6 +68,8 @@ enum TicketEventType {
   ASSIST_REJECT
   DELETE
   RESTORE
+  LINK_CREATED
+  LINK_UPDATE
 }
 
 enum TicketAssistStatus {

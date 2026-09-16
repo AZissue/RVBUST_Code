@@ -1,7 +1,8 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { TicketEventType, TicketStatus, Visibility, type Prisma } from '@prisma/client';
 import { AccessPolicyService } from '../auth/access-policy.service.js';
 import type { AuthUser } from '../auth/auth.types.js';
+import { LinkageService } from '../linkage/linkage.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { ChangeStatusDto } from './dto/change-status.dto.js';
@@ -40,7 +41,8 @@ const visibleInclude = (_user: AuthUser) => ({ ...ticketInclude });
 
 @Injectable()
 export class TicketsService {
-  constructor(private readonly prisma: PrismaService, private readonly access: AccessPolicyService, private readonly notifications: NotificationsService) {}
+  private readonly logger = new Logger(TicketsService.name);
+  constructor(private readonly prisma: PrismaService, private readonly access: AccessPolicyService, private readonly notifications: NotificationsService, private readonly linkage: LinkageService) {}
 
   private notifyAssignee(ticketId: string, number: string, assigneeId: string) {    return this.notifications.notify({
       recipientId: assigneeId, ticketId, type: NOTIFICATION_TYPES.TICKET_ASSIGNED, title: '工单已指派给你',
@@ -89,6 +91,8 @@ export class TicketsService {
           orderBy: { createdAt: 'asc' },
         },
         attachments: true,
+        loanOrders: { select: { id: true, loanNo: true, status: true, infoComplete: true }, orderBy: { createdAt: 'desc' as const } },
+        repairOrders: { select: { id: true, repairNo: true, status: true }, orderBy: { createdAt: 'desc' as const } },
       },
     });
     if (!result) return result;
@@ -171,6 +175,15 @@ export class TicketsService {
     const created = await createRecord(db);
     // 事务内调用（如事项转换）跳过通知，由外层在事务提交后补发，避免引用未提交工单
     if (db === this.prisma && assigneeId && assigneeId !== user.id) await this.notifyAssignee(created.id, created.number, assigneeId);
+    // 联动创建借测/维修单：单个联动失败仅记录日志，不影响工单本身与另一路联动
+    if (db === this.prisma && dto.createLinkedLoan) {
+      try { await this.linkage.createLoanFromTicket(user, created.id); }
+      catch (error) { this.logger.error(`工单 ${created.number} 联动创建借测单失败`, error as Error); }
+    }
+    if (db === this.prisma && dto.createLinkedRepair) {
+      try { await this.linkage.createRepairFromTicket(user, created.id); }
+      catch (error) { this.logger.error(`工单 ${created.number} 联动创建维修单失败`, error as Error); }
+    }
     return created;
   }
 

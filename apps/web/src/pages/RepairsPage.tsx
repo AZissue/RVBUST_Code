@@ -2,7 +2,7 @@ import { Download, FileText, Plus, RefreshCw, Search, Upload, X } from 'lucide-r
 import { AttachmentPreview } from '../components/AttachmentPreview'
 import { RepairStatusEditor } from '../components/RepairStatusEditor'
 import { useAuth } from '../context/AuthContext'
-import { useSearchParams, Link } from 'react-router-dom'
+import { useSearchParams, Link, useParams } from 'react-router-dom'
 import { useRef, useState, type FormEvent } from 'react'
 import { ReturnRepairForm, downloadRepairPdf } from '../components/ReturnRepairForm'
 import { Modal } from '../components/Modal'
@@ -27,8 +27,9 @@ const nextStep: Partial<Record<RepairStatus, { status: RepairStatus; label: stri
 
 export function RepairsPage() {
   const [params] = useSearchParams()
+  const { id: routeDetailId } = useParams()
   const [status, setStatus] = useState(() => params.get('active') === '1' ? 'ACTIVE' : '')
-  const [detailId, setDetailId] = useState<string | null>(null)
+  const [detailId, setDetailId] = useState<string | null>(routeDetailId ?? null)
   const [search, setSearch] = useState('')
   const [appliedSearch, setAppliedSearch] = useState('')
   const remote = useRemote(() => api<RepairOrder[]>('/repairs'), [], true)

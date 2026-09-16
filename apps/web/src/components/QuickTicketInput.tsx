@@ -26,6 +26,7 @@ type Similar = Ticket & { similarity: number }
 /** 快速记录按关键词推断问题分类枚举（与后端 TicketCategory 对应） */
 const CATEGORY_KEYWORDS: Array<[TicketCategory, readonly string[]]> = [
   ['PRE_SALES', ['售前', '选型', '报价', '购买']],
+  ['LOAN_REQUEST', ['借测', '试用']],
   ['TRAINING', ['培训', '教程', '教学']],
   ['POINTCLOUD_DEBUG', ['点云', '拍摄', '无点云', '深度图', '标定数据']],
   ['SDK_DEVELOPMENT', ['sdk', 'api', '接口', '开发', '代码', '调试程序']],

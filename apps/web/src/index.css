@@ -197,6 +197,16 @@ input, textarea, select { width: 100%; color: var(--text); background: var(--sur
 .invite-box { display: flex; flex-direction: column; gap: 8px; padding: 9px; margin-top: 8px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 5px; }
 .recycle-actions { display: flex; flex-direction: column; gap: 8px; }
 .button.danger { color: var(--brand); border-color: var(--brand); }
+/* 工单详情：业务联动（借测/维修单据） */
+.linkage-panel .section-heading { margin-bottom: 6px; }
+.linkage-list { display: flex; flex-direction: column; }
+.linkage-item { padding: 8px 0; border-bottom: 1px solid var(--border); }
+.linkage-item:last-child { border-bottom: 0; }
+.linkage-item header { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 12px; }
+.linkage-item header .mono { color: var(--brand); font-weight: 700; }
+.linkage-item .muted { color: var(--muted); font-size: 11px; }
+.linkage-item.is-done { opacity: .55; }
+.linkage-panel .row-actions { margin-top: 10px; }
 .button.danger:hover { color: #fff; background: var(--brand); border-color: var(--brand); }
 
 .reports-calendar { display: grid; grid-template-columns: minmax(0, 1fr) 420px; gap: 14px; align-items: start; }

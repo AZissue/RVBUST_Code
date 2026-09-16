@@ -10,7 +10,7 @@ import ExcelJS from 'exceljs';
 
 const CATEGORY_LABELS: Record<TicketCategory, string> = {
   PRE_SALES: '售前咨询', TRAINING: '客户培训', POINTCLOUD_DEBUG: '点云调试',
-  SDK_DEVELOPMENT: 'SDK 开发', HAND_EYE_CALIBRATION: '手眼标定', HARDWARE_FAILURE: '硬件故障', OTHER: '其他',
+  SDK_DEVELOPMENT: 'SDK 开发', HAND_EYE_CALIBRATION: '手眼标定', HARDWARE_FAILURE: '硬件故障', OTHER: '其他', LOAN_REQUEST: '借测申请',
 };
 const STATUS_LABELS: Record<TicketStatus, string> = {
   PENDING: '待处理', IN_PROGRESS: '处理中', WAITING_CUSTOMER: '等待客户', WAITING_RND: '等待研发', RESOLVED: '已解决', CLOSED: '已关闭',

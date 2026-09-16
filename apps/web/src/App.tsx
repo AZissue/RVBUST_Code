@@ -52,6 +52,7 @@ export default function App() {
       <Route path="loans/:id" element={<LoanDetailPage />} />
       <Route path="repairs" element={<RepairsPage />} />
       <Route path="repairs/new" element={<RepairFormPage />} />
+      <Route path="repairs/:id" element={<RepairsPage />} />
       <Route path="worklogs" element={<WorklogsPage />} />
       <Route path="reports" element={<ReportCalendarPage />} />
       <Route path="stats" element={<ReportsPage />} />

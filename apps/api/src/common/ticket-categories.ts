@@ -9,6 +9,7 @@ export const TICKET_CATEGORY_LABELS: Record<TicketCategory, string> = {
   HAND_EYE_CALIBRATION: '手眼标定',
   HARDWARE_FAILURE: '硬件故障',
   OTHER: '其他',
+  LOAN_REQUEST: '借测申请',
 }
 
 export const TICKET_CATEGORIES = Object.keys(TICKET_CATEGORY_LABELS) as TicketCategory[]

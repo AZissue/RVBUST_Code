@@ -4,7 +4,7 @@ import { Modal } from './Modal'
 import { useRemote } from '../hooks/useRemote'
 import { api } from '../lib/api'
 import { TICKET_CATEGORIES, ticketCategoryLabels } from '../lib/labels'
-import type { Customer, Device, Ticket } from '../types'
+import type { Customer, Device, Ticket, TicketCategory } from '../types'
 
 const normalized = (value: string) => value.trim().toLocaleLowerCase()
 const deviceLabel = (device: Device) => [device.name, device.serialNumber || device.id].join(' · ')
@@ -25,6 +25,12 @@ export function CreateTicketModal({ onClose, onCreated, defaultAssigneeId }: { o
   const descriptionRef = useRef<HTMLTextAreaElement>(null)
   const [requestKey] = useState(() => crypto.randomUUID())
   const [error, setError] = useState('')
+  const [category, setCategory] = useState<TicketCategory>('OTHER')
+  const [createLinkedLoan, setCreateLinkedLoan] = useState(false)
+  const [createLinkedRepair, setCreateLinkedRepair] = useState(false)
+  const showLoanOption = category === 'PRE_SALES' || category === 'LOAN_REQUEST'
+  const showRepairOption = category === 'HARDWARE_FAILURE'
+  const changeCategory = (value: TicketCategory) => { setCategory(value); setCreateLinkedLoan(false); setCreateLinkedRepair(false) }
   const customer = customers.data?.find(item => normalized(item.name) === normalized(customerName))
   const detail = useRemote(() => customer ? api<Customer>(`/customers/${customer.id}`) : Promise.resolve(null), [customer?.id])
   const currentDetail = detail.data?.id === customer?.id ? detail.data : null
@@ -59,16 +65,20 @@ export function CreateTicketModal({ onClose, onCreated, defaultAssigneeId }: { o
       const ticket = await api<Ticket>('/tickets', { method: 'POST', body: JSON.stringify({
         requestKey, organizationId: selected.id, contactId: contactId || undefined, deviceId: device?.id,
         assigneeId: value('assigneeId') || undefined, title: value('title'), description: value('description'),
-        category: value('category') || 'OTHER', priority: value('priority') || 'MEDIUM',
+        category, priority: value('priority') || 'MEDIUM',
         cameraModel: device?.cameraModel || value('cameraModel') || undefined,
         serialNumber: device?.serialNumber || value('serialNumber') || undefined,
         sdkVersion: device?.sdkVersion || value('sdkVersion') || undefined,
         systemEnvironment: value('systemEnvironment') || undefined,
         plannedAt: value('plannedAt') ? new Date(value('plannedAt')).toISOString() : undefined,
+        createLinkedLoan: showLoanOption && createLinkedLoan ? true : undefined,
+        createLinkedRepair: showRepairOption && createLinkedRepair ? true : undefined,
         assistTargetIds: assistTargetIds.length ? assistTargetIds : undefined,
         assistMessage: assistMessage.trim() || undefined,
       }) })
-      onCreated(ticket, notice)
+      const linkedNotice = showLoanOption && createLinkedLoan ? '已同步创建借测单并加入排队' : showRepairOption && createLinkedRepair ? '已同步创建维修单' : undefined
+      const notices = [notice, linkedNotice].filter(Boolean)
+      onCreated(ticket, notices.length ? notices.join('；') : undefined)
     } catch (reason) { setError(reason instanceof Error ? reason.message : '创建失败') }
     finally { lock.current = false; setBusy(false) }
   }
@@ -83,7 +93,9 @@ export function CreateTicketModal({ onClose, onCreated, defaultAssigneeId }: { o
         <label>问题标题<input ref={titleRef} name="title" required minLength={3} maxLength={240} /></label>
         <button type="button" className="button" disabled={summarizing} onClick={() => void suggestTitle()}><Sparkles size={14} />{summarizing ? '正在总结' : '自动总结'}</button>
       </div>
-      <label>问题分类<select name="category" defaultValue="OTHER">{TICKET_CATEGORIES.map(item => <option key={item} value={item}>{ticketCategoryLabels[item]}</option>)}</select></label>
+      <label>问题分类<select name="category" value={category} onChange={event => changeCategory(event.target.value as TicketCategory)}>{TICKET_CATEGORIES.map(item => <option key={item} value={item}>{ticketCategoryLabels[item]}</option>)}</select></label>
+      {showLoanOption && <label className="span-2 checkbox-row"><input type="checkbox" checked={createLinkedLoan} onChange={event => setCreateLinkedLoan(event.target.checked)} />同时创建借测单并加入排队</label>}
+      {showRepairOption && <label className="span-2 checkbox-row"><input type="checkbox" checked={createLinkedRepair} onChange={event => setCreateLinkedRepair(event.target.checked)} />同时创建维修单</label>}
       <label className="span-2">问题描述<textarea ref={descriptionRef} name="description" required minLength={3} maxLength={20000} rows={4} /></label>
       <label className="span-2 checkbox-row"><input type="checkbox" checked={assistTargetIds.length > 0} onChange={event => setAssistTargetIds(event.target.checked ? (users.data ?? []).map(item => item.id) : [])} />需要协作：添加系统内同事为协作人，共同跟进处理该工单</label>
       {assistTargetIds.length > 0 && <label className="span-2">协作人<div className="assist-user-list">{users.data?.map(item => <label key={item.id} className="checkbox-row"><input type="checkbox" checked={assistTargetIds.includes(item.id)} onChange={() => toggleAssist(item.id)} />{item.name}</label>) ?? <span>加载中…</span>}</div></label>}

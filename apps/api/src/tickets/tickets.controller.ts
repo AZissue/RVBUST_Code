@@ -11,6 +11,7 @@ import { CreateTicketEventDto, DeleteTicketEventDto } from './dto/ticket-event.d
 import { CreateTicketDto, UpdateTicketDto, ChangeCreatorDto, DeleteTicketDto } from './dto/ticket.dto.js';
 import { CreateAssistRequestDto } from './dto/assist.dto.js';
 import { TicketsService } from './tickets.service.js';
+import { LinkageService } from '../linkage/linkage.service.js';
 import { TicketsExcelService } from './tickets-excel.service.js';
 import { QuickTicketsService } from './quick-tickets.service.js';
 import { ParseQuickTicketDto, SimilarTicketsDto, SuggestTitleDto, UpdateQuickTicketDto, ConvertWorkItemDto } from './dto/quick-ticket.dto.js';
@@ -26,7 +27,7 @@ const importUploadOptions = {
 
 @Controller('tickets')
 export class TicketsController {
-  constructor(private readonly tickets: TicketsService, private readonly quick: QuickTicketsService, private readonly excel: TicketsExcelService) {}
+  constructor(private readonly tickets: TicketsService, private readonly quick: QuickTicketsService, private readonly excel: TicketsExcelService, private readonly linkage: LinkageService) {}
   @Get() list(@CurrentUser() user: AuthUser, @Query('search') search?: string, @Query('status') statusRaw?: string, @Query('mine') mine?: string, @Query('page') pageRaw?: string, @Query('all') all?: string, @Query('view') view?: string) {
     if (view && !['all', 'assigned', 'collaborating', 'invited', 'created', 'today-todo', 'today-done'].includes(view)) throw new BadRequestException('工单视图无效');
     const statuses = statusRaw ? statusRaw.split(',').filter(Boolean) : [];
@@ -55,6 +56,15 @@ export class TicketsController {
   @Roles('admin', 'support') @Get('recycle-bin') recycle(@CurrentUser() user: AuthUser, @Query('search') search?: string, @Query('page') pageRaw?: string) { return this.tickets.listDeleted(user, search, Math.max(1, Number.parseInt(pageRaw ?? '1', 10) || 1)); }
   @Get(':id') get(@CurrentUser() user: AuthUser, @Param('id') id: string) { return this.tickets.get(user, id); }
   @Post() create(@CurrentUser() user: AuthUser, @Body() dto: CreateTicketDto) { return this.tickets.create(user, dto); }
+  @Roles('admin', 'support', 'employee') @Post(':id/loan-requests') async createLoanRequest(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    const { loan } = await this.linkage.createLoanFromTicket(user, id);
+    return { loan: { id: loan.id, loanNo: loan.loanNo, status: loan.status } };
+  }
+  @Roles('admin', 'support', 'employee') @Post(':id/repair-requests') async createRepairRequest(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    const { repair } = await this.linkage.createRepairFromTicket(user, id);
+    return { repair: { id: repair.id, repairNo: repair.repairNo, status: repair.status } };
+  }
+  @Roles('admin', 'support', 'employee') @Get(':id/links') links(@CurrentUser() user: AuthUser, @Param('id') id: string) { return this.linkage.listLinks(user, id); }
   @Roles('admin', 'support', 'employee') @Patch(':id') update(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: UpdateTicketDto) { return this.tickets.update(user, id, dto); }
   @Roles('admin') @Post(':id/created-by') changeCreator(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: ChangeCreatorDto) { return this.tickets.changeCreator(user, id, dto); }
   @Roles('admin', 'support', 'employee') @Post(':id/status') changeStatus(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: ChangeStatusDto) { return this.tickets.changeStatus(user, id, dto); }

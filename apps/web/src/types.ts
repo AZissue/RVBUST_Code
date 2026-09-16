@@ -167,7 +167,7 @@ export interface WorkItem {
 
 export type TicketStatus = 'PENDING' | 'IN_PROGRESS' | 'WAITING_CUSTOMER' | 'WAITING_RND' | 'RESOLVED' | 'CLOSED'
 export type TicketPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT'
-export type TicketCategory = 'PRE_SALES' | 'TRAINING' | 'POINTCLOUD_DEBUG' | 'SDK_DEVELOPMENT' | 'HAND_EYE_CALIBRATION' | 'HARDWARE_FAILURE' | 'OTHER'
+export type TicketCategory = 'PRE_SALES' | 'LOAN_REQUEST' | 'TRAINING' | 'POINTCLOUD_DEBUG' | 'SDK_DEVELOPMENT' | 'HAND_EYE_CALIBRATION' | 'HARDWARE_FAILURE' | 'OTHER'
 export type TicketAssistStatus = 'PENDING' | 'ACCEPTED' | 'REJECTED' | 'CANCELLED'
 
 export interface TicketAssistRequest {
@@ -215,6 +215,10 @@ export interface Ticket {
   collaborators?: Array<{ user: { id: string; name: string } }>
   assistRequests?: TicketAssistRequest[]
   events?: TicketEvent[]
+  /** 关联借测单（工单详情接口返回，仅含列表所需字段） */
+  loanOrders?: Array<{ id: string; loanNo: string; status: LoanStatus; infoComplete: boolean }>
+  /** 关联维修单（工单详情接口返回，仅含列表所需字段） */
+  repairOrders?: Array<{ id: string; repairNo: string; status: RepairStatus }>
 }
 
 export interface TicketEvent { id: string; type: string; visibility: 'INTERNAL' | 'CUSTOMER'; content: string; createdAt: string; author: { id: string; name: string } }

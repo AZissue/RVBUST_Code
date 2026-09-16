@@ -2,7 +2,7 @@ import type { BugStatus, DeviceHealth, DeviceOwnerType, DeviceStatus, LoanStatus
 
 export const ticketStatusLabels: Record<TicketStatus, string> = { PENDING: '待处理', IN_PROGRESS: '处理中', WAITING_CUSTOMER: '等待客户', WAITING_RND: '等待研发', RESOLVED: '已解决', CLOSED: '已关闭' }
 export const ticketPriorityLabels: Record<TicketPriority, string> = { LOW: '低', MEDIUM: '中', HIGH: '高', URGENT: '紧急' }
-export const ticketCategoryLabels: Record<TicketCategory, string> = { PRE_SALES: '售前咨询', TRAINING: '客户培训', POINTCLOUD_DEBUG: '点云调试', SDK_DEVELOPMENT: 'SDK 开发', HAND_EYE_CALIBRATION: '手眼标定', HARDWARE_FAILURE: '硬件故障', OTHER: '其他' }
+export const ticketCategoryLabels: Record<TicketCategory, string> = { PRE_SALES: '售前咨询', LOAN_REQUEST: '借测需求', TRAINING: '客户培训', POINTCLOUD_DEBUG: '点云调试', SDK_DEVELOPMENT: 'SDK 开发', HAND_EYE_CALIBRATION: '手眼标定', HARDWARE_FAILURE: '硬件故障', OTHER: '其他' }
 export const TICKET_CATEGORIES = Object.keys(ticketCategoryLabels) as TicketCategory[]
 export const ticketCategoryLabel = (category: string) => ticketCategoryLabels[category as TicketCategory] ?? category
 export const ticketEventTypeLabels: Record<string, string> = { CUSTOMER_REPLY: '客户回复', INTERNAL_NOTE: '跟进记录', STATUS_CHANGE: '状态变更', ASSIGNMENT: '指派', ATTACHMENT: '附件', WORK_RECORD: '工作记录', RESOLUTION: '解决方案', ASSIST_REQUEST: '协助邀请', ASSIST_ACCEPT: '接受协助', ASSIST_REJECT: '驳回协助', DELETE: '移入回收站', RESTORE: '恢复工单' }

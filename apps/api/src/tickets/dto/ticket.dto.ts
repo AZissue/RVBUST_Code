@@ -1,6 +1,6 @@
 import { PartialType } from '@nestjs/mapped-types';
 import { TicketCategory, TicketPriority, TicketStatus } from '@prisma/client';
-import { IsArray, IsDateString, IsEnum, IsOptional, IsString, IsUUID, Length } from 'class-validator';
+import { IsArray, IsBoolean, IsDateString, IsEnum, IsOptional, IsString, IsUUID, Length } from 'class-validator';
 
 export class CreateTicketDto {
   @IsOptional() @IsString() @Length(1, 20000) rawText?: string;
@@ -28,6 +28,10 @@ export class CreateTicketDto {
   @IsOptional() @IsDateString() occurredAt?: string;
   /** 创建时直接指定状态（补录场景），如 RESOLVED/IN_PROGRESS；客户账号忽略此字段 */
   @IsOptional() @IsEnum(TicketStatus) status?: TicketStatus;
+  /** 创建工单的同时联动创建借测单（幂等，失败不阻断工单创建） */
+  @IsOptional() @IsBoolean() createLinkedLoan?: boolean;
+  /** 创建工单的同时联动创建维修单（幂等，失败不阻断工单创建） */
+  @IsOptional() @IsBoolean() createLinkedRepair?: boolean;
 }
 
 export class UpdateTicketDto extends PartialType(CreateTicketDto) {}
