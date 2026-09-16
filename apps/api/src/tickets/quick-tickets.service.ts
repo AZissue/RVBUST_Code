@@ -16,10 +16,11 @@ export class QuickTicketsService {
     const extracted = extractDateExpression(rawText);
     const withStatus = extractStatusExpression(extracted.text);
     const customers = await this.prisma.customerOrganization.findMany({ where: this.access.customerWhere(user), select: { id: true, name: true } });
+    const aliases = await this.prisma.customerAlias.findMany({ select: { organizationId: true, alias: true } });
     const users = await this.prisma.user.findMany({ where: { status: "ACTIVE", role: { name: { in: ['admin', 'support', 'employee'] } } }, select: { id: true, name: true, username: true } });
     const modelHint = rawText.match(/\b[A-Za-z]+[- ]?\d{3,}[A-Za-z0-9-]*\b/)?.[0]?.replace(/ /g, '');
     const modelCandidates = modelHint ? await this.prisma.device.findMany({ where: { organizationId: { in: customers.map((c) => c.id) }, cameraModel: { equals: modelHint, mode: 'insensitive' } }, select: { cameraModel: true }, take: 20 }) : [];
-    const result = await this.parser.parse(withStatus.text, { customers, users, currentUserId: user.id, deviceModels: [...new Set(modelCandidates.map((d) => d.cameraModel).filter((m): m is string => Boolean(m)))] });
+    const result = await this.parser.parse(withStatus.text, { customers, users, currentUserId: user.id, deviceModels: [...new Set(modelCandidates.map((d) => d.cameraModel).filter((m): m is string => Boolean(m)))], aliases });
     const devices = result.matchedCustomer && result.deviceText ? await this.prisma.device.findMany({ where: { organizationId: result.matchedCustomer.id, OR: [{ cameraModel: { equals: result.deviceText, mode: 'insensitive' } }, { name: { equals: result.deviceText, mode: 'insensitive' } }] }, select: { id: true, name: true, serialNumber: true, cameraModel: true } }) : [];
     const similarTickets = result.matchedCustomer && result.issue ? await this.similar(user, { organizationId: result.matchedCustomer.id, issue: result.issue, cameraModel: result.deviceText }) : [];
     // occurredAt/status 由确定性提取给出；rawText 保留原文（含日期/状态短语）供追溯

@@ -258,6 +258,7 @@ model User {
   businessCustomers      CustomerOrganization[] @relation("BusinessOwner")
   reportedBugs           BugReport[]           @relation("BugAuthor")
   resolvedBugs           BugReport[]           @relation("BugResolver")
+  createdCustomerAliases CustomerAlias[]         @relation("CustomerAliasCreator")
   createdAt              DateTime              @default(now()) @map("created_at")
   updatedAt              DateTime              @updatedAt @map("updated_at")
 
@@ -315,12 +316,28 @@ model CustomerOrganization {
   worklogs         Worklog[]
   loanOrders       LoanOrder[]
   repairOrders     RepairOrder[]
+  aliases          CustomerAlias[]
   createdAt        DateTime  @default(now()) @map("created_at")
   updatedAt        DateTime  @updatedAt @map("updated_at")
 
   @@index([technicalOwnerId])
   @@index([businessOwnerId])
   @@map("customer_organizations")
+}
+
+/** 快速工单纠错别名：确认页把错选词改选为正确客户后记录，下次同词解析直接满分命中 */
+model CustomerAlias {
+  id             String               @id @default(uuid()) @db.Uuid
+  organizationId String               @map("organization_id") @db.Uuid
+  organization   CustomerOrganization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  alias          String               @db.VarChar(100)
+  createdById    String               @map("created_by_id") @db.Uuid
+  createdBy      User                 @relation("CustomerAliasCreator", fields: [createdById], references: [id])
+  createdAt      DateTime             @default(now()) @map("created_at")
+
+  @@unique([organizationId, alias])
+  @@index([alias])
+  @@map("customer_aliases")
 }
 
 model Contact {

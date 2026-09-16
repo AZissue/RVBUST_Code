@@ -1,10 +1,11 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import type { CustomerLevel, Prisma } from '@prisma/client';
 import { AccessPolicyService } from '../auth/access-policy.service.js';
 import type { AuthUser } from '../auth/auth.types.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { computeCustomerLevel, recentMonthKeys } from './customer-level.js';
 import { CreateContactDto, UpdateContactDto } from './dto/contact.dto.js';
+import { CreateCustomerAliasDto } from './dto/customer-alias.dto.js';
 import { CreateCustomerDto, UpdateCustomerDto } from './dto/customer.dto.js';
 import { CreateDeviceDto, UpdateDeviceDto } from './dto/device.dto.js';
 import { CreateProjectDto, UpdateProjectDto } from './dto/project.dto.js';
@@ -117,6 +118,18 @@ export class CustomersService {
     await this.ensureExists(id);
     try { await this.prisma.customerOrganization.delete({ where: { id } }); return { success: true }; }
     catch (error) { if ((error as { code?: string }).code === 'P2003') throw new ConflictException('客户仍有关联工单或账号，不能删除'); throw error; }
+  }
+
+  /** 记录快速工单纠错别名（确认页改选触发）。幂等：同客户同别名已存在时静默成功；并发唯一冲突同样视为成功 */
+  async addAlias(user: AuthUser, dto: CreateCustomerAliasDto) {
+    const alias = dto.alias.trim();
+    if (!alias || alias.length > 100) throw new BadRequestException('别名长度需在 1-100 字之间');
+    await this.access.requireCustomer(user, dto.organizationId);
+    const existing = await this.prisma.customerAlias.findUnique({ where: { organizationId_alias: { organizationId: dto.organizationId, alias } } });
+    if (existing) return { ok: true };
+    try { await this.prisma.customerAlias.create({ data: { organizationId: dto.organizationId, alias, createdById: user.id } }); }
+    catch (error) { if ((error as { code?: string }).code !== 'P2002') throw error; }
+    return { ok: true };
   }
 
   async addContact(organizationId: string, dto: CreateContactDto) {

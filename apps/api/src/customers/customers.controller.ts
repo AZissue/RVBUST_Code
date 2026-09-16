@@ -4,6 +4,7 @@ import { CurrentUser } from '../auth/current-user.decorator.js';
 import { Roles } from '../auth/roles.decorator.js';
 import { CustomersService } from './customers.service.js';
 import { CreateContactDto, UpdateContactDto } from './dto/contact.dto.js';
+import { CreateCustomerAliasDto } from './dto/customer-alias.dto.js';
 import { CreateCustomerDto, UpdateCustomerDto } from './dto/customer.dto.js';
 import { CreateDeviceDto } from './dto/device.dto.js';
 import { CreateProjectDto, UpdateProjectDto } from './dto/project.dto.js';
@@ -20,6 +21,7 @@ export class CustomersController {
   @Get('customers/:id') get(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) { return this.customers.get(user, id); }
   @Get('customers/:id/profile') profile(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) { return this.customers.profile(user, id); }
   @Roles('admin', 'support', 'employee') @Post('customers') create(@Body() dto: CreateCustomerDto) { return this.customers.create(dto); }
+  @Roles('admin', 'support', 'employee') @Post('customer-aliases') addAlias(@CurrentUser() user: AuthUser, @Body() dto: CreateCustomerAliasDto) { return this.customers.addAlias(user, dto); }
   @Roles('admin', 'support') @Patch('customers/:id') update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateCustomerDto) { return this.customers.update(id, dto); }
   @Roles('admin') @Delete('customers/:id') remove(@Param('id', ParseUUIDPipe) id: string) { return this.customers.remove(id); }
 

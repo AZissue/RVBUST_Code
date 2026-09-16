@@ -3,7 +3,8 @@ import { TicketPriority } from '@prisma/client';
 
 export interface Candidate { id: string; name: string; score: number }
 export interface Person { id: string; name: string; username?: string }
-export interface ParserContext { customers: Person[]; users: Person[]; currentUserId: string; deviceModels?: string[] }
+export interface CustomerAliasRef { organizationId: string; alias: string }
+export interface ParserContext { customers: Person[]; users: Person[]; currentUserId: string; deviceModels?: string[]; aliases?: CustomerAliasRef[] }
 export type ParsedTicket = Omit<ReturnType<typeof parseQuickTicketInput>, 'priority'> & { priority: TicketPriority };
 export interface QuickInputParser { parse(rawText: string, context: ParserContext): ParsedTicket | Promise<ParsedTicket> }
 const clean = (s: string) => s.replace(/^[\s,，。:：;；]+|[\s,，。:：;；]+$/g, '');
@@ -73,6 +74,27 @@ export function parseQuickTicketInput(rawText: string, context: ParserContext) {
   issue = clean(issue);
   const deviceText = issue.match(/\b[A-Za-z]+[- ]?\d{3,}[A-Za-z0-9-]*\b/)?.[0]?.replace(/ /g, '') ?? '';
   let customerText = '';
+  let customerCandidates: Candidate[] = [];
+  // 纠错别名表（人工确认，可信）：归一化输入与归一化别名精确匹配，命中即满分 1.0 自动绑定，优先于全位置扫描/相似度链
+  const normalizedIssue = normalize(issue);
+  const aliasHit = (context.aliases ?? [])
+    .map((a) => ({ ...a, key: normalize(a.alias) }))
+    .filter((a) => a.key.length >= 2)
+    .map((a) => ({ ...a, index: normalizedIssue.indexOf(a.key) }))
+    .filter((a) => a.index >= 0)
+    .sort((a, b) => b.key.length - a.key.length || a.index - b.index)[0];
+  const aliasCustomer = aliasHit ? context.customers.find((c) => c.id === aliasHit.organizationId) : undefined;
+  if (aliasHit && aliasCustomer) {
+    customerText = aliasHit.alias;
+    customerCandidates = [{ id: aliasCustomer.id, name: aliasCustomer.name, score: 1 }];
+    // 原文中能找到别名原词（如「盈联科技」）则剥掉，保持 issue/title 不含客户名；归一化命中但原文无原词时保留原文
+    const aliasIndex = issue.indexOf(aliasHit.alias);
+    if (aliasIndex >= 0) {
+      const before = issue.slice(0, aliasIndex).replace(/[\s,，。:：;；]+$/, '');
+      const after = issue.slice(aliasIndex + aliasHit.alias.length).replace(/^[\s,，。:：;；]+/, '');
+      issue = clean(before + ' ' + after);
+    }
+  } else {
   // 客户名全位置扫描：所有客户名及其归一化名在全文 includes 匹配，取最长命中（候选重叠时最长优先），不限句首
   const customerHit = context.customers
     .flatMap((c) => [c.name, normalize(c.name)])
@@ -94,7 +116,8 @@ export function parseQuickTicketInput(rawText: string, context: ParserContext) {
       issue = clean(issue.slice(head.length));
     }
   }
-  const customerCandidates = matchCustomers(customerText, context.customers);
+  customerCandidates = matchCustomers(customerText, context.customers);
+  }
   const assigneeCandidates = assigneeText ? matchPeople(assigneeText, context.users) : context.users.filter((u) => u.id === context.currentUserId).map((u) => ({ id: u.id, name: u.name, score: 1 }));
   issue = clean(issue.replace(/[\s，,]+$/g, ''));
   const matchedCustomer = choose(customerCandidates, .85);

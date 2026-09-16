@@ -6,6 +6,22 @@
 .similar-tickets article { padding: 12px 0; border-bottom: 1px solid var(--border); }
 .similar-tickets p, .quick-success { overflow-wrap: anywhere; }
 .quick-success { margin-top: 12px; }
+.quick-confirm:focus { outline: none; }
+.quick-dup-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 9px 12px; color: var(--brand); background: var(--brand-soft); border: 1px solid color-mix(in srgb, var(--brand) 30%, transparent); border-radius: 5px; font-size: 12px; }
+.quick-dup-bar > svg { flex: 0 0 auto; }
+.quick-dup-bar > strong { overflow-wrap: anywhere; }
+.quick-dup-bar .header-actions { margin-left: auto; }
+.quick-dup-bar .button { min-height: 28px; padding: 4px 10px; font-size: 12px; }
+.quick-dup-list { flex-basis: 100%; display: flex; flex-direction: column; gap: 8px; margin: 2px 0 0; padding: 8px 0 0; list-style: none; border-top: 1px dashed color-mix(in srgb, var(--brand) 30%, transparent); }
+.quick-dup-list li { display: flex; flex-direction: column; gap: 2px; }
+.quick-dup-list a { font-weight: 650; overflow-wrap: anywhere; }
+.quick-dup-list .muted { font-size: 11px; }
+.quick-review { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--warning) 55%, transparent); border-radius: 6px; background: color-mix(in srgb, var(--warning) 7%, var(--surface)); }
+.quick-review > h3 { grid-column: 1 / -1; margin: 0; color: var(--warning); font-size: 13px; }
+.quick-review > .span-2 { grid-column: 1 / -1; }
+.quick-review-hint { margin: 0; font-size: 12px; }
+.quick-auto summary { cursor: pointer; font-size: 13px; font-weight: 650; }
+.quick-auto[open] summary { margin-bottom: 12px; }
 .metric-strip.compact.personal-ticket-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .personal-ticket-metrics button { text-align: left; color: inherit; background: none; }
 .personal-ticket-metrics button.selected { box-shadow: inset 0 -2px #da3039; }
@@ -24,4 +40,5 @@
   .personal-ticket-list .task-main { grid-column: 1 / -1; }
   .personal-ticket-list .task-row > .badge { display: inline-flex; justify-self: start; }
   .quick-confirm .header-actions { flex-wrap: wrap; }
+  .quick-review { grid-template-columns: 1fr; }
 }

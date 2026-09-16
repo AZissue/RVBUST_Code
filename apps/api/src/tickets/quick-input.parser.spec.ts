@@ -115,4 +115,29 @@ describe('local quick ticket parser', () => {
     expect(result.customerCandidates[0]?.id).toBe('c2');
     expect(result.issue).toBe('M2600 无点云');
   });
+  it('auto-binds a recorded correction alias with a full score (case: 盈联→盈连)', () => {
+    const ctx = { customers: [{ id: 'c1', name: '盈连科技' }], users: context.users, currentUserId: 'u1', aliases: [{ organizationId: 'c1', alias: '盈联科技' }] };
+    const result = parseQuickTicketInput('盈联科技 M2600 相机进水', ctx);
+    expect(result.matchedCustomer).toMatchObject({ id: 'c1', score: 1 });
+    expect(result.customerCandidates).toHaveLength(1);
+    expect(result.issue).toBe('M2600 相机进水');
+  });
+  it('keeps other customers matching unaffected when the alias word is absent', () => {
+    const ctx = { customers: [...context.customers, { id: 'c3', name: '盈连科技' }], users: context.users, currentUserId: 'u1', aliases: [{ organizationId: 'c3', alias: '盈联科技' }] };
+    const result = parseQuickTicketInput('工布 G52000 2D正常3D无点云 李四 普通', ctx);
+    expect(result.matchedCustomer?.id).toBe('c2');
+  });
+  it('alias match wins over similarity candidates for the same wrong word', () => {
+    // 无别名时「盈联科技」会经归一化全位置扫描命中盈联智能(0.98) 自动绑定错客户；记录别名后必须满分命中盈连科技
+    const ctx = { customers: [{ id: 'c1', name: '盈连科技' }, { id: 'c4', name: '盈联智能' }], users: context.users, currentUserId: 'u1', aliases: [{ organizationId: 'c1', alias: '盈联科技' }] };
+    const result = parseQuickTicketInput('盈联科技 M2600 相机进水', ctx);
+    expect(result.matchedCustomer).toMatchObject({ id: 'c1', score: 1 });
+    expect(result.customerCandidates).toHaveLength(1);
+  });
+  it('ignores aliases pointing outside the provided customer list', () => {
+    const ctx = { customers: [{ id: 'c1', name: '盈连科技' }], users: context.users, currentUserId: 'u1', aliases: [{ organizationId: 'c-hidden', alias: '盈联科技' }] };
+    const result = parseQuickTicketInput('盈联科技 M2600 相机进水', ctx);
+    expect(result.matchedCustomer).toBeNull();
+    expect(result.customerCandidates[0]).toMatchObject({ id: 'c1', score: .75 });
+  });
 });
