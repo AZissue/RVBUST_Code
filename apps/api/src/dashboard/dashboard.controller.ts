@@ -9,4 +9,5 @@ export class DashboardController {
   @Get() summary(@CurrentUser() user: AuthUser) { return this.dashboard.summary(user); }
   @Get('reports') reports(@CurrentUser() user: AuthUser) { return this.dashboard.reports(user); }
   @Get('my-tickets') myTickets(@CurrentUser() user: AuthUser, @Query('from') from?: string, @Query('to') to?: string) { return this.dashboard.myTickets(user, from, to); }
+  @Get('linkage-todos') linkageTodos(@CurrentUser() user: AuthUser) { return this.dashboard.linkageTodos(user); }
 }

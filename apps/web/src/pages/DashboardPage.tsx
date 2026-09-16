@@ -17,9 +17,22 @@ interface Summary {
   overdueLoanCount: number; repairingCount: number
   alerts: { stale: Ticket[]; overduePlan: Ticket[]; waitingTimeout: Ticket[] }
 }
+
+interface LinkageLoanTodoItem { loanId: string; loanNo: string; ticketId: string | null; ticketNumber: string | null; title: string; pendingHours: number }
+interface LinkageRepairTodoItem { repairId: string; repairNo: string; ticketId: string | null; ticketNumber: string | null; title: string; stalledHours: number }
+interface LinkageOverdueLoanItem { loanId: string; loanNo: string; ticketId: string | null; ticketNumber: string | null; title: string; overdueDays: number }
+interface LinkageTodos {
+  infoIncomplete: { total: number; items: LinkageLoanTodoItem[] }
+  toScore: { total: number; items: LinkageLoanTodoItem[] }
+  repairsStalled: { total: number; items: LinkageRepairTodoItem[] }
+  loansOverdue: { total: number; items: LinkageOverdueLoanItem[] }
+}
+interface LinkageTodoRow { key: string; kind: 'loan' | 'repair'; to: string; no: string; title: string; ticketNumber: string | null; hint: string }
+
 export function DashboardPage() {
   const navigate = useNavigate()
   const remote = useRemote(() => api<Summary>('/dashboard'), [], true)
+  const linkageRemote = useRemote(() => api<LinkageTodos>('/dashboard/linkage-todos'), [], true)
   const importInput = useRef<HTMLInputElement>(null)
   const [importing, setImporting] = useState(false)
   const [importError, setImportError] = useState('')
@@ -52,6 +65,13 @@ export function DashboardPage() {
     { label: '等待超时', items: data.alerts.waitingTimeout, hint: (t: Ticket) => `等待${t.status === 'WAITING_CUSTOMER' ? '客户' : '研发'} · ${formatDate(t.updatedAt)}` },
   ]
   const hasAlerts = alertGroups.some((group) => group.items.length > 0)
+  const linkage = linkageRemote.data
+  const linkageGroups: Array<{ label: string; rows: LinkageTodoRow[]; total: number }> = linkage ? [
+    { label: '待完善借测信息', total: linkage.infoIncomplete.total, rows: linkage.infoIncomplete.items.map((item) => ({ key: item.loanId, kind: 'loan', to: `/loans/${item.loanId}`, no: item.loanNo, title: item.title, ticketNumber: item.ticketNumber, hint: `已等待 ${item.pendingHours} 小时` })) },
+    { label: '待评分', total: linkage.toScore.total, rows: linkage.toScore.items.map((item) => ({ key: item.loanId, kind: 'loan', to: `/loans/${item.loanId}`, no: item.loanNo, title: item.title, ticketNumber: item.ticketNumber, hint: `已等待 ${item.pendingHours} 小时` })) },
+    { label: '维修超时未跟进', total: linkage.repairsStalled.total, rows: linkage.repairsStalled.items.map((item) => ({ key: item.repairId, kind: 'repair', to: `/repairs/${item.repairId}`, no: item.repairNo, title: item.title, ticketNumber: item.ticketNumber, hint: `停滞 ${item.stalledHours} 小时` })) },
+    { label: '借测逾期', total: linkage.loansOverdue.total, rows: linkage.loansOverdue.items.map((item) => ({ key: item.loanId, kind: 'loan', to: `/loans/${item.loanId}`, no: item.loanNo, title: item.title, ticketNumber: item.ticketNumber, hint: `逾期 ${item.overdueDays} 天` })) },
+  ] : []
   return <div className="page-stack dashboard-page">
     <header className="page-header"><div><span className="eyebrow">TODAY</span><h1>今日工作台</h1></div><div className="header-actions"><a className="button" href="/api/tickets/import-template" download><FileDown size={16} />导出模版</a><button className="button" disabled={importing} onClick={() => importInput.current?.click()}><FileUp size={16} />{importing ? '导入中' : '批量导入工单'}</button><button className="button" onClick={() => void remote.refresh()}><RefreshCw size={16} />刷新</button><button className="button primary" onClick={() => navigate('/tickets?create=1')}><Plus size={16} />新建工单</button></div>
       <input ref={importInput} type="file" accept=".xlsx" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) void runImport(file); event.target.value = '' }} /></header>
@@ -63,6 +83,21 @@ export function DashboardPage() {
       <section className="workspace-section"><div className="section-heading"><h2>需要关注</h2></div>
         {!hasAlerts && <Empty text="没有停滞、计划逾期或等待超时的工单" />}
         {alertGroups.filter((group) => group.items.length > 0).map((group) => <div className="alert-group" key={group.label}><h3>{group.label}<span>{group.items.length}</span></h3><TicketRows tickets={group.items} hint={group.hint} /></div>)}
+      </section>
+      <section className="workspace-section"><div className="section-heading"><h2>联动待办</h2><p>工单与借测 / 维修的联动事项</p></div>
+        {linkageRemote.error && !linkage && <div role="alert" className="form-error">{linkageRemote.error}<button onClick={() => void linkageRemote.refresh()}>重试</button></div>}
+        {!linkage && !linkageRemote.error && <Empty text="正在加载联动待办…" />}
+        {linkage && <div className="linkage-todos">{linkageGroups.map((group) => <div className="linkage-todo-group" key={group.label}>
+          <h3>{group.label}<span className="count-badge">{group.total}</span></h3>
+          {group.rows.length === 0 && <p className="linkage-todo-empty">无</p>}
+          {group.rows.map((row) => <div className="linkage-todo-row" key={row.key}>
+            <span className={`badge linkage-kind-${row.kind}`}>{row.kind === 'loan' ? '借测' : '维修'}</span>
+            <Link className="mono" to={row.to} title={row.no}>{row.no}</Link>
+            <div><strong>{row.title}</strong><small>{row.ticketNumber ? `工单 ${row.ticketNumber}` : '未关联工单'}</small></div>
+            <span className="linkage-todo-hint">{row.hint}</span>
+          </div>)}
+          {group.total > group.rows.length && <p className="linkage-todo-more">共 {group.total} 条</p>}
+        </div>)}</div>}
       </section>
     </main><aside className="workbench-aside"><QuickTicketInput />
       <section className="workspace-section"><div className="section-heading"><h2>今日工作记录</h2><Link to="/worklogs">全部记录<ArrowRight size={15} /></Link></div><div className="today-timeline">{data.todayWorklogs.map((log) => <button key={log.id} onClick={() => navigate('/worklogs')}><time>{new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit' }).format(new Date(log.occurredAt))}</time><i /><div><span>{log.workType.label}</span><strong>{log.summary}</strong>{(log.result || log.organization?.name) && <p>{[log.organization?.name, log.result].filter(Boolean).join(' · ')}</p>}</div></button>)}{!data.todayWorklogs.length && <Empty text="今天还没有确认记录" />}</div></section>

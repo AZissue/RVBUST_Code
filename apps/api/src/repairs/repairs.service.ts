@@ -21,7 +21,6 @@ const repairInclude = {
   contact: { select: { id: true, name: true, phone: true } },
   assignee: { select: { id: true, name: true } },
   ticket: { select: { id: true, number: true, title: true } },
-  resolution: true,
   followUps: { include: { author: { select: { id: true, name: true } } }, orderBy: { occurredAt: 'desc' as const } },
 } as const;
 

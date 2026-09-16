@@ -2,11 +2,28 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { LoanStatus, RepairStatus, TicketStatus, WorkItemStatus, WorklogStatus } from '@prisma/client';
 import { AccessPolicyService } from '../auth/access-policy.service.js';
 import type { AuthUser } from '../auth/auth.types.js';
+import { LinkageConfigService } from '../linkage/linkage-config.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+
+// 进行中的单据状态集合（与 linkage / tickets 模块保持一致）
+const ACTIVE_LOAN_STATUSES: LoanStatus[] = [LoanStatus.QUEUED, LoanStatus.ONGOING, LoanStatus.OVERDUE];
+const ACTIVE_REPAIR_STATUSES: RepairStatus[] = [RepairStatus.RECEIVED, RepairStatus.DIAGNOSING, RepairStatus.REPAIRING, RepairStatus.SHIPPED];
+
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
+
+const loanTodoSelect = {
+  id: true, loanNo: true, ticketId: true, createdAt: true, dueAt: true,
+  ticket: { select: { id: true, number: true, title: true } },
+} as const;
 
 @Injectable()
 export class DashboardService {
-  constructor(private readonly prisma: PrismaService, private readonly access: AccessPolicyService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly access: AccessPolicyService,
+    private readonly linkageConfig: LinkageConfigService,
+  ) {}
 
   async summary(user: AuthUser) {
     const mine = { deletedAt: null, AND: [this.access.ticketWhere(user), { assigneeId: user.id }] };
@@ -60,6 +77,90 @@ export class DashboardService {
       select: { id: true, number: true, title: true, status: true, category: true, createdAt: true, resolvedAt: true, organization: { select: { id: true, name: true } } },
       orderBy: [{ createdAt: 'desc' }],
     });
+  }
+
+  /** 联动待办：当前用户相关的借测/维修联动四类待办（每组最多 5 条 + 总数） */
+  async linkageTodos(user: AuthUser) {
+    this.access.requireInternal(user);
+    const cfg = await this.linkageConfig.getAll();
+    const now = Date.now();
+    // 借测三组待办归属：工单负责人或借测单创建人
+    const loanOwnership = { OR: [{ ticket: { is: { assigneeId: user.id } } }, { createdById: user.id }] };
+    // 维修停滞：最新 RepairEvent / FollowUp / 建单时间均早于超时阈值（无任何动态时以建单时间计）
+    const stalledBefore = new Date(now - cfg.repairFollowupTimeoutHours * HOUR_MS);
+    const stalledOwnership = { OR: [{ assigneeId: user.id }, ...(user.role === 'admin' ? [{ assigneeId: null }] : [])] };
+    const stalledWhere = {
+      status: { in: ACTIVE_REPAIR_STATUSES }, deletedAt: null, ...stalledOwnership,
+      createdAt: { lt: stalledBefore },
+      events: { none: { createdAt: { gte: stalledBefore } } },
+      followUps: { none: { createdAt: { gte: stalledBefore } } },
+    };
+    const [infoItems, infoTotal, scoreItems, scoreTotal, stalledItems, stalledTotal, overdueItems, overdueTotal] = await Promise.all([
+      this.prisma.loanOrder.findMany({
+        where: { status: LoanStatus.QUEUED, infoComplete: false, deletedAt: null, ...loanOwnership },
+        select: loanTodoSelect, orderBy: { createdAt: 'desc' }, take: 5,
+      }),
+      this.prisma.loanOrder.count({ where: { status: LoanStatus.QUEUED, infoComplete: false, deletedAt: null, ...loanOwnership } }),
+      this.prisma.loanOrder.findMany({
+        where: { status: LoanStatus.QUEUED, infoComplete: true, score: null, deletedAt: null, ...loanOwnership },
+        select: loanTodoSelect, orderBy: { createdAt: 'desc' }, take: 5,
+      }),
+      this.prisma.loanOrder.count({ where: { status: LoanStatus.QUEUED, infoComplete: true, score: null, deletedAt: null, ...loanOwnership } }),
+      this.prisma.repairOrder.findMany({
+        where: stalledWhere,
+        select: {
+          id: true, repairNo: true, ticketId: true, createdAt: true,
+          events: { select: { createdAt: true }, orderBy: { createdAt: 'desc' }, take: 1 },
+          followUps: { select: { createdAt: true }, orderBy: { createdAt: 'desc' }, take: 1 },
+          ticket: { select: { id: true, number: true, title: true } },
+        },
+        orderBy: { createdAt: 'desc' }, take: 5,
+      }),
+      this.prisma.repairOrder.count({ where: stalledWhere }),
+      this.prisma.loanOrder.findMany({
+        where: { status: LoanStatus.OVERDUE, deletedAt: null, ...loanOwnership },
+        select: loanTodoSelect, orderBy: { createdAt: 'desc' }, take: 5,
+      }),
+      this.prisma.loanOrder.count({ where: { status: LoanStatus.OVERDUE, deletedAt: null, ...loanOwnership } }),
+    ]);
+    const loanTodo = (loan: (typeof infoItems)[number], pendingHours: number) => ({
+      loanId: loan.id, loanNo: loan.loanNo, ticketId: loan.ticketId,
+      ticketNumber: loan.ticket?.number ?? '', title: loan.ticket?.title ?? '',
+      pendingHours,
+    });
+    return {
+      infoIncomplete: {
+        total: infoTotal,
+        items: infoItems.map((loan) => loanTodo(loan, Math.floor((now - loan.createdAt.getTime()) / HOUR_MS))),
+      },
+      toScore: {
+        total: scoreTotal,
+        items: scoreItems.map((loan) => loanTodo(loan, Math.floor((now - loan.createdAt.getTime()) / HOUR_MS))),
+      },
+      repairsStalled: {
+        total: stalledTotal,
+        items: stalledItems.map((repair) => {
+          const lastActivity = Math.max(
+            repair.createdAt.getTime(),
+            repair.events[0]?.createdAt.getTime() ?? 0,
+            repair.followUps[0]?.createdAt.getTime() ?? 0,
+          );
+          return {
+            repairId: repair.id, repairNo: repair.repairNo, ticketId: repair.ticketId,
+            ticketNumber: repair.ticket?.number ?? '', title: repair.ticket?.title ?? '',
+            stalledHours: Math.floor((now - lastActivity) / HOUR_MS),
+          };
+        }),
+      },
+      loansOverdue: {
+        total: overdueTotal,
+        items: overdueItems.map((loan) => ({
+          loanId: loan.id, loanNo: loan.loanNo, ticketId: loan.ticketId,
+          ticketNumber: loan.ticket?.number ?? '', title: loan.ticket?.title ?? '',
+          overdueDays: Math.floor((now - (loan.dueAt ?? loan.createdAt).getTime()) / DAY_MS),
+        })),
+      },
+    };
   }
 
   async reports(user: AuthUser) {
