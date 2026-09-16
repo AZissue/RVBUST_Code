@@ -5,7 +5,7 @@ import { Modal } from '../components/Modal'
 import { useRemote } from '../hooks/useRemote'
 import { api, formatDate } from '../lib/api'
 import { deviceHealthLabels, deviceOwnerLabel, deviceStatusLabels, deviceStatusLabelByOwner, loanStatusLabels } from '../lib/labels'
-import type { Customer, Device, DeviceOwnerType, DeviceStatus, LoanStatus } from '../types'
+import type { Customer, Device, DeviceOwnerType, DeviceStatus, LoanStatus, RepairStatus } from '../types'
 import { Empty, PageError, PageLoading } from './DashboardPage'
 import './device-flow.css'
 
@@ -39,48 +39,51 @@ type Dashboard = {
   counts: Record<string, number>
   modelRank: { model: string; count: number }[]
   averageDays: number | null
-  recent: FlowRow[]
+  recent: RecentRow[]
   month: string
   asOf: string
 }
-type FlowRow = {
+type RecentRow =
+  | { kind: 'loan'; at: string | null; id: string; loanNo: string; organization: { name: string }; items: { device: { serialNumber: string | null; cameraModel: string | null; name: string } }[]; status: LoanStatus; effectiveStatus: LoanStatus; overdueDays: number }
+  | { kind: 'repair'; at: string | null; id: string; no: string; status: RepairStatus; organization: { name: string }; model: string | null; sn: string | null }
+type AttentionRow = {
   id: string
   loanNo: string
   organization: { name: string }
-  contact: { name: string; phone?: string } | null
-  assignee: { name: string } | null
   items: { device: { serialNumber: string | null; cameraModel: string | null; name: string } }[]
-  followUps: { content: string; occurredAt: string; author: { name: string } }[]
-  loanedAt: string | null
   dueAt: string | null
-  status: LoanStatus
   effectiveStatus: LoanStatus
   overdueDays: number
-  outboundCarrier: string | null
-  outboundTracking: string | null
 }
-type Result = { items: FlowRow[]; total: number }
+const REPAIR_STATUS_LABELS: Record<RepairStatus, string> = { RECEIVED: '维修中', DIAGNOSING: '维修中', REPAIRING: '维修中', SHIPPED: '已寄回', CLOSED: '已关闭' }
 
-const date = (value: string | null | undefined) => value?.slice(0, 10) || '—'
-const EFFECTIVE_LABELS: Record<string, string> = { ...loanStatusLabels, ONGOING: '借测中' }
-function FlowBadge({ row }: { row: FlowRow }) {
-  return <span className={`badge flow-status flow-status-${row.effectiveStatus.toLowerCase()}`}>{EFFECTIVE_LABELS[row.effectiveStatus] || row.effectiveStatus}{row.overdueDays > 0 ? ` ${row.overdueDays} 天` : ''}</span>
+const datetime = (value: string | null | undefined) => {
+  if (!value) return '—'
+  const parsed = new Date(value)
+  return Number.isNaN(+parsed) ? '—' : `${parsed.getFullYear()}/${parsed.getMonth() + 1}/${parsed.getDate()} ${String(parsed.getHours()).padStart(2, '0')}:${String(parsed.getMinutes()).padStart(2, '0')}:${String(parsed.getSeconds()).padStart(2, '0')}`
 }
 
-const TODO_TABS: [string, string][] = [['overdue', '已逾期'], ['due', '7天内到期'], ['stale', '久未跟进']]
+function LoanBadge({ status, overdueDays }: { status: LoanStatus; overdueDays: number }) {
+  const label = loanStatusLabels[status] || (status === 'ONGOING' ? '借测中' : status)
+  return <span className={`badge flow-status flow-status-${status.toLowerCase()}`}>{label}{overdueDays > 0 ? ` ${overdueDays} 天` : ''}</span>
+}
+function RecentStatus({ row }: { row: RecentRow }) {
+  if (row.kind === 'loan') return <LoanBadge status={row.effectiveStatus} overdueDays={row.overdueDays} />
+  const cls = row.status === 'CLOSED' ? 'cancelled' : row.status === 'SHIPPED' ? 'returned' : 'ongoing'
+  return <span className={`badge flow-status flow-status-${cls}`}>{REPAIR_STATUS_LABELS[row.status]}</span>
+}
 
 export function DevicesPage() {
   const navigate = useNavigate()
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('')
   const [ownerType, setOwnerType] = useState('')
-  const [todoTab, setTodoTab] = useState('overdue')
   const [creating, setCreating] = useState(false)
   const [editing, setEditing] = useState<Device | null>(null)
   const [error, setError] = useState('')
   const remote = useRemote(() => api<Device[]>('/devices'), [], true)
   const dashboardRemote = useRemote(() => api<Dashboard>('/loans/dashboard'), [], true)
-  const todoRemote = useRemote(() => api<Result>(`/loans/list?status=${todoTab}&pageSize=8`), [todoTab], true)
+  const attentionRemote = useRemote(() => api<{ items: AttentionRow[] }>('/loans/list?status=attention&sort=due_soon&pageSize=8'), [], true)
   if (remote.loading || dashboardRemote.loading) return <PageLoading />
   if (remote.error) return <PageError message={remote.error} retry={remote.refresh} />
   if (dashboardRemote.error) return <PageError message={dashboardRemote.error} retry={dashboardRemote.refresh} />
@@ -98,57 +101,59 @@ export function DevicesPage() {
     if (next === 'RETIRED' && !window.confirm(`确认将「${item.name}」报废？报废后设备退出流转。`)) return
     setError(''); try { await api(`/devices/${item.id}/status`, { method: 'PATCH', body: JSON.stringify({ status: next }) }); await remote.refresh() } catch (reason) { setError(reason instanceof Error ? reason.message : '状态流转失败') }
   }
-  const metrics: [string, string, string][] = [
-    ['monthLoan', '本月借出', `month=${data.month}`],
-    ['monthRepair', '本月维修', ''],
-    ['active', '当前借测中', 'status=active'],
-    ['due', '7天内到期', 'status=due'],
+  const metrics: [string, string, string, string][] = [
+    ['monthLoan', '本月借出', '按借出日期统计', `month=${data.month}`],
+    ['monthRepair', '本月维修', '按收货日期统计', ''],
+    ['active', '当前借测中', '当前未归还设备', 'status=active'],
+    ['due', '7天内到期', '含今天到期', 'status=due'],
   ]
+  const recent = [...data.recent].sort((a, b) => +new Date(b.at ?? 0) - +new Date(a.at ?? 0)).slice(0, 6)
   return <div className="page-stack prototype-overview">
     <header className="page-header"><div><span className="eyebrow">DEVICE OVERVIEW</span><h1>设备总览</h1><span className="muted">截至 {data.asOf}</span></div>
       <div className="header-actions"><Link className="button" to="/loans">借测记录<ArrowRight size={16} /></Link><button className="button primary" onClick={() => setCreating(true)}><Plus size={16} />新增设备</button></div></header>
     {error && <div className="form-error"><button onClick={() => setError('')}><X size={14} /></button>{error}</div>}
     <div className="flow-metrics">
-      {metrics.map(([key, label, query]) => <Link key={key} to={key === 'monthRepair' ? '/repairs' : `/loans?${query}`} className="flow-metric"><span>{label}</span><strong>{data.counts[key] ?? 0}</strong></Link>)}
+      {metrics.map(([key, label, caption, query]) => <Link key={key} to={key === 'monthRepair' ? '/repairs' : `/loans?${query}`} className="flow-metric"><span>{label}</span><strong>{data.counts[key] ?? 0}</strong><small>{caption}</small></Link>)}
     </div>
     <div className="prototype-dashboard-main">
-      <section>
-        <div className="page-header"><h2>借测待办</h2><Link to={`/loans?status=${todoTab}`}>查看全部</Link></div>
-        <div className="prototype-tabs">
-          {TODO_TABS.map(([key, label]) => <button key={key} className={todoTab === key ? 'active' : ''} onClick={() => setTodoTab(key)}>{label}<span>{data.counts[key] ?? 0}</span></button>)}
-        </div>
-        <div className="prototype-attention">
-          {todoRemote.loading ? <PageLoading /> : todoRemote.error ? <PageError message={todoRemote.error} retry={todoRemote.refresh} /> : todoRemote.data?.items.map((row) => <button key={row.id} className="prototype-attention-row" onClick={() => navigate(`/loans?status=${todoTab}`)}>
-            <div><strong>{row.organization.name}</strong><div>{row.items[0]?.device.cameraModel || '未登记型号'} · {row.items.map((item) => item.device.serialNumber || item.device.name).join(' / ') || '未关联设备'}</div><small>应还 {date(row.dueAt)}</small></div>
-            <FlowBadge row={row} />
-          </button>)}
-          {!todoRemote.loading && !todoRemote.data?.items.length && <div className="empty-compact">暂无待办</div>}
+      <section className="panel">
+        <div className="section-heading"><div><h2>需要关注</h2><p>优先显示逾期和 7 天内即将到期的借测设备</p></div><Link to="/loans?status=overdue">查看全部</Link></div>
+        <div className="attention-list">
+          {attentionRemote.loading ? <PageLoading /> : attentionRemote.error ? <PageError message={attentionRemote.error} retry={attentionRemote.refresh} /> : attentionRemote.data?.items.map((row) => {
+            const sn = row.items.map((item) => item.device.serialNumber || item.device.name).join(' / ')
+            const model = row.items[0]?.device.cameraModel || '未登记型号'
+            return <button key={row.id} className={`attention-card ${row.effectiveStatus === 'OVERDUE' ? 'attention-overdue' : ''}`} onClick={() => navigate(`/loans/${row.id}`)}>
+              <div><strong>{row.organization.name} · {model}</strong><small>SN: {sn || '未关联设备'} · {row.loanNo}</small></div>
+              <LoanBadge status={row.effectiveStatus} overdueDays={row.overdueDays} />
+            </button>
+          })}
+          {!attentionRemote.loading && !attentionRemote.data?.items.length && <div className="empty-compact">暂无逾期或临期借测</div>}
         </div>
       </section>
       <aside className="prototype-operations">
-        <section><h2>本月运营统计</h2><div className="prototype-ops-grid">
-          <div><span>本月归还</span><strong>{data.counts.monthReturned ?? 0}</strong></div>
-          <div><span>平均借测天数</span><strong>{data.averageDays ?? '—'}</strong></div>
-          <div><span>当前逾期</span><strong>{data.counts.overdue ?? 0}</strong></div>
-          <div><span>借测最多型号</span><strong>{data.modelRank[0]?.model || '—'}</strong></div>
+        <section className="panel"><div className="section-heading"><div><h2>本月运营统计</h2></div></div><div className="prototype-ops-grid">
+          <div className="ops-card"><span>本月归还</span><strong>{data.counts.monthReturned ?? 0}</strong></div>
+          <div className="ops-card"><span>平均借测天数</span><strong>{data.averageDays != null ? `${data.averageDays} 天` : '—'}</strong></div>
+          <div className="ops-card"><span>当前逾期</span><strong>{data.counts.overdue ?? 0}</strong></div>
+          <div className="ops-card"><span>借测最多型号</span><strong>{data.modelRank[0]?.model || '—'}</strong></div>
         </div></section>
-        <section><h2>本月借测型号分布</h2>
-          {data.modelRank.map((rank) => <div className="prototype-rank" key={rank.model}><span>{rank.model}</span><meter min={0} max={data.modelRank[0]?.count || 1} value={rank.count} /><b>{rank.count}</b></div>)}
+        <section className="panel"><div className="section-heading"><div><h2>本月借测型号分布</h2></div></div>
+          {data.modelRank.map((rank) => <div className="prototype-rank" key={rank.model}><span>{rank.model}</span><div className="rank-track"><div className="rank-fill" style={{ width: `${Math.round((rank.count / (data.modelRank[0]?.count || 1)) * 100)}%` }} /></div><b>{rank.count} 台</b></div>)}
           {!data.modelRank.length && <div className="empty-compact">本月暂无借测</div>}
         </section>
       </aside>
     </div>
-    <section>
-      <div className="page-header"><h2>最近流转</h2></div>
-      <div className="table-wrap flow-table"><table><thead><tr><th>工单</th><th>设备</th><th>客户</th><th>物流</th><th>状态</th><th>操作</th></tr></thead><tbody>
-        {(data.recent).map((row) => <tr key={row.id} className={row.effectiveStatus === 'OVERDUE' ? 'flow-overdue-row' : ''}>
-          <td><strong>{row.loanNo}</strong><div className="muted">借出 {date(row.loanedAt)}</div><div className="muted">应还 {date(row.dueAt)}</div></td>
-          <td className="flow-sn"><strong>{row.items[0]?.device.cameraModel || '—'}</strong>{row.items.map((item, index) => <div key={index}>{item.device.serialNumber || item.device.name}</div>)}</td>
-          <td><strong>{row.organization.name}</strong><div className="muted">工程师：{row.assignee?.name ?? '未指派'}</div></td>
-          <td><div>寄出：{[row.outboundCarrier, row.outboundTracking].filter(Boolean).join(' ') || '—'}</div></td>
-          <td><FlowBadge row={row} /></td>
-          <td><button className="button small" onClick={() => navigate('/loans')}>详情</button></td>
+    <section className="panel">
+      <div className="section-heading"><div><h2>最近流转</h2></div></div>
+      <div className="table-wrap"><table className="recent-table"><thead><tr><th>类型</th><th>客户</th><th>设备</th><th>状态</th><th>时间</th></tr></thead><tbody>
+        {recent.map((row) => <tr key={`${row.kind}-${row.id}`}>
+          <td><strong>{row.kind === 'loan' ? '借测' : '维修'}</strong><div className="muted mono">{row.kind === 'loan' ? row.loanNo : row.no}</div></td>
+          <td>{row.organization.name}</td>
+          <td className="flow-sn">{row.kind === 'loan' ? <><strong>{row.items[0]?.device.cameraModel || '—'}</strong>{row.items.map((item, index) => <div key={index}>{item.device.serialNumber || item.device.name}</div>)}</> : <><strong>{row.model || '—'}</strong><div>{row.sn || '—'}</div></>}</td>
+          <td><RecentStatus row={row} /></td>
+          <td className="muted nowrap">{datetime(row.at)}</td>
         </tr>)}
+        {!recent.length && <tr><td colSpan={5}><Empty text="暂无流转记录" /></td></tr>}
       </tbody></table></div>
     </section>
     {/* 设备台账：KPI 全部为设备表筛选卡，点击即过滤下方列表 */}

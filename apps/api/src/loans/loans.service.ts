@@ -94,6 +94,7 @@ export class LoansService {
       case 'ongoing': and.push({ status: { in: ACTIVE_STATUSES }, OR: [{ dueAt: null }, { dueAt: { gte: today } }] }); break;
       case 'overdue': and.push({ status: { in: ACTIVE_STATUSES }, dueAt: { lt: today } }); break;
       case 'due': and.push({ status: { in: ACTIVE_STATUSES }, dueAt: { gte: today, lte: weekEnd } }); break;
+      case 'attention': and.push({ status: { in: ACTIVE_STATUSES }, dueAt: { lte: weekEnd } }); break;
       case 'active': and.push({ status: { in: ACTIVE_STATUSES } }); break;
       case 'stale': {
         // 久未跟进：进行中超 14 天无跟进记录
@@ -186,11 +187,27 @@ export class LoansService {
       orderBy: [{ loanedAt: { sort: 'desc', nulls: 'last' } }, { updatedAt: 'desc' }],
       take: 6,
     });
+    const recentRepairs = await this.prisma.repairOrder.findMany({
+      where: { deletedAt: null, ...(user.role === 'employee' ? { OR: [{ createdById: user.id }, { assigneeId: user.id }] } : {}) },
+      select: {
+        id: true, repairNo: true, status: true, createdAt: true, serialNumber: true,
+        organization: { select: { name: true } },
+        device: { select: { cameraModel: true, serialNumber: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 3,
+    });
     return {
       counts: { monthLoan, monthRepair, monthReturned, active, overdue, due, stale, queued },
       modelRank,
       averageDays: durations.length ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length) : null,
-      recent: recentRows.map((row) => ({ ...row, ...this.decorate(row) })),
+      recent: [
+        ...recentRows.map((row) => ({ kind: 'loan' as const, at: row.loanedAt ?? row.updatedAt, ...row, ...this.decorate(row) })),
+        ...recentRepairs.map((row) => ({
+          kind: 'repair' as const, at: row.createdAt, id: row.id, no: row.repairNo, status: row.status,
+          organization: row.organization, model: row.device?.cameraModel ?? null, sn: row.serialNumber ?? row.device?.serialNumber ?? null,
+        })),
+      ],
       attention: (await this.listPage(user, { status: 'overdue', pageSize: '20' })).items.slice(0, 8),
       month, asOf: today.toISOString().slice(0, 10),
     };

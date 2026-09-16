@@ -22,6 +22,10 @@
 .flow-metric strong {
   font-size: 28px;
 }
+.flow-metric small {
+  color: var(--muted);
+  font-size: 12px;
+}
 .flow-alert strong {
   color: var(--brand);
 }
@@ -354,57 +358,47 @@
 .prototype-dashboard-main h2 {
   font-size: 16px;
 }
-.prototype-tabs {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin: 12px 0;
-}
-.prototype-tabs button {
-  border: 1px solid var(--border-strong);
-  border-radius: 7px;
-  background: var(--surface);
-  color: var(--text);
-  padding: 8px 12px;
-  cursor: pointer;
-  font-weight: 650;
-}
-.prototype-tabs button.active {
-  background: var(--text);
-  color: var(--surface);
-  border-color: var(--text);
-}
 .prototype-attention {
   max-height: 430px;
   overflow: auto;
 }
-.prototype-attention-row {
+/* 需要关注：卡片式列表行，逾期整卡标红 */
+.attention-list {
+  display: grid;
+  gap: 10px;
+}
+.attention-card {
   display: flex;
   justify-content: space-between;
   gap: 12px;
   align-items: center;
   width: 100%;
+  padding: 13px 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
   color: inherit;
-  text-decoration: none;
-  padding: 14px 0;
-  border-bottom: 1px solid var(--border);
-  background: transparent;
-  border-left: 0;
-  border-right: 0;
-  border-top: 0;
   cursor: pointer;
   text-align: left;
   font: inherit;
+  transition: border-color .15s ease, background .15s ease;
 }
-.prototype-attention-row:hover {
+.attention-card:hover {
+  border-color: var(--border-strong);
   background: var(--surface-2);
 }
-.prototype-attention-row small {
-  color: var(--muted);
-}
-.prototype-attention-row > div {
+.attention-card > div {
   min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+.attention-card small {
+  color: var(--muted);
   overflow-wrap: anywhere;
+}
+.attention-card.attention-overdue {
+  background: color-mix(in srgb, var(--brand) 7%, transparent);
+  border-color: color-mix(in srgb, var(--brand) 22%, transparent);
 }
 .prototype-operations {
   display: flex;
@@ -414,11 +408,17 @@
 .prototype-ops-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 20px;
+  gap: 12px;
 }
 .prototype-ops-grid > div {
   display: grid;
   gap: 6px;
+}
+.prototype-ops-grid .ops-card {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
 }
 .prototype-ops-grid span {
   font-size: 12px;
@@ -430,13 +430,21 @@
 }
 .prototype-rank {
   display: grid;
-  grid-template-columns: 90px minmax(0, 1fr) 30px;
+  grid-template-columns: 90px minmax(0, 1fr) 44px;
   align-items: center;
   gap: 8px;
   margin: 12px 0;
 }
-.prototype-rank meter {
-  width: 100%;
+.rank-track {
+  height: 10px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.rank-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--text);
 }
 @media (max-width: 900px) {
   .prototype-dashboard-main {
