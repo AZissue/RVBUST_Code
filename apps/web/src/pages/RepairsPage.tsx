@@ -2,7 +2,7 @@ import { Download, FileText, Plus, RefreshCw, Search, Upload, X } from 'lucide-r
 import { AttachmentPreview } from '../components/AttachmentPreview'
 import { RepairStatusEditor } from '../components/RepairStatusEditor'
 import { useAuth } from '../context/AuthContext'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams, Link } from 'react-router-dom'
 import { useRef, useState, type FormEvent } from 'react'
 import { ReturnRepairForm, downloadRepairPdf } from '../components/ReturnRepairForm'
 import { Modal } from '../components/Modal'
@@ -28,7 +28,6 @@ const nextStep: Partial<Record<RepairStatus, { status: RepairStatus; label: stri
 export function RepairsPage() {
   const [params] = useSearchParams()
   const [status, setStatus] = useState(() => params.get('active') === '1' ? 'ACTIVE' : '')
-  const [creating, setCreating] = useState(false)
   const [detailId, setDetailId] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [appliedSearch, setAppliedSearch] = useState('')
@@ -43,7 +42,7 @@ export function RepairsPage() {
     return haystack.includes(appliedSearch.trim().toLowerCase())
   })
   return <div className="page-stack">
-    <header className="page-header"><div><span className="eyebrow">REPAIR ORDERS</span><h1>维修管理</h1><p>从收货、检测、维修到寄回关闭的完整返修流水。</p></div><div className="header-actions"><a className="button" href="/api/repairs/export" download><Download size={16} />导出数据</a><button className="button primary" onClick={() => setCreating(true)}><Plus size={16} />新建返厂单</button></div></header>
+    <header className="page-header"><div><span className="eyebrow">REPAIR ORDERS</span><h1>维修管理</h1><p>从收货、检测、维修到寄回关闭的完整返修流水。</p></div><div className="header-actions"><a className="button" href="/api/repairs/export" download><Download size={16} />导出数据</a><Link className="button primary" to="/repairs/new"><Plus size={16} />新建返厂单</Link></div></header>
     <form className="flow-toolbar" onSubmit={(event) => { event.preventDefault(); setAppliedSearch(search) }}>
       <label className="flow-search"><Search size={16} /><input aria-label="搜索返修单" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="单号、客户、SN、型号或物流单号" /></label>
       <button className="button" type="submit">查询</button>
@@ -60,7 +59,6 @@ export function RepairsPage() {
       <td><span className={`badge flow-status flow-status-${STATUS_CLASS[repair.status]}`}>{repairStatusLabels[repair.status]}</span></td>
       <td><button className="button small" onClick={() => setDetailId(repair.id)}>详情</button></td>
     </tr>)}</tbody></table>{!repairs.length && <Empty text="暂无返修单" />}</div></section>
-    {creating && <ReturnRepairForm onClose={() => setCreating(false)} onSaved={async () => { setCreating(false); await remote.refresh() }} />}
     {detailId && <RepairDetailDrawer id={detailId} onClose={() => setDetailId(null)} onChanged={remote.refresh} />}
   </div>
 }

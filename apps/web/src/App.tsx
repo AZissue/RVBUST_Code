@@ -14,6 +14,7 @@ import { LoanFormPage } from './pages/LoanFormPage'
 import { LoginPage } from './pages/LoginPage'
 import { RegisterPage } from './pages/RegisterPage'
 import { RepairsPage } from './pages/RepairsPage'
+import { RepairFormPage } from './pages/RepairFormPage'
 import { ReportsPage } from './pages/ReportsPage'
 import { ReportCalendarPage } from './pages/ReportCalendarPage'
 import { SettingsPage, TeamsPage } from './pages/SystemPages'
@@ -51,6 +52,7 @@ export default function App() {
       <Route path="loans/new" element={<LoanFormPage />} />
       <Route path="loans/:id" element={<LoanDetailPage />} />
       <Route path="repairs" element={<RepairsPage />} />
+      <Route path="repairs/new" element={<RepairFormPage />} />
       <Route path="worklogs" element={<WorklogsPage />} />
       <Route path="reports" element={<ReportCalendarPage />} />
       <Route path="stats" element={<ReportsPage />} />
