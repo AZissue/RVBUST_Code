@@ -5,20 +5,27 @@ import type { AuthUser } from '../auth/auth.types.js';
 import { CurrentUser } from '../auth/current-user.decorator.js';
 import { Roles } from '../auth/roles.decorator.js';
 import { AddFollowUpDto, AdvanceLoanDto, AssignLoanDto, CreateLoanDto, ReturnLoanDto, ScoreLoanDto, ShipLoanDto, UpdateLoanDto } from './dto/loan.dto.js';
-import { LoansExcelService } from './loans-excel.service.js';
 import { LoansService } from './loans.service.js';
 
 @Roles('admin', 'support', 'employee')
 @Controller('loans')
 export class LoansController {
-  constructor(private readonly loans: LoansService, private readonly excel: LoansExcelService) {}
+  constructor(private readonly loans: LoansService) {}
 
   @Get() list(@CurrentUser() user: AuthUser, @Query('status') status?: LoanStatus, @Query('organizationId') organizationId?: string, @Query('assigneeId') assigneeId?: string, @Query('mine') mine?: string) {
     return this.loans.list(user, { status, organizationId, assigneeId, mine: mine === '1' });
   }
 
-  @Get('export') async export(@Res() response: Response) {
-    const buffer = await this.excel.buildExportBuffer();
+  @Get('list') listPage(@CurrentUser() user: AuthUser, @Query() query: Record<string, string>) {
+    return this.loans.listPage(user, query);
+  }
+
+  @Get('dashboard') dashboard(@CurrentUser() user: AuthUser) {
+    return this.loans.dashboard(user);
+  }
+
+  @Get('export') async export(@CurrentUser() user: AuthUser, @Query() query: Record<string, string>, @Res() response: Response) {
+    const buffer = await this.loans.buildExport(user, query);
     response.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     response.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent('借测记录导出.xlsx')}`);
     return response.send(buffer);

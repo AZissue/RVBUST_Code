@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { LoanStatus, type Prisma } from '@prisma/client';
+import ExcelJS from 'exceljs';
 import type { AuthUser } from '../auth/auth.types.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { NOTIFICATION_TYPES } from '../common/notification-types.js';
@@ -23,6 +24,23 @@ const QUEUE_ORDER_BY: Prisma.LoanOrderOrderByWithRelationInput[] = [
   { score: { sort: 'desc', nulls: 'last' } },
   { createdAt: 'asc' },
 ];
+
+const ACTIVE_STATUSES: LoanStatus[] = [LoanStatus.ONGOING, LoanStatus.OVERDUE];
+const dayMs = 86400000;
+
+/** 业务日（Asia/Shanghai 零点，UTC） */
+export function businessDay(now = new Date()) {
+  return new Date(now.toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' }) + 'T00:00:00Z');
+}
+
+function parseMonth(value: string) {
+  if (!/^\d{4}-\d{2}$/.test(value)) return null;
+  const [year, month] = value.split('-').map(Number);
+  if (month < 1 || month > 12) return null;
+  return { start: new Date(Date.UTC(year, month - 1, 1)), end: new Date(Date.UTC(year, month, 1)) };
+}
+
+const LOAN_STATUS_LABELS: Record<LoanStatus, string> = { QUEUED: '排队中', ONGOING: '借测中', OVERDUE: '已逾期', RETURNED: '已归还', CANCELLED: '已取消' };
 
 @Injectable()
 export class LoansService {
@@ -63,6 +81,180 @@ export class LoansService {
       orderBy: query.status === LoanStatus.QUEUED ? QUEUE_ORDER_BY : { updatedAt: 'desc' },
       take: 500,
     });
+  }
+
+  /** 列表筛选（搜索/状态/月份/回收站），供借测列表、总览统计与导出共用 */
+  private buildWhere(user: AuthUser, query: Record<string, string>): Prisma.LoanOrderWhereInput {
+    const today = businessDay(), weekEnd = new Date(+today + 7 * dayMs);
+    const and: Prisma.LoanOrderWhereInput[] = [this.scopeWhere(user)];
+    and.push(query.deleted === '1' ? { deletedAt: { not: null } } : { deletedAt: null });
+    if (query.mine === '1') and.push({ assigneeId: user.id });
+    switch (query.status) {
+      case 'queued': and.push({ status: LoanStatus.QUEUED }); break;
+      case 'ongoing': and.push({ status: { in: ACTIVE_STATUSES }, OR: [{ dueAt: null }, { dueAt: { gte: today } }] }); break;
+      case 'overdue': and.push({ status: { in: ACTIVE_STATUSES }, dueAt: { lt: today } }); break;
+      case 'due': and.push({ status: { in: ACTIVE_STATUSES }, dueAt: { gte: today, lte: weekEnd } }); break;
+      case 'active': and.push({ status: { in: ACTIVE_STATUSES } }); break;
+      case 'stale': {
+        // 久未跟进：进行中超 14 天无跟进记录
+        const cutoff = new Date(+today - 14 * dayMs);
+        and.push({ status: { in: ACTIVE_STATUSES }, createdAt: { lt: cutoff }, followUps: { none: { occurredAt: { gte: cutoff } } } });
+        break;
+      }
+      case 'returned': and.push({ status: LoanStatus.RETURNED }); break;
+      case 'cancelled': and.push({ status: LoanStatus.CANCELLED }); break;
+    }
+    const month = parseMonth(query.month ?? '');
+    if (month) and.push(query.dateField === 'returned' ? { returnedAt: { gte: month.start, lt: month.end } } : { loanedAt: { gte: month.start, lt: month.end } });
+    const search = (query.search ?? '').trim();
+    if (search) and.push({ OR: [
+      { loanNo: { contains: search, mode: 'insensitive' } },
+      { organization: { name: { contains: search, mode: 'insensitive' } } },
+      { contact: { name: { contains: search, mode: 'insensitive' } } },
+      { contact: { phone: { contains: search, mode: 'insensitive' } } },
+      { purpose: { contains: search, mode: 'insensitive' } },
+      { note: { contains: search, mode: 'insensitive' } },
+      { agreementNo: { contains: search, mode: 'insensitive' } },
+      { outboundTracking: { contains: search, mode: 'insensitive' } },
+      { returnTracking: { contains: search, mode: 'insensitive' } },
+      { items: { some: { device: { OR: [
+        { serialNumber: { contains: search, mode: 'insensitive' } },
+        { cameraModel: { contains: search, mode: 'insensitive' } },
+        { name: { contains: search, mode: 'insensitive' } },
+      ] } } } },
+      { followUps: { some: { content: { contains: search, mode: 'insensitive' } } } },
+    ] });
+    return { AND: and };
+  }
+
+  /** 列表展示字段：逾期动态推导（预计归还日早于业务日即逾期，不落库） */
+  private decorate(row: { status: LoanStatus; dueAt: Date | null }) {
+    const daysUntilDue = row.dueAt ? Math.round((+new Date(row.dueAt) - +businessDay()) / dayMs) : null;
+    const active = ACTIVE_STATUSES.includes(row.status);
+    return {
+      daysUntilDue,
+      overdueDays: active && daysUntilDue !== null && daysUntilDue < 0 ? -daysUntilDue : 0,
+      effectiveStatus: active ? (daysUntilDue !== null && daysUntilDue < 0 ? LoanStatus.OVERDUE : LoanStatus.ONGOING) : row.status,
+    };
+  }
+
+  /** 借测列表（新版）：全文搜索 + 状态/月份筛选 + 排序 + 服务端分页 */
+  async listPage(user: AuthUser, query: Record<string, string>) {
+    this.requireInternal(user);
+    await this.fixOverdue();
+    const page = Math.max(1, parseInt(query.page ?? '', 10) || 1);
+    const pageSize = [20, 30, 50].includes(Number(query.pageSize)) ? Number(query.pageSize) : 20;
+    const where = this.buildWhere(user, query);
+    const orderBy: Prisma.LoanOrderOrderByWithRelationInput[] = query.status === 'queued' ? QUEUE_ORDER_BY
+      : query.sort === 'due_soon' ? [{ dueAt: { sort: 'asc', nulls: 'last' } }, { id: 'asc' }]
+        : [{ loanedAt: { sort: 'desc', nulls: 'last' } }, { updatedAt: 'desc' }, { id: 'asc' }];
+    const [total, items] = await this.prisma.$transaction([
+      this.prisma.loanOrder.count({ where }),
+      this.prisma.loanOrder.findMany({ where, orderBy, skip: (page - 1) * pageSize, take: pageSize, include: loanInclude }),
+    ]);
+    return { total, items: items.map((row) => ({ ...row, ...this.decorate(row) })), page, pageSize };
+  }
+
+  /** 设备总览：统计卡片、待办、型号分布、平均借测天数、最近流转 */
+  async dashboard(user: AuthUser) {
+    this.requireInternal(user);
+    await this.fixOverdue();
+    const today = businessDay(), month = today.toISOString().slice(0, 7);
+    const count = (q: Record<string, string>) => this.prisma.loanOrder.count({ where: this.buildWhere(user, q) });
+    const [monthLoan, monthReturned, active, overdue, due, stale, queued] = await Promise.all([
+      count({ month }), count({ month, dateField: 'returned', status: 'returned' }), count({ status: 'active' }),
+      count({ status: 'overdue' }), count({ status: 'due' }), count({ status: 'stale' }), count({ status: 'queued' }),
+    ]);
+    const monthRange = parseMonth(month)!;
+    const monthRepair = await this.prisma.repairOrder.count({
+      where: { deletedAt: null, receivedAt: { gte: monthRange.start, lt: monthRange.end }, ...(user.role === 'employee' ? { OR: [{ createdById: user.id }, { assigneeId: user.id }] } : {}) },
+    });
+    const monthly = await this.prisma.loanOrder.findMany({
+      where: this.buildWhere(user, { month }),
+      select: { loanedAt: true, returnedAt: true, items: { select: { device: { select: { cameraModel: true } } }, take: 1 } },
+    });
+    const ranks = new Map<string, number>();
+    for (const row of monthly) {
+      const model = row.items[0]?.device.cameraModel || '未登记型号';
+      ranks.set(model, (ranks.get(model) ?? 0) + 1);
+    }
+    const modelRank = [...ranks].map(([model, n]) => ({ model, count: n })).sort((a, b) => b.count - a.count).slice(0, 6);
+    const durations = monthly.filter((r) => r.loanedAt && r.returnedAt && r.returnedAt >= r.loanedAt).map((r) => Math.round((+r.returnedAt! - +r.loanedAt!) / dayMs));
+    const recentRows = await this.prisma.loanOrder.findMany({
+      where: this.buildWhere(user, {}),
+      include: loanInclude,
+      orderBy: [{ loanedAt: { sort: 'desc', nulls: 'last' } }, { updatedAt: 'desc' }],
+      take: 6,
+    });
+    return {
+      counts: { monthLoan, monthRepair, monthReturned, active, overdue, due, stale, queued },
+      modelRank,
+      averageDays: durations.length ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length) : null,
+      recent: recentRows.map((row) => ({ ...row, ...this.decorate(row) })),
+      attention: (await this.listPage(user, { status: 'overdue', pageSize: '20' })).items.slice(0, 8),
+      month, asOf: today.toISOString().slice(0, 10),
+    };
+  }
+
+  /** 导出 Excel（三工作表：借测明细 / 跟进记录 / 统计），遵循当前筛选 */
+  async buildExport(user: AuthUser, query: Record<string, string>) {
+    this.requireInternal(user);
+    await this.fixOverdue();
+    const where = this.buildWhere(user, query);
+    if (await this.prisma.loanOrder.count({ where }) > 10000) throw new BadRequestException('请缩小筛选范围至 10000 条以内');
+    const rows = await this.prisma.loanOrder.findMany({ where, include: loanInclude, orderBy: [{ loanedAt: { sort: 'desc', nulls: 'last' } }] });
+    const workbook = new ExcelJS.Workbook();
+    const day = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : '');
+    const sheet = workbook.addWorksheet('借测明细');
+    sheet.columns = [
+      { header: '借测单号', key: 'loanNo', width: 18 }, { header: '客户', key: 'customer', width: 28 },
+      { header: '联系人', key: 'contact', width: 12 }, { header: '联系电话', key: 'phone', width: 14 },
+      { header: '跟进工程师', key: 'assignee', width: 12 }, { header: '设备型号', key: 'model', width: 12 },
+      { header: '设备（SN）', key: 'devices', width: 36 }, { header: '借出日期', key: 'loanedAt', width: 12 },
+      { header: '预计归还', key: 'dueAt', width: 12 }, { header: '实际归还', key: 'returnedAt', width: 12 },
+      { header: '状态', key: 'status', width: 10 }, { header: '逾期天数', key: 'overdue', width: 10 },
+      { header: '寄出物流', key: 'outbound', width: 20 }, { header: '归还物流', key: 'inbound', width: 20 },
+      { header: '借测目的', key: 'purpose', width: 40 }, { header: '协议编号', key: 'agreementNo', width: 16 },
+      { header: '最后跟进日期', key: 'lastFollowAt', width: 14 }, { header: '最后跟进人', key: 'lastFollowBy', width: 12 },
+      { header: '最后跟进内容', key: 'lastFollow', width: 40 }, { header: '备注', key: 'note', width: 24 },
+    ];
+    const followSheet = workbook.addWorksheet('跟进记录');
+    followSheet.columns = [
+      { header: '借测单号', key: 'loanNo', width: 18 }, { header: '客户', key: 'customer', width: 28 },
+      { header: '跟进日期', key: 'date', width: 12 }, { header: '跟进人', key: 'by', width: 12 },
+      { header: '跟进内容', key: 'content', width: 60 },
+    ];
+    for (const row of rows) {
+      const d = this.decorate(row), last = row.followUps[0];
+      sheet.addRow({
+        loanNo: row.loanNo, customer: row.organization.name,
+        contact: row.contact?.name ?? '', phone: row.contact?.phone ?? '', assignee: row.assignee?.name ?? '',
+        model: row.items[0]?.device.cameraModel ?? '', devices: row.items.map((item) => item.device.serialNumber || item.device.name).join('，'),
+        loanedAt: day(row.loanedAt), dueAt: day(row.dueAt), returnedAt: day(row.returnedAt),
+        status: LOAN_STATUS_LABELS[d.effectiveStatus], overdue: d.overdueDays || '',
+        outbound: [row.outboundCarrier, row.outboundTracking].filter(Boolean).join(' '), inbound: [row.returnCarrier, row.returnTracking].filter(Boolean).join(' '),
+        purpose: row.purpose, agreementNo: row.agreementNo ?? '',
+        lastFollowAt: day(last?.occurredAt ?? null), lastFollowBy: last?.author.name ?? '', lastFollow: last?.content ?? '',
+        note: row.note ?? '',
+      });
+      for (const f of row.followUps) followSheet.addRow({ loanNo: row.loanNo, customer: row.organization.name, date: day(f.occurredAt), by: f.author.name, content: f.content });
+    }
+    const active = rows.filter((r) => ACTIVE_STATUSES.includes(r.status));
+    const stats = workbook.addWorksheet('统计');
+    stats.columns = [{ header: '指标', key: 'k', width: 22 }, { header: '数值', key: 'v', width: 26 }];
+    stats.addRows([
+      { k: '导出记录数', v: rows.length }, { k: '当前借测中', v: active.length },
+      { k: '已逾期', v: rows.filter((r) => this.decorate(r).overdueDays > 0).length },
+      { k: '7天内到期', v: active.filter((r) => { const n = this.decorate(r).daysUntilDue; return n !== null && n >= 0 && n <= 7; }).length },
+      { k: '已归还', v: rows.filter((r) => r.status === LoanStatus.RETURNED).length },
+      { k: '排队中', v: rows.filter((r) => r.status === LoanStatus.QUEUED).length },
+    ]);
+    for (const s of [sheet, followSheet, stats]) {
+      s.getRow(1).font = { bold: true };
+      s.views = [{ state: 'frozen', ySplit: 1 }];
+      s.autoFilter = { from: 'A1', to: { row: 1, column: s.columns.length } };
+    }
+    return Buffer.from(await workbook.xlsx.writeBuffer());
   }
 
   async get(user: AuthUser, id: string) {

@@ -1,7 +1,7 @@
-import { AlarmClock, CalendarClock, CheckCircle2, ChevronDown, ChevronRight, Download, FileClock, ListOrdered, MessageSquarePlus, Plus, Search, Share2, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, ChevronDown, ChevronRight, Download, Plus, RefreshCw, Search, X } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
 import { Fragment, useEffect, useState, type FormEvent } from 'react'
-import { useAuth } from '../context/AuthContext'
+import { LoanOverdueNotice } from '../components/LoanOverdueNotice'
 import { LoanPhotoPanel } from '../components/LoanPhotos'
 import { Modal } from '../components/Modal'
 import { useRemote } from '../hooks/useRemote'
@@ -9,6 +9,7 @@ import { api, formatDate } from '../lib/api'
 import { loanStatusLabels } from '../lib/labels'
 import type { Contact, Customer, Device, LoanOrder, LoanScoreRule, LoanStatus, User } from '../types'
 import { Empty, PageError, PageLoading } from './DashboardPage'
+import './device-flow.css'
 
 export { loanStatusLabels }
 export function LoanDueBadge({ days }: { days: number }) {
@@ -23,112 +24,129 @@ export function LoanStatusBadge({ status }: { status: LoanStatus }) {
 
 const CARRIERS = ['顺丰', '京东物流', '德邦', '中通', '圆通', '申通', '韵达', '极兔', 'EMS', '邮政', '跨越速运', '安能', '其他']
 
+type Row = LoanOrder & { daysUntilDue: number | null; overdueDays: number; effectiveStatus: LoanStatus }
+type Result = { items: Row[]; total: number; page: number; pageSize: number }
+
+const date = (value: string | null | undefined) => value?.slice(0, 10) || '—'
+const STATUS_FILTERS: [string, string][] = [['', '全部'], ['queued', '排队中'], ['ongoing', '借测中'], ['returned', '已归还'], ['overdue', '已逾期']]
+const EFFECTIVE_LABELS: Record<string, string> = { ...loanStatusLabels, ONGOING: '借测中', OVERDUE: '已逾期' }
+
+function Badge({ row }: { row: Row }) {
+  const status = row.effectiveStatus
+  return <span className={`badge flow-status flow-status-${status.toLowerCase()}`}>{EFFECTIVE_LABELS[status] || status}{row.overdueDays > 0 ? ` ${row.overdueDays} 天` : ''}</span>
+}
+
 export function LoansPage() {
-  const [params] = useSearchParams()
-  const [status, setStatus] = useState(() => Object.keys(loanStatusLabels).includes(params.get('status') ?? '') ? params.get('status')! : '')
-  const [mine, setMine] = useState(() => params.get('mine') === '1')
-  const [creating, setCreating] = useState(false)
-  const [returning, setReturning] = useState<LoanOrder | null>(null)
-  const [assigning, setAssigning] = useState<LoanOrder | null>(null)
-  const [shipping, setShipping] = useState<LoanOrder | null>(null)
-  const [advancing, setAdvancing] = useState<LoanOrder | null>(null)
-  const [scoring, setScoring] = useState<LoanOrder | null>(null)
-  const [expanded, setExpanded] = useState<string | null>(null)
-  const [search, setSearch] = useState('')
-  const [sort, setSort] = useState<'default' | 'dueAsc' | 'dueDesc'>('default')
+  const [params, setParams] = useSearchParams()
+  const [search, setSearch] = useState(params.get('search') || '')
   const [error, setError] = useState('')
-  const { user } = useAuth()
-  const remote = useRemote(() => api<LoanOrder[]>('/loans'), [], true)
-  if (remote.loading) return <PageLoading />
-  if (remote.error) return <PageError message={remote.error} retry={remote.refresh} />
-  const dueState = (loan: LoanOrder) => loan.dueAt ? Math.ceil((new Date(loan.dueAt).getTime() - Date.now()) / 86400000) : Number.POSITIVE_INFINITY
-  const allLoans = remote.data ?? []
-  const activeLoans = allLoans.filter((loan) => loan.status === 'ONGOING' || loan.status === 'OVERDUE')
-  const overdueLoans = activeLoans.filter((loan) => dueState(loan) < 0)
-  const dueSoonLoans = activeLoans.filter((loan) => { const d = dueState(loan); return d >= 0 && d <= 7 })
-  const queuedLoans = allLoans.filter((loan) => loan.status === 'QUEUED')
-  // 排队位次动态计算：手动提前优先 → 评分降序（未评分最后）→ 先创建先服务
-  const queueRank = new Map([...queuedLoans].sort((a, b) => {
-    if (Boolean(a.advancedAt) !== Boolean(b.advancedAt)) return a.advancedAt ? -1 : 1
-    if (a.advancedAt && b.advancedAt) return a.advancedAt < b.advancedAt ? -1 : 1
-    if ((a.score ?? -1) !== (b.score ?? -1)) return (b.score ?? -1) - (a.score ?? -1)
-    return a.createdAt < b.createdAt ? -1 : 1
-  }).map((loan, index) => [loan.id, index + 1]))
-  const loans = allLoans.filter((loan) => {
-    if (mine && loan.assignee?.id !== user?.id) return false
-    if (status === 'DUE_SOON') { const d = dueState(loan); if (!(loan.status === 'ONGOING' && d >= 0 && d <= 7)) return false }
-    else if (status && loan.status !== status) return false
-    if (!search.trim()) return true
-    const haystack = `${loan.loanNo} ${loan.organization.name} ${loan.contact?.name ?? ''} ${loan.assignee?.name ?? ''} ${loan.items.map((item) => `${item.device.serialNumber ?? ''} ${item.device.name} ${item.device.cameraModel ?? ''}`).join(' ')} ${loan.agreementNo ?? ''}`.toLowerCase()
-    return haystack.includes(search.trim().toLowerCase())
+  const [creating, setCreating] = useState(false)
+  const [returning, setReturning] = useState<Row | null>(null)
+  const [assigning, setAssigning] = useState<Row | null>(null)
+  const [shipping, setShipping] = useState<Row | null>(null)
+  const [advancing, setAdvancing] = useState<Row | null>(null)
+  const [scoring, setScoring] = useState<Row | null>(null)
+  const [expanded, setExpanded] = useState<string | null>(null)
+  const remote = useRemote(() => api<Result>(`/loans/list?${params}`), [params.toString()], true)
+  useEffect(() => setSearch(params.get('search') || ''), [params])
+  const change = (key: string, value: string) => setParams((old) => {
+    const next = new URLSearchParams(old)
+    value ? next.set(key, value) : next.delete(key)
+    if (key !== 'page') next.delete('page')
+    return next
   })
-  loans.sort((a, b) => {
-    if (sort === 'dueAsc') return dueState(a) - dueState(b)
-    if (sort === 'dueDesc') return dueState(b) - dueState(a)
-    return 0
-  })
-  const run = async (action: () => Promise<unknown>) => { setError(''); try { await action(); await remote.refresh() } catch (reason) { setError(reason instanceof Error ? reason.message : '操作失败') } }
-  const kpi = [
-    { key: '', label: '全部借测单', value: allLoans.length, icon: FileClock, hint: '' },
-    { key: 'QUEUED', label: '排队中', value: queuedLoans.length, icon: ListOrdered, hint: queuedLoans.filter((loan) => loan.score == null).length ? `${queuedLoans.filter((loan) => loan.score == null).length} 单待评分` : '' },
-    { key: 'ONGOING', label: '借测中', value: activeLoans.length, icon: Share2, hint: `${activeLoans.reduce((sum, loan) => sum + loan.items.length, 0)} 台设备在借` },
-    { key: 'OVERDUE', label: '已逾期', value: overdueLoans.length, icon: AlarmClock, hint: overdueLoans.length ? `最长逾期 ${Math.max(...overdueLoans.map((loan) => -dueState(loan)))} 天` : '' },
-    { key: 'DUE_SOON', label: '7天内到期', value: dueSoonLoans.length, icon: CalendarClock, hint: '' },
-    { key: 'RETURNED', label: '已归还', value: allLoans.filter((loan) => loan.status === 'RETURNED').length, icon: CheckCircle2, hint: '' },
-  ]
+  const refresh = async () => remote.refresh()
+  const run = async (action: () => Promise<unknown>) => { setError(''); try { await action(); await refresh() } catch (reason) { setError(reason instanceof Error ? reason.message : '操作失败') } }
+  async function download() {
+    setError('')
+    try {
+      const response = await fetch(`/api/loans/export?${params}`, { credentials: 'include' })
+      if (!response.ok) throw new Error('导出失败，请缩小筛选范围后重试')
+      const url = URL.createObjectURL(await response.blob()), anchor = document.createElement('a')
+      anchor.href = url; anchor.download = '借测记录导出.xlsx'; anchor.click()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+    } catch (reason) { setError((reason as Error).message) }
+  }
+  const rows = remote.data?.items ?? []
+  const isQueuedView = params.get('status') === 'queued'
+  const taskView = params.get('status')
   return <div className="page-stack">
-    <header className="page-header"><div><span className="eyebrow">LOAN ORDERS</span><h1>借测管理</h1><p>借测需求先入队，完善信息后按评分排队，借出到归还全程可追踪。</p></div><div className="header-actions"><a className="button" href="/api/loans/export" download><Download size={16} />导出数据</a><button className="button primary" onClick={() => setCreating(true)}><Plus size={16} />入队登记</button></div></header>
+    <LoanOverdueNotice onReview={() => { setSearch(''); setParams({ status: 'overdue', sort: 'due_soon' }) }} />
+    <header className="page-header"><div><span className="eyebrow">LOAN ORDERS</span><h1>借测管理</h1><p>借测需求先入队，完善信息后按评分排队，借出到归还全程可追踪。</p></div><div className="header-actions"><button className="button" onClick={() => void download()}><Download size={16} />导出数据</button><button className="button primary" onClick={() => setCreating(true)}><Plus size={16} />入队登记</button></div></header>
     {error && <div className="form-error"><button onClick={() => setError('')}><X size={14} /></button>{error}</div>}
-    <section className="metric-strip">{kpi.map((item) => <button key={item.key} className={`metric clickable ${status === item.key ? 'filter-active' : ''}`} onClick={() => setStatus(status === item.key ? '' : item.key)} title={`筛选：${item.label}`}>
-      <item.icon size={17} /><span>{item.label}</span><strong>{item.value}{item.hint ? <em> {item.hint}</em> : null}</strong>
-    </button>)}</section>
-    <section className="toolbar">
-      <div className="searchbox"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索单号、客户、SN、型号或工程师" /></div>
-      <select aria-label="借测状态筛选" value={status} onChange={(event) => setStatus(event.target.value)}><option value="">全部状态</option><option value="QUEUED">排队中</option><option value="ONGOING">借测中</option><option value="OVERDUE">已逾期</option><option value="DUE_SOON">7天内到期</option><option value="RETURNED">已归还</option><option value="CANCELLED">已取消</option></select>
-      <select aria-label="排序方式" value={sort} onChange={(event) => setSort(event.target.value as typeof sort)}><option value="default">默认排序</option><option value="dueAsc">最近到期优先</option><option value="dueDesc">最远到期优先</option></select>
-      <label><input type="checkbox" checked={mine} onChange={(event) => setMine(event.target.checked)} />只看我的</label>
-      <span className="result-count">{loans.length} 张借测单</span>
-    </section>
-    <section className="panel no-padding"><div className="table-wrap"><table><thead><tr><th></th><th>单号</th><th>客户</th><th>设备（SN）</th><th>跟进工程师</th><th>评分</th><th>借出日期</th><th>预计归还</th><th>状态</th><th>操作</th></tr></thead><tbody>{loans.map((loan) => <Fragment key={loan.id}>
-      <tr className={loan.status === 'OVERDUE' || (loan.status === 'ONGOING' && dueState(loan) < 0) ? 'danger-row' : ''}>
-        <td><button className="icon-button" onClick={() => setExpanded(expanded === loan.id ? null : loan.id)}>{expanded === loan.id ? <ChevronDown size={15} /> : <ChevronRight size={15} />}</button></td>
-        <td className="mono">{loan.loanNo}{loan.status === 'QUEUED' && <span className="badge warn" style={{ marginLeft: 6 }}>队列 #{queueRank.get(loan.id) ?? '-'}</span>}</td><td>{loan.organization.name}</td>
-        <td className="mono truncate-cell">{loan.items.length ? loan.items.map((item) => item.device.serialNumber || item.device.name).join(', ') : '-'}</td>
-        <td>{loan.assignee?.name ?? '未指派'}</td>
-        <td>{loan.score != null ? <strong>{loan.score}</strong> : <span className="placeholder-text">未评分</span>}</td>
-        <td>{formatDate(loan.loanedAt ?? undefined)}</td><td>{formatDate(loan.dueAt ?? undefined)}</td><td>{loan.status === 'ONGOING' ? <LoanDueBadge days={dueState(loan)} /> : <LoanStatusBadge status={loan.status} />}</td>
-        <td><div className="row-actions">
-          {loan.status === 'QUEUED' && <button className="button small primary" onClick={() => setShipping(loan)}>借出</button>}
-          {loan.status === 'QUEUED' && <button className="button small" onClick={() => setScoring(loan)}>评分</button>}
-          {loan.status === 'QUEUED' && <button className="button small" onClick={() => setAdvancing(loan)}>提前</button>}
-          {(loan.status === 'ONGOING' || loan.status === 'OVERDUE') && <button className="button small" onClick={() => setReturning(loan)}>归还</button>}
-          {(loan.status === 'ONGOING' || loan.status === 'OVERDUE' || loan.status === 'QUEUED') && <button className="button small" onClick={() => setAssigning(loan)}>指派</button>}
-          {(loan.status === 'ONGOING' || loan.status === 'OVERDUE' || loan.status === 'QUEUED') && <button className="button small" onClick={() => void run(() => api(`/loans/${loan.id}/cancel`, { method: 'POST' }))}>取消</button>}
-        </div></td>
-      </tr>
-      {expanded === loan.id && <tr><td className="expanded-cell" colSpan={10}>
-        <dl className="detail-aside"><section><dl>
-          <dt>借测目的</dt><dd className="pre-wrap">{loan.purpose}</dd>
-          <dt>评估结论</dt><dd className="pre-wrap">{loan.assessmentResult || '-'}</dd>
-          {loan.scoreDetail && <><dt>评分明细</dt><dd>{Object.entries(loan.scoreDetail).map(([key, value]) => <span key={key} className="badge" style={{ marginRight: 6 }}>{key}：{value}</span>)}</dd></>}
-          {loan.advanceReason && <><dt>提前借测</dt><dd>{loan.advanceReason}（{loan.advancedBy?.name ?? '-'} · {formatDate(loan.advancedAt ?? undefined)}）</dd></>}
-          {loan.ticket && <><dt>关联工单</dt><dd><a href={`/tickets/${loan.ticket.id}`}>{loan.ticket.number} {loan.ticket.title}</a></dd></>}
-          <dt>协议编号</dt><dd>{loan.agreementNo || '-'}</dd>
-          <dt>联系人</dt><dd>{loan.contact?.name ?? '-'}</dd>
-          <dt>实际归还</dt><dd>{formatDate(loan.returnedAt ?? undefined)}</dd>
-          <dt>备注</dt><dd className="pre-wrap">{loan.note || '-'}</dd>
-        </dl></section></dl>
-        {loan.items.length > 0 && <div className="table-wrap"><table><thead><tr><th>设备</th><th>SN</th><th>配件</th><th>归还状态</th><th>归还备注</th></tr></thead><tbody>{loan.items.map((item) => <tr key={item.id}><td>{item.device.name}</td><td className="mono">{item.device.serialNumber || '-'}</td><td>{item.accessories || '-'}</td><td>{item.returnedAt ? <span className="badge ok">已归还 {formatDate(item.returnedAt)}</span> : <span className="badge warn">未归还</span>}</td><td>{item.conditionNote || '-'}</td></tr>)}</tbody></table></div>}
-        {loan.items.map(item => <LoanPhotoPanel key={item.id} item={item} onChanged={remote.refresh} />)}
-        {(loan.status === 'QUEUED' || loan.status === 'ONGOING' || loan.status === 'OVERDUE') && <FollowUpPanel loan={loan} onChanged={remote.refresh} />}
-      </td></tr>}
-    </Fragment>)}</tbody></table>{!loans.length && <Empty text="暂无借测单" />}</div></section>
-    {creating && <CreateLoanModal onClose={() => setCreating(false)} onCreated={async () => { setCreating(false); await remote.refresh() }} />}
-    {shipping && <ShipLoanModal loan={shipping} onClose={() => setShipping(null)} onDone={async () => { setShipping(null); await remote.refresh() }} />}
-    {advancing && <AdvanceLoanModal loan={advancing} onClose={() => setAdvancing(null)} onDone={async () => { setAdvancing(null); await remote.refresh() }} />}
-    {scoring && <ScoreLoanModal loan={scoring} onClose={() => setScoring(null)} onDone={async () => { setScoring(null); await remote.refresh() }} />}
-    {returning && <ReturnLoanModal loan={returning} onClose={() => setReturning(null)} onDone={async () => { setReturning(null); await remote.refresh() }} />}
-    {assigning && <AssignLoanModal loan={assigning} onClose={() => setAssigning(null)} onDone={async () => { setAssigning(null); await remote.refresh() }} />}
+    <form className="flow-toolbar" onSubmit={(event) => { event.preventDefault(); change('search', search) }}>
+      <label className="flow-search"><Search size={16} /><input aria-label="搜索借测记录" placeholder="单号、客户、SN、型号、物流单号或跟进内容" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
+      <button className="button" type="submit">查询</button>
+      <select aria-label="借测状态筛选" value={STATUS_FILTERS.some(([value]) => value === taskView) ? taskView! : ''} onChange={(event) => change('status', event.target.value)}>
+        {STATUS_FILTERS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+      </select>
+      <input type="month" aria-label="月份" value={params.get('month') || ''} onChange={(event) => change('month', event.target.value)} />
+      <select aria-label="日期口径" value={params.get('dateField') || 'loaned'} onChange={(event) => change('dateField', event.target.value)}>
+        <option value="loaned">借出月份</option>
+        <option value="returned">归还月份</option>
+      </select>
+      <select aria-label="排序" value={params.get('sort') || ''} onChange={(event) => change('sort', event.target.value)}>
+        <option value="">最近借出</option>
+        <option value="due_soon">应还日期优先</option>
+      </select>
+      <label><input type="checkbox" checked={params.get('mine') === '1'} onChange={(event) => change('mine', event.target.checked ? '1' : '')} />只看我的</label>
+      <button className="icon-button" type="button" title="清除筛选" onClick={() => { setParams({}); setSearch('') }}><RefreshCw size={17} /></button>
+    </form>
+    {['due', 'stale', 'active'].includes(taskView || '') && <div className="flow-task-filter">任务视图：{{ due: '七天内到期', stale: '久未跟进', active: '未归还（含逾期）' }[taskView as 'due' | 'stale' | 'active']}<button className="button small" onClick={() => change('status', '')}>清除</button></div>}
+    {remote.loading ? <PageLoading /> : remote.error ? <PageError message={remote.error} retry={refresh} /> : <>
+      <section className="panel no-padding"><div className="table-wrap flow-table"><table><thead><tr><th></th><th>工单</th><th>设备</th><th>客户</th><th>物流</th><th>状态</th><th>最后跟进</th><th>操作</th></tr></thead><tbody>
+        {rows.map((loan, index) => <Fragment key={loan.id}>
+          <tr className={loan.effectiveStatus === 'OVERDUE' ? 'flow-overdue-row' : ''}>
+            <td><button className="icon-button" onClick={() => setExpanded(expanded === loan.id ? null : loan.id)}>{expanded === loan.id ? <ChevronDown size={15} /> : <ChevronRight size={15} />}</button></td>
+            <td><strong>{loan.loanNo}</strong>{isQueuedView && <span className="badge warn" style={{ marginLeft: 6 }}>队列 #{(remote.data!.page - 1) * remote.data!.pageSize + index + 1}</span>}{loan.score != null && <span className="badge" style={{ marginLeft: 6 }}>评分 {loan.score}</span>}<div className="muted">借出 {date(loan.loanedAt)}</div><div className="muted">应还 {date(loan.dueAt)}</div></td>
+            <td className="flow-sn">{loan.items.length ? <strong>{loan.items[0].device.cameraModel || loan.items[0].device.name}</strong> : <span className="placeholder-text">待借出登记</span>}{loan.items.map((item) => <div key={item.id}>{item.device.serialNumber || item.device.name}</div>)}</td>
+            <td><strong>{loan.organization.name}</strong><div className="muted">{loan.contact?.name ?? '—'} {loan.contact?.phone ?? ''}</div><div className="muted">工程师：{loan.assignee?.name ?? '未指派'}</div></td>
+            <td><div>寄出：{[loan.outboundCarrier, loan.outboundTracking].filter(Boolean).join(' ') || '—'}</div><div className="muted">归还：{[loan.returnCarrier, loan.returnTracking].filter(Boolean).join(' ') || '—'}</div></td>
+            <td><Badge row={loan} /></td>
+            <td className="flow-follow-summary">{loan.followUps?.length ? <><div>{loan.followUps[0].content}</div><small className="muted">{loan.followUps[0].author.name} · {date(loan.followUps[0].occurredAt)}</small></> : '—'}</td>
+            <td><div className="row-actions">
+              {loan.status === 'QUEUED' && <button className="button small primary" onClick={() => setShipping(loan)}>借出</button>}
+              {loan.status === 'QUEUED' && <button className="button small" onClick={() => setScoring(loan)}>评分</button>}
+              {loan.status === 'QUEUED' && <button className="button small" onClick={() => setAdvancing(loan)}>提前</button>}
+              {(loan.status === 'ONGOING' || loan.status === 'OVERDUE') && <button className="button small" onClick={() => setReturning(loan)}>归还</button>}
+              {(loan.status === 'ONGOING' || loan.status === 'OVERDUE' || loan.status === 'QUEUED') && <button className="button small" onClick={() => setAssigning(loan)}>指派</button>}
+              {(loan.status === 'ONGOING' || loan.status === 'OVERDUE' || loan.status === 'QUEUED') && <button className="button small" onClick={() => void run(() => api(`/loans/${loan.id}/cancel`, { method: 'POST' }))}>取消</button>}
+            </div></td>
+          </tr>
+          {expanded === loan.id && <tr><td className="expanded-cell" colSpan={8}>
+            <dl className="detail-aside"><section><dl>
+              <dt>借测目的</dt><dd className="pre-wrap">{loan.purpose}</dd>
+              <dt>评估结论</dt><dd className="pre-wrap">{loan.assessmentResult || '-'}</dd>
+              {loan.scoreDetail && <><dt>评分明细</dt><dd>{Object.entries(loan.scoreDetail).map(([key, value]) => <span key={key} className="badge" style={{ marginRight: 6 }}>{key}：{value}</span>)}</dd></>}
+              {loan.advanceReason && <><dt>提前借测</dt><dd>{loan.advanceReason}（{loan.advancedBy?.name ?? '-'} · {formatDate(loan.advancedAt ?? undefined)}）</dd></>}
+              {loan.ticket && <><dt>关联工单</dt><dd><a href={`/tickets/${loan.ticket.id}`}>{loan.ticket.number} {loan.ticket.title}</a></dd></>}
+              <dt>协议编号</dt><dd>{loan.agreementNo || '-'}</dd>
+              <dt>联系人</dt><dd>{loan.contact?.name ?? '-'}</dd>
+              <dt>实际归还</dt><dd>{formatDate(loan.returnedAt ?? undefined)}</dd>
+              <dt>备注</dt><dd className="pre-wrap">{loan.note || '-'}</dd>
+            </dl></section></dl>
+            {loan.items.length > 0 && <div className="table-wrap"><table><thead><tr><th>设备</th><th>SN</th><th>配件</th><th>归还状态</th><th>归还备注</th></tr></thead><tbody>{loan.items.map((item) => <tr key={item.id}><td>{item.device.name}</td><td className="mono">{item.device.serialNumber || '-'}</td><td>{(item as { accessories?: string }).accessories || '-'}</td><td>{item.returnedAt ? <span className="badge ok">已归还 {formatDate(item.returnedAt)}</span> : <span className="badge warn">未归还</span>}</td><td>{item.conditionNote || '-'}</td></tr>)}</tbody></table></div>}
+            {loan.items.map((item) => <LoanPhotoPanel key={item.id} item={item} onChanged={refresh} />)}
+            {(loan.status === 'QUEUED' || loan.status === 'ONGOING' || loan.status === 'OVERDUE') && <FollowUpPanel loan={loan} onChanged={refresh} />}
+          </td></tr>}
+        </Fragment>)}
+      </tbody></table>{!rows.length && <Empty text="暂无借测单" />}</div></section>
+      <footer className="flow-pager">
+        <span>共 {remote.data?.total ?? 0} 条</span>
+        <select aria-label="每页条数" value={remote.data?.pageSize ?? 20} onChange={(event) => change('pageSize', event.target.value)}>
+          <option value="20">20 条 / 页</option><option value="30">30 条 / 页</option><option value="50">50 条 / 页</option>
+        </select>
+        <button className="icon-button" title="上一页" disabled={(remote.data?.page ?? 1) <= 1} onClick={() => change('page', String((remote.data?.page ?? 1) - 1))}><ArrowLeft size={18} /></button>
+        <span>{remote.data?.page ?? 1} / {Math.max(1, Math.ceil((remote.data?.total ?? 0) / (remote.data?.pageSize ?? 20)))}</span>
+        <button className="icon-button" title="下一页" disabled={(remote.data?.page ?? 1) * (remote.data?.pageSize ?? 20) >= (remote.data?.total ?? 0)} onClick={() => change('page', String((remote.data?.page ?? 1) + 1))}><ArrowRight size={18} /></button>
+      </footer>
+    </>}
+    {creating && <CreateLoanModal onClose={() => setCreating(false)} onCreated={async () => { setCreating(false); await refresh() }} />}
+    {shipping && <ShipLoanModal loan={shipping} onClose={() => setShipping(null)} onDone={async () => { setShipping(null); await refresh() }} />}
+    {advancing && <AdvanceLoanModal loan={advancing} onClose={() => setAdvancing(null)} onDone={async () => { setAdvancing(null); await refresh() }} />}
+    {scoring && <ScoreLoanModal loan={scoring} onClose={() => setScoring(null)} onDone={async () => { setScoring(null); await refresh() }} />}
+    {returning && <ReturnLoanModal loan={returning} onClose={() => setReturning(null)} onDone={async () => { setReturning(null); await refresh() }} />}
+    {assigning && <AssignLoanModal loan={assigning} onClose={() => setAssigning(null)} onDone={async () => { setAssigning(null); await refresh() }} />}
   </div>
 }
 
@@ -146,7 +164,7 @@ function FollowUpPanel({ loan, onChanged }: { loan: LoanOrder; onChanged: () => 
     finally { setBusy(false) }
   }
   return <section className="followup-panel">
-    <h3><MessageSquarePlus size={15} /> 跟进记录{loan.ticket ? <span className="placeholder-text">（同步写入关联工单时间线）</span> : null}</h3>
+    <h3>跟进记录{loan.ticket ? <span className="placeholder-text">（同步写入关联工单时间线）</span> : null}</h3>
     {loan.followUps?.length ? <ol className="followup-list">{loan.followUps.map((item) => <li key={item.id}><header><strong>{item.author.name}</strong><time>{formatDate(item.occurredAt)}</time></header><p className="pre-wrap">{item.content}</p></li>)}</ol> : <p className="placeholder-text">暂无跟进记录</p>}
     <form className="followup-form" onSubmit={submit}>
       <textarea value={content} onChange={(event) => setContent(event.target.value)} rows={2} placeholder="记录跟进情况，仅内部可见" />
@@ -247,9 +265,9 @@ function ShipLoanModal({ loan, onClose, onDone }: { loan: LoanOrder; onClose: ()
 /** 手动提前：必须填写提前原因，留痕操作人与时间 */
 function AdvanceLoanModal({ loan, onClose, onDone }: { loan: LoanOrder; onClose: () => void; onDone: () => Promise<void> }) {
   const [error, setError] = useState(''); const [busy, setBusy] = useState(false)
-  const submit = async (event: FormEvent<HTMLFormElement>) => {
+  const submit = async (event: FormEvent) => {
     event.preventDefault(); setBusy(true); setError('')
-    const reason = String(new FormData(event.currentTarget).get('reason') ?? '').trim()
+    const reason = String(new FormData(event.currentTarget as HTMLFormElement).get('reason') ?? '').trim()
     try { await api(`/loans/${loan.id}/advance`, { method: 'POST', body: JSON.stringify({ reason }) }); await onDone() } catch (reason) { setError(reason instanceof Error ? reason.message : '操作失败') } finally { setBusy(false) }
   }
   return <Modal title={`提前借测：${loan.loanNo}`} onClose={onClose}><form className="form-grid" onSubmit={submit}>

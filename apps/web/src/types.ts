@@ -66,9 +66,13 @@ export interface LoanOrder {
   agreementNo?: string | null
   note?: string | null
   organization: { id: string; name: string }
-  contact?: { id: string; name: string } | null
+  contact?: { id: string; name: string; phone?: string } | null
   assignee?: { id: string; name: string } | null
   ticket?: { id: string; number: string; title: string } | null
+  outboundCarrier?: string | null
+  outboundTracking?: string | null
+  returnCarrier?: string | null
+  returnTracking?: string | null
   infoComplete?: boolean
   score?: number | null
   scoreDetail?: Record<string, number> | null
