@@ -74,13 +74,13 @@ export function LoansPage() {
     <LoanOverdueNotice onReview={() => { setSearch(''); setParams({ status: 'overdue', sort: 'due_soon' }) }} />
     <header className="page-header"><div><span className="eyebrow">LOAN ORDERS</span><h1>借测管理</h1><p>借测需求先入队，完善信息后按评分排队，借出到归还全程可追踪。</p></div><div className="header-actions"><button className="button" onClick={() => void download()}><Download size={16} />导出数据</button><Link className="button primary" to="/loans/new"><Plus size={16} />新建借测工单</Link></div></header>
     {error && <div className="form-error"><button onClick={() => setError('')}><X size={14} /></button>{error}</div>}
-    <form className="flow-toolbar" onSubmit={(event) => { event.preventDefault(); change('search', search) }}>
-      <label className="flow-search"><Search size={16} /><input aria-label="搜索借测记录" placeholder="单号、客户、SN、型号、物流单号或跟进内容" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
+    <form className="toolbar" onSubmit={(event) => { event.preventDefault(); change('search', search) }}>
+      <div className="searchbox"><Search size={16} /><input aria-label="搜索借测记录" placeholder="单号、客户、SN、型号、物流单号或跟进内容" value={search} onChange={(event) => setSearch(event.target.value)} /></div>
       <button className="button" type="submit">查询</button>
       <select aria-label="借测状态筛选" value={STATUS_FILTERS.some(([value]) => value === taskView) ? taskView! : ''} onChange={(event) => change('status', event.target.value)}>
         {STATUS_FILTERS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
       </select>
-      <input type="month" aria-label="月份" value={params.get('month') || ''} onChange={(event) => change('month', event.target.value)} />
+      <input className="toolbar-month" type="month" aria-label="月份" value={params.get('month') || ''} onChange={(event) => change('month', event.target.value)} />
       <select aria-label="日期口径" value={params.get('dateField') || 'loaned'} onChange={(event) => change('dateField', event.target.value)}>
         <option value="loaned">借出月份</option>
         <option value="returned">归还月份</option>
@@ -89,7 +89,7 @@ export function LoansPage() {
         <option value="">最近借出</option>
         <option value="due_soon">应还日期优先</option>
       </select>
-      <label><input type="checkbox" checked={params.get('mine') === '1'} onChange={(event) => change('mine', event.target.checked ? '1' : '')} />只看我的</label>
+      <label className="mine-toggle"><input type="checkbox" checked={params.get('mine') === '1'} onChange={(event) => change('mine', event.target.checked ? '1' : '')} />只看我的</label>
       <button className="icon-button" type="button" title="清除筛选" onClick={() => { setParams({}); setSearch('') }}><RefreshCw size={17} /></button>
     </form>
     {['due', 'stale', 'active'].includes(taskView || '') && <div className="flow-task-filter">任务视图：{{ due: '七天内到期', stale: '久未跟进', active: '未归还（含逾期）' }[taskView as 'due' | 'stale' | 'active']}<button className="button small" onClick={() => change('status', '')}>清除</button></div>}

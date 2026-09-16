@@ -43,8 +43,8 @@ export function RepairsPage() {
   })
   return <div className="page-stack">
     <header className="page-header"><div><span className="eyebrow">REPAIR ORDERS</span><h1>维修管理</h1><p>从收货、检测、维修到寄回关闭的完整返修流水。</p></div><div className="header-actions"><a className="button" href="/api/repairs/export" download><Download size={16} />导出数据</a><Link className="button primary" to="/repairs/new"><Plus size={16} />新建返厂单</Link></div></header>
-    <form className="flow-toolbar" onSubmit={(event) => { event.preventDefault(); setAppliedSearch(search) }}>
-      <label className="flow-search"><Search size={16} /><input aria-label="搜索返修单" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="单号、客户、SN、型号或物流单号" /></label>
+    <form className="toolbar" onSubmit={(event) => { event.preventDefault(); setAppliedSearch(search) }}>
+      <div className="searchbox"><Search size={16} /><input aria-label="搜索返修单" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="单号、客户、SN、型号或物流单号" /></div>
       <button className="button" type="submit">查询</button>
       <select aria-label="返修状态筛选" value={status} onChange={(event) => setStatus(event.target.value)}><option value="">全部状态</option><option value="ACTIVE">返修进行中</option>{Object.entries(repairStatusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
       <button className="icon-button" type="button" title="清除筛选" onClick={() => { setStatus(''); setSearch(''); setAppliedSearch('') }}><RefreshCw size={17} /></button>

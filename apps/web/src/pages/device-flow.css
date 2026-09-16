@@ -25,26 +25,11 @@
 .flow-alert strong {
   color: var(--brand);
 }
-.flow-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.flow-toolbar select,
-.flow-toolbar input {
-  width: auto;
-  max-width: 100%;
-}
-.flow-search {
-  display: flex;
-  align-items: center;
-  flex: 1;
-  min-width: 240px;
-  gap: 8px;
-}
-.flow-search input {
-  width: 100%;
+/* 月份筛选输入：与工具栏下拉同高同宽风格 */
+.toolbar input.toolbar-month {
+  flex: 0 0 auto;
+  width: 140px;
+  height: 34px;
 }
 .flow-sn {
   white-space: normal;
@@ -159,12 +144,8 @@
   .flow-edit {
     grid-template-columns: 1fr;
   }
-  .flow-search {
-    min-width: 180px;
-    flex-basis: 100%;
-  }
-  .flow-toolbar > * {
-    max-width: 100%;
+  .toolbar input.toolbar-month {
+    width: 130px;
   }
   .flow-pager {
     gap: 6px;
