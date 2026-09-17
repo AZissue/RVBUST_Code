@@ -179,6 +179,8 @@ export class TicketsService {
       throw new ConflictException('工单编号生成失败，请重试');
     };
     const created = await createRecord(db);
+    // 接续同客户未解决工单：关联留痕 + 按 autoClose 关闭前置单（同事务，失败整体回滚）
+    if (dto.continuations?.length) await this.applyContinuations(user, created, dto, db);
     // 事务内调用（如事项转换）跳过通知，由外层在事务提交后补发，避免引用未提交工单
     if (db === this.prisma && assigneeId && assigneeId !== user.id) await this.notifyAssignee(created.id, created.number, assigneeId);
     // 联动创建借测/维修单：单个联动失败仅记录日志并反馈给前端，不影响工单本身与另一路联动
@@ -199,6 +201,143 @@ export class TicketsService {
     }
     // 联动失败信息随响应返回，前端据此提示用户补建
     return linkageErrors.length ? Object.assign(created, { linkageErrors }) : created;
+  }
+
+  /**
+   * 接续同客户未解决工单（在 create 事务内调用，失败整体回滚）：
+   * 校验（同客户/未解决/未被接续过）→ 写关联 → 双向时间线 → 按 autoClose 关闭前置单
+   * （carryLinks 时迁移进行中借测/维修单到新单，兼容 M3 关单拦截）→ 通知原负责人与创建人。
+   */
+  private async applyContinuations(user: AuthUser, created: { id: string; number: string; organizationId: string }, dto: CreateTicketDto, db: Prisma.TransactionClient) {
+    const items = dto.continuations!;
+    const unique = new Map(items.map((item) => [item.fromTicketId, item.note.trim()]));
+    if (unique.size !== items.length) throw new BadRequestException('接续工单存在重复项');
+    const autoClose = dto.autoClose ?? true;
+    const carryLinks = dto.carryLinks ?? false;
+    const fromIds = [...unique.keys()];
+    for (const note of unique.values()) {
+      if (note.length < 2 || note.length > 500) throw new BadRequestException('接续说明需为 2-500 字');
+    }
+    const predecessors = await db.ticket.findMany({
+      where: { id: { in: fromIds } },
+      select: { id: true, number: true, title: true, status: true, organizationId: true, deletedAt: true, assigneeId: true, createdById: true },
+    });
+    for (const id of fromIds) {
+      const p = predecessors.find((item) => item.id === id);
+      if (!p || p.deletedAt) throw new BadRequestException('前置工单不存在或已删除');
+      if (p.organizationId !== created.organizationId) throw new BadRequestException(`工单 ${p.number} 与该客户不一致，不能接续`);
+      if (p.status === TicketStatus.RESOLVED || p.status === TicketStatus.CLOSED) throw new BadRequestException(`工单 ${p.number} 已${p.status === TicketStatus.CLOSED ? '关闭' : '解决'}，不能接续`);
+    }
+    // 线性链：一张前置单最多被接续一次（fromTicketId 唯一索引兜底并发）
+    const existed = await db.ticketContinuation.findFirst({ where: { fromTicketId: { in: fromIds } }, select: { fromTicketId: true, toTicket: { select: { number: true } } }, orderBy: { createdAt: 'asc' } });
+    if (existed) throw new BadRequestException(`工单已被 ${existed.toTicket.number} 接续，请勿重复接续`);
+    // 自动关单前检查进行中借测/维修单（M3 关单拦截条件）
+    if (autoClose && !carryLinks) {
+      const [loans, repairs] = await Promise.all([
+        db.loanOrder.findMany({ where: { ticketId: { in: fromIds }, deletedAt: null, status: { in: ACTIVE_LOAN_STATUSES } }, select: { loanNo: true } }),
+        db.repairOrder.findMany({ where: { ticketId: { in: fromIds }, deletedAt: null, status: { in: ACTIVE_REPAIR_STATUSES } }, select: { repairNo: true } }),
+      ]);
+      if (loans.length || repairs.length) throw new BadRequestException(`前置工单存在进行中的借测/维修单（${[...loans.map((l) => l.loanNo), ...repairs.map((r) => r.repairNo)].join('、')}），请先处理或勾选「迁移关联业务到新单」`);
+    }
+    const truncate = (text: string, max: number) => (text.length > max ? text.slice(0, max) : text);
+    for (const [fromId, note] of unique) {
+      const p = predecessors.find((item) => item.id === fromId)!;
+      const link = await db.ticketContinuation.create({ data: { fromTicketId: fromId, toTicketId: created.id, note, carryLinks, createdById: user.id } });
+      const meta = { continuationId: link.id, fromNumber: p.number, toNumber: created.number };
+      // 前置单时间线：接续留痕（自动关单/仅关联两种文案）
+      await db.ticketEvent.create({ data: { ticketId: fromId, authorId: user.id, type: TicketEventType.LINK_CREATED, visibility: Visibility.INTERNAL, content: autoClose ? `本工单由 ${created.number} 接续跟进：${note}，工单关闭` : `本工单被 ${created.number} 关联引用：${note}`, metadata: meta } });
+      // 新单时间线：承接自前置单
+      await db.ticketEvent.create({ data: { ticketId: created.id, authorId: user.id, type: TicketEventType.LINK_CREATED, visibility: Visibility.INTERNAL, content: `接续自 ${p.number}「${truncate(p.title, 40)}」：${note}`, metadata: meta } });
+      if (!autoClose) continue;
+      // 迁移进行中的借测/维修单到新单（两边时间线各留一条）
+      if (carryLinks) {
+        const [loans, repairs] = await Promise.all([
+          db.loanOrder.findMany({ where: { ticketId: fromId, deletedAt: null, status: { in: ACTIVE_LOAN_STATUSES } }, select: { id: true, loanNo: true } }),
+          db.repairOrder.findMany({ where: { ticketId: fromId, deletedAt: null, status: { in: ACTIVE_REPAIR_STATUSES } }, select: { id: true, repairNo: true } }),
+        ]);
+        for (const loan of loans) {
+          await db.loanOrder.update({ where: { id: loan.id }, data: { ticketId: created.id } });
+          await db.ticketEvent.create({ data: { ticketId: fromId, authorId: user.id, type: TicketEventType.LINK_UPDATE, visibility: Visibility.INTERNAL, content: `借测单 ${loan.loanNo} 的关联工单已变更为 ${created.number}（接续迁移）`, metadata: { linkType: 'loan', linkId: loan.id, linkNo: loan.loanNo, migratedTo: created.number } } });
+          await db.ticketEvent.create({ data: { ticketId: created.id, authorId: user.id, type: TicketEventType.LINK_UPDATE, visibility: Visibility.INTERNAL, content: `承接迁移自 ${p.number} 的借测单 ${loan.loanNo}`, metadata: { linkType: 'loan', linkId: loan.id, linkNo: loan.loanNo, migratedFrom: p.number } } });
+        }
+        for (const repair of repairs) {
+          await db.repairOrder.update({ where: { id: repair.id }, data: { ticketId: created.id } });
+          await db.ticketEvent.create({ data: { ticketId: fromId, authorId: user.id, type: TicketEventType.LINK_UPDATE, visibility: Visibility.INTERNAL, content: `维修单 ${repair.repairNo} 的关联工单已变更为 ${created.number}（接续迁移）`, metadata: { linkType: 'repair', linkId: repair.id, linkNo: repair.repairNo, migratedTo: created.number } } });
+          await db.ticketEvent.create({ data: { ticketId: created.id, authorId: user.id, type: TicketEventType.LINK_UPDATE, visibility: Visibility.INTERNAL, content: `承接迁移自 ${p.number} 的维修单 ${repair.repairNo}`, metadata: { linkType: 'repair', linkId: repair.id, linkNo: repair.repairNo, migratedFrom: p.number } } });
+        }
+      }
+      // 关闭前置单（接续关闭：solution 记入接续说明，不设 resolvedAt，报表口径不受影响）
+      await db.ticket.update({ where: { id: fromId }, data: { status: TicketStatus.CLOSED, solution: note } });
+      await db.ticketEvent.create({ data: { ticketId: fromId, authorId: user.id, type: TicketEventType.STATUS_CHANGE, visibility: Visibility.INTERNAL, content: `状态变更：${zhStatus(p.status)} → 已关闭（由接续工单关闭）` } });
+    }
+    // 通知前置单负责人与创建人（事务内调用时由外层补发，避免引用未提交工单）
+    if (db === this.prisma) {
+      for (const [fromId] of unique) {
+        const p = predecessors.find((item) => item.id === fromId)!;
+        const recipients = [...new Set([p.assigneeId, p.createdById])].filter((rid): rid is string => Boolean(rid) && rid !== user.id);
+        for (const recipientId of recipients) {
+          await this.notifications.notify({
+            recipientId, ticketId: fromId, type: NOTIFICATION_TYPES.TICKET_CONTINUED,
+            title: autoClose ? '工单已被接续并关闭' : '工单被新单关联引用',
+            body: autoClose ? `${user.name} 将工单 ${p.number} 接续到新工单 ${created.number}，原工单已关闭。` : `${user.name} 将工单 ${p.number} 关联引用到新工单 ${created.number}。`,
+            dedupeKey: `ticket-continued:${fromId}:${created.id}:${recipientId}`,
+          });
+        }
+      }
+    }
+  }
+
+  /** 接续选择器数据源：该客户近 90 天未解决、未被接续的工单（附进行中借测/维修数，供迁移提示） */
+  async continuable(user: AuthUser, organizationId: string, keyword?: string) {
+    await this.access.requireCustomer(user, organizationId);
+    const since = new Date(Date.now() - 90 * 86400000);
+    const search = (keyword ?? '').trim();
+    return this.prisma.ticket.findMany({
+      where: {
+        AND: [this.access.ticketWhere(user)],
+        organizationId, deletedAt: null,
+        status: { notIn: [TicketStatus.RESOLVED, TicketStatus.CLOSED] },
+        createdAt: { gte: since },
+        continuationsFrom: { none: {} },
+        ...(search ? { OR: [{ number: { contains: search, mode: 'insensitive' } }, { title: { contains: search, mode: 'insensitive' } }] } : {}),
+      },
+      select: {
+        id: true, number: true, title: true, status: true, updatedAt: true,
+        assignee: { select: { id: true, name: true } },
+        loanOrders: { where: { deletedAt: null, status: { in: ACTIVE_LOAN_STATUSES } }, select: { id: true } },
+        repairOrders: { where: { deletedAt: null, status: { in: ACTIVE_REPAIR_STATUSES } }, select: { id: true } },
+      },
+      orderBy: { updatedAt: 'desc' },
+      take: 20,
+    });
+  }
+
+  /** 工单链：向上（承接自）/向下（已接续至）各遍历 ≤10 跳，环安全；已删除单标注 */
+  async chain(user: AuthUser, id: string) {
+    await this.access.requireTicket(user, id);
+    const walk = async (startId: string, direction: 'from' | 'to') => {
+      const result: { id: string; number: string; title: string; status: TicketStatus; deletedAt: string | null; note: string; createdAt: string }[] = [];
+      const visited = new Set<string>([startId]);
+      let frontier = [startId];
+      for (let hop = 0; hop < 10 && frontier.length; hop++) {
+        const links = await this.prisma.ticketContinuation.findMany({
+          where: direction === 'from' ? { toTicketId: { in: frontier } } : { fromTicketId: { in: frontier } },
+          select: { note: true, createdAt: true, fromTicket: { select: { id: true, number: true, title: true, status: true, deletedAt: true } }, toTicket: { select: { id: true, number: true, title: true, status: true, deletedAt: true } } },
+        });
+        const next: string[] = [];
+        for (const link of links) {
+          const ticket = direction === 'from' ? link.fromTicket : link.toTicket;
+          if (visited.has(ticket.id)) continue;
+          visited.add(ticket.id);
+          next.push(ticket.id);
+          result.push({ id: ticket.id, number: ticket.number, title: ticket.title, status: ticket.status, deletedAt: ticket.deletedAt ? ticket.deletedAt.toISOString() : null, note: link.note, createdAt: link.createdAt.toISOString() });
+        }
+        frontier = next;
+      }
+      return result.reverse();
+    };
+    const [ancestors, descendants] = await Promise.all([walk(id, 'from'), walk(id, 'to')]);
+    return { ancestors, descendants };
   }
 
   /** 校验并返回可协助的内部成员（去重、排除本人、需为启用账号）；否则抛错 */

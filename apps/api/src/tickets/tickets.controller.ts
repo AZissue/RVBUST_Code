@@ -54,6 +54,8 @@ export class TicketsController {
     return this.excel.importBuffer(user, file.buffer);
   }
   @Roles('admin', 'support') @Get('recycle-bin') recycle(@CurrentUser() user: AuthUser, @Query('search') search?: string, @Query('page') pageRaw?: string) { return this.tickets.listDeleted(user, search, Math.max(1, Number.parseInt(pageRaw ?? '1', 10) || 1)); }
+  @Get('continuable') continuable(@CurrentUser() user: AuthUser, @Query('organizationId', ParseUUIDPipe) organizationId: string, @Query('keyword') keyword?: string) { return this.tickets.continuable(user, organizationId, keyword); }
+  @Get(':id/chain') chain(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) { return this.tickets.chain(user, id); }
   @Get(':id') get(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) { return this.tickets.get(user, id); }
   @Post() create(@CurrentUser() user: AuthUser, @Body() dto: CreateTicketDto) { return this.tickets.create(user, dto); }
   @Roles('admin', 'support', 'employee') @Post(':id/loan-requests') async createLoanRequest(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) {

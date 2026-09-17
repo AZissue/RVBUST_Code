@@ -1,4 +1,4 @@
-import { ArrowLeft, CheckCircle2, ClipboardList, Clock3, MessageSquare, PackagePlus, Pencil, Plus, RefreshCw, RotateCcw, Search, Send, Trash2, UserPlus, Wrench, X } from 'lucide-react'
+import { ArrowLeft, CheckCircle2, ClipboardList, Clock3, GitBranch, MessageSquare, PackagePlus, Pencil, Plus, RefreshCw, RotateCcw, Search, Send, Trash2, UserPlus, Wrench, X } from 'lucide-react'
 import { useEffect, useState, useRef, type FormEvent } from 'react'
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { CreateTicketModal } from '../components/CreateTicketModal'
@@ -126,6 +126,7 @@ export function TicketDetailPage() {
     {error && <div className="form-error"><button onClick={() => setError('')}><X size={14} /></button>{error}</div>}
     {isDeleted && <div className="form-error" style={{ borderColor: 'var(--warning, #ed6c02)', background: 'rgba(237,108,2,.08)', color: 'var(--warning, #ed6c02)' }}>该工单已在回收站中{isDeleted && ticket.deletedBy ? `，由 ${ticket.deletedBy.name} 删除${ticket.deletedReason ? `，原因：${ticket.deletedReason}` : ''}` : ''}</div>}
     <TicketLinkageCard ticket={ticket} isDeleted={isDeleted} onCreated={async (message) => { setNotice(message); await remote.refresh() }} />
+    <TicketChainCard ticket={ticket} isDeleted={isDeleted} onChanged={async (notice) => { if (notice) setNotice(notice); await remote.refresh() }} />
     <div className="ticket-layout"><section className="panel"><div className="section-heading"><div><h2>处理时间线</h2><p>内部跟进记录，仅团队可见</p></div></div><div className="timeline">{ticket.events?.map((event) => <article key={event.id} className={event.type === 'LINK_CREATED' || event.type === 'LINK_UPDATE' ? 'timeline-linkage' : undefined}><div className="timeline-dot" /><header><strong>{event.author.name}</strong><span className={`visibility ${event.visibility.toLowerCase()}`}>{event.visibility === 'INTERNAL' ? '内部' : '客户可见'}</span><time>{formatDate(event.createdAt)}</time>{(user?.role === 'admin' || event.author.id === user?.id) && <button type="button" className="icon-button danger" title="删除流程记录" aria-label="删除流程记录" onClick={() => setDeletingEvent({ id: event.id, content: event.content })}><Trash2 size={15} /></button>}</header><p><TimelineEventBody event={event} /></p><small>{ticketEventTypeLabel(event.type)}</small></article>)}</div>
       {!isDeleted && <div className="composer">{!editable && <p className="readonly-hint">当前为协作只读模式：可追加跟进记录，工单状态变更仅限当前负责人或管理员</p>}<textarea rows={3} value={message} onChange={(event) => setMessage(event.target.value)} placeholder="记录跟进情况，仅内部可见" /><button className="button primary" disabled={sending || !message.trim()} onClick={() => void addEvent()}><Send size={16} />写入时间线</button></div>}</section>
       <aside className="detail-aside"><section><h2>工单上下文</h2><dl><dt>客户</dt><dd><Link to={`/customers/${ticket.organization.id}`}>{ticket.organization.name}</Link></dd><dt>联系人</dt><dd>{ticket.contact?.name ?? '-'}</dd><dt>创建人</dt><dd>{ticket.createdBy?.name ?? '-'}</dd><dt>创建时间</dt><dd>{formatDate(ticket.createdAt)}</dd><dt>负责人</dt><dd>{ticket.assignee?.name ?? '未分配'}</dd><dt>计划完成</dt><dd>{formatDate(ticket.plannedAt)}</dd><dt>分类</dt><dd>{ticketCategoryLabel(ticket.category)}</dd></dl></section><section><h2>协作</h2><div className="assist-list">{(ticket.collaborators ?? []).map((collaborator) => <div className="assist-item" key={collaborator.user.id}><header><strong>{collaborator.user.name}</strong></header>{editable && !isDeleted && <div className="row-actions"><button className="button small" onClick={() => void removeCollaborator(collaborator.user.id)}>移除</button></div>}</div>)}</div>{!ticket.collaborators?.length && <p className="muted">暂无协作人</p>}{editable && !isDeleted && <div className="row-actions"><button className="button" onClick={() => setInviteOpen((previous) => !previous)}><UserPlus size={15} />添加协作人</button></div>}{inviteOpen && editable && !isDeleted && <div className="invite-box">{assignable.data?.map((item) => <label key={item.id} className="checkbox-row"><input type="checkbox" checked={inviteUserIds.includes(item.id)} onChange={() => toggleInvite(item.id)} />{item.name}</label>) ?? <span>加载中…</span>}<input value={inviteMessage} onChange={(event) => setInviteMessage(event.target.value)} placeholder="协作说明（可选）" maxLength={2000} /><div className="row-actions"><button className="button primary small" onClick={() => void inviteAssist()}>添加</button><button className="button small" onClick={() => setInviteOpen(false)}>取消</button></div></div>}</section><section className="recycle-actions">{!isDeleted && editable && <button className="button danger" onClick={() => setDeleteOpen(true)}><Trash2 size={15} />移入回收站</button>}{isDeleted && <button className="button" onClick={() => void restoreTicket()}><RotateCcw size={16} />恢复工单</button>}</section><section><h2>设备环境</h2><dl><dt>相机型号</dt><dd>{ticket.cameraModel || '-'}</dd><dt>SN</dt><dd className="mono">{ticket.serialNumber || '-'}</dd><dt>SDK</dt><dd>{ticket.sdkVersion || '-'}</dd><dt>系统环境</dt><dd>{ticket.systemEnvironment || '-'}</dd></dl></section></aside>
@@ -173,6 +174,33 @@ function TicketLinkageCard({ ticket, isDeleted, onCreated }: { ticket: Ticket; i
       {showLoanButton && <button type="button" className="button" disabled={creating !== ''} onClick={() => void create('loan')}><PackagePlus size={15} />{creating === 'loan' ? '正在创建' : '创建借测单'}</button>}
       {showRepairButton && <button type="button" className="button" disabled={creating !== ''} onClick={() => void create('repair')}><Wrench size={15} />{creating === 'repair' ? '正在创建' : '创建维修单'}</button>}
     </div>}
+  </section>
+}
+
+function TicketChainCard({ ticket, isDeleted, onChanged }: { ticket: Ticket; isDeleted: boolean; onChanged: (notice?: string) => Promise<void> }) {
+  type ChainItem = { id: string; number: string; title: string; status: TicketStatus; deletedAt: string | null; note: string }
+  const chain = useRemote(() => api<{ ancestors: ChainItem[]; descendants: ChainItem[] }>(`/tickets/${ticket.id}/chain`), [ticket.id])
+  const [creating, setCreating] = useState(false)
+  const closable = !isDeleted && ticket.status !== 'RESOLVED' && ticket.status !== 'CLOSED'
+  if (chain.loading || chain.error) return null
+  const { ancestors, descendants } = chain.data ?? { ancestors: [], descendants: [] }
+  if (!ancestors.length && !descendants.length && !closable) return null
+  const activeLinks = (ticket.loanOrders ?? []).filter((item) => ACTIVE_LOAN_STATUSES.includes(item.status)).length + (ticket.repairOrders ?? []).filter((item) => item.status !== 'CLOSED').length
+  const renderItem = (item: ChainItem, label: string) => <div key={`${label}-${item.id}`} className="linkage-item">
+    <header><Link className="mono" to={`/tickets/${item.id}`}>{item.number}</Link><span className="muted">{label}</span><StatusBadge status={item.status} />{item.deletedAt && <span className="badge">已删除</span>}</header>
+    <p className="muted chain-title">{item.title}{item.note ? `（${item.note}）` : ''}</p>
+  </div>
+  return <section className="panel linkage-panel">
+    <div className="section-heading"><div><h2>接续链</h2><p>工单链路与上下文承接，新阶段可在此发起接续</p></div>{closable && <button type="button" className="button small" onClick={() => setCreating(true)}><GitBranch size={14} />发起接续工单</button>}</div>
+    {ancestors.length > 0 && <div className="linkage-list">{ancestors.map((item) => renderItem(item, '承接自'))}</div>}
+    {descendants.length > 0 && <div className="linkage-list">{descendants.map((item) => renderItem(item, '已接续至'))}</div>}
+    {creating && <CreateTicketModal
+      defaultAssigneeId={ticket.assignee?.id}
+      initialCustomerName={ticket.organization.name}
+      initialTitle={`【接续 ${ticket.number}】`}
+      presetContinuations={[{ id: ticket.id, number: ticket.number, title: ticket.title, activeLinks }]}
+      onClose={() => setCreating(false)}
+      onCreated={async (_created, notice) => { setCreating(false); await onChanged(notice) }} />}
   </section>
 }
 

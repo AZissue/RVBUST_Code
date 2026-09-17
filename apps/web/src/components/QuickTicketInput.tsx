@@ -81,6 +81,7 @@ function QuickTicketConfirm({ parsed, defaultDate, canCreateCustomer, onClose, o
   const [status, setStatus] = useState<TicketStatus>(parsed.status ?? 'PENDING')
   const [category, setCategory] = useState<TicketCategory>(() => inferCategory(parsed.rawText))
   const [similar, setSimilar] = useState<Similar[]>([])
+  const [continuing, setContinuing] = useState<Similar | null>(null)
   const [checkedKey, setCheckedKey] = useState('')
   const [error, setError] = useState('')
   const [lookupError, setLookupError] = useState('')
@@ -134,12 +135,13 @@ function QuickTicketConfirm({ parsed, defaultDate, canCreateCustomer, onClose, o
     } catch (e) { setError(e instanceof Error ? e.message : '总结失败') } finally { setSummarizing(false) }
   }
   const ready = Boolean(organizationId && assigneeId && issue.trim().length >= 3 && title.trim().length >= 3 && checkedKey === key && !busy)
-  const save = async (existing?: Similar) => {
+  const save = async (existing?: Similar, continuation?: { fromTicketId: string; note: string }, continuationAutoClose = true) => {
     if (!ready) return
     if (existing && !window.confirm(`确认更新 ${existing.number}？将追加内部处理记录，并更新负责人和优先级；原描述和状态保持不变。`)) return
+    if (continuation && !continuation.note.trim()) { setError('请填写接续说明'); return }
     setBusy(true); setError('')
     try {
-      const ticket = existing ? await api<Ticket>(`/tickets/${existing.id}/quick-update`, { method: 'POST', body: JSON.stringify({ organizationId, assigneeId, priority, issue, rawText: parsed.rawText, expectedUpdatedAt: existing.updatedAt }) }) : await api<Ticket>('/tickets', { method: 'POST', body: JSON.stringify({ category, organizationId, assigneeId, priority, title: title.trim(), description: issue.trim(), rawText: parsed.rawText, requestKey, cameraModel: model || undefined, deviceId: deviceId || undefined, occurredAt: date || undefined, status: status === 'PENDING' ? undefined : status }) })
+      const ticket = existing ? await api<Ticket>(`/tickets/${existing.id}/quick-update`, { method: 'POST', body: JSON.stringify({ organizationId, assigneeId, priority, issue, rawText: parsed.rawText, expectedUpdatedAt: existing.updatedAt }) }) : await api<Ticket>('/tickets', { method: 'POST', body: JSON.stringify({ category, organizationId, assigneeId, priority, title: title.trim(), description: issue.trim(), rawText: parsed.rawText, requestKey, cameraModel: model || undefined, deviceId: deviceId || undefined, occurredAt: date || undefined, status: status === 'PENDING' ? undefined : status, continuations: continuation ? [{ fromTicketId: continuation.fromTicketId, note: continuation.note.trim() }] : undefined, autoClose: continuation ? continuationAutoClose : undefined }) })
       // 别名学习：用户把原文中的客户词改选为其他客户时记录，失败静默不阻塞主流程
       const alias = parsed.customerText?.trim()
       if (alias && organizationId !== parsed.matchedCustomer?.id) void api('/customer-aliases', { method: 'POST', body: JSON.stringify({ alias, organizationId }) }).catch(() => {})
@@ -211,10 +213,33 @@ function QuickTicketConfirm({ parsed, defaultDate, canCreateCustomer, onClose, o
     </fieldset>
     {lookupError && <div role="alert" className="form-error">相似工单检查失败：{lookupError}<button className="button" onClick={() => setRetry((n) => n + 1)}>重试</button></div>}
     {organizationId && issue.trim() && !lookupError && checkedKey !== key && <p role="status">正在检查相似工单…</p>}
-    {similar.length > 0 && <section className="similar-tickets"><h3>发现可能相关的现有工单</h3>{similar.map((t) => <article key={t.id}><Link to={`/tickets/${t.id}`} target="_blank">{t.number} · {t.title}</Link><p>{t.organization.name} · {t.cameraModel || t.device?.name || '未关联设备'} · 相似度 {t.similarity}%</p><div className="header-actions"><StatusBadge status={t.status} /><button className="button" disabled={!ready} onClick={() => void save(t)}>更新现有工单</button></div></article>)}</section>}
+    {similar.length > 0 && <section className="similar-tickets"><h3>发现可能相关的现有工单</h3>{similar.map((t) => <article key={t.id}><Link to={`/tickets/${t.id}`} target="_blank">{t.number} · {t.title}</Link><p>{t.organization.name} · {t.cameraModel || t.device?.name || '未关联设备'} · 相似度 {t.similarity}%</p><div className="header-actions"><StatusBadge status={t.status} /><button className="button" disabled={!ready} onClick={() => setContinuing(t)}>接续此工单</button><button className="button" disabled={!ready} onClick={() => void save(t)}>更新现有工单</button></div></article>)}</section>}
+    {continuing && <ContinueTicketDialog ticket={continuing} defaultNote={issue.trim().slice(0, 100)} busy={busy} onClose={() => setContinuing(null)} onConfirm={(note, autoCloseValue) => { setContinuing(null); return save(undefined, { fromTicketId: continuing.id, note }, autoCloseValue) }} />}
     {error && <div role="alert" className="form-error">{error}<button className="button" onClick={() => { setError(''); setRetry((n) => n + 1) }}>重试加载</button></div>}
     {(issue.trim().length < 3 || title.trim().length < 3) && <div role="status" className="form-error">请补充问题标题和描述，至少 3 个字符。</div>}
     <div className="form-actions"><button className="button" disabled={busy} onClick={onClose}>重新编辑</button><button className="button primary" disabled={!ready} onClick={() => void save()}>{busy ? '正在保存' : similar.length ? '仍然创建新工单' : '确认创建工单'}</button></div>
     {creatingCustomer && <SimpleFormModal title="创建新客户" fields={[[ 'name', '公司名称', true ]]} onClose={() => setCreatingCustomer(false)} onSubmit={async (payload) => { const c = await api<Customer>('/customers', { method: 'POST', body: JSON.stringify(payload) }); setCustomers((list) => [...list, c]); setOrganizationId(c.id); setDeviceId(''); setCreatingCustomer(false) }} />}
   </div></Modal>
+}
+
+/** 接续确认弹窗：接续说明必填（默认带入问题描述前 100 字），可取消自动关单 */
+function ContinueTicketDialog({ ticket, defaultNote, busy, onClose, onConfirm }: { ticket: Similar; defaultNote: string; busy: boolean; onClose: () => void; onConfirm: (note: string, autoClose: boolean) => Promise<void> }) {
+  const [note, setNote] = useState(defaultNote)
+  const [autoClose, setAutoClose] = useState(true)
+  const [error, setError] = useState('')
+  const submit = async () => {
+    const trimmed = note.trim()
+    if (trimmed.length < 2) { setError('接续说明必填（2-500 字）'); return }
+    setError('')
+    try { await onConfirm(trimmed, autoClose) } catch (reason) { setError(reason instanceof Error ? reason.message : '接续失败') }
+  }
+  return <Modal title={`接续工单：${ticket.number}`} onClose={() => { if (!busy) onClose() }}>
+    <div className="form-grid">
+      <p className="span-2 placeholder-text">将创建新工单承接「{ticket.title}」，接续说明写入原单时间线{autoClose ? '，原工单将关闭（可在回收站恢复）' : '，原工单保持开放'}。</p>
+      <label className="span-2">接续说明（必填，2-500 字）<textarea rows={3} minLength={2} maxLength={500} value={note} onChange={(event) => setNote(event.target.value)} /></label>
+      <label className="span-2 checkbox-row"><input type="checkbox" checked={autoClose} onChange={(event) => setAutoClose(event.target.checked)} />同时关闭原工单（接续说明将写入原单）</label>
+      {error && <div role="alert" className="form-error span-2">{error}</div>}
+      <div className="form-actions span-2"><button type="button" className="button" disabled={busy} onClick={onClose}>取消</button><button type="button" className="button primary" disabled={busy} onClick={() => void submit()}>{busy ? '正在创建' : '确认接续并创建'}</button></div>
+    </div>
+  </Modal>
 }

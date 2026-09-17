@@ -262,6 +262,7 @@ model User {
   reportedBugs           BugReport[]           @relation("BugAuthor")
   resolvedBugs           BugReport[]           @relation("BugResolver")
   createdCustomerAliases CustomerAlias[]         @relation("CustomerAliasCreator")
+  createdTicketContinuations TicketContinuation[] @relation("TicketContinuationCreator")
   createdAt              DateTime              @default(now()) @map("created_at")
   updatedAt              DateTime              @updatedAt @map("updated_at")
 
@@ -519,6 +520,8 @@ model Ticket {
   loanOrders        LoanOrder[]
   repairOrders      RepairOrder[]
   followUps         FollowUp[]
+  continuationsFrom TicketContinuation[] @relation("TicketContinuationsFrom")
+  continuationsTo   TicketContinuation[] @relation("TicketContinuationsTo")
   createdAt         DateTime             @default(now()) @map("created_at")
   updatedAt         DateTime             @updatedAt @map("updated_at")
   deletedAt         DateTime?            @map("deleted_at")
@@ -973,4 +976,22 @@ model HtmlFlowFile {
   createdAt    DateTime @default(now()) @map("created_at")
 
   @@map("html_flow_files")
+}
+
+/// 工单接续：新工单（to）承接同客户未解决工单（from），形成工单链促进闭环。
+/// fromTicketId 全局唯一（一张前置单最多被接续一次，线性链），并发由唯一索引兜底。
+model TicketContinuation {
+  id           String   @id @default(uuid()) @db.Uuid
+  fromTicketId String   @unique @map("from_ticket_id") @db.Uuid
+  toTicketId   String   @map("to_ticket_id") @db.Uuid
+  note         String   @db.VarChar(500)
+  carryLinks   Boolean  @default(false) @map("carry_links")
+  createdById  String?  @map("created_by_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at")
+  fromTicket   Ticket   @relation("TicketContinuationsFrom", fields: [fromTicketId], references: [id], onDelete: Cascade)
+  toTicket     Ticket   @relation("TicketContinuationsTo", fields: [toTicketId], references: [id], onDelete: Cascade)
+  createdBy    User?    @relation("TicketContinuationCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([toTicketId])
+  @@map("ticket_continuations")
 }

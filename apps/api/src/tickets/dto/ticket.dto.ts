@@ -1,6 +1,13 @@
 import { PartialType } from '@nestjs/mapped-types';
 import { TicketCategory, TicketPriority, TicketStatus } from '@prisma/client';
-import { IsArray, IsBoolean, IsDateString, IsEnum, IsOptional, IsString, IsUUID, Length } from 'class-validator';
+import { Type } from 'class-transformer';
+import { IsArray, IsBoolean, IsDateString, IsEnum, IsOptional, IsString, IsUUID, Length, ValidateNested } from 'class-validator';
+
+/** 接续的前置工单：note 必填（2-500 字），写入前置单时间线，自动关单时同步填入其 solution */
+export class ContinuationItemDto {
+  @IsUUID() fromTicketId!: string;
+  @IsString() @Length(2, 500) note!: string;
+}
 
 export class CreateTicketDto {
   @IsOptional() @IsString() @Length(1, 20000) rawText?: string;
@@ -32,6 +39,12 @@ export class CreateTicketDto {
   @IsOptional() @IsBoolean() createLinkedLoan?: boolean;
   /** 创建工单的同时联动创建维修单（幂等，失败不阻断工单创建） */
   @IsOptional() @IsBoolean() createLinkedRepair?: boolean;
+  /** 接续同客户未解决工单：建立工单链，旧单时间线留痕并按 autoClose 关闭 */
+  @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => ContinuationItemDto) continuations?: ContinuationItemDto[];
+  /** 接续后同时关闭前置单（默认 true；false 时仅建立关联与时间线留痕） */
+  @IsOptional() @IsBoolean() autoClose?: boolean;
+  /** 前置单存在进行中借测/维修单时，将其迁移到新工单（默认 false；不迁移且未处理时关单被拦截） */
+  @IsOptional() @IsBoolean() carryLinks?: boolean;
 }
 
 export class UpdateTicketDto extends PartialType(CreateTicketDto) {}

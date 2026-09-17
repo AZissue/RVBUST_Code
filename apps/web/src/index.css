@@ -406,3 +406,18 @@ tr.danger-row:hover td { background: color-mix(in srgb, var(--brand) 9%, var(--s
 .kb-text { margin: 0; padding: 16px; overflow: auto; max-height: 68vh; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 13px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
 .kb-editor { width: 100%; min-height: 55vh; padding: 16px; border: 1px solid rgba(127, 127, 127, .3); border-radius: 8px; background: transparent; color: inherit; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 13px; line-height: 1.6; resize: vertical; }
 .kb-editor-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; }
+
+/* 工单接续 */
+.continuation-picker { border: 1px dashed rgba(127,127,127,.35); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+.continuation-picker .section-heading h3 { margin: 0; font-size: 14px; }
+.continuation-picker .section-heading p { margin: 2px 0 0; font-size: 12px; color: var(--muted, #888); }
+.continuation-list { display: flex; flex-direction: column; gap: 6px; }
+.continuation-item { border: 1px solid rgba(127,127,127,.2); border-radius: 8px; padding: 8px 10px; }
+.continuation-item.selected { border-color: rgba(46,125,50,.5); background: rgba(46,125,50,.06); }
+.continuation-item .checkbox-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.continuation-title { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.continuation-note { display: block; margin-top: 6px; font-size: 12px; color: var(--muted, #888); }
+.continuation-note input { width: 100%; margin-top: 4px; }
+.continuation-options { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid rgba(127,127,127,.15); padding-top: 8px; }
+.continuation-options .checkbox-row { font-size: 13px; }
+.chain-title { margin: 2px 0 0; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
