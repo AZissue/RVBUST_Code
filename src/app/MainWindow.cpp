@@ -10,6 +10,8 @@
 #include "logic/PoseGuide.h"
 #include "logic/DataQualityCheck.h"
 #include "logic/ToolInputParser.h"
+#include "logic/FrameBuffer.h"
+#include "logic/RuntimeLog.h"
 #include "ui/TopNavBar.h"
 #include "ui/ModeSelector.h"
 #include "ui/Image2DView.h"
@@ -128,6 +130,10 @@ MainWindow::MainWindow(QWidget* parent)
         });
     }
 
+    // UI-thread stall watchdog: armed before any heavy work so the very first
+    // freeze is already covered by the runtime log.
+    startUiWatchdog();
+
     // Warm up the camera system + device scan in the background so that
     // clicking 连接 later goes straight to the device list and Open().
     startPreScan();
@@ -217,7 +223,9 @@ void MainWindow::wireSignals()
 
     // Camera signals
     connect(m_camera, &CameraManager::previewFrameReady, this,
-            [this](const QImage& img) { m_view2d->updateFrame(img, true); });
+            // livePreview=true: streaming frames take the cheap nearest-neighbour
+            // path and the 200 ms settle timer does one smooth pass afterwards.
+            [this](const QImage& img) { m_view2d->updateFrame(img, true, true); });
     connect(m_camera, &CameraManager::previewRightFrameReady, this,
             [this](const QImage& img) { m_view3d->showImage(img); });
     connect(m_camera, &CameraManager::captureComplete,
@@ -301,17 +309,45 @@ void MainWindow::wireSignals()
                 // Stale board pose until the new frame is recognized.
                 m_view3d->clearBoardFrame();
                 m_pendingBoardPose = BoardPoseFit::Pose{};
+                // Measurement page data source: the organized 3D grid of this
+                // very capture, handed over by refcount (no copy of the ~37 MB
+                // buffer).  CameraManager published it before emitting the
+                // capture result this slot runs on, so it matches `img`.
+                FrameBuffer::DoubleBuf grid;
+                int gw = 0, gh = 0;
+                const bool haveGrid = m_camera->lastGrid(grid, gw, gh);
+                m_toolsPanel->setMeasurementCloud(haveGrid ? grid : FrameBuffer::DoubleBuf{},
+                                                  gw, gh, img.width(), img.height());
             });
     connect(m_flow, &CaptureFlow::pointCloudReady, this,
-            [this](const std::vector<float>& pts, const std::vector<float>& cols) {
+            // Shared buffers: the payload is handed over by refcount, no copy.
+            [this](const FrameBuffer::FloatBuf& pts, const FrameBuffer::FloatBuf& cols) {
+                m_uploading3d = true;
+                beginHeavyOp(QStringLiteral("3D点云上传(%1点)")
+                                 .arg(pts ? pts->size() / 3 : 0));
                 m_view3d->updatePointCloud(pts, cols);
+                endHeavyOp();
+                m_uploading3d = false;
             });
     connect(m_flow, &CaptureFlow::markersDisplayReady, this,
             [this](const std::vector<std::tuple<float, float, std::string>>& overlay2d,
                    const std::vector<std::array<float, 3>>& highlights3d,
                    const std::vector<int>& highlightIndices) {
                 m_view2d->drawMarkers(overlay2d);
-                m_view3d->updatePointCloud(m_flow->capturedPoints());
+                // NOTE (reported, not changed): this re-uploads the same geometry
+                // that pointCloudReady() already uploaded, and without colours.
+                // Kept as-is because the visible result is identical and the
+                // behaviour cannot be re-verified without the GUI.
+                beginHeavyOp(QStringLiteral("3D点云重传(标记)"));
+                // Keep an active measurement colouring: the colours belong to
+                // this same cloud (same frame, same point count), so re-using
+                // them is both correct and cheaper than dropping them here.
+                const FrameBuffer::FloatBuf& pts = m_flow->capturedPoints();
+                const bool keepColors = m_measureCloudColors && pts
+                                        && m_measureCloudColors->size() == pts->size();
+                m_view3d->updatePointCloud(pts, keepColors ? m_measureCloudColors
+                                                           : FrameBuffer::FloatBuf{});
+                endHeavyOp();
                 m_view3d->highlightPoints(highlights3d);
                 m_view3d->setSelectableMarkers(highlights3d, highlightIndices);
                 m_view3d->setMarkerPickEnabled(true);
@@ -331,6 +367,23 @@ void MainWindow::wireSignals()
                 m_logger->info(QStringLiteral("3D 选择识别点 #%1 填充相机目标点")
                                .arg(index));
             });
+    // Measurement tool (3D 测量一体化工具 parity).  The panel computes, the
+    // views only paint: ROI rectangles go to the 2D view, the snapshot goes to
+    // the 2D display pages and to the 3D deviation/annotation overlay.
+    connect(m_view2d, &Image2DView::roiSelected,
+            m_toolsPanel, &ToolsPanel::onRoiSelected);
+    connect(m_toolsPanel, &ToolsPanel::roisChanged,
+            m_view2d, &Image2DView::setRois);
+    connect(m_toolsPanel, &ToolsPanel::measurementUpdated,
+            m_view2d, &Image2DView::setMeasurement);
+    connect(m_toolsPanel, &ToolsPanel::measurementUpdated,
+            this, &MainWindow::onMeasurementUpdated);
+    // The 3D "偏差着色" toolbar button and the panel's checkbox are two views of
+    // one state — route each to the other so they cannot drift apart.
+    connect(m_view3d, &VisSceneView::deviationColoringToggled,
+            m_toolsPanel, &ToolsPanel::setDeviationColoring);
+    connect(m_toolsPanel, &ToolsPanel::deviationColoringChanged,
+            m_view3d, &VisSceneView::setDeviationColoringChecked);
     connect(m_flow, &CaptureFlow::clearMarkersRequested,
             m_view2d, &Image2DView::clearMarkers);
     connect(m_flow, &CaptureFlow::tipRequested,
@@ -470,6 +523,8 @@ void MainWindow::onModeChanged(bool eyeInHand, bool markerType, bool concentric)
     if (typeChanged && m_data->count() > 0) {
         auto reply = QMessageBox::question(this, QStringLiteral("切换标定类型"),
                                            QStringLiteral("切换标定类型将清空当前采集数据，是否继续？"));
+        // Modal wait is user think-time, not a UI stall — do not report it.
+        m_watchdog.reset();
         if (reply != QMessageBox::Yes) {
             m_modeSelector->blockSignals(true);
             m_modeSelector->setMode(
@@ -575,16 +630,16 @@ void MainWindow::onConnectCamera()
 {
     if (m_preScanning) {
         // Startup pre-scan still running; continue automatically when done.
+        // setConnectBusy() repaints the busy state directly — no nested event
+        // loop here, which could re-enter this very handler.
         m_connectRequested = true;
         setConnectBusy(QStringLiteral("正在搜索相机..."));
         m_logger->info(QStringLiteral("正在搜索相机..."));
-        QApplication::processEvents();
         return;
     }
     if (m_cachedDevices.empty()) {
         setConnectBusy(QStringLiteral("正在搜索相机..."));
         m_logger->info(QStringLiteral("正在搜索相机..."));
-        QApplication::processEvents();
         m_camera->scanDevicesAsync([this](const std::vector<DeviceEntry>& devices) {
             clearBusy();
             m_cachedDevices = devices;
@@ -624,7 +679,11 @@ void MainWindow::proceedWithDevices(const std::vector<DeviceEntry>& devices)
     }
 
     DeviceListDialog dlg(this, devices, [this]() { return m_camera->listDevices(); });
-    if (dlg.exec() != QDialog::Accepted)
+    const int dlgResult = dlg.exec();
+    // The modal wait is user think-time, not a UI stall — re-baseline the
+    // watchdog so it does not report the dialog's lifetime as a freeze.
+    m_watchdog.reset();
+    if (dlgResult != QDialog::Accepted)
         return;
 
     const QString serial = dlg.selectedSerial();
@@ -635,9 +694,10 @@ void MainWindow::proceedWithDevices(const std::vector<DeviceEntry>& devices)
     // created on the thread that later drives the preview (UI thread).
     setConnectBusy(QStringLiteral("连接中..."));
     m_logger->info(QStringLiteral("正在连接设备 %1").arg(serial));
-    QApplication::processEvents();
+    beginHeavyOp(QStringLiteral("相机连接"));
 
     const bool ok = m_camera->initWithDeviceSerial(serial);
+    endHeavyOp();
     clearBusy();
     if (!ok)
         m_toast->showMessage(QStringLiteral("相机连接失败"), false);
@@ -709,7 +769,10 @@ void MainWindow::on2dPixelPicked(int x, int y)
         return;
     }
 
-    std::vector<double> grid;
+    // Shared buffers: lastGrid()/lastCorrespond() hand back a refcount of the
+    // capture's grid/correspond map instead of copying ~37 MB / ~25 MB on every
+    // click in the image.
+    FrameBuffer::DoubleBuf grid;
     int gw = 0, gh = 0;
     if (!m_camera->lastGrid(grid, gw, gh)) {
         m_toast->showMessage(QStringLiteral("请先拍照采集数据"), false);
@@ -721,14 +784,14 @@ void MainWindow::on2dPixelPicked(int x, int y)
     if (m_camera->lastGridAligned()) {
         std::size_t idx = 0;
         if (PixelTo3DTools::alignedIndex(x, y, gw, gh, idx))
-            ok = PixelTo3DTools::pointAt(grid, idx, pt);
+            ok = PixelTo3DTools::pointAt(*grid, idx, pt);
     } else {
         if (!m_correspondBuilt) {
-            std::vector<double> cmap;
+            FrameBuffer::DoubleBuf cmap;
             int cw = 0, ch = 0;
             if (m_camera->lastCorrespond(cmap, cw, ch)) {
                 PixelTo3DTools::buildCorrespondIndex(
-                    cmap, cw, ch, m_correspondIndex);
+                    *cmap, cw, ch, m_correspondIndex);
                 m_correspondW = cw;
                 m_correspondH = ch;
                 m_correspondBuilt = true;
@@ -737,7 +800,7 @@ void MainWindow::on2dPixelPicked(int x, int y)
         if (m_correspondBuilt)
             ok = PixelTo3DTools::queryIndex(
                 m_correspondIndex, m_correspondW, m_correspondH,
-                x, y, grid, pt);
+                x, y, *grid, pt);
         else
             m_toast->showMessage(
                 QStringLiteral("线扫未对齐模式下未获得对应图，无法取点"), false);
@@ -854,6 +917,34 @@ void MainWindow::onRobotConnect(const QString& host, quint16 port,
 {
     m_robotProtocol = protocol;
 
+    if (protocol == 2) {
+        // 博纳斯/纳博特 JSON over TCP: like UR, no register format/scale to
+        // configure — the adapter owns the framing and the JSON payload.
+        m_nrcReader.setTimeoutMs(1500);
+        if (!m_nrcReader.connect(host, port)) {
+            m_robotSimulated = false;
+            m_robotConnected = false;
+            m_toolsPanel->setRobotStatus(QStringLiteral("连接失败"), true);
+            m_sidePanel->setTip(
+                QStringLiteral("机器人连接失败：%1").arg(m_nrcReader.lastError()),
+                true);
+            m_logger->error(QStringLiteral("机器人连接失败：%1")
+                                .arg(m_nrcReader.lastError()));
+            updateRobotReadBar();
+            return;
+        }
+        m_robotSimulated = false;
+        m_robotConnected = true;
+        m_toolsPanel->setRobotConnected(true);
+        m_toolsPanel->setRobotStatus(QStringLiteral("已连接"), false);
+        m_sidePanel->setTip(
+            QStringLiteral("机器人已连接（%1:%2，博纳斯 JSON/TCP）").arg(host).arg(port), false);
+        m_logger->success(
+            QStringLiteral("机器人已连接（%1:%2，博纳斯 JSON/TCP）").arg(host).arg(port));
+        updateRobotReadBar();
+        return;
+    }
+
     if (protocol == 1) {
         // UR Realtime interface: no register format/scale to configure.
         m_urReader.setTimeoutMs(1500);
@@ -916,6 +1007,7 @@ void MainWindow::onRobotDisconnect()
 {
     m_robotReader.disconnect();
     m_urReader.disconnect();
+    m_nrcReader.disconnect();
     m_robotConnected = false;
     m_robotSimulated = false;
     m_toolsPanel->setRobotConnected(false);
@@ -930,6 +1022,7 @@ void MainWindow::onRobotSimulateConnect()
     // state so the read buttons / cards can be exercised in the UI.
     m_robotReader.disconnect();
     m_urReader.disconnect();
+    m_nrcReader.disconnect();
     m_robotSimulated = true;
     m_robotConnected = true;
     m_toolsPanel->setRobotConnected(true);
@@ -950,6 +1043,8 @@ bool MainWindow::readRobotPose(RobotPose::Pose& pose)
         pose.rpy = { 0.0, 0.0, 0.0 };
         return true;
     }
+    if (m_robotProtocol == 2)
+        return m_nrcReader.readPose(pose) == RobotPose::Status::Ok;
     if (m_robotProtocol == 1)
         return m_urReader.readPose(pose) == RobotPose::Status::Ok;
     return m_robotReader.readPose(pose) == RobotPose::Status::Ok;
@@ -957,6 +1052,8 @@ bool MainWindow::readRobotPose(RobotPose::Pose& pose)
 
 QString MainWindow::robotLastError() const
 {
+    if (m_robotProtocol == 2)
+        return m_nrcReader.lastError();
     return m_robotProtocol == 1 ? m_urReader.lastError() : m_robotReader.lastError();
 }
 
@@ -1222,20 +1319,122 @@ void MainWindow::refreshBoardOverlay()
     m_view3d->setBoardHistory(frames);
 }
 
+// Measurement tool -> 3D viewport (P4).
+//
+// Two independent things happen here, both through interfaces the 3D view
+// already had (no new Vis command, no change to the pick path):
+//   1. the captured cloud is re-uploaded with per-point RGB computed from the
+//      panel's robust ±3σ(MAD) deviation scale — the exact same colour function
+//      the 2D 偏差图 page uses;
+//   2. the fitted plane and the measured region are marked with a sphere, a
+//      normal arrow and a text label (尺寸总图 values).
+void MainWindow::onMeasurementUpdated(const Measurement::Snapshot& snapshot)
+{
+    const FrameBuffer::FloatBuf& pts = m_flow->capturedPoints();
+
+    // ── deviation colouring ──
+    // The panel builds one RGB triple per *valid* cloud point, following the
+    // same NaN/zero scan PointCloudUtils::filterValidPoints uses, so the array
+    // is index-aligned with `pts`.  A size mismatch means the cloud is from a
+    // different frame; colouring it would misplace every point, so it is
+    // skipped rather than drawn wrong.
+    const bool canColor = snapshot.hasCloudColors && pts && snapshot.cloudColors
+                          && snapshot.cloudColors->size() * 3 == pts->size();
+    if (canColor) {
+        const std::vector<std::array<float, 3>>& src = *snapshot.cloudColors;
+        std::vector<float> flat;
+        flat.reserve(src.size() * 3);
+        for (const std::array<float, 3>& c : src) {
+            flat.push_back(c[0]);
+            flat.push_back(c[1]);
+            flat.push_back(c[2]);
+        }
+        beginHeavyOp(QStringLiteral("3D偏差着色(%1点)").arg(flat.size() / 3));
+        m_measureCloudColors = FrameBuffer::makeFloat(std::move(flat));
+        m_view3d->updatePointCloud(pts, m_measureCloudColors);
+        endHeavyOp();
+        m_cloudColored = true;
+    } else if (m_cloudColored && pts) {
+        // Colouring was switched off (or the capture changed): back to the
+        // plain cloud, once.
+        beginHeavyOp(QStringLiteral("3D点云重传(取消着色)"));
+        m_measureCloudColors.reset();
+        m_view3d->updatePointCloud(pts);
+        endHeavyOp();
+        m_cloudColored = false;
+    }
+
+    // ── annotations ──
+    for (int handle : m_measureHandles)
+        m_view3d->removeObject(handle);
+    m_measureHandles.clear();
+
+    const std::array<float, 3> accent = { 1.0f, 0.655f, 0.149f };   // 255,167,38
+    const std::array<float, 3> line = { 0.353f, 0.667f, 0.961f };   // 90,170,245
+    if (snapshot.hasPlane) {
+        const std::array<float, 3> p = { static_cast<float>(snapshot.planePoint[0]),
+                                         static_cast<float>(snapshot.planePoint[1]),
+                                         static_cast<float>(snapshot.planePoint[2]) };
+        std::array<float, 3> n = { static_cast<float>(snapshot.planeNormal[0]),
+                                   static_cast<float>(snapshot.planeNormal[1]),
+                                   static_cast<float>(snapshot.planeNormal[2]) };
+        const float len = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+        if (len > 1e-6f)
+            for (float& v : n) v /= len;
+
+        int h = m_view3d->addSphere(p, 2.5f, accent);
+        if (h >= 0) m_measureHandles.push_back(h);
+        // 40 mm normal arrow: long enough to read at working distance, short
+        // enough not to leave the field of view.
+        const std::array<float, 3> tip = { p[0] + n[0] * 40.0f, p[1] + n[1] * 40.0f,
+                                           p[2] + n[2] * 40.0f };
+        h = m_view3d->addArrow(p, tip, 1.5f, line);
+        if (h >= 0) m_measureHandles.push_back(h);
+        if (!snapshot.label.isEmpty()) {
+            const std::array<float, 3> at = { p[0], p[1], p[2] + 25.0f };
+            h = m_view3d->addText(snapshot.label, at, 0.02f, accent);
+            if (h >= 0) m_measureHandles.push_back(h);
+        }
+    }
+    if (snapshot.hasRoiBox) {
+        const std::array<float, 3> c = {
+            static_cast<float>(0.5 * (snapshot.boxMin[0] + snapshot.boxMax[0])),
+            static_cast<float>(0.5 * (snapshot.boxMin[1] + snapshot.boxMax[1])),
+            static_cast<float>(0.5 * (snapshot.boxMin[2] + snapshot.boxMax[2]))
+        };
+        const std::array<float, 3> half = {
+            static_cast<float>(0.5 * (snapshot.boxMax[0] - snapshot.boxMin[0])),
+            static_cast<float>(0.5 * (snapshot.boxMax[1] - snapshot.boxMin[1])),
+            static_cast<float>(0.5 * (snapshot.boxMax[2] - snapshot.boxMin[2]))
+        };
+        const int h = m_view3d->addBox(c, half, accent);
+        if (h >= 0) m_measureHandles.push_back(h);
+        if (!snapshot.label.isEmpty()) {
+            const int t = m_view3d->addText(snapshot.label,
+                                            { c[0], c[1], c[2] + half[2] + 10.0f },
+                                            0.02f, accent);
+            if (t >= 0) m_measureHandles.push_back(t);
+        }
+    }
+}
+
 // ── State Helpers ─────────────────────────────────────────────────────
 
 void MainWindow::setBusy(const QString& text, ActionButtons::BusyTarget target)
 {
     m_busy = true;
     m_actionButtons->setBusy(target, text);
-    QApplication::processEvents();
+    // Paint the busy state synchronously without dispatching queued events.
+    // A nested processEvents() here would run the camera/capture handlers while
+    // this call is still on the stack — the re-entrancy the field crash needs.
+    m_actionButtons->repaint();
 }
 
 void MainWindow::setConnectBusy(const QString& text)
 {
     m_busy = true;
     m_topNav->setConnectBusy(true, text);
-    QApplication::processEvents();
+    m_topNav->repaint();   // same non-reentrant paint, see setBusy()
 }
 
 void MainWindow::clearBusy()
@@ -1245,13 +1444,84 @@ void MainWindow::clearBusy()
     m_actionButtons->clearBusy();
 }
 
+// ── UI-thread stall watchdog (D5) ─────────────────────────────────────
+
+void MainWindow::startUiWatchdog()
+{
+    const int threshold = m_config.uiStallThresholdMs();
+    m_watchdog.setThresholdMs(threshold);
+    m_watchdog.setIntervalMs(UiStallWatchdog::kDefaultIntervalMs);
+
+    if (!m_watchdogTimer) {
+        m_watchdogTimer = new QTimer(this);
+        // CoarseTimer: the OS may coalesce it, which costs nothing measurable
+        // and the reporting threshold is 5x the interval anyway.
+        m_watchdogTimer->setTimerType(Qt::CoarseTimer);
+        connect(m_watchdogTimer, &QTimer::timeout,
+                this, &MainWindow::onWatchdogTick);
+    }
+    m_watchdog.reset();
+    m_watchdogTimer->start(static_cast<int>(m_watchdog.intervalMs()));
+    RuntimeLog::log("[WATCHDOG] armed interval=%d ms threshold=%d ms",
+                    static_cast<int>(m_watchdog.intervalMs()), threshold);
+}
+
+void MainWindow::onWatchdogTick()
+{
+    UiStallWatchdog::Context ctx;
+    ctx.previewing = m_camera && m_camera->isPreviewing();
+    ctx.capturing  = m_busy;
+    ctx.uploading3d = m_uploading3d;
+    const FrameBuffer::FloatBuf& pts = m_flow->capturedPoints();
+    ctx.pointCount = pts ? static_cast<long long>(pts->size() / 3) : 0;
+
+    const UiStallWatchdog::Tick t = m_watchdog.tick(UiStallWatchdog::nowMs(), ctx);
+    if (!t.stalled)
+        return;
+
+    std::string msg = UiStallWatchdog::formatStall(t.stallMs, ctx);
+    // Name the last synchronous UI-thread operation when it overlaps the stall
+    // window, so the log says "what" and not only "how long".
+    const double stallStart = UiStallWatchdog::nowMs() - t.stallMs;
+    if (!m_heavyOpName.isEmpty() && m_heavyOpEndMs >= stallStart) {
+        msg += " 最近重活=";
+        msg += m_heavyOpName.toStdString();
+    }
+    RuntimeLog::log("[WATCHDOG] %s", msg.c_str());
+    // Mirror to the operator-visible log so a freeze is visible without opening
+    // the technical file (dual-track logging is a project rule).
+    m_logger->warning(QStringLiteral("[WATCHDOG] ") + QString::fromStdString(msg));
+}
+
+void MainWindow::beginHeavyOp(const QString& name)
+{
+    m_heavyOpName   = name;
+    m_heavyOpStartMs = UiStallWatchdog::nowMs();
+    m_heavyOpEndMs   = m_heavyOpStartMs;
+}
+
+void MainWindow::endHeavyOp()
+{
+    m_heavyOpEndMs = UiStallWatchdog::nowMs();
+    if (m_heavyOpStartMs < 0.0)
+        return;
+    const double costMs = m_heavyOpEndMs - m_heavyOpStartMs;
+    // Only the operations that can actually stall the UI are worth a line.
+    if (costMs >= 30.0) {
+        RuntimeLog::log("[UI] %s 耗时 %.0f ms",
+                        qPrintable(m_heavyOpName), costMs);
+    }
+}
+
 // ── Settings Dialog ───────────────────────────────────────────────────
 
 void MainWindow::showSettingsDialog()
 {
     SettingsDialog dlg(m_saveBaseDir, m_config.caliboardErrorThreshold(),
                        m_camera, m_data, this);
-    if (dlg.exec() != QDialog::Accepted)
+    const int dlgResult = dlg.exec();
+    m_watchdog.reset();   // modal think-time is not a UI stall
+    if (dlgResult != QDialog::Accepted)
         return;
 
     m_saveBaseDir = dlg.saveBaseDir();

@@ -7,6 +7,8 @@
 #include <array>
 #include <memory>
 
+#include "logic/FrameBuffer.h"
+
 class QTimer;
 
 struct VisSceneViewImpl;
@@ -17,9 +19,11 @@ public:
     explicit VisSceneView(QWidget* parent = nullptr);
     ~VisSceneView() override;
 
-    // Point cloud (xyz in mm, rgb in [0,1])
-    void updatePointCloud(const std::vector<float>& xyz,
-                          const std::vector<float>& rgb = {});
+    // Point cloud (xyz in mm, rgb in [0,1]).  Shared immutable buffers, so a
+    // caller that already holds the capture's payload hands over a refcount
+    // instead of copying ~16 MB.  rgb may be null (renders gray).
+    void updatePointCloud(const FrameBuffer::FloatBuf& xyz,
+                          const FrameBuffer::FloatBuf& rgb = {});
     void highlightPoints(const std::vector<std::array<float, 3>>& pts3dMM);
     void clear();
 
@@ -91,10 +95,16 @@ public:
     // Lifecycle — call before destroying the parent window
     void shutdown();
 
+    // 偏差着色 toggle (toolbar).  The state is owned by the tools panel, which
+    // computes the colours; this only reflects it, so the two controls can
+    // never disagree.
+    void setDeviationColoringChecked(bool on);
+
     // Emitted when the user clicks on/near a selectable marker.
     // index matches the 2D overlay label; xyz in mm.
 signals:
     void markerPicked(int index, float x, float y, float z);
+    void deviationColoringToggled(bool on);
 
 protected:
     void resizeEvent(QResizeEvent* event) override;
@@ -138,6 +148,7 @@ private:
 
     QPushButton* m_resetButton = nullptr;
     QPushButton* m_historyButton = nullptr;   // toggles board-history overlay
+    QPushButton* m_deviationButton = nullptr; // toggles measurement colouring
     QWidget* m_containerWidget = nullptr;
     QWidget* m_viewport = nullptr;
     QLabel* m_placeholder = nullptr;

@@ -69,6 +69,12 @@ struct VisSceneViewImpl {
     HWND visHwnd = nullptr;
     std::string uniqueTitle;
     bool initialized = false;
+    // Init sentinel.  Embedding spans several steps (create view → wait for its
+    // HWND → reparent).  Without this, a re-entrant call made while those steps
+    // were still running created a *second* Vis::View (leaked, and both fought
+    // over the same HWND title).  Set for the whole span, cleared on success,
+    // failure and shutdown.
+    bool initializing = false;
 
     // Handle tracking: our int → Vis::Handle and reverse
     int nextHandle = 1;
@@ -80,6 +86,12 @@ struct VisSceneViewImpl {
     Vis::Handle groundHandle;
     Vis::Handle axesHandle;
     std::vector<Vis::Handle> highlightHandles;
+
+    // Reused padding buffer for updatePointCloud()'s gray/padded colour path.
+    // Held here so a repeated upload does not allocate a fresh 8 MB vector and
+    // re-touch every element (D3: the colour array used to be rebuilt in full
+    // on every call).
+    std::vector<float> scratchColors;
 
     // WNDPROC hook — embedded to avoid heap allocation/deletion race
     struct WndProcCtx {
@@ -173,12 +185,22 @@ static HWND findVisWindow(const char* title) {
     return ctx.result;
 }
 
-static HWND findVisWindowWithRetry(const char* title, int maxRetries, int delayMs) {
-    for (int i = 0; i < maxRetries; ++i) {
+// Bounded inline poll for a window that the Vis render thread has just
+// created.  Deliberately does NOT pump the Qt event loop: a nested
+// processEvents() here is what allowed a re-entrant init to create a second
+// Vis::View.  The HWND is created by the Vis thread, so sleeping this thread
+// does not prevent it from appearing.  If the poll comes up empty the caller
+// keeps initializing and retries from a one-shot timer instead of blocking.
+static constexpr int kInlineFindAttempts = 8;   // ~16 ms of blocking at most
+static constexpr int kInlineFindDelayMs  = 2;
+static constexpr int kFindRetryEveryMs   = 20;
+static constexpr int kMaxFindRetries     = 25;  // ~0.5 s total budget
+
+static HWND findVisWindowPolled(const char* title) {
+    for (int i = 0; i < kInlineFindAttempts; ++i) {
         HWND hwnd = findVisWindow(title);
         if (hwnd) return hwnd;
-        Sleep(delayMs);
-        QApplication::processEvents();
+        Sleep(kInlineFindDelayMs);
     }
     return nullptr;
 }
@@ -330,50 +352,105 @@ static void removeWndProcHook(HWND hwnd, VisSceneViewImpl& d) {
 
 // ── Vis embedding init ──
 
-static bool initVisEmbedding(VisSceneViewImpl& d, QWidget* viewport,
-                             QWidget* host) {
-    if (d.initialized) return true;
+// Phase 2: the Vis HWND exists — reparent it into the Qt viewport and finish
+// the setup.  Only ever reached with `d->initializing` set, so at most one
+// caller can be here at a time.
+static bool embedVisWindow(const std::shared_ptr<VisSceneViewImpl>& d,
+                           QWidget* viewport, QWidget* host) {
+    if (!d->view || !d->visHwnd)
+        return false;
+
+    const int w = viewport->width();
+    const int h = viewport->height();
+
+    // Embed the Vis window as a native child of the viewport so it behaves
+    // exactly like the 2D view (moves/resizes with the window, no floating).
+    // NOTE: Close() deadlocks while the window is a WS_CHILD — shutdown()
+    // detaches it (SetParent(NULL)) before calling Close().
+    SetParent(d->visHwnd, reinterpret_cast<HWND>(viewport->winId()));
+    LONG_PTR style = GetWindowLongPtrW(d->visHwnd, GWL_STYLE);
+    style &= ~(WS_POPUP | WS_CAPTION | WS_THICKFRAME | WS_SYSMENU);
+    style |= WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS;
+    SetWindowLongPtrW(d->visHwnd, GWL_STYLE, style);
+    SetWindowPos(d->visHwnd, HWND_BOTTOM, 0, 0, w, h,
+                 SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    d->view->WindowShow({{0, 0, w, h}});
+
+    // Install WNDPROC hook for right-pan + scroll inversion
+    d->wndProcCtx.host = host;
+    installWndProcHook(d->visHwnd, *d);
+
+    d->initialized = true;
+    d->initializing = false;
+    RuntimeLog::log("3D: Vis embedded OK (%dx%d)", w, h);
+    return true;
+}
+
+// One-shot retry driven by the event loop.  The impl is held by shared_ptr and
+// the timer is bound to `host`, so the callback can neither outlive the widget
+// nor touch a freed impl.  No nested event loop is involved.
+static void retryVisFind(const std::shared_ptr<VisSceneViewImpl>& d,
+                         QWidget* viewport, QWidget* host, int attempt) {
+    QTimer::singleShot(kFindRetryEveryMs, host,
+                       [d, viewport, host, attempt]() {
+        // shutdown() clears the sentinel; that cancels any pending retry.
+        if (!d->initializing)
+            return;
+        if (!d->view) {
+            d->initializing = false;
+            return;
+        }
+        HWND hwnd = findVisWindow(d->uniqueTitle.c_str());
+        if (hwnd) {
+            d->visHwnd = hwnd;
+            embedVisWindow(d, viewport, host);
+            return;
+        }
+        if (attempt + 1 >= kMaxFindRetries) {
+            RuntimeLog::log("3D: Vis window not found after %d retries — giving up",
+                            kMaxFindRetries);
+            d->view.reset();
+            d->initializing = false;
+            return;
+        }
+        retryVisFind(d, viewport, host, attempt + 1);
+    });
+}
+
+// Non-reentrant init.  Returns true only once the window is actually embedded;
+// a re-entrant call made while the sentinel is set reports "not ready" instead
+// of creating a second Vis::View.
+static bool initVisEmbedding(const std::shared_ptr<VisSceneViewImpl>& d,
+                             QWidget* viewport, QWidget* host) {
+    if (!d) return false;
+    if (d->initialized) return true;
+    if (d->initializing) return false;   // sentinel: a second View is forbidden
+
     int w = viewport->width();
     int h = viewport->height();
     if (w <= 0 || h <= 0) return false;
 
     char titleBuf[64];
     snprintf(titleBuf, sizeof(titleBuf), "HandEye3D_%p", viewport);
-    d.uniqueTitle = titleBuf;
+    d->uniqueTitle = titleBuf;
 
-    d.view = createVisView(titleBuf, w, h);
-    if (!d.view) {
+    d->initializing = true;
+    d->view = createVisView(titleBuf, w, h);
+    if (!d->view) {
         RuntimeLog::log("3D: Vis::View creation failed (%dx%d)", w, h);
+        d->initializing = false;
         return false;
     }
 
-    d.visHwnd = findVisWindowWithRetry(titleBuf, 20, 25);
-    if (!d.visHwnd) {
-        RuntimeLog::log("3D: Vis window not found after retries");
-        d.view.reset();
-        return false;
-    }
+    // Fast path: the window is usually up by the time the constructor returns.
+    d->visHwnd = findVisWindowPolled(titleBuf);
+    if (d->visHwnd)
+        return embedVisWindow(d, viewport, host);
 
-    // Embed the Vis window as a native child of the viewport so it behaves
-    // exactly like the 2D view (moves/resizes with the window, no floating).
-    // NOTE: Close() deadlocks while the window is a WS_CHILD — shutdown()
-    // detaches it (SetParent(NULL)) before calling Close().
-    SetParent(d.visHwnd, reinterpret_cast<HWND>(viewport->winId()));
-    LONG_PTR style = GetWindowLongPtrW(d.visHwnd, GWL_STYLE);
-    style &= ~(WS_POPUP | WS_CAPTION | WS_THICKFRAME | WS_SYSMENU);
-    style |= WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS;
-    SetWindowLongPtrW(d.visHwnd, GWL_STYLE, style);
-    SetWindowPos(d.visHwnd, HWND_BOTTOM, 0, 0, w, h,
-                 SWP_NOACTIVATE | SWP_FRAMECHANGED);
-    d.view->WindowShow({{0, 0, w, h}});
-
-    // Install WNDPROC hook for right-pan + scroll inversion
-    d.wndProcCtx.host = host;
-    installWndProcHook(d.visHwnd, d);
-
-    d.initialized = true;
-    RuntimeLog::log("3D: Vis embedded OK (%dx%d)", w, h);
-    return true;
+    // Slow path: keep the sentinel set and retry from the event loop, so the
+    // UI is never blocked and no re-entrant init can slip in meanwhile.
+    retryVisFind(d, viewport, host, 0);
+    return false;
 }
 
 // Position the embedded Vis child over the whole 3D viewport area.
@@ -498,6 +575,29 @@ void VisSceneView::setupToolbar()
         .arg(Theme::FONT_HINT).arg(Theme::PRIMARY));
     QObject::connect(m_historyButton, SIGNAL(toggled(bool)), this, SLOT(onHistoryToggled(bool)));
 
+    // "偏差着色" toggle: the 3D half of the measurement colouring.  It lives in
+    // the 3D toolbar because it changes what *this* view renders; the actual
+    // colouring is computed by the tools panel, so the button only reports the
+    // user's wish (deviationColoringToggled) and is answered by a re-published
+    // snapshot — this view never reaches into the measurement code itself.
+    m_deviationButton = new QPushButton(QStringLiteral("偏差着色"), m_containerWidget);
+    m_deviationButton->setObjectName(QStringLiteral("vis_deviation_toggle"));
+    m_deviationButton->setCheckable(true);
+    m_deviationButton->setCursor(Qt::PointingHandCursor);
+    m_deviationButton->setToolTip(
+        QStringLiteral("按测量结果给 3D 点云着色（与 2D 偏差图同一稳健色标）"));
+    m_deviationButton->setAttribute(Qt::WA_NativeWindow, true);
+    m_deviationButton->setAttribute(Qt::WA_DontCreateNativeAncestors, true);
+    m_deviationButton->setAttribute(Qt::WA_TranslucentBackground, true);
+    m_deviationButton->setStyleSheet(QStringLiteral(
+        "QPushButton { color: #FFF; background: rgba(0,0,0,0.5); border: none; "
+        "border-radius: 4px; padding: 4px 12px; font-size: %1px; }"
+        "QPushButton:hover { background: rgba(0,0,0,0.65); color: %2; }"
+        "QPushButton:checked { color: #000; background: %2; }")
+        .arg(Theme::FONT_HINT).arg(Theme::PRIMARY));
+    QObject::connect(m_deviationButton, &QPushButton::toggled, this,
+                     &VisSceneView::deviationColoringToggled);
+
     m_pickHint = new QLabel(QStringLiteral("识别后可点击场景中的点选择填充"), m_containerWidget);
     m_pickHint->setAttribute(Qt::WA_NativeWindow, true);
     m_pickHint->setAttribute(Qt::WA_DontCreateNativeAncestors, true);
@@ -513,11 +613,12 @@ void VisSceneView::setupToolbar()
 // Core scene methods
 // ═══════════════════════════════════════════════════════════════
 
-void VisSceneView::updatePointCloud(const std::vector<float>& xyz, const std::vector<float>& rgb)
+void VisSceneView::updatePointCloud(const FrameBuffer::FloatBuf& xyz,
+                                    const FrameBuffer::FloatBuf& rgb)
 {
 #ifdef HAS_RVBUST_VIS
     if (!d) return;
-    if (!d->initialized) initVisEmbedding(*d, m_viewport, this);
+    if (!d->initialized) initVisEmbedding(d, m_viewport, this);
     if (!d->initialized) return;
 
     if (d->pointCloudHandle.type != 0 || d->pointCloudHandle.uid != 0) {
@@ -525,19 +626,33 @@ void VisSceneView::updatePointCloud(const std::vector<float>& xyz, const std::ve
         d->pointCloudHandle.Reset();
     }
 
-    size_t numPts = xyz.size() / 3;
-    std::vector<float> colors;
-    if (rgb.empty()) {
-        colors.assign(numPts * 3, 0.8f);
-    } else if (rgb.size() >= numPts * 3) {
-        colors.assign(rgb.begin(), rgb.begin() + numPts * 3);
+    static const std::vector<float> kNoPoints;
+    const std::vector<float>& pts = xyz ? *xyz : kNoPoints;
+    const size_t numPts = pts.size() / 3;
+
+    // Colour preparation, on the UI thread but without rebuilding a fresh
+    // 8 MB array every time: when the producer's colour buffer already matches
+    // the point count it is handed to Vis as-is, and the gray fallback reuses
+    // one scratch buffer instead of allocating and filling a new one per call.
+    const std::vector<float>* colorVec = nullptr;
+    if (rgb && rgb->size() == numPts * 3) {
+        colorVec = rgb.get();
     } else {
-        // Pad short color array with gray
-        colors = rgb;
-        colors.resize(numPts * 3, 0.8f);
+        const bool grayOnly = (!rgb || rgb->empty());
+        if (d->scratchColors.size() != numPts * 3 || !grayOnly) {
+            d->scratchColors.assign(numPts * 3, 0.8f);
+            if (!grayOnly) {
+                // qMin (not std::min): this file pulls in windows.h, whose
+                // min/max macros break the std:: form without NOMINMAX.
+                const size_t n = qMin(rgb->size(), numPts * 3);
+                std::copy(rgb->begin(), rgb->begin() + n, d->scratchColors.begin());
+            }
+        }
+        colorVec = &d->scratchColors;
     }
+
     const bool firstCloud = (d->pointCloudHandle.type == 0 && d->pointCloudHandle.uid == 0);
-    d->pointCloudHandle = d->view->Point(xyz, 2.0f, colors);
+    d->pointCloudHandle = d->view->Point(pts, 2.0f, *colorVec);
     if (firstCloud) {
         d->view->Home();  // frame the cloud so it is visible immediately
         d->wndProcCtx.zoomDepth = 0.0;
@@ -1237,6 +1352,15 @@ void VisSceneView::onHistoryToggled(bool visible)
     setBoardHistoryVisible(visible);
 }
 
+void VisSceneView::setDeviationColoringChecked(bool on)
+{
+    if (!m_deviationButton || m_deviationButton->isChecked() == on)
+        return;
+    // Reflect the panel-side state without echoing it back as a user toggle.
+    const QSignalBlocker block(m_deviationButton);
+    m_deviationButton->setChecked(on);
+}
+
 // ═══════════════════════════════════════════════════════════════
 // 2D Image overlay
 // ═══════════════════════════════════════════════════════════════
@@ -1280,9 +1404,12 @@ void VisSceneView::shutdown()
 #ifdef HAS_RVBUST_VIS
     if (!d || m_shuttingDown) return;
 
-    // 1. Set shutdown flag FIRST — prevents showEvent/resizeEvent re-entry
+    // 1. Set shutdown flag FIRST — prevents showEvent/resizeEvent re-entry.
+    //    Clearing `initializing` also cancels any pending embed retry, so no
+    //    one-shot timer can embed a window into a torn-down viewport.
     m_shuttingDown = true;
     d->initialized = false;
+    d->initializing = false;
     d->wndProcCtx.hoverFeedArmed = false;
 
     // 2. Remove WNDPROC hook before any window operations
@@ -1341,7 +1468,7 @@ void VisSceneView::applyVisGeometry()
         d->view->WindowSetRectangle(0, 0, cw, ch);
         positionVisWindow(*d, m_viewport);
     } else if (!d->initialized) {
-        initVisEmbedding(*d, m_viewport, this);
+        initVisEmbedding(d, m_viewport, this);
         positionVisWindow(*d, m_viewport);
     }
 #else
@@ -1379,10 +1506,18 @@ void VisSceneView::resizeEvent(QResizeEvent* event)
                               ch - m_historyButton->height() - 8);
         m_historyButton->raise();
     }
+    if (m_deviationButton) {
+        m_deviationButton->adjustSize();
+        m_deviationButton->move(8 + (m_resetButton ? m_resetButton->width() + 8 : 0)
+                                    + (m_historyButton ? m_historyButton->width() + 8 : 0),
+                                ch - m_deviationButton->height() - 8);
+        m_deviationButton->raise();
+    }
     if (m_pickHint) {
         m_pickHint->adjustSize();
         const int hintX = 8 + (m_resetButton ? m_resetButton->width() + 8 : 0)
-                            + (m_historyButton ? m_historyButton->width() + 8 : 0);
+                            + (m_historyButton ? m_historyButton->width() + 8 : 0)
+                            + (m_deviationButton ? m_deviationButton->width() + 8 : 0);
         m_pickHint->move(hintX, ch - m_pickHint->height() - 8);
         m_pickHint->raise();
     }

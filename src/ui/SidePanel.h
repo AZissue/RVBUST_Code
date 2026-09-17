@@ -36,7 +36,13 @@ private:
     QFrame* m_timelineCard;
     QPushButton* m_btnRunQuality;
     QTextEdit* m_timeline;
+    // `text` is plain: it is HTML-escaped before being appended, so a tip that
+    // contains '<' can never turn into stray markup.
     void appendTimeline(const QString& label, const QString& colorHex, const QString& text);
+    // `htmlBody` is already-formed rich text (e.g. the quality report) and is
+    // inserted verbatim — use appendTimeline() for anything user-supplied.
+    void appendTimelineHtml(const QString& label, const QString& colorHex,
+                            const QString& htmlBody);
 
     // Bottom area: file preview (shares space equally with the log above).
     QFrame* m_previewCard;

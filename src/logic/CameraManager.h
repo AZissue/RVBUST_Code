@@ -9,7 +9,11 @@
 #include <memory>
 #include <functional>
 #include <atomic>
+#include <chrono>
+#include <mutex>
 #include <QFutureWatcher>
+
+#include "logic/FrameBuffer.h"
 
 // Forward-declare RVC types to avoid leaking RVC headers into all consumers
 namespace RVC {
@@ -59,8 +63,12 @@ public:
     // and, for SwingLineScan + correspond2d=false captures, the SDK
     // CorrespondMap (3D point index -> 2D pixel).  lastGridAligned() is false
     // exactly when correspond data is available.
-    bool lastGrid(std::vector<double>& xyzMm, int& w, int& h) const;
-    bool lastCorrespond(std::vector<double>& cmap, int& w, int& h) const;
+    //
+    // Both hand out a shared, immutable buffer instead of copying: the grid is
+    // w*h*3 doubles (~37 MB at 1440x1080) and the correspond map ~25 MB, which
+    // used to be deep-copied on every 2D pixel pick.
+    bool lastGrid(FrameBuffer::DoubleBuf& xyzMm, int& w, int& h) const;
+    bool lastCorrespond(FrameBuffer::DoubleBuf& cmap, int& w, int& h) const;
     bool lastGridAligned() const;
 
     // Native concentric circle detection results (from last capture)
@@ -96,9 +104,12 @@ public:
 signals:
     void previewFrameReady(const QImage& image);
     void previewRightFrameReady(const QImage& image);
+    // Point/colour payload is handed over as shared immutable buffers: emitting
+    // the signal (and every slot that keeps a reference) costs a refcount bump
+    // instead of an 8 MB copy each.
     void captureComplete(const QString& pngPath, const QString& plyPath,
-                         const std::vector<float>& points,       // filtered N*3 flat
-                         const std::vector<float>& colors,       // N*3 flat [0,1]
+                         const FrameBuffer::FloatBuf& points,   // filtered N*3 flat
+                         const FrameBuffer::FloatBuf& colors,   // N*3 flat [0,1]
                          const QImage& image);
     void cameraError(const QString& message);
     void cameraConnected();
@@ -115,21 +126,25 @@ private slots:
 private:
     // ── X1/X2 dedicated flow methods (guard + return isolates each code path) ──
 public:
+    // One 3D capture produces ~70 MB of payload.  Every heavy member is a
+    // shared immutable buffer so this struct can be copied cheaply — which
+    // matters because QFutureWatcher<T>::result() returns T *by value*, so the
+    // whole struct used to be deep-copied once per capture.
     struct CaptureResult {
         bool ok = false;
         QString pngPath;
         QString plyPath;
         QString error;
-        std::vector<float> points;
-        std::vector<float> colors;
-        std::vector<float> nativePixels;
+        FrameBuffer::FloatBuf points;         // filtered N*3 flat
+        FrameBuffer::FloatBuf colors;         // N*3 flat [0,1]
+        std::vector<float> nativePixels;      // <=1000 markers, kept by value
         std::vector<float> nativePoints;
         // Organized grid (image-ordered, mm) for pixel<->3D lookup.
-        std::vector<double> gridPoints;   // w*h*3
+        FrameBuffer::DoubleBuf gridPoints;    // w*h*3
         int gridW = 0;
         int gridH = 0;
         // SwingLineScan + correspond2d=false only: point index -> 2D pixel.
-        std::vector<double> correspondMap;  // w*h*2
+        FrameBuffer::DoubleBuf correspondMap; // w*h*2
         int cmW = 0;
         int cmH = 0;
         bool gridAligned = true;
@@ -144,13 +159,48 @@ private:
     // the 2D stream is as fast as the camera allows).
     struct PreviewFrames {
         QImage left;
-        QImage right;   // stereo X2 only
+        QImage right;      // stereo X2 only
+        bool abandoned = false;   // round dropped to hand the device to a capture
     };
     PreviewFrames capturePreviewFrameX1();
     PreviewFrames capturePreviewFrameX2();
 
     // ── Camera model discriminator ──
     enum class CameraModel : uint8_t { None, X1, X2 };
+
+    // ── D1: RVC device access serialization ──────────────────────────────
+    //
+    // The RVC GenICam layer is not thread-safe: driving one device from the
+    // preview worker and the capture worker at the same time corrupts device
+    // state (black 2D frames, num=0 detections, internal deadlocks).  Every RVC
+    // entry point therefore runs under m_rvcMutex, so at most one thread is
+    // ever inside the SDK.
+    //
+    // A capture cannot simply wait for "preview idle" with a timeout and then
+    // barge in anyway — that was the bug.  Instead the capturing side bumps
+    // m_deviceYieldGen before it blocks; a preview round that observes a newer
+    // generation drops its remaining device calls and releases.  The capture
+    // then acquires the lock deterministically, however long that takes.
+    //
+    // std::recursive_timed_mutex (not std::mutex) because initWithDeviceSerial()
+    // legitimately re-enters via shutdown() on the same thread, and because the
+    // close path needs a bounded try_lock_for instead of an unbounded wait.
+    std::recursive_timed_mutex m_rvcMutex;
+    std::atomic<int>  m_deviceYieldGen{0};       // bumped by the capturing side
+    std::atomic<int>  m_previewAbandonCount{0};  // preview rounds that yielded
+    qint64 m_lastDeviceWaitMs = 0;               // for the runtime log/tests
+
+    // Class definition lives in the .cpp; only ever used there.
+    class DeviceLock;
+
+    // Lifetime token shared with every worker we hand to the thread pool.  A
+    // worker's first action is to read this token, so a worker that starts
+    // after ~CameraManager() is a no-op instead of a use-after-free on `this`.
+    struct WorkerToken {
+        std::atomic<bool> cancelRequested{false};
+    };
+    std::shared_ptr<WorkerToken> m_workerToken;
+
 
     // PIMPL: hide RVC types behind opaque pointer to keep header clean
     struct RvcImpl;
@@ -187,10 +237,12 @@ private:
     std::vector<float> m_distortion;        // 5 elements
 
     // Last capture's pixel<->3D lookup data (UI thread, filled on success).
-    std::vector<double> m_lastGrid;
+    // Slots, not vectors: publishing the shared buffer from the capture result
+    // and releasing the previous frame's block are both refcount operations.
+    FrameBuffer::BufferSlot<std::vector<double>> m_lastGrid;
     int m_lastGridW = 0;
     int m_lastGridH = 0;
-    std::vector<double> m_lastCorrespond;
+    FrameBuffer::BufferSlot<std::vector<double>> m_lastCorrespond;
     int m_lastCmW = 0;
     int m_lastCmH = 0;
     bool m_lastGridAligned = true;
@@ -200,10 +252,30 @@ private:
     std::vector<float> m_nativeMarkerPoints;   // flat [x0,y0,z0,...] in mm
 
     void scheduleReconnect();
+    // Drop the last-frame lookup buffers / native detection cache.  Called when
+    // a newer frame replaces them and on shutdown, so the previous ~60 MB goes
+    // away at a defined point instead of lingering until the next capture.
+    void releaseFrameCaches();
 
 public:
     static constexpr int CAPTURE_TIMEOUT_MS = 60000;  // 5M-point GigE captures are slow
     static constexpr int RECONNECT_MAX_ATTEMPTS = 3;
     static constexpr int RECONNECT_INTERVAL_MS = 3000;
     static constexpr int HEALTH_CHECK_INTERVAL_MS = 5000;
+    // Bounded wait for the device lock on the close path.  If a worker is still
+    // inside a hung SDK call we skip teardown instead of hanging the UI or
+    // racing the device (see shutdown()).
+    static constexpr int SHUTDOWN_DEVICE_WAIT_MS = 3000;
+
+    // Bytes held by the last-frame caches (grid + correspond map), for the
+    // [MEM] runtime trace.
+    std::size_t cachedBufferBytes() const;
+    // Diagnostics for the D1 log line and the unit tests.
+    qint64 lastDeviceWaitMs() const { return m_lastDeviceWaitMs; }
+    int previewAbandonCount() const { return m_previewAbandonCount.load(); }
 };
+
+// Registered so the shared-buffer signal arguments stay usable if any
+// connection is ever changed to Qt::QueuedConnection.
+Q_DECLARE_METATYPE(FrameBuffer::FloatBuf)
+Q_DECLARE_METATYPE(FrameBuffer::DoubleBuf)

@@ -18,6 +18,7 @@
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QHeaderView>   // QTableWidget's header API (incomplete type in QtWidgets)
 #include <QImage>
 #include <QLabel>
 #include <QLineEdit>
@@ -27,7 +28,10 @@
 #include <QTextEdit>
 #include <QVBoxLayout>
 #include <QtConcurrent>
+#include <algorithm>
 #include <array>
+#include <cmath>
+#include <limits>
 #include <vector>
 
 namespace {
@@ -104,6 +108,7 @@ void ToolsPanel::buildUi()
     m_toolList->addItem(QStringLiteral("手眼标定"));
     m_toolList->addItem(QStringLiteral("坐标转换"));
     m_toolList->addItem(QStringLiteral("机器人通信"));
+    m_toolList->addItem(QStringLiteral("测量"));
     m_toolList->setStyleSheet(QStringLiteral(
         "QListWidget { background: %1; border: 1px solid %2; border-radius: %3px;"
         " font-size: %4px; }"
@@ -119,6 +124,7 @@ void ToolsPanel::buildUi()
     buildCalibrationPage(m_stack);
     buildTransformPage(m_stack);
     buildRobotCommPage(m_stack);
+    buildMeasurePage(m_stack);
     layout->addWidget(m_stack, 1);
 
     connect(m_toolList, &QListWidget::currentRowChanged,
@@ -943,6 +949,7 @@ void ToolsPanel::buildRobotCommPage(QStackedWidget* stack)
     m_robotProtocol = new ArrowComboBox(group);
     m_robotProtocol->addItem(QStringLiteral("Modbus TCP"));
     m_robotProtocol->addItem(QStringLiteral("UR Realtime (30003)"));
+    m_robotProtocol->addItem(QStringLiteral("博纳斯(纳博特) JSON/TCP"));
     m_robotProtocol->setStyleSheet(Theme::comboBoxStyle());
     protoRow->addWidget(m_robotProtocol, 1);
     m_robotStatus = new QLabel(QStringLiteral("未连接"), group);
@@ -1031,6 +1038,8 @@ void ToolsPanel::buildRobotCommPage(QStackedWidget* stack)
     hint->setText(QStringLiteral(
         "连接成功后，主界面会显示「拍照位姿」与「戳点位姿」按钮。"
         "UR Realtime 协议下机器人主动推流，读取到的姿态分量为轴角(弧度)而非欧拉角度数。"
+        "博纳斯(纳博特) JSON/TCP 协议读取当前 TCP 位姿（x y z rx ry rz，mm/度），"
+        "应答字段名未知时会自动尝试常见字段并把原始应答写进运行日志。"
         "无真机时可点击「模拟连接成功」验证按钮显示与样式。"));
     form->addRow(QString(), hint);
 
@@ -1041,7 +1050,8 @@ void ToolsPanel::buildRobotCommPage(QStackedWidget* stack)
     auto updateProtocolFields = [this](int index) {
         const bool isModbus = (index == 0);
         m_modbusFieldsWidget->setVisible(isModbus);
-        m_robotPort->setValue(isModbus ? 502 : 30003);
+        // Default ports: Modbus TCP 502, UR realtime 30003, 博纳斯/纳博特 6001.
+        m_robotPort->setValue(index == 1 ? 30003 : (index == 2 ? 6001 : 502));
     };
     connect(m_robotProtocol, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, updateProtocolFields);
@@ -1090,4 +1100,853 @@ void ToolsPanel::setRobotConnected(bool connected)
         return;
     m_btnRobotConnect->setText(connected ? QStringLiteral("断开")
                                          : QStringLiteral("连接"));
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Measurement tool — parity with the Python 3D 测量一体化工具
+// ══════════════════════════════════════════════════════════════════════
+
+namespace {
+
+// Coarse quality label for the result table (可信度).  Point count dominates;
+// the RMS test only applies to methods where a residual is meaningful (-1
+// means "not applicable").
+QString confidenceFor(int points, double rms)
+{
+    if (points >= 2000 && (rms < 0.0 || rms <= 0.05))
+        return QStringLiteral("高");
+    if (points >= 300)
+        return QStringLiteral("中");
+    return QStringLiteral("低");
+}
+
+QString fmt4(double v)
+{
+    return QString::number(v, 'f', 4);
+}
+
+} // namespace
+
+void ToolsPanel::buildMeasurePage(QStackedWidget* stack)
+{
+    auto* page = new QWidget(stack);
+    auto* pageLayout = new QVBoxLayout(page);
+    pageLayout->setSpacing(10);
+
+    // ── data source ──
+    auto* cloudGroup = new QGroupBox(QStringLiteral("数据源"), page);
+    auto* cloudForm = new QFormLayout(cloudGroup);
+    m_measureCloudLabel = new QLabel(QStringLiteral("尚未采集（先在主窗口点击「拍照」）"),
+                                     cloudGroup);
+    m_measureCloudLabel->setObjectName(QStringLiteral("measure_cloud_label"));
+    m_measureCloudLabel->setStyleSheet(QStringLiteral("color: %1; font-size: %2px;")
+                                           .arg(Theme::TEXT_BODY).arg(Theme::FONT_HINT));
+    cloudForm->addRow(QStringLiteral("当前点云"), m_measureCloudLabel);
+
+    m_measureRoiLabel = new QLabel(QStringLiteral("未选择"), cloudGroup);
+    m_measureRoiLabel->setObjectName(QStringLiteral("measure_roi_label"));
+    m_measureRoiLabel->setWordWrap(true);
+    m_measureRoiLabel->setStyleSheet(QStringLiteral("color: %1; font-size: %2px;")
+                                         .arg(Theme::TEXT_BODY).arg(Theme::FONT_HINT));
+    cloudForm->addRow(QStringLiteral("测量区域"), m_measureRoiLabel);
+
+    m_roiClearBtn = new QPushButton(QStringLiteral("清除区域"), cloudGroup);
+    m_roiClearBtn->setStyleSheet(Theme::secondaryButtonStyle());
+    cloudForm->addRow(QString(), m_roiClearBtn);
+    pageLayout->addWidget(cloudGroup);
+
+    // ── method + tolerances ──
+    auto* methodGroup = new QGroupBox(QStringLiteral("测量方法"), page);
+    auto* methodForm = new QFormLayout(methodGroup);
+
+    m_measureMethod = new ArrowComboBox(methodGroup);
+    m_measureMethod->setObjectName(QStringLiteral("measure_method"));
+    m_measureMethod->setStyleSheet(Theme::comboBoxStyle());
+    // Order and names follow the Python METHODS table (app.py) so the two tools
+    // report the same quantities under the same names.
+    m_measureMethod->addItem(QStringLiteral("平面度"));
+    m_measureMethod->addItem(QStringLiteral("面到面高度(中位数)"));
+    m_measureMethod->addItem(QStringLiteral("面面距离/夹角"));
+    m_measureMethod->addItem(QStringLiteral("圆 / 孔径"));
+    m_measureMethod->addItem(QStringLiteral("包围盒"));
+    m_measureMethod->addItem(QStringLiteral("重复性统计"));
+    methodForm->addRow(QStringLiteral("方法"), m_measureMethod);
+    pageLayout->addWidget(methodGroup);
+
+    auto* tolRow = new QHBoxLayout();
+    m_tolEnable = new QCheckBox(QStringLiteral("启用公差"), methodGroup);
+    m_tolEnable->setObjectName(QStringLiteral("measure_tol_enable"));
+    m_tolEnable->setStyleSheet(QStringLiteral("font-size: %1px;").arg(Theme::FONT_HINT));
+    tolRow->addWidget(m_tolEnable);
+    auto* loLabel = new QLabel(QStringLiteral("下限"), methodGroup);
+    loLabel->setStyleSheet(QStringLiteral("font-size: %1px;").arg(Theme::FONT_HINT));
+    tolRow->addWidget(loLabel);
+    m_tolLo = new QDoubleSpinBox(methodGroup);
+    m_tolLo->setObjectName(QStringLiteral("measure_tol_lo"));
+    m_tolLo->setDecimals(4);
+    m_tolLo->setRange(-1.0e6, 1.0e6);
+    m_tolLo->setValue(-0.05);
+    m_tolLo->setStyleSheet(Theme::inputStyle());
+    tolRow->addWidget(m_tolLo);
+    auto* hiLabel = new QLabel(QStringLiteral("上限"), methodGroup);
+    hiLabel->setStyleSheet(QStringLiteral("font-size: %1px;").arg(Theme::FONT_HINT));
+    tolRow->addWidget(hiLabel);
+    m_tolHi = new QDoubleSpinBox(methodGroup);
+    m_tolHi->setObjectName(QStringLiteral("measure_tol_hi"));
+    m_tolHi->setDecimals(4);
+    m_tolHi->setRange(-1.0e6, 1.0e6);
+    m_tolHi->setValue(0.05);
+    m_tolHi->setStyleSheet(Theme::inputStyle());
+    tolRow->addWidget(m_tolHi);
+    tolRow->addStretch();
+    methodForm->addRow(QStringLiteral("公差 (mm)"), tolRow);
+
+    m_devColor3d = new QCheckBox(QStringLiteral("3D 偏差着色（在 3D 视窗同步显示测量区域）"),
+                                 methodGroup);
+    m_devColor3d->setObjectName(QStringLiteral("measure_dev3d"));
+    m_devColor3d->setStyleSheet(QStringLiteral("font-size: %1px;").arg(Theme::FONT_HINT));
+    methodForm->addRow(QString(), m_devColor3d);
+
+    auto* btnRow = new QHBoxLayout();
+    m_measureBtn = new QPushButton(QStringLiteral("测量"), methodGroup);
+    m_measureBtn->setObjectName(QStringLiteral("measure_run"));
+    m_measureBtn->setStyleSheet(Theme::primaryButtonStyle());
+    btnRow->addWidget(m_measureBtn);
+    m_repeatAddBtn = new QPushButton(QStringLiteral("加入重复性"), methodGroup);
+    m_repeatAddBtn->setObjectName(QStringLiteral("measure_repeat_add"));
+    m_repeatAddBtn->setStyleSheet(Theme::secondaryButtonStyle());
+    btnRow->addWidget(m_repeatAddBtn);
+    btnRow->addStretch();
+    methodForm->addRow(QString(), btnRow);
+
+    m_measureHint = new QLabel(methodGroup);
+    m_measureHint->setObjectName(QStringLiteral("measure_hint"));
+    m_measureHint->setWordWrap(true);
+    m_measureHint->setStyleSheet(QStringLiteral("color: %1; font-size: %2px;")
+                                     .arg(Theme::ERROR).arg(Theme::FONT_HINT));
+    methodForm->addRow(QString(), m_measureHint);
+    pageLayout->addWidget(methodGroup);
+
+    // ── results ──
+    m_measureTable = new QTableWidget(0, 5, page);
+    m_measureTable->setObjectName(QStringLiteral("measure_table"));
+    m_measureTable->setHorizontalHeaderLabels({ QStringLiteral("方法"), QStringLiteral("数值"),
+                                                QStringLiteral("单位"), QStringLiteral("点数"),
+                                                QStringLiteral("可信度") });
+    m_measureTable->verticalHeader()->setVisible(false);
+    m_measureTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_measureTable->setSelectionMode(QAbstractItemView::NoSelection);
+    m_measureTable->horizontalHeader()->setStretchLastSection(true);
+    m_measureTable->setStyleSheet(
+        QStringLiteral("QTableWidget { background: %1; border: 1px solid %2;"
+                       " border-radius: %3px; font-size: %4px; }"
+                       "QHeaderView::section { background: %5; border: none;"
+                       " padding: 5px; font-size: %4px; }")
+            .arg(Theme::BG_CARD).arg(Theme::BORDER_DEFAULT).arg(Theme::BORDER_RADIUS)
+            .arg(Theme::FONT_HINT).arg(Theme::BG_MAIN));
+    pageLayout->addWidget(m_measureTable, 1);
+
+    // ── repeatability series (session memory only, never written to disk) ──
+    auto* seriesGroup = new QGroupBox(QStringLiteral("重复性序列（仅本次运行）"), page);
+    auto* seriesForm = new QFormLayout(seriesGroup);
+    m_seriesCombo = new ArrowComboBox(seriesGroup);
+    m_seriesCombo->setObjectName(QStringLiteral("measure_series_combo"));
+    m_seriesCombo->setStyleSheet(Theme::comboBoxStyle());
+    seriesForm->addRow(QStringLiteral("序列"), m_seriesCombo);
+
+    m_seriesSummary = new QLabel(QStringLiteral("—"), seriesGroup);
+    m_seriesSummary->setObjectName(QStringLiteral("measure_series_summary"));
+    m_seriesSummary->setWordWrap(true);
+    m_seriesSummary->setStyleSheet(QStringLiteral("color: %1; font-size: %2px;")
+                                       .arg(Theme::TEXT_BODY).arg(Theme::FONT_HINT));
+    seriesForm->addRow(QStringLiteral("统计"), m_seriesSummary);
+
+    auto* clearSeriesBtn = new QPushButton(QStringLiteral("清空序列"), seriesGroup);
+    clearSeriesBtn->setStyleSheet(Theme::secondaryButtonStyle());
+    seriesForm->addRow(QString(), clearSeriesBtn);
+    pageLayout->addWidget(seriesGroup);
+
+    stack->addWidget(page);
+
+    connect(m_measureBtn, &QPushButton::clicked, this, &ToolsPanel::runMeasurement);
+    connect(m_repeatAddBtn, &QPushButton::clicked,
+            this, &ToolsPanel::addLastToRepeatSeries);
+    connect(m_roiClearBtn, &QPushButton::clicked,
+            this, &ToolsPanel::clearMeasurementRois);
+    connect(m_seriesCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int) { refreshSeriesUi(); });
+    connect(clearSeriesBtn, &QPushButton::clicked, this, [this]() {
+        m_series.clear();
+        refreshSeriesUi();
+        emit measurementUpdated(buildSnapshot());
+    });
+    // The tolerance fields feed the run chart (mean ±3σ plus the tolerance
+    // lines), so a change re-publishes the snapshot without re-measuring.
+    for (QDoubleSpinBox* spin : { m_tolLo, m_tolHi })
+        connect(spin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+                this, [this](double) { emit measurementUpdated(buildSnapshot()); });
+    connect(m_tolEnable, &QCheckBox::toggled, this,
+            [this](bool) { emit measurementUpdated(buildSnapshot()); });
+    // The 3D-colouring switch has a twin in the 3D view's toolbar; either one
+    // drives the same state and the second is kept in step by MainWindow.
+    connect(m_devColor3d, &QCheckBox::toggled, this, [this](bool on) {
+        emit deviationColoringChanged(on);
+        if (m_hasLast)
+            runMeasurement();   // re-colour the last result right away
+    });
+    refreshSeriesUi();
+}
+
+void ToolsPanel::setDeviationColoring(bool on)
+{
+    if (!m_devColor3d || m_devColor3d->isChecked() == on)
+        return;
+    {
+        // Setting the box must not bounce straight back as deviationColoringChanged.
+        const QSignalBlocker block(m_devColor3d);
+        m_devColor3d->setChecked(on);
+    }
+    if (m_hasLast)
+        runMeasurement();
+}
+
+void ToolsPanel::setMeasurementCloud(const FrameBuffer::DoubleBuf& grid, int gridW,
+                                     int gridH, int imageW, int imageH)
+{
+    m_measureGrid = grid;                 // refcount bump, no copy
+    m_measureGridW = gridW;
+    m_measureGridH = gridH;
+    m_imageW = imageW;
+    m_imageH = imageH;
+    if (m_measureCloudLabel) {
+        int valid = 0;
+        if (grid && gridW > 0 && gridH > 0) {
+            const std::vector<double>& g = *grid;
+            const std::size_t cells = static_cast<std::size_t>(gridW) * gridH;
+            for (std::size_t i = 0; i < cells && i * 3 + 2 < g.size(); ++i) {
+                const double x = g[i * 3], y = g[i * 3 + 1], z = g[i * 3 + 2];
+                if (std::isfinite(x) && std::isfinite(y) && std::isfinite(z)
+                    && !(x == 0.0 && y == 0.0 && z == 0.0)) {
+                    ++valid;
+                }
+            }
+        }
+        m_measureCloudLabel->setText(
+            gridW > 0 ? QStringLiteral("%1 × %2 网格，%3 个有效点")
+                            .arg(gridW).arg(gridH).arg(valid)
+                      : QStringLiteral("尚未采集（先在主窗口点击「拍照」）"));
+    }
+    // A new capture invalidates the previous ROI selection: the rectangles are
+    // in image pixels and the new frame may have a different size.
+    if (m_imageW > 0 && m_imageH > 0 && !m_roiRects.isEmpty()) {
+        m_roiRects.clear();
+        m_roiPoints[0].clear();
+        m_roiPoints[1].clear();
+        m_roiCells[0].clear();
+        m_roiCells[1].clear();
+        emit roisChanged({}, {});
+    }
+    // A measurement describes one frame: the numbers, the deviation map and the
+    // 3D overlay all have to go when a new frame arrives.  The repeatability
+    // series deliberately survives — accumulating across captures is its point.
+    resetMeasurementState();
+    updateMeasureHint();
+    emit measurementUpdated(buildSnapshot());
+}
+
+void ToolsPanel::refreshRoiPoints()
+{
+    for (int i = 0; i < 2; ++i) {
+        m_roiPoints[i].clear();
+        m_roiCells[i].clear();
+    }
+    if (!m_measureGrid || m_measureGridW <= 0 || m_measureGridH <= 0
+        || m_imageW <= 0 || m_imageH <= 0) {
+        return;
+    }
+    // The ROI was dragged in image pixels; the point map may live on its own
+    // resolution, so the rectangle is scaled into grid cells.
+    const double sx = static_cast<double>(m_measureGridW) / m_imageW;
+    const double sy = static_cast<double>(m_measureGridH) / m_imageH;
+    for (int i = 0; i < m_roiRects.size() && i < 2; ++i) {
+        const QRect r = m_roiRects[i];
+        const int x0 = static_cast<int>(std::floor(r.left() * sx));
+        const int y0 = static_cast<int>(std::floor(r.top() * sy));
+        const int x1 = static_cast<int>(std::ceil((r.right() + 1) * sx)) - 1;
+        const int y1 = static_cast<int>(std::ceil((r.bottom() + 1) * sy)) - 1;
+        m_roiPoints[i] = MeasureTools::pointsInRoiIndexed(
+            *m_measureGrid, m_measureGridW, m_measureGridH, x0, y0, x1, y1,
+            &m_roiCells[i]);
+    }
+}
+
+void ToolsPanel::onRoiSelected(const QRect& rect)
+{
+    if (!m_measureGrid || m_imageW <= 0) {
+        m_measureHint->setText(QStringLiteral("尚未采集点云，请先在主窗口拍摄一张。"));
+        return;
+    }
+    if (rect.width() < 4 || rect.height() < 4)
+        return;
+    // Two ROIs are supported (datum + measured).  A third drag starts over so
+    // the selection never gets stuck.
+    if (m_roiRects.size() >= 2)
+        m_roiRects.clear();
+    m_roiRects.push_back(rect);
+    refreshRoiPoints();
+    emit roisChanged(m_roiRects, roiLabels());
+    updateMeasureHint();
+}
+
+void ToolsPanel::clearMeasurementRois()
+{
+    m_roiRects.clear();
+    for (int i = 0; i < 2; ++i) {
+        m_roiPoints[i].clear();
+        m_roiCells[i].clear();
+    }
+    emit roisChanged({}, {});
+    updateMeasureHint();
+}
+
+void ToolsPanel::updateMeasureHint()
+{
+    if (!m_measureRoiLabel)
+        return;
+    QStringList parts;
+    const QStringList labels = roiLabels();
+    for (int i = 0; i < m_roiRects.size(); ++i) {
+        const QRect r = m_roiRects[i];
+        parts << QStringLiteral("%1: (%2,%3)-(%4,%5)，%6 点")
+                     .arg(labels[i])
+                     .arg(r.left()).arg(r.top()).arg(r.right()).arg(r.bottom())
+                     .arg(m_roiPoints[i].size());
+    }
+    m_measureRoiLabel->setText(parts.isEmpty()
+        ? QStringLiteral("未选择 — 在右侧 2D 视图上按住左键拖框（依次为 ROI A、ROI B）")
+        : parts.join(QStringLiteral("；")));
+}
+
+QStringList ToolsPanel::roiLabels() const
+{
+    QStringList labels;
+    for (int i = 0; i < m_roiRects.size(); ++i)
+        labels << QStringLiteral("ROI %1").arg(QChar(QLatin1Char('A').unicode() + i));
+    return labels;
+}
+
+void ToolsPanel::resetMeasurementState()
+{
+    // Every run starts from a clean display state: a stale deviation map or
+    // annotation from a previous method would be worse than an empty page.
+    if (m_measureHint)
+        m_measureHint->clear();
+    if (m_measureTable)
+        m_measureTable->setRowCount(0);
+    m_lastRows.clear();
+    m_lastKey.clear();
+    m_lastPrimary = 0.0;
+    m_hasLast = false;
+    m_devSamples.clear();
+    m_annotations.clear();
+    m_section.clear();
+    m_sectionStep = 0.0;
+    m_cloudColors.reset();
+    m_hasPlane = false;
+    m_hasBox = false;
+    m_pageFooter.clear();
+    m_devLo = m_devHi = 0.0;
+    m_devRobust = false;
+    m_devClipped = 0;
+}
+
+void ToolsPanel::runMeasurement()
+{
+    const int method = m_measureMethod ? m_measureMethod->currentIndex() : 0;
+
+    resetMeasurementState();
+
+    auto addRow = [this](const QString& m, const QString& v, const QString& u,
+                         int pts, const QString& conf) {
+        m_lastRows.push_back({ m, v, u, pts, conf });
+    };
+    auto setPrimary = [this](const QString& key, double value) {
+        m_lastKey = key;
+        m_lastPrimary = value;
+        m_hasLast = true;
+    };
+    // Pushes the accumulated rows into the table and re-publishes the snapshot
+    // to the views.  Every exit path of this function goes through here, so the
+    // table and the display pages can never disagree about what was measured.
+    auto publish = [this]() {
+        m_measureTable->setRowCount(static_cast<int>(m_lastRows.size()));
+        for (int i = 0; i < m_lastRows.size(); ++i) {
+            const Measurement::ResultRow& r = m_lastRows[i];
+            const QString cols[5] = { r.method, r.value, r.unit,
+                                      QString::number(r.points), r.confidence };
+            for (int c = 0; c < 5; ++c) {
+                auto* item = new QTableWidgetItem(cols[c]);
+                if (c >= 1 && c <= 3)
+                    item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+                m_measureTable->setItem(i, c, item);
+            }
+        }
+        m_measureTable->resizeColumnsToContents();
+        emit measurementUpdated(buildSnapshot());
+    };
+
+    if (!m_measureGrid || m_measureGridW <= 0 || m_measureGridH <= 0) {
+        m_measureHint->setText(QStringLiteral("尚未采集点云：请先在主窗口点击「拍照」。"));
+        publish();
+        return;
+    }
+
+    // Fills the deviation page state from a per-point residual vector that is
+    // index-aligned with the grid-cell index list.  The colour limits are the
+    // MAD-based ±3σ band (Python mviz's `robust_limits`), not percentiles — a
+    // single flyer must not squash the whole range.
+    auto fillDeviation = [this](const std::vector<double>& dev,
+                                const std::vector<std::size_t>& cells,
+                                bool coolWarm, const QString& unit) {
+        m_devSamples.clear();
+        m_devSamples.reserve(static_cast<int>(dev.size()));
+        const int gw = m_measureGridW;
+        for (std::size_t k = 0; k < dev.size() && k < cells.size(); ++k) {
+            Measurement::DevSample s;
+            s.value = dev[k];
+            s.gx = static_cast<int>(cells[k] % static_cast<std::size_t>(gw));
+            s.gy = static_cast<int>(cells[k] / static_cast<std::size_t>(gw));
+            m_devSamples.push_back(s);
+        }
+        const MeasureTools::Limits lim = MeasureTools::robustLimits(dev, 3.0);
+        m_devLo = lim.lo;
+        m_devHi = lim.hi;
+        m_devRobust = lim.robust;
+        m_devClipped = static_cast<int>(lim.nClipped);
+        m_snapshotCoolWarm = coolWarm;
+        m_pageFooter = QStringLiteral("色标 %1 = [%2, %3] %4，裁剪 %5 点")
+                           .arg(lim.robust ? QStringLiteral("中位数 ±3σ(MAD)")
+                                           : QStringLiteral("1–99% 分位"))
+                           .arg(fmt4(lim.lo)).arg(fmt4(lim.hi))
+                           .arg(unit).arg(lim.nClipped);
+    };
+
+    // Per-point colour for the whole captured cloud, relative to `plane` (P4).
+    // The mapping itself is deliberately NOT here: it lives in MeasureTools
+    // (pure logic) so its index alignment with PointCloudUtils::filterValidPoints
+    // is unit-tested instead of only being claimed.
+    auto fillCloudColors = [this](const MeasureTools::Plane& plane, bool coolWarm) {
+        m_cloudColors.reset();
+        if (!m_devColor3d || !m_devColor3d->isChecked() || !plane.valid
+            || !m_measureGrid || m_measureGridW <= 0 || m_measureGridH <= 0)
+            return;
+        std::vector<std::size_t> highlight = m_roiCells[0];
+        highlight.insert(highlight.end(), m_roiCells[1].begin(), m_roiCells[1].end());
+        m_cloudColors = std::make_shared<const std::vector<std::array<float, 3>>>(
+            MeasureTools::cloudDeviationColors(*m_measureGrid, m_measureGridW,
+                                               m_measureGridH, plane, m_devLo, m_devHi,
+                                               coolWarm, highlight));
+    };
+
+    // Concatenates the two ROIs (datum first) — used by the plane-pair methods.
+    auto bothRois = [this](std::vector<MeasureTools::Vec3>& pts,
+                           std::vector<std::size_t>& cells) {
+        pts = m_roiPoints[0];
+        cells = m_roiCells[0];
+        pts.insert(pts.end(), m_roiPoints[1].begin(), m_roiPoints[1].end());
+        cells.insert(cells.end(), m_roiCells[1].begin(), m_roiCells[1].end());
+    };
+
+    auto roiCenter = [this](int roi) {
+        std::array<double, 3> c{ 0.0, 0.0, 0.0 };
+        const std::vector<MeasureTools::Vec3>& p = m_roiPoints[roi];
+        if (p.empty())
+            return c;
+        for (const MeasureTools::Vec3& v : p)
+            for (int k = 0; k < 3; ++k)
+                c[k] += v[k];
+        for (int k = 0; k < 3; ++k)
+            c[k] /= static_cast<double>(p.size());
+        return c;
+    };
+
+    QString hint;
+    switch (method) {
+    case 0: {   // 平面度
+        const std::vector<MeasureTools::Vec3>& pts = m_roiPoints[0];
+        if (pts.size() < 3) {
+            hint = QStringLiteral("平面度需要在 ROI A 内至少 3 个点，当前 %1 个。")
+                       .arg(pts.size());
+            break;
+        }
+        const MeasureTools::Flatness f = MeasureTools::flatness(pts, 3.0);
+        if (!f.valid) {
+            hint = QString::fromStdString(f.message);
+            break;
+        }
+        addRow(QStringLiteral("平面度 LSQ PV"), fmt4(f.lsqPv), QStringLiteral("mm"),
+               static_cast<int>(f.used), confidenceFor(static_cast<int>(f.used), f.lsqRms));
+        addRow(QStringLiteral("平面度 LSQ RMS"), fmt4(f.lsqRms), QStringLiteral("mm"),
+               static_cast<int>(f.used), confidenceFor(static_cast<int>(f.used), f.lsqRms));
+        addRow(QStringLiteral("平面度 最小区域 PV"), fmt4(f.mzPv), QStringLiteral("mm"),
+               static_cast<int>(f.used), confidenceFor(static_cast<int>(f.used), f.lsqRms));
+        addRow(QStringLiteral("倾斜角"), fmt4(f.tiltDeg), QStringLiteral("°"),
+               static_cast<int>(f.used), confidenceFor(static_cast<int>(f.used), f.lsqRms));
+        setPrimary(QStringLiteral("平面度 最小区域 PV"), f.mzPv);
+
+        fillDeviation(f.dev, m_roiCells[0], true, QStringLiteral("mm"));
+        fillCloudColors(f.plane, true);
+        // Section along the ROI's principal direction, for the 截面轮廓 page.
+        const MeasureTools::SectionProfile sec = MeasureTools::sectionProfile(pts, 64);
+        if (sec.valid) {
+            m_section = sec.points;
+            m_sectionStep = sec.stepMm;
+        }
+        // 3D + 尺寸总图 annotation.
+        m_hasPlane = true;
+        m_planePoint = roiCenter(0);
+        m_planeNormal = f.plane.normal;
+        const QRect r = m_roiRects.value(0);
+        m_annotations.push_back({ QStringLiteral("平面度 PV %1 mm").arg(fmt4(f.mzPv)),
+                                  QPoint(r.center().x(), r.center().y()), false });
+        updateMeasureHint();
+        publish();
+        return;
+    }
+    case 1: {   // 面到面高度（中位数）
+        if (m_roiPoints[0].size() < 3 || m_roiPoints[1].size() < 3) {
+            hint = QStringLiteral("需要两个测量区域：在 2D 视图上先后拖出 ROI A（基准）"
+                                  "与 ROI B（被测），当前 %1 / %2 点。")
+                       .arg(m_roiPoints[0].size()).arg(m_roiPoints[1].size());
+            break;
+        }
+        const MeasureTools::Height h =
+            MeasureTools::heightBetween(m_roiPoints[0], m_roiPoints[1], 3.0);
+        if (!h.valid) {
+            hint = QString::fromStdString(h.message);
+            break;
+        }
+        addRow(QStringLiteral("面到面高度(中位数)"), fmt4(h.value), QStringLiteral("mm"),
+               static_cast<int>(h.usedTarget), confidenceFor(static_cast<int>(h.usedTarget), h.rms));
+        addRow(QStringLiteral("面到面高度 RMS"), fmt4(h.rms), QStringLiteral("mm"),
+               static_cast<int>(h.usedTarget), confidenceFor(static_cast<int>(h.usedTarget), h.rms));
+        setPrimary(QStringLiteral("面到面高度(中位数)"), h.value);
+
+        std::vector<MeasureTools::Vec3> pts;
+        std::vector<std::size_t> cells;
+        bothRois(pts, cells);
+        fillDeviation(MeasureTools::deviations(pts, h.ref), cells, true, QStringLiteral("mm"));
+        fillCloudColors(h.ref, true);
+
+        const MeasureTools::SectionProfile sec = MeasureTools::sectionProfile(pts, 96);
+        if (sec.valid) {
+            m_section = sec.points;
+            m_sectionStep = sec.stepMm;
+        }
+        m_hasPlane = true;
+        m_planePoint = roiCenter(0);
+        m_planeNormal = h.ref.normal;
+        const QRect ra = m_roiRects.value(0), rb = m_roiRects.value(1);
+        m_annotations.push_back({ QStringLiteral("基准 A"),
+                                  QPoint(ra.center().x(), ra.center().y()), false });
+        m_annotations.push_back({ QStringLiteral("B 相对 A %1 mm").arg(fmt4(h.value)),
+                                  QPoint(rb.center().x(), rb.center().y()), false });
+        updateMeasureHint();
+        publish();
+        return;
+    }
+    case 2: {   // 面面距离 / 夹角
+        if (m_roiPoints[0].size() < 3 || m_roiPoints[1].size() < 3) {
+            hint = QStringLiteral("需要两个测量区域（ROI A / ROI B），当前 %1 / %2 点。")
+                       .arg(m_roiPoints[0].size()).arg(m_roiPoints[1].size());
+            break;
+        }
+        // 3° is the user-facing parallel threshold (the Python tool ships 5°).
+        const MeasureTools::PlanePair pp =
+            MeasureTools::planePair(m_roiPoints[0], m_roiPoints[1], 3.0, 3.0);
+        if (!pp.valid) {
+            hint = QString::fromStdString(pp.message);
+            break;
+        }
+        const int pts = static_cast<int>(pp.usedA + pp.usedB);
+        addRow(QStringLiteral("面面夹角"), fmt4(pp.angleDeg), QStringLiteral("°"), pts,
+               confidenceFor(pts, -1.0));
+        if (pp.parallel) {
+            addRow(QStringLiteral("平行面间距"), fmt4(pp.distanceMm), QStringLiteral("mm"), pts,
+                   confidenceFor(pts, -1.0));
+            setPrimary(QStringLiteral("平行面间距"), pp.distanceMm);
+        } else {
+            addRow(QStringLiteral("夹角 ≥ 3°：不给出间距"), QStringLiteral("—"),
+                   QStringLiteral("mm"), pts, QStringLiteral("—"));
+            setPrimary(QStringLiteral("面面夹角"), pp.angleDeg);
+        }
+
+        std::vector<MeasureTools::Vec3> p2;
+        std::vector<std::size_t> c2;
+        bothRois(p2, c2);
+        fillDeviation(MeasureTools::deviations(p2, pp.planeA), c2, true, QStringLiteral("mm"));
+        fillCloudColors(pp.planeA, true);
+
+        m_hasPlane = true;
+        m_planePoint = roiCenter(0);
+        m_planeNormal = pp.planeA.normal;
+        const QRect ra = m_roiRects.value(0), rb = m_roiRects.value(1);
+        m_annotations.push_back({ QStringLiteral("A"), QPoint(ra.center().x(), ra.center().y()),
+                                  false });
+        m_annotations.push_back({ QStringLiteral("B：夹角 %1°").arg(fmt4(pp.angleDeg)),
+                                  QPoint(rb.center().x(), rb.center().y()), false });
+        updateMeasureHint();
+        publish();
+        return;
+    }
+    case 3: {   // 圆 / 孔径
+        const std::vector<MeasureTools::Vec3>& pts = m_roiPoints[0];
+        if (pts.size() < 5) {
+            hint = QStringLiteral("圆拟合需要在 ROI A 内至少 5 个点，当前 %1 个。")
+                       .arg(pts.size());
+            break;
+        }
+        // Two MAD rejection passes, as in the Python tool.
+        const MeasureTools::Circle c = MeasureTools::fitCircle(pts, 2, 2.5);
+        if (!c.valid) {
+            hint = QString::fromStdString(c.message);
+            break;
+        }
+        addRow(QStringLiteral("直径"), fmt4(c.diameter), QStringLiteral("mm"),
+               static_cast<int>(c.used), confidenceFor(static_cast<int>(c.used), c.rms));
+        addRow(QStringLiteral("半径"), fmt4(c.radius), QStringLiteral("mm"),
+               static_cast<int>(c.used), confidenceFor(static_cast<int>(c.used), c.rms));
+        addRow(QStringLiteral("圆度(半径极差)"), fmt4(c.roundness), QStringLiteral("mm"),
+               static_cast<int>(c.used), confidenceFor(static_cast<int>(c.used), c.rms));
+        addRow(QStringLiteral("圆心"), QStringLiteral("(%1, %2, %3)")
+                   .arg(fmt4(c.center[0])).arg(fmt4(c.center[1])).arg(fmt4(c.center[2])),
+               QStringLiteral("mm"), static_cast<int>(c.used),
+               confidenceFor(static_cast<int>(c.used), c.rms));
+        setPrimary(QStringLiteral("直径"), c.diameter);
+
+        // The deviation page shows the residual radius for a circle: same
+        // signed-distance idea, measured from the fitted circle instead.
+        std::vector<double> radial(pts.size());
+        for (std::size_t k = 0; k < pts.size(); ++k) {
+            const double dx = pts[k][0] - c.center[0];
+            const double dy = pts[k][1] - c.center[1];
+            const double dz = pts[k][2] - c.center[2];
+            radial[k] = std::sqrt(dx * dx + dy * dy + dz * dz) - c.radius;
+        }
+        fillDeviation(radial, m_roiCells[0], false, QStringLiteral("mm"));
+
+        const QRect r = m_roiRects.value(0);
+        m_annotations.push_back({ QStringLiteral("⌀%1 mm").arg(fmt4(c.diameter)),
+                                  QPoint(r.center().x(), r.center().y()), false });
+        m_hasPlane = true;
+        m_planePoint = c.center;
+        m_planeNormal = c.normal;
+        updateMeasureHint();
+        publish();
+        return;
+    }
+    case 4: {   // 包围盒
+        const std::vector<MeasureTools::Vec3>& pts = m_roiPoints[0];
+        if (pts.size() < 4) {
+            hint = QStringLiteral("包围盒需要在 ROI A 内至少 4 个点，当前 %1 个。")
+                       .arg(pts.size());
+            break;
+        }
+        const MeasureTools::BoundingBox b = MeasureTools::pcaBoundingBox(pts);
+        if (!b.valid) {
+            hint = QString::fromStdString(b.message);
+            break;
+        }
+        const int used = static_cast<int>(b.used);
+        addRow(QStringLiteral("长"), fmt4(b.length), QStringLiteral("mm"), used,
+               confidenceFor(used, -1.0));
+        addRow(QStringLiteral("宽"), fmt4(b.width), QStringLiteral("mm"), used,
+               confidenceFor(used, -1.0));
+        addRow(QStringLiteral("高"), fmt4(b.height), QStringLiteral("mm"), used,
+               confidenceFor(used, -1.0));
+        addRow(QStringLiteral("中心"), QStringLiteral("(%1, %2, %3)")
+                   .arg(fmt4(b.center[0])).arg(fmt4(b.center[1])).arg(fmt4(b.center[2])),
+               QStringLiteral("mm"), used, confidenceFor(used, -1.0));
+        setPrimary(QStringLiteral("长"), b.length);
+
+        // Axis-aligned extent of the ROI, used to place the 3D marker.
+        m_hasBox = true;
+        for (int k = 0; k < 3; ++k) {
+            m_boxMin[k] = std::numeric_limits<double>::max();
+            m_boxMax[k] = std::numeric_limits<double>::lowest();
+        }
+        for (const MeasureTools::Vec3& v : pts) {
+            for (int k = 0; k < 3; ++k) {
+                m_boxMin[k] = std::min(m_boxMin[k], v[k]);
+                m_boxMax[k] = std::max(m_boxMax[k], v[k]);
+            }
+        }
+        const QRect r = m_roiRects.value(0);
+        m_annotations.push_back(
+            { QStringLiteral("%1 × %2 × %3 mm").arg(fmt4(b.length), fmt4(b.width),
+                                                     fmt4(b.height)),
+              QPoint(r.center().x(), r.center().y()), false });
+        updateMeasureHint();
+        publish();
+        return;
+    }
+    default:    // 重复性统计
+        break;
+    }
+
+    if (!hint.isEmpty()) {
+        m_measureHint->setText(hint);
+        updateMeasureHint();
+        publish();
+        return;
+    }
+
+    // ── 重复性统计: statistics of the series selected in the combo box ──
+    const QString name = m_seriesCombo ? m_seriesCombo->currentText() : QString();
+    if (name.isEmpty() || !m_series.contains(name) || m_series.value(name).isEmpty()) {
+        m_measureHint->setText(QStringLiteral(
+            "当前没有重复性数据：先测一个尺寸，再点「加入重复性」（可反复采样）。"));
+        updateMeasureHint();
+        publish();
+        return;
+    }
+    const QVector<double>& vals = m_series.value(name);
+    const MeasureTools::Repeatability rep =
+        MeasureTools::repeatability(std::vector<double>(vals.begin(), vals.end()));
+    if (rep.valid) {
+        const int n = static_cast<int>(rep.n);
+        addRow(QStringLiteral("采样数 n"), QString::number(n), QString(), n,
+               confidenceFor(n, -1.0));
+        addRow(QStringLiteral("均值"), fmt4(rep.mean), QStringLiteral("mm"), n,
+               confidenceFor(n, -1.0));
+        addRow(QStringLiteral("标准差 σ"), fmt4(rep.stdDev), QStringLiteral("mm"), n,
+               confidenceFor(n, -1.0));
+        addRow(QStringLiteral("极差"), fmt4(rep.range), QStringLiteral("mm"), n,
+               confidenceFor(n, -1.0));
+        addRow(QStringLiteral("±3σ"), QStringLiteral("±%1").arg(fmt4(rep.sixSigma / 2.0)),
+               QStringLiteral("mm"), n, confidenceFor(n, -1.0));
+        addRow(QStringLiteral("最小 / 最大"),
+               QStringLiteral("%1 / %2").arg(fmt4(rep.min), fmt4(rep.max)),
+               QStringLiteral("mm"), n, confidenceFor(n, -1.0));
+        addRow(QStringLiteral("最大偏差"), fmt4(rep.maxDev), QStringLiteral("mm"), n,
+               confidenceFor(n, -1.0));
+    } else {
+        hint = QStringLiteral("序列「%1」的有效样本不足。").arg(name);
+    }
+    m_pageFooter = hint.isEmpty()
+        ? QStringLiteral("序列「%1」：n=%2，均值 %3，σ %4（仅本次运行，未写入磁盘）")
+              .arg(name).arg(rep.n).arg(fmt4(rep.mean)).arg(fmt4(rep.stdDev))
+        : QString();
+    updateMeasureHint();
+    publish();
+}
+
+void ToolsPanel::addLastToRepeatSeries()
+{
+    if (!m_hasLast || m_lastKey.isEmpty()) {
+        m_measureHint->setText(QStringLiteral(
+            "先执行一次测量（平面度 / 高度 / 间距 / 直径 / 长），再把结果加入序列。"));
+        return;
+    }
+    // Session-only series: the accumulator lives in this panel's memory and is
+    // deliberately never written to disk.
+    m_series[m_lastKey].append(m_lastPrimary);
+    m_measureHint->clear();
+    refreshSeriesUi();
+    if (m_seriesCombo) {
+        const int idx = m_seriesCombo->findText(m_lastKey);
+        if (idx >= 0 && m_seriesCombo->currentIndex() != idx) {
+            QSignalBlocker block(m_seriesCombo);   // avoid a re-entrant refresh
+            m_seriesCombo->setCurrentIndex(idx);
+        }
+    }
+    emit measurementUpdated(buildSnapshot());
+}
+
+void ToolsPanel::refreshSeriesUi()
+{
+    if (!m_seriesCombo)
+        return;
+    const QString keep = m_seriesCombo->currentText();
+    {
+        QSignalBlocker block(m_seriesCombo);
+        m_seriesCombo->clear();
+        for (auto it = m_series.constBegin(); it != m_series.constEnd(); ++it) {
+            if (!it.value().isEmpty())
+                m_seriesCombo->addItem(it.key());
+        }
+        const int idx = m_seriesCombo->findText(keep);
+        if (idx >= 0)
+            m_seriesCombo->setCurrentIndex(idx);
+    }
+    if (!m_seriesSummary)
+        return;
+    const QString name = m_seriesCombo->currentText();
+    if (name.isEmpty() || !m_series.contains(name)) {
+        m_seriesSummary->setText(QStringLiteral("—"));
+        return;
+    }
+    const QVector<double>& vals = m_series.value(name);
+    const MeasureTools::Repeatability rep =
+        MeasureTools::repeatability(std::vector<double>(vals.begin(), vals.end()));
+    m_seriesSummary->setText(
+        rep.valid ? QStringLiteral("n=%1  均值 %2 mm  σ %3 mm  极差 %4 mm  ±3σ %5 mm")
+                        .arg(rep.n).arg(fmt4(rep.mean)).arg(fmt4(rep.stdDev))
+                        .arg(fmt4(rep.range)).arg(fmt4(3.0 * rep.stdDev))
+                  : QStringLiteral("样本不足（n=%1）").arg(rep.n));
+}
+
+Measurement::Snapshot ToolsPanel::buildSnapshot() const
+{
+    Measurement::Snapshot s;
+    s.valid = !m_lastRows.isEmpty();
+    s.title = m_measureMethod ? m_measureMethod->currentText() : QString();
+    s.footer = m_pageFooter;
+
+    s.devSamples = m_devSamples;
+    s.gridW = m_measureGridW;
+    s.gridH = m_measureGridH;
+    s.limitLo = m_devLo;
+    s.limitHi = m_devHi;
+    s.robustLimits = m_devRobust;
+    s.clipped = m_devClipped;
+    s.unit = QStringLiteral("mm");
+    s.coolWarm = m_snapshotCoolWarm;
+
+    s.annotations = m_annotations;
+
+    s.section = m_section;
+    s.sectionStep = m_sectionStep;
+    s.sectionPoints = static_cast<int>(m_section.size());
+
+    // The run chart always shows the series picked in the combo box, which is
+    // the one the user is accumulating into.
+    if (m_seriesCombo) {
+        const QString name = m_seriesCombo->currentText();
+        if (!name.isEmpty() && m_series.contains(name)) {
+            s.seriesName = name;
+            s.series = m_series.value(name);
+            const MeasureTools::Repeatability rep = MeasureTools::repeatability(
+                std::vector<double>(s.series.begin(), s.series.end()));
+            s.seriesN = static_cast<int>(rep.n);
+            s.seriesMean = rep.mean;
+            s.seriesSigma = rep.stdDev;
+            s.seriesRange = rep.range;
+        }
+    }
+    s.hasTolerance = m_tolEnable && m_tolEnable->isChecked();
+    s.tolLo = m_tolLo ? m_tolLo->value() : 0.0;
+    s.tolHi = m_tolHi ? m_tolHi->value() : 0.0;
+
+    // ── 3D payload ──
+    s.cloudColors = m_cloudColors;   // refcount bump, never an element copy
+    s.hasCloudColors = m_cloudColors && !m_cloudColors->empty();
+    s.hasPlane = m_hasPlane;
+    s.planePoint = m_planePoint;
+    s.planeNormal = m_planeNormal;
+    s.hasRoiBox = m_hasBox;
+    s.boxMin = m_boxMin;
+    s.boxMax = m_boxMax;
+    s.label = s.title;
+    return s;
 }

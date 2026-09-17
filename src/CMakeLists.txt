@@ -10,10 +10,14 @@ set(SOURCES
     logic/RuntimeLog.cpp
     logic/DetectionEngine.cpp
     logic/CaptureFlow.cpp
+    logic/FrameBuffer.cpp
+    logic/UiStallWatchdog.cpp
     logic/PointCloudUtils.cpp
     logic/CalibrationService.cpp
     logic/RobotPose.cpp
     logic/URRealtimeReader.cpp
+    logic/NrcJsonReader.cpp
+    logic/MeasureTools.cpp
     logic/GeometryTools.h
     sdk/HandEyeSDKBridge.cpp
     ui/Theme.cpp

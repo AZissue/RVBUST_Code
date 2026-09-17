@@ -8,10 +8,14 @@
 #include "models/CalibrationMode.h"
 #include "logic/AppConfig.h"
 #include "logic/CalibrationService.h"
+#include "logic/NrcJsonReader.h"
 #include "logic/RobotPose.h"
 #include "logic/URRealtimeReader.h"
 #include "logic/BoardPoseFit.h"
+#include "logic/FrameBuffer.h"
+#include "logic/UiStallWatchdog.h"
 #include "ui/ActionButtons.h"
+#include "ui/MeasurementSnapshot.h"
 
 // Forward declarations
 class CameraManager;
@@ -28,6 +32,7 @@ class SidePanel;
 class ToastOverlay;
 class ToolsPanel;
 class QShowEvent;
+class QTimer;
 struct DeviceEntry;
 
 // MainWindow is the UI assembler / signal adapter.  Business logic of the
@@ -89,10 +94,25 @@ private:
     void syncBoardHistory();
     void refreshBoardOverlay();
 
+    // Measurement tool -> 3D viewport (P4): deviation colouring of the captured
+    // cloud through the existing per-point RGB channel, plus sphere/arrow/text
+    // annotations for the fitted plane and the measured region.
+    void onMeasurementUpdated(const Measurement::Snapshot& snapshot);
+
     // State helpers
     void setBusy(const QString& text, ActionButtons::BusyTarget target);
     void setConnectBusy(const QString& text);
     void clearBusy();
+
+    // UI-thread stall watchdog (D5): a 100 ms heart-beat that reports a late
+    // tick as "[WATCHDOG] UI stall NNN ms (...)" so a frozen UI leaves a trace
+    // in the runtime log with the stage that was running.
+    void startUiWatchdog();
+    void onWatchdogTick();
+    // Bracket a synchronous UI-thread heavy operation so a stall reported right
+    // after it can name the culprit in the log line.
+    void beginHeavyOp(const QString& name);
+    void endHeavyOp();
 
     // Dialogs
     void showSettingsDialog();
@@ -114,6 +134,15 @@ private:
     SidePanel*      m_sidePanel     = nullptr;
     ToastOverlay*   m_toast         = nullptr;
     ToolsPanel*     m_toolsPanel    = nullptr;
+
+    // Measurement overlay state (3D): object handles of the last annotations and
+    // whether the uploaded cloud currently carries deviation colours.
+    std::vector<int> m_measureHandles;
+    bool m_cloudColored = false;
+    // Per-point RGB of the last deviation colouring, kept so a later re-upload
+    // of the same frame (e.g. the marker-highlight pass after 识别) can restore
+    // the colouring instead of silently dropping it.
+    FrameBuffer::FloatBuf m_measureCloudColors;
 
     // Current mode
     EyeHandMode m_eyeHandMode = EyeHandMode::EyeInHand;
@@ -151,11 +180,22 @@ private:
     // Stage 8: robot communication (isolated, default off)
     RobotPose::ModbusTcpReader m_robotReader;
     RobotPose::URRealtimeReader m_urReader;
-    int m_robotProtocol = 0;           // 0 = Modbus TCP, 1 = UR Realtime
+    RobotPose::NrcJsonReader m_nrcReader;   // 博纳斯/纳博特 JSON over TCP
+    // 0 = Modbus TCP, 1 = UR Realtime, 2 = 博纳斯(纳博特) JSON/TCP
+    int m_robotProtocol = 0;
     bool m_robotAutoRead = false;
     bool m_robotConnected = false;     // logical connection (real or simulated)
     bool m_robotSimulated = false;     // "模拟连接成功" — no real socket
 
     // Window centering (restore/clamp once on first show)
     bool m_windowPositioned = false;
+
+    // UI-thread stall watchdog (D5).  All state is touched on the UI thread
+    // only — the watchdog adds no thread of its own and no shared state.
+    QTimer* m_watchdogTimer = nullptr;
+    UiStallWatchdog::Watchdog m_watchdog;
+    QString m_heavyOpName;              // last synchronous UI-thread heavy op
+    double  m_heavyOpStartMs = -1.0;
+    double  m_heavyOpEndMs   = -1.0;
+    bool    m_uploading3d    = false;   // inside VisSceneView::updatePointCloud
 };

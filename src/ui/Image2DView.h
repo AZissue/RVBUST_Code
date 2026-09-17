@@ -3,16 +3,52 @@
 #include <QLabel>
 #include <QPixmap>
 #include <QImage>
+#include <QElapsedTimer>
+#include <QPointer>
+#include <QStringList>
+#include <QVector>
 #include <vector>
 #include <tuple>
 #include <string>
 
+#include "ui/MeasurementSnapshot.h"
+
+class QPushButton;
+
+// The 2D viewport is also the container for the measurement display pages:
+// 图像 | 偏差图 | 尺寸总图 | 截面轮廓 | 重复性趋势.  The pages live inside this
+// widget — no extra window — and share its zoom / pan / pick machinery, so
+// switching pages never changes how the image behaves.
 class Image2DView : public QWidget {
     Q_OBJECT
 public:
+    enum class Page {
+        Image = 0,   // the captured camera image
+        Deviation,   // colour map of the signed distance from the fitted plane
+        Dimensions,  // leader lines + value call-outs drawn over the image
+        Section,     // section profile along the ROI's principal direction
+        Repeat       // repeatability run chart + histogram
+    };
+
     explicit Image2DView(QWidget* parent = nullptr);
 
-    void updateFrame(const QImage& image, bool preserveView = false);
+    void setPage(Page page);
+    Page page() const { return m_page; }
+
+    // ROI rectangles in image pixels, drawn over the image (A, B, ...).
+    void setRois(const QVector<QRect>& rois, const QStringList& labels);
+    void clearRois();
+
+    // Measurement results to paint on the display pages.  Cheap to copy (the
+    // heavy members are vectors that are moved in by the caller).
+    void setMeasurement(const Measurement::Snapshot& snapshot);
+
+    // `livePreview` marks the streaming preview path (as opposed to a captured
+    // still).  Live frames are rendered with a cheap nearest-neighbour scale and
+    // the existing 200 ms settle timer then re-renders one smooth frame, so the
+    // UI thread never pays for a full-quality scale 20 times a second.
+    void updateFrame(const QImage& image, bool preserveView = false,
+                     bool livePreview = false);
     void drawMarkers(const std::vector<std::tuple<float, float, std::string>>& markers);
     void clearMarkers();
     void clear();
@@ -20,6 +56,11 @@ public:
 signals:
     // Left-click on the image; coordinates are image pixels (0-based).
     void pixelClicked(int x, int y);
+    // A left-drag finished: the dragged rectangle in image pixels, normalised
+    // so width/height are positive.  Only emitted for drags of at least
+    // kRoiMinDrag px in both directions (a shorter drag is still a click).
+    void roiSelected(const QRect& rect);
+    void pageChanged(int page);
 
 protected:
     void wheelEvent(QWheelEvent* event) override;
@@ -32,10 +73,31 @@ protected:
 private:
     void fitZoom();
     void render();
+    void buildPageBar();
+    void updatePageBarGeometry();
+    // Regenerates m_originalPixmap for the active page.  Cheap no-op when the
+    // camera image is unchanged and the page did not move.
+    void refreshPagePixmap();
+    QPixmap renderDeviationPage(const QSize& size) const;
+    QPixmap renderDimensionPage(const QSize& size) const;
+    QPixmap renderSectionPage(const QSize& size) const;
+    QPixmap renderRepeatPage(const QSize& size) const;
 
     QLabel* m_imageLabel;
     QLabel* m_titleLabel;
     QLabel* m_zoomLabel;
+
+    // Page machinery (all inside this widget: no extra window).
+    QPointer<QWidget> m_pageBar;
+    QVector<QPushButton*> m_pageButtons;
+    Page m_page = Page::Image;
+    QImage m_cameraImage;        // last frame, kept for the 尺寸总图 base layer
+    Measurement::Snapshot m_snapshot;
+    QVector<QRect> m_rois;
+    QStringList m_roiLabels;
+    QPoint m_roiStart;
+    QRect m_roiCurrent;          // rubber band while dragging (image pixels)
+    bool m_roiPending = false;   // left button down, may become a drag
 
     QPixmap m_originalPixmap;
     QPixmap m_cachedCanvas;
@@ -54,6 +116,12 @@ private:
     QTimer* m_smoothTimer = nullptr;
     bool m_smoothRender = true;
     bool m_canvasDirty = true;
+    bool m_livePreview = false;
+    // Render cost trace: logged only when a render actually stalls the UI.
+    QElapsedTimer m_renderTimer;
 
     bool widgetToImagePixel(const QPoint& pos, int& px, int& py) const;
+    // Same mapping, but clamped to the image so a drag that leaves the image
+    // still produces a usable rectangle.
+    bool widgetToImagePixelClamped(const QPoint& pos, int& px, int& py) const;
 };

@@ -56,6 +56,9 @@ void AppConfig::load()
     if (!m_data.contains("caliboard_error_threshold")) {
         m_data["caliboard_error_threshold"] = 5.0;
     }
+    if (!m_data.contains("ui_stall_threshold_ms")) {
+        m_data["ui_stall_threshold_ms"] = 500;
+    }
 }
 
 void AppConfig::save()
@@ -161,5 +164,22 @@ float AppConfig::caliboardErrorThreshold() const
 void AppConfig::setCaliboardErrorThreshold(float pct)
 {
     m_data["caliboard_error_threshold"] = static_cast<double>(pct);
+    save();
+}
+
+int AppConfig::uiStallThresholdMs() const
+{
+    // Env override wins: useful when the field needs a tighter/looser report
+    // than the persisted setting without editing the ini.
+    bool ok = false;
+    const int env = qEnvironmentVariableIntValue("HEC_UI_STALL_MS", &ok);
+    if (ok && env > 0)
+        return env;
+    return m_data.value("ui_stall_threshold_ms", 500).toInt();
+}
+
+void AppConfig::setUiStallThresholdMs(int ms)
+{
+    m_data["ui_stall_threshold_ms"] = ms > 0 ? ms : 500;
     save();
 }

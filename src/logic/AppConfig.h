@@ -39,6 +39,12 @@ public:
     float caliboardErrorThreshold() const;
     void setCaliboardErrorThreshold(float pct);
 
+    // UI-thread stall watchdog threshold (ms).  Default 500 ms; the
+    // HEC_UI_STALL_MS environment variable overrides it for field diagnosis
+    // without touching the settings file.
+    int uiStallThresholdMs() const;
+    void setUiStallThresholdMs(int ms);
+
     // Direct access to QSettings (for dialogs)
     QSettings& settings() { return m_settings; }
 

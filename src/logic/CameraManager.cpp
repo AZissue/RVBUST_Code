@@ -12,13 +12,41 @@
 #include <cstdio>
 #include <cstring>
 #include <windows.h>
+#define PSAPI_VERSION 2   // K32GetProcessMemoryInfo lives in kernel32
+#include <psapi.h>
 #include <QtConcurrent/QtConcurrentRun>
-#include <QThread>
-#include <QEventLoop>
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QElapsedTimer>
+#include <QTimer>
 #include <chrono>
+
+// ── In-process memory trace (D2) ──
+//
+// The acceptance criterion for the buffer work is a working-set delta over a
+// fixed operation sequence, so log the process figures next to the payload
+// sizes at each hand-off.  That gives the before/after comparison directly
+// from the runtime log.
+static void logMemoryTrace(const char* tag, std::size_t payloadBytes)
+{
+    PROCESS_MEMORY_COUNTERS pmc{};
+    DWORD handles = 0;
+    const bool haveMem =
+        GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc)) != 0;
+    GetProcessHandleCount(GetCurrentProcess(), &handles);
+    if (haveMem) {
+        RuntimeLog::log("[MEM] %s: working_set=%.1f MB peak=%.1f MB handles=%lu payload=%.1f MB",
+                        tag,
+                        pmc.WorkingSetSize / 1048576.0,
+                        pmc.PeakWorkingSetSize / 1048576.0,
+                        static_cast<unsigned long>(handles),
+                        payloadBytes / 1048576.0);
+    } else {
+        RuntimeLog::log("[MEM] %s: handles=%lu payload=%.1f MB (working set unavailable)",
+                        tag, static_cast<unsigned long>(handles),
+                        payloadBytes / 1048576.0);
+    }
+}
 
 // ── PIMPL: hide RVC::X1 / RVC::X2 + CaptureOptions ──
 
@@ -29,6 +57,11 @@ struct CameraManager::RvcImpl {
     RVC::X2 x2;
     RVC::X1::CaptureOptions capOptsX1;
     RVC::X2::CaptureOptions capOptsX2;
+
+    // Set once by ~CameraManager().  shutdown() refuses to re-arm the worker
+    // token afterwards, so a late worker can never touch a half-destroyed
+    // CameraManager.
+    bool destroying = false;
 
     RVC::DeviceInfo devInfo;
     // Device handles from the last scan, so connecting by serial does not
@@ -42,6 +75,79 @@ struct CameraManager::RvcImpl {
     bool isX2()      const { return model == CameraModel::X2; }
 };
 
+// ── D1: the one gate every RVC call goes through ──
+//
+// `who`       : static tag for the runtime log ("capture", "preview-x2", ...)
+// `previewGen`: >= 0 marks a preview round.  The round remembers the yield
+//               generation it started with; if a capture has bumped it by the
+//               time the lock is granted, the round gives the device up again
+//               instead of finishing its frame (that is the "让位" the D1 fix
+//               requires).  < 0 marks the capturing/shutdown side, which never
+//               abandons.
+// `timeout`   : zero = wait indefinitely (deterministic); non-zero = bounded
+//               try, used only by shutdown(), which must not hang the close
+//               path.  When the try fails the caller MUST NOT touch the device.
+class CameraManager::DeviceLock {
+public:
+    DeviceLock(CameraManager* mgr, const char* who, int previewGen = -1,
+               std::chrono::milliseconds timeout = std::chrono::milliseconds(0))
+        : m_mgr(mgr), m_who(who), m_lock(mgr->m_rvcMutex, std::defer_lock)
+    {
+        const auto t0 = std::chrono::steady_clock::now();
+        if (timeout.count() > 0) {
+            m_ok = m_lock.try_lock_for(timeout);
+        } else {
+            m_lock.lock();
+            m_ok = true;
+        }
+        const qint64 waited = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                  std::chrono::steady_clock::now() - t0).count();
+
+        if (!m_ok) {
+            RuntimeLog::log("[DEV] %s: device still busy after %lld ms — "
+                            "NOT entering (no concurrent device access)",
+                            m_who, waited);
+            return;
+        }
+
+        if (previewGen >= 0 && previewGen != m_mgr->m_deviceYieldGen.load()) {
+            // A capture requested the device while this preview round was
+            // waiting for the lock: abandon the round and release immediately.
+            m_mgr->m_previewAbandonCount.fetch_add(1);
+            m_lock.unlock();
+            m_ok = false;
+            m_abandoned = true;
+            return;
+        }
+
+        m_mgr->m_lastDeviceWaitMs = waited;
+        // Preview rounds run ~20x/s — only log the ones that actually had to
+        // wait, so the log stays readable.  Capture/shutdown always log.
+        if (previewGen < 0 || waited >= 50) {
+            RuntimeLog::log("[DEV] %s acquired device after %lld ms "
+                            "(preview yields so far=%d, was_previewing=%d)",
+                            m_who, waited, m_mgr->m_previewAbandonCount.load(),
+                            previewGen >= 0 ? 1 : 0);
+        }
+    }
+
+    ~DeviceLock()
+    {
+        if (m_ok && m_lock.owns_lock())
+            m_lock.unlock();
+    }
+
+    bool ok() const { return m_ok; }
+    bool abandoned() const { return m_abandoned; }
+
+private:
+    CameraManager* m_mgr;
+    const char* m_who;
+    std::unique_lock<std::recursive_timed_mutex> m_lock;
+    bool m_ok = false;
+    bool m_abandoned = false;
+};
+
 // ── Constructor / Destructor ──
 
 CameraManager::CameraManager(QObject* parent)
@@ -51,7 +157,10 @@ CameraManager::CameraManager(QObject* parent)
     , m_captureWatcher(new QFutureWatcher<CaptureResult>(this))
     , m_captureWatchdog(new QTimer(this))
     , m_impl(std::make_unique<RvcImpl>())
+    , m_workerToken(std::make_shared<WorkerToken>())
 {
+    qRegisterMetaType<FrameBuffer::FloatBuf>("FrameBuffer::FloatBuf");
+    qRegisterMetaType<FrameBuffer::DoubleBuf>("FrameBuffer::DoubleBuf");
     m_intrinsicMatrix.resize(9, 0.0f);
     m_distortion.resize(5, 0.0f);
     connect(m_previewTimer, &QTimer::timeout, this, &CameraManager::onPreviewTick);
@@ -76,6 +185,12 @@ CameraManager::CameraManager(QObject* parent)
 
 CameraManager::~CameraManager()
 {
+    // Order matters: flag the destruction first so shutdown() does not re-arm
+    // the worker token and so a worker that is queued-but-not-started bails out
+    // before it dereferences `this`.
+    m_impl->destroying = true;
+    if (m_workerToken)
+        m_workerToken->cancelRequested = true;
     shutdown();
 }
 
@@ -86,6 +201,11 @@ bool CameraManager::connectFirstAvailable()
     // Use plain try/catch (NOT SEH __try/__except) — nesting SEH inside RVC
     // SDK calls can interfere with the SDK's own internal exception handling
     // and cause 0xC0000005 to propagate uncaught.
+
+    // Enumerating and opening a device are RVC calls too: serialize them.
+    DeviceLock lk(this, "connect-first");
+    if (!lk.ok())
+        return false;
 
     if (!m_impl->systemInited) {
         try {
@@ -157,6 +277,13 @@ bool CameraManager::connectFirstAvailable()
 
 std::vector<DeviceEntry> CameraManager::listDevices()
 {
+    // Runs on a pool thread (scanDevicesAsync); the enumeration and the
+    // GetDeviceInfo/GetNetworkConfig calls below are RVC calls and must not
+    // overlap a preview or capture transaction on another thread.
+    DeviceLock lk(this, "scan");
+    if (!lk.ok())
+        return {};
+
     // Init the RVC system once.  Use plain try/catch, NOT SEH: nesting SEH
     // inside RVC SDK calls can interfere with the SDK's own exception handling
     // and let 0xC0000005 escape uncaught (see connectFirstAvailable).
@@ -248,6 +375,7 @@ void CameraManager::prewarmSystem()
         return;
     QElapsedTimer t;
     t.start();
+    DeviceLock lk(this, "prewarm");
     try {
         if (RVC::SystemInit()) {
             m_impl->systemInited = true;
@@ -279,6 +407,16 @@ bool CameraManager::initWithDeviceSerial(const QString& serial)
 {
     QElapsedTimer connectTimer;
     connectTimer.start();
+
+    // Create/Open/Close/Destroy plus the intrinsic read are device calls.  The
+    // lock is recursive because this function re-enters through shutdown()
+    // when a device is already connected.
+    DeviceLock lk(this, "connect");
+    if (!lk.ok()) {
+        emit cameraError(QStringLiteral("相机设备忙，请稍后重试"));
+        return false;
+    }
+
     if (!m_impl->systemInited) {
         try {
             RVC::SystemInit();
@@ -485,65 +623,76 @@ void CameraManager::shutdown()
     if (m_shuttingDown) return;
     m_shuttingDown = true;
 
+    // 1. Stop scheduling new frames and ask any queued/running worker to bail
+    //    out before it touches the device (or `this`, when destroying).
+    if (m_workerToken && !m_impl->destroying)
+        m_workerToken->cancelRequested = true;
     stopPreview();
-    // Wait for any in-flight preview frame before closing the device objects.
-    const auto waitDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
-    while (m_previewBusy && std::chrono::steady_clock::now() < waitDeadline) {
-        QThread::msleep(5);
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
-    }
     m_captureWatchdog->stop();
     m_reconnectTimer->stop();
     m_healthTimer->stop();
     m_reconnectAttempts = 0;
+
+    // 2. Drop the previous frame's caches now, not when the next capture
+    //    happens to overwrite them — nothing reads them after a teardown.
+    releaseFrameCaches();
     m_impl->scannedDevices.clear();
     m_impl->scannedInfos.clear();
 
-    // Let any in-flight health check finish before tearing down the RVC
-    // system: SystemFindDevice (pool thread) must not run concurrently with
-    // SystemShutdown (this thread).
-    const auto workerDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(6);
-    while ((m_healthBusy.load() || m_scanBusy.load() || m_captureInProgress)
-           && std::chrono::steady_clock::now() < workerDeadline) {
-        QThread::msleep(10);
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
-    }
-
-    // If a capture worker is still running, ignore its late result and do
-    // not touch the device objects concurrently below.
-    if (m_captureInProgress) {
-        m_captureInProgress = false;
+    // A capture worker may still be inside the SDK.  Its result must not be
+    // applied after teardown.
+    if (m_captureInProgress)
         m_captureTimedOut = true;
-    }
-    m_nativeMarkerPixels.clear();
-    m_nativeMarkerPoints.clear();
 
-    if (m_isConnected) {
-        try {
-            if (m_impl->isX2()) {
-                if (m_impl->x2.IsOpen())
-                    m_impl->x2.Close();
-                RVC::X2::Destroy(m_impl->x2);
-            } else if (m_impl->isX1()) {
-                if (m_impl->x1.IsOpen())
-                    m_impl->x1.Close();
-                RVC::X1::Destroy(m_impl->x1);
+    // 3. Deterministically wait for the worker to leave the device.  This is a
+    //    plain lock wait — no nested processEvents, so no slot can re-enter
+    //    this object while it is being torn down.  Bounded so a truly hung SDK
+    //    call cannot hang the close path.
+    bool released = false;
+    {
+        DeviceLock lk(this, "shutdown", -1,
+                      std::chrono::milliseconds(SHUTDOWN_DEVICE_WAIT_MS));
+        if (lk.ok()) {
+            if (m_isConnected) {
+                try {
+                    if (m_impl->isX2()) {
+                        if (m_impl->x2.IsOpen())
+                            m_impl->x2.Close();
+                        RVC::X2::Destroy(m_impl->x2);
+                    } else if (m_impl->isX1()) {
+                        if (m_impl->x1.IsOpen())
+                            m_impl->x1.Close();
+                        RVC::X1::Destroy(m_impl->x1);
+                    }
+                } catch (...) {
+                    fprintf(stderr, "[CameraManager] Exception during camera shutdown\n");
+                }
+                m_impl->model = CameraModel::None;
             }
-        } catch (...) {
-            fprintf(stderr, "[CameraManager] Exception during camera shutdown\n");
+            if (m_impl->systemInited) {
+                try {
+                    RVC::SystemShutdown();
+                } catch (...) {
+                    fprintf(stderr, "[CameraManager] Exception during SystemShutdown\n");
+                }
+                m_impl->systemInited = false;
+            }
+            released = true;
         }
+    }
+    if (!released) {
+        // Deliberately leaking the device handle beats tearing it down while a
+        // worker is inside it.  The process exit reclaims it.
+        RuntimeLog::log("[DEV] shutdown: worker still inside the device after %d ms — "
+                        "skipping Close/Destroy/SystemShutdown to avoid concurrency",
+                        SHUTDOWN_DEVICE_WAIT_MS);
         m_impl->model = CameraModel::None;
     }
-    if (m_impl->systemInited) {
-        try {
-            RVC::SystemShutdown();
-        } catch (...) {
-            fprintf(stderr, "[CameraManager] Exception during SystemShutdown\n");
-        }
-        m_impl->systemInited = false;
-    }
+
     m_isConnected = false;
     m_shuttingDown = false;
+    if (m_workerToken && !m_impl->destroying)
+        m_workerToken->cancelRequested = false;
     emit cameraDisconnected();
 }
 
@@ -561,24 +710,43 @@ std::pair<std::vector<float>, std::vector<float>> CameraManager::intrinsics() co
     return {m_intrinsicMatrix, m_distortion};
 }
 
-bool CameraManager::lastGrid(std::vector<double>& xyzMm, int& w, int& h) const
+bool CameraManager::lastGrid(FrameBuffer::DoubleBuf& xyzMm, int& w, int& h) const
 {
-    if (m_lastGrid.empty())
+    if (!m_lastGrid.valid())
         return false;
-    xyzMm = m_lastGrid;
+    xyzMm = m_lastGrid.get();   // refcount bump, not a 37 MB copy
     w = m_lastGridW;
     h = m_lastGridH;
     return true;
 }
 
-bool CameraManager::lastCorrespond(std::vector<double>& cmap, int& w, int& h) const
+bool CameraManager::lastCorrespond(FrameBuffer::DoubleBuf& cmap, int& w, int& h) const
 {
-    if (m_lastCorrespond.empty())
+    if (!m_lastCorrespond.valid())
         return false;
-    cmap = m_lastCorrespond;
+    cmap = m_lastCorrespond.get();
     w = m_lastCmW;
     h = m_lastCmH;
     return true;
+}
+
+std::size_t CameraManager::cachedBufferBytes() const
+{
+    return m_lastGrid.bytes() + m_lastCorrespond.bytes()
+         + FrameBuffer::bytes(m_nativeMarkerPixels)
+         + FrameBuffer::bytes(m_nativeMarkerPoints);
+}
+
+void CameraManager::releaseFrameCaches()
+{
+    m_lastGrid.clear();
+    m_lastGridW = m_lastGridH = 0;
+    m_lastCorrespond.clear();
+    m_lastCmW = m_lastCmH = 0;
+    m_nativeMarkerPixels.clear();
+    m_nativeMarkerPixels.shrink_to_fit();
+    m_nativeMarkerPoints.clear();
+    m_nativeMarkerPoints.shrink_to_fit();
 }
 
 bool CameraManager::lastGridAligned() const
@@ -653,8 +821,16 @@ void CameraManager::onPreviewTick()
     m_previewBusy = true;
     const int gen = m_previewGen;
 
+    // The worker captures this token by value; reading it is the very first
+    // thing it does, so a worker that starts after ~CameraManager() exits
+    // without ever touching `this`.
+    auto token = m_workerToken;
+
     // Capture2D runs in a pool thread so the UI event loop never blocks.
-    QtConcurrent::run([this, gen]() {
+    QtConcurrent::run([this, gen, token]() {
+        if (!token || token->cancelRequested.load())
+            return;
+
         PreviewFrames frames;
         if (m_impl->isX1())
             frames = capturePreviewFrameX1();
@@ -667,6 +843,12 @@ void CameraManager::onPreviewTick()
                 return;
             }
             m_previewBusy = false;
+            if (frames.abandoned) {
+                // The round was dropped on purpose so a capture could own the
+                // device.  Not a failure: do not count it and do not
+                // self-schedule (the capture has already stopped preview).
+                return;
+            }
             if (!frames.left.isNull()) {
                 emit previewFrameReady(frames.left);
                 m_previewFailures = 0;
@@ -689,6 +871,15 @@ void CameraManager::onPreviewTick()
 CameraManager::PreviewFrames CameraManager::capturePreviewFrameX1()
 {
     PreviewFrames out;
+    // Device transaction: one thread at a time.  If a capture bumped the yield
+    // generation while we were waiting for the lock, we hand the device over
+    // instead of driving it — that is the deterministic "preview 让位".
+    const int gen = m_deviceYieldGen.load();
+    DeviceLock lk(this, "preview-x1", gen);
+    if (!lk.ok()) {
+        out.abandoned = lk.abandoned();
+        return out;
+    }
     try {
         if (!m_impl->x1.IsOpen()) return out;
 
@@ -715,8 +906,22 @@ CameraManager::PreviewFrames CameraManager::capturePreviewFrameX1()
 CameraManager::PreviewFrames CameraManager::capturePreviewFrameX2()
 {
     PreviewFrames out;
+    const int gen = m_deviceYieldGen.load();
+    DeviceLock lk(this, "preview-x2", gen);
+    if (!lk.ok()) {
+        out.abandoned = lk.abandoned();
+        return out;
+    }
     try {
         if (!m_impl->x2.IsOpen()) return out;
+
+        // A capture may have asked for the device after this round started;
+        // bail before the first Capture2D rather than after it.
+        if (gen != m_deviceYieldGen.load()) {
+            ++m_previewAbandonCount;
+            out.abandoned = true;
+            return out;
+        }
 
         auto opts = m_impl->capOptsX2;
         opts.use_projector_capturing_2d_image = false;
@@ -729,8 +934,9 @@ CameraManager::PreviewFrames CameraManager::capturePreviewFrameX2()
 
         out.left = DetectionEngine::rvcToQImage(img);
 
-        // Stereo: also capture right camera view
-        if (m_impl->devInfo.support_extra) {
+        // Stereo: also capture right camera view.  Re-check the yield request
+        // first so the second frame does not delay the waiting capture.
+        if (m_impl->devInfo.support_extra && gen == m_deviceYieldGen.load()) {
             RVC::CameraID rightId = RVC::CameraID_Right;
             if (m_impl->x2.Capture2D(rightId, opts)) {
                 RVC::Image rightImg = m_impl->x2.GetImage(rightId);
@@ -754,7 +960,7 @@ static bool postProcessCapture(RVC::Image& img, RVC::PointMap& pm,
                                const QString& saveDir, int index,
                                CameraManager::CaptureResult& out,
                                bool gridAligned,
-                               const std::vector<double>& correspondMap,
+                               FrameBuffer::DoubleBuf correspondMap,
                                int cmW, int cmH)
 {
     // Save temp files
@@ -774,14 +980,19 @@ static bool postProcessCapture(RVC::Image& img, RVC::PointMap& pm,
     out.gridW = pmSize.width;
     out.gridH = pmSize.height;
     const std::size_t gridCount = static_cast<std::size_t>(out.gridW) * out.gridH;
-    out.gridPoints.resize(gridCount * 3);
-    if (gridCount > 0) {
-        const double* pmData = pm.GetPointDataPtr();
-        for (std::size_t i = 0; i < gridCount * 3; ++i)
-            out.gridPoints[i] = pmData[i] * 1000.0;   // m -> mm
+    {
+        // Fill a local vector, then hand ownership to a shared immutable
+        // buffer (a move — no element copy).  ~37 MB at 1440x1080.
+        std::vector<double> grid(gridCount * 3);
+        if (gridCount > 0) {
+            const double* pmData = pm.GetPointDataPtr();
+            for (std::size_t i = 0; i < gridCount * 3; ++i)
+                grid[i] = pmData[i] * 1000.0;   // m -> mm
+        }
+        out.gridPoints = FrameBuffer::makeDouble(std::move(grid));
     }
     out.gridAligned = gridAligned;
-    out.correspondMap = correspondMap;
+    out.correspondMap = std::move(correspondMap);
     out.cmW = cmW;
     out.cmH = cmH;
 
@@ -816,10 +1027,16 @@ static bool postProcessCapture(RVC::Image& img, RVC::PointMap& pm,
     const int imgCh = (img.GetType() == RVC::ImageType::BGR8 || img.GetType() == RVC::ImageType::RGB8) ? 3 : 1;
     auto* imgData = reinterpret_cast<const uint8_t*>(img.GetDataPtr());
 
-    PointCloudUtils::filterValidPoints(pmData, total, imgData, imgCh,
-                                       out.points, out.colors);
+    {
+        // The filter writes into plain vectors; wrap them afterwards so the
+        // payload is handed on by pointer instead of being copied again.
+        std::vector<float> pts, cols;
+        PointCloudUtils::filterValidPoints(pmData, total, imgData, imgCh, pts, cols);
+        out.points = FrameBuffer::makeFloat(std::move(pts));
+        out.colors = FrameBuffer::makeFloat(std::move(cols));
+    }
 
-    if (out.points.empty()) {
+    if (!out.points || out.points->empty()) {
         fprintf(stderr, "[CameraManager] WARNING: captured point cloud is empty "
                         "(all NaN/zero) — check 3D exposure / capture mode\n");
     }
@@ -845,12 +1062,19 @@ void CameraManager::captureFullFrame(const QString& saveDir, int index)
     m_captureStartMs = QDateTime::currentMSecsSinceEpoch();
     m_captureWatchdog->start(CAPTURE_TIMEOUT_MS);
 
+    // See onPreviewTick: the token is read before anything else, so a capture
+    // worker that starts after ~CameraManager() never touches `this`.
+    auto token = m_workerToken;
     if (m_impl->isX1()) {
-        m_captureWatcher->setFuture(QtConcurrent::run([this, saveDir, index]() {
+        m_captureWatcher->setFuture(QtConcurrent::run([this, saveDir, index, token]() {
+            if (token && token->cancelRequested.load())
+                return CaptureResult{};
             return captureFrameX1(saveDir, index);
         }));
     } else if (m_impl->isX2()) {
-        m_captureWatcher->setFuture(QtConcurrent::run([this, saveDir, index]() {
+        m_captureWatcher->setFuture(QtConcurrent::run([this, saveDir, index, token]() {
+            if (token && token->cancelRequested.load())
+                return CaptureResult{};
             return captureFrameX2(saveDir, index);
         }));
     }
@@ -859,15 +1083,25 @@ void CameraManager::captureFullFrame(const QString& saveDir, int index)
 CameraManager::CaptureResult CameraManager::captureFrameX1(const QString& saveDir, int index)
 {
     CaptureResult out;
+    // Ask any in-flight preview round to give the device up, then wait for it.
+    // There is deliberately no "wait N seconds then enter anyway": the lock is
+    // granted only once the preview thread has actually left the device.
+    const int abandonBefore = m_previewAbandonCount.load();
+    m_deviceYieldGen.fetch_add(1);
+    DeviceLock lk(this, "capture-x1");
+    RuntimeLog::log("[DEV] capture-x1: device acquired after %lld ms "
+                    "(preview rounds yielded=%d)",
+                    m_lastDeviceWaitMs,
+                    m_previewAbandonCount.load() - abandonBefore);
+    if (!lk.ok()) {
+        out.error = QStringLiteral("相机设备忙，未开始采集");
+        return out;
+    }
     try {
         if (!m_impl->x1.IsOpen()) {
             out.error = QStringLiteral("X1 相机未就绪");
             return out;
         }
-        // Wait for any in-flight preview frame off the UI thread (bounded).
-        const auto waitDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
-        while (m_previewBusy.load() && std::chrono::steady_clock::now() < waitDeadline)
-            QThread::msleep(5);
         // Capture the 2D image with ambient lighting (no projector pattern),
         // matching what the user sees in the preview.  The projector is still
         // used for the 3D depth acquisition.
@@ -901,15 +1135,22 @@ CameraManager::CaptureResult CameraManager::captureFrameX1(const QString& saveDi
 CameraManager::CaptureResult CameraManager::captureFrameX2(const QString& saveDir, int index)
 {
     CaptureResult out;
+    const int abandonBefore = m_previewAbandonCount.load();
+    m_deviceYieldGen.fetch_add(1);
+    DeviceLock lk(this, "capture-x2");
+    RuntimeLog::log("[DEV] capture-x2: device acquired after %lld ms "
+                    "(preview rounds yielded=%d)",
+                    m_lastDeviceWaitMs,
+                    m_previewAbandonCount.load() - abandonBefore);
+    if (!lk.ok()) {
+        out.error = QStringLiteral("相机设备忙，未开始采集");
+        return out;
+    }
     try {
         if (!m_impl->x2.IsOpen()) {
             out.error = QStringLiteral("X2 相机未就绪");
             return out;
         }
-        // Wait for any in-flight preview frame off the UI thread (bounded).
-        const auto waitDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
-        while (m_previewBusy.load() && std::chrono::steady_clock::now() < waitDeadline)
-            QThread::msleep(5);
         // Ambient-light 2D image (no projector pattern) to match the preview.
         auto opts = m_impl->capOptsX2;
         opts.use_projector_capturing_2d_image = false;
@@ -926,7 +1167,9 @@ CameraManager::CaptureResult CameraManager::captureFrameX2(const QString& saveDi
         }
         const bool gridAligned =
             !(opts.capture_mode == RVC::CaptureMode_SwingLineScan && !opts.correspond2d);
-        std::vector<double> cmap;
+        // Built once at the SDK boundary and then shared by pointer: the map is
+        // ~25 MB and used to be copied into the result, the cache and the flow.
+        FrameBuffer::DoubleBuf cmap;
         int cmW = 0, cmH = 0;
         if (!gridAligned) {
             try {
@@ -936,17 +1179,20 @@ CameraManager::CaptureResult CameraManager::captureFrameX2(const QString& saveDi
                     cmW = sz.width;
                     cmH = sz.height;
                     const double* data = cm.GetDataConstPtr();
-                    if (data && cmW > 0 && cmH > 0)
-                        cmap.assign(data,
-                                    data + static_cast<std::size_t>(cmW) * cmH * 2);
+                    if (data && cmW > 0 && cmH > 0) {
+                        std::vector<double> cmapVec(
+                            static_cast<std::size_t>(cmW) * cmH * 2);
+                        std::copy(data, data + cmapVec.size(), cmapVec.begin());
+                        cmap = FrameBuffer::makeDouble(std::move(cmapVec));
+                    }
                 }
             } catch (...) {
-                cmap.clear();
+                cmap.reset();
                 cmW = cmH = 0;
             }
         }
         if (!postProcessCapture(img, pm, saveDir, index, out,
-                                gridAligned, cmap, cmW, cmH)) {
+                                gridAligned, std::move(cmap), cmW, cmH)) {
             out.error = QStringLiteral("PNG/PLY 临时保存失败");
             return out;
         }
@@ -964,12 +1210,25 @@ void CameraManager::onCaptureFinished()
     m_captureWatchdog->stop();
     m_captureInProgress = false;
 
+    // The worker's CaptureResult stays inside the QFuture until the next capture
+    // replaces it — see captureFullFrame(), which calls setFuture() with the new
+    // run and thereby drops the previous result.  That is the release point.
+    //
+    // Do NOT reset the watcher here, and not on a deferred event-loop turn
+    // either: setFuture() disconnects the watcher's call-out interface, and Qt
+    // may still be delivering this completion's QFutureCallOutEvent, so the
+    // callback lands on a torn-down interface (SEH 0xC0000005 right after
+    // "setFuture returned").  One retained CaptureResult costs a few refcounts
+    // plus the frame's QImage; the heavy blocks are already shared with
+    // m_lastGrid/m_lastCorrespond and are freed by BufferSlot::publish().
     if (m_captureTimedOut) {
         m_captureTimedOut = false;
         return;  // timeout already reported; late result ignored
     }
 
-    const auto result = m_captureWatcher->result();
+    // QFutureWatcher<T>::result() returns T by value; CaptureResult is cheap to
+    // copy now that its heavy members are shared_ptr.
+    const CaptureResult result = m_captureWatcher->result();
     const qint64 elapsed = QDateTime::currentMSecsSinceEpoch() - m_captureStartMs;
     if (!result.ok) {
         RuntimeLog::log("capture FAILED after %lld ms: %s",
@@ -982,17 +1241,24 @@ void CameraManager::onCaptureFinished()
     // Apply native detection cache on the UI thread (written by the worker).
     m_nativeMarkerPixels = result.nativePixels;
     m_nativeMarkerPoints = result.nativePoints;
-    m_lastGrid = result.gridPoints;
+
+    // Publish the new frame's lookup buffers.  This also drops the previous
+    // frame's grid/correspond block (tens of MB) right here instead of leaving
+    // it to linger until the next capture overwrote it.
+    m_lastGrid.publish(result.gridPoints);
     m_lastGridW = result.gridW;
     m_lastGridH = result.gridH;
-    m_lastCorrespond = result.correspondMap;
+    m_lastCorrespond.publish(result.correspondMap);
     m_lastCmW = result.cmW;
     m_lastCmH = result.cmH;
     m_lastGridAligned = result.gridAligned;
+
     RuntimeLog::log("capture OK: %zu points in %lld ms (png=%s ply=%s)",
-                    result.points.size() / 3, elapsed,
+                    result.points ? result.points->size() / 3 : 0, elapsed,
                     qPrintable(QFileInfo(result.pngPath).fileName()),
                     qPrintable(QFileInfo(result.plyPath).fileName()));
+    logMemoryTrace("after capture (before upload)", cachedBufferBytes()
+                   + FrameBuffer::bytes(result.points) + FrameBuffer::bytes(result.colors));
     emit captureComplete(result.pngPath, result.plyPath,
                          result.points, result.colors, result.image);
 }
@@ -1063,9 +1329,22 @@ void CameraManager::onHealthTick()
     m_healthBusy = true;
 
     const QString serial = m_lastSerial;
-    QtConcurrent::run([this, serial]() {
+    auto token = m_workerToken;
+    QtConcurrent::run([this, serial, token]() {
+        if (!token || token->cancelRequested.load())
+            return;
         bool valid = false;
         try {
+            // SystemFindDevice re-scans the bus; it is an RVC call like any
+            // other and must not overlap SystemShutdown or a device
+            // transaction on another thread.
+            DeviceLock lk(this, "health-scan");
+            if (!lk.ok()) {
+                QMetaObject::invokeMethod(this, [this]() {
+                    m_healthBusy = false;
+                }, Qt::QueuedConnection);
+                return;
+            }
             RVC::Device dev = RVC::SystemFindDevice(serial.toUtf8().constData());
             valid = dev.IsValid();
         } catch (...) {

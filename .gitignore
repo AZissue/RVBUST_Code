@@ -32,3 +32,6 @@ Thumbs.db
 
 # Local tool settings (kept on disk, not tracked)
 .claude/
+
+# Codex <-> Claude Code loop workspace (logs, prompts, local test drivers)
+.codex-loop/

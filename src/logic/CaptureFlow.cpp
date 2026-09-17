@@ -69,14 +69,16 @@ void CaptureFlow::beginCapture()
 }
 
 void CaptureFlow::onCaptureReady(const QString& pngPath, const QString& plyPath,
-                                 const std::vector<float>& points,
-                                 const std::vector<float>& colors,
+                                 const FrameBuffer::FloatBuf& points,
+                                 const FrameBuffer::FloatBuf& colors,
                                  const QImage& image)
 {
     emit busyChanged(false, {});
 
     m_capturedPng = pngPath;
     m_capturedPly = plyPath;
+    // Refcount bump, not an 8 MB copy — and the previous frame's buffer is
+    // released right here instead of lingering until the next capture.
     m_capturedPoints = points;
     m_capturedImage = image;
 
@@ -478,7 +480,7 @@ bool CaptureFlow::hasUnsavedCapture() const
     return !m_capturedPng.isEmpty();
 }
 
-const std::vector<float>& CaptureFlow::capturedPoints() const
+const FrameBuffer::FloatBuf& CaptureFlow::capturedPoints() const
 {
     return m_capturedPoints;
 }
@@ -506,8 +508,9 @@ void CaptureFlow::clearCapturedState()
 {
     m_capturedPng.clear();
     m_capturedPly.clear();
-    m_capturedPoints.clear();
-    m_capturedPoints.shrink_to_fit();
+    // Dropping the shared reference frees the ~8 MB point buffer as soon as no
+    // other holder (Vis upload, pending signal) still needs it.
+    m_capturedPoints.reset();
     m_capturedImage = QImage();
     m_lastErrorPct = -1.0f;
     m_lastMarkerCount = 0;

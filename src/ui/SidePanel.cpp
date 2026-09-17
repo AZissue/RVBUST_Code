@@ -146,12 +146,21 @@ SidePanel::SidePanel(QWidget* parent)
 
 void SidePanel::appendTimeline(const QString& label, const QString& colorHex, const QString& text)
 {
+    appendTimelineHtml(label, colorHex, text.toHtmlEscaped());
+}
+
+void SidePanel::appendTimelineHtml(const QString& label, const QString& colorHex,
+                                   const QString& htmlBody)
+{
+    // m_timeline is a QTextEdit (rich text): the wrapper below is markup, so the
+    // body must already be HTML.  Passing escaped plain text here would show the
+    // tags literally — that is exactly the "[数据质检] <span style=...>" defect.
     const QString html = QStringLiteral(
         "<div style='margin-bottom:6px;'>"
         "<span style='color:%1; font-weight:600;'>[%2]</span> "
         "<span style='color:%3;'>%4</span>"
         "</div>")
-        .arg(colorHex).arg(label).arg(Theme::TEXT_BODY).arg(text.toHtmlEscaped());
+        .arg(colorHex).arg(label).arg(Theme::TEXT_BODY).arg(htmlBody);
     m_timeline->append(html);
     QScrollBar* bar = m_timeline->verticalScrollBar();
     if (bar)
@@ -177,7 +186,9 @@ void SidePanel::setPoseGuide(const QString& text, bool warning)
 
 void SidePanel::setQualityReport(const QString& html)
 {
-    appendTimeline(QStringLiteral("数据质检"), Theme::TEXT_TITLE, html);
+    // The quality report is built as rich text (coloured level tags, <b> totals)
+    // by MainWindow::refreshQualityReport(); it must not be escaped.
+    appendTimelineHtml(QStringLiteral("数据质检"), Theme::TEXT_TITLE, html);
 }
 
 void SidePanel::updateFilePreview(bool eyeInHand, bool markerType,

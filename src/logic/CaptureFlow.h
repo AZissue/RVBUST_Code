@@ -9,6 +9,7 @@
 #include <QFutureWatcher>
 #include <QTimer>
 #include "models/CalibrationMode.h"
+#include "logic/FrameBuffer.h"
 
 class CameraManager;
 class DataManager;
@@ -38,8 +39,8 @@ public:
     // Workflow entry points
     void beginCapture();            // sets busy and triggers camera capture
     void onCaptureReady(const QString& pngPath, const QString& plyPath,
-                        const std::vector<float>& points,
-                        const std::vector<float>& colors,
+                        const FrameBuffer::FloatBuf& points,
+                        const FrameBuffer::FloatBuf& colors,
                         const QImage& image);
     void detect();
     void save(const QString& cameraTargetXyz, const QString& robotCapturePose,
@@ -48,7 +49,8 @@ public:
 
     // State
     bool hasUnsavedCapture() const;
-    const std::vector<float>& capturedPoints() const;
+    // Shared buffer — see FrameBuffer.h.  Callers must not assume it is non-null.
+    const FrameBuffer::FloatBuf& capturedPoints() const;
     void reset();                   // discard transient capture state
 
     // Programmatic action-state control (e.g. camera error disables buttons)
@@ -203,8 +205,8 @@ signals:
     void detectEnabledChanged(bool enabled);
     void saveEnabledChanged(bool enabled);
     void imageCaptured(const QImage& image);
-    void pointCloudReady(const std::vector<float>& points,
-                         const std::vector<float>& colors);
+    void pointCloudReady(const FrameBuffer::FloatBuf& points,
+                         const FrameBuffer::FloatBuf& colors);
     void markersDisplayReady(
         const std::vector<std::tuple<float, float, std::string>>& overlay2d,
         const std::vector<std::array<float, 3>>& highlights3d,
@@ -235,7 +237,7 @@ private:
     // Transient capture state (cleared on save/reset)
     QString m_capturedPng;
     QString m_capturedPly;
-    std::vector<float> m_capturedPoints;
+    FrameBuffer::FloatBuf m_capturedPoints;
     QImage  m_capturedImage;
 
     // Detection cache: same frame + same marker type/spec -> reuse the last

@@ -12,12 +12,18 @@ set(TEST_SOURCES
     test_pixel_to_3d.cpp
     test_calibration_service.cpp
     test_robot_pose.cpp
+    test_nrc_json_reader.cpp
     test_pose_guide.cpp
     test_data_quality_check.cpp
     test_board_pose_fit.cpp
+    test_frame_buffer.cpp
+    test_ui_stall_watchdog.cpp
+    test_measure_tools.cpp
 )
 
 add_executable(unit_tests ${TEST_SOURCES}
+    ${CMAKE_SOURCE_DIR}/src/logic/FrameBuffer.cpp
+    ${CMAKE_SOURCE_DIR}/src/logic/UiStallWatchdog.cpp
     ${CMAKE_SOURCE_DIR}/src/logic/PointCloudUtils.cpp
     ${CMAKE_SOURCE_DIR}/src/logic/DetectionEngine.cpp
     ${CMAKE_SOURCE_DIR}/src/sdk/HandEyeSDKBridge.cpp
@@ -25,6 +31,11 @@ add_executable(unit_tests ${TEST_SOURCES}
     ${CMAKE_SOURCE_DIR}/src/logic/CalibrationService.cpp
     ${CMAKE_SOURCE_DIR}/src/logic/RobotPose.cpp
     ${CMAKE_SOURCE_DIR}/src/logic/URRealtimeReader.cpp
+    ${CMAKE_SOURCE_DIR}/src/logic/NrcJsonReader.cpp
+    # NrcJsonReader logs every raw response through RuntimeLog.
+    ${CMAKE_SOURCE_DIR}/src/logic/RuntimeLog.cpp
+    # Measurement kernel: pure computation, no Qt, no SDK.
+    ${CMAKE_SOURCE_DIR}/src/logic/MeasureTools.cpp
 )
 
 target_include_directories(unit_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -61,4 +72,9 @@ if(WIN32)
         COMMENT "Deploying Qt5Test runtime")
 endif()
 
-add_test(NAME unit_tests COMMAND unit_tests)
+# The console output of a crashed/failed run is not always captured by the
+# launcher, so QTest also writes a machine-readable report next to the build.
+# Real-time console output is kept via "-o -,txt".
+add_test(NAME unit_tests COMMAND unit_tests
+    -o "${CMAKE_BINARY_DIR}/unit_tests_report.txt,txt"
+    -o "-,txt")
