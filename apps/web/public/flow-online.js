@@ -24,6 +24,14 @@
     }
     node.textContent = message;
     node.style.color = error ? '#b91c1c' : '#333';
+    if (blocked) {
+      const reload = document.createElement('button');
+      reload.type = 'button';
+      reload.textContent = '重新加载';
+      reload.style.cssText = 'margin-left:10px;border:1px solid #b91c1c;background:white;color:#b91c1c;border-radius:4px;cursor:pointer';
+      reload.onclick = () => location.reload();
+      node.append(reload);
+    }
   }
 
   async function init() {
@@ -47,13 +55,19 @@
 
   function save(key, value) {
     const name = keys[key];
-    if (!name || !state) return Promise.reject(new Error('尚未加载设备流转数据'));
-    if (blocked) return Promise.reject(new Error('数据已被其他人更新，请刷新后重新操作'));
+    if (!name || !state || blocked) {
+      const result = Promise.reject(new Error(blocked ? '数据已被其他人更新，请刷新后重新操作' : '尚未加载设备流转数据'));
+      result.catch(() => undefined);
+      return result;
+    }
     state[name] = copy(value);
     status('正在保存…');
     if (timer) clearTimeout(timer);
     timer = setTimeout(flush, 80);
-    return new Promise((resolve, reject) => pending.push({ resolve, reject }));
+    const result = new Promise((resolve, reject) => pending.push({ resolve, reject }));
+    // Many original HTML handlers do not await save; keep their failures visible without unhandled rejections.
+    result.catch(() => undefined);
+    return result;
   }
 
   async function flush() {

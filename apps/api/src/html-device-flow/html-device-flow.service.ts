@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { basename, extname, resolve } from 'node:path';
 import { PrismaService } from '../prisma/prisma.service.js';
 
@@ -16,6 +16,26 @@ type FlowState = {
 
 const emptyState = (): FlowState => ({ records: [], devices: [], recycle: { records: [], devices: [] }, settings: {} });
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+const storedFileId = (value: unknown) => typeof value === 'string' ? /^\/api\/html-device-flow\/files\/([a-f0-9-]{36})$/i.exec(value)?.[1] : undefined;
+function decodedUploadName(value: string) {
+  if (/[^\u0000-\u00ff]/.test(value)) return value;
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(Buffer.from(value, 'latin1')); }
+  catch { return value; }
+}
+
+function referencedFileIds(state: FlowState) {
+  const ids = new Set<string>();
+  for (const record of [...state.records, ...state.recycle.records]) {
+    const agreement = record.agreement as { data?: unknown } | undefined;
+    const values = Object.values((record.photos ?? {}) as Record<string, unknown>);
+    values.push(agreement?.data);
+    for (const value of values) {
+      const id = storedFileId(value);
+      if (id) ids.add(id);
+    }
+  }
+  return ids;
+}
 
 function validateState(value: unknown): FlowState {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new BadRequestException('数据格式无效');
@@ -64,7 +84,8 @@ export class HtmlDeviceFlowService {
     if (Buffer.byteLength(json) > 15 * 1024 * 1024) throw new BadRequestException('业务数据超出限制');
     const stored = clone(next);
     for (const record of [...stored.records, ...stored.recycle.records]) delete record.followUps;
-    return this.db.$transaction(async (tx) => {
+    let removedFiles: { storageKey: string }[] = [];
+    const result = await this.db.$transaction(async (tx) => {
       let row = await tx.htmlFlowState.findUnique({ where: { id: 'main' } });
       if (!row) {
         try {
@@ -81,11 +102,21 @@ export class HtmlDeviceFlowService {
       if (!updated.count) throw new ConflictException('数据已被其他人更新，请刷新后重试');
 
       const previous = clone(row.data) as FlowState;
-      const oldById = new Map([...previous.records, ...previous.recycle.records].map((r) => [r.id, r]));
+      const oldIds = new Set([...previous.records, ...previous.recycle.records].map((r) => r.id));
       const nextById = new Map([...next.records, ...next.recycle.records].map((r) => [r.id, r]));
+      const currentFollowups = await tx.htmlFlowFollowup.findMany({
+        where: { deletedAt: null },
+        orderBy: [{ recordId: 'asc' }, { sequence: 'asc' }],
+      });
+      const followupsByRecord = new Map<string, typeof currentFollowups>();
+      for (const followup of currentFollowups) {
+        const list = followupsByRecord.get(followup.recordId) ?? [];
+        list.push(followup);
+        followupsByRecord.set(followup.recordId, list);
+      }
       for (const [recordId, record] of nextById) {
         const incoming = record.followUps ?? [];
-        const current = await tx.htmlFlowFollowup.findMany({ where: { recordId, deletedAt: null }, orderBy: { sequence: 'asc' } });
+        const current = followupsByRecord.get(recordId) ?? [];
         const prior = current.map((f) => ({ id: f.id, person: f.person ?? '', date: f.date ?? '', text: f.content, source: f.source ?? '' }));
         if (JSON.stringify(incoming) === JSON.stringify(prior)) continue;
         const ids = new Set(incoming.map((f) => f.id));
@@ -99,11 +130,19 @@ export class HtmlDeviceFlowService {
           });
         }
       }
-      for (const recordId of oldById.keys()) {
+      for (const recordId of oldIds) {
         if (!nextById.has(recordId)) await tx.htmlFlowFollowup.updateMany({ where: { recordId, deletedAt: null }, data: { deletedAt: new Date() } });
+      }
+      const nextFiles = referencedFileIds(next);
+      const removedIds = [...referencedFileIds(previous)].filter((id) => !nextFiles.has(id));
+      if (removedIds.length) {
+        removedFiles = await tx.htmlFlowFile.findMany({ where: { id: { in: removedIds } }, select: { storageKey: true } });
+        await tx.htmlFlowFile.deleteMany({ where: { id: { in: removedIds } } });
       }
       return { revision: (revision as number) + 1 };
     }, { timeout: 30000 });
+    await Promise.all(removedFiles.map((file) => unlink(resolve(this.uploadRoot(), file.storageKey)).catch(() => undefined)));
+    return result;
   }
 
   private uploadRoot() { return resolve(process.env.UPLOAD_DIR ?? './uploads', 'html-device-flow'); }
@@ -113,17 +152,18 @@ export class HtmlDeviceFlowService {
     const allowed = new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document']);
     if (!allowed.has(file.mimetype)) throw new BadRequestException('仅支持 PDF、Word、JPG、PNG 和 WebP');
     const id = randomUUID();
-    const suffix = extname(file.originalname).toLowerCase().slice(0, 12);
+    const originalName = decodedUploadName(file.originalname);
+    const suffix = extname(originalName).toLowerCase().slice(0, 12);
     const storageKey = id + suffix;
     await mkdir(this.uploadRoot(), { recursive: true });
     await writeFile(resolve(this.uploadRoot(), storageKey), file.buffer, { flag: 'wx' });
     try {
-      await this.db.htmlFlowFile.create({ data: { id, storageKey, originalName: basename(file.originalname).slice(0, 255), mimeType: file.mimetype, sizeBytes: file.size, createdById: userId } });
+      await this.db.htmlFlowFile.create({ data: { id, storageKey, originalName: basename(originalName).slice(0, 255), mimeType: file.mimetype, sizeBytes: file.size, createdById: userId } });
     } catch (error) {
       await import('node:fs/promises').then((fs) => fs.unlink(resolve(this.uploadRoot(), storageKey)).catch(() => undefined));
       throw error;
     }
-    return { id, url: `/api/html-device-flow/files/${id}`, name: file.originalname, type: file.mimetype, size: file.size };
+    return { id, url: `/api/html-device-flow/files/${id}`, name: originalName, type: file.mimetype, size: file.size };
   }
 
   async file(id: string) {

@@ -1,6 +1,9 @@
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
-import { PrismaClient } from '@prisma/client';
+import { createRequire } from 'node:module';
+
+const require = createRequire(new URL('../apps/api/package.json', import.meta.url));
+const { PrismaClient } = require('@prisma/client');
 
 const input = process.argv[2];
 if (!input) throw new Error('Usage: node migration/import-html-flow.mjs <original-html> [--apply-preview]');
@@ -9,7 +12,7 @@ const hash = createHash('sha256').update(source).digest('hex');
 const lines = source.split(/\r?\n/);
 function embedded(key) {
   const prefix = `if(!localStorage.getItem(${key}))save(${key},`;
-  const line = lines.find((value) => value.startsWith(prefix));
+  const line = lines.map((value) => value.trim()).find((value) => value.startsWith(prefix));
   if (!line || !line.endsWith(');')) throw new Error(`Embedded ${key} data not found`);
   return JSON.parse(line.slice(prefix.length, -2));
 }
