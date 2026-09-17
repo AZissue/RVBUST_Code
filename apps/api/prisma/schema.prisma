@@ -910,3 +910,39 @@ model LoanScoreRule {
 
   @@map("loan_score_rules")
 }
+
+model HtmlFlowState {
+  id        String   @id @db.VarChar(32)
+  revision  Int      @default(0)
+  data      Json
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("html_flow_state")
+}
+
+model HtmlFlowFollowup {
+  id        String    @id @db.VarChar(100)
+  recordId  String    @map("record_id") @db.VarChar(100)
+  sequence  Int
+  person    String?
+  date      String?   @db.VarChar(40)
+  content   String
+  source    String?
+  deletedAt DateTime? @map("deleted_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@index([recordId, sequence])
+  @@map("html_flow_followups")
+}
+
+model HtmlFlowFile {
+  id           String   @id @default(uuid()) @db.Uuid
+  storageKey   String   @unique @map("storage_key") @db.VarChar(300)
+  originalName String   @map("original_name") @db.VarChar(255)
+  mimeType     String   @map("mime_type") @db.VarChar(120)
+  sizeBytes    Int      @map("size_bytes")
+  createdById  String   @map("created_by_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("html_flow_files")
+}
