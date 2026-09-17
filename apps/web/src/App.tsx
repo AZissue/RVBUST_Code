@@ -5,10 +5,9 @@ import { AuditPage } from './pages/AuditPage'
 import { BugsPage } from './pages/BugsPage'
 import { CustomerProfilePage } from './pages/CustomerProfilePage'
 import { DeviceDetailPage } from './pages/DeviceDetailPage'
+import { DeviceFlowHost } from './pages/DeviceFlowHost'
 import { CustomersPage } from './pages/CustomersPage'
 import { DashboardPage } from './pages/DashboardPage'
-import { DevicesPage } from './pages/DevicesPage'
-import { LoansPage } from './pages/LoansPage'
 import { LoanDetailPage } from './pages/LoanDetailPage'
 import { LoanFormPage } from './pages/LoanFormPage'
 import { LoginPage } from './pages/LoginPage'
@@ -36,6 +35,7 @@ export default function App() {
   return <Routes>
     <Route path="/login" element={user ? <Navigate to="/" replace /> : <LoginPage />} />
     <Route path="/register" element={user ? <Navigate to="/" replace /> : <RegisterPage />} />
+    <Route path="/device-flow" element={<DeviceFlowHost />} />
     <Route path="/" element={<ProtectedApp />}>
       <Route index element={<DashboardPage />} />
       <Route path="my-work" element={<TicketsPage mine />} />
@@ -45,12 +45,12 @@ export default function App() {
       <Route path="tickets/:id" element={<TicketDetailPage />} />
       <Route path="customers" element={<CustomersPage />} />
       <Route path="customers/:id" element={<CustomerProfilePage />} />
-      <Route path="devices" element={<DevicesPage />} />
+      <Route path="devices" element={<Navigate to="/device-flow" replace />} />
       <Route path="devices/:id" element={<DeviceDetailPage />} />
-      <Route path="loans" element={<LoansPage />} />
+      <Route path="loans" element={<Navigate to="/device-flow?tab=loans" replace />} />
       <Route path="loans/new" element={<LoanFormPage />} />
       <Route path="loans/:id" element={<LoanDetailPage />} />
-      <Route path="repairs" element={<RepairsPage />} />
+      <Route path="repairs" element={<Navigate to="/device-flow?tab=repairs" replace />} />
       <Route path="repairs/new" element={<RepairFormPage />} />
       <Route path="repairs/:id" element={<RepairsPage />} />
       <Route path="worklogs" element={<WorklogsPage />} />
