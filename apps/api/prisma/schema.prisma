@@ -381,6 +381,8 @@ model Device {
   location       String?              @db.VarChar(200)
   status         DeviceStatus         @default(IN_STOCK)
   source         DeviceSource         @default(MANUAL) @map("source")
+  /** 设备服务页面（html-device-flow）记录 ID（'D-xxx'），页面来源行才可被页面回收/删除 */
+  flowId         String?              @unique @map("flow_id") @db.VarChar(100)
   purchaseDate   DateTime?            @map("purchase_date") @db.Date
   warrantyUntil  DateTime?            @map("warranty_until") @db.Date
   notes          String?
@@ -725,6 +727,8 @@ model LoanOrder {
   outboundTracking String? @map("outbound_tracking") @db.VarChar(100)
   returnCarrier    String? @map("return_carrier") @db.VarChar(50)
   returnTracking   String? @map("return_tracking") @db.VarChar(100)
+  /** 设备服务页面（html-device-flow）记录 ID（'R-xxx'），页面来源行才可被页面回收/删除 */
+  flowId      String?    @unique @map("flow_id") @db.VarChar(100)
   ticket      Ticket?    @relation(fields: [ticketId], references: [id], onDelete: SetNull)
   advancedBy  User?      @relation("LoanAdvancedBy", fields: [advancedById], references: [id], onDelete: SetNull)
   deletedBy   User?      @relation("LoanDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
@@ -788,6 +792,8 @@ model RepairOrder {
   partsReturned   String?  @map("parts_returned") @db.VarChar(500)
   deletedAt   DateTime?    @map("deleted_at")
   deletedById String?      @db.Uuid @map("deleted_by_id")
+  /** 设备服务页面（html-device-flow）记录 ID（'R-xxx'），页面来源行才可被页面回收/删除 */
+  flowId      String?      @unique @map("flow_id") @db.VarChar(100)
   ticket      Ticket?      @relation(fields: [ticketId], references: [id], onDelete: SetNull)
   device      Device?      @relation(fields: [deviceId], references: [id])
   deletedBy   User?        @relation("RepairDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
@@ -918,6 +924,8 @@ model FollowUp {
   occurredAt   DateTime       @map("occurred_at")
   content      String         @db.VarChar(2000)
   source       FollowUpSource @default(WEB)
+  /** 设备服务页面（html-device-flow）跟进 ID（'FU-xxx'），页面来源行才参与页面同步 */
+  flowId       String?        @unique @map("flow_id") @db.VarChar(100)
   loanOrder    LoanOrder?     @relation(fields: [loanOrderId], references: [id], onDelete: Cascade)
   repairOrder  RepairOrder?   @relation(fields: [repairOrderId], references: [id], onDelete: Cascade)
   ticket       Ticket?        @relation(fields: [ticketId], references: [id], onDelete: SetNull)

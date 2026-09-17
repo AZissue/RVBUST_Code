@@ -16,12 +16,12 @@ export class HtmlDeviceFlowController {
 
   @Post('sync')
   @UseInterceptors(FileInterceptor('payload', { storage: memoryStorage(), limits: { fileSize: 20 * 1024 * 1024, files: 1 } }))
-  sync(@UploadedFile() file?: Express.Multer.File) {
+  sync(@CurrentUser() user: AuthUser, @UploadedFile() file?: Express.Multer.File) {
     if (!file) throw new BadRequestException('缺少同步数据');
     let payload: unknown;
     try { payload = JSON.parse(file.buffer.toString('utf8')); }
     catch { throw new BadRequestException('同步数据格式无效'); }
-    return this.flow.sync(payload);
+    return this.flow.sync(payload, user.id);
   }
 
   @Post('files')
