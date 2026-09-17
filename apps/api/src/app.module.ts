@@ -25,9 +25,10 @@ import { WorkitemsModule } from './workitems/workitems.module.js';
 import { WorktypesModule } from './worktypes/worktypes.module.js';
 import { HealthController } from './health.controller.js';
 import { HtmlDeviceFlowModule } from './html-device-flow/html-device-flow.module.js';
+import { KnowledgeModule } from './knowledge/knowledge.module.js';
 
 @Module({
-  imports: [ConfigModule.forRoot({ isGlobal: true, envFilePath: ['../../.env', '.env'] }), EventEmitterModule.forRoot(), ScheduleModule.forRoot(), PrismaModule, AuditModule, AuthModule, UsersModule, CustomersModule, TicketsModule, WorkitemsModule, WorklogsModule, WorktypesModule, DashboardModule, NotificationsModule, FilesModule, SystemModule, DevicesModule, LoansModule, RepairsModule, BugsModule, HtmlDeviceFlowModule],
+  imports: [ConfigModule.forRoot({ isGlobal: true, envFilePath: ['../../.env', '.env'] }), EventEmitterModule.forRoot(), ScheduleModule.forRoot(), PrismaModule, AuditModule, AuthModule, UsersModule, CustomersModule, TicketsModule, WorkitemsModule, WorklogsModule, WorktypesModule, DashboardModule, NotificationsModule, FilesModule, SystemModule, DevicesModule, LoansModule, RepairsModule, BugsModule, HtmlDeviceFlowModule, KnowledgeModule],
   controllers: [HealthController],
   providers: [
     { provide: APP_GUARD, useClass: AuthGuard },
