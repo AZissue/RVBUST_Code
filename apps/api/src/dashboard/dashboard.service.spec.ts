@@ -98,7 +98,9 @@ describe('DashboardService.linkageTodos', () => {
     const { prisma, service } = setup();
     prisma.loanOrder.findMany.mockImplementation(({ where }: { where: { status: string } }) =>
       where.status === 'OVERDUE'
-        ? [{ id: 'loan-2', loanNo: 'LN-2', ticketId: null, createdAt: new Date(Date.now() - 10 * 24 * HOUR_MS), dueAt: new Date(Date.now() - 3 * 24 * HOUR_MS), ticket: null }]
+        // 距离整天边界预留 12 小时余量：mock 的 dueAt 在服务读取 now 之后才计算，毫秒差会让
+        // floor((now-dueAt)/DAY) 落在 2；偏离边界后结果恒为 3，消除对执行耗时的敏感
+        ? [{ id: 'loan-2', loanNo: 'LN-2', ticketId: null, createdAt: new Date(Date.now() - 10 * 24 * HOUR_MS), dueAt: new Date(Date.now() - 3 * 24 * HOUR_MS - 12 * HOUR_MS), ticket: null }]
         : [],
     );
     prisma.loanOrder.count.mockImplementation(({ where }: { where: { status: string } }) => (where.status === 'OVERDUE' ? 1 : 0));
