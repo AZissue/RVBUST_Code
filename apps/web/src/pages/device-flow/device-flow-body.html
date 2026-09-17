@@ -1,0 +1,271 @@
+<nav class="flow-tabs">
+  <button class="active" data-tab="dashboard">设备总览</button>
+  <button data-tab="repairs">维修管理</button>
+  <button data-tab="loans">借测管理</button>
+  <button data-tab="recycle">回收站 <span id="recycleCount" class="recycle-badge">0</span></button>
+</nav>
+<main>
+  <section id="dashboard" class="section active">
+    <div class="topbar">
+      <div class="title"><h1>设备总览</h1><p>这里只保留“借测设备”和“维修设备”两类档案；具体工单分别到对应管理页面查看。</p></div>
+    </div>
+    <div class="dashboard-grid">
+      <div class="card metric-card" onclick="dashboardJump('monthLoan')"><div class="label">本月借出</div><div class="metric" id="mMonthLoan">0</div><div class="metric-note">按借出日期统计</div></div>
+      <div class="card metric-card" onclick="dashboardJump('monthRepair')"><div class="label">本月维修</div><div class="metric" id="mMonthRepair">0</div><div class="metric-note">按报修日期统计</div></div>
+      <div class="card metric-card" onclick="dashboardJump('loaning')"><div class="label">当前借测中</div><div class="metric" id="mLoan">0</div><div class="metric-note">当前未归还设备</div></div>
+      <div class="card due-card metric-card" onclick="dashboardJump('dueSoon')"><div class="label">7天内到期</div><div class="metric" id="mDueSoon">0</div><div class="metric-note">含今天到期</div></div>
+    </div>
+    <div class="dashboard-main">
+      <div class="card">
+        <div class="action-summary"><div><div class="subhead">借测待办</div><div class="hint">不再一次铺满全部逾期记录，按处理优先级查看。</div></div><button class="btn" onclick="dashboardJump('overdue')">查看全部逾期</button></div>
+        <div class="action-tabs"><button class="action-tab active" data-action="overdue" onclick="setDashboardAction('overdue',this)">已逾期 <span class="count" id="aOverdue">0</span></button><button class="action-tab" data-action="due" onclick="setDashboardAction('due',this)">7天内到期 <span class="count" id="aDue">0</span></button><button class="action-tab" data-action="stale" onclick="setDashboardAction('stale',this)">久未跟进 <span class="count" id="aStale">0</span></button></div>
+        <div id="attentionList" class="compact-list action-list"></div>
+      </div>
+      <div class="dashboard-side-stack">
+        <div class="card">
+          <div class="subhead">本月运营统计</div>
+          <div class="ops-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+            <div class="mini-stat"><div class="label">本月归还</div><div class="value" id="mMonthReturned">0</div></div>
+            <div class="mini-stat"><div class="label">平均借测天数</div><div class="value" id="mAvgLoanDays">-</div></div>
+            <div class="mini-stat metric-card" onclick="dashboardJump('overdue')"><div class="label">当前逾期</div><div class="value" id="mOverdue">0</div></div>
+            <div class="mini-stat"><div class="label">借测最多型号</div><div class="value" id="mTopModel">-</div></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="subhead">本月借测型号分布</div>
+          <div id="modelRank" class="rank-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <div class="subhead">最近流转</div>
+      <div id="recentFlow"></div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <div class="subhead">设备档案</div>
+      <div class="hint" style="margin-bottom:12px">按借测 / 维修分类查看设备档案；测试设备可直接删除。</div>
+      <div class="toolbar"><input id="deviceSearch" placeholder="搜索型号 / SN / 客户" oninput="renderDevices()"></div>
+      <div class="device-tabs">
+        <button class="device-tab active" data-device-filter="借测中" onclick="setDeviceFilter(this,'借测中')">借测设备</button>
+        <button class="device-tab" data-device-filter="维修中" onclick="setDeviceFilter(this,'维修中')">维修设备</button>
+      </div>
+      <div id="deviceTable"></div>
+    </div>
+  </section>
+
+  <section id="repairs" class="section">
+    <div class="topbar"><div class="title"><h1>维修管理</h1><p>包含客户寄回、维修过程、寄返物流以及维修工单 PDF。</p></div><div class="actions"><button class="btn" onclick="exportRecordsExcel('repair')">导出数据</button><button class="btn primary" onclick="goNew('repair')">+ 新建维修工单</button></div></div>
+    <div class="toolbar"><input id="repairSearch" placeholder="搜索客户 / SN / 单号" oninput="renderRecords('repair')"><select id="repairFilter" onchange="renderRecords('repair')"><option value="">全部状态</option><option>待寄回</option><option>维修中</option><option>已完成</option></select></div>
+    <div id="repairTable"></div>
+  </section>
+
+  <section id="loans" class="section">
+    <div class="topbar"><div class="title"><h1>借测管理</h1><p>记录 SN、借测客户、配件、寄出 / 寄回单号、设备及配件图片。</p></div><div class="actions"><button class="btn" onclick="exportRecordsExcel('loan')">导出数据</button><button class="btn primary" onclick="goNew('loan')">+ 新建借测单</button></div></div>
+    <div class="toolbar"><input id="loanSearch" placeholder="搜索客户 / SN / 单号" oninput="renderRecords('loan')"><select id="loanFilter" onchange="renderRecords('loan')"><option value="">全部状态</option><option selected>借测中</option><option value="已逾期">已逾期</option><option>已归还</option></select><select id="loanSort" onchange="renderRecords('loan')"><option value="default">默认排序</option><option value="overdue_desc">逾期最长优先</option><option value="overdue_asc">逾期最短优先</option><option value="due_soon">最近到期优先</option></select></div>
+    <div id="loanTable"></div>
+  </section>
+
+  <section id="recycle" class="section">
+    <div class="topbar">
+      <div class="title"><h1>回收站</h1><p>删除的设备和工单会先进入回收站，可恢复或永久删除。</p></div>
+      <div class="actions"><button class="btn danger" onclick="emptyRecycleBin()">清空回收站</button></div>
+    </div>
+    <div class="card">
+      <div class="device-tabs">
+        <button class="device-tab active" id="rbTabRecords" onclick="setRecycleTab('records')">已删除工单</button>
+        <button class="device-tab" id="rbTabDevices" onclick="setRecycleTab('devices')">已删除设备</button>
+      </div>
+      <div id="recycleTable"></div>
+    </div>
+  </section>
+</main>
+
+<div id="drawerOverlay" class="overlay" onclick="overlayClick()"></div>
+
+<div id="drawer" class="drawer">
+  <div class="drawer-head"><div><div class="label" id="dEyebrow">设备档案</div><h2 id="dTitle" style="margin:4px 0 0"></h2></div><button class="btn" onclick="closeDrawer()">关闭</button></div>
+  <div id="drawerBody"></div>
+</div>
+
+<div id="newRecord" class="drawer record-drawer" role="dialog" aria-modal="true">
+  <div class="drawer-head">
+    <div>
+      <div class="label">工单表单</div>
+      <h2 id="recordTitle" style="margin:4px 0 0">新建工单</h2>
+      <p id="recordSubtitle" class="hint" style="margin:6px 0 0">当前页面只创建对应类别的工单。</p>
+    </div>
+    <button class="btn" onclick="backToRecordList()">关闭</button>
+  </div>
+  <div class="record-drawer-body">
+    <div class="card">
+      <div class="semantic-box">
+        <div class="semantic-head">
+          <div>
+            <div class="subhead" style="margin:0">智能识别粘贴信息</div>
+            <div class="hint">客户/公司、姓名、电话、地址、型号、SN、快递公司、快递单号顺序不限，可直接整段粘贴。</div>
+          </div>
+          <div class="actions">
+            <button type="button" class="btn primary" onclick="parseSemanticInput()">识别并填入</button>
+            <button type="button" class="btn" onclick="clearCurrentForm()">全部清空</button>
+          </div>
+        </div>
+        <textarea id="semanticInput" placeholder="示例：示例科技 张三 13800000000 广东省深圳市南山区科技路88号 M2600 SN:DEMO-M2600-001 顺丰 SF000000000000"></textarea>
+        <div id="semanticResult" class="semantic-result"></div>
+        <div id="semanticWarn" class="semantic-warn hidden"></div>
+      </div>
+      <select id="rType" class="hidden" onchange="toggleTypeFields()"><option value="repair">维修工单</option><option value="loan">借测单</option></select>
+      <div class="form-grid">
+        <div class="field" id="fRSN"><label>关联设备 SN（选填）</label><input id="rSN" list="deviceSNList" placeholder="从已有设备选择，或输入新 SN"><datalist id="deviceSNList"></datalist></div>
+        <div class="field"><label>设备型号</label><input id="rModel" placeholder="如 M2600"></div>
+      </div>
+      <div class="divider"></div>
+      <div class="subhead" id="customerSectionTitle">客户与联系人</div>
+      <div class="form-grid three">
+        <div class="field"><label id="customerLabel">客户 *</label><input id="rCustomer"></div>
+        <div class="field"><label id="contactLabel">联系人</label><input id="rContact"></div>
+        <div class="field"><label>联系电话</label><input id="rPhone"></div>
+        <div class="field full"><label id="addressLabel">地址</label><input id="rAddress"></div>
+      </div>
+
+      <div id="repairFields">
+        <div class="divider"></div><div class="subhead">维修信息</div>
+        <div class="form-grid">
+          <div class="field"><label>报修日期</label><input id="rReportDate" type="date"></div>
+          <div class="field"><label>外观情况</label><input id="rAppearance" placeholder="完好 / 划痕 / 磕碰..."></div>
+          <div class="field full"><label>报修原因 / 故障现象</label><textarea id="rReason"></textarea></div>
+        </div>
+      </div>
+
+      <div id="loanFields" class="hidden">
+        <div class="divider"></div><div class="subhead">借测信息</div>
+        <div class="form-grid">
+          <div class="field"><label>借出日期</label><input id="lStart" type="date"></div>
+          <div class="field"><label>预计归还日期</label><input id="lDue" type="date"></div>
+        </div>
+
+        <div class="divider"></div><div class="subhead">借测协议 <span class="danger">*</span></div>
+        <div class="agreement-box">
+          <div id="agreementDropzone" class="agreement-dropzone"
+               ondragenter="agreementDragEnter(event)" ondragover="agreementDragEnter(event)"
+               ondragleave="agreementDragLeave(event)" ondrop="agreementDrop(event)"
+               onclick="$('agreementFileInput').click()">
+            <b>拖动借测协议到这里上传</b>
+            <div class="small">或点击这里选择文件 · 推荐 PDF</div>
+          </div>
+          <div class="agreement-row">
+            <div>
+              <div id="agreementStatus" class="agreement-missing">未添加借测协议</div>
+              <div id="agreementMeta" class="agreement-meta">创建借测工单前必须添加借测协议文档。</div>
+            </div>
+            <div class="actions">
+              <label class="btn" style="cursor:pointer">添加 / 更换协议<input id="agreementFileInput" type="file" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" style="display:none" onchange="handleAgreementFile(event)"></label>
+              <button type="button" class="btn hidden" id="viewAgreementBtn" onclick="viewAgreement()">查看协议</button>
+              <button type="button" class="btn hidden" id="removeAgreementBtn" onclick="removeAgreement()">移除</button>
+            </div>
+          </div>
+          <div class="agreement-ai-box">
+            <div class="agreement-ai-head">
+              <div>
+                <b>协议自动识别</b>
+                <div class="hint">支持电子版 PDF 和打印后扫描的 PDF；优先读取文字层，扫描件会自动切换 OCR 识别。</div>
+              </div>
+              <button type="button" class="btn" id="agreementParseBtn" onclick="parseCurrentAgreement()" disabled>重新识别</button>
+            </div>
+            <div id="agreementAIResult" class="agreement-ai-result"></div>
+            <div id="agreementAINote" class="agreement-ai-note"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="divider"></div><div class="subhead">物流与配件</div>
+      <div class="form-grid three" id="logisticsGrid">
+        <div class="field" id="fInboundCarrier"><label id="inboundCarrierLabel">客户寄回 / 归还物流公司</label>
+          <select id="rInboundCarrier">
+            <option value="">请选择</option>
+            <option>顺丰</option><option>京东物流</option><option>德邦</option><option>中通</option>
+            <option>圆通</option><option>申通</option><option>韵达</option><option>极兔</option>
+            <option>EMS</option><option>邮政</option><option>跨越速运</option><option>安能</option><option>其他</option>
+          </select>
+        </div>
+        <div class="field" id="fInboundTracking"><label id="inboundTrackingLabel">客户寄回 / 归还快递单号</label><input id="rInboundTracking"></div>
+        <div class="field" id="fStatus"><label>当前状态</label><select id="rStatus"></select></div>
+
+        <div class="field hidden" id="outboundCarrierWrap"><label>寄出物流公司</label>
+          <select id="rOutboundCarrier">
+            <option>顺丰</option><option>京东物流</option><option>德邦</option><option>中通</option>
+            <option>圆通</option><option>申通</option><option>韵达</option><option>极兔</option>
+            <option>EMS</option><option>邮政</option><option>跨越速运</option><option>安能</option><option>其他</option>
+          </select>
+        </div>
+        <div class="field" id="fOutboundTracking"><label id="outboundTrackingLabel">寄出快递单号</label><input id="rOutboundTracking"></div>
+        <div class="field" id="repairOutboundFixed">
+          <label>维修后返还物流</label>
+          <input value="顺丰（固定）" disabled>
+        </div>
+
+        <div class="field full" id="loanAccessoriesWrap"><label>随机器配件</label>
+          <select id="rAccessories">
+            <option value="">请选择</option><option>裸机</option><option>5m标配</option><option>15m标配</option><option>25m标配</option>
+          </select>
+        </div>
+        <div class="field full hidden" id="repairAccessoriesWrap"><label>客户寄回配件</label>
+          <textarea id="rAccessoriesRepair" placeholder="按客户实际寄回内容填写，例如：相机×1、15m线缆×1、电源适配器×1"></textarea>
+        </div>
+      </div>
+
+      <div class="divider"></div><div class="subhead">设备六面图 + 配件图</div>
+      <div class="photo-grid" id="photoGrid"></div>
+      <div class="hint" style="margin-top:8px">图片随工单保存在服务器，可点击查看大图。</div>
+
+      <div class="divider"></div><div class="subhead" id="notesSectionTitle">维修过程 / 备注</div>
+      <div class="field full"><textarea id="rNotes" placeholder="记录检测结果、维修动作、更换件、复测结果、维修备注等"></textarea></div>
+
+      <div class="actions" style="margin-top:18px">
+        <button class="btn primary" onclick="saveRecord()">保存工单</button>
+        <button class="btn" id="pdfBtn" onclick="generateRepairPdfFromForm()">生成维修 PDF</button>
+        <button class="btn ghost" onclick="resetRecordForm()">清空</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="dueWarningModal" class="warning-modal" onclick="if(event.target===this)closeDueWarning()">
+  <div class="warning-panel">
+    <div class="warning-head">
+      <div><div class="label">借测到期提醒</div><h2 style="margin:4px 0 0">近期需要跟进的借测设备</h2></div>
+      <button class="btn" onclick="closeDueWarning()">关闭</button>
+    </div>
+    <div id="dueWarningList"></div>
+  </div>
+</div>
+
+<div id="imageLightbox" class="lightbox" onclick="lightboxBackdrop(event)">
+  <button class="lightbox-close" onclick="closeLightbox()">×</button>
+  <button class="lightbox-prev" onclick="event.stopPropagation();lightboxStep(-1)">‹</button>
+  <img id="lightboxImage" alt="图片预览">
+  <button class="lightbox-next" onclick="event.stopPropagation();lightboxStep(1)">›</button>
+  <div id="lightboxCaption" class="lightbox-caption"></div>
+</div>
+
+<div id="repairSheet">
+  <div class="pdf-title">维修工单 <span class="pdf-date" id="rpDate"></span></div>
+  <table>
+    <tr><td class="lbl">单号：</td><td id="rpOrderNo"></td><td class="lbl">报修日期：</td><td id="rpReportDate"></td></tr>
+    <tr><td class="lbl">客户名称：</td><td colspan="3" id="rpCustomer"></td></tr>
+    <tr><td class="lbl">联系人：</td><td id="rpContact"></td><td class="lbl">联系电话：</td><td id="rpPhone"></td></tr>
+    <tr><td class="lbl">设备型号：</td><td id="rpModel"></td><td class="lbl">设备 SN：</td><td id="rpSN"></td></tr>
+    <tr><td class="lbl">外观情况：</td><td id="rpAppearance"></td><td class="lbl">处理结果：</td><td id="rpStatus"></td></tr>
+    <tr><td class="lbl">故障现象：</td><td colspan="3" class="big" id="rpReason"></td></tr>
+    <tr><td class="lbl">维修过程：</td><td colspan="3" class="big" id="rpNotes"></td></tr>
+    <tr><td class="lbl">客户寄回：</td><td colspan="3" id="rpInbound"></td></tr>
+    <tr><td class="lbl">维修后寄返：</td><td colspan="3" id="rpOutbound"></td></tr>
+    <tr><td class="lbl">回寄地址：</td><td colspan="3" id="rpAddress"></td></tr>
+  </table>
+  <div class="note">
+    注：<br>
+    1. 本维修工单由技术支持系统根据实际保存数据生成，空字段表示未填写。<br>
+    2. 报修设备需经过售后确认方可寄回，寄送前请做好减震包装。<br>
+    3. 故障现象与维修过程描述越详细，后续追溯越方便。
+  </div>
+</div>

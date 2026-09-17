@@ -10,7 +10,7 @@ import type { ThemeMode } from '../types'
 const groups = [
   { label: '工作台', items: [{ to: '/', label: '仪表盘', icon: Gauge }, { to: '/my-work', label: '我的工作', icon: ClipboardList }, { to: '/tickets', label: '工单', icon: FileClock }, { to: '/tickets/recycle-bin', label: '回收站', icon: Trash2 }] },
   { label: '客户', items: [{ to: '/customers', label: '客户管理', icon: Building2 }] },
-  { label: '设备管理', items: [{ to: '/device-flow', label: '设备流转管理', icon: Package }] },
+  { label: '设备管理', items: [{ to: '/device-flow', label: '设备服务管理', icon: Package }] },
   { label: '数据', items: [{ to: '/worklogs', label: '工作记录', icon: NotebookPen }, { to: '/reports', label: '日报/周报/月报', icon: FileText }, { to: '/stats', label: '统计报表', icon: BarChart3 }] },
 ]
 

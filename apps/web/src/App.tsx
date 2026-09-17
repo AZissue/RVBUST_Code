@@ -5,7 +5,7 @@ import { AuditPage } from './pages/AuditPage'
 import { BugsPage } from './pages/BugsPage'
 import { CustomerProfilePage } from './pages/CustomerProfilePage'
 import { DeviceDetailPage } from './pages/DeviceDetailPage'
-import { DeviceFlowHost } from './pages/DeviceFlowHost'
+import { DeviceFlowPage } from './pages/device-flow/DeviceFlowPage'
 import { CustomersPage } from './pages/CustomersPage'
 import { DashboardPage } from './pages/DashboardPage'
 import { LoanDetailPage } from './pages/LoanDetailPage'
@@ -35,9 +35,9 @@ export default function App() {
   return <Routes>
     <Route path="/login" element={user ? <Navigate to="/" replace /> : <LoginPage />} />
     <Route path="/register" element={user ? <Navigate to="/" replace /> : <RegisterPage />} />
-    <Route path="/device-flow" element={<DeviceFlowHost />} />
     <Route path="/" element={<ProtectedApp />}>
       <Route index element={<DashboardPage />} />
+      <Route path="device-flow" element={<DeviceFlowPage />} />
       <Route path="my-work" element={<TicketsPage mine />} />
       <Route path="work-items" element={<WorkItemsPage />} />
       <Route path="tickets" element={<TicketsPage />} />

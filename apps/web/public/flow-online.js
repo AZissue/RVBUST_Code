@@ -14,6 +14,7 @@
   const pending = [];
   const copy = (value) => structuredClone(value);
 
+  let hideTimer = null;
   function status(message, error = false) {
     let node = document.getElementById('flowSyncStatus');
     if (!node) {
@@ -24,14 +25,21 @@
     }
     node.textContent = message;
     node.style.color = error ? '#b91c1c' : '#333';
-    if (blocked) {
-      const reload = document.createElement('button');
-      reload.type = 'button';
-      reload.textContent = '重新加载';
-      reload.style.cssText = 'margin-left:10px;border:1px solid #b91c1c;background:white;color:#b91c1c;border-radius:4px;cursor:pointer';
-      reload.onclick = () => location.reload();
-      node.append(reload);
+    if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+    if (error) {
+      // 保存失败 / 多人编辑冲突：常驻提示，直到下一次状态变化
+      if (blocked) {
+        const reload = document.createElement('button');
+        reload.type = 'button';
+        reload.textContent = '重新加载';
+        reload.style.cssText = 'margin-left:10px;border:1px solid #b91c1c;background:white;color:#b91c1c;border-radius:4px;cursor:pointer';
+        reload.onclick = () => location.reload();
+        node.append(reload);
+      }
+      return;
     }
+    // 连接/保存成功：短暂提示后自动消失，避免常驻遮挡
+    hideTimer = setTimeout(() => { const current = document.getElementById('flowSyncStatus'); if (current) current.remove(); }, 2000);
   }
 
   async function init() {
