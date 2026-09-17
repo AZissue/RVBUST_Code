@@ -42,13 +42,13 @@ const inferCategory = (text: string): TicketCategory => {
   return 'OTHER'
 }
 
-export function QuickTicketInput({ embedded = false, heading = '快速记录', defaultDate, onSaved }: { embedded?: boolean; heading?: string; defaultDate?: string; onSaved?: (ticket: Ticket, updated: boolean) => void }) {
+export function QuickTicketInput({ embedded = false, heading = '快速记录', defaultDate, onSaved }: { embedded?: boolean; heading?: string; defaultDate?: string; onSaved?: (ticket: Ticket, updated: boolean, notice?: string) => void }) {
   const { user } = useAuth()
   const [rawText, setRawText] = useState('')
   const [parsed, setParsed] = useState<Parsed | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [success, setSuccess] = useState<{ ticket: Ticket; updated: boolean } | null>(null)
+  const [success, setSuccess] = useState<{ ticket: Ticket; updated: boolean; notice?: string } | null>(null)
   const parse = async () => {
     setBusy(true); setError(''); setSuccess(null)
     try { setParsed(await api<Parsed>('/tickets/quick/parse', { method: 'POST', body: JSON.stringify({ rawText }) })) }
@@ -59,14 +59,14 @@ export function QuickTicketInput({ embedded = false, heading = '快速记录', d
     <textarea aria-label="快速工单输入" maxLength={4000} value={rawText} onChange={(e) => setRawText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); if (canParse) void parse() } }} rows={7} placeholder={'开头可写工单时间补录历史单：0907 / 本周一 / 9月7日 / 昨天，可带状态：已解决 / 处理中 / 等待客户反馈\n浙江智享机器人 M2600拍摄3D无点云，负责人张伟，紧急'} />
     {error && <div role="alert" className="form-error">{error}</div>}
     <button className="button primary" disabled={!canParse} onClick={() => void parse()}><Plus size={15} />{busy ? '正在解析' : '智能解析'}</button>
-    {success && <div className="quick-success" role="status">工单 {success.ticket.number} {success.updated ? '更新' : '创建'}成功 <Link to={`/tickets/${success.ticket.id}`}>查看工单</Link></div>}
-    {parsed && <QuickTicketConfirm parsed={parsed} defaultDate={defaultDate} canCreateCustomer={user?.role === 'admin' || user?.role === 'support'} onClose={() => setParsed(null)} onSaved={(ticket, updated) => { setSuccess({ ticket, updated }); setParsed(null); setRawText(''); onSaved?.(ticket, updated) }} />}
+    {success && <div className="quick-success" role="status">工单 {success.ticket.number} {success.updated ? '更新' : '创建'}成功{success.notice ? ` · ${success.notice}` : ''} <Link to={`/tickets/${success.ticket.id}`}>查看工单</Link></div>}
+    {parsed && <QuickTicketConfirm parsed={parsed} defaultDate={defaultDate} canCreateCustomer={user?.role === 'admin' || user?.role === 'support'} onClose={() => setParsed(null)} onSaved={(ticket, updated, notice) => { setSuccess({ ticket, updated, notice }); setParsed(null); setRawText(''); onSaved?.(ticket, updated, notice) }} />}
   </>
   if (embedded) return <div className="quick-capture-embedded">{inner}</div>
   return <section className="workspace-section quick-capture-panel">{inner}</section>
 }
 
-function QuickTicketConfirm({ parsed, defaultDate, canCreateCustomer, onClose, onSaved }: { parsed: Parsed; defaultDate?: string; canCreateCustomer: boolean; onClose: () => void; onSaved: (ticket: Ticket, updated: boolean) => void }) {
+function QuickTicketConfirm({ parsed, defaultDate, canCreateCustomer, onClose, onSaved }: { parsed: Parsed; defaultDate?: string; canCreateCustomer: boolean; onClose: () => void; onSaved: (ticket: Ticket, updated: boolean, notice?: string) => void }) {
   const [customers, setCustomers] = useState<Customer[]>([])
   const [users, setUsers] = useState<Array<{ id: string; name: string }>>([])
   const [devices, setDevices] = useState<Device[]>([])
@@ -80,6 +80,9 @@ function QuickTicketConfirm({ parsed, defaultDate, canCreateCustomer, onClose, o
   const [date, setDate] = useState(parsed.occurredAt ?? defaultDate ?? '')
   const [status, setStatus] = useState<TicketStatus>(parsed.status ?? 'PENDING')
   const [category, setCategory] = useState<TicketCategory>(() => inferCategory(parsed.rawText))
+  const [linkageDefaults, setLinkageDefaults] = useState({ loan: false, repair: false })
+  const [createLinkedLoan, setCreateLinkedLoan] = useState(false)
+  const [createLinkedRepair, setCreateLinkedRepair] = useState(false)
   const [similar, setSimilar] = useState<Similar[]>([])
   const [checkedKey, setCheckedKey] = useState('')
   const [error, setError] = useState('')
@@ -99,6 +102,20 @@ function QuickTicketConfirm({ parsed, defaultDate, canCreateCustomer, onClose, o
     Promise.all([api<Customer[]>('/customers'), api<Array<{ id: string; name: string }>>('/users/assignable')]).then(([c, u]) => { if (current) { setCustomers(c); setUsers(u) } }).catch((e: Error) => { if (current) setError(e.message) })
     return () => { current = false }
   }, [retry])
+  // 联动默认配置（管理员在系统设置维护），接口失败时静默回落 false
+  useEffect(() => {
+    let current = true
+    api<{ defaultCreate: { loan: boolean; repair: boolean } }>('/system/linkage-config')
+      .then(config => { if (current) setLinkageDefaults({ loan: Boolean(config.defaultCreate?.loan), repair: Boolean(config.defaultCreate?.repair) }) })
+      .catch(() => { /* 静默回落默认 false */ })
+    return () => { current = false }
+  }, [])
+  // 默认配置加载完成后按当前分类应用默认勾选（与创建工单弹窗一致）；用户手动改过的勾选不覆盖
+  useEffect(() => {
+    setCreateLinkedLoan(previous => previous || ((category === 'PRE_SALES' || category === 'LOAN_REQUEST') && linkageDefaults.loan))
+    setCreateLinkedRepair(previous => previous || (category === 'HARDWARE_FAILURE' && linkageDefaults.repair))
+  }, [category, linkageDefaults])
+  const changeCategory = (value: TicketCategory) => { setCategory(value); setCreateLinkedLoan((value === 'PRE_SALES' || value === 'LOAN_REQUEST') && linkageDefaults.loan); setCreateLinkedRepair(value === 'HARDWARE_FAILURE' && linkageDefaults.repair) }
   useEffect(() => {
     let current = true
     setDevices([])
@@ -139,11 +156,14 @@ function QuickTicketConfirm({ parsed, defaultDate, canCreateCustomer, onClose, o
     if (existing && !window.confirm(`确认更新 ${existing.number}？将追加内部处理记录，并更新负责人和优先级；原描述和状态保持不变。`)) return
     setBusy(true); setError('')
     try {
-      const ticket = existing ? await api<Ticket>(`/tickets/${existing.id}/quick-update`, { method: 'POST', body: JSON.stringify({ organizationId, assigneeId, priority, issue, rawText: parsed.rawText, expectedUpdatedAt: existing.updatedAt }) }) : await api<Ticket>('/tickets', { method: 'POST', body: JSON.stringify({ category, organizationId, assigneeId, priority, title: title.trim(), description: issue.trim(), rawText: parsed.rawText, requestKey, cameraModel: model || undefined, deviceId: deviceId || undefined, occurredAt: date || undefined, status: status === 'PENDING' ? undefined : status }) })
+      const ticket = existing ? await api<Ticket>(`/tickets/${existing.id}/quick-update`, { method: 'POST', body: JSON.stringify({ organizationId, assigneeId, priority, issue, rawText: parsed.rawText, expectedUpdatedAt: existing.updatedAt }) }) : await api<Ticket>('/tickets', { method: 'POST', body: JSON.stringify({ category, organizationId, assigneeId, priority, title: title.trim(), description: issue.trim(), rawText: parsed.rawText, requestKey, cameraModel: model || undefined, deviceId: deviceId || undefined, occurredAt: date || undefined, status: status === 'PENDING' ? undefined : status, createLinkedLoan: createLinkedLoan ? true : undefined, createLinkedRepair: createLinkedRepair ? true : undefined }) })
       // 别名学习：用户把原文中的客户词改选为其他客户时记录，失败静默不阻塞主流程
       const alias = parsed.customerText?.trim()
       if (alias && organizationId !== parsed.matchedCustomer?.id) void api('/customer-aliases', { method: 'POST', body: JSON.stringify({ alias, organizationId }) }).catch(() => {})
-      onSaved(ticket, Boolean(existing))
+      // 联动提示：入队/建单成功说明与联动失败原因都反馈给用户（失败信息由后端 linkageErrors 携带，工单本身已创建成功）
+      const linkNotice = !existing && createLinkedLoan ? '已同步创建借测单并加入排队' : !existing && createLinkedRepair ? '已同步创建维修单' : undefined
+      const notice = [linkNotice, ...(ticket.linkageErrors ?? [])].filter(Boolean).join('；') || undefined
+      onSaved(ticket, Boolean(existing), notice)
     } catch (e) { setError(e instanceof Error ? e.message : '保存失败'); setRetry((n) => n + 1) } finally { setBusy(false) }
   }
   // 相似工单：优先用解析接口随附的结果，旧后端无该字段时回退到确认页内的防抖查询结果
@@ -199,7 +219,9 @@ function QuickTicketConfirm({ parsed, defaultDate, canCreateCustomer, onClose, o
         <div className="form-grid">
           {parsed.matchedCustomer && <label>客户<select aria-label="确认客户" value={organizationId} onChange={(e) => { setOrganizationId(e.target.value); setDeviceId('') }}><option value="">选择现有客户</option>{customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label>}
           {parsed.matchedAssignee && <label>负责人<select aria-label="确认负责人" value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)}><option value="">负责人：未匹配</option>{users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</select>{parsed.assigneeDefaulted && parsed.matchedAssignee && <small>默认当前用户：{parsed.matchedAssignee.name}</small>}</label>}
-          <label>问题分类<select aria-label="确认问题分类" value={category} onChange={(e) => setCategory(e.target.value as TicketCategory)}>{Object.entries(ticketCategoryLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><small>按关键词初步识别，可修改</small></label>
+          <label>问题分类<select aria-label="确认问题分类" value={category} onChange={(e) => changeCategory(e.target.value as TicketCategory)}>{Object.entries(ticketCategoryLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><small>按关键词初步识别，可修改</small></label>
+          {(category === 'PRE_SALES' || category === 'LOAN_REQUEST') && <label className="span-2 checkbox-row"><input type="checkbox" checked={createLinkedLoan} onChange={(e) => setCreateLinkedLoan(e.target.checked)} />同时创建借测单并加入排队</label>}
+          {category === 'HARDWARE_FAILURE' && <label className="span-2 checkbox-row"><input type="checkbox" checked={createLinkedRepair} onChange={(e) => setCreateLinkedRepair(e.target.checked)} />同时创建维修单</label>}
           <label>优先级<select aria-label="确认优先级" value={priority} onChange={(e) => setPriority(e.target.value as TicketPriority)}>{Object.entries(ticketPriorityLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
           <label>状态<select aria-label="确认状态" value={status} onChange={(e) => setStatus(e.target.value as TicketStatus)}>{Object.entries(ticketStatusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><small>识别「已解决/处理中/等待客户反馈」等关键词</small></label>
           <label>工单时间<input aria-label="确认工单时间" type="date" value={date} onChange={(e) => setDate(e.target.value)} /><small>{date ? '编号按此日期生成，留空为今天' : '未指定，按今天记录'}</small></label>
