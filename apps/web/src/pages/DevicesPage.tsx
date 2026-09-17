@@ -2,6 +2,7 @@ import { ArrowRight, Cpu, Database, Handshake, Package, Plus, RotateCcw, Search,
 import { useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Modal } from '../components/Modal'
+import { useAuth } from '../context/AuthContext'
 import { useRemote } from '../hooks/useRemote'
 import { api, formatDate } from '../lib/api'
 import { deviceHealthLabels, deviceOwnerLabel, deviceStatusLabels, deviceStatusLabelByOwner, loanStatusLabels } from '../lib/labels'
@@ -75,6 +76,8 @@ function RecentStatus({ row }: { row: RecentRow }) {
 
 export function DevicesPage() {
   const navigate = useNavigate()
+  const { user } = useAuth()
+  const canManage = user?.role === 'admin' || user?.role === 'support'
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('')
   const [ownerType, setOwnerType] = useState('')
@@ -100,6 +103,10 @@ export function DevicesPage() {
     if (next === item.status) return
     if (next === 'RETIRED' && !window.confirm(`确认将「${item.name}」报废？报废后设备退出流转。`)) return
     setError(''); try { await api(`/devices/${item.id}/status`, { method: 'PATCH', body: JSON.stringify({ status: next }) }); await remote.refresh() } catch (reason) { setError(reason instanceof Error ? reason.message : '状态流转失败') }
+  }
+  const removeDevice = async (item: Device) => {
+    if (!window.confirm(`确认删除设备「${item.name}」？\n删除后进入回收站，列表与统计中将不再显示，可随时从回收站恢复。`)) return
+    setError(''); try { await api(`/devices/${item.id}`, { method: 'DELETE' }); await remote.refresh() } catch (reason) { setError(reason instanceof Error ? reason.message : '删除失败') }
   }
   const metrics: [string, string, string, string][] = [
     ['monthLoan', '本月借出', '按借出日期统计', `month=${data.month}`],
@@ -182,6 +189,7 @@ export function DevicesPage() {
       <td><div className="row-actions" onClick={(event) => event.stopPropagation()}>
         <select className="cell-select" aria-label="修改设备状态" value={item.status ?? 'IN_STOCK'} onChange={(event) => void changeStatus(item, event.target.value as DeviceStatus)}>{STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>
         <button className="button small" onClick={() => setEditing(item)}>编辑</button>
+        {canManage && <button className="button small danger" onClick={() => void removeDevice(item)}>删除</button>}
       </div></td>
     </tr>)}</tbody></table>{!devices.length && <Empty text={hasFilter ? '没有符合筛选条件的设备' : '暂无设备，点击右上角新增'} />}</div></section>
     {creating && <DeviceFormModal title="新增设备" onClose={() => setCreating(false)} onSubmit={async (payload) => { await api('/devices', { method: 'POST', body: JSON.stringify(payload) }); setCreating(false); await remote.refresh() }} />}

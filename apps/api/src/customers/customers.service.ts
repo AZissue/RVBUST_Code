@@ -83,10 +83,10 @@ export class CustomersService {
     const [graded, contacts, devices, tickets, loanOrders, repairOrders] = await Promise.all([
       this.withLevels([organization]),
       this.prisma.contact.findMany({ where: { organizationId: id }, orderBy: [{ isPrimary: 'desc' }, { name: 'asc' }] }),
-      this.prisma.device.findMany({ where: { organizationId: id }, orderBy: { createdAt: 'desc' } }),
+      this.prisma.device.findMany({ where: { organizationId: id, deletedAt: null }, orderBy: { createdAt: 'desc' } }),
       this.prisma.ticket.findMany({ where: { organizationId: id }, select: { id: true, number: true, title: true, status: true, priority: true, createdAt: true, assignee: { select: { id: true, name: true } } }, orderBy: { createdAt: 'desc' }, take: 20 }),
-      this.prisma.loanOrder.findMany({ where: { organizationId: id }, include: { contact: { select: { id: true, name: true } }, assignee: { select: { id: true, name: true } }, items: { include: { device: { select: { id: true, name: true, serialNumber: true } } } } }, orderBy: { createdAt: 'desc' }, take: 50 }),
-      this.prisma.repairOrder.findMany({ where: { organizationId: id }, include: { device: { select: { id: true, name: true, serialNumber: true } }, contact: { select: { id: true, name: true } }, assignee: { select: { id: true, name: true } } }, orderBy: { createdAt: 'desc' }, take: 50 }),
+      this.prisma.loanOrder.findMany({ where: { organizationId: id, deletedAt: null }, include: { contact: { select: { id: true, name: true } }, assignee: { select: { id: true, name: true } }, items: { include: { device: { select: { id: true, name: true, serialNumber: true } } } } }, orderBy: { createdAt: 'desc' }, take: 50 }),
+      this.prisma.repairOrder.findMany({ where: { organizationId: id, deletedAt: null }, include: { device: { select: { id: true, name: true, serialNumber: true } }, contact: { select: { id: true, name: true } }, assignee: { select: { id: true, name: true } } }, orderBy: { createdAt: 'desc' }, take: 50 }),
     ]);
     return { organization: graded[0], contacts, devices, tickets, loanOrders, repairOrders };
   }

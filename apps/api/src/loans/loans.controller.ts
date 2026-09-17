@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query, Res } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query, Res } from '@nestjs/common';
 import type { LoanStatus } from '@prisma/client';
 import type { Response } from 'express';
 import type { AuthUser } from '../auth/auth.types.js';
@@ -31,6 +31,7 @@ export class LoansController {
     return response.send(buffer);
   }
   @Get('score-rule') getScoreRule() { return this.loans.getScoreRule(); }
+  @Roles('admin', 'support') @Get('recycle-bin') recycleBin(@CurrentUser() user: AuthUser) { return this.loans.listDeleted(user); }
   @Get(':id') get(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) { return this.loans.get(user, id); }
   @Roles('admin', 'support') @Post() create(@CurrentUser() user: AuthUser, @Body() dto: CreateLoanDto) { return this.loans.create(user, dto); }
   @Roles('admin', 'support') @Patch(':id') update(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateLoanDto) { return this.loans.update(user, id, dto); }
@@ -41,4 +42,7 @@ export class LoansController {
   @Roles('admin', 'support') @Post(':id/assign') assign(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: AssignLoanDto) { return this.loans.assign(user, id, dto); }
   @Roles('admin', 'support') @Post(':id/return') returnItems(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: ReturnLoanDto) { return this.loans.returnItems(user, id, dto); }
   @Roles('admin', 'support') @Post(':id/cancel') cancel(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) { return this.loans.cancel(user, id); }
+  @Roles('admin', 'support') @Delete(':id') remove(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) { return this.loans.softDelete(user, id); }
+  @Roles('admin', 'support') @Post(':id/restore') restore(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) { return this.loans.restore(user, id); }
+  @Roles('admin') @Delete(':id/purge') purge(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) { return this.loans.purge(user, id); }
 }

@@ -58,7 +58,7 @@ export class LoansService {
   // 惰性逾期修正：ONGOING 且 dueAt 已过的单置为 OVERDUE，并幂等通知创建人与负责人
   private async fixOverdue() {
     const now = new Date();
-    const overdue = await this.prisma.loanOrder.findMany({ where: { status: LoanStatus.ONGOING, dueAt: { lt: now } }, select: { id: true, loanNo: true, ticketId: true, createdById: true, assigneeId: true } });
+    const overdue = await this.prisma.loanOrder.findMany({ where: { status: LoanStatus.ONGOING, dueAt: { lt: now }, deletedAt: null }, select: { id: true, loanNo: true, ticketId: true, createdById: true, assigneeId: true } });
     if (!overdue.length) return;
     await this.prisma.loanOrder.updateMany({ where: { id: { in: overdue.map((loan) => loan.id) }, status: LoanStatus.ONGOING, dueAt: { lt: now } }, data: { status: LoanStatus.OVERDUE } });
     for (const loan of overdue) {
@@ -77,6 +77,7 @@ export class LoansService {
     return this.prisma.loanOrder.findMany({
       where: {
         AND: [this.scopeWhere(user)],
+        deletedAt: null,
         status: query.status,
         organizationId: query.organizationId,
         assigneeId: query.mine ? user.id : query.assigneeId,
@@ -281,7 +282,7 @@ export class LoansService {
   async get(user: AuthUser, id: string) {
     this.requireInternal(user);
     await this.fixOverdue();
-    const loan = await this.prisma.loanOrder.findFirst({ where: { id, AND: [this.scopeWhere(user)] }, include: loanInclude });
+    const loan = await this.prisma.loanOrder.findFirst({ where: { id, deletedAt: null, AND: [this.scopeWhere(user)] }, include: loanInclude });
     if (!loan) throw new NotFoundException('借出单不存在');
     return loan;
   }
@@ -506,5 +507,49 @@ export class LoansService {
       this.events.emit(LINKAGE_EVENTS.loanStatusChanged, { loanId: id, loanNo: loan.loanNo, ticketId: loan.ticketId, actorId: user.id, from: loan.status, to: LoanStatus.CANCELLED });
       return updated;
     });
+  }
+
+  /** 移入回收站（软删除）：保留全部借测与跟进数据，可在回收站恢复 */
+  async softDelete(user: AuthUser, id: string) {
+    const loan = await this.get(user, id);
+    return this.prisma.$transaction(async (tx) => {
+      await tx.loanOrder.update({ where: { id }, data: { deletedAt: new Date(), deletedById: user.id } });
+      await tx.auditLog.create({ data: { actorId: user.id, action: 'loan.delete', entityType: 'LoanOrder', entityId: id, metadata: { loanNo: loan.loanNo, status: loan.status } } });
+      return { success: true };
+    });
+  }
+
+  /** 回收站列表（仅已删除借出单，含越权范围提示所需的客户名） */
+  async listDeleted(user: AuthUser) {
+    this.requireInternal(user);
+    return this.prisma.loanOrder.findMany({
+      where: { deletedAt: { not: null }, AND: [this.scopeWhere(user)] },
+      include: { ...loanInclude, deletedBy: { select: { id: true, name: true } } },
+      orderBy: { deletedAt: 'desc' },
+      take: 200,
+    });
+  }
+
+  /** 从回收站恢复 */
+  async restore(user: AuthUser, id: string) {
+    const loan = await this.prisma.loanOrder.findFirst({ where: { id, deletedAt: { not: null }, AND: [this.scopeWhere(user)] }, select: { deletedAt: true } });
+    if (!loan) throw new NotFoundException('借出单不存在或不在回收站中');
+    return this.prisma.$transaction(async (tx) => {
+      await tx.loanOrder.update({ where: { id }, data: { deletedAt: null, deletedById: null } });
+      await tx.auditLog.create({ data: { actorId: user.id, action: 'loan.restore', entityType: 'LoanOrder', entityId: id } });
+      return { success: true };
+    });
+  }
+
+  /** 彻底删除回收站中的借出单（仅管理员）：借测明细与跟进随 FK 级联清除 */
+  async purge(user: AuthUser, id: string) {
+    const loan = await this.prisma.loanOrder.findUnique({ where: { id }, select: { deletedAt: true, loanNo: true } });
+    if (!loan) throw new NotFoundException('借出单不存在');
+    if (!loan.deletedAt) throw new BadRequestException('仅回收站中的借出单可以彻底删除');
+    await this.prisma.$transaction(async (tx) => {
+      await tx.loanOrder.delete({ where: { id } });
+      await tx.auditLog.create({ data: { actorId: user.id, action: 'loan.purge', entityType: 'LoanOrder', entityId: id, metadata: { loanNo: loan.loanNo } } });
+    });
+    return { success: true };
   }
 }

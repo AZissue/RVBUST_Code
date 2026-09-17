@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query, Res } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query, Res } from '@nestjs/common';
 import type { RepairStatus } from '@prisma/client';
 import type { Response } from 'express';
 import type { AuthUser } from '../auth/auth.types.js';
@@ -23,6 +23,7 @@ export class RepairsController {
     response.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent('维修记录导出.xlsx')}`);
     return response.send(buffer);
   }
+  @Roles('admin', 'support') @Get('recycle-bin') recycleBin(@CurrentUser() user: AuthUser) { return this.repairs.listDeleted(user); }
   @Get(':id') get(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) { return this.repairs.get(user, id); }
   @Post(':id/pdf') exportPdf(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) { return this.repairs.exportPdf(user, id); }
   @Roles('admin', 'support') @Post() create(@CurrentUser() user: AuthUser, @Body() dto: CreateRepairDto) { return this.repairs.create(user, dto); }
@@ -30,4 +31,7 @@ export class RepairsController {
   @Roles('admin', 'support') @Post(':id/transition') transition(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: TransitionRepairDto) { return this.repairs.transition(user, id, dto); }
   @Roles('admin', 'support') @Post(':id/assign') assign(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: AssignRepairDto) { return this.repairs.assign(user, id, dto); }
   @Post(':id/follow-ups') addFollowUp(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: AddRepairFollowUpDto) { return this.repairs.addFollowUp(user, id, dto); }
+  @Roles('admin', 'support') @Delete(':id') remove(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) { return this.repairs.softDelete(user, id); }
+  @Roles('admin', 'support') @Post(':id/restore') restore(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) { return this.repairs.restore(user, id); }
+  @Roles('admin') @Delete(':id/purge') purge(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) { return this.repairs.purge(user, id); }
 }

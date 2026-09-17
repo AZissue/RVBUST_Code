@@ -11,6 +11,7 @@ export class RepairsExcelService {
 
   async buildExportBuffer() {
     const orders = await this.prisma.repairOrder.findMany({
+      where: { deletedAt: null },
       include: { organization: { select: { name: true } }, contact: { select: { name: true } }, assignee: { select: { name: true } }, device: { select: { name: true, serialNumber: true, cameraModel: true } } },
       orderBy: { receivedAt: 'desc' },
       take: 5000,

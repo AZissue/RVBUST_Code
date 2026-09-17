@@ -43,7 +43,7 @@ export class RepairsService {
     this.requireInternal(user);
     if (query.status && !Object.values(RepairStatus).includes(query.status)) throw new BadRequestException('返修单状态无效');
     return this.prisma.repairOrder.findMany({
-      where: { AND: [this.scopeWhere(user)], status: query.active ? { in: [RepairStatus.RECEIVED, RepairStatus.DIAGNOSING, RepairStatus.REPAIRING] } : query.status, organizationId: query.organizationId, assigneeId: query.mine ? user.id : query.assigneeId },
+      where: { AND: [this.scopeWhere(user)], deletedAt: null, status: query.active ? { in: [RepairStatus.RECEIVED, RepairStatus.DIAGNOSING, RepairStatus.REPAIRING] } : query.status, organizationId: query.organizationId, assigneeId: query.mine ? user.id : query.assigneeId },
       include: repairInclude, orderBy: { updatedAt: 'desc' }, take: 500,
     });
   }
@@ -51,7 +51,7 @@ export class RepairsService {
   async get(user: AuthUser, id: string) {
     this.requireInternal(user);
     const repair = await this.prisma.repairOrder.findFirst({
-      where: { id, AND: [this.scopeWhere(user)] },
+      where: { id, deletedAt: null, AND: [this.scopeWhere(user)] },
       include: { ...repairInclude, events: { orderBy: { createdAt: 'asc' } }, attachments: true },
     });
     if (!repair) throw new NotFoundException('返修单不存在');
@@ -180,7 +180,7 @@ export class RepairsService {
       if (repair.deviceId) {
         await tx.$queryRaw`SELECT id FROM devices WHERE id = ${repair.deviceId}::uuid FOR UPDATE`;
         const device = await tx.device.findUniqueOrThrow({ where: { id: repair.deviceId } });
-        const other = await tx.repairOrder.count({ where: { deviceId: repair.deviceId, id: { not: id }, status: { not: RepairStatus.CLOSED } } });
+        const other = await tx.repairOrder.count({ where: { deviceId: repair.deviceId, id: { not: id }, status: { not: RepairStatus.CLOSED }, deletedAt: null } });
         if (dto.status !== RepairStatus.CLOSED && (other || ['LOANED', 'RETIRED'].includes(device.status))) throw new BadRequestException('设备已借出、报废或存在其他未关闭返修单，不能回退；请先处理设备当前业务');
         if (dto.status !== RepairStatus.CLOSED) await tx.device.update({ where: { id: device.id }, data: { status: 'REPAIRING' } });
         else if (!other && device.status === 'REPAIRING') await tx.device.update({ where: { id: device.id }, data: { status: 'IN_STOCK' } });
@@ -212,5 +212,49 @@ export class RepairsService {
     const updated = await this.prisma.repairOrder.update({ where: { id }, data: { assigneeId: dto.assigneeId }, include: repairInclude });
     await this.notifications.notify({ recipientId: dto.assigneeId, type: NOTIFICATION_TYPES.REPAIR_ASSIGNED, title: '返修单已指派给你', body: `返修单 ${repair.repairNo} 已指派给你跟进。`, dedupeKey: `repair-assign:${repair.id}:${dto.assigneeId}` });
     return updated;
+  }
+
+  /** 移入回收站（软删除）：保留全部返修与跟进数据，可在回收站恢复 */
+  async softDelete(user: AuthUser, id: string) {
+    const repair = await this.get(user, id);
+    return this.prisma.$transaction(async (tx) => {
+      await tx.repairOrder.update({ where: { id }, data: { deletedAt: new Date(), deletedById: user.id } });
+      await tx.auditLog.create({ data: { actorId: user.id, action: 'repair.delete', entityType: 'RepairOrder', entityId: id, metadata: { repairNo: repair.repairNo, status: repair.status } } });
+      return { success: true };
+    });
+  }
+
+  /** 回收站列表（仅已删除返修单） */
+  async listDeleted(user: AuthUser) {
+    this.requireInternal(user);
+    return this.prisma.repairOrder.findMany({
+      where: { deletedAt: { not: null }, AND: [this.scopeWhere(user)] },
+      include: { ...repairInclude, deletedBy: { select: { id: true, name: true } } },
+      orderBy: { deletedAt: 'desc' },
+      take: 200,
+    });
+  }
+
+  /** 从回收站恢复 */
+  async restore(user: AuthUser, id: string) {
+    const repair = await this.prisma.repairOrder.findFirst({ where: { id, deletedAt: { not: null }, AND: [this.scopeWhere(user)] }, select: { deletedAt: true } });
+    if (!repair) throw new NotFoundException('返修单不存在或不在回收站中');
+    return this.prisma.$transaction(async (tx) => {
+      await tx.repairOrder.update({ where: { id }, data: { deletedAt: null, deletedById: null } });
+      await tx.auditLog.create({ data: { actorId: user.id, action: 'repair.restore', entityType: 'RepairOrder', entityId: id } });
+      return { success: true };
+    });
+  }
+
+  /** 彻底删除回收站中的返修单（仅管理员）：状态时间线、跟进与附件随 FK 级联清除 */
+  async purge(user: AuthUser, id: string) {
+    const repair = await this.prisma.repairOrder.findUnique({ where: { id }, select: { deletedAt: true, repairNo: true } });
+    if (!repair) throw new NotFoundException('返修单不存在');
+    if (!repair.deletedAt) throw new BadRequestException('仅回收站中的返修单可以彻底删除');
+    await this.prisma.$transaction(async (tx) => {
+      await tx.repairOrder.delete({ where: { id } });
+      await tx.auditLog.create({ data: { actorId: user.id, action: 'repair.purge', entityType: 'RepairOrder', entityId: id, metadata: { repairNo: repair.repairNo } } });
+    });
+    return { success: true };
   }
 }

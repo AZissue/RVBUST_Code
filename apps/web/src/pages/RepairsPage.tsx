@@ -28,6 +28,8 @@ const nextStep: Partial<Record<RepairStatus, { status: RepairStatus; label: stri
 export function RepairsPage() {
   const [params] = useSearchParams()
   const { id: routeDetailId } = useParams()
+  const { user } = useAuth()
+  const canManage = user?.role === 'admin' || user?.role === 'support'
   const [status, setStatus] = useState(() => params.get('active') === '1' ? 'ACTIVE' : '')
   const [detailId, setDetailId] = useState<string | null>(routeDetailId ?? null)
   const [search, setSearch] = useState('')
@@ -58,7 +60,7 @@ export function RepairsPage() {
       <td className="truncate-cell flow-follow-summary" title={repair.symptom}>{repair.symptom}</td>
       <td><div>{repair.trackingNo || '—'}</div><div className="muted">{repair.inWarranty == null ? '保修待判定' : repair.inWarranty ? '保内' : '保外'}</div></td>
       <td><span className={`badge flow-status flow-status-${STATUS_CLASS[repair.status]}`}>{repairStatusLabels[repair.status]}</span></td>
-      <td><button className="button small" onClick={() => setDetailId(repair.id)}>详情</button></td>
+      <td><div className="row-actions"><button className="button small" onClick={() => setDetailId(repair.id)}>详情</button>{canManage && <button className="button small danger" onClick={() => { if (window.confirm(`确认删除返修单 ${repair.repairNo}？\n删除后进入回收站，可随时恢复。`)) return void (async () => { try { await api(`/repairs/${repair.id}`, { method: 'DELETE' }); await remote.refresh() } catch (reason) { window.alert(reason instanceof Error ? reason.message : '删除失败') } })() }}>删除</button>}</div></td>
     </tr>)}</tbody></table>{!repairs.length && <Empty text="暂无返修单" />}</div></section>
     {detailId && <RepairDetailDrawer id={detailId} onClose={() => setDetailId(null)} onChanged={remote.refresh} />}
   </div>

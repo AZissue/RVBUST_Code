@@ -4,6 +4,7 @@ import { Fragment, useEffect, useState, type FormEvent } from 'react'
 import { LoanOverdueNotice } from '../components/LoanOverdueNotice'
 import { LoanPhotoPanel, uploadLoanPhoto } from '../components/LoanPhotos'
 import { Modal } from '../components/Modal'
+import { useAuth } from '../context/AuthContext'
 import { useRemote } from '../hooks/useRemote'
 import { api, formatDate } from '../lib/api'
 import { loanStatusLabels } from '../lib/labels'
@@ -38,6 +39,8 @@ function Badge({ row }: { row: Row }) {
 
 export function LoansPage() {
   const navigate = useNavigate()
+  const { user } = useAuth()
+  const canManage = user?.role === 'admin' || user?.role === 'support'
   const [params, setParams] = useSearchParams()
   const [search, setSearch] = useState(params.get('search') || '')
   const [error, setError] = useState('')
@@ -112,6 +115,7 @@ export function LoansPage() {
               {(loan.status === 'ONGOING' || loan.status === 'OVERDUE') && <button className="button small" onClick={() => setReturning(loan)}>归还</button>}
               {(loan.status === 'ONGOING' || loan.status === 'OVERDUE' || loan.status === 'QUEUED') && <button className="button small" onClick={() => setAssigning(loan)}>指派</button>}
               {(loan.status === 'ONGOING' || loan.status === 'OVERDUE' || loan.status === 'QUEUED') && <button className="button small" onClick={() => void run(() => api(`/loans/${loan.id}/cancel`, { method: 'POST' }))}>取消</button>}
+              {canManage && <button className="button small danger" onClick={() => { if (window.confirm(`确认删除借测单 ${loan.loanNo}？\n删除后进入回收站，可随时恢复。`)) return void run(() => api(`/loans/${loan.id}`, { method: 'DELETE' })) }}>删除</button>}
             </div></td>
           </tr>
           {expanded === loan.id && <tr><td className="expanded-cell" colSpan={8}>

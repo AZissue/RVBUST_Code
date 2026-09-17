@@ -44,8 +44,8 @@ export class DashboardService {
       this.prisma.ticket.findMany({ where: unresolved, include, orderBy: [{ priority: 'desc' }, { updatedAt: 'desc' }], take: 6 }),
       this.prisma.worklog.findMany({ where: { authorId: user.id, status: 'CONFIRMED', occurredAt: { gte: dayStart, lt: dayEnd } }, include: { workType: true, organization: { select: { id: true, name: true } } }, orderBy: { occurredAt: 'desc' }, take: 10 }),
       // 我的借测逾期：直接按应还时间判断（不依赖惰性修正，ONGOING/OVERDUE 且 dueAt 已过均计入）
-      this.prisma.loanOrder.count({ where: { assigneeId: user.id, status: { in: [LoanStatus.ONGOING, LoanStatus.OVERDUE] }, dueAt: { lt: now } } }),
-      this.prisma.repairOrder.count({ where: { status: { in: [RepairStatus.RECEIVED, RepairStatus.DIAGNOSING, RepairStatus.REPAIRING] }, ...(user.role === 'employee' ? { OR: [{ assigneeId: user.id }, { createdById: user.id }] } : {}) } }),
+      this.prisma.loanOrder.count({ where: { assigneeId: user.id, status: { in: [LoanStatus.ONGOING, LoanStatus.OVERDUE] }, dueAt: { lt: now }, deletedAt: null } }),
+      this.prisma.repairOrder.count({ where: { status: { in: [RepairStatus.RECEIVED, RepairStatus.DIAGNOSING, RepairStatus.REPAIRING] }, deletedAt: null, ...(user.role === 'employee' ? { OR: [{ assigneeId: user.id }, { createdById: user.id }] } : {}) } }),
       // 需要关注：停滞超 3 天 / 计划逾期未兑现 / 等待反馈超时
       this.prisma.ticket.findMany({ where: { ...unresolved, updatedAt: { lt: staleBefore } }, include, orderBy: { updatedAt: 'asc' }, take: 5 }),
       this.prisma.ticket.findMany({ where: { ...unresolved, plannedAt: { lt: now } }, include, orderBy: { plannedAt: 'asc' }, take: 5 }),
