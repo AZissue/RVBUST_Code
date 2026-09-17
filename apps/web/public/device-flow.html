@@ -16,6 +16,8 @@
   aside{background:#121418;color:#fff;padding:22px 16px;position:sticky;top:0;height:100vh}
   .brand{font-size:20px;font-weight:800;letter-spacing:.5px;margin:4px 10px 24px}
   .brand small{display:block;color:#8f96a3;font-size:11px;font-weight:500;margin-top:4px}
+  .return-system{display:inline-flex;align-items:center;color:#d4d8de;text-decoration:none;font-size:13px;padding:7px 10px;margin:0 0 12px 2px;border-radius:6px}
+  .return-system:hover,.return-system:focus-visible{background:#252930;color:#fff}
   nav button{display:block;width:100%;border:0;background:transparent;color:#b9c0ca;text-align:left;padding:12px 14px;border-radius:10px;margin:4px 0;cursor:pointer}
   nav button.active,nav button:hover{background:#252930;color:#fff}
   main{padding:28px}
@@ -57,6 +59,11 @@
   .photo-slot .photo-view{display:none}
   .drawer{position:fixed;right:0;top:0;width:min(720px,100vw);height:100vh;background:#fff;box-shadow:-16px 0 50px rgba(0,0,0,.15);z-index:40;padding:24px;overflow:auto;transform:translateX(105%);transition:.25s}
   .drawer.open{transform:none}.drawer-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}
+  #deviceModal{top:50%;left:50%;right:auto;width:min(620px,calc(100vw - 32px));height:auto;max-height:calc(100dvh - 32px);padding:24px;border:1px solid var(--line);border-radius:8px;transform:translate(-50%,-48%) scale(.98);opacity:0;visibility:hidden;pointer-events:none;transition:transform .18s ease,opacity .18s ease}
+  #deviceModal.open{transform:translate(-50%,-50%) scale(1);opacity:1;visibility:visible;pointer-events:auto}
+  #deviceModal .drawer-head{padding-bottom:14px;border-bottom:1px solid var(--line)}
+  #deviceModal .drawer-head h2{font-size:20px;margin:0}
+  #deviceModal .actions{justify-content:flex-end;margin-top:20px}
   .timeline{border-left:2px solid #e4e7eb;padding-left:18px}.tl{position:relative;margin:0 0 18px}.tl:before{content:"";position:absolute;width:9px;height:9px;background:#17191d;border-radius:50%;left:-24px;top:5px}.tl small{color:var(--muted)}
   .empty{padding:40px;text-align:center;color:#858d98;background:#fff;border:1px dashed var(--line);border-radius:12px}
   .danger{color:#b91f2d}
@@ -384,6 +391,7 @@
 <body>
 <div class="app">
   <aside>
+    <a class="return-system" href="/" target="_top">← 返回技术支持系统</a>
     <div class="brand">设备流转管理<small>维修 · 借测 · 设备档案</small></div>
     <nav>
       <button class="active" data-tab="dashboard">设备总览</button>
@@ -615,8 +623,8 @@
   <div id="drawerBody"></div>
 </div>
 
-<div id="deviceModal" class="drawer">
-  <div class="drawer-head"><h2>新建设备</h2><button class="btn" onclick="closeAllDrawers()">关闭</button></div>
+<div id="deviceModal" class="drawer" role="dialog" aria-modal="true" aria-labelledby="deviceModalTitle">
+  <div class="drawer-head"><h2 id="deviceModalTitle">新建设备</h2><button class="btn" onclick="closeAllDrawers()">取消</button></div>
   <div class="form-grid">
     <div class="field"><label>SN *</label><input id="dSN"></div>
     <div class="field"><label>型号 *</label><input id="dModel"></div>
@@ -626,7 +634,7 @@
     <div class="field"><label>资产编号</label><input id="dAssetNo"></div>
     <div class="field full"><label>备注</label><textarea id="dNote"></textarea></div>
   </div>
-  <div class="actions" style="margin-top:18px"><button class="btn primary" onclick="saveDevice()">保存设备</button></div>
+  <div class="actions"><button class="btn primary" onclick="saveDevice()">保存设备</button></div>
 </div>
 
 <div id="dueWarningModal" class="warning-modal" onclick="if(event.target===this)closeDueWarning()">
@@ -766,6 +774,9 @@ document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>showTab(b.datas
 function closeAllDrawers(){
   $('drawer').classList.remove('open'); $('deviceModal').classList.remove('open'); $('drawerOverlay').classList.remove('open'); if($('imageLightbox')) closeLightbox();
 }
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape' && ($('drawer').classList.contains('open') || $('deviceModal').classList.contains('open')))closeAllDrawers();
+});
 function saveViewState(extra={}){
   try{
     const prev=JSON.parse(sessionStorage.getItem(VIEW_STATE_KEY)||'{}');
@@ -1750,7 +1761,7 @@ function addDemoData(){
   save(DEV_KEY,devs);save(DB_KEY,rs);renderDashboard();renderDevices();renderRecords('repair');renderRecords('loan');refreshSNList();alert('演示数据已添加。可查看：即将到期、逾期、客户流转、设备健康、月度统计。');
 }
 
-function openDeviceForm(){closeAllDrawers();$('deviceModal').classList.add('open');$('drawerOverlay').classList.add('open')}
+function openDeviceForm(){closeAllDrawers();$('deviceModal').classList.add('open');$('drawerOverlay').classList.add('open');$('dSN').focus()}
 function saveDevice(){
   let sn=$('dSN').value.trim(),model=$('dModel').value.trim(); if(!sn||!model){alert('请填写 SN 和型号');return}
   let devs=load(DEV_KEY,[]); if(devs.some(d=>d.sn===sn)){alert('该 SN 已存在');return}

@@ -45,6 +45,17 @@ test('loads imported records and preserves the original loan controls', async ({
   expect((await download).suggestedFilename()).toMatch(/^借测记录_.*\.xlsx$/)
   await page.setViewportSize({ width: 390, height: 844 })
   expect(await frame.locator('body').evaluate((body) => body.ownerDocument!.documentElement.scrollWidth)).toBe(390)
+  await frame.locator('nav button[data-tab="dashboard"]').click()
+  await frame.locator('#dashboard button[onclick="openDeviceForm()"]').click()
+  await expect(frame.locator('#deviceModal')).toBeVisible()
+  const bounds = await frame.locator('#deviceModal').boundingBox()
+  expect(bounds).not.toBeNull()
+  expect(bounds!.x).toBeGreaterThanOrEqual(0)
+  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390)
+  await frame.locator('#dSN').press('Escape')
+  await expect(frame.locator('#deviceModal')).toBeHidden()
+  await frame.locator('.return-system').click()
+  await expect(page).toHaveURL('/')
 })
 
 test('saves a new record to the server and keeps it after reload', async ({ page }) => {
