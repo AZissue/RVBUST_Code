@@ -8,6 +8,7 @@ import { DeviceDetailPage } from './pages/DeviceDetailPage'
 import { CustomersPage } from './pages/CustomersPage'
 import { DashboardPage } from './pages/DashboardPage'
 import { DevicesPage } from './pages/DevicesPage'
+import { KnowledgePage } from './pages/KnowledgePage'
 import { LoansPage } from './pages/LoansPage'
 import { LoanDetailPage } from './pages/LoanDetailPage'
 import { LoanFormPage } from './pages/LoanFormPage'
@@ -54,6 +55,7 @@ export default function App() {
       <Route path="repairs/new" element={<RepairFormPage />} />
       <Route path="repairs/:id" element={<RepairsPage />} />
       <Route path="worklogs" element={<WorklogsPage />} />
+      <Route path="knowledge" element={<KnowledgePage />} />
       <Route path="reports" element={<ReportCalendarPage />} />
       <Route path="stats" element={<ReportsPage />} />
       <Route path="users" element={<UsersPage />} />

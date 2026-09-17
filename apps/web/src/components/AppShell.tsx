@@ -12,6 +12,7 @@ const groups = [
   { label: '客户', items: [{ to: '/customers', label: '客户管理', icon: Building2 }] },
   { label: '设备管理', items: [{ to: '/devices', label: '设备总览', icon: Package }, { to: '/loans', label: '借测管理', icon: Share2 }, { to: '/repairs', label: '维修管理', icon: Wrench }] },
   { label: '数据', items: [{ to: '/worklogs', label: '工作记录', icon: NotebookPen }, { to: '/reports', label: '日报/周报/月报', icon: FileText }, { to: '/stats', label: '统计报表', icon: BarChart3 }] },
+  { label: '知识', items: [{ to: '/knowledge', label: '知识库', icon: BookOpen }] },
 ]
 
 interface Notification { id: string; title: string; body: string; readAt?: string; createdAt: string; ticket?: { id: string } }
@@ -43,7 +44,6 @@ export function AppShell() {
       <div className="brand"><div className="brand-mark">TS</div><div><strong>技术支持系统</strong><span>Support Operations V2</span></div><button className="icon-button mobile-only" onClick={() => setMenuOpen(false)}><X size={18} /></button></div>
       <nav>
         {groups.map((group) => <div className="nav-group" key={group.label}><div className="nav-label">{group.label}</div>{group.items.map((item) => <NavLink end={item.to === '/'} key={item.to} to={item.to} onClick={() => setMenuOpen(false)}><item.icon size={17} />{item.label}</NavLink>)}</div>)}
-        <div className="nav-group"><div className="nav-label">知识</div><button className="nav-disabled" title="后续阶段开放"><BookOpen size={17} />知识库<span>后续</span></button></div>
         {isAdmin && <div className="nav-group"><div className="nav-label">系统</div>
           <NavLink to="/users"><Users size={17} />用户管理</NavLink><NavLink to="/teams"><Users size={17} />团队管理</NavLink><NavLink to="/settings"><Settings size={17} />系统设置</NavLink><NavLink to="/audit"><FileClock size={17} />操作日志</NavLink>
         </div>}
