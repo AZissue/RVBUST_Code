@@ -28,7 +28,7 @@ test('quick input, personal ticket sync, themes and mobile', async ({ page, brow
   ] as const
   for (const [input, priority, matched] of inputs) {
     await page.getByLabel('快速工单输入').fill(input)
-    await page.getByRole('button', { name: '解析并创建工单' }).click()
+    await page.getByRole('button', { name: '智能解析' }).click()
     const dialog = page.getByRole('dialog', { name: '解析结果确认' })
     await expect(dialog).toBeVisible()
     await expect(dialog.getByLabel('确认优先级')).toHaveValue(priority)
@@ -36,7 +36,7 @@ test('quick input, personal ticket sync, themes and mobile', async ({ page, brow
       await expect(dialog.getByText('未匹配到现有客户', { exact: true })).toBeVisible()
       await expect(dialog.getByRole('button', { name: '确认创建工单', exact: true })).toBeDisabled()
     } else await expect(dialog.getByLabel('确认客户')).not.toHaveValue('')
-    if (input.includes('2D正常')) await expect(dialog.getByLabel('确认问题')).toHaveValue('G52000 2D正常3D无点云')
+    if (input.includes('2D正常')) await expect(dialog.getByLabel('确认问题', { exact: true })).toHaveValue('G52000 2D正常3D无点云')
     await dialog.getByRole('button', { name: '重新编辑' }).click()
   }
   const extraCustomerResponse = await page.request.post('/api/customers', { data: { name: '浙江智享科技' } })
@@ -46,7 +46,7 @@ test('quick input, personal ticket sync, themes and mobile', async ({ page, brow
   await page.request.patch(`/api/users/${employee.id}`, { data: { name: '张三' } })
   try {
     await page.getByLabel('快速工单输入').fill('浙江智享 M2600无点云 张工 紧急')
-    await page.getByRole('button', { name: '解析并创建工单' }).click()
+    await page.getByRole('button', { name: '智能解析' }).click()
     const ambiguous = page.getByRole('dialog', { name: '解析结果确认' })
     await expect(ambiguous.getByLabel('确认客户')).toHaveValue('')
     await expect(ambiguous.getByLabel('确认负责人')).toHaveValue('')
@@ -58,7 +58,7 @@ test('quick input, personal ticket sync, themes and mobile', async ({ page, brow
     await page.request.patch(`/api/users/${employee.id}`, { data: { name: employee.name } })
   }
   await page.getByLabel('快速工单输入').fill('浙江智享机器人 M2600拍摄3D无点云 张伟 紧急')
-  await page.getByRole('button', { name: '解析并创建工单' }).click()
+  await page.getByRole('button', { name: '智能解析' }).click()
   const dialog = page.getByRole('dialog', { name: '解析结果确认' })
   await expect(dialog.getByLabel('确认负责人')).toHaveValue(admin.id)
   await expect(dialog.getByRole('button', { name: /确认创建工单|仍然创建新工单/ })).toBeEnabled()
@@ -69,7 +69,7 @@ test('quick input, personal ticket sync, themes and mobile', async ({ page, brow
   const id = href!.split('/').pop()!
   try {
     await page.reload()
-    await expect(page.locator('.today-overview')).toContainText('待处理工单')
+    await expect(page.locator('.today-overview')).toContainText('我的待处理')
     await page.getByRole('link', { name: '我的工作', exact: true }).first().click()
     const row = page.locator(`.personal-ticket-list a[href="/tickets/${id}"]`)
     await expect(row).toBeVisible(); await row.click()
@@ -83,9 +83,10 @@ test('quick input, personal ticket sync, themes and mobile', async ({ page, brow
     await page.getByTitle('深色').click()
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
     await page.screenshot({ path: 'test-results/my-work-dark.png', fullPage: true })
-    await row.click()
-    await page.getByLabel('工单负责人', { exact: true }).selectOption(support.id)
-    await expect(page.getByLabel('工单负责人', { exact: true })).toHaveValue(support.id)
+    // 改派负责人在工单列表行内完成（我的工作/详情页均无负责人下拉）
+    await page.getByRole('link', { name: '工单', exact: true }).click()
+    const ticketNumber = (await (await page.request.get(`/api/tickets/${id}`)).json()).number
+    await page.locator('tbody tr', { hasText: ticketNumber }).getByLabel('工单负责人').selectOption(support.id)
     await page.getByRole('link', { name: '我的工作', exact: true }).click()
     await expect(row).toHaveCount(0)
     const supportContext = await browser.newContext({ baseURL: process.env.WEB_PORT ? `http://127.0.0.1:${process.env.WEB_PORT}` : 'http://127.0.0.1:5173' })
@@ -96,7 +97,7 @@ test('quick input, personal ticket sync, themes and mobile', async ({ page, brow
     await supportContext.close()
     await page.getByRole('link', { name: '仪表盘', exact: true }).click()
     await page.getByLabel('快速工单输入').fill('浙江智享 M2600没有点云 张伟 高优先级')
-    await page.getByRole('button', { name: '解析并创建工单' }).click()
+    await page.getByRole('button', { name: '智能解析' }).click()
     await expect(page.getByRole('heading', { name: '发现可能相关的现有工单' })).toBeVisible()
     const match = page.locator('.similar-tickets article').filter({ has: page.locator(`a[href="/tickets/${id}"]`) })
     page.once('dialog', (d) => d.accept())
@@ -110,12 +111,12 @@ test('quick input, personal ticket sync, themes and mobile', async ({ page, brow
     await page.screenshot({ path: 'test-results/dashboard-mobile.png', fullPage: true })
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
     await page.getByLabel('快速工单输入').fill('M2600无点云 张伟 紧急')
-    await page.getByRole('button', { name: '解析并创建工单' }).click()
+    await page.getByRole('button', { name: '智能解析' }).click()
     await page.screenshot({ path: 'test-results/quick-confirm-mobile.png' })
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
     await page.getByRole('button', { name: '重新编辑' }).click()
     for (const path of ['/customers', '/devices', '/worklogs', '/reports', '/stats', '/work-items']) {
-      await page.goto(path); await expect(page.locator('h1')).toBeVisible(); await expect(page.getByText('数据加载失败', { exact: true })).toHaveCount(0)
+      await page.goto(path); await expect(page.locator('h1').first()).toBeVisible(); await expect(page.getByText('数据加载失败', { exact: true })).toHaveCount(0)
     }
     expect(errors).toEqual([])
   } finally { await page.request.delete(`/api/tickets/${id}`) }
