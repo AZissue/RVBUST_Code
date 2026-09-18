@@ -5,6 +5,18 @@
 
 ## ⏭ 交接块（新会话先读这里）
 
+- **2026-09-18（打包 test2.0 测试包给现场试用）**
+  - 按 `pack_portable.ps1` 打出 `dist/HandEyeCalibrationTool_test2.0/`（228.6 MB，
+    200 个文件）+ `dist/HandEyeCalibrationTool_test2.0.zip`（85.1 MB）。
+  - 脚本增强：新增 `-Name` 参数（留空仍为 `HandEyeCalibrationTool_v<Version>`），
+    说明文件改名为 `使用说明.txt`，内容由 `packaging/README.txt` 模板注入版本与打包
+    日期（`@VERSION@` / `@DATE@`）；脚本仍保持纯 ASCII（中文文件名用码点拼出）。
+  - 验证：包内 exe 与 build 产物 SHA256 一致；在本机运行中的实例上枚举其同目录加载
+    的 54 个模块，全部存在于包内（含 Qt5Network.dll）；`platforms/`（1 个）与
+    `osgPlugins-3.6.5/`（77 个）齐全；ctest 1/1 通过。
+  - 未做：没在「未装 RVC/VC++ 运行库」的干净机器上实测；打包时本机有实例正在运行，
+    锁住了 `build/src/Release/vcruntime140_1.dll`，导致 CMake post-build 拷贝报
+    `Permission denied`（关掉运行中的实例后重建即恢复，不影响本次包的内容）。
 - **2026-09-17（v2.1 三项任务，Codex 验收 × Claude Code 实现的循环）**
   - 任务一（卡死）**已修复并验收**：①`CameraManager` 全部 RVC 设备访问收进一把
     `recursive_timed_mutex`，拍照改为"确定性等预览让位"（原来的"等 3 s 超时后照样并发进设备"
