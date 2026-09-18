@@ -34,6 +34,8 @@ type AttachmentRow = {
 };
 
 const emptyState = (): FlowState => ({ records: [], devices: [], recycle: { records: [], devices: [] }, settings: {} });
+/** 维修记录先创建后补录的占位客户（全系统复用一行，补填真实客户后自动迁移） */
+const PLACEHOLDER_ORG = '待补充客户';
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 const asText = (value: unknown) => typeof value === 'string' ? value : '';
 const storedFileId = (value: unknown) => typeof value === 'string' ? /^\/api\/html-device-flow\/files\/([a-f0-9-]{36})$/i.exec(value)?.[1]?.toLowerCase() : undefined;
@@ -535,8 +537,10 @@ export class HtmlDeviceFlowService {
         const matchedFlow = repairByFlowId.get(record.id);
         const uuid = flowRowUuid(record.id, 'R');
         const rowId = matchedFlow ? matchedFlow.id : uuid && repairById.has(uuid) ? uuid : randomUUID();
-        const organizationId = await resolveOrg(asText(record.customer));
-        if (!organizationId) throw new BadRequestException(`记录 ${record.id} 缺少客户名称`);
+        // 维修记录允许先创建后补录：客户为空时挂到占位客户「待补充客户」（全系统复用一行），
+        // 后续在页面补填真实客户后，update 路径会重新解析并迁移到正确组织
+        const organizationId = (await resolveOrg(asText(record.customer))) ?? await resolveOrg(PLACEHOLDER_ORG);
+        if (!organizationId) throw new BadRequestException(`记录 ${record.id} 客户解析失败`);
         const contactId = await resolveContact(organizationId, asText(record.contact), asText(record.phone));
         const status = repairStatusFromLabel(record.status);
         const existing = repairById.get(rowId);

@@ -901,7 +901,7 @@ function collectRecord() {
 }
 async function saveRecord() {
   const r = collectRecord();
-  if (!r.customer) { alert('请至少填写客户 / 报修单位。'); return }
+  if (!r.customer && r.type !== 'repair') { alert('请至少填写客户 / 报修单位。'); return }
   if (r.type === 'loan') {
     if (!r.sn) { alert('借测单请填写设备 SN。'); return }
     if (!(r.agreement && r.agreement.data)) { alert('请先添加借测协议文档，未添加协议无法创建借测单。'); return }

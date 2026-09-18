@@ -137,7 +137,7 @@ export function CreateTicketModal({ onClose, onCreated, defaultAssigneeId, initi
         customers.setData([...(customers.data ?? []), selected])
         notice = `已新建客户「${selected.name}」`
       }
-      if (showRepairOption && createLinkedRepair && !device?.serialNumber && !value('serialNumber').trim()) throw new Error('勾选创建维修单需要先填写设备序列号（在「补充信息」中填写）')
+      // 维修单允许先创建后补录：序列号缺失时不拦截（返修单支持无 SN 建档，后续在维修详情补填）
       const continuationList = [...selectedContinuations.values()]
       for (const item of continuationList) {
         if ((continuationNotes[item.id] ?? '').trim().length < 2) throw new Error(`请填写工单 ${item.number} 的接续说明（2-500 字）`)

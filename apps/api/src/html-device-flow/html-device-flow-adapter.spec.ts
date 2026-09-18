@@ -234,6 +234,31 @@ describe('html-device-flow adapter sync（翻译回关系表）', () => {
     }));
   });
 
+  it('维修记录客户为空：落到占位客户「待补充客户」，后续补填可迁移', async () => {
+    const { tx, service, emptyData } = setupSync();
+    // 空客户名解析为 null → 占位客户 findFirst 也未命中 → create
+    tx.customerOrganization.findFirst.mockResolvedValue(null);
+    const payload = {
+      revision: 0,
+      data: emptyData({
+        records: [
+          {
+            id: 'R-nocust', orderNo: 'WX20260917999', type: 'repair', sn: '', model: '',
+            customer: '', contact: '', phone: '',
+            reportDate: '', reason: '',
+            status: '待寄回', accessories: '', notes: '', photos: {}, agreement: null, followUps: [],
+          },
+        ],
+      }),
+    };
+    await expect(service.sync(payload)).resolves.toEqual({ revision: 1 });
+    expect(tx.customerOrganization.create).toHaveBeenCalledWith(expect.objectContaining({ data: { name: '待补充客户' } }));
+    const repairCall = tx.repairOrder.upsert.mock.calls[0][0];
+    expect(repairCall.create.organizationId).toBe('org-new');
+    expect(repairCall.create.status).toBe('RECEIVED');
+    expect(repairCall.create.serialNumber).toBeNull();
+  });
+
   it('更新：flowId 命中走 update 分支并恢复 deletedAt，不动 loanNo/createdById', async () => {
     const { tx, service, emptyData } = setupSync();
     tx.htmlFlowState.findUnique.mockResolvedValue({ id: 'main', revision: 3, data: {} });
