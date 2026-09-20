@@ -8,7 +8,6 @@
 #include "logic/TransformTools.h"
 #include "logic/MeasureMethods.h"
 #include "ui/ArrowComboBox.h"
-#include "ui/Image2DView.h"
 #include "ui/MeasurePage.h"
 #include "ui/MeasurePages.h"
 #include "ui/Theme.h"
@@ -222,23 +221,36 @@ void ToolsPanel::updateDistanceResult()
 void ToolsPanel::buildPixelTo3DPage(QStackedWidget* stack)
 {
     auto* page = new QWidget(stack);
+    m_p2dPage = page;   // 冻结判据「当前页是不是像素→3D」就看这个指针
     auto* pageLayout = new QVBoxLayout(page);
 
     auto* group = new QGroupBox(QStringLiteral("像素→3D（离线反投影）"), page);
     auto* form = new QFormLayout(group);
     form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
 
+    // Online / offline switch.  Offline (default) reads a local png + ply and
+    // picks the pixel on the main 2D view; online (camera) is not wired yet.
+    m_p2dModeCombo = new ArrowComboBox(group);
+    m_p2dModeCombo->setObjectName(QStringLiteral("p2d_mode"));
+    m_p2dModeCombo->setStyleSheet(Theme::comboBoxStyle());
+    m_p2dModeCombo->addItem(QStringLiteral("离线（加载本地文件，用主 2D 视窗取点）"));
+    m_p2dModeCombo->addItem(QStringLiteral("在线（相机实时）"));
+    m_p2dModeCombo->setCurrentIndex(0);
+    form->addRow(QStringLiteral("模式"), m_p2dModeCombo);
+
     // Data folder
-    auto* dirRow = new QHBoxLayout();
+    auto* dirWrap = new QWidget(group);
+    auto* dirRow = new QHBoxLayout(dirWrap);
+    dirRow->setContentsMargins(0, 0, 0, 0);
     dirRow->setSpacing(8);
-    m_p2dDir = makeTextInput(group);
+    m_p2dDir = makeTextInput(dirWrap);
     m_p2dDir->setObjectName(QStringLiteral("p2d_dir"));
     m_p2dDir->setPlaceholderText(QStringLiteral("选择含 png + ply 的会话文件夹"));
     dirRow->addWidget(m_p2dDir, 1);
-    auto* browseBtn = new QPushButton(QStringLiteral("浏览"), group);
+    auto* browseBtn = new QPushButton(QStringLiteral("浏览"), dirWrap);
     browseBtn->setStyleSheet(Theme::secondaryButtonStyle());
     dirRow->addWidget(browseBtn);
-    form->addRow(QStringLiteral("数据文件夹"), dirRow);
+    form->addRow(QStringLiteral("数据文件夹"), dirWrap);
 
     // Image file
     m_p2dImageCombo = new ArrowComboBox(group);
@@ -264,16 +276,18 @@ void ToolsPanel::buildPixelTo3DPage(QStackedWidget* stack)
     m_p2dPixel = makeTextInput(group);
     m_p2dPixel->setObjectName(QStringLiteral("p2d_pixel"));
     m_p2dPixel->setPlaceholderText(QStringLiteral(
-        "x, y（像素坐标，也可在下方图像上点击取点）"));
+        "x, y（像素坐标，也可在主 2D 视窗上左键点击取点）"));
     form->addRow(QStringLiteral("像素坐标"), m_p2dPixel);
 
-    // Embedded 2D image view (click to pick pixel)
-    m_p2dView = new Image2DView(group);
-    m_p2dView->setMinimumHeight(240);
-    m_p2dView->setStyleSheet(QStringLiteral(
-        "border: 1px solid %1; border-radius: 4px;")
-        .arg(Theme::BORDER_DEFAULT));
-    form->addRow(QString(), m_p2dView);
+    // 在线模式下整组禁用的文件输入（连同它们的标签）。
+    const QVector<QWidget*> offlineFields = {
+        dirWrap, m_p2dImageCombo, m_p2dIntrinsic, m_p2dExtrinsic
+    };
+    m_p2dOfflineOnly = offlineFields;
+    for (QWidget* field : offlineFields) {
+        if (QWidget* label = form->labelForField(field))
+            m_p2dOfflineOnly.append(label);
+    }
 
     // Result + actions
     auto* resultRow = new QHBoxLayout();
@@ -316,49 +330,115 @@ void ToolsPanel::buildPixelTo3DPage(QStackedWidget* stack)
         m_p2dDir->setText(dir);
         refreshPixelTo3DImages();
     });
+    connect(m_p2dModeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int) { applyPixelTo3DMode(); });
     connect(m_p2dImageCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [this](int index) { showPixelTo3DImage(index); });
-    connect(m_p2dView, &Image2DView::pixelClicked, this, [this](int x, int y) {
-        m_p2dPixel->setText(QStringLiteral("%1, %2").arg(x).arg(y));
-        m_p2dHint->clear();
-    });
     connect(calcBtn, &QPushButton::clicked,
             this, &ToolsPanel::updatePixelTo3DResult);
     connect(m_p2dCopyBtn, &QPushButton::clicked, this, [this]() {
         if (!m_p2dResultValue.isEmpty())
             QApplication::clipboard()->setText(m_p2dResultValue);
     });
-    for (QLineEdit* edit : { m_p2dDir, m_p2dIntrinsic, m_p2dExtrinsic, m_p2dPixel })
+    // 数据文件夹边打字边刷新图像列表（不只在点「浏览」时刷新）。
+    connect(m_p2dDir, &QLineEdit::textChanged,
+            this, [this](const QString&) { refreshPixelTo3DImages(); });
+    for (QLineEdit* edit : { m_p2dIntrinsic, m_p2dExtrinsic, m_p2dPixel })
         connect(edit, &QLineEdit::textChanged, this, [this](const QString&) {
             m_p2dHint->clear();
         });
+}
+
+// 在线/离线开关落到控件上：在线禁用整组文件输入并给提示，离线恢复。
+void ToolsPanel::applyPixelTo3DMode()
+{
+    const bool online = (m_p2dModeCombo->currentIndex() == 1);
+    m_p2dOnline = online;
+    for (QWidget* widget : m_p2dOfflineOnly)
+        widget->setEnabled(!online);
+
+    if (online) {
+        m_p2dHint->setText(QStringLiteral(
+            "在线模式：相机取点链路尚未提供；当前请用离线模式在主 2D 视窗取点"));
+        updateOfflineFreeze();
+        return;
+    }
+
+    m_p2dHint->clear();
+    // 离线：若条件齐备就把主 2D 视窗切到当前选中的 png（否则保持解冻）。
+    updateOfflineFreeze();
+}
+
+// 冻结的唯一判据：面板可见 + 当前工具页是「像素→3D」+ 离线模式且图像有效。
+// 任一不满足 → 立刻解冻。所有状态转换（开/关面板、换工具页、切模式、改目录）
+// 都汇到这里，避免出现"打开面板就冻结"这类错配。
+void ToolsPanel::updateOfflineFreeze(bool requireVisible)
+{
+    const bool onPixelTo3DPage =
+        (m_stack != nullptr && m_p2dPage != nullptr
+         && m_stack->currentWidget() == m_p2dPage);
+    const QString dir = m_p2dDir ? m_p2dDir->text().trimmed() : QString();
+    const int index = m_p2dImageCombo ? m_p2dImageCombo->currentIndex() : -1;
+    const bool hasImage = !dir.isEmpty() && index >= 0
+        && index < m_p2dImageCombo->count();
+
+    if ((requireVisible && !isVisible()) || !onPixelTo3DPage || m_p2dOnline
+        || !hasImage) {
+        emit pixelTo3DOfflineImageEnded();
+        return;
+    }
+    emit pixelTo3DOfflineImageRequested(
+        dir + QLatin1Char('/') + m_p2dImageCombo->itemText(index));
 }
 
 void ToolsPanel::refreshPixelTo3DImages()
 {
     const QString dir = m_p2dDir->text().trimmed();
     m_p2dImageCombo->clear();
-    if (dir.isEmpty())
-        return;
-    QDir qdir(dir);
-    const QStringList pngs = qdir.entryList(
-        { QStringLiteral("*.png"), QStringLiteral("*.jpg"), QStringLiteral("*.bmp") },
-        QDir::Files, QDir::Name);
-    for (const QString& name : pngs)
-        m_p2dImageCombo->addItem(name);
-    if (m_p2dImageCombo->count() > 0)
-        showPixelTo3DImage(0);
+    if (!dir.isEmpty()) {
+        QDir qdir(dir);
+        const QStringList pngs = qdir.entryList(
+            { QStringLiteral("*.png"), QStringLiteral("*.jpg"), QStringLiteral("*.bmp") },
+            QDir::Files, QDir::Name);
+        for (const QString& name : pngs)
+            m_p2dImageCombo->addItem(name);
+    }
+    if (!dir.isEmpty() && m_p2dImageCombo->count() == 0)
+        m_p2dHint->setText(QStringLiteral("该目录下没有 png 图像"));
+    // 目录/显式选择变了 → 按同一套判据重算冻结（空目录自动解冻）。
+    updateOfflineFreeze();
 }
 
+// 离线取点：把当前 png 交给主窗口冻结到主 2D 视窗上（是否真的冻结由
+// updateOfflineFreeze() 的三条判据决定，这里不再自己判断）。
 void ToolsPanel::showPixelTo3DImage(int index)
 {
-    const QString dir = m_p2dDir->text().trimmed();
-    if (dir.isEmpty() || index < 0 || index >= m_p2dImageCombo->count())
+    Q_UNUSED(index);
+    updateOfflineFreeze();
+}
+
+void ToolsPanel::onMainViewPixelClicked(int x, int y)
+{
+    if (m_p2dOnline || !isVisible())
         return;
-    const QString path = dir + QLatin1Char('/') + m_p2dImageCombo->itemText(index);
-    QImage img(path);
-    if (!img.isNull())
-        m_p2dView->updateFrame(img);
+    m_p2dPixel->setText(QStringLiteral("%1, %2").arg(x).arg(y));
+    m_p2dHint->clear();
+    updatePixelTo3DResult();
+}
+
+void ToolsPanel::showEvent(QShowEvent* event)
+{
+    QDialog::showEvent(event);
+    // showEvent 期间 isVisible() 未必已经为 true，这里显式按「正在显示」评估：
+    // 仍然要求当前页是「像素→3D」且离线+图像有效，才冻结主 2D 视窗。
+    updateOfflineFreeze(false);
+}
+
+void ToolsPanel::hideEvent(QHideEvent* event)
+{
+    // 关闭（或最小化）工具页：把主 2D 视窗还给实时/采集图。
+    emit pixelTo3DOfflineImageEnded();
+    QDialog::hideEvent(event);
 }
 
 void ToolsPanel::updatePixelTo3DResult()
@@ -419,6 +499,11 @@ void ToolsPanel::updatePixelTo3DResult()
     const bool extGiven = !m_p2dExtrinsic->text().trimmed().isEmpty();
     const bool hasExtrinsics =
         extGiven && ek.status == ToolInputParser::ParseStatus::Ok;
+    // 非空但解析失败的外参不静默忽略。
+    if (extGiven && !hasExtrinsics) {
+        fail(QStringLiteral("相机外参：%1").arg(parseErrorText(ek, 16)));
+        return;
+    }
     if (hasExtrinsics) {
         for (int i = 0; i < 16; ++i)
             ext[static_cast<std::size_t>(i)] = ek.values[i];
@@ -449,11 +534,6 @@ void ToolsPanel::updatePixelTo3DResult()
         && ik.status != ToolInputParser::ParseStatus::Ok) {
         fail(QStringLiteral("点云与图像尺寸不一致，需要相机内参：%1")
                  .arg(parseErrorText(ik, 9)));
-        return;
-    }
-    if (q.status == PixelTo3DService::Status::NoPointAtPixel
-        && extGiven && !hasExtrinsics) {
-        fail(QStringLiteral("相机外参：%1").arg(parseErrorText(ek, 16)));
         return;
     }
     fail(QString::fromStdString(PixelTo3DService::statusText(q.status)));
@@ -1157,6 +1237,10 @@ bool ToolsPanel::activeToolIsMeasure() const
 
 void ToolsPanel::onToolChanged(int row)
 {
+    // 换页先重算冻结：切走「像素→3D」立刻解冻，切回来（离线+图像有效）重新冻结。
+    // （列表项 → 堆叠页的 setCurrentIndex 在 buildUi() 里先于本槽连接，所以这里
+    //   m_stack->currentWidget() 已经是新页。）
+    updateOfflineFreeze();
     const int idx = row - m_firstMeasureRow;
     if (idx < 0 || idx >= static_cast<int>(m_pages.size())) {
         // 非测量工具：保留 m_page（它仍是"最近测过的那一页"，2D/3D 显示页

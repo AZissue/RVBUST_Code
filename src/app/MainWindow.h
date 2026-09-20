@@ -87,6 +87,9 @@ private:
     void onCapture();
     void saveFromCards();
     void on2dPixelPicked(int x, int y);
+    // 像素→3D（离线）：工具页请求把主 2D 视窗冻结到这张离线图上 / 解冻。
+    void onPixelTo3DOfflineImageRequested(const QString& imagePath);
+    void onPixelTo3DOfflineImageEnded();
     void onCalibrate();
     void onCalibrationFinished();
     void onRobotConnect(const QString& host, quint16 port,

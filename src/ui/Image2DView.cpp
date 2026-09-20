@@ -111,6 +111,11 @@ void Image2DView::updateFrame(const QImage& image, bool preserveView, bool liveP
 
     m_cameraImage = image;
 
+    // Frozen for an offline tool: the real frame is kept (so unfreezing brings
+    // it straight back) but nothing on screen changes.
+    if (m_frozen)
+        return;
+
     // A streaming preview must not regenerate a measurement page 20 times a
     // second: on a non-image page the live frames are ignored and the page
     // keeps the last captured measurement.  A captured still always refreshes.
@@ -177,6 +182,53 @@ void Image2DView::clear()
     m_cameraImage = QImage();
     m_canvasDirty = true;
     m_imageLabel->clear();
+}
+
+// ── Offline freeze ─────────────────────────────────────────────────────
+
+void Image2DView::setFrozenImage(const QImage& image)
+{
+    if (image.isNull())
+        return;
+    m_frozenImage = image;
+    m_frozen = true;
+    refreshPagePixmap();     // paints the still instead of the live frame
+    m_autoFit = true;
+    m_zoomLevel = 0.0;
+    fitZoom();
+    m_canvasDirty = true;
+    m_livePreview = false;
+    m_smoothRender = true;
+    render();
+}
+
+void Image2DView::clearFrozenImage()
+{
+    if (!m_frozen)
+        return;
+    m_frozen = false;
+    m_frozenImage = QImage();
+
+    if (!m_cameraImage.isNull()) {
+        // Come back to the last real frame that arrived while frozen.
+        refreshPagePixmap();
+        m_autoFit = true;
+        m_zoomLevel = 0.0;
+        fitZoom();
+        m_canvasDirty = true;
+        m_livePreview = false;
+        m_smoothRender = true;
+        render();
+        return;
+    }
+
+    // No real frame to come back to: leave the canvas empty.
+    m_originalPixmap = QPixmap();
+    m_cachedCanvas = QPixmap();
+    m_cachedVisible = QPixmap();
+    m_canvasDirty = true;
+    m_imageLabel->clear();
+    render();
 }
 
 // ── Display pages (inside this widget, no extra window) ───────────────
@@ -290,6 +342,18 @@ void Image2DView::setMeasurement(const Measurement::Snapshot& snapshot)
 
 void Image2DView::refreshPagePixmap()
 {
+    if (m_frozen) {
+        // Frozen for an offline tool page: the still wins over every page, so a
+        // page switch during the offline session cannot drop it.
+        if (m_frozenImage.isNull())
+            return;
+        if (m_originalPixmap.isNull() || m_originalPixmap.size() != m_frozenImage.size())
+            m_originalPixmap = QPixmap::fromImage(m_frozenImage);
+        else
+            m_originalPixmap.convertFromImage(m_frozenImage);
+        return;
+    }
+
     if (m_page == Page::Image) {
         if (!m_cameraImage.isNull()) {
             if (m_originalPixmap.isNull() || m_originalPixmap.size() != m_cameraImage.size())

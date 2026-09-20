@@ -1,0 +1,17 @@
+********* Start testing of TestDataQualityCheck *********
+Config: Using QtTest library 5.14.2, Qt 5.14.2 (x86_64-little_endian-llp64 shared (dynamic) release build; by MSVC 2017)
+PASS   : TestDataQualityCheck::initTestCase()
+PASS   : TestDataQualityCheck::parsePoseText()
+PASS   : TestDataQualityCheck::countEmpty()
+PASS   : TestDataQualityCheck::countTooFew()
+PASS   : TestDataQualityCheck::countAdvisory()
+PASS   : TestDataQualityCheck::countEnough()
+PASS   : TestDataQualityCheck::nearDuplicate()
+PASS   : TestDataQualityCheck::noNearDuplicate()
+PASS   : TestDataQualityCheck::outlierPosition()
+PASS   : TestDataQualityCheck::frameErrorHigh()
+PASS   : TestDataQualityCheck::spreadInsufficient()
+PASS   : TestDataQualityCheck::overallOk()
+PASS   : TestDataQualityCheck::cleanupTestCase()
+Totals: 13 passed, 0 failed, 0 skipped, 0 blacklisted, 2ms
+********* Finished testing of TestDataQualityCheck *********

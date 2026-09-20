@@ -60,6 +60,9 @@ public:
     // measurement so the colouring appears (or disappears) immediately.
     void setDeviationColoring(bool on);
 
+    // 像素→3D 工具页的「在线/离线」开关状态（离线 = 用主 2D 视窗取点）。
+    bool pixelTo3DOffline() const { return !m_p2dOnline; }
+
 signals:
     // Emitted when the panel's own 3D-colouring checkbox is toggled, so the 3D
     // toolbar button can follow it.
@@ -77,6 +80,19 @@ signals:
     // Measurement explanation / result lines (P4).  MainWindow writes them into
     // the operation log; the panel itself never touches the logger.
     void logMessage(const QString& line);
+
+    // 离线模式：请主窗口把主 2D 视窗冻结成这张图
+    void pixelTo3DOfflineImageRequested(const QString& imagePath);
+    // 离开离线模式 / 关掉工具页 / 清空目录：请主窗口解冻
+    void pixelTo3DOfflineImageEnded();
+
+public slots:
+    // 主 2D 视窗上的左键点击（离线取点）：填进像素输入框并立刻重算
+    void onMainViewPixelClicked(int x, int y);
+
+protected:
+    void showEvent(QShowEvent* event) override;
+    void hideEvent(QHideEvent* event) override;
 
 private:
     void buildUi();
@@ -101,6 +117,11 @@ private:
     void updateTransformResult();
     void refreshPixelTo3DImages();
     void showPixelTo3DImage(int index);
+    // 在线/离线开关落到控件上：在线禁用整组文件输入并给提示，离线恢复。
+    void applyPixelTo3DMode();
+    // 冻结的唯一出口：面板可见(requireVisible) + 当前页是「像素→3D」+ 离线且图像有效，
+    // 全满足才请求主窗口冻结，否则立刻解冻。
+    void updateOfflineFreeze(bool requireVisible = true);
 
     QListWidget* m_toolList = nullptr;
     QStackedWidget* m_stack = nullptr;
@@ -120,7 +141,11 @@ private:
     QLineEdit* m_p2dIntrinsic = nullptr;
     QLineEdit* m_p2dExtrinsic = nullptr;
     QLineEdit* m_p2dPixel = nullptr;
-    class Image2DView* m_p2dView = nullptr;
+    QComboBox* m_p2dModeCombo = nullptr;      // p2d_mode：离线（默认）/ 在线
+    QWidget* m_p2dPage = nullptr;             // 堆叠页里的「像素→3D」页（冻结判据用）
+    // 在线模式下整组禁用的控件（文件输入 + 对应标签）
+    QVector<QWidget*> m_p2dOfflineOnly;
+    bool m_p2dOnline = false;
     QLabel* m_p2dResult = nullptr;
     QLabel* m_p2dHint = nullptr;
     QPushButton* m_p2dCopyBtn = nullptr;

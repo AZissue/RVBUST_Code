@@ -314,8 +314,15 @@ void MainWindow::wireSignals()
             m_pickSphereHandle = -1;
         }
     });
-    connect(m_view2d, &Image2DView::pixelClicked,
-            this, &MainWindow::on2dPixelPicked);
+    connect(m_view2d, &Image2DView::pixelClicked, this, [this](int x, int y) {
+        // 既有行为（黄球 + 相机目标点卡片 + 提示）保持不变。
+        on2dPixelPicked(x, y);
+        // 离线工具打开期间，同一次点击再转发一份给「像素→3D」页。
+        if (m_toolsPanel && m_toolsPanel->isVisible()
+            && m_toolsPanel->pixelTo3DOffline()) {
+            m_toolsPanel->onMainViewPixelClicked(x, y);
+        }
+    });
     connect(m_camera, &CameraManager::cameraError, this,
             [this](const QString& msg) {
                 m_logger->error(msg);
@@ -492,6 +499,10 @@ void MainWindow::wireSignals()
     // one state — route each to the other so they cannot drift apart.
     connect(m_view3d, &VisSceneView::deviationColoringToggled,
             m_toolsPanel, &ToolsPanel::setDeviationColoring);
+    connect(m_toolsPanel, &ToolsPanel::pixelTo3DOfflineImageRequested,
+            this, &MainWindow::onPixelTo3DOfflineImageRequested);
+    connect(m_toolsPanel, &ToolsPanel::pixelTo3DOfflineImageEnded,
+            this, &MainWindow::onPixelTo3DOfflineImageEnded);
     connect(m_toolsPanel, &ToolsPanel::deviationColoringChanged,
             m_view3d, &VisSceneView::setDeviationColoringChecked);
     connect(m_flow, &CaptureFlow::clearMarkersRequested,
@@ -950,6 +961,23 @@ void MainWindow::on2dPixelPicked(int x, int y)
     m_logger->info(
         QStringLiteral("2D 点击取点: 像素 (%1, %2) → 3D (%3)")
             .arg(x).arg(y).arg(value));
+}
+
+void MainWindow::onPixelTo3DOfflineImageRequested(const QString& imagePath)
+{
+    const QImage img(imagePath);
+    if (img.isNull()) {
+        const QString name = QFileInfo(imagePath).fileName();
+        m_logger->error(QStringLiteral("像素→3D：无法加载离线图像 %1").arg(imagePath));
+        m_toast->showMessage(QStringLiteral("无法加载离线图像：%1").arg(name), false);
+        return;
+    }
+    m_view2d->setFrozenImage(img);
+}
+
+void MainWindow::onPixelTo3DOfflineImageEnded()
+{
+    m_view2d->clearFrozenImage();
 }
 
 void MainWindow::onCalibrate()

@@ -53,6 +53,13 @@ public:
     void clearMarkers();
     void clear();
 
+    // 临时把画面冻结成给定图像（离线工具用）。冻结期间 updateFrame() 仍更新
+    // "最后一张真实帧"，但不改屏幕上的画面，也不会丢掉实时数据。
+    void setFrozenImage(const QImage& image);
+    // 解冻：立刻用最后一张真实帧重绘（没有真实帧时清空画面）。
+    void clearFrozenImage();
+    bool frozen() const { return m_frozen; }
+
 signals:
     // Left-click on the image; coordinates are image pixels (0-based).
     void pixelClicked(int x, int y);
@@ -96,6 +103,10 @@ private:
     QPointer<QPushButton> m_clearRoiBtn;   // 清除 ROI（工具栏，无 ROI 时禁用）
     Page m_page = Page::Image;
     QImage m_cameraImage;        // last frame, kept for the 尺寸总图 base layer
+    // Offline freeze (the 像素→3D tool shows one of its own png on this view).
+    // m_cameraImage keeps following the live stream while frozen.
+    QImage m_frozenImage;
+    bool m_frozen = false;
     Measurement::Snapshot m_snapshot;
     QVector<QRect> m_rois;
     QStringList m_roiLabels;
