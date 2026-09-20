@@ -389,6 +389,9 @@ void MainWindow::wireSignals()
     connect(m_data, &DataManager::dataChanged, this, [this]() {
         m_actionButtons->setCalcEnabled(m_data->count() > 0);
     });
+    // 工具面板「手眼标定」页：用当前会话一键算（路径与位姿由主窗口给回）
+    connect(m_toolsPanel, &ToolsPanel::calibrationSessionRequested, this,
+            &MainWindow::onCalibrationSessionRequested);
     // Robot communication (isolated; wiring is inert until the user connects)
     connect(m_toolsPanel, &ToolsPanel::robotConnectRequested,
             this, &MainWindow::onRobotConnect);
@@ -1054,6 +1057,21 @@ void MainWindow::onCalibrate()
     m_calibWatcher->setFuture(QtConcurrent::run([folder, poseLines, params]() {
         return CalibrationService::calibrateMarker(folder, poseLines, params);
     }));
+}
+
+void MainWindow::onCalibrationSessionRequested()
+{
+    const auto records = m_data->allRecords();
+    QStringList poseLines;
+    for (const auto& r : records) {
+        if (!r.robotCapturePose.trimmed().isEmpty())
+            poseLines.push_back(r.robotCapturePose);
+    }
+    // 没有记录时也要回一次（空 poseLines），让面板给出可读提示。
+    m_toolsPanel->useCurrentSession(
+        m_data->saveDir(), poseLines,
+        m_eyeHandMode == EyeHandMode::EyeInHand,
+        m_markerType == MarkerType::ConcentricCircle);
 }
 
 void MainWindow::onCalibrationFinished()

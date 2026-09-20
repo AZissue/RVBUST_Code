@@ -98,6 +98,8 @@ private:
     void onPixelTo3DOfflineImageRequested(const QString& imagePath);
     void onPixelTo3DOfflineImageEnded();
     void onCalibrate();
+    // 工具页「用当前会话」：把当前会话目录与每组机器人位姿喂回面板（无记录也回一次）。
+    void onCalibrationSessionRequested();
     void onCalibrationFinished();
     void onRobotConnect(const QString& host, quint16 port,
                         int protocol, int format, double scale,

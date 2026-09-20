@@ -1,0 +1,13 @@
+********* Start testing of TestPointCloudUtils *********
+Config: Using QtTest library 5.14.2, Qt 5.14.2 (x86_64-little_endian-llp64 shared (dynamic) release build; by MSVC 2017)
+PASS   : TestPointCloudUtils::initTestCase()
+PASS   : TestPointCloudUtils::filtersNanAndZeroPoints()
+PASS   : TestPointCloudUtils::convertsMetersToMillimeters()
+PASS   : TestPointCloudUtils::extractsBgrColorsAsRgb()
+PASS   : TestPointCloudUtils::usesGrayForMonoImage()
+PASS   : TestPointCloudUtils::defaultsToWhiteWithoutImage()
+PASS   : TestPointCloudUtils::projectsLookAtCenterToScreenCenter()
+PASS   : TestPointCloudUtils::projectsOffCenterPointAndRejectsBehindCamera()
+PASS   : TestPointCloudUtils::cleanupTestCase()
+Totals: 9 passed, 0 failed, 0 skipped, 0 blacklisted, 1ms
+********* Finished testing of TestPointCloudUtils *********

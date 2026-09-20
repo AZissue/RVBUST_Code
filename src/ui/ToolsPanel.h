@@ -94,7 +94,14 @@ signals:
     // 在线模式：请主窗口用当前采集帧执行一次像素→3D 查询
     void pixelTo3DOnlineQueryRequested(int pixelX, int pixelY);
 
+    // 用户点了「用当前会话」：请主窗口把当前会话目录与每组位姿给回来
+    void calibrationSessionRequested();
+
 public slots:
+    // 主窗口回答：folder = 当前会话目录；poseLines = 每组数据的机器人位姿（顺序即采集顺序）；
+    // eyeInHand / concentric 与主窗口当前选择一致，两个下拉框要对齐过去。
+    void useCurrentSession(const QString& folder, const QStringList& poseLines,
+                           bool eyeInHand, bool concentric);
     // 主 2D 视窗上的左键点击（离线取点）：填进像素输入框并立刻重算
     void onMainViewPixelClicked(int x, int y);
     // 主窗口的查询结果：ok=false 时 message 是可读中文原因
@@ -125,6 +132,10 @@ private:
     void updatePixelTo3DResult();
     void updateCalibrationResult();
     void onCalibrationFinished();
+    // 手眼标定页当前的参数（两个方法共用，行为与原来逐字一致）。
+    CalibrationService::Params calibParams() const;
+    // 发起一次标定（folder + 内存里的位姿行），结果走 onCalibrationFinished。
+    void runCalibration(const QString& folder, const std::vector<QString>& poseLines);
     void updatePoseInputHint();
     void updateTransformResult();
     void refreshPixelTo3DImages();
@@ -177,7 +188,12 @@ private:
     QLabel* m_calibHint = nullptr;
     QPushButton* m_calibCalcBtn = nullptr;
     QPushButton* m_calibCopyBtn = nullptr;
+    QPushButton* m_calibSessionBtn = nullptr;
     QFutureWatcher<CalibrationService::Result>* m_calibWatcher = nullptr;
+    // 「用当前会话」的状态：非空时「计算」用内存里的位姿；编辑两个路径输入框即清掉。
+    QString m_sessionFolder;        // 会话目录（用当前会话时的文件夹）
+    std::vector<QString> m_sessionPoses;  // 会话位姿（顺序 = 采集顺序）
+    bool m_sessionActive = false;   // true = 当前处于「用当前会话」模式
 
     // Coordinate-transform tool inputs (text-paste based)
     QComboBox* m_mountCombo = nullptr;

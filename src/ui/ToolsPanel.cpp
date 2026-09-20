@@ -650,6 +650,11 @@ void ToolsPanel::buildCalibrationPage(QStackedWidget* stack)
     auto* btnRow = new QHBoxLayout();
     btnRow->setSpacing(8);
     btnRow->addStretch();
+    // 用户反馈 9：在线（当前会话）路径已知，一键算并把用的路径显示出来。
+    m_calibSessionBtn = new QPushButton(QStringLiteral("用当前会话"), group);
+    m_calibSessionBtn->setObjectName(QStringLiteral("calib_session_btn"));
+    m_calibSessionBtn->setStyleSheet(Theme::secondaryButtonStyle());
+    btnRow->addWidget(m_calibSessionBtn);
     m_calibCalcBtn = new QPushButton(QStringLiteral("计算"), group);
     m_calibCalcBtn->setStyleSheet(Theme::primaryButtonStyle());
     btnRow->addWidget(m_calibCalcBtn);
@@ -677,6 +682,11 @@ void ToolsPanel::buildCalibrationPage(QStackedWidget* stack)
     });
     connect(m_calibCalcBtn, &QPushButton::clicked,
             this, &ToolsPanel::updateCalibrationResult);
+    connect(m_calibSessionBtn, &QPushButton::clicked, this, [this]() {
+        if (m_calibWatcher->isRunning())
+            return;
+        emit calibrationSessionRequested();
+    });
     connect(m_calibCopyBtn, &QPushButton::clicked, this, [this]() {
         if (!m_calibResult->toPlainText().isEmpty())
             QApplication::clipboard()->setText(m_calibResult->toPlainText());
@@ -684,13 +694,92 @@ void ToolsPanel::buildCalibrationPage(QStackedWidget* stack)
     for (QLineEdit* edit : { m_calibDir, m_calibPoseFile })
         connect(edit, &QLineEdit::textChanged, this, [this](const QString&) {
             m_calibHint->clear();
+            // 用户自己改路径 = 回到手工方式：丢掉「用当前会话」带来的内存位姿，
+            // 之后的「计算」按文件夹 + 位姿文件走。
+            m_sessionActive = false;
+            m_sessionFolder.clear();
+            m_sessionPoses.clear();
         });
+}
+
+CalibrationService::Params ToolsPanel::calibParams() const
+{
+    CalibrationService::Params params;
+    params.eyeInHand = m_calibEyeCombo->currentIndex() == 1;
+    params.markerType = m_calibMarkerCombo->currentIndex() == 0 ? 1 : 0;
+    params.isPoseMm = m_calibPoseUnitCombo->currentIndex() == 0;
+    params.isPoseDegree = m_calibAngleUnitCombo->currentIndex() == 0;
+    params.autoRemoveLargeError = m_calibAutoRemove->isChecked();
+    return params;
+}
+
+void ToolsPanel::runCalibration(const QString& folder,
+                                const std::vector<QString>& poseLines)
+{
+    const CalibrationService::Params params = calibParams();
+    m_calibCalcBtn->setEnabled(false);
+    m_calibCalcBtn->setText(QStringLiteral("计算中..."));
+    m_calibWatcher->setFuture(QtConcurrent::run([folder, poseLines, params]() {
+        return CalibrationService::calibrateMarker(folder, poseLines, params);
+    }));
+}
+
+void ToolsPanel::useCurrentSession(const QString& folder,
+                                   const QStringList& poseLines,
+                                   bool eyeInHand, bool concentric)
+{
+    if (m_calibWatcher->isRunning())
+        return;
+
+    // 先写路径再置状态：setText 会触发 textChanged（那里会清掉会话状态）。
+    m_calibDir->setText(folder);
+    m_calibEyeCombo->setCurrentIndex(eyeInHand ? 1 : 0);
+    m_calibMarkerCombo->setCurrentIndex(concentric ? 0 : 1);
+    m_calibResult->clear();
+
+    std::vector<QString> lines;
+    lines.reserve(static_cast<std::size_t>(poseLines.size()));
+    for (const QString& line : poseLines) {
+        if (!line.trimmed().isEmpty())
+            lines.push_back(line);
+    }
+
+    if (lines.empty()) {
+        m_sessionActive = false;
+        m_sessionFolder.clear();
+        m_sessionPoses.clear();
+        m_calibHint->setText(QStringLiteral(
+            "当前会话还没有可用的机器人位姿（请先拍照并填写机器人位姿）"));
+        return;
+    }
+    if (folder.trimmed().isEmpty()) {
+        m_sessionActive = false;
+        m_sessionFolder.clear();
+        m_sessionPoses.clear();
+        m_calibHint->setText(QStringLiteral(
+            "当前会话还没有保存目录（请先保存一组标定数据）"));
+        return;
+    }
+
+    m_sessionActive = true;
+    m_sessionFolder = folder;
+    m_sessionPoses = lines;
+    m_calibHint->setText(QStringLiteral("当前会话：%1（%2 组位姿）")
+        .arg(folder).arg(static_cast<int>(lines.size())));
+    runCalibration(m_sessionFolder, m_sessionPoses);
 }
 
 void ToolsPanel::updateCalibrationResult()
 {
     if (m_calibWatcher->isRunning())
         return;
+    if (m_sessionActive) {
+        // 会话模式：「计算」重算当前会话（用内存里的位姿，不是磁盘上的 pose.txt）。
+        m_calibHint->setText(QStringLiteral("当前会话：%1（%2 组位姿）")
+            .arg(m_sessionFolder).arg(m_sessionPoses.size()));
+        runCalibration(m_sessionFolder, m_sessionPoses);
+        return;
+    }
     m_calibHint->clear();
     auto fail = [this](const QString& message) {
         m_calibHint->setText(message);
@@ -725,18 +814,7 @@ void ToolsPanel::updateCalibrationResult()
         return;
     }
 
-    CalibrationService::Params params;
-    params.eyeInHand = m_calibEyeCombo->currentIndex() == 1;
-    params.markerType = m_calibMarkerCombo->currentIndex() == 0 ? 1 : 0;
-    params.isPoseMm = m_calibPoseUnitCombo->currentIndex() == 0;
-    params.isPoseDegree = m_calibAngleUnitCombo->currentIndex() == 0;
-    params.autoRemoveLargeError = m_calibAutoRemove->isChecked();
-
-    m_calibCalcBtn->setEnabled(false);
-    m_calibCalcBtn->setText(QStringLiteral("计算中..."));
-    m_calibWatcher->setFuture(QtConcurrent::run([dir, poseLines, params]() {
-        return CalibrationService::calibrateMarker(dir, poseLines, params);
-    }));
+    runCalibration(dir, poseLines);
 }
 
 void ToolsPanel::onCalibrationFinished()

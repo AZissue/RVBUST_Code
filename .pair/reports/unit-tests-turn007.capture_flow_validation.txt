@@ -1,0 +1,17 @@
+********* Start testing of TestCaptureFlowValidation *********
+Config: Using QtTest library 5.14.2, Qt 5.14.2 (x86_64-little_endian-llp64 shared (dynamic) release build; by MSVC 2017)
+PASS   : TestCaptureFlowValidation::initTestCase()
+PASS   : TestCaptureFlowValidation::acceptsCleanValues()
+PASS   : TestCaptureFlowValidation::rejectsNanInfVariants()
+PASS   : TestCaptureFlowValidation::validatesRequiredFieldsByMode()
+PASS   : TestCaptureFlowValidation::rejectsNonNumericValues()
+PASS   : TestCaptureFlowValidation::rejectsNanInfViaSaveValidation()
+PASS   : TestCaptureFlowValidation::acceptsValidInputs()
+PASS   : TestCaptureFlowValidation::caliboardQualityGates()
+PASS   : TestCaptureFlowValidation::caliboardQualityThresholdConfigurable()
+PASS   : TestCaptureFlowValidation::detectsCjkFormatChars()
+PASS   : TestCaptureFlowValidation::acceptsEnglishCommaSeparatedValues()
+PASS   : TestCaptureFlowValidation::rejectsChineseFormatOnSave()
+PASS   : TestCaptureFlowValidation::cleanupTestCase()
+Totals: 13 passed, 0 failed, 0 skipped, 0 blacklisted, 1ms
+********* Finished testing of TestCaptureFlowValidation *********
