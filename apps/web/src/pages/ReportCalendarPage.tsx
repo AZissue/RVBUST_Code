@@ -180,10 +180,10 @@ export function ReportCalendarPage() {
             {inWindow.map((ticket) => (
               <button key={ticket.id} type="button" className="report-ticket" onClick={() => navigate(`/tickets/${ticket.id}`)}>
                 <header>
-                  <strong>{ticket.title}</strong>
+                  <span className="report-ticket-customer">{ticket.organization.name}</span>
                   <StatusBadge status={ticket.status} />
                 </header>
-                <span className="report-ticket-customer">{ticket.organization.name}</span>
+                <strong>{ticket.title}</strong>
                 <small><span className="mono report-ticket-no">{ticket.number}</span> · {ticketCategoryLabel(ticket.category)} · {pad(new Date(ticket.createdAt).getMonth() + 1)}-{pad(new Date(ticket.createdAt).getDate())} {pad(new Date(ticket.createdAt).getHours())}:{pad(new Date(ticket.createdAt).getMinutes())}</small>
               </button>
             ))}
