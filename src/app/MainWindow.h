@@ -49,6 +49,11 @@ protected:
     void changeEvent(QEvent* event) override;
     void closeEvent(QCloseEvent* event) override;
     void showEvent(QShowEvent* event) override;
+    // WM_QUERYENDSESSION / WM_ENDSESSION: release the camera (bounded) before
+    // Windows logs off or shuts down, so the device is not left occupied.
+    bool nativeEvent(const QByteArray& eventType, void* message, long* result) override;
+    // Idle detection for the preview pause (任务 3.4).
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
     // UI construction
@@ -66,6 +71,17 @@ private:
     void onDisconnectCamera();
     void startPreScan();
     void proceedWithDevices(const std::vector<DeviceEntry>& devices);
+    // 相机维护 →「释放相机」: 断开 + 重新扫描, for the "device looks occupied /
+    // wedged" case.  Also used by the OS-session path (shorter device wait).
+    void releaseCameraNow(int deviceWaitMs, const QString& why);
+    // 任务 3.4: pause the preview after N seconds without user input, and resume
+    // it the moment anything happens again.
+    void onUserActivity();
+    void onIdleTimeout();
+    // 任务 2: push the three automation switches into CaptureFlow / UI state.
+    void applyAutoFlowSettings();
+    // 任务 2: 识别成功 → 自动保存（同一套必填项校验）.
+    void onDetectionFinished(bool ok);
 
     // Workflow (UI choreography only; business logic is in CaptureFlow)
     void onCapture();
@@ -158,6 +174,15 @@ private:
     std::vector<DeviceEntry> m_cachedDevices;
     bool m_preScanning = false;
     bool m_connectRequested = false;
+
+    // ── Round 5: camera parameter source + automation + lifetime ──
+    bool m_useCameraParams = true;         // 任务 1 (mirrors AppConfig)
+    bool m_autoDetectAfterCapture = false; // 任务 2 (all default off)
+    bool m_autoSaveAfterDetect = false;
+    // 任务 3.4: 0 = never pause the preview on idle.
+    int  m_idlePauseSec = 60;
+    QTimer* m_idleTimer = nullptr;
+    bool m_idlePreviewPaused = false;
 
     // Stage 4: online 2D-pixel -> 3D point
     int m_pickSphereHandle = -1;               // 3D highlight sphere

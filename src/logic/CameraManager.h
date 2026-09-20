@@ -47,13 +47,61 @@ public:
     void prewarmSystem();   // RVC::SystemInit on the calling (UI) thread
     bool initWithDeviceSerial(const QString& serial);
     bool connectFirstAvailable();   // scan + connect (SEH-safe), prefers X1
-    void shutdown();
+    // Bounded, idempotent teardown.  `deviceWaitMs` is how long the device lock
+    // is waited for; the OS-session path passes a shorter one.  A repeat call
+    // performs no SDK work and emits no second cameraDisconnected (see
+    // CameraRelease::plan).
+    void shutdown(int deviceWaitMs = SHUTDOWN_DEVICE_WAIT_MS);
     bool isConnected() const;
+
+    // What the last shutdown() actually did (3.1: a failed/timed-out release
+    // must be visible in the log, never silent).
+    struct ReleaseReport {
+        bool attempted = false;    // a release path with work to do ran
+        bool released = false;     // Close/Destroy/SystemShutdown completed
+        QString detail;            // error text when !released
+    };
+    ReleaseReport lastRelease() const { return m_lastRelease; }
+
+    // Crash path only (called from the SEH filter's release thread, never from
+    // the normal workflow).  Drops the SDK-wide resources with no per-device
+    // call — after an access violation the X1/X2 objects may point at corrupt
+    // state, so Close()/Destroy() are deliberately NOT attempted here; the
+    // TerminateProcess that follows is what actually frees the device.
+    // Never throws, never blocks on the device lock.
+    static void emergencyRelease();
+
+    // Bounded wait for an in-flight capture worker to leave the device.  True
+    // when nothing was running (or it finished in time).  Used by the close
+    // path so the teardown below it does not race a live worker; it does NOT
+    // pump the event loop, so no slot can re-enter the window mid-close.
+    bool waitForCaptureIdle(int timeoutMs);
 
     // Saved camera parameters (exposure/gain) to re-apply every time a device
     // connects.  Connect resets capture options to the camera's stored values,
     // so this is applied after Open() and before cameraConnected is emitted.
     void setParamsOnConnect(const QVariantMap& params);
+
+    // ── Capture-parameter source (第 5 回合 任务 1) ──
+    // true (default): keep the camera's own values, push nothing.
+    // false        : push the AppConfig values, as before.
+    void setUseCameraParams(bool on);
+    bool useCameraParams() const { return m_useCameraParams; }
+    // Values read back from the device at (or after) connect — what 设置 shows
+    // as "相机当前参数".  Empty when nothing was read.
+    QMap<QString, float> cameraReadSettings() const { return m_cameraRead; }
+    // Re-read the device's own parameters right now (设置 →「从相机读取当前参数」).
+    // Also re-applies the saved values when use_camera_params is off, because
+    // the reload overwrites the capture options.  False when not connected.
+    bool reloadCameraParamsFromDevice();
+
+    // ── Camera lifetime tuning (任务 3.4) ──
+    void setHealthCheckInterval(int ms);
+    // The interval actually in effect (default 30 s — the 5 s scan took the
+    // device lock often enough to be felt as "the camera keeps getting grabbed").
+    int  healthCheckInterval() const;
+    void setConnectRetryCount(int count) { m_connectRetryCount = count > 0 ? count : 0; }
+    int  connectRetryCount() const { return m_connectRetryCount; }
 
     // Device info
     QString deviceName() const;
@@ -220,6 +268,16 @@ private:
     bool m_captureInProgress = false;
     bool m_captureTimedOut = false;
     QVariantMap m_paramsOnConnect;
+    // 任务 1: parameter source.  m_cameraRead holds what the device reported, so
+    // 设置 can show "相机当前参数" even without touching the device again.
+    bool m_useCameraParams = true;
+    QMap<QString, float> m_cameraRead;
+    // 任务 3: set once a teardown has completed, cleared by a successful
+    // connect, so a repeat shutdown() is a no-op (and a shutdown after a
+    // *reconnect* still tears the new session down).
+    bool m_released = false;
+    ReleaseReport m_lastRelease;
+    int m_connectRetryCount = 3;
     std::atomic<bool> m_previewBusy{false};
     int  m_previewGen = 0;
     std::atomic<int> m_previewFailures{0};
@@ -251,6 +309,15 @@ private:
     std::vector<float> m_nativeMarkerPixels;   // flat [x0,y0,...] in px
     std::vector<float> m_nativeMarkerPoints;   // flat [x0,y0,z0,...] in mm
 
+    // The camera's saved capture mode may be a line-scan mode that yields no
+    // depth; pick the best full-frame mode the device supports.  Shared by the
+    // connect path and the "从相机读取当前参数" reload.
+    void applyPreferredCaptureMode(int supportedModes);
+    // Push the AppConfig exposure/gain, unconditionally.
+    void applySavedParams();
+    // Decide (CameraParamPolicy) and then push — or not.
+    void applyConnectParams();
+
     void scheduleReconnect();
     // Drop the last-frame lookup buffers / native detection cache.  Called when
     // a newer frame replaces them and on shutdown, so the previous ~60 MB goes
@@ -261,7 +328,10 @@ public:
     static constexpr int CAPTURE_TIMEOUT_MS = 60000;  // 5M-point GigE captures are slow
     static constexpr int RECONNECT_MAX_ATTEMPTS = 3;
     static constexpr int RECONNECT_INTERVAL_MS = 3000;
-    static constexpr int HEALTH_CHECK_INTERVAL_MS = 5000;
+    // 任务 3.4: was 5 s, which took the device lock (SystemFindDevice) 12x per
+    // minute and wrote a "[DEV] health-scan acquired device" line each time.
+    // 30 s is plenty for hot-plug detection; AppConfig can tune it.
+    static constexpr int HEALTH_CHECK_INTERVAL_MS = 30000;
     // Bounded wait for the device lock on the close path.  If a worker is still
     // inside a hung SDK call we skip teardown instead of hanging the UI or
     // racing the device (see shutdown()).

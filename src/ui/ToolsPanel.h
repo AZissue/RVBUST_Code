@@ -35,6 +35,9 @@ public:
 
     void setRobotStatus(const QString& text, bool ok);
     void setRobotConnected(bool connected);
+    // Mirror of AppConfig "auto_read_robot_pose".  Programmatic, so it does not
+    // re-emit robotAutoReadToggled (MainWindow is the single writer of the key).
+    void setRobotAutoRead(bool on);
 
     // ── Measurement page (aligned with the Python 3D 测量一体化工具) ──
     // The 3D grid of the last capture, handed over by refcount.  The image size

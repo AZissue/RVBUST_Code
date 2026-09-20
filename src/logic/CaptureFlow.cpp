@@ -5,11 +5,16 @@
 #include "logic/DetectionEngine.h"
 #include "logic/RuntimeLog.h"
 
+#include "logic/AutoFlowPolicy.h"
+
 #include <QtConcurrent/QtConcurrentRun>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QDateTime>
+#include <QThread>
+#include <QTimer>
 #include <cmath>
 
 namespace {
@@ -94,6 +99,45 @@ void CaptureFlow::onCaptureReady(const QString& pngPath, const QString& plyPath,
     emit tipRequested(QStringLiteral("采集完成，请点击识别检测标记物"), false);
     emitLog(this, QStringLiteral("success"),
             QStringLiteral("第 %1 组数据采集完成").arg(m_data->count() + 1));
+
+    // 任务 2: 拍照成功 → 自动识别.  Queued so the capture's own UI updates (frame
+    // painted, busy cleared, tip shown) land before the detection turns the
+    // busy state back on — the operator sees the same sequence as a manual
+    // click, only without having to click.
+    if (AutoFlowPolicy::shouldAutoDetect(m_autoDetect, !m_capturedPng.isEmpty())) {
+        RuntimeLog::log("auto-detect: 拍照后自动识别已开启，自动触发识别");
+        QTimer::singleShot(0, this, [this]() {
+            if (!m_capturedPng.isEmpty())
+                detect();
+        });
+    }
+}
+
+bool CaptureFlow::waitForIdle(int timeoutMs)
+{
+    if (!m_detecting || !m_detectWatcher->isRunning())
+        return true;
+
+    QElapsedTimer t;
+    t.start();
+    // Polls rather than pumping events: this runs from the close path, where a
+    // nested event loop could re-enter the window.
+    while (m_detectWatcher->isRunning() && t.elapsed() < timeoutMs)
+        QThread::msleep(10);
+
+    const bool idle = !m_detectWatcher->isRunning();
+    if (!idle)
+        RuntimeLog::log("[FLOW] detect worker still running after %d ms — "
+                        "teardown continues", timeoutMs);
+    return idle;
+}
+
+void CaptureFlow::abandonPendingWork()
+{
+    if (m_detecting) {
+        m_detectTimedOut = true;   // late result is dropped by onDetectionFinished
+        RuntimeLog::log("[FLOW] pending detection abandoned (closing)");
+    }
 }
 
 // ── Detect ────────────────────────────────────────────────────────────
@@ -308,6 +352,10 @@ void CaptureFlow::onDetectionTimeout()
     emit toastRequested(QStringLiteral("识别超时，请重试"), false);
     emitLog(this, QStringLiteral("error"),
             QStringLiteral("识别超时（%1 秒）").arg(DETECT_TIMEOUT_MS / 1000));
+    // A timeout is a failed detection like any other, so the auto-save path
+    // gets the same explicit "自动保存跳过：本次识别未成功" line instead of
+    // silently saving nothing (the late worker result is dropped above).
+    emit detectionFinished(false);
 }
 
 void CaptureFlow::applyDetectionResult(const DetectResult& result)
@@ -347,6 +395,7 @@ void CaptureFlow::applyDetectionResult(const DetectResult& result)
         default:
             break;
         }
+        emit detectionFinished(false);
         return;
     }
 
@@ -384,6 +433,7 @@ void CaptureFlow::applyDetectionResult(const DetectResult& result)
                 QStringLiteral("黑底白圆检测成功 (%1 点)").arg(result.detectedCount));
         emit toastRequested(QStringLiteral("识别成功: %1 个圆点").arg(result.detectedCount), true);
     }
+    emit detectionFinished(true);
 }
 
 // ── Save ──────────────────────────────────────────────────────────────

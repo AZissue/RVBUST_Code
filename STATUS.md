@@ -1,10 +1,42 @@
 # STATUS.md — 进度状态（每次会话结束必须更新）
 
-> 最后更新：2026-09-11
+> 最后更新：2026-09-20
 > 只保留「当前快照」，不积累历史；旧条目删除即可，git 历史里仍可追溯。
 
 ## ⏭ 交接块（新会话先读这里）
 
+- **2026-09-20（第 5 回合：相机生命周期与配置批，待 Codex 验收）**
+  - 规模：只做用户第 1、8、12 条（相机参数来源 / 流程自动化 / 相机可靠释放），
+    其它条目未动。构建 `$LASTEXITCODE=0`，ctest **231 passed / 0 failed / 1 skipped（21 类）**。
+  - 任务 1（默认用相机内部参数）：新增 `logic/CameraParamPolicy.h`（纯决策：用相机值 /
+    下发保存值 / 操作员改过值，单测 9 项）；`AppConfig` 新增 `use_camera_params`（默认 true）；
+    `CameraManager::applyConnectParams()` 是唯一决定"要不要下发"的地方，true 时
+    **一个 setParameter 都不调用**，并把读回值写进 AppConfig；日志给出
+    `[CAM] params: use_camera_params=1 → …不下发任何参数` 与
+    `[CAM] effective params (camera-internal|saved-config): k=v…` 两行，来源可自查。
+    设置页新增「当前相机参数 + 来源说明」「从相机读取当前参数（未连接时禁用）」
+    「使用相机内部参数」勾选框；改动任一数值自动切到"使用保存的参数"并提示，绝不静默忽略。
+  - 任务 2（流程自动化）：`logic/AutoFlowPolicy.h`（纯决策，单测 8 项）+
+    `AppConfig` 三个键**默认全关**；自动保存走**同一个** `validateSaveInputs`，
+    不满足就写一行 `自动保存跳过：…` 到操作日志（识别失败/超时/必填项缺失都有）；
+    "拍照时自动读取机器人位姿"两个入口统一到 `auto_read_robot_pose`（工具面板复选框
+    改为受控镜像，不再各写各的）。
+  - 任务 3（相机可靠释放）：①正常关闭顺序固定为 停预览 → 有界等在飞线程(3 s) →
+    `shutdown()`，`shutdown()` 由 `logic/CameraRelease.h::plan()` 改成状态驱动的幂等
+    （重复调用只写一行 no-op，不重复 Close/Destroy/信号），日志
+    `[CAM] release on close: N ms (preview stopped, captured=0, released=1)`；
+    ②`WM_QUERYENDSESSION` 有界(1.5 s)释放后回 TRUE；③崩溃路径**改了**：不再弹模态框，
+    先写异常码/模块/地址/时间到 runtime 日志，再在独立线程做一次 ≤2 s 释放尝试，然后
+    `TerminateProcess` 立即退出（判定故障模块是 RVC/HandEyeSDK 时跳过 SDK 调用，
+    理由见交付说明）；④`onHealthTick` 默认 5 s → **30 s**，空闲 60 s 自动暂停预览、
+    有输入立即恢复，设置页新增「释放相机」一键清理；⑤连接失败分类为
+    "被占用/未找到/不支持/SDK 错误"并给可读建议，重试 1/2/3 s（`connect_retry_count`）。
+  - 测试注入点：`HEC_CRASH_INJECT=after-connect|after-capture` 触发空指针写
+    （`logic/CrashInject.h`，未设变量时仅一次空串比较，不影响正常使用）。
+  - **未验证（重要）**：本轮**没有启动过 GUI**（会话内启动 exe 需要交互授权，未获批准），
+    所以关闭/空闲/设置页/崩溃注入的运行期行为**只有编译期与单测证据**；Codex 验收
+    3.5 的 ①②③④ 四项（3 次正常关闭 / `taskkill /F` ×10 / 注入崩溃 / 双实例占用）
+    需在真机跑。崩溃时不做 SDK 调用（故障模块是 SDK 时）是**有意的取舍**，见交付说明。
 - **2026-09-18（打包 test2.0 测试包给现场试用）**
   - 按 `pack_portable.ps1` 打出 `dist/HandEyeCalibrationTool_test2.0/`（228.6 MB，
     200 个文件）+ `dist/HandEyeCalibrationTool_test2.0.zip`（85.1 MB）。

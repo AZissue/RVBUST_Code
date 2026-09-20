@@ -1,4 +1,4 @@
-find_package(Qt5 REQUIRED COMPONENTS Test Core Gui)
+find_package(Qt5 REQUIRED COMPONENTS Test Core Gui Concurrent)
 
 set(TEST_SOURCES
     test_main.cpp
@@ -19,6 +19,10 @@ set(TEST_SOURCES
     test_frame_buffer.cpp
     test_ui_stall_watchdog.cpp
     test_measure_tools.cpp
+    test_camera_param_policy.cpp
+    test_auto_flow_policy.cpp
+    test_camera_recovery.cpp
+    test_camera_manager_release.cpp
 )
 
 add_executable(unit_tests ${TEST_SOURCES}
@@ -36,6 +40,10 @@ add_executable(unit_tests ${TEST_SOURCES}
     ${CMAKE_SOURCE_DIR}/src/logic/RuntimeLog.cpp
     # Measurement kernel: pure computation, no Qt, no SDK.
     ${CMAKE_SOURCE_DIR}/src/logic/MeasureTools.cpp
+    # CameraManager itself, so "call shutdown() twice" is tested against the
+    # real object and not only against the pure CameraRelease::plan.  The tests
+    # never connect, so no RVC call is reached.
+    ${CMAKE_SOURCE_DIR}/src/logic/CameraManager.cpp
 )
 
 target_include_directories(unit_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -48,6 +56,8 @@ target_link_libraries(unit_tests PRIVATE
     Qt5::Core
     Qt5::Gui
     Qt5::Network
+    # CameraManager.cpp uses QtConcurrent for its capture/scan workers.
+    Qt5::Concurrent
     RVC::RVC
     HandEyeSDK::HandEyeSDK
     ws2_32

@@ -12,6 +12,8 @@
 #include "logic/ToolInputParser.h"
 #include "logic/FrameBuffer.h"
 #include "logic/RuntimeLog.h"
+#include "logic/AutoFlowPolicy.h"
+#include "logic/CameraRelease.h"
 #include "ui/TopNavBar.h"
 #include "ui/ModeSelector.h"
 #include "ui/Image2DView.h"
@@ -41,12 +43,29 @@
 #include <QVariantMap>
 #include <QStringList>
 #include <QDir>
+#include <QDateTime>
 #include <QFileInfo>
 #include <QTimer>
 #include <QtConcurrent>
 #include <vector>
 #include <array>
 #include <tuple>
+#ifdef _WIN32
+#  ifndef NOMINMAX
+#    define NOMINMAX
+#  endif
+#  include <windows.h>   // WM_QUERYENDSESSION / WM_ENDSESSION (任务 3.2)
+#  ifdef ERROR
+#    undef ERROR
+#  endif
+#endif
+
+namespace {
+// 任务 3.1: bounded wait for an in-flight capture/detection worker on close.
+constexpr int kCloseWorkerWaitMs = 3000;
+// 任务 3.2: bounded release attempt when Windows ends the session (<= 2 s).
+constexpr int kSessionEndWaitMs = 1500;
+} // namespace
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
@@ -89,9 +108,56 @@ MainWindow::MainWindow(QWidget* parent)
     m_camera->setParamsOnConnect(m_config.cameraParams());
     m_flow->setErrorThreshold(m_config.caliboardErrorThreshold());
 
+    // ── Round 5 startup policy ──
+    // 任务 1: whether the camera's own capture parameters win over the saved
+    // ones (default true — the operator tunes them in the vendor tool first).
+    m_useCameraParams = m_config.useCameraParams();
+    m_camera->setUseCameraParams(m_useCameraParams);
+    // 任务 3.3/3.4: bounded connect retry + the "is the camera still there"
+    // scan, which used to run every 5 s.
+    m_camera->setConnectRetryCount(m_config.connectRetryCount());
+    m_camera->setHealthCheckInterval(m_config.healthCheckIntervalSec() * 1000);
+    RuntimeLog::log("[CAM] startup: use_camera_params=%d, connect_retry=%d, "
+                    "health_interval=%d s",
+                    m_useCameraParams ? 1 : 0, m_camera->connectRetryCount(),
+                    m_config.healthCheckIntervalSec());
+
+    // 任务 3.4: idle-preview pause.  0 = never pause.
+    m_idlePauseSec = m_config.idlePausePreviewSec();
+    m_idleTimer = new QTimer(this);
+    m_idleTimer->setSingleShot(true);
+    connect(m_idleTimer, &QTimer::timeout, this, &MainWindow::onIdleTimeout);
+    if (m_idlePauseSec > 0) {
+        // Watch application-wide input so "连续 N 秒无操作" means the whole app,
+        // not just this window's widgets.
+        qApp->installEventFilter(this);
+        m_idleTimer->start(m_idlePauseSec * 1000);
+    }
+
+    // 任务 3.1: belt-and-braces release for exit paths that do not go through
+    // closeEvent.  shutdown() is idempotent, so when closeEvent already ran this
+    // is a logged no-op rather than a second Close/Destroy.
+    connect(qApp, &QCoreApplication::aboutToQuit, this, [this]() {
+        // Same reason as closeEvent: the Vis close has to be requested while the
+        // app is still alive or it never returns (see the block in closeEvent).
+        if (m_view3d)
+            m_view3d->shutdown();
+        if (!m_camera)
+            return;
+        m_camera->stopPreview();
+        m_camera->shutdown();
+        const auto r = m_camera->lastRelease();
+        RuntimeLog::log("[CAM] release on aboutToQuit: attempted=%d released=%d %s",
+                        r.attempted ? 1 : 0, r.released ? 1 : 0,
+                        r.detail.isEmpty() ? "" : qPrintable(r.detail));
+    });
+
     buildUi();
     wireSignals();
     registerShortcuts();
+    // 任务 2: flow automation + the single source of truth for 自动读取机器人位姿.
+    // Applied after buildUi() because it also syncs the tools-panel checkbox.
+    applyAutoFlowSettings();
 
     // Restore last mode
     m_eyeHandMode = m_config.eyeInHand() ? EyeHandMode::EyeInHand : EyeHandMode::EyeToHand;
@@ -141,11 +207,20 @@ MainWindow::MainWindow(QWidget* parent)
 
 MainWindow::~MainWindow()
 {
-    // CloseEvent already shut down camera (m_camera set to null), so this is
-    // a no-op for normal flow.  Only active on abnormal destruction.
+    // closeEvent normally released the camera already; this is the abnormal
+    // path (destruction without a close, e.g. an explicit qApp->quit()).  The
+    // call is the same either way because shutdown() is idempotent — on the
+    // normal path it is a logged no-op, which is also the evidence that a
+    // second teardown does not repeat Close/Destroy.
+    if (m_idleTimer)
+        m_idleTimer->stop();
     if (m_camera) {
         m_camera->stopPreview();
         m_camera->shutdown();
+        const auto r = m_camera->lastRelease();
+        RuntimeLog::log("[CAM] release on teardown: attempted=%d released=%d %s",
+                        r.attempted ? 1 : 0, r.released ? 1 : 0,
+                        r.detail.isEmpty() ? "" : qPrintable(r.detail));
     }
 }
 
@@ -253,8 +328,27 @@ void MainWindow::wireSignals()
         m_actionButtons->setCaptureEnabled(true);
         m_actionButtons->setPreviewActive(false);
         m_actionButtons->setPreviewEnabled(true);
-        m_logger->success(QStringLiteral("相机连接成功"));
         clearBusy();
+
+        // 任务 1: with use_camera_params on, the values now in effect are the
+        // ones the camera itself holds — write them back so 设置 shows "相机
+        // 当前值" instead of a stale saved set.
+        QString detail;
+        if (m_useCameraParams) {
+            const auto readBack = m_camera->cameraReadSettings();
+            if (!readBack.isEmpty()) {
+                QVariantMap asMap;
+                QStringList parts;
+                for (auto it = readBack.constBegin(); it != readBack.constEnd(); ++it) {
+                    asMap[it.key()] = it.value();
+                    parts << QStringLiteral("%1=%2").arg(it.key()).arg(it.value());
+                }
+                m_config.setCameraParams(asMap);
+                detail = QStringLiteral("，相机参数(%1)")
+                             .arg(parts.join(QStringLiteral(", ")));
+            }
+        }
+        m_logger->success(QStringLiteral("相机连接成功%1").arg(detail));
     });
     connect(m_camera, &CameraManager::cameraDisconnected, this, [this]() {
         m_topNav->setCameraStatus(false);
@@ -293,7 +387,15 @@ void MainWindow::wireSignals()
     connect(m_toolsPanel, &ToolsPanel::robotSimulateConnectRequested,
             this, &MainWindow::onRobotSimulateConnect);
     connect(m_toolsPanel, &ToolsPanel::robotAutoReadToggled, this,
-            [this](bool on) { m_robotAutoRead = on; });
+            [this](bool on) {
+                m_robotAutoRead = on;
+                // 任务 2: the checkbox is a view of AppConfig's single key, so a
+                // change here is persisted and shows up in 设置 next time.
+                m_config.setAutoReadRobotPose(on);
+            });
+    // 任务 2: 识别成功 → 自动保存（走既有必填项校验）.
+    connect(m_flow, &CaptureFlow::detectionFinished,
+            this, &MainWindow::onDetectionFinished);
     // Robot read buttons live in the ActionButtons row (visible while connected)
     connect(m_actionButtons, &ActionButtons::readCapturePoseClicked,
             this, &MainWindow::onRobotRead);
@@ -1513,12 +1615,146 @@ void MainWindow::endHeavyOp()
     }
 }
 
+// ── Round 5: automation / idle / camera release ───────────────────────
+
+void MainWindow::applyAutoFlowSettings()
+{
+    m_autoDetectAfterCapture = m_config.autoDetectAfterCapture();
+    m_autoSaveAfterDetect = m_config.autoSaveAfterDetect();
+    m_robotAutoRead = m_config.autoReadRobotPose();
+
+    m_flow->setAutoDetectAfterCapture(m_autoDetectAfterCapture);
+    // One config key, two views: 设置 checkbox and the tools-panel checkbox.
+    m_toolsPanel->setRobotAutoRead(m_robotAutoRead);
+    RuntimeLog::log("[FLOW] automation: auto_detect=%d auto_save=%d auto_read_pose=%d",
+                    m_autoDetectAfterCapture ? 1 : 0, m_autoSaveAfterDetect ? 1 : 0,
+                    m_robotAutoRead ? 1 : 0);
+}
+
+void MainWindow::onDetectionFinished(bool ok)
+{
+    if (!m_autoSaveAfterDetect)
+        return;
+
+    // Queued so the auto-save runs after the detection's busy state has cleared
+    // — the same sequence the operator gets by clicking 保存, and the cards are
+    // fully settled by then (the detection auto-fills camera_target_xyz first).
+    QTimer::singleShot(0, this, [this, ok]() {
+        if (!m_autoSaveAfterDetect)
+            return;   // switched off in between
+        auto* card1 = m_dataInput->card("camera_target_xyz");
+        auto* card2 = m_dataInput->card("robot_capture_pose");
+        auto* card3 = m_dataInput->card("robot_target_xyz");
+        const QString v1 = card1 ? card1->value() : QString();
+        const QString v2 = card2 ? card2->value() : QString();
+        const QString v3 = card3 ? card3->value() : QString();
+
+        // Exactly the validation the manual 保存 button runs.  Quality warnings
+        // never block, but a missing required field does (PROJECT.md §3).
+        CalibrationMode mode;
+        mode.eyeHand = m_eyeHandMode;
+        mode.calibType = m_calibType;
+        mode.markerType = m_markerType;
+        const auto issue = CaptureFlow::validateSaveInputs(v1, v2, v3, mode);
+
+        const auto decision = AutoFlowPolicy::decideAutoSave(
+            true, ok, issue.ok, issue.message);
+        if (!decision.trigger) {
+            RuntimeLog::log("[FLOW] %s", qPrintable(decision.reason));
+            m_logger->info(decision.reason);
+            return;
+        }
+        RuntimeLog::log("[FLOW] auto-save triggered (识别成功 + 必填项校验通过)");
+        m_logger->info(QStringLiteral("自动保存：识别成功且必填项校验通过，正在保存"));
+        m_flow->save(v1, v2, v3);
+    });
+}
+
+void MainWindow::onUserActivity()
+{
+    // Anything the user does resumes the preview we paused, and re-arms the
+    // idle timer.  Nothing is resumed that we did not pause ourselves.
+    if (m_idlePreviewPaused) {
+        m_idlePreviewPaused = false;
+        if (m_camera && m_camera->isConnected()) {
+            m_camera->resumePreview();
+            RuntimeLog::log("[CAM] preview resumed (user activity)");
+        }
+    }
+    if (m_idleTimer && m_idlePauseSec > 0)
+        m_idleTimer->start(m_idlePauseSec * 1000);
+}
+
+void MainWindow::onIdleTimeout()
+{
+    if (!m_camera || !m_camera->isConnected() || !m_camera->isPreviewing())
+        return;
+    m_camera->pausePreview();
+    m_idlePreviewPaused = true;
+    RuntimeLog::log("[CAM] preview paused after %d s idle "
+                    "(frees the device for other tools)", m_idlePauseSec);
+}
+
+bool MainWindow::eventFilter(QObject* watched, QEvent* event)
+{
+    switch (event->type()) {
+    case QEvent::MouseButtonPress:
+    case QEvent::MouseButtonRelease:
+    case QEvent::MouseMove:
+    case QEvent::Wheel:
+    case QEvent::KeyPress:
+    case QEvent::TouchBegin:
+        onUserActivity();
+        break;
+    default:
+        break;
+    }
+    return QMainWindow::eventFilter(watched, event);
+}
+
+void MainWindow::releaseCameraNow(int deviceWaitMs, const QString& why)
+{
+    if (!m_camera)
+        return;
+    const qint64 t0 = QDateTime::currentMSecsSinceEpoch();
+    m_camera->shutdown(deviceWaitMs);
+    const auto report = m_camera->lastRelease();
+    const qint64 elapsed = QDateTime::currentMSecsSinceEpoch() - t0;
+
+    if (report.attempted && !report.released) {
+        RuntimeLog::log("[CAM] %s: release INCOMPLETE after %lld ms: %s",
+                        qPrintable(why), elapsed, qPrintable(report.detail));
+        m_logger->warning(QStringLiteral("相机释放未完成（%1）：%2")
+                              .arg(why, report.detail));
+    } else {
+        RuntimeLog::log("[CAM] %s: released in %lld ms (noop=%d)",
+                        qPrintable(why), elapsed, report.attempted ? 0 : 1);
+        m_logger->info(QStringLiteral("相机已释放（%1），用时 %2 ms").arg(why).arg(elapsed));
+    }
+
+    // Re-enumerate so "相机被占用/状态异常" can be cleared on the spot: the bus
+    // scan is what makes the next 连接 go straight to Open().
+    m_cachedDevices.clear();
+    m_camera->scanDevicesAsync([this](const std::vector<DeviceEntry>& devices) {
+        m_cachedDevices = devices;
+        RuntimeLog::log("[CAM] rescan after release: %zu device(s)", devices.size());
+        m_logger->info(QStringLiteral("释放后重新扫描：发现 %1 个设备")
+                           .arg(static_cast<int>(devices.size())));
+    });
+}
+
 // ── Settings Dialog ───────────────────────────────────────────────────
 
 void MainWindow::showSettingsDialog()
 {
-    SettingsDialog dlg(m_saveBaseDir, m_config.caliboardErrorThreshold(),
-                       m_camera, m_data, this);
+    SettingsDialog dlg(m_config, m_camera, m_data, this);
+    // 相机维护 →「释放相机」: runs while the (modal) dialog is open, so the
+    // operator sees the result immediately instead of after pressing OK.
+    connect(&dlg, &SettingsDialog::cameraReleaseRequested, this, [this]() {
+        releaseCameraNow(CameraManager::SHUTDOWN_DEVICE_WAIT_MS,
+                         QStringLiteral("手动释放相机"));
+    });
+
     const int dlgResult = dlg.exec();
     m_watchdog.reset();   // modal think-time is not a UI stall
     if (dlgResult != QDialog::Accepted)
@@ -1532,17 +1768,51 @@ void MainWindow::showSettingsDialog()
     m_config.setCaliboardErrorThreshold(threshold);
     m_flow->setErrorThreshold(threshold);
 
-    // Apply camera parameter changes
-    const auto params = dlg.cameraParams();
-    for (auto it = params.begin(); it != params.end(); ++it)
-        m_camera->setParameter(it.key(), it.value().toFloat());
+    // ── 任务 1: capture-parameter source ──
+    // Only push values when the operator actually edited them: with
+    // use_camera_params on, re-applying the (displayed) values would be exactly
+    // the "下发参数" the setting exists to avoid.
+    m_useCameraParams = dlg.useCameraParams();
+    m_config.setUseCameraParams(m_useCameraParams);
+    m_camera->setUseCameraParams(m_useCameraParams);
+    if (dlg.cameraParamsEdited()) {
+        const auto params = dlg.cameraParams();
+        for (auto it = params.begin(); it != params.end(); ++it)
+            m_camera->setParameter(it.key(), it.value().toFloat());
+        RuntimeLog::log("[CAM] settings: %d 项拍摄参数已下发到相机", params.size());
+    } else {
+        RuntimeLog::log("[CAM] settings: 拍摄参数未修改，未下发任何参数 (use_camera_params=%d)",
+                        m_useCameraParams ? 1 : 0);
+    }
 
-    // Persist the full set of current values
+    // Persist what is in effect (with use_camera_params on these are the values
+    // read from the camera, which is what 设置 must display next time).
     QVariantMap current;
     const auto settings = m_camera->currentSettings();
     for (auto it = settings.begin(); it != settings.end(); ++it)
         current[it.key()] = it.value();
     m_config.setCameraParams(current);
+
+    // ── 任务 2: automation + 任务 3.4: lifetime tuning ──
+    m_config.setAutoDetectAfterCapture(dlg.autoDetectAfterCapture());
+    m_config.setAutoSaveAfterDetect(dlg.autoSaveAfterDetect());
+    m_config.setAutoReadRobotPose(dlg.autoReadRobotPose());
+    m_config.setIdlePausePreviewSec(dlg.idlePausePreviewSec());
+    m_config.setHealthCheckIntervalSec(dlg.healthCheckIntervalSec());
+    applyAutoFlowSettings();
+    m_camera->setHealthCheckInterval(dlg.healthCheckIntervalSec() * 1000);
+
+    m_idlePauseSec = dlg.idlePausePreviewSec();
+    if (m_idlePauseSec > 0) {
+        m_idleTimer->start(m_idlePauseSec * 1000);
+    } else {
+        m_idleTimer->stop();
+        // Switching the feature off must not leave the preview paused by it.
+        if (m_idlePreviewPaused && m_camera->isConnected()) {
+            m_idlePreviewPaused = false;
+            m_camera->resumePreview();
+        }
+    }
 
     // Backup restore (mode + records already restored inside DataManager)
     if (!dlg.restoredBackupPath().isEmpty()) {
@@ -1657,22 +1927,116 @@ void MainWindow::changeEvent(QEvent* event)
     }
 }
 
+bool MainWindow::nativeEvent(const QByteArray& eventType, void* message, long* result)
+{
+#ifdef _WIN32
+    if (eventType == QByteArrayLiteral("windows_generic_MSG")
+            || eventType == QByteArrayLiteral("windows_dispatcher_MSG")) {
+        MSG* msg = static_cast<MSG*>(message);
+        if (msg && msg->message == WM_QUERYENDSESSION) {
+            // 任务 3.2: release the camera before Windows logs off / shuts down,
+            // bounded so we never hold the session end up.  This message can
+            // arrive several times; shutdown() is idempotent, so the repeats are
+            // no-ops.  Always answer TRUE — refusing to end the session would
+            // leave the operator with a machine that will not shut down.
+            RuntimeLog::log("[CAM] WM_QUERYENDSESSION (lParam=0x%llx): releasing camera",
+                            static_cast<unsigned long long>(msg->lParam));
+            if (m_camera) {
+                if (m_idleTimer)
+                    m_idleTimer->stop();
+                m_camera->stopPreview();
+                m_camera->shutdown(kSessionEndWaitMs);
+                const auto r = m_camera->lastRelease();
+                RuntimeLog::log("[CAM] session-end release: released=%d %s",
+                                r.released ? 1 : 0,
+                                r.detail.isEmpty() ? "" : qPrintable(r.detail));
+            }
+            if (result) *result = TRUE;
+            return true;
+        }
+        if (msg && msg->message == WM_ENDSESSION) {
+            // Confirm the state after the decision: either the session really is
+            // ending (the release above already ran) or it was cancelled.
+            RuntimeLog::log("[CAM] WM_ENDSESSION (ending=%d): camera %s",
+                            msg->wParam ? 1 : 0,
+                            (m_camera && m_camera->isConnected()) ? "still connected"
+                                                                  : "released");
+            if (result) *result = TRUE;
+            return true;
+        }
+    }
+#endif
+    return QMainWindow::nativeEvent(eventType, message, result);
+}
+
 void MainWindow::closeEvent(QCloseEvent* event)
 {
+    const qint64 t0 = QDateTime::currentMSecsSinceEpoch();
     m_config.setWindowGeometry(x(), y(), width(), height());
     m_config.save();
     m_data->saveBackup(true);
 
-    // Shut down camera while event loop is still running.
-    // Vis is shut down later in ~VisSceneView() — Close() must NOT be
-    // called from inside closeEvent because it blocks on the OSG render
-    // thread which needs the event loop message pump to drain.
+    // The idle pause must not fire (and resumePreview must not run) while the
+    // camera is being torn down.
+    if (m_idleTimer)
+        m_idleTimer->stop();
+    qApp->removeEventFilter(this);
+
+    // Shut down camera while event loop is still running.  The 3D view is
+    // torn down here as well, for the same reason — see the block below.
     if (m_camera) {
         m_camera->disconnect(this);
+        // 1. stop the preview — no new frames are scheduled from here on.
         m_camera->stopPreview();
+        // 2. bounded wait for in-flight workers so the teardown below is
+        //    deterministic instead of racing a live capture/detection thread.
+        //    Bounded (3 s): a truly hung SDK call must not block the close.
+        const bool captureIdle = m_camera->waitForCaptureIdle(kCloseWorkerWaitMs);
+        if (m_flow) {
+            const bool detectIdle = m_flow->waitForIdle(kCloseWorkerWaitMs);
+            // Drop a late detection result instead of letting it reach a window
+            // that is already going away.
+            m_flow->abandonPendingWork();
+            m_flow->disconnect(this);
+            if (!detectIdle)
+                RuntimeLog::log("[FLOW] detection still running at close");
+        }
+        // 3. release the device (X.Close -> Destroy -> SystemShutdown).
         m_camera->shutdown();
-        m_camera = nullptr;
+        const auto report = m_camera->lastRelease();
+        const qint64 elapsed = QDateTime::currentMSecsSinceEpoch() - t0;
+        RuntimeLog::log("[CAM] release on close: %lld ms (preview stopped, captured=%d, "
+                        "released=%d)",
+                        elapsed, captureIdle ? 0 : 1, report.released ? 1 : 0);
+        if (!report.released) {
+            // Never silent: a half-released device is exactly what makes the
+            // *next* start look like "相机被占用".
+            RuntimeLog::log("[CAM] release on close FAILED: %s", qPrintable(report.detail));
+        }
+        // The pointer deliberately stays valid: the aboutToQuit fallback and
+        // ~MainWindow below re-enter the (now idempotent) shutdown(), which
+        // logs a no-op line instead of being skipped behind a null check.
     }
+
+    // ── 3D view ──
+    // Must be torn down while the application is still alive, i.e. here and not
+    // in ~VisSceneView().  Measured (round 6, close_probe on a freshly connected
+    // camera): calling VisSceneView::shutdown() from ~VisSceneView() never
+    // returns — Vis::View::Close() ends up in MSVCP140!_Cnd_wait waiting for a
+    // signal from a Vis/OSG render thread that no longer exists once the loop is
+    // gone (`3D: Vis close did not return within 3000 ms — exiting without it`),
+    // which is what left the process alive after the window had disappeared.
+    // The same call from closeEvent completes in ~0.3 s and logs `3D: Vis
+    // closed`.  Whether the message pump runs meanwhile is irrelevant (verified
+    // with the UI thread blocked and not pumping); what matters is that the app
+    // is still alive when the close is requested.
+    //
+    // Red line (PROJECT §3) is kept by shutdown() itself: the synchronous Vis
+    // command runs on a worker thread, never on the UI thread, and this thread
+    // only waits for it — bounded by kViewCloseWaitMs so a wedged render thread
+    // can never hold the exit up again.
+    if (m_view3d)
+        m_view3d->shutdown();
 
     event->accept();
 }

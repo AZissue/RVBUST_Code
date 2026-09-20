@@ -36,6 +36,20 @@ public:
     void setErrorThreshold(float pct);
     float errorThreshold() const { return m_errorThreshold; }
 
+    // ── Flow automation (第 5 回合 任务 2) ──
+    // 拍照成功 → 自动识别.  It runs exactly the same detect() the 识别 button
+    // calls, so the busy state and the enabled/disabled logic are identical;
+    // the manual button keeps working unchanged.
+    void setAutoDetectAfterCapture(bool on) { m_autoDetect = on; }
+    bool autoDetectAfterCapture() const { return m_autoDetect; }
+
+    // Bounded wait for an in-flight detection worker (close path).  True when
+    // nothing was running or it finished in time.  Does not pump the event loop.
+    bool waitForIdle(int timeoutMs);
+    // Close path: mark a still-running detection as timed out so its late result
+    // is dropped instead of being applied to a window that is going away.
+    void abandonPendingWork();
+
     // Workflow entry points
     void beginCapture();            // sets busy and triggers camera capture
     void onCaptureReady(const QString& pngPath, const QString& plyPath,
@@ -212,6 +226,10 @@ signals:
         const std::vector<std::array<float, 3>>& highlights3d,
         const std::vector<int>& highlightIndices);
     void clearMarkersRequested();
+    // Emitted once per finished detection (the single exit of
+    // applyDetectionResult), so the optional auto-save can hook the *result*
+    // instead of guessing from the tip/toast traffic.
+    void detectionFinished(bool ok);
     void tipRequested(const QString& text, bool isError);
     void toastRequested(const QString& text, bool success);
     void logRequested(const QString& message, const QString& level);
@@ -248,6 +266,7 @@ private:
 
     bool m_detectEnabled = false;
     bool m_saveEnabled   = false;
+    bool m_autoDetect    = false;   // 拍照成功 → 自动识别 (default off)
 
     // Async file-based detection
     DetectJob m_pendingJob;

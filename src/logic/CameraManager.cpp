@@ -1,4 +1,7 @@
 #include "logic/CameraManager.h"
+#include "logic/CameraParamPolicy.h"
+#include "logic/CameraRelease.h"
+#include "logic/CrashInject.h"
 #include "logic/DetectionEngine.h"
 #include "logic/PointCloudUtils.h"
 #include "logic/RuntimeLog.h"
@@ -18,6 +21,7 @@
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QElapsedTimer>
+#include <QThread>
 #include <QTimer>
 #include <chrono>
 
@@ -46,6 +50,35 @@ static void logMemoryTrace(const char* tag, std::size_t payloadBytes)
                         tag, static_cast<unsigned long>(handles),
                         payloadBytes / 1048576.0);
     }
+}
+
+// QVariantMap (config / QVariant storage) -> the plain float map the pure
+// parameter policy works on.
+static QMap<QString, float> toFloatMap(const QVariantMap& in)
+{
+    QMap<QString, float> out;
+    for (auto it = in.constBegin(); it != in.constEnd(); ++it)
+        out.insert(it.key(), it.value().toFloat());
+    return out;
+}
+
+// GigE "In Use" flag — the hard evidence for "上一次没释放干净 / 被别的程序占着",
+// which is what decides whether a connect retry can help (任务 3.3).
+static bool deviceInUse(RVC::Device& dev, const RVC::DeviceInfo& info)
+{
+    if (info.type != RVC::PortType_GIGE)
+        return false;
+    try {
+        int status = 0;
+        RVC::NetworkType ntype;
+        char ip[32] = {}, mask[32] = {}, gw[32] = {};
+        if (dev.GetNetworkConfig(RVC::NetworkDevice_LeftCamera, &ntype,
+                                 ip, mask, gw, &status) == 0)
+            return status == RVC::NetworkDeviceStatus_In_Use;
+    } catch (...) {
+        // unknown — treat as not occupied rather than blocking a retry
+    }
+    return false;
 }
 
 // ── PIMPL: hide RVC::X1 / RVC::X2 + CaptureOptions ──
@@ -192,6 +225,7 @@ CameraManager::~CameraManager()
     if (m_workerToken)
         m_workerToken->cancelRequested = true;
     shutdown();
+    m_impl.reset();
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -502,6 +536,9 @@ bool CameraManager::initWithDeviceSerial(const QString& serial)
                 fprintf(stderr, "[CameraManager] WARNING: X1 GetIntrinsicParameters failed!\n");
             }
             m_impl->model = CameraModel::X1;
+            // 任务 1: remember the values the *camera* holds, before anything can
+            // overwrite the capture options.
+            m_cameraRead = currentSettings();
             return true;
         } catch (const std::exception& e) {
             lastError = QStringLiteral("X1 连接异常: %1").arg(e.what());
@@ -526,28 +563,7 @@ bool CameraManager::initWithDeviceSerial(const QString& serial)
             // Prefer a full-frame capture mode for static calibration scenes.
             // The camera's saved mode may be a line-scan mode (SwingLineScan
             // etc.) which only produces a thin strip — or no depth at all.
-            const int supported = static_cast<int>(info.support_capture_mode);
-            const int preferred[] = {
-                RVC::CaptureMode_Ultra,
-                RVC::CaptureMode_Normal,
-                RVC::CaptureMode_Fast,
-                RVC::CaptureMode_AntiInterReflection,
-                RVC::CaptureMode_Robust
-            };
-            int chosen = static_cast<int>(m_impl->capOptsX2.capture_mode);
-            if ((chosen & supported) == 0)
-                chosen = 0;
-            for (int m : preferred) {
-                if (m & supported) {
-                    chosen = m;
-                    break;
-                }
-            }
-            if (chosen != static_cast<int>(m_impl->capOptsX2.capture_mode)) {
-                fprintf(stderr, "[CameraManager] capture mode %d -> %d (supported=%d)\n",
-                        static_cast<int>(m_impl->capOptsX2.capture_mode), chosen, supported);
-                m_impl->capOptsX2.capture_mode = static_cast<RVC::CaptureMode>(chosen);
-            }
+            applyPreferredCaptureMode(static_cast<int>(info.support_capture_mode));
 
             m_cameraId = info.support_extra ? RVC::CameraID_Extra : RVC::CameraID_Left;
             m_impl->capOptsX2.transform_to_camera = static_cast<RVC::CameraID>(m_cameraId);
@@ -562,6 +578,9 @@ bool CameraManager::initWithDeviceSerial(const QString& serial)
                 fprintf(stderr, "[CameraManager] WARNING: X2 GetIntrinsicParameters failed!\n");
             }
             m_impl->model = CameraModel::X2;
+            // 任务 1: the device's own values, read after the capture-mode fix so
+            // the reported 3D exposure key matches the mode actually in use.
+            m_cameraRead = currentSettings();
             return true;
         } catch (const std::exception& e) {
             lastError = QStringLiteral("X2 连接异常: %1").arg(e.what());
@@ -572,56 +591,239 @@ bool CameraManager::initWithDeviceSerial(const QString& serial)
         }
     };
 
-    // Re-apply the operator's saved exposure/gain after Open() (which resets
-    // capture options to the camera's stored values).  Must happen before
-    // cameraConnected so the very first preview already uses them.
-    auto applySavedParams = [this]() {
-        for (auto it = m_paramsOnConnect.constBegin();
-             it != m_paramsOnConnect.constEnd(); ++it) {
-            setParameter(it.key(), it.value().toFloat());
-        }
+    // One full connect attempt: X1 first for dual-mode devices, then X2.  The
+    // winning model name is handed back so the caller can finish the session
+    // with it — before the retry loop was introduced this was the `if (canX1 &&
+    // tryConnectX1()) { ... }` body, and dropping the call here left a
+    // successfully opened device without ever entering the connected state.
+    auto attemptConnect = [&](const char*& model) -> bool {
+        if (canX1 && tryConnectX1()) { model = "X1"; return true; }
+        if (canX2 && tryConnectX2()) { model = "X2"; return true; }
+        return false;
     };
 
-    // Prefer X1 for dual-mode devices
-    if (canX1 && tryConnectX1()) {
+    auto finishConnect = [&](const char* model) -> bool {
         m_isConnected = true;
+        m_released = false;            // a new session must be releasable again
         m_lastSerial = serial;
         m_reconnectAttempts = 0;
-        applySavedParams();
-        RuntimeLog::log("connect OK: %s (X1, %lld ms)",
-                        qPrintable(serial), connectTimer.elapsed());
+        applyConnectParams();
+        RuntimeLog::log("connect OK: %s (%s, %lld ms)",
+                        qPrintable(serial), model, connectTimer.elapsed());
         // Timers must be started from their owning (UI) thread; queue it so
         // this works whether connect runs on the UI or a worker thread.
         QMetaObject::invokeMethod(this, [this]() { m_healthTimer->start(); },
                                   Qt::QueuedConnection);
         emit cameraConnected();
+        // 崩溃注入 (TEST ONLY): HEC_CRASH_INJECT=after-connect.  Placed after the
+        // emit so the acceptance test crashes with a fully "connected" GUI.
+        CrashInject::hitIfEnabled(CrashInject::Point::AfterConnect);
         return true;
-    }
-    if (canX2 && tryConnectX2()) {
-        m_isConnected = true;
-        m_lastSerial = serial;
-        m_reconnectAttempts = 0;
-        applySavedParams();
-        RuntimeLog::log("connect OK: %s (X2, %lld ms)",
-                        qPrintable(serial), connectTimer.elapsed());
-        QMetaObject::invokeMethod(this, [this]() { m_healthTimer->start(); },
-                                  Qt::QueuedConnection);
-        emit cameraConnected();
-        return true;
-    }
+    };
 
-    // Single failure message (fallback attempts are buffered in lastError).
-    RuntimeLog::log("connect FAILED: %s (%lld ms) lastError=%s",
-                    qPrintable(serial), connectTimer.elapsed(),
-                    qPrintable(lastError));
-    emit cameraError(lastError.isEmpty() ? QStringLiteral("无法连接相机设备") : lastError);
-    return false;
+    // ── Bounded connect retry (任务 3.3) ──
+    // A device that is still held by a previous, not-quite-released process is
+    // the common field failure, and it clears by itself after a moment.  Retry
+    // only when that can actually help: an unplugged camera or an unsupported
+    // model will not come back after 3 s of waiting.
+    int retriesTried = 0;
+    const std::vector<int> retryDelays =
+        CameraRelease::connectRetryDelaysMs(m_connectRetryCount);
+    for (;;) {
+        const char* model = nullptr;
+        if (attemptConnect(model))
+            return finishConnect(model);
+
+        const auto failure = CameraRelease::classify(
+            lastError, /*deviceFound=*/true, deviceInUse(device, info));
+        if (retriesTried >= static_cast<int>(retryDelays.size())
+                || !CameraRelease::shouldRetry(failure)) {
+            RuntimeLog::log("connect FAILED: %s (%lld ms, %d retr%s, failure=%d) lastError=%s",
+                            qPrintable(serial), connectTimer.elapsed(),
+                            retriesTried, retriesTried == 1 ? "y" : "ies",
+                            static_cast<int>(failure), qPrintable(lastError));
+            // Readable recovery advice instead of a bare SDK string.
+            emit cameraError(CameraRelease::operatorHint(failure, retriesTried, lastError));
+            return false;
+        }
+
+        const int waitMs = retryDelays[retriesTried];
+        ++retriesTried;
+        // Bounded: at most 1+2+3 s with the default count, and only on failure.
+        RuntimeLog::log("[DEV] connect attempt failed (%s) — retry %d/%d in %d ms",
+                        qPrintable(lastError), retriesTried,
+                        static_cast<int>(retryDelays.size()), waitMs);
+        QThread::msleep(waitMs);
+    }
 }
 
-void CameraManager::shutdown()
+void CameraManager::applyPreferredCaptureMode(int supportedModes)
+{
+    const int preferred[] = {
+        RVC::CaptureMode_Ultra,
+        RVC::CaptureMode_Normal,
+        RVC::CaptureMode_Fast,
+        RVC::CaptureMode_AntiInterReflection,
+        RVC::CaptureMode_Robust
+    };
+    int chosen = static_cast<int>(m_impl->capOptsX2.capture_mode);
+    if ((chosen & supportedModes) == 0)
+        chosen = 0;
+    for (int m : preferred) {
+        if (m & supportedModes) {
+            chosen = m;
+            break;
+        }
+    }
+    if (chosen != static_cast<int>(m_impl->capOptsX2.capture_mode)) {
+        fprintf(stderr, "[CameraManager] capture mode %d -> %d (supported=%d)\n",
+                static_cast<int>(m_impl->capOptsX2.capture_mode), chosen, supportedModes);
+        m_impl->capOptsX2.capture_mode = static_cast<RVC::CaptureMode>(chosen);
+    }
+}
+
+void CameraManager::applySavedParams()
+{
+    for (auto it = m_paramsOnConnect.constBegin();
+         it != m_paramsOnConnect.constEnd(); ++it) {
+        setParameter(it.key(), it.value().toFloat());
+    }
+}
+
+void CameraManager::applyConnectParams()
+{
+    // 任务 1: the single place that decides whether the saved exposure/gain is
+    // pushed over what the camera itself holds.  With use_camera_params=true the
+    // decision applies nothing at all, which is exactly the requested behaviour
+    // ("不应下发任何参数") and is what the runtime log line below records.
+    const auto decision = CameraParamPolicy::decide(
+        m_useCameraParams, toFloatMap(m_paramsOnConnect), m_cameraRead,
+        /*userEdited=*/false);
+    for (const QString& key : decision.appliedKeys)
+        setParameter(key, m_paramsOnConnect.value(key).toFloat());
+    RuntimeLog::log("%s", qPrintable(decision.logLine));
+
+    // Also log the values that will really be used, so "本次连接用的是相机内部值
+    // 还是保存值" is verifiable from the log alone.
+    const auto effective = currentSettings();
+    QStringList parts;
+    for (auto it = effective.constBegin(); it != effective.constEnd(); ++it)
+        parts << QStringLiteral("%1=%2").arg(it.key()).arg(it.value());
+    // The source is taken from the decision, not from the checkbox, so an
+    // operator edit (which overrides the checkbox) cannot be mislabelled here.
+    RuntimeLog::log("[CAM] effective params (%s): %s",
+                    decision.source == CameraParamPolicy::Source::CameraInternal
+                        ? "camera-internal" : "saved-config",
+                    qPrintable(parts.join(QStringLiteral(", "))));
+}
+
+void CameraManager::setUseCameraParams(bool on)
+{
+    m_useCameraParams = on;
+}
+
+void CameraManager::setHealthCheckInterval(int ms)
+{
+    m_healthTimer->setInterval(ms > 0 ? ms : HEALTH_CHECK_INTERVAL_MS);
+}
+
+int CameraManager::healthCheckInterval() const
+{
+    return m_healthTimer->interval();
+}
+
+bool CameraManager::reloadCameraParamsFromDevice()
+{
+    if (!m_isConnected || !m_impl->hasCamera())
+        return false;
+
+    DeviceLock lk(this, "reload-params");
+    if (!lk.ok())
+        return false;
+
+    bool ok = false;
+    try {
+        if (m_impl->isX1()) {
+            ok = m_impl->x1.LoadCaptureOptionParameters(m_impl->capOptsX1);
+        } else if (m_impl->isX2()) {
+            ok = m_impl->x2.LoadCaptureOptionParameters(m_impl->capOptsX2);
+            if (ok)
+                applyPreferredCaptureMode(
+                    static_cast<int>(m_impl->devInfo.support_capture_mode));
+        }
+    } catch (...) {
+        ok = false;
+    }
+    if (!ok) {
+        RuntimeLog::log("[CAM] reload params FAILED (device did not report)");
+        return false;
+    }
+
+    m_cameraRead = currentSettings();
+    // The reload replaced the capture options with the device's values, so if
+    // the operator is on the saved-parameter setting, put those back on top —
+    // otherwise "从相机读取" would silently change what the next capture uses.
+    if (!m_useCameraParams)
+        applySavedParams();
+
+    RuntimeLog::log("[CAM] reload params OK: %d key(s) read from device, source=%s",
+                    m_cameraRead.size(),
+                    m_useCameraParams ? "camera-internal" : "saved-config");
+    return true;
+}
+
+bool CameraManager::waitForCaptureIdle(int timeoutMs)
+{
+    if (!m_captureInProgress || !m_captureWatcher->isRunning())
+        return true;
+
+    QElapsedTimer t;
+    t.start();
+    // Deliberately polls instead of pumping the event loop: processEvents() here
+    // would let the capture-completion slot re-enter the window while it is
+    // already closing.  isRunning() flips as soon as the worker leaves the
+    // device, which is all the teardown below needs — the queued `finished`
+    // delivery stays queued and is discarded by shutdown()'s timeout flag.
+    while (m_captureWatcher->isRunning() && t.elapsed() < timeoutMs)
+        QThread::msleep(10);
+
+    const bool idle = !m_captureWatcher->isRunning();
+    if (!idle) {
+        RuntimeLog::log("[CAM] capture worker still inside the device after %d ms — "
+                        "teardown will run anyway", timeoutMs);
+    }
+    return idle;
+}
+
+void CameraManager::shutdown(int deviceWaitMs)
 {
     if (m_shuttingDown) return;
+
+    // Idempotency (任务 3.1): decide from the *state* whether there is anything
+    // left to release.  A repeat call (aboutToQuit after closeEvent,
+    // WM_QUERYENDSESSION after an explicit 断开) must not repeat Close/Destroy,
+    // must not call SystemShutdown twice and must not emit a second
+    // cameraDisconnected.
+    CameraRelease::State st;
+    // "deviceOpen" must describe the *object*, not our bookkeeping: the field
+    // is documented in CameraRelease.h as "an X1/X2 object is open", and
+    // m_isConnected is a UI-facing flag that can lag behind it.  Asking the
+    // impl keeps Close/Destroy from being skipped for a device that exists —
+    // which would leave the object open and let SystemShutdown() run underneath
+    // it.
+    st.deviceOpen = m_impl->hasCamera();
+    st.systemInited = m_impl->systemInited;
+    st.released = m_released;
+    const CameraRelease::Actions act = CameraRelease::plan(st);
+    if (act.noop) {
+        RuntimeLog::log("[CAM] shutdown: already released — no-op "
+                        "(no Close/Destroy, no SystemShutdown, no signal)");
+        return;
+    }
+
     m_shuttingDown = true;
+    m_lastRelease = ReleaseReport{};
+    m_lastRelease.attempted = true;
 
     // 1. Stop scheduling new frames and ask any queued/running worker to bail
     //    out before it touches the device (or `this`, when destroying).
@@ -648,12 +850,11 @@ void CameraManager::shutdown()
     //    plain lock wait — no nested processEvents, so no slot can re-enter
     //    this object while it is being torn down.  Bounded so a truly hung SDK
     //    call cannot hang the close path.
-    bool released = false;
+    QString detail;
     {
-        DeviceLock lk(this, "shutdown", -1,
-                      std::chrono::milliseconds(SHUTDOWN_DEVICE_WAIT_MS));
+        DeviceLock lk(this, "shutdown", -1, std::chrono::milliseconds(deviceWaitMs));
         if (lk.ok()) {
-            if (m_isConnected) {
+            if (act.closeDevice) {
                 try {
                     if (m_impl->isX2()) {
                         if (m_impl->x2.IsOpen())
@@ -664,39 +865,83 @@ void CameraManager::shutdown()
                             m_impl->x1.Close();
                         RVC::X1::Destroy(m_impl->x1);
                     }
+                } catch (const std::exception& e) {
+                    detail = QStringLiteral("关闭设备异常: %1").arg(e.what());
                 } catch (...) {
-                    fprintf(stderr, "[CameraManager] Exception during camera shutdown\n");
+                    detail = QStringLiteral("关闭设备时发生未知异常");
                 }
                 m_impl->model = CameraModel::None;
             }
-            if (m_impl->systemInited) {
+            if (act.systemShutdown) {
                 try {
                     RVC::SystemShutdown();
+                } catch (const std::exception& e) {
+                    if (detail.isEmpty())
+                        detail = QStringLiteral("SystemShutdown 异常: %1").arg(e.what());
                 } catch (...) {
-                    fprintf(stderr, "[CameraManager] Exception during SystemShutdown\n");
+                    if (detail.isEmpty())
+                        detail = QStringLiteral("SystemShutdown 时发生未知异常");
                 }
                 m_impl->systemInited = false;
             }
-            released = true;
+        } else {
+            // Deliberately leaking the device handle beats tearing it down while
+            // a worker is inside it.  The process exit reclaims it.
+            detail = QStringLiteral("等待设备锁超时(%1 ms)：采集/预览线程仍在相机内，"
+                                    "已跳过 Close/Destroy/SystemShutdown")
+                         .arg(deviceWaitMs);
+            m_impl->model = CameraModel::None;
         }
     }
-    if (!released) {
-        // Deliberately leaking the device handle beats tearing it down while a
-        // worker is inside it.  The process exit reclaims it.
-        RuntimeLog::log("[DEV] shutdown: worker still inside the device after %d ms — "
-                        "skipping Close/Destroy/SystemShutdown to avoid concurrency",
-                        SHUTDOWN_DEVICE_WAIT_MS);
-        m_impl->model = CameraModel::None;
+
+    m_lastRelease.released = detail.isEmpty();
+    m_lastRelease.detail = detail;
+    if (m_lastRelease.released) {
+        RuntimeLog::log("[CAM] release OK: close=%d systemShutdown=%d (device wait <=%d ms)",
+                        act.closeDevice ? 1 : 0, act.systemShutdown ? 1 : 0, deviceWaitMs);
+    } else {
+        // Never silent: without this line an incomplete release just looks like
+        // "the camera is occupied again next time".
+        RuntimeLog::log("[CAM] release INCOMPLETE: %s", qPrintable(detail));
     }
 
     m_isConnected = false;
+    m_released = true;
     m_shuttingDown = false;
     if (m_workerToken && !m_impl->destroying)
         m_workerToken->cancelRequested = false;
-    emit cameraDisconnected();
+    if (act.emitDisconnected)
+        emit cameraDisconnected();
 }
 
 bool CameraManager::isConnected() const { return m_isConnected; }
+
+void CameraManager::emergencyRelease()
+{
+    // 任务 3.3 — crash-only path.  Rules for code that runs after an access
+    // violation:
+    //   * no per-device call (the X1/X2 objects may point at corrupt state, and
+    //     Close() would walk driver structures the fault may have half-updated);
+    //   * no lock (a fault inside the device lock would make a second wait on it
+    //     deadlock — the caller's bound would then be the only way out, and we
+    //     would rather spend that budget on the SDK call);
+    //   * no RuntimeLog::log (its mutex may be exactly what the crashing thread
+    //     held).  stderr is redirected to the same runtime log, unbuffered, and
+    //     needs no lock — see openEarlyLog() in main.cpp.
+    // The TerminateProcess that follows this call is what really frees the
+    // device: the OS closes the GigE/USB handles.  This function only gives the
+    // SDK a chance to drop system-wide state cleanly first.
+    fprintf(stderr, "[CRASH] emergencyRelease: RVC::SystemShutdown() begin\n");
+    try {
+        RVC::SystemShutdown();
+        fprintf(stderr, "[CRASH] emergencyRelease: RVC::SystemShutdown() returned\n");
+    } catch (const std::exception& e) {
+        fprintf(stderr, "[CRASH] emergencyRelease: SystemShutdown threw: %s\n", e.what());
+    } catch (...) {
+        fprintf(stderr, "[CRASH] emergencyRelease: SystemShutdown threw (unknown)\n");
+    }
+    fflush(stderr);
+}
 
 // ── Device info ──
 
@@ -1261,6 +1506,10 @@ void CameraManager::onCaptureFinished()
                    + FrameBuffer::bytes(result.points) + FrameBuffer::bytes(result.colors));
     emit captureComplete(result.pngPath, result.plyPath,
                          result.points, result.colors, result.image);
+    // 崩溃注入 (TEST ONLY): HEC_CRASH_INJECT=after-capture.  Last statement on
+    // purpose: the frame has already reached the UI, so the acceptance test
+    // crashes with the camera holding a fully delivered capture.
+    CrashInject::hitIfEnabled(CrashInject::Point::AfterCapture);
 }
 
 void CameraManager::onCaptureTimeout()

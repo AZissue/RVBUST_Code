@@ -1083,6 +1083,16 @@ void ToolsPanel::buildRobotCommPage(QStackedWidget* stack)
             [this](bool on) { emit robotAutoReadToggled(on); });
 }
 
+void ToolsPanel::setRobotAutoRead(bool on)
+{
+    if (!m_robotAutoReadCheck || m_robotAutoReadCheck->isChecked() == on)
+        return;
+    // Keep the panel's checkbox and AppConfig "auto_read_robot_pose" one single
+    // state: the settings dialog and this checkbox are views of the same key.
+    const QSignalBlocker block(m_robotAutoReadCheck);
+    m_robotAutoReadCheck->setChecked(on);
+}
+
 void ToolsPanel::setRobotStatus(const QString& text, bool ok)
 {
     if (!m_robotStatus)

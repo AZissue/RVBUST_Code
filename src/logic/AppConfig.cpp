@@ -59,6 +59,30 @@ void AppConfig::load()
     if (!m_data.contains("ui_stall_threshold_ms")) {
         m_data["ui_stall_threshold_ms"] = 500;
     }
+    // Default true: the operator tunes exposure/gain in the camera vendor tool
+    // first, so the camera's own values must win unless told otherwise.
+    if (!m_data.contains("use_camera_params")) {
+        m_data["use_camera_params"] = true;
+    }
+    // Flow automation: all off, so an untouched install behaves as before.
+    if (!m_data.contains("auto_detect_after_capture")) {
+        m_data["auto_detect_after_capture"] = false;
+    }
+    if (!m_data.contains("auto_save_after_detect")) {
+        m_data["auto_save_after_detect"] = false;
+    }
+    if (!m_data.contains("auto_read_robot_pose")) {
+        m_data["auto_read_robot_pose"] = false;
+    }
+    if (!m_data.contains("idle_pause_preview_sec")) {
+        m_data["idle_pause_preview_sec"] = 60;
+    }
+    if (!m_data.contains("health_check_interval_sec")) {
+        m_data["health_check_interval_sec"] = 30;
+    }
+    if (!m_data.contains("connect_retry_count")) {
+        m_data["connect_retry_count"] = 3;
+    }
 }
 
 void AppConfig::save()
@@ -164,6 +188,86 @@ float AppConfig::caliboardErrorThreshold() const
 void AppConfig::setCaliboardErrorThreshold(float pct)
 {
     m_data["caliboard_error_threshold"] = static_cast<double>(pct);
+    save();
+}
+
+bool AppConfig::useCameraParams() const
+{
+    return m_data.value("use_camera_params", true).toBool();
+}
+
+void AppConfig::setUseCameraParams(bool on)
+{
+    m_data["use_camera_params"] = on;
+    save();
+}
+
+bool AppConfig::autoDetectAfterCapture() const
+{
+    return m_data.value("auto_detect_after_capture", false).toBool();
+}
+
+void AppConfig::setAutoDetectAfterCapture(bool on)
+{
+    m_data["auto_detect_after_capture"] = on;
+    save();
+}
+
+bool AppConfig::autoSaveAfterDetect() const
+{
+    return m_data.value("auto_save_after_detect", false).toBool();
+}
+
+void AppConfig::setAutoSaveAfterDetect(bool on)
+{
+    m_data["auto_save_after_detect"] = on;
+    save();
+}
+
+bool AppConfig::autoReadRobotPose() const
+{
+    return m_data.value("auto_read_robot_pose", false).toBool();
+}
+
+void AppConfig::setAutoReadRobotPose(bool on)
+{
+    m_data["auto_read_robot_pose"] = on;
+    save();
+}
+
+int AppConfig::idlePausePreviewSec() const
+{
+    const int v = m_data.value("idle_pause_preview_sec", 60).toInt();
+    return v > 0 ? v : 0;   // 0 (and anything negative) disables the idle pause
+}
+
+void AppConfig::setIdlePausePreviewSec(int sec)
+{
+    m_data["idle_pause_preview_sec"] = sec > 0 ? sec : 0;
+    save();
+}
+
+int AppConfig::healthCheckIntervalSec() const
+{
+    const int v = m_data.value("health_check_interval_sec", 30).toInt();
+    return v > 0 ? v : 30;
+}
+
+void AppConfig::setHealthCheckIntervalSec(int sec)
+{
+    m_data["health_check_interval_sec"] = sec > 0 ? sec : 30;
+    save();
+}
+
+int AppConfig::connectRetryCount() const
+{
+    const int v = m_data.value("connect_retry_count", 3).toInt();
+    return v > 0 ? v : 0;
+}
+
+void AppConfig::setConnectRetryCount(int count)
+{
+    m_data["connect_retry_count"] = count > 0 ? count : 0;
     save();
 }
 

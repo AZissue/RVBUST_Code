@@ -10,8 +10,11 @@
 #include <QPainter>
 #include <QFont>
 #include <QPaintEvent>
+#include <QThread>
 #include <atomic>
+#include <memory>
 #include <mutex>
+#include <thread>
 #include <algorithm>
 #include <cmath>
 #include <QtConcurrent/QtConcurrentRun>
@@ -195,6 +198,11 @@ static constexpr int kInlineFindAttempts = 8;   // ~16 ms of blocking at most
 static constexpr int kInlineFindDelayMs  = 2;
 static constexpr int kFindRetryEveryMs   = 20;
 static constexpr int kMaxFindRetries     = 25;  // ~0.5 s total budget
+
+// Bounded wait for the worker-thread Vis::View::Close() in shutdown().  The
+// call normally returns in a few hundred ms; the bound only exists so a stuck
+// Vis render thread cannot keep the process alive after the window is gone.
+static constexpr int kViewCloseWaitMs = 3000;
 
 static HWND findVisWindowPolled(const char* title) {
     for (int i = 0; i < kInlineFindAttempts; ++i) {
@@ -531,7 +539,10 @@ VisSceneView::VisSceneView(QWidget* parent)
 #endif
 }
 
-VisSceneView::~VisSceneView() { shutdown(); }
+VisSceneView::~VisSceneView()
+{
+    shutdown();
+}
 
 // ═══════════════════════════════════════════════════════════════
 // Toolbar (reset button only)
@@ -1425,16 +1436,55 @@ void VisSceneView::shutdown()
     //    m_viewport won't find any child HWND to double-destroy.
     ++m_pickQueryId;   // invalidate in-flight pick queries
     if (d->view) {
+        bool closed = false;
         {
             // Wait for any worker-thread pick query to finish before resetting
             // the view pointer.
             std::lock_guard<std::mutex> lg(d->viewMtx);
             if (d->visHwnd && IsWindow(d->visHwnd))
                 ShowWindow(d->visHwnd, SW_HIDE);
-            d->view->Close();
-            d->view.reset();
+
+            // Close() is a synchronous Vis command, so per PROJECT §3 it must
+            // not run on the UI thread: it is issued on a worker here and this
+            // thread only waits for it.
+            //
+            // The wait is bounded because the call can fail to return at all.
+            // Measured with a freshly connected camera (round 6): issued from
+            // ~VisSceneView() the call never came back — Vis::View::Close() →
+            // Vis3d_Command_Execute ended up in MSVCP140!_Cnd_wait and stayed
+            // there, so the process outlived the window (the round-6 blocker).
+            // The identical call issued while the application is still alive
+            // (MainWindow::closeEvent / aboutToQuit) returns in ~0.3 s; whether
+            // the UI thread pumps messages meanwhile makes no difference.  The
+            // close therefore happens there, and this bound is what keeps the
+            // destructor path from re-introducing the hang if it ever runs
+            // first (crash path, quit without closeEvent).
+            const auto impl = d;   // keeps the impl (and its view) alive
+            const auto done = std::make_shared<std::atomic<bool>>(false);
+            std::thread worker([impl, done]() {
+                if (impl->view)
+                    impl->view->Close();
+                done->store(true, std::memory_order_release);
+            });
+            for (int waited = 0;
+                 waited < kViewCloseWaitMs && !done->load(std::memory_order_acquire);
+                 waited += 10)
+                QThread::msleep(10);
+            if (done->load(std::memory_order_acquire)) {
+                worker.join();
+                d->view.reset();
+                closed = true;
+            } else {
+                // Still inside Close(): the worker's own reference to the impl
+                // keeps the view alive, so nothing is destroyed underneath it
+                // and the process can exit without waiting any longer.
+                worker.detach();
+                RuntimeLog::log("3D: Vis close did not return within %d ms — "
+                                "exiting without it", kViewCloseWaitMs);
+            }
         }
-        RuntimeLog::log("3D: Vis closed");
+        if (closed)
+            RuntimeLog::log("3D: Vis closed");
     }
 
     // 4. Clear all handle state
