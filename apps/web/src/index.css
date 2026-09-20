@@ -263,7 +263,9 @@ input, textarea, select { width: 100%; color: var(--text); background: var(--sur
 .report-ticket:hover { border-color: var(--brand); }
 .report-ticket header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .report-ticket strong { font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.report-ticket-customer { font-size: 13px; font-weight: 500; }
 .report-ticket small { color: var(--muted); font-size: 11px; }
+.report-ticket-no { font-size: 10px; opacity: .85; }
 @media (max-width: 1080px) { .reports-calendar { grid-template-columns: 1fr; } }
 .level-s { color: #fff; background: var(--brand); }
 .level-a { color: var(--brand); background: var(--brand-soft); box-shadow: inset 0 0 0 1px var(--brand); }
