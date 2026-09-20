@@ -1,0 +1,20 @@
+********* Start testing of TestMeasureMethods *********
+Config: Using QtTest library 5.14.2, Qt 5.14.2 (x86_64-little_endian-llp64 shared (dynamic) release build; by MSVC 2017)
+PASS   : TestMeasureMethods::initTestCase()
+PASS   : TestMeasureMethods::catalogueCoversEveryMethodOnce()
+PASS   : TestMeasureMethods::roiCountMatchesTheKernel()
+PASS   : TestMeasureMethods::roiRolesMatchTheDeclaredRequirement()
+PASS   : TestMeasureMethods::roiRequirementTextIsExplicit()
+PASS   : TestMeasureMethods::thirdDragTellsTheUserInsteadOfSilentRestart()
+PASS   : TestMeasureMethods::singleRoiMethodReplacesInsteadOfRestarting()
+PASS   : TestMeasureMethods::dragIsIgnoredByMethodsWithoutRoi()
+PASS   : TestMeasureMethods::roiStateTextDescribesProgress()
+PASS   : TestMeasureMethods::noteAfterDragMatchesTheState()
+PASS   : TestMeasureMethods::explainLineCarriesEverySection()
+PASS   : TestMeasureMethods::everyMethodStatesWhatTheNumbersMean()
+PASS   : TestMeasureMethods::resultLineCarriesValuesAndConvention()
+PASS   : TestMeasureMethods::refusalLineNamesTheMethod()
+PASS   : TestMeasureMethods::logTagsSeparateExplainFromResult()
+PASS   : TestMeasureMethods::cleanupTestCase()
+Totals: 16 passed, 0 failed, 0 skipped, 0 blacklisted, 2ms
+********* Finished testing of TestMeasureMethods *********

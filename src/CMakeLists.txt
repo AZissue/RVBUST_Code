@@ -17,6 +17,8 @@ set(SOURCES
     logic/RobotPose.cpp
     logic/URRealtimeReader.cpp
     logic/NrcJsonReader.cpp
+    # 埃夫特（EFORT）机器人通信适配器（用户反馈 7，第四种协议）
+    logic/EfortPoseReader.cpp
     logic/MeasureTools.cpp
     logic/PixelTo3DService.cpp
     # 测量方法目录（P3 ROI 需求 / P4 说明）— 纯数据，无 Qt 依赖
@@ -56,6 +58,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt5::Network
     RVC::RVC
     HandEyeSDK::HandEyeSDK
+    EfortSDK::EfortSDK
 )
 
 set(THIRD_PARTY "${CMAKE_SOURCE_DIR}/third_party")
@@ -87,6 +90,21 @@ if(WIN32)
     file(GLOB QT5_DLLS      "${THIRD_PARTY}/Qt5/bin/*.dll")
     file(GLOB RVC_DLLS      "${THIRD_PARTY}/RVC/runtime/*.dll")
     file(GLOB HANDEYE_DLLS  "${THIRD_PARTY}/HandEyeSDK/bin/*.dll")
+    # EftSdk.dll + 它的依赖（log4cpp / rlibcpp*）。third_party 已在 .gitignore
+    # 里，这些二进制不会进 git。
+    file(GLOB EFORT_DLLS    "${THIRD_PARTY}/EfortSDK/bin/*.dll")
+
+    # 埃夫特 SDK 内部用 log4cpp，连接前会读**工作目录**下的 log4cpp.conf，
+    # 缺文件时 EftSdk.dll 直接抛异常（这就是 008 整程序崩溃的根因，009 之后
+    # 变成一条可读的「连接失败」）。所以它必须和 exe 一起部署。
+    # 源文件缺失时明确报错，不静默跳过（否则真机上只会看到连接失败）。
+    set(EFORT_LOG_CONF "${THIRD_PARTY}/EfortSDK/bin/log4cpp.conf")
+    if(NOT EXISTS "${EFORT_LOG_CONF}")
+        message(FATAL_ERROR
+            "找不到 EfortSDK 的日志配置 ${EFORT_LOG_CONF}：EftSdk.dll 在连接前需要"
+            "可执行文件旁边的 log4cpp.conf。请把 SDK 自带的 log4cpp 样例配置放到 "
+            "third_party/EfortSDK/bin/log4cpp.conf（或把 EFORTSDK_DIR 指向含该文件的 SDK）。")
+    endif()
 
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         # Qt5 runtime DLLs (Release + Debug)
@@ -100,7 +118,12 @@ if(WIN32)
         # RVC + HandEyeSDK
         COMMAND ${CMAKE_COMMAND} -E copy_if_different ${RVC_DLLS} $<TARGET_FILE_DIR:${PROJECT_NAME}>
         COMMAND ${CMAKE_COMMAND} -E copy_if_different ${HANDEYE_DLLS} $<TARGET_FILE_DIR:${PROJECT_NAME}>
-        COMMENT "Deploying Qt5 + RVC + HandEyeSDK runtime DLLs..."
+        # EfortSDK（埃夫特）
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${EFORT_DLLS} $<TARGET_FILE_DIR:${PROJECT_NAME}>
+        # EfortSDK 的 log4cpp 配置：必须躺在 exe 旁边（见上面的 EXISTS 检查）
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${EFORT_LOG_CONF}" "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
+        COMMENT "Deploying Qt5 + RVC + HandEyeSDK + EfortSDK runtime DLLs..."
     )
 
     # VC++ runtime (app-local deployment): the target PC needs no vc_redist.

@@ -1,0 +1,11 @@
+********* Start testing of TestBoardPoseFit *********
+Config: Using QtTest library 5.14.2, Qt 5.14.2 (x86_64-little_endian-llp64 shared (dynamic) release build; by MSVC 2017)
+PASS   : TestBoardPoseFit::initTestCase()
+PASS   : TestBoardPoseFit::fitXyPlane()
+PASS   : TestBoardPoseFit::fitTiltedPlane()
+PASS   : TestBoardPoseFit::fitDegenerate()
+PASS   : TestBoardPoseFit::fitSkipsInvalidPoints()
+PASS   : TestBoardPoseFit::quatRoundtrip()
+PASS   : TestBoardPoseFit::cleanupTestCase()
+Totals: 7 passed, 0 failed, 0 skipped, 0 blacklisted, 2ms
+********* Finished testing of TestBoardPoseFit *********

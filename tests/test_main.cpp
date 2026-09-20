@@ -29,6 +29,7 @@
 #include "test_measure_methods.h"
 #include "test_log_presentation.h"
 #include "test_pixel_to_3d_service.h"
+#include "test_efort_pose_reader.h"
 
 namespace {
 
@@ -184,6 +185,12 @@ int main(int argc, char** argv)
         // 的分派顺序、失败状态与结果一致性。
         TestPixelTo3DService t23;
         status |= runClass(&t23, argc, argv, "pixel_to_3d_service");
+    }
+    {
+        // 第 11 回合任务 008（Codex 验收）：埃夫特适配器里不需要真机的那部分
+        // ——mm/度归一化、坏值拒绝、SDK 返回码映射。
+        TestEfortPoseReader t24;
+        status |= runClass(&t24, argc, argv, "efort_pose_reader");
     }
     return status;
 }

@@ -1138,6 +1138,8 @@ void ToolsPanel::buildRobotCommPage(QStackedWidget* stack)
     m_robotProtocol->addItem(QStringLiteral("Modbus TCP"));
     m_robotProtocol->addItem(QStringLiteral("UR Realtime (30003)"));
     m_robotProtocol->addItem(QStringLiteral("博纳斯(纳博特) JSON/TCP"));
+    // 用户反馈 7：埃夫特走 EfortSDK（第四种协议，index 3 固定不变）。
+    m_robotProtocol->addItem(QStringLiteral("埃夫特（EfortSDK）"));
     m_robotProtocol->setStyleSheet(Theme::comboBoxStyle());
     protoRow->addWidget(m_robotProtocol, 1);
     m_robotStatus = new QLabel(QStringLiteral("未连接"), group);
@@ -1228,6 +1230,8 @@ void ToolsPanel::buildRobotCommPage(QStackedWidget* stack)
         "UR Realtime 协议下机器人主动推流，读取到的姿态分量为轴角(弧度)而非欧拉角度数。"
         "博纳斯(纳博特) JSON/TCP 协议读取当前 TCP 位姿（x y z rx ry rz，mm/度），"
         "应答字段名未知时会自动尝试常见字段并把原始应答写进运行日志。"
+        "埃夫特走 EfortSDK，IP 必填（端口由 SDK 决定，本页端口输入框在埃夫特协议下隐藏），"
+        "读取基坐标下的 TCP 位姿。"
         "无真机时可点击「模拟连接成功」验证按钮显示与样式。"));
     form->addRow(QString(), hint);
 
@@ -1238,6 +1242,9 @@ void ToolsPanel::buildRobotCommPage(QStackedWidget* stack)
     auto updateProtocolFields = [this](int index) {
         const bool isModbus = (index == 0);
         m_modbusFieldsWidget->setVisible(isModbus);
+        // 埃夫特（index 3）走 EfortSDK：地址串由 SDK 决定，端口不参与，
+        // 所以把端口框收起来（留空），避免给用户一个"填了就有用"的错觉。
+        m_robotPort->setVisible(index != 3);
         // Default ports: Modbus TCP 502, UR realtime 30003, 博纳斯/纳博特 6001.
         m_robotPort->setValue(index == 1 ? 30003 : (index == 2 ? 6001 : 502));
     };
@@ -1254,9 +1261,13 @@ void ToolsPanel::buildRobotCommPage(QStackedWidget* stack)
                 setRobotStatus(QStringLiteral("系数格式无效"), true);
                 return;
             }
+            // 埃夫特（protocol 3）不走 TCP 端口：传 0，由适配器把 IP 交给 SDK。
+            const quint16 port = (protocol == 3)
+                ? 0
+                : static_cast<quint16>(m_robotPort->value());
             emit robotConnectRequested(
                 m_robotHost->text().trimmed(),
-                static_cast<quint16>(m_robotPort->value()),
+                port,
                 protocol,
                 m_robotFormat->currentIndex(), scale,
                 static_cast<quint8>(m_robotUnitId->value()),

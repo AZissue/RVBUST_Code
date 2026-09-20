@@ -1,0 +1,19 @@
+********* Start testing of TestCameraRecovery *********
+Config: Using QtTest library 5.14.2, Qt 5.14.2 (x86_64-little_endian-llp64 shared (dynamic) release build; by MSVC 2017)
+PASS   : TestCameraRecovery::initTestCase()
+PASS   : TestCameraRecovery::idleStateIsNoop()
+PASS   : TestCameraRecovery::repeatTeardownIsNoop()
+PASS   : TestCameraRecovery::teardownAfterConnectClosesAndAnnounces()
+PASS   : TestCameraRecovery::systemOnlyTeardownShutsDownSystem()
+PASS   : TestCameraRecovery::retryScheduleIsOneTwoThreeSeconds()
+PASS   : TestCameraRecovery::retryDisabledWhenCountIsZero()
+PASS   : TestCameraRecovery::classifiesBusyFromTheDeviceFlag()
+PASS   : TestCameraRecovery::classifiesBusyFromTheErrorText()
+PASS   : TestCameraRecovery::classifiesMissingDevice()
+PASS   : TestCameraRecovery::retriesOnlyWhenItCanHelp()
+PASS   : TestCameraRecovery::busyHintTellsTheOperatorWhatToDo()
+PASS   : TestCameraRecovery::everyFailureHasAHint()
+PASS   : TestCameraRecovery::crashInjectMatchesOnlyItsOwnValue()
+PASS   : TestCameraRecovery::cleanupTestCase()
+Totals: 15 passed, 0 failed, 0 skipped, 0 blacklisted, 1ms
+********* Finished testing of TestCameraRecovery *********

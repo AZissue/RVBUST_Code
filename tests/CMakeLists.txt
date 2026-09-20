@@ -32,6 +32,9 @@ set(TEST_SOURCES
     # 第 11 回合任务 001（Codex 验收测试）：像素→3D 共享服务的分派顺序与
     # 结果一致性（src/logic/PixelTo3DService.cpp）。
     test_pixel_to_3d_service.cpp
+    # 第 11 回合任务 008（Codex 验收测试）：埃夫特适配器的位姿归一化与
+    # SDK 返回码映射（真机不可用，这里钉住"我们自己的换算"）。
+    test_efort_pose_reader.cpp
 )
 
 add_executable(unit_tests ${TEST_SOURCES}
@@ -52,6 +55,9 @@ add_executable(unit_tests ${TEST_SOURCES}
     # Pixel -> 3D shared service (used by the tool page offline and, later, by
     # the online click-to-pick path).
     ${CMAKE_SOURCE_DIR}/src/logic/PixelTo3DService.cpp
+    # Efort (EFORT) robot adapter: readPose needs the vendor SDK, but the
+    # normalisation helpers are what the tests exercise.
+    ${CMAKE_SOURCE_DIR}/src/logic/EfortPoseReader.cpp
     # CameraManager itself, so "call shutdown() twice" is tested against the
     # real object and not only against the pure CameraRelease::plan.  The tests
     # never connect, so no RVC call is reached.
@@ -72,6 +78,9 @@ target_link_libraries(unit_tests PRIVATE
     Qt5::Concurrent
     RVC::RVC
     HandEyeSDK::HandEyeSDK
+    # EfortPoseReader.cpp links the EFORT SDK; the include dir comes from the
+    # imported target so the test can also read SdkConstDef.h's return codes.
+    EfortSDK::EfortSDK
     ws2_32
 )
 

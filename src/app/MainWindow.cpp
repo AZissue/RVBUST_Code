@@ -1126,6 +1126,33 @@ void MainWindow::onRobotConnect(const QString& host, quint16 port,
 {
     m_robotProtocol = protocol;
 
+    if (protocol == 3) {
+        // 埃夫特：走厂商 EfortSDK（EftSdk.dll）。地址串与端口由适配器决定，
+        // 与 UR/NRC 一样没有寄存器格式/系数要配。
+        if (!m_eftReader.connect(host, port)) {
+            m_robotSimulated = false;
+            m_robotConnected = false;
+            m_toolsPanel->setRobotStatus(QStringLiteral("连接失败"), true);
+            m_sidePanel->setTip(
+                QStringLiteral("机器人连接失败：%1").arg(m_eftReader.lastError()),
+                true);
+            m_logger->error(QStringLiteral("机器人连接失败：%1")
+                                .arg(m_eftReader.lastError()));
+            updateRobotReadBar();
+            return;
+        }
+        m_robotSimulated = false;
+        m_robotConnected = true;
+        m_toolsPanel->setRobotConnected(true);
+        m_toolsPanel->setRobotStatus(QStringLiteral("已连接"), false);
+        m_sidePanel->setTip(
+            QStringLiteral("机器人已连接（%1，埃夫特 EfortSDK）").arg(host), false);
+        m_logger->success(
+            QStringLiteral("机器人已连接（%1，埃夫特 EfortSDK）").arg(host));
+        updateRobotReadBar();
+        return;
+    }
+
     if (protocol == 2) {
         // 博纳斯/纳博特 JSON over TCP: like UR, no register format/scale to
         // configure — the adapter owns the framing and the JSON payload.
@@ -1217,6 +1244,7 @@ void MainWindow::onRobotDisconnect()
     m_robotReader.disconnect();
     m_urReader.disconnect();
     m_nrcReader.disconnect();
+    m_eftReader.disconnect();
     m_robotConnected = false;
     m_robotSimulated = false;
     m_toolsPanel->setRobotConnected(false);
@@ -1232,6 +1260,7 @@ void MainWindow::onRobotSimulateConnect()
     m_robotReader.disconnect();
     m_urReader.disconnect();
     m_nrcReader.disconnect();
+    m_eftReader.disconnect();
     m_robotSimulated = true;
     m_robotConnected = true;
     m_toolsPanel->setRobotConnected(true);
@@ -1252,6 +1281,8 @@ bool MainWindow::readRobotPose(RobotPose::Pose& pose)
         pose.rpy = { 0.0, 0.0, 0.0 };
         return true;
     }
+    if (m_robotProtocol == 3)
+        return m_eftReader.readPose(pose) == RobotPose::Status::Ok;
     if (m_robotProtocol == 2)
         return m_nrcReader.readPose(pose) == RobotPose::Status::Ok;
     if (m_robotProtocol == 1)
@@ -1261,6 +1292,8 @@ bool MainWindow::readRobotPose(RobotPose::Pose& pose)
 
 QString MainWindow::robotLastError() const
 {
+    if (m_robotProtocol == 3)
+        return m_eftReader.lastError();
     if (m_robotProtocol == 2)
         return m_nrcReader.lastError();
     return m_robotProtocol == 1 ? m_urReader.lastError() : m_robotReader.lastError();

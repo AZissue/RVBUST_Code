@@ -1,0 +1,12 @@
+********* Start testing of TestAutoFlowPolicy *********
+Config: Using QtTest library 5.14.2, Qt 5.14.2 (x86_64-little_endian-llp64 shared (dynamic) release build; by MSVC 2017)
+PASS   : TestAutoFlowPolicy::initTestCase()
+PASS   : TestAutoFlowPolicy::switchOffNeverTriggers()
+PASS   : TestAutoFlowPolicy::successfulDetectWithValidCardsTriggers()
+PASS   : TestAutoFlowPolicy::failedDetectSkipsWithReason()
+PASS   : TestAutoFlowPolicy::invalidCardsSkipWithTheValidatorMessage()
+PASS   : TestAutoFlowPolicy::missingValidatorMessageFallsBack()
+PASS   : TestAutoFlowPolicy::autoDetectNeedsAFrame()
+PASS   : TestAutoFlowPolicy::cleanupTestCase()
+Totals: 8 passed, 0 failed, 0 skipped, 0 blacklisted, 1ms
+********* Finished testing of TestAutoFlowPolicy *********

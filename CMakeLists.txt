@@ -23,6 +23,9 @@ find_package(RVC REQUIRED)
 # ── HandEyeSDK ──
 find_package(HandEyeSDK REQUIRED)
 
+# ── EfortSDK（埃夫特机器人通信，第四种协议）──
+find_package(EfortSDK REQUIRED)
+
 # ── RVBUST Vis (optional for Phase 2) ──
 find_package(RVBUSTVis QUIET)
 if(RVBUSTVis_FOUND)

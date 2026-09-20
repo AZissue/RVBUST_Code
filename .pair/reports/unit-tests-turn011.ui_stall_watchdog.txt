@@ -1,0 +1,18 @@
+********* Start testing of TestUiStallWatchdog *********
+Config: Using QtTest library 5.14.2, Qt 5.14.2 (x86_64-little_endian-llp64 shared (dynamic) release build; by MSVC 2017)
+PASS   : TestUiStallWatchdog::initTestCase()
+PASS   : TestUiStallWatchdog::firstTickIsNotAStall()
+PASS   : TestUiStallWatchdog::detectsStallOverThreshold()
+PASS   : TestUiStallWatchdog::reportsEachEpisodeOnce()
+PASS   : TestUiStallWatchdog::recoversAndDetectsAgain()
+PASS   : TestUiStallWatchdog::thresholdIsConfigurable()
+PASS   : TestUiStallWatchdog::tracksMaxStall()
+PASS   : TestUiStallWatchdog::contextFormatting()
+PASS   : TestUiStallWatchdog::countFormatting()
+PASS   : TestUiStallWatchdog::clockIsMonotonic()
+PASS   : TestUiStallWatchdog::blockAfterResetIsStillReported()
+QINFO  : TestUiStallWatchdog::tickCostIsNegligible() watchdog tick cost: 0.007 us/tick over 200000 ticks (0 stalls)
+PASS   : TestUiStallWatchdog::tickCostIsNegligible()
+PASS   : TestUiStallWatchdog::cleanupTestCase()
+Totals: 13 passed, 0 failed, 0 skipped, 0 blacklisted, 5ms
+********* Finished testing of TestUiStallWatchdog *********

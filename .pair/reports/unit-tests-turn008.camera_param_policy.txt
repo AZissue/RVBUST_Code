@@ -1,0 +1,13 @@
+********* Start testing of TestCameraParamPolicy *********
+Config: Using QtTest library 5.14.2, Qt 5.14.2 (x86_64-little_endian-llp64 shared (dynamic) release build; by MSVC 2017)
+PASS   : TestCameraParamPolicy::initTestCase()
+PASS   : TestCameraParamPolicy::cameraInternalPushesNothing()
+PASS   : TestCameraParamPolicy::cameraInternalEmptyReadPushesNothing()
+PASS   : TestCameraParamPolicy::savedConfigIsApplied()
+PASS   : TestCameraParamPolicy::savedConfigEmptyPushesNothing()
+PASS   : TestCameraParamPolicy::operatorEditBeatsTheCheckbox()
+PASS   : TestCameraParamPolicy::operatorEditWithEmptySavedPushesNothing()
+PASS   : TestCameraParamPolicy::sourceAnnotationIsExplicit()
+PASS   : TestCameraParamPolicy::cleanupTestCase()
+Totals: 9 passed, 0 failed, 0 skipped, 0 blacklisted, 1ms
+********* Finished testing of TestCameraParamPolicy *********

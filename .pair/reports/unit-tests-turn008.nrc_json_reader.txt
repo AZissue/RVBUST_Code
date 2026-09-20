@@ -1,0 +1,21 @@
+********* Start testing of TestNrcJsonReader *********
+Config: Using QtTest library 5.14.2, Qt 5.14.2 (x86_64-little_endian-llp64 shared (dynamic) release build; by MSVC 2017)
+PASS   : TestNrcJsonReader::initTestCase()
+PASS   : TestNrcJsonReader::connectAndPoseFramesMatchCapturedBytes()
+PASS   : TestNrcJsonReader::allCapturedCommandFramesAreByteExact()
+PASS   : TestNrcJsonReader::handshakeReplyIsSkipped()
+PASS   : TestNrcJsonReader::worksWhenHandshakeIsIgnored()
+PASS   : TestNrcJsonReader::parsesPosValue()
+PASS   : TestNrcJsonReader::parsesCurrentPos()
+PASS   : TestNrcJsonReader::parsesRealPosMcs()
+PASS   : TestNrcJsonReader::parsesNestedData()
+PASS   : TestNrcJsonReader::parsesPoseInsideTopLevelArray()
+PASS   : TestNrcJsonReader::timeoutIsRetryable()
+PASS   : TestNrcJsonReader::badCrcIsProtocolError()
+PASS   : TestNrcJsonReader::shortOrMissingFieldIsReadableError()
+PASS   : TestNrcJsonReader::invalidJsonIsReadableError()
+PASS   : TestNrcJsonReader::notConnectedWithoutConnect()
+PASS   : TestNrcJsonReader::connectRefusedIsReported()
+PASS   : TestNrcJsonReader::cleanupTestCase()
+Totals: 17 passed, 0 failed, 0 skipped, 0 blacklisted, 588ms
+********* Finished testing of TestNrcJsonReader *********

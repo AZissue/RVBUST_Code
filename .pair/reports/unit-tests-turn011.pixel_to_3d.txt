@@ -1,0 +1,16 @@
+********* Start testing of TestPixelTo3D *********
+Config: Using QtTest library 5.14.2, Qt 5.14.2 (x86_64-little_endian-llp64 shared (dynamic) release build; by MSVC 2017)
+PASS   : TestPixelTo3D::initTestCase()
+PASS   : TestPixelTo3D::alignedLookupBasic()
+PASS   : TestPixelTo3D::alignedLookupOutOfBounds()
+PASS   : TestPixelTo3D::alignedLookupRejectsNaN()
+PASS   : TestPixelTo3D::projectedIndexRoundTrip()
+PASS   : TestPixelTo3D::projectedIndexWithExtrinsics()
+PASS   : TestPixelTo3D::correspondIndexRoundTrip()
+PASS   : TestPixelTo3D::plyReaderAscii()
+PASS   : TestPixelTo3D::plyReaderBinaryFloat()
+PASS   : TestPixelTo3D::plyReaderBadInputs()
+PASS   : TestPixelTo3D::plyReaderSkipsNonVertexScalarProperties()
+PASS   : TestPixelTo3D::cleanupTestCase()
+Totals: 12 passed, 0 failed, 0 skipped, 0 blacklisted, 12ms
+********* Finished testing of TestPixelTo3D *********

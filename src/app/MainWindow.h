@@ -8,6 +8,7 @@
 #include "models/CalibrationMode.h"
 #include "logic/AppConfig.h"
 #include "logic/CalibrationService.h"
+#include "logic/EfortPoseReader.h"
 #include "logic/NrcJsonReader.h"
 #include "logic/RobotPose.h"
 #include "logic/URRealtimeReader.h"
@@ -218,6 +219,7 @@ private:
     RobotPose::ModbusTcpReader m_robotReader;
     RobotPose::URRealtimeReader m_urReader;
     RobotPose::NrcJsonReader m_nrcReader;   // 博纳斯/纳博特 JSON over TCP
+    EfortPoseReader::EfortReader m_eftReader;  // 埃夫特（EfortSDK，protocol 3）
     // 0 = Modbus TCP, 1 = UR Realtime, 2 = 博纳斯(纳博特) JSON/TCP
     int m_robotProtocol = 0;
     bool m_robotAutoRead = false;

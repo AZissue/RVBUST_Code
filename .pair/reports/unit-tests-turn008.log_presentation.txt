@@ -1,0 +1,13 @@
+********* Start testing of TestLogPresentation *********
+Config: Using QtTest library 5.14.2, Qt 5.14.2 (x86_64-little_endian-llp64 shared (dynamic) release build; by MSVC 2017)
+PASS   : TestLogPresentation::initTestCase()
+PASS   : TestLogPresentation::everyLevelHasItsOwnLabel()
+PASS   : TestLogPresentation::levelColorsUseTheExistingPalette()
+PASS   : TestLogPresentation::unknownLevelFallsBackToInfo()
+PASS   : TestLogPresentation::explainLineKeepsExactlyOneTag()
+PASS   : TestLogPresentation::resultLineKeepsValuesAndOneTag()
+PASS   : TestLogPresentation::refusalBranchIsStillPanelWorthy()
+PASS   : TestLogPresentation::onlyMeasurementLogsReachThePanel()
+PASS   : TestLogPresentation::cleanupTestCase()
+Totals: 9 passed, 0 failed, 0 skipped, 0 blacklisted, 1ms
+********* Finished testing of TestLogPresentation *********
