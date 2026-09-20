@@ -23,6 +23,9 @@ private slots:
     void roiStateTextDescribesProgress();
     void noteAfterDragMatchesTheState();
     void explainLineCarriesEverySection();
+    // 第 11 回合任务 005（用户反馈 5）：说明只留在操作日志，且每个方法的结果行
+    // 都要补一句"这组数说明了什么"，否则用户还是看不懂那堆数。
+    void everyMethodStatesWhatTheNumbersMean();
     void resultLineCarriesValuesAndConvention();
     void refusalLineNamesTheMethod();
     void logTagsSeparateExplainFromResult();

@@ -1,0 +1,17 @@
+********* Start testing of TestToolInputParser *********
+Config: Using QtTest library 5.14.2, Qt 5.14.2 (x86_64-little_endian-llp64 shared (dynamic) release build; by MSVC 2017)
+PASS   : TestToolInputParser::initTestCase()
+PASS   : TestToolInputParser::parsesSpaceSeparated16()
+PASS   : TestToolInputParser::parsesCommaSeparated16()
+PASS   : TestToolInputParser::parsesMixedSeparators()
+PASS   : TestToolInputParser::parsesScientificNotation()
+PASS   : TestToolInputParser::trimsSurroundingWhitespace()
+PASS   : TestToolInputParser::rejectsWrongCount()
+PASS   : TestToolInputParser::rejectsEmptyInput()
+PASS   : TestToolInputParser::rejectsChineseComma()
+PASS   : TestToolInputParser::rejectsFullWidthDigits()
+PASS   : TestToolInputParser::rejectsNonNumericToken()
+PASS   : TestToolInputParser::reportsBadToken()
+PASS   : TestToolInputParser::cleanupTestCase()
+Totals: 13 passed, 0 failed, 0 skipped, 0 blacklisted, 1ms
+********* Finished testing of TestToolInputParser *********

@@ -1,0 +1,19 @@
+********* Start testing of TestPixelTo3DService *********
+Config: Using QtTest library 5.14.2, Qt 5.14.2 (x86_64-little_endian-llp64 shared (dynamic) release build; by MSVC 2017)
+PASS   : TestPixelTo3DService::initTestCase()
+PASS   : TestPixelTo3DService::hasDataOnlyWhenUsable()
+PASS   : TestPixelTo3DService::missingCloudIsNoData()
+PASS   : TestPixelTo3DService::badImageSizeIsNoData()
+PASS   : TestPixelTo3DService::alignedPixelMapsToItsOwnPoint()
+PASS   : TestPixelTo3DService::alignedOutOfRangePixelIsOutOfRange()
+PASS   : TestPixelTo3DService::alignedInvalidPointIsNoPointAtPixel()
+PASS   : TestPixelTo3DService::nonAlignedWithoutIntrinsicsAsksForThem()
+PASS   : TestPixelTo3DService::nonAlignedWithZeroFocalIsInvalid()
+PASS   : TestPixelTo3DService::projectedPathMatchesTheOldComputation()
+PASS   : TestPixelTo3DService::correspondMapBeatsAlignedLayout()
+PASS   : TestPixelTo3DService::correspondMapOutOfRangePixel()
+PASS   : TestPixelTo3DService::formatPointKeepsThreeDecimals()
+PASS   : TestPixelTo3DService::statusTextIsReadableChinese()
+PASS   : TestPixelTo3DService::cleanupTestCase()
+Totals: 15 passed, 0 failed, 0 skipped, 0 blacklisted, 1ms
+********* Finished testing of TestPixelTo3DService *********

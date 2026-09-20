@@ -1,0 +1,15 @@
+********* Start testing of TestDetectionEngine *********
+Config: Using QtTest library 5.14.2, Qt 5.14.2 (x86_64-little_endian-llp64 shared (dynamic) release build; by MSVC 2017)
+PASS   : TestDetectionEngine::initTestCase()
+PASS   : TestDetectionEngine::formatXyzForCardSkipsNanAndPicksFirstValid()
+PASS   : TestDetectionEngine::formatXyzForCardReturnsEmptyForNoValidPoints()
+PASS   : TestDetectionEngine::formatXyzForCardFormatsThreeDecimals()
+PASS   : TestDetectionEngine::formatMarkersForOverlayLabelsAndHighlights()
+PASS   : TestDetectionEngine::firstValidPoint3dSkipsNan()
+PASS   : TestDetectionEngine::firstValidPoint3dReturnsEmpty()
+PASS   : TestDetectionEngine::countValidPoints2DCountsLeadingValid()
+SKIP   : TestDetectionEngine::detectConcentricRegressionOnTestData() Set HAND_EYE_TEST_REGRESSION=1 to run the file-based SDK regression
+D:\MyCode\MyHandEyeTools\tests\test_detection_engine.cpp(115) : failure location
+PASS   : TestDetectionEngine::cleanupTestCase()
+Totals: 9 passed, 0 failed, 1 skipped, 0 blacklisted, 1ms
+********* Finished testing of TestDetectionEngine *********

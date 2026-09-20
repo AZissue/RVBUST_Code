@@ -1,0 +1,10 @@
+********* Start testing of TestCameraManagerRelease *********
+Config: Using QtTest library 5.14.2, Qt 5.14.2 (x86_64-little_endian-llp64 shared (dynamic) release build; by MSVC 2017)
+PASS   : TestCameraManagerRelease::initTestCase()
+PASS   : TestCameraManagerRelease::shutdownTwiceOnAConnectedlessManager()
+PASS   : TestCameraManagerRelease::releaseReportSurvivesARepeatCall()
+PASS   : TestCameraManagerRelease::useCameraParamsDefaultsToOn()
+PASS   : TestCameraManagerRelease::healthIntervalIsConfigurable()
+PASS   : TestCameraManagerRelease::cleanupTestCase()
+Totals: 6 passed, 0 failed, 0 skipped, 0 blacklisted, 1ms
+********* Finished testing of TestCameraManagerRelease *********

@@ -18,17 +18,6 @@
 
 namespace {
 
-// 说明文案里的小字体标签（P4：说明要短、能看懂，所以直接放在页面上，
-// 同时选中方法时写一条 [测量-说明] 进操作日志）。
-QLabel* specLabel(const char* text, QWidget* parent)
-{
-    auto* label = new QLabel(QString::fromUtf8(text), parent);
-    label->setWordWrap(true);
-    label->setStyleSheet(QStringLiteral("color: %1; font-size: %2px;")
-                             .arg(Theme::TEXT_BODY).arg(Theme::FONT_HINT));
-    return label;
-}
-
 // 操作日志的两条固定前缀（P4）：选中方法时是 [测量-说明]，测完是 [测量-结果]。
 // 两者必须分开，否则"我刚测的数字"和"这个方法怎么用"在日志里分不出来。
 // 前缀本身定义在 MeasureMethods.h 里（可被单测断言）。
@@ -116,16 +105,8 @@ void MeasurePage::buildUi()
     cloudForm->addRow(QString(), m_roiClearBtn);
     layout->addWidget(cloudGroup);
 
-    // ── 说明（P4：用途 / ROI 怎么画 / 输出 / 可信度 / 常见错法）──
-    auto* specGroup = new QGroupBox(QStringLiteral("说明"), this);
-    specGroup->setObjectName(QStringLiteral("measure_spec_%1").arg(id));
-    auto* specForm = new QFormLayout(specGroup);
-    specForm->addRow(QStringLiteral("用途"), specLabel(m_spec.purpose, specGroup));
-    specForm->addRow(QStringLiteral("ROI 怎么画"), specLabel(m_spec.howTo, specGroup));
-    specForm->addRow(QStringLiteral("输出"), specLabel(m_spec.outputs, specGroup));
-    specForm->addRow(QStringLiteral("可信度"), specLabel(m_spec.confidence, specGroup));
-    specForm->addRow(QStringLiteral("常见错法"), specLabel(m_spec.pitfalls, specGroup));
-    layout->addWidget(specGroup);
+    // 「说明」区已删除（用户反馈 5）：怎么用 / 这些数说明了什么，现在只写在
+    // 操作日志里（选中方法写 [测量-说明]、测完写 [测量-结果]），工具窗口不再讲一遍。
 
     // ── 公差 + 运行 ──
     auto* methodGroup = new QGroupBox(QStringLiteral("测量"), this);

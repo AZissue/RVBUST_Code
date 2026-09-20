@@ -235,6 +235,29 @@ void TestMeasureMethods::explainLineCarriesEverySection()
     }
 }
 
+void TestMeasureMethods::everyMethodStatesWhatTheNumbersMean()
+{
+    // 第 11 回合任务 005：说明搬到操作日志，所以**每个方法**的
+    // [测量-说明] 都要有四个小标题（用途/怎么用/输出/怎么看结果），
+    // [测量-结果] 都要在数值之后补一句"这组数说明：…"，且该句不能是空的。
+    const std::vector<ResultItem> items = { { "数值", "1.000", "mm" } };
+    for (const Expected& e : kExpected) {
+        const std::string explain = methodExplainLine(e.method);
+        QVERIFY2(contains(explain, "用途："), explain.c_str());
+        QVERIFY2(contains(explain, "怎么用："), explain.c_str());
+        QVERIFY2(contains(explain, "输出："), explain.c_str());
+        QVERIFY2(contains(explain, "怎么看结果："), explain.c_str());
+
+        const std::string result = resultLine(e.method, items, "");
+        QVERIFY2(contains(result, "这组数说明："), result.c_str());
+        const std::size_t at = result.find("这组数说明：");
+        QVERIFY2(result.size() > at + std::string("这组数说明：").size(),
+                 "「这组数说明：」后面必须真的跟一句话");
+        // 数值本身一个字符都不许变（老断言靠的就是这个格式）。
+        QVERIFY2(contains(result, "数值 = 1.000 mm"), result.c_str());
+    }
+}
+
 void TestMeasureMethods::resultLineCarriesValuesAndConvention()
 {
     const std::vector<ResultItem> items = {
