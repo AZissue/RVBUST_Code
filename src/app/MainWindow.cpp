@@ -4,7 +4,7 @@
 #include "logic/CalibrationService.h"
 #include "logic/CaptureFlow.h"
 #include "logic/RobotPose.h"
-#include "logic/PixelTo3DTools.h"
+#include "logic/PixelTo3DService.h"
 #include "logic/DataManager.h"
 #include "logic/LogManager.h"
 #include "logic/PoseGuide.h"
@@ -313,6 +313,8 @@ void MainWindow::wireSignals()
             m_view3d->removeObject(m_pickSphereHandle);
             m_pickSphereHandle = -1;
         }
+        // 上一次取点在主 2D 视窗留下的十字标记同样过期（新一次识别会重画）。
+        m_view2d->clearMarkers();
     });
     connect(m_view2d, &Image2DView::pixelClicked, this, [this](int x, int y) {
         // 既有行为（黄球 + 相机目标点卡片 + 提示）保持不变。
@@ -499,6 +501,8 @@ void MainWindow::wireSignals()
     // one state — route each to the other so they cannot drift apart.
     connect(m_view3d, &VisSceneView::deviationColoringToggled,
             m_toolsPanel, &ToolsPanel::setDeviationColoring);
+    connect(m_toolsPanel, &ToolsPanel::pixelTo3DOnlineQueryRequested,
+            this, &MainWindow::onPixelTo3DOnlineQueryRequested);
     connect(m_toolsPanel, &ToolsPanel::pixelTo3DOfflineImageRequested,
             this, &MainWindow::onPixelTo3DOfflineImageRequested);
     connect(m_toolsPanel, &ToolsPanel::pixelTo3DOfflineImageEnded,
@@ -891,11 +895,14 @@ void MainWindow::saveFromCards()
                  card3 ? card3->value() : QString());
 }
 
-void MainWindow::on2dPixelPicked(int x, int y)
+// 在线取点：用当前采集帧跑一次共享服务。所有「拿不到数据」的情形都返回可读中文 message。
+bool MainWindow::queryPixelFromCurrentFrame(int pixelX, int pixelY,
+                                            std::array<double, 3>& point,
+                                            QString& message)
 {
     if (!m_camera->isConnected()) {
-        m_toast->showMessage(QStringLiteral("请先连接相机并拍照后再点击取点"), false);
-        return;
+        message = QStringLiteral("请先连接相机并拍照后再点击取点");
+        return false;
     }
 
     // Shared buffers: lastGrid()/lastCorrespond() hand back a refcount of the
@@ -904,40 +911,63 @@ void MainWindow::on2dPixelPicked(int x, int y)
     FrameBuffer::DoubleBuf grid;
     int gw = 0, gh = 0;
     if (!m_camera->lastGrid(grid, gw, gh)) {
-        m_toast->showMessage(QStringLiteral("请先拍照采集数据"), false);
-        return;
+        message = QStringLiteral("请先拍照采集数据");
+        return false;
     }
 
-    std::array<double, 3> pt{};
-    bool ok = false;
+    PixelTo3DService::Source src;
+    src.xyzMm = &(*grid);
+
     if (m_camera->lastGridAligned()) {
-        std::size_t idx = 0;
-        if (PixelTo3DTools::alignedIndex(x, y, gw, gh, idx))
-            ok = PixelTo3DTools::pointAt(*grid, idx, pt);
+        // 对齐帧：点云按图像网格排布，服务走直查。
+        src.imageWidth = gw;
+        src.imageHeight = gh;
     } else {
+        // 线扫未对齐帧：把对应图填进 Source（沿用既有的"每次采集只取一次"缓存）。
+        FrameBuffer::DoubleBuf cmap;
+        int cw = 0, ch = 0;
         if (!m_correspondBuilt) {
-            FrameBuffer::DoubleBuf cmap;
-            int cw = 0, ch = 0;
             if (m_camera->lastCorrespond(cmap, cw, ch)) {
-                PixelTo3DTools::buildCorrespondIndex(
-                    *cmap, cw, ch, m_correspondIndex);
                 m_correspondW = cw;
                 m_correspondH = ch;
                 m_correspondBuilt = true;
             }
         }
-        if (m_correspondBuilt)
-            ok = PixelTo3DTools::queryIndex(
-                m_correspondIndex, m_correspondW, m_correspondH,
-                x, y, *grid, pt);
-        else
-            m_toast->showMessage(
-                QStringLiteral("线扫未对齐模式下未获得对应图，无法取点"), false);
+        if (!m_correspondBuilt
+            || !m_camera->lastCorrespond(cmap, m_correspondW, m_correspondH)) {
+            message = QStringLiteral("线扫未对齐模式下未获得对应图，无法取点");
+            return false;
+        }
+        src.correspondMap = &(*cmap);
+        src.imageWidth = m_correspondW;
+        src.imageHeight = m_correspondH;
+    }
+
+    const PixelTo3DService::Query q =
+        PixelTo3DService::query(src, pixelX, pixelY);
+    if (q.status != PixelTo3DService::Status::Ok) {
+        message = QString::fromStdString(PixelTo3DService::statusText(q.status));
+        return false;
+    }
+    point = q.pointMm;
+    message.clear();
+    return true;
+}
+
+void MainWindow::on2dPixelPicked(int x, int y)
+{
+    std::array<double, 3> pt{};
+    QString message;
+    const bool ok = queryPixelFromCurrentFrame(x, y, pt, message);
+
+    // 在线模式且工具页正停在「像素→3D」页：同一次查询的结果推给工具页结果行。
+    if (m_toolsPanel && m_toolsPanel->isVisible()
+        && m_toolsPanel->onlinePixelTo3DActive()) {
+        m_toolsPanel->setOnlinePixelResult(x, y, ok, pt[0], pt[1], pt[2], message);
     }
 
     if (!ok) {
-        m_toast->showMessage(
-            QStringLiteral("该像素无有效 3D 点（背景或无效深度）"), false);
+        m_toast->showMessage(message, false);
         return;
     }
 
@@ -947,6 +977,11 @@ void MainWindow::on2dPixelPicked(int x, int y)
         { static_cast<float>(pt[0]), static_cast<float>(pt[1]),
           static_cast<float>(pt[2]) },
         2.0f, { 1.0f, 0.85f, 0.1f });
+
+    // 主 2D 视窗留一个取点标记（与识别圆心标记同一套绘制；下一次拍照/识别
+    // 由既有逻辑重画或清掉）。
+    m_view2d->drawMarkers(
+        { { static_cast<float>(x), static_cast<float>(y), std::string() } });
 
     const QString value = QStringLiteral("%1 %2 %3")
         .arg(pt[0], 0, 'f', 3).arg(pt[1], 0, 'f', 3).arg(pt[2], 0, 'f', 3);
@@ -961,6 +996,16 @@ void MainWindow::on2dPixelPicked(int x, int y)
     m_logger->info(
         QStringLiteral("2D 点击取点: 像素 (%1, %2) → 3D (%3)")
             .arg(x).arg(y).arg(value));
+}
+
+void MainWindow::onPixelTo3DOnlineQueryRequested(int pixelX, int pixelY)
+{
+    // 工具页「计算」走的是同一条链路，只是由它自己发起。
+    std::array<double, 3> pt{};
+    QString message;
+    const bool ok = queryPixelFromCurrentFrame(pixelX, pixelY, pt, message);
+    m_toolsPanel->setOnlinePixelResult(
+        pixelX, pixelY, ok, pt[0], pt[1], pt[2], message);
 }
 
 void MainWindow::onPixelTo3DOfflineImageRequested(const QString& imagePath)

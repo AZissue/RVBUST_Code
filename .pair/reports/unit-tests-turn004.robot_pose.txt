@@ -1,0 +1,13 @@
+********* Start testing of TestRobotPose *********
+Config: Using QtTest library 5.14.2, Qt 5.14.2 (x86_64-little_endian-llp64 shared (dynamic) release build; by MSVC 2017)
+PASS   : TestRobotPose::initTestCase()
+PASS   : TestRobotPose::modbusFloat32()
+PASS   : TestRobotPose::modbusInt32Scaled()
+PASS   : TestRobotPose::modbusInt16Scaled()
+PASS   : TestRobotPose::modbusTimeout()
+PASS   : TestRobotPose::notConnected()
+PASS   : TestRobotPose::statusTextMapped()
+PASS   : TestRobotPose::urRealtimePose()
+PASS   : TestRobotPose::cleanupTestCase()
+Totals: 9 passed, 0 failed, 0 skipped, 0 blacklisted, 424ms
+********* Finished testing of TestRobotPose *********

@@ -87,6 +87,13 @@ private:
     void onCapture();
     void saveFromCards();
     void on2dPixelPicked(int x, int y);
+    // 像素→3D（在线）：工具页请求用当前采集帧跑一次查询，结果用
+    // ToolsPanel::setOnlinePixelResult 回填。
+    void onPixelTo3DOnlineQueryRequested(int pixelX, int pixelY);
+    // 在线取点的唯一实现（主 2D 点击与工具页「计算」共用）：
+    // 用当前采集帧跑 PixelTo3DService，成功填 point，失败给出可读中文 message。
+    bool queryPixelFromCurrentFrame(int pixelX, int pixelY,
+                                    std::array<double, 3>& point, QString& message);
     // 像素→3D（离线）：工具页请求把主 2D 视窗冻结到这张离线图上 / 解冻。
     void onPixelTo3DOfflineImageRequested(const QString& imagePath);
     void onPixelTo3DOfflineImageEnded();

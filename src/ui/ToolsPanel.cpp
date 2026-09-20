@@ -334,8 +334,14 @@ void ToolsPanel::buildPixelTo3DPage(QStackedWidget* stack)
             this, [this](int) { applyPixelTo3DMode(); });
     connect(m_p2dImageCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [this](int index) { showPixelTo3DImage(index); });
-    connect(calcBtn, &QPushButton::clicked,
-            this, &ToolsPanel::updatePixelTo3DResult);
+    connect(calcBtn, &QPushButton::clicked, this, [this]() {
+        // 在线模式的「计算」也走主窗口的同一套查询链路，不在这里另算一份。
+        if (m_p2dOnline) {
+            requestOnlinePixelQuery();
+            return;
+        }
+        updatePixelTo3DResult();
+    });
     connect(m_p2dCopyBtn, &QPushButton::clicked, this, [this]() {
         if (!m_p2dResultValue.isEmpty())
             QApplication::clipboard()->setText(m_p2dResultValue);
@@ -359,7 +365,7 @@ void ToolsPanel::applyPixelTo3DMode()
 
     if (online) {
         m_p2dHint->setText(QStringLiteral(
-            "在线模式：相机取点链路尚未提供；当前请用离线模式在主 2D 视窗取点"));
+            "在线：连接相机并拍照后，在主 2D 视窗左键取点"));
         updateOfflineFreeze();
         return;
     }
@@ -424,6 +430,41 @@ void ToolsPanel::onMainViewPixelClicked(int x, int y)
     m_p2dPixel->setText(QStringLiteral("%1, %2").arg(x).arg(y));
     m_p2dHint->clear();
     updatePixelTo3DResult();
+}
+
+// 在线模式点「计算」：手输像素 → 请主窗口用当前采集帧查询。
+void ToolsPanel::requestOnlinePixelQuery()
+{
+    const ToolInputParser::ParseResult pixel = ToolInputParser::parseNumberList(
+        m_p2dPixel->text().toStdString(), 2);
+    if (pixel.status != ToolInputParser::ParseStatus::Ok) {
+        m_p2dHint->setText(
+            QStringLiteral("像素坐标：%1").arg(parseErrorText(pixel, 2)));
+        return;
+    }
+    emit pixelTo3DOnlineQueryRequested(
+        static_cast<int>(pixel.values[0]), static_cast<int>(pixel.values[1]));
+}
+
+// 主窗口回填：在线取点的结果行 + hint。
+void ToolsPanel::setOnlinePixelResult(int pixelX, int pixelY, bool ok,
+                                      double xMm, double yMm, double zMm,
+                                      const QString& message)
+{
+    if (!ok) {
+        m_p2dResultValue.clear();
+        m_p2dResult->setText(QStringLiteral("--"));
+        m_p2dHint->setText(message.isEmpty()
+            ? QStringLiteral("该像素无有效 3D 点（背景或无效深度）")
+            : message);
+        return;
+    }
+    const std::array<double, 3> point{ xMm, yMm, zMm };
+    m_p2dResultValue =
+        QString::fromStdString(PixelTo3DService::formatPoint(point));
+    m_p2dResult->setText(m_p2dResultValue);
+    m_p2dHint->setText(
+        QStringLiteral("像素 (%1, %2) → 3D").arg(pixelX).arg(pixelY));
 }
 
 void ToolsPanel::showEvent(QShowEvent* event)

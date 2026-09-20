@@ -62,6 +62,12 @@ public:
 
     // 像素→3D 工具页的「在线/离线」开关状态（离线 = 用主 2D 视窗取点）。
     bool pixelTo3DOffline() const { return !m_p2dOnline; }
+    // 在线模式且当前工具页就是「像素→3D」：主窗口据此把点击/查询结果推给本页。
+    bool onlinePixelTo3DActive() const
+    {
+        return m_p2dOnline && m_stack != nullptr && m_p2dPage != nullptr
+            && m_stack->currentWidget() == m_p2dPage;
+    }
 
 signals:
     // Emitted when the panel's own 3D-colouring checkbox is toggled, so the 3D
@@ -85,10 +91,16 @@ signals:
     void pixelTo3DOfflineImageRequested(const QString& imagePath);
     // 离开离线模式 / 关掉工具页 / 清空目录：请主窗口解冻
     void pixelTo3DOfflineImageEnded();
+    // 在线模式：请主窗口用当前采集帧执行一次像素→3D 查询
+    void pixelTo3DOnlineQueryRequested(int pixelX, int pixelY);
 
 public slots:
     // 主 2D 视窗上的左键点击（离线取点）：填进像素输入框并立刻重算
     void onMainViewPixelClicked(int x, int y);
+    // 主窗口的查询结果：ok=false 时 message 是可读中文原因
+    void setOnlinePixelResult(int pixelX, int pixelY, bool ok,
+                              double xMm, double yMm, double zMm,
+                              const QString& message);
 
 protected:
     void showEvent(QShowEvent* event) override;
@@ -122,6 +134,8 @@ private:
     // 冻结的唯一出口：面板可见(requireVisible) + 当前页是「像素→3D」+ 离线且图像有效，
     // 全满足才请求主窗口冻结，否则立刻解冻。
     void updateOfflineFreeze(bool requireVisible = true);
+    // 在线模式点「计算」：解析手输像素并发 pixelTo3DOnlineQueryRequested。
+    void requestOnlinePixelQuery();
 
     QListWidget* m_toolList = nullptr;
     QStackedWidget* m_stack = nullptr;

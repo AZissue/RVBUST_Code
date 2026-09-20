@@ -1,0 +1,15 @@
+********* Start testing of TestPoseGuide *********
+Config: Using QtTest library 5.14.2, Qt 5.14.2 (x86_64-little_endian-llp64 shared (dynamic) release build; by MSVC 2017)
+PASS   : TestPoseGuide::initTestCase()
+PASS   : TestPoseGuide::translationBasic()
+PASS   : TestPoseGuide::rotationIdentity()
+PASS   : TestPoseGuide::rotation90Z()
+PASS   : TestPoseGuide::rotationSymmetric()
+PASS   : TestPoseGuide::guideEmpty()
+PASS   : TestPoseGuide::guideTooClose()
+PASS   : TestPoseGuide::guideFarPosition()
+PASS   : TestPoseGuide::guideFarAngle()
+PASS   : TestPoseGuide::guideBoundary()
+PASS   : TestPoseGuide::cleanupTestCase()
+Totals: 11 passed, 0 failed, 0 skipped, 0 blacklisted, 0ms
+********* Finished testing of TestPoseGuide *********
