@@ -57,4 +57,11 @@ QString toggleUnselectedStyle();
 QString comboBoxStyle();
 QString spinBoxStyle();
 
+// ── 2D/3D 视窗的浮层（用户反馈 4：无边框、无底色、半透明背景）──
+// 只给这两个视窗用：标签与工具栏按钮统一成同一种"看得见底下图像"的浮层样式。
+// 2D/3D 视窗上的文字标签：无边框、无实心底色，只有一层很淡的半透明底。
+QString viewOverlayLabelStyle();
+// 2D/3D 视窗底部工具栏的按钮：同上，悬停/按下时略亮一点。
+QString viewOverlayButtonStyle();
+
 } // namespace Theme

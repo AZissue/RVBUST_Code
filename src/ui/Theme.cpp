@@ -341,4 +341,46 @@ QString spinBoxStyle()
     .arg(BORDER_FOCUS);
 }
 
+// ── 2D/3D 视窗的浮层（用户反馈 4）─────────────────────────────────────
+// 用户原话：「无边框、无底色、半透明背景即可」——视窗里的标签和工具栏按钮
+// 不再盖住图像：只有一层很淡的半透明底（alpha ≤ 0.30），底下画面透得出来。
+
+QString viewOverlayLabelStyle()
+{
+    return QStringLiteral(R"(
+        QLabel {
+            color: #FFFFFF;
+            background-color: rgba(0, 0, 0, 0.20);
+            border: none;
+            border-radius: 4px;
+            padding: 3px 8px;
+            font-size: %1px;
+        }
+    )")
+    .arg(FONT_HINT);
+}
+
+QString viewOverlayButtonStyle()
+{
+    return QStringLiteral(R"(
+        QPushButton {
+            color: #E6EAF2;
+            background-color: rgba(0, 0, 0, 0.20);
+            border: none;
+            border-radius: 4px;
+            padding: 3px 9px;
+            font-size: %1px;
+        }
+        QPushButton:hover { background-color: rgba(0, 0, 0, 0.28); }
+        QPushButton:pressed { background-color: rgba(22, 119, 255, 0.30); }
+        QPushButton:checked {
+            background-color: rgba(22, 119, 255, 0.30);
+            color: #FFFFFF;
+            font-weight: 600;
+        }
+        QPushButton:disabled { color: #9AA0AA; background-color: rgba(0, 0, 0, 0.12); }
+    )")
+    .arg(FONT_HINT);
+}
+
 } // namespace Theme

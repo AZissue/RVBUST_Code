@@ -81,15 +81,13 @@ Image2DView::Image2DView(QWidget* parent)
     // Overlay labels (title top-left, zoom top-right) float over the image and
     // are transparent to mouse events so pixel picking still works through them.
     m_titleLabel = new QLabel(QStringLiteral("2D 实时图像"), this);
-    m_titleLabel->setStyleSheet(QStringLiteral(
-        "color: #FFF; background: rgba(0,0,0,0.45); border: none; border-radius: 4px; "
-        "padding: 3px 8px; font-size: %1px; font-weight: 600;").arg(Theme::FONT_HINT));
+    // 用户反馈 4：无边框、无实心底色，只有一层很淡的半透明底（标题保留加粗）。
+    m_titleLabel->setStyleSheet(Theme::viewOverlayLabelStyle()
+                                + QStringLiteral("QLabel { font-weight: 600; }"));
     m_titleLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
 
     m_zoomLabel = new QLabel(QStringLiteral("适应"), this);
-    m_zoomLabel->setStyleSheet(QStringLiteral(
-        "color: #FFF; background: rgba(0,0,0,0.45); border: none; border-radius: 4px; "
-        "padding: 3px 8px; font-size: %1px;").arg(Theme::FONT_HINT));
+    m_zoomLabel->setStyleSheet(Theme::viewOverlayLabelStyle());
     m_zoomLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
 
     // Zoom-drag uses a fast (nearest-neighbor) scale; a short debounce timer
@@ -244,13 +242,8 @@ void Image2DView::buildPageBar()
     const QStringList names = { QStringLiteral("图像"), QStringLiteral("偏差图"),
                                 QStringLiteral("尺寸总图"), QStringLiteral("截面轮廓"),
                                 QStringLiteral("重复性趋势") };
-    const QString style = QStringLiteral(
-        "QPushButton { color: #E6EAF2; background: rgba(24,26,31,0.72);"
-        " border: 1px solid %1; border-radius: 4px; padding: 3px 9px; font-size: %2px; }"
-        "QPushButton:hover { background: rgba(22,119,255,0.35); }"
-        "QPushButton:checked { background: %3; border-color: %3; color: #FFFFFF;"
-        " font-weight: 600; }")
-        .arg(Theme::BORDER_DEFAULT).arg(Theme::FONT_HINT).arg(Theme::PRIMARY);
+    // 用户反馈 4：工具栏按钮同样去掉边框与实心底色，只留一层淡半透明底。
+    const QString style = Theme::viewOverlayButtonStyle();
 
     for (int i = 0; i < names.size(); ++i) {
         auto* btn = new QPushButton(names[i], bar);

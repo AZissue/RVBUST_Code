@@ -502,8 +502,10 @@ VisSceneView::VisSceneView(QWidget* parent)
 
     m_placeholder = new QLabel(QStringLiteral("3D 标定场景\n\n未启用 3D 可视化"), m_containerWidget);
     m_placeholder->setAlignment(Qt::AlignCenter);
-    m_placeholder->setStyleSheet(QStringLiteral("color: #555; font-size: %1px; border: none;")
-                                 .arg(Theme::FONT_H2));
+    // 用户反馈 4：占位文字同样是无边框 + 很淡的半透明底；字号保持原来的 H2。
+    m_placeholder->setStyleSheet(Theme::viewOverlayLabelStyle()
+                                 + QStringLiteral("QLabel { font-size: %1px; }")
+                                       .arg(Theme::FONT_H2));
 
     m_imageOverlay = new QLabel(m_containerWidget);
     m_imageOverlay->setAlignment(Qt::AlignCenter);
@@ -562,11 +564,7 @@ void VisSceneView::setupToolbar()
     m_resetButton->setAttribute(Qt::WA_NativeWindow, true);
     m_resetButton->setAttribute(Qt::WA_DontCreateNativeAncestors, true);
     m_resetButton->setAttribute(Qt::WA_TranslucentBackground, true);
-    m_resetButton->setStyleSheet(QStringLiteral(
-        "QPushButton { color: #FFF; background: rgba(0,0,0,0.5); border: none; "
-        "border-radius: 4px; padding: 4px 12px; font-size: %1px; }"
-        "QPushButton:hover { background: rgba(0,0,0,0.65); color: %2; }")
-        .arg(Theme::FONT_HINT).arg(Theme::PRIMARY));
+    m_resetButton->setStyleSheet(Theme::viewOverlayButtonStyle());
     QObject::connect(m_resetButton, SIGNAL(clicked()), this, SLOT(resetViewNoAnim()));
 
     // "叠加历史" toggle: shows/hides the accumulated board-pose history frames.
@@ -578,12 +576,7 @@ void VisSceneView::setupToolbar()
     m_historyButton->setAttribute(Qt::WA_NativeWindow, true);
     m_historyButton->setAttribute(Qt::WA_DontCreateNativeAncestors, true);
     m_historyButton->setAttribute(Qt::WA_TranslucentBackground, true);
-    m_historyButton->setStyleSheet(QStringLiteral(
-        "QPushButton { color: #FFF; background: rgba(0,0,0,0.5); border: none; "
-        "border-radius: 4px; padding: 4px 12px; font-size: %1px; }"
-        "QPushButton:hover { background: rgba(0,0,0,0.65); color: %2; }"
-        "QPushButton:checked { color: #000; background: %2; }")
-        .arg(Theme::FONT_HINT).arg(Theme::PRIMARY));
+    m_historyButton->setStyleSheet(Theme::viewOverlayButtonStyle());
     QObject::connect(m_historyButton, SIGNAL(toggled(bool)), this, SLOT(onHistoryToggled(bool)));
 
     // "偏差着色" toggle: the 3D half of the measurement colouring.  It lives in
@@ -600,12 +593,7 @@ void VisSceneView::setupToolbar()
     m_deviationButton->setAttribute(Qt::WA_NativeWindow, true);
     m_deviationButton->setAttribute(Qt::WA_DontCreateNativeAncestors, true);
     m_deviationButton->setAttribute(Qt::WA_TranslucentBackground, true);
-    m_deviationButton->setStyleSheet(QStringLiteral(
-        "QPushButton { color: #FFF; background: rgba(0,0,0,0.5); border: none; "
-        "border-radius: 4px; padding: 4px 12px; font-size: %1px; }"
-        "QPushButton:hover { background: rgba(0,0,0,0.65); color: %2; }"
-        "QPushButton:checked { color: #000; background: %2; }")
-        .arg(Theme::FONT_HINT).arg(Theme::PRIMARY));
+    m_deviationButton->setStyleSheet(Theme::viewOverlayButtonStyle());
     QObject::connect(m_deviationButton, &QPushButton::toggled, this,
                      &VisSceneView::deviationColoringToggled);
 
