@@ -18,6 +18,8 @@ set(SOURCES
     logic/URRealtimeReader.cpp
     logic/NrcJsonReader.cpp
     logic/MeasureTools.cpp
+    # 测量方法目录（P3 ROI 需求 / P4 说明）— 纯数据，无 Qt 依赖
+    logic/MeasureMethods.h
     logic/GeometryTools.h
     sdk/HandEyeSDKBridge.cpp
     ui/Theme.cpp
@@ -31,6 +33,9 @@ set(SOURCES
     ui/Image2DView.cpp
     ui/VisSceneView.cpp
     ui/ToolsPanel.cpp
+    # 测量页基类 + 8 个方法页（P3：左侧列表各一项，共用同一基类）
+    ui/MeasurePage.cpp
+    ui/MeasurePages.cpp
     ui/DeviceListDialog.cpp
     ui/SettingsDialog.cpp
 )

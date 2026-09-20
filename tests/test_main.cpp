@@ -26,6 +26,8 @@
 #include "test_auto_flow_policy.h"
 #include "test_camera_recovery.h"
 #include "test_camera_manager_release.h"
+#include "test_measure_methods.h"
+#include "test_log_presentation.h"
 
 namespace {
 
@@ -165,6 +167,16 @@ int main(int argc, char** argv)
     {
         TestCameraManagerRelease t20;
         status |= runClass(&t20, argc, argv, "camera_manager_release");
+    }
+    {
+        // 第 7 回合 P3/P4：方法目录的 ROI 需求与说明文案（纯逻辑，无界面）。
+        TestMeasureMethods t21;
+        status |= runClass(&t21, argc, argv, "measure_methods");
+    }
+    {
+        // 第 10 回合 P4：操作日志的落屏规则（级别 → 标签/配色、哪些条目上屏）。
+        TestLogPresentation t22;
+        status |= runClass(&t22, argc, argv, "log_presentation");
     }
     return status;
 }

@@ -1,0 +1,1067 @@
+{
+    "format": "measure_truth/1",
+    "generator": "tests/measure_truth.cpp (C++17, std::mt19937_64 seed 20260920, Box-Muller)",
+    "grid": {
+        "invalid": "NaN（无效体积之外 / 通孔内）",
+        "isomorphic": "与 CameraManager::lastGrid() 交给测量面板的内存布局一致",
+        "layout": "ASCII 头 \"<w> <h>\\n\"，随后 w*h*3 个小端 float32 (x,y,z)，单位 mm，行主序 cell = y*w + x"
+    },
+    "methodUsage": {
+        "catalogue": "src/logic/MeasureMethods.h (methodSpecs())",
+        "field": "scenes[].method = 界面左侧工具列表里的条目 id（== MeasureTools::methodId()）；scenes[].roiHint = 这一框该框哪儿的操作说明"
+    },
+    "methods": [
+        {
+            "id": "flatness",
+            "name": "平面度",
+            "roiCount": 1,
+            "roiRequirement": "本方法只需 ROI A（被测面）"
+        },
+        {
+            "id": "step_height",
+            "name": "高度段差",
+            "roiCount": 2,
+            "roiRequirement": "本方法需要 ROI A + ROI B（基准面 / 被测面）"
+        },
+        {
+            "id": "plane_pair",
+            "name": "面面距离夹角",
+            "roiCount": 2,
+            "roiRequirement": "本方法需要 ROI A + ROI B（面 A / 面 B）"
+        },
+        {
+            "id": "ring_circle",
+            "name": "圆环拟合",
+            "roiCount": 1,
+            "roiRequirement": "本方法只需 ROI A（环形材料）"
+        },
+        {
+            "id": "hole_diameter",
+            "name": "孔径(孔洞边界法)",
+            "roiCount": 1,
+            "roiRequirement": "本方法只需 ROI A（孔 + 约 2 个点距的材料）"
+        },
+        {
+            "id": "bounding_box",
+            "name": "包围盒",
+            "roiCount": 1,
+            "roiRequirement": "本方法只需 ROI A（整个物体）"
+        },
+        {
+            "id": "section",
+            "name": "截面轮廓",
+            "roiCount": 1,
+            "roiRequirement": "本方法只需 ROI A（被测区域）"
+        },
+        {
+            "id": "repeatability",
+            "name": "重复性",
+            "roiCount": 0,
+            "roiRequirement": "本方法不需要 ROI（用重复性序列）"
+        }
+    ],
+    "scenes": [
+        {
+            "checks": [
+                {
+                    "criterion": "全网格取点，数目必须精确相等（映射的覆盖性）",
+                    "id": "roi_point_count",
+                    "roi": [
+                        0,
+                        0,
+                        199,
+                        199
+                    ],
+                    "title": "ROI 取点数",
+                    "tol": 0,
+                    "truth": 40000,
+                    "unit": "点"
+                },
+                {
+                    "criterion": "MAD 剔除把报告 PV 限制在 ±3σ 内，故 |实测-6σ| <= 0.35σ",
+                    "id": "flatness_pv",
+                    "roi": [
+                        0,
+                        0,
+                        199,
+                        199
+                    ],
+                    "title": "平面度 LSQ PV",
+                    "tol": 0.0017499999999999998,
+                    "truth": 0.03,
+                    "unit": "mm"
+                },
+                {
+                    "criterion": "|实测-噪声σ| <= 0.0008 mm",
+                    "id": "flatness_rms",
+                    "roi": [
+                        0,
+                        0,
+                        199,
+                        199
+                    ],
+                    "title": "平面度 LSQ RMS",
+                    "tol": 0.0008,
+                    "truth": 0.005,
+                    "unit": "mm"
+                },
+                {
+                    "criterion": "断言 LSQ PV - MZ PV >= -0.0001 mm（收敛失败时 MZ 保留 LSQ 值）",
+                    "id": "mz_le_pv",
+                    "roi": [
+                        0,
+                        0,
+                        199,
+                        199
+                    ],
+                    "title": "最小区域 PV <= LSQ PV",
+                    "tol": 0.0001,
+                    "truth": 0,
+                    "unit": "mm"
+                },
+                {
+                    "criterion": "|实测-真值| <= 0.02°",
+                    "id": "plane_tilt_x",
+                    "roi": [
+                        0,
+                        0,
+                        199,
+                        199
+                    ],
+                    "title": "平面法向倾角 X",
+                    "tol": 0.02,
+                    "truth": 0,
+                    "unit": "°"
+                },
+                {
+                    "criterion": "|实测-真值| <= 0.02°",
+                    "id": "plane_tilt_y",
+                    "roi": [
+                        0,
+                        0,
+                        199,
+                        199
+                    ],
+                    "title": "平面法向倾角 Y",
+                    "tol": 0.02,
+                    "truth": 0,
+                    "unit": "°"
+                }
+            ],
+            "files": [
+                "plane_flat.grid"
+            ],
+            "gridHeight": 200,
+            "gridWidth": 200,
+            "imageHeight": 200,
+            "imageWidth": 200,
+            "method": "flatness",
+            "name": "plane_flat",
+            "notes": "100 x 100 mm 平面，σ = 0.005 mm 高斯噪声。PV 真值取 MAD 剔除后的饱和值 6σ（本次原始噪声 PV 为 0.0400 mm，仅供参考），RMS 真值取 σ。",
+            "roiHint": "选「平面度」，在 2D 视图上拖一个框盖住整块平面（ROI A = 被测面）"
+        },
+        {
+            "checks": [
+                {
+                    "criterion": "|实测-真值| <= 0.05°",
+                    "id": "plane_tilt_y",
+                    "roi": [
+                        0,
+                        0,
+                        199,
+                        199
+                    ],
+                    "title": "平面法向倾角 Y",
+                    "tol": 0.05,
+                    "truth": 8,
+                    "unit": "°"
+                },
+                {
+                    "criterion": "|实测-真值| <= 0.05°",
+                    "id": "plane_tilt_x",
+                    "roi": [
+                        0,
+                        0,
+                        199,
+                        199
+                    ],
+                    "title": "平面法向倾角 X",
+                    "tol": 0.05,
+                    "truth": 0,
+                    "unit": "°"
+                },
+                {
+                    "criterion": "倾斜被拟合掉，只剩噪声，PV 取 MAD 剔除后的 6σ",
+                    "id": "flatness_pv",
+                    "roi": [
+                        0,
+                        0,
+                        199,
+                        199
+                    ],
+                    "title": "平面度 LSQ PV",
+                    "tol": 0.006999999999999999,
+                    "truth": 0.12,
+                    "unit": "mm"
+                },
+                {
+                    "criterion": "|实测-噪声σ| <= 0.002 mm",
+                    "id": "flatness_rms",
+                    "roi": [
+                        0,
+                        0,
+                        199,
+                        199
+                    ],
+                    "title": "平面度 LSQ RMS",
+                    "tol": 0.002,
+                    "truth": 0.02,
+                    "unit": "mm"
+                }
+            ],
+            "files": [
+                "plane_tilt.grid"
+            ],
+            "gridHeight": 200,
+            "gridWidth": 200,
+            "imageHeight": 200,
+            "imageWidth": 200,
+            "method": "flatness",
+            "name": "plane_tilt",
+            "notes": "100 x 100 mm 平面绕 X 轴倾斜 8.000°，σ = 0.02 mm（本次原始 PV 0.1830 mm）。倾角定义：tilt_x = atan2(nx, -nz)，tilt_y = atan2(ny, -nz)。",
+            "roiHint": "选「平面度」，框住整块倾斜平面（ROI A = 被测面）；倾角看「倾斜角」那一行"
+        },
+        {
+            "checks": [
+                {
+                    "criterion": "|实测-真值| <= 0.01 mm",
+                    "id": "height_signed",
+                    "roi": [
+                        10,
+                        20,
+                        100,
+                        140
+                    ],
+                    "roi2": [
+                        140,
+                        20,
+                        220,
+                        140
+                    ],
+                    "title": "面到面高度 B-A",
+                    "tol": 0.01,
+                    "truth": 3,
+                    "unit": "mm"
+                },
+                {
+                    "criterion": "|实测-(-真值)| <= 0.01 mm",
+                    "id": "height_signed",
+                    "roi": [
+                        140,
+                        20,
+                        220,
+                        140
+                    ],
+                    "roi2": [
+                        10,
+                        20,
+                        100,
+                        140
+                    ],
+                    "title": "面到面高度 A-B（对调，符号反）",
+                    "tol": 0.01,
+                    "truth": -3,
+                    "unit": "mm"
+                },
+                {
+                    "criterion": "取点数必须精确相等",
+                    "id": "roi_point_count",
+                    "roi": [
+                        10,
+                        20,
+                        100,
+                        140
+                    ],
+                    "title": "基准 ROI 取点数",
+                    "tol": 0,
+                    "truth": 11011,
+                    "unit": "点"
+                }
+            ],
+            "files": [
+                "step_3mm.grid"
+            ],
+            "gridHeight": 161,
+            "gridWidth": 241,
+            "imageHeight": 161,
+            "imageWidth": 241,
+            "method": "step_height",
+            "name": "step_3mm",
+            "notes": "120 x 80 mm 台阶：x <= 60 mm 为基准面 z = 0，x > 60 mm 为被测面 z = -3.000 mm（朝向相机 3 mm，凸起为正），σ = 0.004 mm。",
+            "roiHint": "选「高度段差」：第一次拖框 = ROI A（基准面，x <= 60 mm），第二次拖框 = ROI B（被测面，x > 60 mm）"
+        },
+        {
+            "checks": [
+                {
+                    "criterion": "|实测-真值| <= 0.05°",
+                    "id": "angle_deg",
+                    "roi": [
+                        0,
+                        0,
+                        80,
+                        80
+                    ],
+                    "roi2": [
+                        100,
+                        0,
+                        180,
+                        80
+                    ],
+                    "title": "面面夹角 A-B",
+                    "tol": 0.05,
+                    "truth": 89.613,
+                    "unit": "°"
+                },
+                {
+                    "criterion": "取点数必须精确相等",
+                    "id": "roi_point_count",
+                    "roi": [
+                        0,
+                        0,
+                        80,
+                        80
+                    ],
+                    "title": "A 面 ROI 取点数",
+                    "tol": 0,
+                    "truth": 6561,
+                    "unit": "点"
+                }
+            ],
+            "files": [
+                "angle_89_613.grid"
+            ],
+            "gridHeight": 81,
+            "gridWidth": 181,
+            "imageHeight": 81,
+            "imageWidth": 181,
+            "method": "plane_pair",
+            "name": "angle_89_613",
+            "notes": "两块面：A 为 z = 0 水平面（40 x 40 mm），B 为近竖直墙（40 x 40 mm），两面夹角 89.613°。法向按 n[2] <= 0 定向。",
+            "roiHint": "选「面面距离夹角」：ROI A 框水平面，ROI B 框近竖直墙；两面夹角 89.613° > 3°，所以不报「平行面间距」是正常的"
+        },
+        {
+            "checks": [
+                {
+                    "criterion": "|实测-真值| <= 公差，且新法偏差 <= 旧法偏差的一半",
+                    "id": "hole_diameter",
+                    "roi": [
+                        108,
+                        148,
+                        132,
+                        172
+                    ],
+                    "title": "孔径 ⌀5（孔洞边界法）",
+                    "tol": 0.05,
+                    "truth": 5,
+                    "unit": "mm"
+                },
+                {
+                    "criterion": "|实测-真值| <= 孔心公差（x / y 各一行）",
+                    "id": "hole_center",
+                    "roi": [
+                        108,
+                        148,
+                        132,
+                        172
+                    ],
+                    "title": "孔心 ⌀5",
+                    "tol": 0.25,
+                    "tol2": 0.25,
+                    "truth": 30,
+                    "truth2": 40,
+                    "unit": "mm"
+                },
+                {
+                    "criterion": "ROI 内有效点（材料）数必须精确相等",
+                    "id": "roi_point_count",
+                    "roi": [
+                        108,
+                        148,
+                        132,
+                        172
+                    ],
+                    "title": "⌀5 ROI 材料点数",
+                    "tol": 0,
+                    "truth": 320,
+                    "unit": "点"
+                },
+                {
+                    "criterion": "|实测-真值| <= 公差，且新法偏差 <= 旧法偏差的一半",
+                    "id": "hole_diameter",
+                    "roi": [
+                        218,
+                        138,
+                        262,
+                        182
+                    ],
+                    "title": "孔径 ⌀10（孔洞边界法）",
+                    "tol": 0.05,
+                    "truth": 10,
+                    "unit": "mm"
+                },
+                {
+                    "criterion": "|实测-真值| <= 孔心公差（x / y 各一行）",
+                    "id": "hole_center",
+                    "roi": [
+                        218,
+                        138,
+                        262,
+                        182
+                    ],
+                    "title": "孔心 ⌀10",
+                    "tol": 0.25,
+                    "tol2": 0.25,
+                    "truth": 60,
+                    "truth2": 40,
+                    "unit": "mm"
+                },
+                {
+                    "criterion": "|实测-真值| <= 公差，且新法偏差 <= 旧法偏差的一半",
+                    "id": "hole_diameter",
+                    "roi": [
+                        338,
+                        118,
+                        422,
+                        202
+                    ],
+                    "title": "孔径 ⌀20（孔洞边界法）",
+                    "tol": 0.05,
+                    "truth": 20,
+                    "unit": "mm"
+                },
+                {
+                    "criterion": "|实测-真值| <= 孔心公差（x / y 各一行）",
+                    "id": "hole_center",
+                    "roi": [
+                        338,
+                        118,
+                        422,
+                        202
+                    ],
+                    "title": "孔心 ⌀20",
+                    "tol": 0.25,
+                    "tol2": 0.25,
+                    "truth": 95,
+                    "truth2": 40,
+                    "unit": "mm"
+                }
+            ],
+            "files": [
+                "holes_p025.grid"
+            ],
+            "gridHeight": 321,
+            "gridWidth": 481,
+            "imageHeight": 321,
+            "imageWidth": 481,
+            "method": "hole_diameter",
+            "name": "holes_p025",
+            "notes": "120 x 80 mm 板，通孔 ⌀5 / ⌀10 / ⌀20 位于 (30,40) / (60,40) / (95,40) mm；材料点距 0.250 mm，σ = 0.003 mm。孔径公差 ±0.050 mm（该点距下 达到 Python 一致性目标），孔心公差 ±0.25 mm。",
+            "roiHint": "选「孔径(孔洞边界法)」，紧贴每个孔各拖一个近正方形 ROI（ROI A = 孔 + 孔外约 2 个点距的材料，别框进别的孔）；不要用「圆环拟合」测孔——它是给环形材料用的"
+        },
+        {
+            "checks": [
+                {
+                    "criterion": "|实测-真值| <= 公差，且新法偏差 <= 旧法偏差的一半",
+                    "id": "hole_diameter",
+                    "roi": [
+                        53,
+                        73,
+                        67,
+                        87
+                    ],
+                    "title": "孔径 ⌀5（孔洞边界法）",
+                    "tol": 0.2,
+                    "truth": 5,
+                    "unit": "mm"
+                },
+                {
+                    "criterion": "|实测-真值| <= 孔心公差（x / y 各一行）",
+                    "id": "hole_center",
+                    "roi": [
+                        53,
+                        73,
+                        67,
+                        87
+                    ],
+                    "title": "孔心 ⌀5",
+                    "tol": 0.5,
+                    "tol2": 0.5,
+                    "truth": 30,
+                    "truth2": 40,
+                    "unit": "mm"
+                },
+                {
+                    "criterion": "ROI 内有效点（材料）数必须精确相等",
+                    "id": "roi_point_count",
+                    "roi": [
+                        53,
+                        73,
+                        67,
+                        87
+                    ],
+                    "title": "⌀5 ROI 材料点数",
+                    "tol": 0,
+                    "truth": 156,
+                    "unit": "点"
+                },
+                {
+                    "criterion": "|实测-真值| <= 公差，且新法偏差 <= 旧法偏差的一半",
+                    "id": "hole_diameter",
+                    "roi": [
+                        108,
+                        68,
+                        132,
+                        92
+                    ],
+                    "title": "孔径 ⌀10（孔洞边界法）",
+                    "tol": 0.2,
+                    "truth": 10,
+                    "unit": "mm"
+                },
+                {
+                    "criterion": "|实测-真值| <= 孔心公差（x / y 各一行）",
+                    "id": "hole_center",
+                    "roi": [
+                        108,
+                        68,
+                        132,
+                        92
+                    ],
+                    "title": "孔心 ⌀10",
+                    "tol": 0.5,
+                    "tol2": 0.5,
+                    "truth": 60,
+                    "truth2": 40,
+                    "unit": "mm"
+                },
+                {
+                    "criterion": "|实测-真值| <= 公差，且新法偏差 <= 旧法偏差的一半",
+                    "id": "hole_diameter",
+                    "roi": [
+                        168,
+                        58,
+                        212,
+                        102
+                    ],
+                    "title": "孔径 ⌀20（孔洞边界法）",
+                    "tol": 0.2,
+                    "truth": 20,
+                    "unit": "mm"
+                },
+                {
+                    "criterion": "|实测-真值| <= 孔心公差（x / y 各一行）",
+                    "id": "hole_center",
+                    "roi": [
+                        168,
+                        58,
+                        212,
+                        102
+                    ],
+                    "title": "孔心 ⌀20",
+                    "tol": 0.5,
+                    "tol2": 0.5,
+                    "truth": 95,
+                    "truth2": 40,
+                    "unit": "mm"
+                }
+            ],
+            "files": [
+                "holes_p050.grid"
+            ],
+            "gridHeight": 161,
+            "gridWidth": 241,
+            "imageHeight": 161,
+            "imageWidth": 241,
+            "method": "hole_diameter",
+            "name": "holes_p050",
+            "notes": "120 x 80 mm 板，通孔 ⌀5 / ⌀10 / ⌀20 位于 (30,40) / (60,40) / (95,40) mm；材料点距 0.500 mm，σ = 0.003 mm。孔径公差 ±0.200 mm（该点距下 公差按点距量化极限放宽），孔心公差 ±0.50 mm。",
+            "roiHint": "选「孔径(孔洞边界法)」，紧贴每个孔各拖一个近正方形 ROI（ROI A = 孔 + 孔外约 2 个点距的材料，别框进别的孔）；不要用「圆环拟合」测孔——它是给环形材料用的"
+        },
+        {
+            "checks": [
+                {
+                    "criterion": "|实测-真值| <= 公差，且新法偏差 <= 旧法偏差的一半",
+                    "id": "hole_diameter",
+                    "roi": [
+                        25,
+                        35,
+                        35,
+                        45
+                    ],
+                    "title": "孔径 ⌀5（孔洞边界法）",
+                    "tol": 0.6,
+                    "truth": 5,
+                    "unit": "mm"
+                },
+                {
+                    "criterion": "|实测-真值| <= 孔心公差（x / y 各一行）",
+                    "id": "hole_center",
+                    "roi": [
+                        25,
+                        35,
+                        35,
+                        45
+                    ],
+                    "title": "孔心 ⌀5",
+                    "tol": 1,
+                    "tol2": 1,
+                    "truth": 30,
+                    "truth2": 40,
+                    "unit": "mm"
+                },
+                {
+                    "criterion": "ROI 内有效点（材料）数必须精确相等",
+                    "id": "roi_point_count",
+                    "roi": [
+                        25,
+                        35,
+                        35,
+                        45
+                    ],
+                    "title": "⌀5 ROI 材料点数",
+                    "tol": 0,
+                    "truth": 100,
+                    "unit": "点"
+                },
+                {
+                    "criterion": "|实测-真值| <= 公差，且新法偏差 <= 旧法偏差的一半",
+                    "id": "hole_diameter",
+                    "roi": [
+                        53,
+                        33,
+                        67,
+                        47
+                    ],
+                    "title": "孔径 ⌀10（孔洞边界法）",
+                    "tol": 0.6,
+                    "truth": 10,
+                    "unit": "mm"
+                },
+                {
+                    "criterion": "|实测-真值| <= 孔心公差（x / y 各一行）",
+                    "id": "hole_center",
+                    "roi": [
+                        53,
+                        33,
+                        67,
+                        47
+                    ],
+                    "title": "孔心 ⌀10",
+                    "tol": 1,
+                    "tol2": 1,
+                    "truth": 60,
+                    "truth2": 40,
+                    "unit": "mm"
+                },
+                {
+                    "criterion": "|实测-真值| <= 公差，且新法偏差 <= 旧法偏差的一半",
+                    "id": "hole_diameter",
+                    "roi": [
+                        83,
+                        28,
+                        107,
+                        52
+                    ],
+                    "title": "孔径 ⌀20（孔洞边界法）",
+                    "tol": 0.6,
+                    "truth": 20,
+                    "unit": "mm"
+                },
+                {
+                    "criterion": "|实测-真值| <= 孔心公差（x / y 各一行）",
+                    "id": "hole_center",
+                    "roi": [
+                        83,
+                        28,
+                        107,
+                        52
+                    ],
+                    "title": "孔心 ⌀20",
+                    "tol": 1,
+                    "tol2": 1,
+                    "truth": 95,
+                    "truth2": 40,
+                    "unit": "mm"
+                }
+            ],
+            "files": [
+                "holes_p100.grid"
+            ],
+            "gridHeight": 81,
+            "gridWidth": 121,
+            "imageHeight": 81,
+            "imageWidth": 121,
+            "method": "hole_diameter",
+            "name": "holes_p100",
+            "notes": "120 x 80 mm 板，通孔 ⌀5 / ⌀10 / ⌀20 位于 (30,40) / (60,40) / (95,40) mm；材料点距 1.000 mm，σ = 0.003 mm。孔径公差 ±0.600 mm（该点距下 公差按点距量化极限放宽），孔心公差 ±1.00 mm。",
+            "roiHint": "选「孔径(孔洞边界法)」，紧贴每个孔各拖一个近正方形 ROI（ROI A = 孔 + 孔外约 2 个点距的材料，别框进别的孔）；不要用「圆环拟合」测孔——它是给环形材料用的"
+        },
+        {
+            "checks": [
+                {
+                    "criterion": "六个面点数和，NaN 缝不计",
+                    "id": "roi_point_count",
+                    "roi": [
+                        0,
+                        0,
+                        410,
+                        220
+                    ],
+                    "title": "表面总点数",
+                    "tol": 0,
+                    "truth": 75046,
+                    "unit": "点"
+                },
+                {
+                    "criterion": "|实测-真值| <= 0.5 mm",
+                    "id": "box_length",
+                    "roi": [
+                        0,
+                        0,
+                        410,
+                        220
+                    ],
+                    "title": "取向盒 长",
+                    "tol": 0.5,
+                    "truth": 100,
+                    "unit": "mm"
+                },
+                {
+                    "criterion": "|实测-真值| <= 0.5 mm",
+                    "id": "box_width",
+                    "roi": [
+                        0,
+                        0,
+                        410,
+                        220
+                    ],
+                    "title": "取向盒 宽",
+                    "tol": 0.5,
+                    "truth": 60,
+                    "unit": "mm"
+                },
+                {
+                    "criterion": "|实测-真值| <= 0.5 mm",
+                    "id": "box_height",
+                    "roi": [
+                        0,
+                        0,
+                        410,
+                        220
+                    ],
+                    "title": "取向盒 高",
+                    "tol": 0.5,
+                    "truth": 20,
+                    "unit": "mm"
+                }
+            ],
+            "files": [
+                "box_100_60_20.grid"
+            ],
+            "gridHeight": 221,
+            "gridWidth": 411,
+            "imageHeight": 221,
+            "imageWidth": 411,
+            "method": "bounding_box",
+            "name": "box_100_60_20",
+            "notes": "100 x 60 x 20 mm 盒子的六个面全部采样（点距 0.5 mm，表面展开成网格），轴对齐。σ = 0.002 mm。真值 = 三个主方向的真实长度，取向盒的长/宽/高。",
+            "roiHint": "选「包围盒」，一个框盖住整个物体（ROI A = 整个物体，六个面尽量都在里面）"
+        },
+        {
+            "checks": [
+                {
+                    "criterion": "六个面点数和，NaN 缝不计",
+                    "id": "roi_point_count",
+                    "roi": [
+                        0,
+                        0,
+                        410,
+                        220
+                    ],
+                    "title": "表面总点数",
+                    "tol": 0,
+                    "truth": 75046,
+                    "unit": "点"
+                },
+                {
+                    "criterion": "|实测-真值| <= 0.5 mm",
+                    "id": "box_length",
+                    "roi": [
+                        0,
+                        0,
+                        410,
+                        220
+                    ],
+                    "title": "取向盒 长",
+                    "tol": 0.5,
+                    "truth": 100,
+                    "unit": "mm"
+                },
+                {
+                    "criterion": "|实测-真值| <= 0.5 mm",
+                    "id": "box_width",
+                    "roi": [
+                        0,
+                        0,
+                        410,
+                        220
+                    ],
+                    "title": "取向盒 宽",
+                    "tol": 0.5,
+                    "truth": 60,
+                    "unit": "mm"
+                },
+                {
+                    "criterion": "|实测-真值| <= 0.5 mm",
+                    "id": "box_height",
+                    "roi": [
+                        0,
+                        0,
+                        410,
+                        220
+                    ],
+                    "title": "取向盒 高",
+                    "tol": 0.5,
+                    "truth": 20,
+                    "unit": "mm"
+                }
+            ],
+            "files": [
+                "box_rot_30_20.grid"
+            ],
+            "gridHeight": 221,
+            "gridWidth": 411,
+            "imageHeight": 221,
+            "imageWidth": 411,
+            "method": "bounding_box",
+            "name": "box_rot_30_20",
+            "notes": "100 x 60 x 20 mm 盒子的六个面全部采样（点距 0.5 mm，表面展开成网格），整体先绕 X 轴转 20°、再绕 Z 轴转 30°。σ = 0.002 mm。真值 = 三个主方向的真实长度，取向盒的长/宽/高。",
+            "roiHint": "选「包围盒」，一个框盖住整个物体（ROI A = 整个物体，六个面尽量都在里面）"
+        },
+        {
+            "checks": [
+                {
+                    "criterion": "对 10 帧 ROI 分别取平均高度，再做重复性统计：|实测-真值| <= 0.002 mm",
+                    "id": "repeat_mean",
+                    "perFrame": true,
+                    "roi": [
+                        0,
+                        0,
+                        99,
+                        99
+                    ],
+                    "title": "重复性 均值",
+                    "tol": 0.002,
+                    "truth": 0.016996975823583622,
+                    "unit": "mm"
+                },
+                {
+                    "criterion": "对 10 帧 ROI 分别取平均高度，再做重复性统计：|实测-真值| <= 0.002 mm",
+                    "id": "repeat_sigma",
+                    "perFrame": true,
+                    "roi": [
+                        0,
+                        0,
+                        99,
+                        99
+                    ],
+                    "title": "重复性 标准差 σ",
+                    "tol": 0.002,
+                    "truth": 0.022137430758453813,
+                    "unit": "mm"
+                },
+                {
+                    "criterion": "对 10 帧 ROI 分别取平均高度，再做重复性统计：|实测-真值| <= 0.002 mm",
+                    "id": "repeat_range",
+                    "perFrame": true,
+                    "roi": [
+                        0,
+                        0,
+                        99,
+                        99
+                    ],
+                    "title": "重复性 极差",
+                    "tol": 0.002,
+                    "truth": 0.06997947160412822,
+                    "unit": "mm"
+                }
+            ],
+            "files": [
+                "repeat_series_00.grid",
+                "repeat_series_01.grid",
+                "repeat_series_02.grid",
+                "repeat_series_03.grid",
+                "repeat_series_04.grid",
+                "repeat_series_05.grid",
+                "repeat_series_06.grid",
+                "repeat_series_07.grid",
+                "repeat_series_08.grid",
+                "repeat_series_09.grid"
+            ],
+            "gridHeight": 100,
+            "gridWidth": 100,
+            "imageHeight": 100,
+            "imageWidth": 100,
+            "method": "repeatability",
+            "name": "repeat_series",
+            "notes": "10 帧同一平面的小视场（50 x 50 mm，σ = 0.002 mm），高度偏移已知：0/20/50/30/-10/40/10/-20/20/30 μm。真值取各帧实际生成的均值高度，统计量按 n-1 标准差计算。",
+            "roiHint": "先选「平面度」或「高度段差」逐帧测量并点「加入重复性」，再选「重复性」看 n / 均值 / σ / 极差（本方法自己不需要 ROI）"
+        },
+        {
+            "checks": [
+                {
+                    "criterion": "取点数精确相等",
+                    "id": "roi_point_count",
+                    "roi": [
+                        240,
+                        160,
+                        242,
+                        162
+                    ],
+                    "title": "方台 2x2 格取点数",
+                    "tol": 0,
+                    "truth": 4,
+                    "unit": "点"
+                },
+                {
+                    "criterion": "|实测-真值| <= 0.01 mm",
+                    "id": "roi_min_z",
+                    "roi": [
+                        240,
+                        160,
+                        242,
+                        162
+                    ],
+                    "title": "方台 2x2 格最小 z",
+                    "tol": 0.01,
+                    "truth": -2,
+                    "unit": "mm"
+                },
+                {
+                    "criterion": "取点数精确相等",
+                    "id": "roi_point_count",
+                    "roi": [
+                        240,
+                        160,
+                        278,
+                        198
+                    ],
+                    "title": "方台整块取点数",
+                    "tol": 0,
+                    "truth": 400,
+                    "unit": "点"
+                },
+                {
+                    "criterion": "混入底板点即为映射偏移",
+                    "id": "roi_min_z",
+                    "roi": [
+                        240,
+                        160,
+                        278,
+                        198
+                    ],
+                    "title": "方台整块最小 z",
+                    "tol": 0.01,
+                    "truth": -2,
+                    "unit": "mm"
+                },
+                {
+                    "criterion": "|实测-真值| <= 0.05 mm",
+                    "id": "roi_span_x",
+                    "roi": [
+                        240,
+                        160,
+                        278,
+                        198
+                    ],
+                    "title": "方台整块 x 跨度",
+                    "tol": 0.05,
+                    "truth": 9.5,
+                    "unit": "mm"
+                },
+                {
+                    "criterion": "取到方台点即为映射偏移",
+                    "id": "roi_max_z",
+                    "roi": [
+                        236,
+                        160,
+                        238,
+                        162
+                    ],
+                    "title": "方台左侧 2x2 格最大 z",
+                    "tol": 0.01,
+                    "truth": 0,
+                    "unit": "mm"
+                },
+                {
+                    "criterion": "取点数精确相等",
+                    "id": "roi_point_count",
+                    "roi": [
+                        236,
+                        160,
+                        238,
+                        162
+                    ],
+                    "title": "方台左侧 2x2 格取点数",
+                    "tol": 0,
+                    "truth": 4,
+                    "unit": "点"
+                },
+                {
+                    "criterion": "取到方台点即为映射偏移",
+                    "id": "roi_max_z",
+                    "roi": [
+                        240,
+                        200,
+                        242,
+                        202
+                    ],
+                    "title": "方台下方 2x2 格最大 z",
+                    "tol": 0.01,
+                    "truth": 0,
+                    "unit": "mm"
+                },
+                {
+                    "criterion": "|实测-真值| <= 0.02 mm",
+                    "id": "roi_z_range",
+                    "roi": [
+                        236,
+                        156,
+                        282,
+                        202
+                    ],
+                    "title": "方台+底板整块 z 极差",
+                    "tol": 0.02,
+                    "truth": 2,
+                    "unit": "mm"
+                }
+            ],
+            "files": [
+                "roi_map_boss.grid"
+            ],
+            "gridHeight": 150,
+            "gridWidth": 200,
+            "imageHeight": 300,
+            "imageWidth": 400,
+            "method": "section",
+            "name": "roi_map_boss",
+            "notes": "100 x 75 mm 底板（z = 0）上有一个 10 x 10 mm、高 2 mm 的方台（z = -2，朝向相机为凸起），占网格 x[120,139] y[80,99]。图像故意做成点图的 2 倍（400 x 300），这样「像素矩形 -> 网格格子」的缩放/偏移一错就会取错点。",
+            "roiHint": "本场景校验的是框选本身（图像 400x300 是点图 200x150 的两倍）：选「截面轮廓」（或任一方法页），把框拖在方台上/旁边，看「取点数」与偏差图是否落在正确位置"
+        }
+    ],
+    "toleranceRule": "每条检查都按 |实测 - 真值| <= 公差 判定；真值由生成器在写入数据时一并算出",
+    "units": {
+        "angle": "deg",
+        "length": "mm"
+    }
+}

@@ -1,6 +1,7 @@
 #include "ui/SidePanel.h"
 #include "ui/Theme.h"
 #include "models/CaptureRecord.h"
+#include "logic/LogPresentation.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QScrollArea>
@@ -142,6 +143,30 @@ SidePanel::SidePanel(QWidget* parent)
     connect(m_tabRobotPose, &QPushButton::clicked, this, [onTab]() { onTab("robot_pose"); });
     connect(m_tabRobotTarget, &QPushButton::clicked, this, [onTab]() { onTab("robot_target"); });
     connect(m_tabCalibResult, &QPushButton::clicked, this, [onTab]() { onTab("calib_result"); });
+}
+
+namespace {
+// 逻辑层（logic/LogPresentation.h）只给"配色角色"，十六进制色值归 Theme.h：
+// 这里把角色翻成既有提示路径用的同一套颜色——[提示]=蓝（setTip 默认）、
+// [警告]=黄（setPoseGuide 警告）、[错误]=红（setTip(isError=true)）、
+// [完成]=绿（Theme::SUCCESS）。所以新转发的日志与老提示在视觉上是一套。
+const char* logColorHex(MeasureTools::LogColorRole role)
+{
+    switch (role) {
+    case MeasureTools::LogColorRole::Success: return Theme::SUCCESS;
+    case MeasureTools::LogColorRole::Warning: return Theme::WARNING;
+    case MeasureTools::LogColorRole::Error:   return Theme::ERROR;
+    case MeasureTools::LogColorRole::Primary: break;
+    }
+    return Theme::PRIMARY;
+}
+} // namespace
+
+void SidePanel::appendLog(const QString& level, const QString& text)
+{
+    const MeasureTools::LogPresentation p =
+        MeasureTools::logPresentation(level.toStdString());
+    appendTimeline(QString::fromStdString(p.label), logColorHex(p.color), text);
 }
 
 void SidePanel::appendTimeline(const QString& label, const QString& colorHex, const QString& text)

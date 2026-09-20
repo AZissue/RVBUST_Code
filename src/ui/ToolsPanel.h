@@ -26,8 +26,11 @@
 #include "logic/MeasureTools.h"
 #include "ui/MeasurementSnapshot.h"
 
+class MeasurePage;
+
 // Non-modal tools panel (v2.0).  Left: tool list.  Right: the selected tool.
-// Tools: Euclidean distance, coordinate transform (walk-point validation).
+// Tools: Euclidean distance, coordinate transform (walk-point validation), and
+// one entry per measurement method (P3) sharing a single MeasurePage base.
 class ToolsPanel : public QDialog {
     Q_OBJECT
 public:
@@ -39,13 +42,18 @@ public:
     // re-emit robotAutoReadToggled (MainWindow is the single writer of the key).
     void setRobotAutoRead(bool on);
 
-    // ── Measurement page (aligned with the Python 3D 测量一体化工具) ──
+    // ── Measurement tools (aligned with the Python 3D 测量一体化工具) ──
+    // Each method is its own entry in the left list and its own MeasurePage in
+    // the stack (P3); the panel only owns what the pages share: the captured
+    // grid, the ROI rectangles and the repeatability series store.
     // The 3D grid of the last capture, handed over by refcount.  The image size
     // is needed because the dragged ROI is in image pixels while the grid is in
     // point-map cells — the two do not have to share a resolution.
     void setMeasurementCloud(const FrameBuffer::DoubleBuf& grid, int gridW, int gridH,
                              int imageW, int imageH);
-    // A rectangle dragged on the 2D view (image pixels).
+    // A rectangle dragged on the 2D view (image pixels).  Landed per the active
+    // method's declared ROI requirement (MeasureTools::planRoiDrag) — the user
+    // is told what happened, never silently restarted.
     void onRoiSelected(const QRect& rect);
     void clearMeasurementRois();
     // Mirror of the 3D view's toolbar toggle.  Applying it re-runs the last
@@ -66,6 +74,9 @@ signals:
     void robotDisconnectRequested();
     void robotSimulateConnectRequested();
     void robotAutoReadToggled(bool on);
+    // Measurement explanation / result lines (P4).  MainWindow writes them into
+    // the operation log; the panel itself never touches the logger.
+    void logMessage(const QString& line);
 
 private:
     void buildUi();
@@ -74,17 +85,13 @@ private:
     void buildCalibrationPage(QStackedWidget* stack);
     void buildTransformPage(QStackedWidget* stack);
     void buildRobotCommPage(QStackedWidget* stack);
-    void buildMeasurePage(QStackedWidget* stack);
-    void refreshRoiPoints();
-    // Drops the *result* state (table rows, deviation map, annotations, 3D
-    // payload) while keeping the repeatability series — that accumulator is
-    // meant to survive across captures, everything else refers to one frame.
-    void resetMeasurementState();
-    void runMeasurement();
-    void addLastToRepeatSeries();
-    void refreshSeriesUi();
-    Measurement::Snapshot buildSnapshot() const;
-    void updateMeasureHint();
+    // 8 个方法页（顺序 = MeasureTools::methodSpecs()），共用 MeasurePage 基类。
+    void buildMeasurePages(QStackedWidget* stack);
+    // 左侧列表换项：切换显示页、把当前 ROI 推给新页、写一条 [测量-说明]。
+    void onToolChanged(int row);
+    bool activeToolIsMeasure() const;
+    // 把面板持有的 ROI 矩形推给当前方法页（页里自带取点与提示）。
+    void pushRoiToActivePage(const QString& note);
     QStringList roiLabels() const;
     void updateDistanceResult();
     void updatePixelTo3DResult();
@@ -164,53 +171,19 @@ private:
     QLabel* m_robotStatus = nullptr;
     QCheckBox* m_robotAutoReadCheck = nullptr;
 
-    // ── Measurement tool (3D 测量一体化工具 parity) ──
-    QLabel* m_measureCloudLabel = nullptr;
-    QLabel* m_measureRoiLabel = nullptr;
-    QLabel* m_measureHint = nullptr;
-    QComboBox* m_measureMethod = nullptr;
-    QCheckBox* m_tolEnable = nullptr;
-    QDoubleSpinBox* m_tolLo = nullptr;
-    QDoubleSpinBox* m_tolHi = nullptr;
-    QPushButton* m_measureBtn = nullptr;
-    QPushButton* m_repeatAddBtn = nullptr;
-    QPushButton* m_roiClearBtn = nullptr;
-    QCheckBox* m_devColor3d = nullptr;   // paint the ROI on the 3D cloud too (P4)
-    QTableWidget* m_measureTable = nullptr;
-    QComboBox* m_seriesCombo = nullptr;
-    QLabel* m_seriesSummary = nullptr;
+    // ── Measurement tools (3D 测量一体化工具 parity) ──
+    // 8 个方法页，左侧列表里各占一项。面板只留三样共享状态：点云、ROI 矩形、
+    // 重复性序列库；结果表 / 偏差图 / 快照都由各页自己发布（MeasurePage）。
+    std::vector<MeasurePage*> m_pages;
+    MeasurePage* m_page = nullptr;      // 最近一次显示的方法页（切到别的工具后仍指向它）
+    int m_firstMeasureRow = 0;          // 左侧列表里第一个测量方法所在的行
+    bool m_measureActive = false;       // 当前列表项是不是测量方法
 
     FrameBuffer::DoubleBuf m_measureGrid;
     int m_measureGridW = 0;
     int m_measureGridH = 0;
     int m_imageW = 0;
     int m_imageH = 0;
-    QVector<QRect> m_roiRects;                       // image pixels, max 2
-    std::vector<MeasureTools::Vec3> m_roiPoints[2];  // extracted per ROI
-    std::vector<std::size_t> m_roiCells[2];          // matching grid cell indices
-    // Display payload of the last measurement.
-    QVector<Measurement::DevSample> m_devSamples;
-    double m_devLo = 0.0, m_devHi = 0.0;
-    bool m_devRobust = false;
-    int m_devClipped = 0;
-    bool m_snapshotCoolWarm = true;   // colormap choice of the last deviation map
-    QVector<Measurement::Annotation> m_annotations;
-    std::vector<std::array<double, 2>> m_section;
-    double m_sectionStep = 0.0;
-    QVector<Measurement::ResultRow> m_lastRows;
-    QString m_lastKey;             // "方法/输出" of the primary value
-    double m_lastPrimary = 0.0;
-    bool m_hasLast = false;
-    QString m_pageFooter;
-    // 3D payload (P4): per-point colour for the captured cloud plus the fitted
-    // plane and ROI box the view annotates.  The colour array is shared, not
-    // copied, on every snapshot hand-off — see Measurement::Snapshot.
-    std::shared_ptr<const std::vector<std::array<float, 3>>> m_cloudColors;
-    bool m_hasPlane = false;
-    std::array<double, 3> m_planePoint{};
-    std::array<double, 3> m_planeNormal{};
-    bool m_hasBox = false;
-    std::array<double, 3> m_boxMin{};
-    std::array<double, 3> m_boxMax{};
+    QVector<QRect> m_roiRects;                 // image pixels, max 2
     QMap<QString, QVector<double>> m_series;   // repeatability series (memory only)
 };

@@ -60,6 +60,9 @@ signals:
     // so width/height are positive.  Only emitted for drags of at least
     // kRoiMinDrag px in both directions (a shorter drag is still a click).
     void roiSelected(const QRect& rect);
+    // The toolbar's 清除 ROI button (P3.3): the panel clears its own ROI state
+    // and comes back with roisChanged({}, {}), which erases the overlay.
+    void roiClearRequested();
     void pageChanged(int page);
 
 protected:
@@ -90,6 +93,7 @@ private:
     // Page machinery (all inside this widget: no extra window).
     QPointer<QWidget> m_pageBar;
     QVector<QPushButton*> m_pageButtons;
+    QPointer<QPushButton> m_clearRoiBtn;   // 清除 ROI（工具栏，无 ROI 时禁用）
     Page m_page = Page::Image;
     QImage m_cameraImage;        // last frame, kept for the 尺寸总图 base layer
     Measurement::Snapshot m_snapshot;

@@ -11,6 +11,7 @@
 #include "logic/DataQualityCheck.h"
 #include "logic/ToolInputParser.h"
 #include "logic/FrameBuffer.h"
+#include "logic/LogPresentation.h"
 #include "logic/RuntimeLog.h"
 #include "logic/AutoFlowPolicy.h"
 #include "logic/CameraRelease.h"
@@ -476,6 +477,13 @@ void MainWindow::wireSignals()
             m_toolsPanel, &ToolsPanel::onRoiSelected);
     connect(m_toolsPanel, &ToolsPanel::roisChanged,
             m_view2d, &Image2DView::setRois);
+    // 2D 视图工具栏的「清除 ROI」（P3.3）：清的是工具面板里的状态，叠加快照
+    // 由面板随后的 roisChanged({}, {}) 擦掉。
+    connect(m_view2d, &Image2DView::roiClearRequested,
+            m_toolsPanel, &ToolsPanel::clearMeasurementRois);
+    // P4：测量方法的说明与结果进操作日志（面板不直接碰 logger）。
+    connect(m_toolsPanel, &ToolsPanel::logMessage, this,
+            [this](const QString& line) { m_logger->info(line); });
     connect(m_toolsPanel, &ToolsPanel::measurementUpdated,
             m_view2d, &Image2DView::setMeasurement);
     connect(m_toolsPanel, &ToolsPanel::measurementUpdated,
@@ -582,10 +590,18 @@ void MainWindow::wireSignals()
             updatePoseGuide(poseCard->value());
     });
 
-    // Log manager
-    connect(m_logger, &LogManager::logAdded, this, [](const QString&, const QString&, const QString&) {
-        // Future: display log entries in side panel
-    });
+    // Log manager →「操作日志」面板（第 10 回合 P4）。
+    // 这条连接以前是个空 lambda，所以文件日志里明明有 [测量-说明] / [测量-结果]，
+    // 界面上却看不到。现在真的转发：logAdded(时间戳, 正文, 级别) → appendLog()。
+    // 只转发"值得上屏"的条目（MeasureTools::shouldShowInPanel：只有测量日志）——
+    // LogManager 里其余条目（相机扫描/机器人连接/看门狗/设置更新…）大多同时还会走
+    // setTip()，整表转发会重复显示并刷屏；它们照旧只进文件日志。
+    connect(m_logger, &LogManager::logAdded, this,
+            [this](const QString& /*timestamp*/, const QString& message, const QString& level) {
+                if (!MeasureTools::shouldShowInPanel(message.toStdString()))
+                    return;
+                m_sidePanel->appendLog(level, message);
+            });
 }
 
 void MainWindow::registerShortcuts()

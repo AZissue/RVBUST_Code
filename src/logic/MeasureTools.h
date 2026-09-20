@@ -23,6 +23,53 @@ namespace MeasureTools {
 
 using Vec3 = std::array<double, 3>;
 
+// ── measurement methods ────────────────────────────────────────────────
+//
+// One entry per tool in the panel's left list.  The enum lives here (and not in
+// the UI header) because the *ROI requirement* of a method is a fact the tests
+// check, not a cosmetic detail: asking for one ROI when the algorithm needs two
+// is a silent wrong answer, not a layout problem.
+enum class Method {
+    Flatness = 0,      // 平面度
+    StepHeight,        // 高度段差（面到面高度）
+    PlanePair,         // 面面距离/夹角
+    RingCircle,        // 圆环拟合（ROI 必须是环形材料）
+    HoleDiameter,      // 孔径（孔洞边界法）
+    BoundingBox,       // 包围盒
+    Section,           // 截面轮廓
+    Repeatability,     // 重复性统计
+    Count
+};
+
+// 2 = datum + measured region, 1 = one region, 0 = works on a stored value.
+inline int roiCountFor(Method m)
+{
+    switch (m) {
+    case Method::StepHeight:
+    case Method::PlanePair:      return 2;
+    case Method::Repeatability:  return 0;
+    case Method::Count:          return 0;
+    default:                     return 1;
+    }
+}
+
+// Stable ASCII id (logs, manifests, test data).  Never localized.
+inline const char* methodId(Method m)
+{
+    switch (m) {
+    case Method::Flatness:      return "flatness";
+    case Method::StepHeight:    return "step_height";
+    case Method::PlanePair:     return "plane_pair";
+    case Method::RingCircle:    return "ring_circle";
+    case Method::HoleDiameter:  return "hole_diameter";
+    case Method::BoundingBox:   return "bounding_box";
+    case Method::Section:       return "section";
+    case Method::Repeatability: return "repeatability";
+    case Method::Count:         break;
+    }
+    return "unknown";
+}
+
 // ── small shared helpers ───────────────────────────────────────────────
 
 inline bool isFinite(const Vec3& p)
@@ -194,7 +241,105 @@ struct Repeatability {
 // a single value yields stdDev = 0.
 Repeatability repeatability(const std::vector<double>& values);
 
+// ── 7. hole diameter (material inner boundary, sector method) ──────────
+//
+// A rectangular ROI dragged around a hole is *mostly material* — only the rim
+// crosses it.  Fitting one circle through all of those points (fitCircle)
+// answers a different question than "how big is the hole": it measures the
+// shape of the ROI.  This method measures what the operator means:
+//
+//   1. fit the material plane robustly over the ROI points;
+//   2. keep only points inside a narrow band around that plane, so the hole's
+//      inner wall, its floor and the background behind a through-hole cannot
+//      act as material;
+//   3. cut the ROI into angular sectors around the ROI centre, with the sector
+//      width chosen so that one sector holds one rim point (see below);
+//   4. take the *innermost* material point of every sector — the material
+//      boundary;
+//   5. a boundary sample sits somewhere in [0, pitch) outside the true edge, so
+//      the median radius is corrected by half the estimated point pitch (the
+//      usual half-sample correction);
+//   6. fit a circle through the boundary samples for the centre, the roundness
+//      and the confidence, and report the corrected diameter/radius.
+//
+// The *median* (step 5) is what makes the answer insensitive to a ROI that is
+// not exactly centred on the hole: an origin offset e shifts a sector radius by
+// -e·cos(theta), and the median of a full cosine cycle is 0 — the residual error
+// is only second order, e²/2R.
+//
+// **How many sectors.**  Step 5 corrects "one boundary sample per sector" by
+// half a pitch, so a sector must hold one rim point.  A sector wide enough to
+// hold several reports the smallest of them, and the radius comes out low by a
+// large fraction of a pitch — on the known-truth data a fixed 36-sector fan over
+// a 1 mm pitch read 6.32 mm for a ⌀5 hole.  The sector count is therefore
+// derived from the data: about 2πR/pitch sectors (bounded to 12..720), i.e. one
+// pitch of arc at the boundary radius.  `minSectors` is the fallback used when
+// no point pitch can be estimated at all.
+//
+// **Where the fan origin comes from.**  The sectors must radiate from a point
+// *inside* the hole; the ROI's own centre cell is a hole cell and has no 3D
+// point at all (NaN), so there is nothing for the caller to hand in — asking the
+// caller for a "centre point" is how a ROI-centre lookup ends up on the rim, and
+// a fan centred on the rim reports nothing but its own offset (the radii spread
+// from 0 to 2R and the "diameter" comes out with an error of the order of R).
+// The origin is therefore computed here, and only in-plane: the centroid of the
+// material points surviving the plane band.  For the ROI this method is defined
+// for — a rectangle drawn tightly around a hole — the material is a ring and its
+// centroid *is* the hole centre.  A ROI drawn so lopsidedly that the centroid
+// leaves the hole makes step 3 pick up the ROI's own edge instead of the rim;
+// that shows up as a roundness comparable to the radius and an empty coverage
+// fraction, and `reliable` goes false rather than the method returning a
+// confident wrong number.
+struct HoleBoundary {
+    double diameter = 0.0;        // primary: 2 * (fitted radius - pitch/2)
+    double radius = 0.0;          // fitted radius - pitch/2
+    double fitDiameter = 0.0;     // uncorrected fit (raw boundary points)
+    double medianDiameter = 0.0;  // 2 * (median sector radius - pitch/2)
+    Vec3 center{};                // fitted centre (corrected radius kept)
+    Vec3 fanOrigin{};             // the sector fan origin actually used (material centroid)
+    Vec3 normal{};                // plane normal, oriented n[2] <= 0
+    double pitch = 0.0;           // estimated material point pitch, mm
+    double pitchCorrection = 0.0; // pitch / 2
+    double roundness = 0.0;       // max - min of the boundary samples
+    double rms = 0.0;             // RMS of the boundary samples about the fit
+    double medianRadius = 0.0;    // median of the per-sector radii
+    int sectors = 0;              // sectors actually used (derived from the pitch)
+    int sectorsUsed = 0;          // sectors that found material
+    // sectorsUsed over the number of rim samples the pitch allows (2πR/pitch),
+    // not over `sectors`: a coarse pitch cannot deliver more samples than that,
+    // and a ROI that clips the hole loses samples against this expectation.
+    double coverage = 0.0;
+    double bandMm = 0.0;          // plane band actually used
+    std::size_t roiPoints = 0;    // finite points handed in
+    std::size_t materialPoints = 0;  // points left inside the band
+    std::size_t used = 0;         // boundary samples fed to the circle fit
+    bool reliable = false;        // coverage and roundness checks passed
+    bool valid = false;
+    std::string message;
+};
+
+HoleBoundary holeBoundary(const std::vector<Vec3>& roiPoints, int minSectors = 36,
+                          double bandSigmaK = 3.0, double minCoverage = 0.75);
+
 // ── ROI helpers (shared by the 2D panel and the 3D overlay) ────────────
+
+// Image pixel rectangle -> grid cell rectangle.
+//
+// The operator drags in *image* pixels while the point map may live on its own
+// resolution (an X2 delivers a 1440×1080 image with a down-sampled point map),
+// so the rectangle is scaled into cells.  A pixel rect covers the continuous
+// interval [left, right+1) × [top, bottom+1); a cell is taken as soon as it is
+// covered at all, so the mapping is a conservative "cover" and never silently
+// drops a cell the operator dragged over.  Returns the cell rectangle
+// (inclusive) and the cell count; `valid` is false when the inputs are
+// degenerate or the result misses the grid.
+struct GridRect {
+    int x0 = 0, y0 = 0, x1 = -1, y1 = -1;
+    int cells = 0;
+    bool valid = false;
+};
+GridRect roiImageToGrid(int left, int top, int right, int bottom,
+                        int imageW, int imageH, int gridW, int gridH);
 
 // Organized-grid ROI extraction: the captured grid is w*h*3 doubles
 // (row-major, y-major) with NaN outside the valid volume.  The rectangle is

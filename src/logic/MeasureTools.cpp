@@ -858,6 +858,297 @@ std::vector<Vec3> pointsInRoiIndexed(const std::vector<double>& grid, int w, int
     return out;
 }
 
+GridRect roiImageToGrid(int left, int top, int right, int bottom,
+                        int imageW, int imageH, int gridW, int gridH)
+{
+    GridRect r;
+    if (imageW <= 0 || imageH <= 0 || gridW <= 0 || gridH <= 0)
+        return r;
+    if (right < left)
+        std::swap(left, right);
+    if (bottom < top)
+        std::swap(top, bottom);
+    const double sx = static_cast<double>(gridW) / static_cast<double>(imageW);
+    const double sy = static_cast<double>(gridH) / static_cast<double>(imageH);
+    r.x0 = static_cast<int>(std::floor(left * sx));
+    r.y0 = static_cast<int>(std::floor(top * sy));
+    r.x1 = static_cast<int>(std::ceil((right + 1) * sx)) - 1;
+    r.y1 = static_cast<int>(std::ceil((bottom + 1) * sy)) - 1;
+    // A rectangle that misses the grid completely stays invalid instead of being
+    // clamped onto the border — clamping first would turn "outside" into a
+    // one-cell measurement on the edge.
+    if (r.x1 < 0 || r.y1 < 0 || r.x0 > gridW - 1 || r.y0 > gridH - 1)
+        return r;
+    r.x0 = std::max(0, std::min(r.x0, gridW - 1));
+    r.y0 = std::max(0, std::min(r.y0, gridH - 1));
+    r.x1 = std::max(0, std::min(r.x1, gridW - 1));
+    r.y1 = std::max(0, std::min(r.y1, gridH - 1));
+    r.cells = (r.x1 - r.x0 + 1) * (r.y1 - r.y0 + 1);
+    r.valid = true;
+    return r;
+}
+
+// ── 7. hole diameter (material inner boundary) ─────────────────────────
+
+namespace {
+
+// Nearest-neighbour distance of every point, on a uniform hash grid.  The point
+// sets here are slices of an organized grid, so the search normally ends in the
+// first ring or two; the ring loop is bounded by the hash size, i.e. it degrades
+// into a full scan rather than ever returning a wrong answer.
+void nearestNeighbourDistances(const std::vector<std::array<double, 2>>& p,
+                               std::vector<double>& out)
+{
+    out.assign(p.size(), std::numeric_limits<double>::max());
+    if (p.size() < 2)
+        return;
+    double minX = p[0][0], maxX = p[0][0], minY = p[0][1], maxY = p[0][1];
+    for (const std::array<double, 2>& q : p) {
+        minX = std::min(minX, q[0]);
+        maxX = std::max(maxX, q[0]);
+        minY = std::min(minY, q[1]);
+        maxY = std::max(maxY, q[1]);
+    }
+    const double spanX = maxX - minX;
+    const double spanY = maxY - minY;
+    // About one point per cell on average, clamped so a degenerate input (one
+    // point, or every point at the same place) still gives a usable hash.
+    double cell = std::sqrt(std::max(spanX * spanY, 1e-12) / static_cast<double>(p.size()));
+    if (!(cell > 0.0) || !std::isfinite(cell))
+        cell = 1.0;
+    const int nx = std::max(1, static_cast<int>(spanX / cell) + 1);
+    const int ny = std::max(1, static_cast<int>(spanY / cell) + 1);
+    std::vector<int> head(static_cast<std::size_t>(nx) * static_cast<std::size_t>(ny), -1);
+    std::vector<int> next(p.size(), -1);
+    auto cellIndex = [&](const std::array<double, 2>& q) {
+        int cx = static_cast<int>((q[0] - minX) / cell);
+        int cy = static_cast<int>((q[1] - minY) / cell);
+        cx = std::max(0, std::min(cx, nx - 1));
+        cy = std::max(0, std::min(cy, ny - 1));
+        return cy * nx + cx;
+    };
+    for (std::size_t i = 0; i < p.size(); ++i) {
+        const int c = cellIndex(p[i]);
+        next[i] = head[c];
+        head[c] = static_cast<int>(i);
+    }
+    const int maxRing = nx + ny;
+    for (std::size_t i = 0; i < p.size(); ++i) {
+        const int ci = cellIndex(p[i]);
+        const int cx = ci % nx;
+        const int cy = ci / nx;
+        double best = std::numeric_limits<double>::max();
+        for (int ring = 0; ring <= maxRing; ++ring) {
+            const int x0 = cx - ring, x1 = cx + ring;
+            const int y0 = cy - ring, y1 = cy + ring;
+            for (int y = y0; y <= y1; ++y) {
+                if (y < 0 || y >= ny)
+                    continue;
+                for (int x = x0; x <= x1; ++x) {
+                    if (x < 0 || x >= nx)
+                        continue;
+                    // Only the ring's own cells are new; the interior was done.
+                    if (ring > 0 && x != x0 && x != x1 && y != y0 && y != y1)
+                        continue;
+                    for (int j = head[y * nx + x]; j >= 0; j = next[j]) {
+                        if (static_cast<std::size_t>(j) == i)
+                            continue;
+                        const double dx = p[j][0] - p[i][0];
+                        const double dy = p[j][1] - p[i][1];
+                        best = std::min(best, std::sqrt(dx * dx + dy * dy));
+                    }
+                }
+            }
+            // Anything in an unscanned ring is at least ring*cell away.
+            if (best <= ring * cell)
+                break;
+        }
+        out[i] = best;
+    }
+}
+
+// Point pitch of the material = median nearest-neighbour distance.  On an
+// organized grid every interior point has neighbours at exactly the pitch, so
+// the median is the pitch; being a median, it ignores the edge points (which
+// have fewer neighbours) and the few diagonal neighbours.
+double estimatePitch(const std::vector<std::array<double, 2>>& material)
+{
+    if (material.size() < 5)
+        return 0.0;
+    std::vector<double> d;
+    nearestNeighbourDistances(material, d);
+    std::vector<double> fin;
+    fin.reserve(d.size());
+    for (double v : d) {
+        if (std::isfinite(v))
+            fin.push_back(v);
+    }
+    if (fin.size() < 5)
+        return 0.0;
+    return medianOf(fin);
+}
+
+} // namespace
+
+HoleBoundary holeBoundary(const std::vector<Vec3>& roiPoints, int minSectors,
+                          double bandSigmaK, double minCoverage)
+{
+    HoleBoundary hb;
+    hb.sectors = std::max(6, minSectors);
+
+    const std::vector<Vec3> pts = finitePoints(roiPoints);
+    hb.roiPoints = pts.size();
+    if (pts.size() < 12) {
+        hb.message = "点数不足（孔径法至少需要 12 点）";
+        return hb;
+    }
+
+    // 1. material plane: LSQ, one MAD rejection round, refit on the survivors.
+    Plane plane;
+    if (!fitPlaneRaw(pts, plane)) {
+        hb.message = plane.message;
+        return hb;
+    }
+    std::vector<double> dev = deviations(pts, plane);
+    std::vector<Vec3> mat = pick(pts, madInliers(dev, 3.0));
+    if (mat.size() >= 3)
+        fitPlaneRaw(mat, plane);
+    dev = deviations(mat, plane);
+
+    // 2. plane band.  3σ of the *material* residuals, floored so that a very
+    //    flat ROI still tolerates the stray points a projected edge produces.
+    std::vector<double> absDev(dev.size());
+    for (std::size_t i = 0; i < dev.size(); ++i)
+        absDev[i] = std::fabs(dev[i]);
+    const double sigma = kMadScale * medianOf(absDev);
+    hb.bandMm = std::max(bandSigmaK * sigma, 0.05);
+    std::vector<Vec3> band;
+    band.reserve(mat.size());
+    for (std::size_t i = 0; i < mat.size(); ++i) {
+        if (std::fabs(dev[i]) <= hb.bandMm)
+            band.push_back(mat[i]);
+    }
+    hb.materialPoints = band.size();
+    if (band.size() < 12) {
+        hb.message = "平面带内材料点不足（孔壁/背景点已排除）";
+        return hb;
+    }
+
+    // 3. in-plane frame around the material centroid (see the header: a ROI
+    //    drawn around a hole has no 3D point at its centre — the centre cell is
+    //    the hole — so the fan origin is derived from the material itself, in
+    //    plane, which is also what makes it independent of the plane's offset).
+    const Vec3 origin = centroid(band);
+    hb.fanOrigin = origin;
+    Vec3 u, v;
+    planeBasis(plane.normal, u, v);
+    std::vector<std::array<double, 2>> uv(band.size());
+    std::vector<double> bandR(band.size());
+    for (std::size_t i = 0; i < band.size(); ++i) {
+        const Vec3 q = sub(band[i], origin);
+        uv[i] = { dot(q, u), dot(q, v) };
+        bandR[i] = std::sqrt(uv[i][0] * uv[i][0] + uv[i][1] * uv[i][1]);
+    }
+
+    // 4. how fine the fan has to be.
+    //
+    // Step 5 corrects the *median of one boundary sample per sector* by half a
+    // pitch, which is only right when a sector really holds one sample.  A fixed
+    // 36-sector fan breaks that as soon as the pitch is coarse: a wedge wide
+    // enough to hold several rim points reports the *smallest* of them, and the
+    // radius comes out low by a large fraction of a pitch.  Measured on the
+    // known-truth data: a 1 mm pitch with a ⌀5 hole read 6.32 mm.  The sector
+    // width is therefore chosen to be about one pitch at the boundary radius, so
+    // that a sector normally contains a single rim point — which is the
+    // condition the half-sample correction assumes.  The radius used for that is
+    // the inner tenth of the band radii, i.e. the rim itself and not the middle
+    // of a band that is a couple of pitches thick.
+    hb.pitch = estimatePitch(uv);
+    std::vector<double> sortedR = bandR;
+    std::sort(sortedR.begin(), sortedR.end());
+    const double rRim = sortedR.empty()
+        ? 0.0
+        : sortedR[std::min(sortedR.size() - 1, sortedR.size() / 10)];
+    int nWedge = hb.sectors;      // fallback when the pitch cannot be estimated
+    if (hb.pitch > 0.0 && rRim > 0.0) {
+        nWedge = static_cast<int>(std::lround(2.0 * kPi * rRim / hb.pitch));
+        nWedge = std::max(12, std::min(nWedge, 720));
+    }
+    hb.sectors = nWedge;
+
+    // 5. innermost material point per angular sector.
+    const double twoPi = 2.0 * kPi;
+    const std::size_t none = static_cast<std::size_t>(-1);
+    std::vector<double> sectorR(static_cast<std::size_t>(nWedge),
+                                std::numeric_limits<double>::max());
+    std::vector<std::size_t> sectorIdx(static_cast<std::size_t>(nWedge), none);
+    for (std::size_t i = 0; i < uv.size(); ++i) {
+        const double angle = std::atan2(uv[i][1], uv[i][0]);
+        int s = static_cast<int>((angle + kPi) / twoPi * nWedge);
+        s = std::max(0, std::min(s, nWedge - 1));
+        if (bandR[i] < sectorR[static_cast<std::size_t>(s)]) {
+            sectorR[static_cast<std::size_t>(s)] = bandR[i];
+            sectorIdx[static_cast<std::size_t>(s)] = i;
+        }
+    }
+    std::vector<Vec3> boundary;
+    std::vector<double> radii;
+    for (int s = 0; s < nWedge; ++s) {
+        const std::size_t k = sectorIdx[static_cast<std::size_t>(s)];
+        if (k == none)
+            continue;
+        boundary.push_back(band[k]);
+        radii.push_back(sectorR[static_cast<std::size_t>(s)]);
+    }
+    hb.sectorsUsed = static_cast<int>(radii.size());
+    if (radii.size() < 5) {
+        hb.coverage = static_cast<double>(hb.sectorsUsed) / hb.sectors;
+        hb.message = "有效扇区不足（找不到孔壁）";
+        return hb;
+    }
+
+    // 6. pitch and the half-sample correction.
+    hb.pitchCorrection = 0.5 * hb.pitch;
+    hb.medianRadius = medianOf(radii);
+    // Confidence: did the fan find the rim all the way round?  The pitch only
+    // allows about 2πR/pitch rim points, so that — not the sector count — is
+    // what the number of boundary samples has to be compared with; a ROI that
+    // clips the hole loses samples against that expectation.
+    const double expect = (hb.pitch > 0.0 && hb.medianRadius > 0.0)
+        ? 2.0 * kPi * hb.medianRadius / hb.pitch
+        : hb.sectors;
+    hb.coverage = std::min(1.0, hb.sectorsUsed / std::max(1.0, std::round(expect)));
+
+    // 7. circle through the boundary samples.
+    const Circle c = fitCircle(boundary, 0, 2.5);
+    if (!c.valid) {
+        hb.message = c.message;
+        return hb;
+    }
+    hb.fitDiameter = c.diameter;
+    hb.roundness = c.roundness;
+    hb.rms = c.rms;
+    hb.center = c.center;
+    hb.normal = c.normal;
+    hb.radius = c.radius - hb.pitchCorrection;
+    hb.diameter = 2.0 * hb.radius;
+    hb.medianDiameter = 2.0 * (hb.medianRadius - hb.pitchCorrection);
+    hb.used = c.used;
+    hb.valid = true;
+
+    // 8. confidence (see step 6 for the coverage fraction).  A roundness
+    //    comparable to the radius means the sectors are not sampling a common
+    //    circle at all, which happens when the fan origin is not inside the
+    //    hole and the sectors therefore start in the material.
+    hb.reliable = hb.coverage >= minCoverage && hb.roundness <= 0.6 * hb.medianRadius;
+    if (!hb.reliable) {
+        hb.message = hb.coverage < minCoverage
+            ? "边界样本数不足（ROI 可能没有完整覆盖孔壁），结果仅供参照"
+            : "边界半径离散度过大（ROI 可能未覆盖孔壁），结果仅供参照";
+    }
+    return hb;
+}
+
 SectionProfile sectionProfile(const std::vector<Vec3>& pts, int bins)
 {
     SectionProfile sp;

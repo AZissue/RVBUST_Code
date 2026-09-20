@@ -5,6 +5,31 @@
 
 ## ⏭ 交接块（新会话先读这里）
 
+- **2026-09-20（测量可信度批：P1–P4，**已通过 Codex 运行期验收并提交**）**
+  - 来源：用户现场联测反馈第 10、2、3、5 条 —— ①造已知真值的数据并做成可复现校验；②修"测圆孔错得离谱"；
+    ③把测量方法拆成独立工具条目、按方法限制 ROI；④每个方法带说明、关键数值进操作日志。
+  - 交付（文件级）：`logic/MeasureMethods.h`（方法目录=名字/ROI 需求/说明文案/拖框策略，纯数据）；
+    `ui/MeasurePage.{h,cpp}` + `ui/MeasurePages.{h,cpp}`（8 个方法页，**取点走产品同一条链路**
+    `roiImageToGrid → pointsInRoiIndexed`）；`ui/ToolsPanel` 左侧 8 个独立条目 + 唯一一份 ROI/重复性状态；
+    `ui/Image2DView` 工具栏「清除 ROI」；`logic/MeasureTools::holeBoundary()` 孔洞边界法；
+    `tests/measure_truth*.{h,cpp}`（生成器+校验器，注册为 **ctest 用例 `measurement_truth`**）+
+    `codex_testData/`（11 场景 / 20 文件 / `manifest.json` 含真值/公差/该用哪个方法/该画哪个 ROI + `README.md`）；
+    `logic/LogPresentation.h` + `SidePanel::appendLog()` + `MainWindow` 的 `logAdded` 转发（P4 返工）。
+  - 数值证据：`unit_tests` **23 类 / 255 passed / 0 failed / 1 skipped**；`measurement_truth`
+    **11 场景 / 20 文件 / 78 条检查 / 失败 0**。孔洞：旧「圆环拟合」偏差 **+1.17 ~ +4.70 mm（全为正）**，
+    新「孔洞边界法」偏差 **0.014 ~ 0.54 mm**，9/9 落在公差内且都 ≤ 旧法一半；`roi_map_boss`（图像 2× 网格）
+    9 条全 PASS → **映射无缩放/偏移问题**。
+  - Codex 真机验收（2026-09-20 13:10–13:45，真实相机 RVC-M2600-ML2 / G2GM620B101）：8 条目、ROI 需求文案、
+    第 1/2/3 次拖框行为、2D 工具栏「清除 ROI」（含 enable/disable）、5 个页签、3D 工具栏、真实点云上跑平面度、
+    两条测量日志**落面板 + 落文件**——全部通过；3 次连拍成功（约 66.8 万点/次）、正常关闭 2.3 s 退出、
+    `taskkill /F` 后重启可重连并采集。**首验发现 P4 不通过**（`MainWindow.cpp` 的 `logAdded` 是空 lambda，
+    日志只进文件不上面板）与 W1（第 2 次拖框后提示滞后），返工后复验通过。见 `.codex-loop/ACCEPTANCE-RUN.md`。
+  - **未验证（重要）**：①真实相机点云上的**孔径**——现场这帧点云稀疏破碎、2D 图像近全黑、没有已知真值的孔，
+    需用户给场景/工件；②3D 偏差着色的观感一致性需人眼判断。
+  - **新发现（下一批优先级最高）**：`use_camera_params=0`（用保存的参数）时**拍照必失败**
+    （`capture FAILED: 3D采集失败: Failed to capture2d!`，两次独立复现）；切回 `use_camera_params=1`
+    并重连后同一台相机立刻成功。另：连续连接失败后设备列表显示「占用」（未坐实）。详见 `.codex-loop/DIALOG.md`
+    回合 9 条目的 F2/F3 与 `RISKS.md`。
 - **2026-09-20（第 5 回合：相机生命周期与配置批，待 Codex 验收）**
   - 规模：只做用户第 1、8、12 条（相机参数来源 / 流程自动化 / 相机可靠释放），
     其它条目未动。构建 `$LASTEXITCODE=0`，ctest **231 passed / 0 failed / 1 skipped（21 类）**。

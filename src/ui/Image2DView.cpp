@@ -212,6 +212,19 @@ void Image2DView::buildPageBar()
         row->addWidget(btn);
         m_pageButtons.push_back(btn);
     }
+
+    // 清除 ROI（第 7 回合 P3.3）：面板里的「清除区域」保留，视窗工具栏也放一个。
+    // 它只发信号——真正的状态在工具面板里，清完由 roisChanged 回到这里擦掉叠加。
+    auto* clearBtn = new QPushButton(QStringLiteral("清除 ROI"), bar);
+    clearBtn->setObjectName(QStringLiteral("view2d_clear_roi"));
+    clearBtn->setStyleSheet(style);
+    clearBtn->setCursor(Qt::PointingHandCursor);
+    clearBtn->setFocusPolicy(Qt::NoFocus);
+    clearBtn->setEnabled(false);   // 没有 ROI 可清时禁用（比藏起来更好找）
+    connect(clearBtn, &QPushButton::clicked, this, &Image2DView::roiClearRequested);
+    row->addWidget(clearBtn);
+    m_clearRoiBtn = clearBtn;
+
     bar->adjustSize();
     bar->raise();
     m_pageBar = bar;
@@ -249,6 +262,8 @@ void Image2DView::setRois(const QVector<QRect>& rois, const QStringList& labels)
 {
     m_rois = rois;
     m_roiLabels = labels;
+    if (m_clearRoiBtn)
+        m_clearRoiBtn->setEnabled(!rois.isEmpty());
     m_canvasDirty = true;
     render();
 }
@@ -257,6 +272,8 @@ void Image2DView::clearRois()
 {
     m_rois.clear();
     m_roiLabels.clear();
+    if (m_clearRoiBtn)
+        m_clearRoiBtn->setEnabled(false);
     m_canvasDirty = true;
     render();
 }

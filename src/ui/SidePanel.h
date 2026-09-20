@@ -13,6 +13,12 @@ public:
     explicit SidePanel(QWidget* parent = nullptr);
 
     void setTip(const QString& text, bool isError = false);
+    // 把 LogManager 的一条条目追加到「操作日志」时间线（第 10 回合 P4）。
+    // level 用 LogManager 的级别名（info/success/warning/error，未知按 info）；
+    // 标签与配色角色由 logic/LogPresentation.h 的表决定，这里只把角色翻成
+    // Theme.h 里的色值。text 原样显示（appendTimeline 会做 HTML 转义 + 自动换行），
+    // 不截断——测量说明/结果那两行很长，断了数字就没法核对。
+    void appendLog(const QString& level, const QString& text);
     void setCalibrationResult(const QString& text);
     void updateFilePreview(bool eyeInHand, bool markerType,
                            const std::vector<CaptureRecord>& records);
