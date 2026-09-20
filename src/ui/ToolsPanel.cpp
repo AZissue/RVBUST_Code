@@ -2,7 +2,7 @@
 
 #include "logic/GeometryTools.h"
 #include "logic/CalibrationService.h"
-#include "logic/PixelTo3DTools.h"
+#include "logic/PixelTo3DService.h"
 #include "logic/PlyPointReader.h"
 #include "logic/ToolInputParser.h"
 #include "logic/TransformTools.h"
@@ -407,58 +407,56 @@ void ToolsPanel::updatePixelTo3DResult()
         return;
     }
 
-    std::array<double, 3> pt{};
-    bool ok = false;
-    // Aligned data: point count == image size -> direct pixel index lookup.
-    if (ply.xyz.size() == static_cast<std::size_t>(w) * h * 3) {
-        std::size_t idx = 0;
-        if (PixelTo3DTools::alignedIndex(px, py, w, h, idx))
-            ok = PixelTo3DTools::pointAt(ply.xyz, idx, pt);
-    } else {
-        // Non-aligned (e.g. SwingLineScan + correspond2d=false): project the
-        // point cloud through camera intrinsics (+ optional extrinsics).
-        ToolInputParser::ParseResult k = ToolInputParser::parseNumberList(
-            m_p2dIntrinsic->text().toStdString(), 9);
-        if (k.status != ToolInputParser::ParseStatus::Ok) {
-            fail(QStringLiteral("点云与图像尺寸不一致，需要相机内参：%1")
-                     .arg(parseErrorText(k, 9)));
-            return;
-        }
-        PixelTo3DTools::Intrinsics intr{
-            k.values[0], k.values[4], k.values[2], k.values[5]
-        };
-        if (intr.fx <= 0.0 || intr.fy <= 0.0) {
-            fail(QStringLiteral("内参无效（fx/fy 必须大于 0）"));
-            return;
-        }
-        std::array<double, 16> ext{};
-        const double* extPtr = nullptr;
-        if (!m_p2dExtrinsic->text().trimmed().isEmpty()) {
-            ToolInputParser::ParseResult e = ToolInputParser::parseNumberList(
-                m_p2dExtrinsic->text().toStdString(), 16);
-            if (e.status != ToolInputParser::ParseStatus::Ok) {
-                fail(QStringLiteral("相机外参：%1").arg(parseErrorText(e, 16)));
-                return;
-            }
-            for (int i = 0; i < 16; ++i)
-                ext[static_cast<std::size_t>(i)] = e.values[i];
-            extPtr = ext.data();
-        }
-        std::vector<int> index;
-        PixelTo3DTools::buildProjectedIndex(
-            ply.xyz, extPtr, intr, w, h, index);
-        ok = PixelTo3DTools::queryIndex(
-            index, w, h, px, py, ply.xyz, pt);
+    // Intrinsics/extrinsics are only needed by the non-aligned path; a parse
+    // failure is reported below only when the shared service asks for them.
+    const ToolInputParser::ParseResult ik = ToolInputParser::parseNumberList(
+        m_p2dIntrinsic->text().toStdString(), 9);
+    const bool hasIntrinsics = (ik.status == ToolInputParser::ParseStatus::Ok);
+
+    std::array<double, 16> ext{};
+    const ToolInputParser::ParseResult ek = ToolInputParser::parseNumberList(
+        m_p2dExtrinsic->text().toStdString(), 16);
+    const bool extGiven = !m_p2dExtrinsic->text().trimmed().isEmpty();
+    const bool hasExtrinsics =
+        extGiven && ek.status == ToolInputParser::ParseStatus::Ok;
+    if (hasExtrinsics) {
+        for (int i = 0; i < 16; ++i)
+            ext[static_cast<std::size_t>(i)] = ek.values[i];
     }
 
-    if (!ok) {
-        fail(QStringLiteral("该像素无有效 3D 点（背景或无效深度）"));
+    PixelTo3DService::Source src;
+    src.xyzMm = &ply.xyz;
+    src.imageWidth = w;
+    src.imageHeight = h;
+    src.hasIntrinsics = hasIntrinsics;
+    if (hasIntrinsics) {
+        src.intrinsics.fx = ik.values[0];
+        src.intrinsics.fy = ik.values[4];
+        src.intrinsics.cx = ik.values[2];
+        src.intrinsics.cy = ik.values[5];
+    }
+    src.extrinsics16 = hasExtrinsics ? ext.data() : nullptr;
+
+    const PixelTo3DService::Query q = PixelTo3DService::query(src, px, py);
+    if (q.status == PixelTo3DService::Status::Ok) {
+        m_p2dResultValue = QString::fromStdString(
+            PixelTo3DService::formatPoint(q.pointMm));
+        m_p2dResult->setText(m_p2dResultValue);
         return;
     }
 
-    m_p2dResultValue = QStringLiteral("%1, %2, %3")
-        .arg(pt[0], 0, 'f', 3).arg(pt[1], 0, 'f', 3).arg(pt[2], 0, 'f', 3);
-    m_p2dResult->setText(m_p2dResultValue);
+    if (q.status == PixelTo3DService::Status::MissingIntrinsics
+        && ik.status != ToolInputParser::ParseStatus::Ok) {
+        fail(QStringLiteral("点云与图像尺寸不一致，需要相机内参：%1")
+                 .arg(parseErrorText(ik, 9)));
+        return;
+    }
+    if (q.status == PixelTo3DService::Status::NoPointAtPixel
+        && extGiven && !hasExtrinsics) {
+        fail(QStringLiteral("相机外参：%1").arg(parseErrorText(ek, 16)));
+        return;
+    }
+    fail(QString::fromStdString(PixelTo3DService::statusText(q.status)));
 }
 
 void ToolsPanel::buildCalibrationPage(QStackedWidget* stack)

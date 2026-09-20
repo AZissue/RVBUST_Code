@@ -18,6 +18,7 @@ set(SOURCES
     logic/URRealtimeReader.cpp
     logic/NrcJsonReader.cpp
     logic/MeasureTools.cpp
+    logic/PixelTo3DService.cpp
     # 测量方法目录（P3 ROI 需求 / P4 说明）— 纯数据，无 Qt 依赖
     logic/MeasureMethods.h
     logic/GeometryTools.h

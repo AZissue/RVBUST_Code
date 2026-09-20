@@ -6,6 +6,7 @@
 | 轮次 | 日期 | inbox | Claude 交付 | Codex 验证 | 结论 |
 |---|---|---|---|---|---|
 | 000 | 2026-09-20 | — | — | 基线：`cmake --build build --config Release` 退出码 0；`ctest -C Release` 2/2 通过（unit_tests 1.15s、measurement_truth 0.40s）；工作区干净（HEAD `9e18f3b`，分支 `HandEyeTools`，领先 `AICode/HandEyeTools` 5 个提交） | 基线绿 |
+| 001 | 2026-09-20 | 001 | 新增 `logic/PixelTo3DService.{h,cpp}`（像素→3D 共享服务，对应图 > 对齐直查 > 投影 的分派）；`ToolsPanel::updatePixelTo3DResult()` 改走服务；`src/CMakeLists.txt` 加一行 | 既有测试全绿且**总数上升**：23 类/255 passed → **24 类/270 passed**（新增 15 条都是 Codex 写的 `TestPixelTo3DService`）；`rg` 复核 `src/ui/` 已无直接取点调用；**真机**：真实 exe + 真实界面，探针点云（索引可反推）三处取点与真值逐位一致（`5,7`→`453.125, 906.250, 1359.375`），越界像素正确报错。证据 `.pair/reports/turn-001-acceptance.md`、`ui-app-turn001.png` | **通过**，已提交 |
 
 ## 成本记录（真实扣费 vs Claude Code 估算）
 

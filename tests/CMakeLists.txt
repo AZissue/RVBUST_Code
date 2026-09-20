@@ -29,6 +29,9 @@ set(TEST_SOURCES
     # 第 10 回合 P4：操作日志的落屏规则（src/logic/LogPresentation.h，
     # 级别 → 标签/配色 + 哪些条目上屏）。
     test_log_presentation.cpp
+    # 第 11 回合任务 001（Codex 验收测试）：像素→3D 共享服务的分派顺序与
+    # 结果一致性（src/logic/PixelTo3DService.cpp）。
+    test_pixel_to_3d_service.cpp
 )
 
 add_executable(unit_tests ${TEST_SOURCES}
@@ -46,6 +49,9 @@ add_executable(unit_tests ${TEST_SOURCES}
     ${CMAKE_SOURCE_DIR}/src/logic/RuntimeLog.cpp
     # Measurement kernel: pure computation, no Qt, no SDK.
     ${CMAKE_SOURCE_DIR}/src/logic/MeasureTools.cpp
+    # Pixel -> 3D shared service (used by the tool page offline and, later, by
+    # the online click-to-pick path).
+    ${CMAKE_SOURCE_DIR}/src/logic/PixelTo3DService.cpp
     # CameraManager itself, so "call shutdown() twice" is tested against the
     # real object and not only against the pure CameraRelease::plan.  The tests
     # never connect, so no RVC call is reached.

@@ -28,6 +28,7 @@
 #include "test_camera_manager_release.h"
 #include "test_measure_methods.h"
 #include "test_log_presentation.h"
+#include "test_pixel_to_3d_service.h"
 
 namespace {
 
@@ -177,6 +178,12 @@ int main(int argc, char** argv)
         // 第 10 回合 P4：操作日志的落屏规则（级别 → 标签/配色、哪些条目上屏）。
         TestLogPresentation t22;
         status |= runClass(&t22, argc, argv, "log_presentation");
+    }
+    {
+        // 第 11 回合任务 001（Codex 验收）：像素→3D 共享服务（在线/离线共用）
+        // 的分派顺序、失败状态与结果一致性。
+        TestPixelTo3DService t23;
+        status |= runClass(&t23, argc, argv, "pixel_to_3d_service");
     }
     return status;
 }

@@ -44,3 +44,5 @@ Thumbs.db
 # Codex x Claude dual-agent loop: evidence packages are tracked, raw streams are not
 .pair/logs/
 .pair/shots/
+# Generated probe data for the pixel->3D UI check (recreate with .pair/tools/make_pixel_probe.py)
+.pair/reports/ui-probe-*/
