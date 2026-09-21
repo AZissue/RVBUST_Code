@@ -25,16 +25,9 @@ public:
     QRect windowGeometry() const;
     void setWindowGeometry(int x, int y, int width, int height);
 
-    // Camera parameters
-    QVariantMap cameraParams() const;
-    void setCameraParams(const QVariantMap& params);
-
-    // When true (default), the values the camera itself holds are used as-is:
-    // LoadCaptureOptionParameters() has already read them into the capture
-    // options, and nothing is pushed over them.  The read-back values are still
-    // written into camera_params so 设置 can display "相机当前值".
-    bool useCameraParams() const;
-    void setUseCameraParams(bool on);
+    // Capture parameters are no longer stored here: exposure/gain are tuned in
+    // the camera vendor's own tool and the app pushes nothing (see the no-arg
+    // Capture()/Capture2D() calls in CameraManager).
 
     // ── Flow automation (第 5 回合 任务 2) — all default OFF ──
     bool autoDetectAfterCapture() const;   // 拍照成功 → 自动识别

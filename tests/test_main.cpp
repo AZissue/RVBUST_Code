@@ -22,7 +22,6 @@
 #include "test_frame_buffer.h"
 #include "test_ui_stall_watchdog.h"
 #include "test_measure_tools.h"
-#include "test_camera_param_policy.h"
 #include "test_auto_flow_policy.h"
 #include "test_camera_recovery.h"
 #include "test_camera_manager_release.h"
@@ -153,10 +152,6 @@ int main(int argc, char** argv)
     {
         TestMeasureTools t16;
         status |= runClass(&t16, argc, argv, "measure_tools");
-    }
-    {
-        TestCameraParamPolicy t17;
-        status |= runClass(&t17, argc, argv, "camera_param_policy");
     }
     {
         TestAutoFlowPolicy t18;

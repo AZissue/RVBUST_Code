@@ -106,22 +106,16 @@ MainWindow::MainWindow(QWidget* parent)
         m_savePathFellBack = true;
     }
 
-    m_camera->setParamsOnConnect(m_config.cameraParams());
     m_flow->setErrorThreshold(m_config.caliboardErrorThreshold());
 
     // ── Round 5 startup policy ──
-    // 任务 1: whether the camera's own capture parameters win over the saved
-    // ones (default true — the operator tunes them in the vendor tool first).
-    m_useCameraParams = m_config.useCameraParams();
-    m_camera->setUseCameraParams(m_useCameraParams);
     // 任务 3.3/3.4: bounded connect retry + the "is the camera still there"
     // scan, which used to run every 5 s.
+    // (第 12 回合 任务 1: 拍摄参数不再由本程序持有，连接时也不下发任何值。)
     m_camera->setConnectRetryCount(m_config.connectRetryCount());
     m_camera->setHealthCheckInterval(m_config.healthCheckIntervalSec() * 1000);
-    RuntimeLog::log("[CAM] startup: use_camera_params=%d, connect_retry=%d, "
-                    "health_interval=%d s",
-                    m_useCameraParams ? 1 : 0, m_camera->connectRetryCount(),
-                    m_config.healthCheckIntervalSec());
+    RuntimeLog::log("[CAM] startup: connect_retry=%d, health_interval=%d s",
+                    m_camera->connectRetryCount(), m_config.healthCheckIntervalSec());
 
     // 任务 3.4: idle-preview pause.  0 = never pause.
     m_idlePauseSec = m_config.idlePausePreviewSec();
@@ -340,23 +334,16 @@ void MainWindow::wireSignals()
         m_actionButtons->setPreviewEnabled(true);
         clearBusy();
 
-        // 任务 1: with use_camera_params on, the values now in effect are the
-        // ones the camera itself holds — write them back so 设置 shows "相机
-        // 当前值" instead of a stale saved set.
+        // 第 12 回合 任务 1: the capture parameters in effect are the camera's
+        // own.  Name them in the operation log — with the settings UI gone this
+        // is the only place the operator can see what the next capture will use.
         QString detail;
-        if (m_useCameraParams) {
-            const auto readBack = m_camera->cameraReadSettings();
-            if (!readBack.isEmpty()) {
-                QVariantMap asMap;
-                QStringList parts;
-                for (auto it = readBack.constBegin(); it != readBack.constEnd(); ++it) {
-                    asMap[it.key()] = it.value();
-                    parts << QStringLiteral("%1=%2").arg(it.key()).arg(it.value());
-                }
-                m_config.setCameraParams(asMap);
-                detail = QStringLiteral("，相机参数(%1)")
-                             .arg(parts.join(QStringLiteral(", ")));
-            }
+        const auto summary = m_camera->cameraCaptureSummary();
+        if (!summary.isEmpty()) {
+            QStringList parts;
+            for (auto it = summary.constBegin(); it != summary.constEnd(); ++it)
+                parts << QStringLiteral("%1=%2").arg(it.key()).arg(it.value());
+            detail = QStringLiteral("，相机参数(%1)").arg(parts.join(QStringLiteral(", ")));
         }
         m_logger->success(QStringLiteral("相机连接成功%1").arg(detail));
     });
@@ -731,14 +718,8 @@ void MainWindow::resetSession()
                               : QStringLiteral("黑底白圆"));
     metaParts << QStringLiteral("标定板=%1x%2 步距=%3mm")
                      .arg(m_caliboardW).arg(m_caliboardH).arg(m_caliboardStep);
-    if (m_camera) {
-        QStringList paramParts;
-        const auto s = m_camera->currentSettings();
-        for (auto it = s.begin(); it != s.end(); ++it)
-            paramParts << QStringLiteral("%1=%2").arg(it.key()).arg(it.value());
-        if (!paramParts.isEmpty())
-            metaParts << QStringLiteral("相机参数(%1)").arg(paramParts.join(QStringLiteral(", ")));
-    }
+    // 第 12 回合 任务 1: 拍摄参数由相机持有，会话头里不再记录本程序的副本；
+    // 每次拍照前的一行 [CAM] capture-x* 日志才是当时真正生效的值。
     m_logger->info(QStringLiteral("新建会话: %1").arg(metaParts.join(QStringLiteral(", "))));
 
     m_view2d->clear();
@@ -1887,7 +1868,7 @@ void MainWindow::releaseCameraNow(int deviceWaitMs, const QString& why)
 
 void MainWindow::showSettingsDialog()
 {
-    SettingsDialog dlg(m_config, m_camera, m_data, this);
+    SettingsDialog dlg(m_config, m_data, this);
     // 相机维护 →「释放相机」: runs while the (modal) dialog is open, so the
     // operator sees the result immediately instead of after pressing OK.
     connect(&dlg, &SettingsDialog::cameraReleaseRequested, this, [this]() {
@@ -1907,31 +1888,6 @@ void MainWindow::showSettingsDialog()
     const float threshold = dlg.errorThreshold();
     m_config.setCaliboardErrorThreshold(threshold);
     m_flow->setErrorThreshold(threshold);
-
-    // ── 任务 1: capture-parameter source ──
-    // Only push values when the operator actually edited them: with
-    // use_camera_params on, re-applying the (displayed) values would be exactly
-    // the "下发参数" the setting exists to avoid.
-    m_useCameraParams = dlg.useCameraParams();
-    m_config.setUseCameraParams(m_useCameraParams);
-    m_camera->setUseCameraParams(m_useCameraParams);
-    if (dlg.cameraParamsEdited()) {
-        const auto params = dlg.cameraParams();
-        for (auto it = params.begin(); it != params.end(); ++it)
-            m_camera->setParameter(it.key(), it.value().toFloat());
-        RuntimeLog::log("[CAM] settings: %d 项拍摄参数已下发到相机", params.size());
-    } else {
-        RuntimeLog::log("[CAM] settings: 拍摄参数未修改，未下发任何参数 (use_camera_params=%d)",
-                        m_useCameraParams ? 1 : 0);
-    }
-
-    // Persist what is in effect (with use_camera_params on these are the values
-    // read from the camera, which is what 设置 must display next time).
-    QVariantMap current;
-    const auto settings = m_camera->currentSettings();
-    for (auto it = settings.begin(); it != settings.end(); ++it)
-        current[it.key()] = it.value();
-    m_config.setCameraParams(current);
 
     // ── 任务 2: automation + 任务 3.4: lifetime tuning ──
     m_config.setAutoDetectAfterCapture(dlg.autoDetectAfterCapture());

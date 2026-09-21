@@ -188,8 +188,8 @@ private:
     bool m_preScanning = false;
     bool m_connectRequested = false;
 
-    // ── Round 5: camera parameter source + automation + lifetime ──
-    bool m_useCameraParams = true;         // 任务 1 (mirrors AppConfig)
+    // ── Round 5: automation + lifetime ──
+    // (第 12 回合 任务 1 删掉了 m_useCameraParams：拍摄参数已完全交由相机持有。)
     bool m_autoDetectAfterCapture = false; // 任务 2 (all default off)
     bool m_autoSaveAfterDetect = false;
     // 任务 3.4: 0 = never pause the preview on idle.

@@ -1,9 +1,53 @@
 # STATUS.md — 进度状态（每次会话结束必须更新）
 
-> 最后更新：2026-09-20
+> 最后更新：2026-09-21
 > 只保留「当前快照」，不积累历史；旧条目删除即可，git 历史里仍可追溯。
 
 ## ⏭ 交接块（新会话先读这里）
+
+- **2026-09-21（第 12 回合：任务 01 删掉内置拍照参数 + 任务 02 所有窗口可缩放/可滚动）**
+  - 来源：用户反馈 —— ①程序内的拍照参数功能不完善，成像不好却不好调，不如干脆不在助手内调参数，
+    只在相机厂商的软件里调好再用助手；②设置窗口内容一多，窗口就跟着变高，确定按钮被任务栏挡住、
+    点不到，也改不了窗口尺寸。
+  - **任务 01（严格无参）**：删掉 `logic/CameraParamPolicy.h`（连同 `tests/test_camera_param_policy.*`）、
+    `AppConfig` 的 `camera_params`/`use_camera_params`（默认值块 + 4 个读写函数）、`CameraManager` 的
+    全部参数 setter 与 `cameraParamRange`、`SettingsDialog` 整个「拍摄参数」分组。
+    预览与拍照改用 SDK **无参**重载：`Capture2D()` / `Capture2D(cid)` / `Capture2D(rightId)` / `Capture()`。
+    用户明确选择「两处自动覆盖相机的兜底都删」：预览/拍照不再强制 `use_projector_capturing_2d_image=false`；
+    连接时不再 `applyPreferredCaptureMode()` 强制非线扫；不再设 `transform_to_camera`。
+    **保留只读镜像**：`loadCameraOptionsLocked()` + `cameraCaptureSummary()` + `logCameraOptions()` ——
+    包络判定（`gridAligned` / `correspond2d` / 对应图）仍要读相机当前值，且每次连接与拍照把实际取值
+    写进 `[CAM]` 日志，便于现场排查"拍出来黑/有条纹/没有深度"。
+  - **任务 02**：`SettingsDialog` 重写为「内容进 `QScrollArea`、`QDialogButtonBox` 留在滚动区外」，
+    `setMinimumSize(520, 360)`；`ToolsPanel` 每个工具页各套一层滚动区（`wrapScrollable()`，6 处调用点），
+    `setMinimumSize(640, 440)`；`DeviceListDialog` 最小尺寸降到 420x260。三个窗口都补了
+    `Qt::WindowMinMaxButtonsHint`（此前只有主窗口能最大化）。
+  - 数值证据（本机）：`ctest` **2/2 通过**；`unit_tests` **24 类 / 270 passed / 0 failed / 1 skipped**
+    （与改动前持平，删掉 `camera_param_policy` 一类、`TestCameraManagerRelease` 换成 `captureSummaryEmptyBeforeConnect`）。
+    界面自检 `.pair/tools/ui_check_012.py`（UIA，JSON 与截图在 `.pair/shots/round12/`）：
+    - 设置：`maximize_box=true`、`thick_frame=true`；600x560 → 560x400 后 `inside_work_area=true`、
+      OK/Cancel 矩形 [1050,561,1127,598] / [1133,561,1210,598] → `buttons_inside_window=true`、
+      `buttons_above_taskbar=true`、`scrollbar_after_shrink=true`；`设置_small.png` 可见内容在滚动、按钮钉在底部。
+    - 工具：`maximize_box=true`、`thick_frame=true`；缩到最小 656x479（客户区 640x440，Qt 的最小尺寸约束）
+      后 15 个页签逐个切换无异常；逐页量「内容底边 vs 客户区底边」溢出 **-246 px**（都装得下），`bad_pages=[]`。
+  - **未验证**：①`DeviceListDialog` 只做了代码层修改，没有自动化验证（要相机处于扫描/占用态才会弹）；
+    ②最小尺寸下没有任何工具页装不下，所以**工具页的滚动条这次没被真正触发过** —— 滚动通路靠
+    `SettingsDialog` 同一套 `QScrollArea` 用法佐证，建议现场把某个工具页的内容做多再看一眼。
+  - **风险 / 维护成本评估（任务 01 明确要求）**：
+    - 净减代码：删掉一整套「参数来源二选一」策略（策略头 + 单测）、4 个配置项、12 个 setter、1 个 UI 分组。
+      旧配置文件里的 `camera_params` / `use_camera_params` 键**不再被读取**，成为死数据，不报错。
+    - 风险 1（已接受，用户拍板）：预览不再强制关投影仪图案。若相机里存的是"2D 图叠加投影条纹"，
+      预览会变慢、标定板 2D 图上带条纹 —— 要去厂商软件改。
+    - 风险 2（已接受）：连接时不再强制非线扫模式。若相机里存的是 `SwingLineScan` 且 `correspond2d=0`，
+      现在会照做 → 点云与图像不对齐；代码仍据此走 `GetCorrespondMap()`，但**拍不出深度/深度很差时，
+      第一件事是去看相机里的采集模式**。
+    - 风险 3（已接受）：`transform_to_camera` 不再由程序设置，点云坐标系随相机里保存的值。
+      现场若发现点云"方向不对"，症状从"程序行为不一致"变成"取决于相机当前状态"。
+    - 成本：今后任何新增参数需求，都要先判断"该不该由助手下发"；若将来又要下发，需要重新引入
+      一层配置 + 单测（约 1 天）。
+  - 提交：本回合一个提交，subject = `refactor(handeye-tools): drop in-app capture parameters,
+    make every dialog resizable`（**未推送**，用户未说「推送」）。哈希见 `git log -1`
+    —— 写死哈希会因本文件也在提交里而每次 amend 后失效，所以这里只用 subject 定位。
 
 - **2026-09-20（第 11 回合：反馈 4/5/6/7/9 双智能体循环，Codex 验收通过并提交）**
   - 协作设施：首次把 `.pair/`（Codex 拆解/验收 × Claude 实现）接入本仓库，入口

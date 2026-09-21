@@ -13,8 +13,11 @@ DeviceListDialog::DeviceListDialog(QWidget* parent,
     , m_refreshFn(std::move(refreshFn))
 {
     setWindowTitle(QStringLiteral("选择相机设备"));
-    setMinimumSize(480, 280);
+    // 与主窗口一样可缩放/最大化（用户反馈：窗口不该被内容尺寸锁死）。 设备表
+    // 本身就是滚动区，行数再多也不会把按钮顶出屏幕。
+    setMinimumSize(420, 260);
     resize(520, 340);
+    setWindowFlags(windowFlags() | Qt::WindowMinMaxButtonsHint);
     m_refreshWatcher = new QFutureWatcher<std::vector<DeviceEntry>>(this);
     connect(m_refreshWatcher, &QFutureWatcher<std::vector<DeviceEntry>>::finished,
             this, &DeviceListDialog::onRefreshFinished);

@@ -45,16 +45,14 @@ void TestCameraManagerRelease::releaseReportSurvivesARepeatCall()
     QCOMPARE(second.detail, first.detail);
 }
 
-void TestCameraManagerRelease::useCameraParamsDefaultsToOn()
+void TestCameraManagerRelease::captureSummaryEmptyBeforeConnect()
 {
     CameraManager cam;
-    // 任务 1: the default must be "do not write to the camera".
-    QVERIFY(cam.useCameraParams());
-    cam.setUseCameraParams(false);
-    QVERIFY(!cam.useCameraParams());
-    cam.setUseCameraParams(true);
-    QVERIFY(cam.useCameraParams());
-    QVERIFY(cam.cameraReadSettings().isEmpty());   // never read → nothing shown
+    // 第 12 回合 任务 1: the app no longer owns any capture parameter.  The
+    // summary is a mirror of what the *camera* holds, so before a connect there
+    // is nothing in it — and, just as important, it never gets filled from
+    // anywhere but the device (loadCameraOptionsLocked is the only writer).
+    QVERIFY(cam.cameraCaptureSummary().isEmpty());
 }
 
 void TestCameraManagerRelease::healthIntervalIsConfigurable()

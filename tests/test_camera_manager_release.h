@@ -13,6 +13,7 @@ private slots:
     // The same claim through the public report: the second call must not
     // restart the release, so the first call's outcome is still what is shown.
     void releaseReportSurvivesARepeatCall();
-    void useCameraParamsDefaultsToOn();
+    // 第 12 回合 任务 1: nothing of our own is reported as a capture parameter.
+    void captureSummaryEmptyBeforeConnect();
     void healthIntervalIsConfigurable();
 };

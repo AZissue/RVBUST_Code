@@ -19,7 +19,6 @@ set(TEST_SOURCES
     test_frame_buffer.cpp
     test_ui_stall_watchdog.cpp
     test_measure_tools.cpp
-    test_camera_param_policy.cpp
     test_auto_flow_policy.cpp
     test_camera_recovery.cpp
     test_camera_manager_release.cpp

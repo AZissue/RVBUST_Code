@@ -41,9 +41,6 @@ void AppConfig::load()
         m_data["window_geometry"] = QVariantMap{
             {"x", -1}, {"y", -1}, {"width", 1920}, {"height", 1080}};
     }
-    if (!m_data.contains("camera_params")) {
-        m_data["camera_params"] = QVariantMap{};
-    }
     if (!m_data.contains("caliboard_pattern_w")) {
         m_data["caliboard_pattern_w"] = 4;     // columns, short side
     }
@@ -58,11 +55,6 @@ void AppConfig::load()
     }
     if (!m_data.contains("ui_stall_threshold_ms")) {
         m_data["ui_stall_threshold_ms"] = 500;
-    }
-    // Default true: the operator tunes exposure/gain in the camera vendor tool
-    // first, so the camera's own values must win unless told otherwise.
-    if (!m_data.contains("use_camera_params")) {
-        m_data["use_camera_params"] = true;
     }
     // Flow automation: all off, so an untouched install behaves as before.
     if (!m_data.contains("auto_detect_after_capture")) {
@@ -146,17 +138,6 @@ void AppConfig::setWindowGeometry(int x, int y, int width, int height)
     // Deferred save — called from closeEvent
 }
 
-QVariantMap AppConfig::cameraParams() const
-{
-    return m_data.value("camera_params").toMap();
-}
-
-void AppConfig::setCameraParams(const QVariantMap& params)
-{
-    m_data["camera_params"] = params;
-    save();
-}
-
 int AppConfig::caliboardPatternW() const
 {
     return m_data.value("caliboard_pattern_w", 4).toInt();  // columns, short side
@@ -188,17 +169,6 @@ float AppConfig::caliboardErrorThreshold() const
 void AppConfig::setCaliboardErrorThreshold(float pct)
 {
     m_data["caliboard_error_threshold"] = static_cast<double>(pct);
-    save();
-}
-
-bool AppConfig::useCameraParams() const
-{
-    return m_data.value("use_camera_params", true).toBool();
-}
-
-void AppConfig::setUseCameraParams(bool on)
-{
-    m_data["use_camera_params"] = on;
     save();
 }
 

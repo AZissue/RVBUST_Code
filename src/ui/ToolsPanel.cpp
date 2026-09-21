@@ -28,6 +28,7 @@
 #include <QPainter>
 #include <QPaintEvent>
 #include <QPolygon>
+#include <QScrollArea>
 #include <QTextEdit>
 #include <QVBoxLayout>
 #include <QtConcurrent>
@@ -48,6 +49,21 @@ QLineEdit* makeTextInput(QWidget* parent)
 
 // ArrowComboBox (the down-arrow repaint the global QSS needs) now lives in
 // ui/ArrowComboBox.h: the measurement pages use the same widget.
+
+// 用户反馈：内容多的窗口会长过屏幕，底部的按钮因此被任务栏挡住、点不到。
+// 每个工具页现在各自套一层滚动区——面板缩小时是页面内部滚动，而不是把对话框
+// 撑到屏幕外。 返回的是滚动区（它才是 stack 里的那一页），页面本身成为其内容。
+QScrollArea* wrapScrollable(QWidget* page, QStackedWidget* stack)
+{
+    auto* scroll = new QScrollArea(stack);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setWidgetResizable(true);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    scroll->setStyleSheet(QStringLiteral("QScrollArea { background: transparent; }"));
+    scroll->setWidget(page);   // reparents the page into the scroll viewport
+    return scroll;
+}
 
 QString parseErrorText(const ToolInputParser::ParseResult& r, std::size_t expected)
 {
@@ -73,7 +89,11 @@ ToolsPanel::ToolsPanel(QWidget* parent)
     : QDialog(parent)
 {
     setWindowTitle(QStringLiteral("工具"));
-    setMinimumSize(720, 520);
+    // 与主窗口一样可自由缩放/最大化；内容超出时由各页自己的滚动区消化，
+    // 所以最小值只保证左列表 + 一页基本信息还看得见。
+    setMinimumSize(640, 440);
+    resize(820, 620);
+    setWindowFlags(windowFlags() | Qt::WindowMinMaxButtonsHint);
     setAttribute(Qt::WA_DeleteOnClose, false);
     buildUi();
 }
@@ -179,7 +199,7 @@ void ToolsPanel::buildDistancePage(QStackedWidget* stack)
 
     pageLayout->addWidget(group);
     pageLayout->addStretch();
-    stack->addWidget(page);
+    stack->addWidget(wrapScrollable(page, stack));
 
     // Manual calculation: result updates only when 计算 is clicked.
     connect(m_calcBtn, &QPushButton::clicked, this, &ToolsPanel::updateDistanceResult);
@@ -221,7 +241,9 @@ void ToolsPanel::updateDistanceResult()
 void ToolsPanel::buildPixelTo3DPage(QStackedWidget* stack)
 {
     auto* page = new QWidget(stack);
-    m_p2dPage = page;   // 冻结判据「当前页是不是像素→3D」就看这个指针
+    // 冻结判据「当前页是不是像素→3D」比对的是 stack 里的那一页，而现在
+    // stack 里装的是滚动区，所以这里存滚动区而不是内层 page。
+    m_p2dPage = wrapScrollable(page, stack);
     auto* pageLayout = new QVBoxLayout(page);
 
     auto* group = new QGroupBox(QStringLiteral("像素→3D（离线反投影）"), page);
@@ -320,7 +342,7 @@ void ToolsPanel::buildPixelTo3DPage(QStackedWidget* stack)
 
     pageLayout->addWidget(group);
     pageLayout->addStretch();
-    stack->addWidget(page);
+    stack->addWidget(wrapScrollable(page, stack));
 
     connect(browseBtn, &QPushButton::clicked, this, [this]() {
         const QString dir = QFileDialog::getExistingDirectory(
@@ -672,7 +694,7 @@ void ToolsPanel::buildCalibrationPage(QStackedWidget* stack)
 
     pageLayout->addWidget(group);
     pageLayout->addStretch();
-    stack->addWidget(page);
+    stack->addWidget(wrapScrollable(page, stack));
 
     connect(browseBtn, &QPushButton::clicked, this, [this]() {
         const QString dir = QFileDialog::getExistingDirectory(
@@ -975,7 +997,7 @@ void ToolsPanel::buildTransformPage(QStackedWidget* stack)
 
     pageLayout->addWidget(group);
     pageLayout->addStretch();
-    stack->addWidget(page);
+    stack->addWidget(wrapScrollable(page, stack));
 
     connect(m_mountCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [this](int index) {
@@ -1237,7 +1259,7 @@ void ToolsPanel::buildRobotCommPage(QStackedWidget* stack)
 
     pageLayout->addWidget(group);
     pageLayout->addStretch();
-    stack->addWidget(page);
+    stack->addWidget(wrapScrollable(page, stack));
 
     auto updateProtocolFields = [this](int index) {
         const bool isModbus = (index == 0);
@@ -1336,7 +1358,7 @@ void ToolsPanel::buildMeasurePages(QStackedWidget* stack)
         page->setObjectName(QStringLiteral("measure_page_%1")
                                 .arg(QString::fromUtf8(specs[i].id)));
         page->setSeriesStore(&m_series);
-        stack->addWidget(page);
+        stack->addWidget(wrapScrollable(page, stack));
         m_pages.push_back(page);
 
         connect(page, &MeasurePage::snapshotReady,

@@ -1,5 +1,4 @@
 #include "logic/CameraManager.h"
-#include "logic/CameraParamPolicy.h"
 #include "logic/CameraRelease.h"
 #include "logic/CrashInject.h"
 #include "logic/DetectionEngine.h"
@@ -50,16 +49,6 @@ static void logMemoryTrace(const char* tag, std::size_t payloadBytes)
                         tag, static_cast<unsigned long>(handles),
                         payloadBytes / 1048576.0);
     }
-}
-
-// QVariantMap (config / QVariant storage) -> the plain float map the pure
-// parameter policy works on.
-static QMap<QString, float> toFloatMap(const QVariantMap& in)
-{
-    QMap<QString, float> out;
-    for (auto it = in.constBegin(); it != in.constEnd(); ++it)
-        out.insert(it.key(), it.value().toFloat());
-    return out;
 }
 
 // GigE "In Use" flag — the hard evidence for "上一次没释放干净 / 被别的程序占着",
@@ -536,9 +525,6 @@ bool CameraManager::initWithDeviceSerial(const QString& serial)
                 fprintf(stderr, "[CameraManager] WARNING: X1 GetIntrinsicParameters failed!\n");
             }
             m_impl->model = CameraModel::X1;
-            // 任务 1: remember the values the *camera* holds, before anything can
-            // overwrite the capture options.
-            m_cameraRead = currentSettings();
             return true;
         } catch (const std::exception& e) {
             lastError = QStringLiteral("X1 连接异常: %1").arg(e.what());
@@ -560,13 +546,7 @@ bool CameraManager::initWithDeviceSerial(const QString& serial)
             if (!m_impl->x2.LoadCaptureOptionParameters(m_impl->capOptsX2))
                 m_impl->capOptsX2 = RVC::X2::CaptureOptions{};
 
-            // Prefer a full-frame capture mode for static calibration scenes.
-            // The camera's saved mode may be a line-scan mode (SwingLineScan
-            // etc.) which only produces a thin strip — or no depth at all.
-            applyPreferredCaptureMode(static_cast<int>(info.support_capture_mode));
-
             m_cameraId = info.support_extra ? RVC::CameraID_Extra : RVC::CameraID_Left;
-            m_impl->capOptsX2.transform_to_camera = static_cast<RVC::CameraID>(m_cameraId);
 
             float imat[9] = {}, idist[5] = {};
             if (m_impl->x2.GetIntrinsicParameters(static_cast<RVC::CameraID>(m_cameraId), imat, idist)) {
@@ -578,9 +558,6 @@ bool CameraManager::initWithDeviceSerial(const QString& serial)
                 fprintf(stderr, "[CameraManager] WARNING: X2 GetIntrinsicParameters failed!\n");
             }
             m_impl->model = CameraModel::X2;
-            // 任务 1: the device's own values, read after the capture-mode fix so
-            // the reported 3D exposure key matches the mode actually in use.
-            m_cameraRead = currentSettings();
             return true;
         } catch (const std::exception& e) {
             lastError = QStringLiteral("X2 连接异常: %1").arg(e.what());
@@ -607,7 +584,7 @@ bool CameraManager::initWithDeviceSerial(const QString& serial)
         m_released = false;            // a new session must be releasable again
         m_lastSerial = serial;
         m_reconnectAttempts = 0;
-        applyConnectParams();
+        logCameraOptions("connect");
         RuntimeLog::log("connect OK: %s (%s, %lld ms)",
                         qPrintable(serial), model, connectTimer.elapsed());
         // Timers must be started from their owning (UI) thread; queue it so
@@ -657,69 +634,55 @@ bool CameraManager::initWithDeviceSerial(const QString& serial)
     }
 }
 
-void CameraManager::applyPreferredCaptureMode(int supportedModes)
+bool CameraManager::loadCameraOptionsLocked(const char* who)
 {
-    const int preferred[] = {
-        RVC::CaptureMode_Ultra,
-        RVC::CaptureMode_Normal,
-        RVC::CaptureMode_Fast,
-        RVC::CaptureMode_AntiInterReflection,
-        RVC::CaptureMode_Robust
-    };
-    int chosen = static_cast<int>(m_impl->capOptsX2.capture_mode);
-    if ((chosen & supportedModes) == 0)
-        chosen = 0;
-    for (int m : preferred) {
-        if (m & supportedModes) {
-            chosen = m;
-            break;
-        }
+    // Read-only: this fills the mirror, it never writes to the device.
+    bool ok = false;
+    try {
+        if (m_impl->isX1())
+            ok = m_impl->x1.LoadCaptureOptionParameters(m_impl->capOptsX1);
+        else if (m_impl->isX2())
+            ok = m_impl->x2.LoadCaptureOptionParameters(m_impl->capOptsX2);
+    } catch (...) {
+        ok = false;
     }
-    if (chosen != static_cast<int>(m_impl->capOptsX2.capture_mode)) {
-        fprintf(stderr, "[CameraManager] capture mode %d -> %d (supported=%d)\n",
-                static_cast<int>(m_impl->capOptsX2.capture_mode), chosen, supportedModes);
-        m_impl->capOptsX2.capture_mode = static_cast<RVC::CaptureMode>(chosen);
-    }
+    if (!ok)
+        RuntimeLog::log("[CAM] %s: 读取相机拍摄参数失败，沿用上一次读到的值", who);
+    return ok;
 }
 
-void CameraManager::applySavedParams()
+void CameraManager::logCameraOptions(const char* when)
 {
-    for (auto it = m_paramsOnConnect.constBegin();
-         it != m_paramsOnConnect.constEnd(); ++it) {
-        setParameter(it.key(), it.value().toFloat());
-    }
-}
+    if (!m_impl->hasCamera())
+        return;
 
-void CameraManager::applyConnectParams()
-{
-    // 任务 1: the single place that decides whether the saved exposure/gain is
-    // pushed over what the camera itself holds.  With use_camera_params=true the
-    // decision applies nothing at all, which is exactly the requested behaviour
-    // ("不应下发任何参数") and is what the runtime log line below records.
-    const auto decision = CameraParamPolicy::decide(
-        m_useCameraParams, toFloatMap(m_paramsOnConnect), m_cameraRead,
-        /*userEdited=*/false);
-    for (const QString& key : decision.appliedKeys)
-        setParameter(key, m_paramsOnConnect.value(key).toFloat());
-    RuntimeLog::log("%s", qPrintable(decision.logLine));
-
-    // Also log the values that will really be used, so "本次连接用的是相机内部值
-    // 还是保存值" is verifiable from the log alone.
-    const auto effective = currentSettings();
     QStringList parts;
-    for (auto it = effective.constBegin(); it != effective.constEnd(); ++it)
+    const auto summary = cameraCaptureSummary();
+    for (auto it = summary.constBegin(); it != summary.constEnd(); ++it)
         parts << QStringLiteral("%1=%2").arg(it.key()).arg(it.value());
-    // The source is taken from the decision, not from the checkbox, so an
-    // operator edit (which overrides the checkbox) cannot be mislabelled here.
-    RuntimeLog::log("[CAM] effective params (%s): %s",
-                    decision.source == CameraParamPolicy::Source::CameraInternal
-                        ? "camera-internal" : "saved-config",
-                    qPrintable(parts.join(QStringLiteral(", "))));
-}
 
-void CameraManager::setUseCameraParams(bool on)
-{
-    m_useCameraParams = on;
+    // The three options that decide the *shape* of a capture rather than its
+    // brightness.  They are the camera's now (no-arg Capture() honours them), so
+    // the log has to name them: "拍照没深度/2D 图带花纹" is answered here and
+    // nowhere else — the operator changes them in the vendor tool.
+    if (m_impl->isX2()) {
+        const auto& o = m_impl->capOptsX2;
+        parts << QStringLiteral("capture_mode=%1").arg(static_cast<int>(o.capture_mode))
+              << QStringLiteral("correspond2d=%1").arg(o.correspond2d ? 1 : 0)
+              << QStringLiteral("enable_2d_in_capture=%1").arg(o.enable_2d_in_capture ? 1 : 0)
+              << QStringLiteral("transform_to_camera=%1").arg(static_cast<int>(o.transform_to_camera));
+    } else if (m_impl->isX1()) {
+        const auto& o = m_impl->capOptsX1;
+        parts << QStringLiteral("enable_2d_in_capture=%1").arg(o.enable_2d_in_capture ? 1 : 0)
+              << QStringLiteral("transform_to_camera=%1").arg(o.transform_to_camera ? 1 : 0);
+    }
+    parts << QStringLiteral("use_projector_capturing_2d_image=%1")
+                 .arg((m_impl->isX2() ? m_impl->capOptsX2.use_projector_capturing_2d_image
+                                      : m_impl->capOptsX1.use_projector_capturing_2d_image)
+                          ? 1 : 0);
+
+    RuntimeLog::log("[CAM] %s 相机拍摄参数（全部取自相机，本程序不下发任何值）: %s",
+                    when, qPrintable(parts.join(QStringLiteral(", "))));
 }
 
 void CameraManager::setHealthCheckInterval(int ms)
@@ -730,46 +693,6 @@ void CameraManager::setHealthCheckInterval(int ms)
 int CameraManager::healthCheckInterval() const
 {
     return m_healthTimer->interval();
-}
-
-bool CameraManager::reloadCameraParamsFromDevice()
-{
-    if (!m_isConnected || !m_impl->hasCamera())
-        return false;
-
-    DeviceLock lk(this, "reload-params");
-    if (!lk.ok())
-        return false;
-
-    bool ok = false;
-    try {
-        if (m_impl->isX1()) {
-            ok = m_impl->x1.LoadCaptureOptionParameters(m_impl->capOptsX1);
-        } else if (m_impl->isX2()) {
-            ok = m_impl->x2.LoadCaptureOptionParameters(m_impl->capOptsX2);
-            if (ok)
-                applyPreferredCaptureMode(
-                    static_cast<int>(m_impl->devInfo.support_capture_mode));
-        }
-    } catch (...) {
-        ok = false;
-    }
-    if (!ok) {
-        RuntimeLog::log("[CAM] reload params FAILED (device did not report)");
-        return false;
-    }
-
-    m_cameraRead = currentSettings();
-    // The reload replaced the capture options with the device's values, so if
-    // the operator is on the saved-parameter setting, put those back on top —
-    // otherwise "从相机读取" would silently change what the next capture uses.
-    if (!m_useCameraParams)
-        applySavedParams();
-
-    RuntimeLog::log("[CAM] reload params OK: %d key(s) read from device, source=%s",
-                    m_cameraRead.size(),
-                    m_useCameraParams ? "camera-internal" : "saved-config");
-    return true;
 }
 
 bool CameraManager::waitForCaptureIdle(int timeoutMs)
@@ -1128,11 +1051,10 @@ CameraManager::PreviewFrames CameraManager::capturePreviewFrameX1()
     try {
         if (!m_impl->x1.IsOpen()) return out;
 
-        // Projector off: plain 2D preview is much faster than projector-aided
-        // capture (the projector pattern is only needed for 3D capture).
-        auto opts = m_impl->capOptsX1;
-        opts.use_projector_capturing_2d_image = false;
-        if (!m_impl->x1.Capture2D(opts))
+        // No-arg overload: the SDK loads the capture options from the camera, so
+        // the preview shows exactly what the operator set up in the vendor tool
+        // (第 12 回合 任务 1 — 本程序不再下发任何拍摄参数).
+        if (!m_impl->x1.Capture2D())
             return out;
 
         RVC::Image img = m_impl->x1.GetImage();
@@ -1168,10 +1090,8 @@ CameraManager::PreviewFrames CameraManager::capturePreviewFrameX2()
             return out;
         }
 
-        auto opts = m_impl->capOptsX2;
-        opts.use_projector_capturing_2d_image = false;
         auto cid = static_cast<RVC::CameraID>(m_cameraId);
-        if (!m_impl->x2.Capture2D(cid, opts))
+        if (!m_impl->x2.Capture2D(cid))
             return out;
 
         RVC::Image img = m_impl->x2.GetImage(cid);
@@ -1183,7 +1103,7 @@ CameraManager::PreviewFrames CameraManager::capturePreviewFrameX2()
         // first so the second frame does not delay the waiting capture.
         if (m_impl->devInfo.support_extra && gen == m_deviceYieldGen.load()) {
             RVC::CameraID rightId = RVC::CameraID_Right;
-            if (m_impl->x2.Capture2D(rightId, opts)) {
+            if (m_impl->x2.Capture2D(rightId)) {
                 RVC::Image rightImg = m_impl->x2.GetImage(rightId);
                 if (rightImg.IsValid())
                     out.right = DetectionEngine::rvcToQImage(rightImg);
@@ -1347,12 +1267,11 @@ CameraManager::CaptureResult CameraManager::captureFrameX1(const QString& saveDi
             out.error = QStringLiteral("X1 相机未就绪");
             return out;
         }
-        // Capture the 2D image with ambient lighting (no projector pattern),
-        // matching what the user sees in the preview.  The projector is still
-        // used for the 3D depth acquisition.
-        auto opts = m_impl->capOptsX1;
-        opts.use_projector_capturing_2d_image = false;
-        if (!m_impl->x1.Capture(opts)) {
+        // No-arg overload: the capture options are the camera's own (第 12 回合
+        // 任务 1).  Read the mirror back first so the log names what this capture
+        // actually used — a dark 2D image or a striped one is answered there.
+        loadCameraOptionsLocked("capture-x1");
+        if (!m_impl->x1.Capture()) {
             out.error = QStringLiteral("3D采集失败: %1").arg(RVC::GetLastErrorMessage());
             return out;
         }
@@ -1396,10 +1315,15 @@ CameraManager::CaptureResult CameraManager::captureFrameX2(const QString& saveDi
             out.error = QStringLiteral("X2 相机未就绪");
             return out;
         }
-        // Ambient-light 2D image (no projector pattern) to match the preview.
-        auto opts = m_impl->capOptsX2;
-        opts.use_projector_capturing_2d_image = false;
-        if (!m_impl->x2.Capture(opts)) {
+        // No-arg overload: the camera's own options are used, nothing is pushed
+        // (第 12 回合 任务 1).  The read-back below is read-only and exists purely
+        // because the *grid shape* of the result still has to be known: in
+        // SwingLineScan without correspond2d the point cloud is not image-aligned
+        // and 像素→3D must go through the correspond map.  Reading also refreshes
+        // the log line with what this capture really used.
+        loadCameraOptionsLocked("capture-x2");
+        logCameraOptions("capture-x2");
+        if (!m_impl->x2.Capture()) {
             out.error = QStringLiteral("3D采集失败: %1").arg(RVC::GetLastErrorMessage());
             return out;
         }
@@ -1410,8 +1334,9 @@ CameraManager::CaptureResult CameraManager::captureFrameX2(const QString& saveDi
             out.error = QStringLiteral("采集数据无效");
             return out;
         }
+        const auto& capOpts = m_impl->capOptsX2;
         const bool gridAligned =
-            !(opts.capture_mode == RVC::CaptureMode_SwingLineScan && !opts.correspond2d);
+            !(capOpts.capture_mode == RVC::CaptureMode_SwingLineScan && !capOpts.correspond2d);
         // Built once at the SDK boundary and then shared by pointer: the map is
         // ~25 MB and used to be copied into the result, the cache and the flow.
         FrameBuffer::DoubleBuf cmap;
@@ -1606,89 +1531,25 @@ void CameraManager::onHealthTick()
         }, Qt::QueuedConnection);
     });
 }
-// Parameter setters
+// Read-only view of the camera's own capture parameters
 // ═══════════════════════════════════════════════════════════════
+//
+// 第 12 回合 任务 1 removed every setter that used to live here: exposure,
+// gain, gamma and the line-scan exposure are tuned in the camera vendor's own
+// tool now, and the app pushes nothing.  What remains is the mirror filled by
+// loadCameraOptionsLocked() — used by logCameraOptions() and by nothing else.
 
-void CameraManager::setParamsOnConnect(const QVariantMap& params)
+QMap<QString, float> CameraManager::cameraCaptureSummary() const
 {
-    m_paramsOnConnect = params;
-}
-
-void CameraManager::setExposure2D(float ms) {
-    if (m_impl->isX1())      m_impl->capOptsX1.exposure_time_2d = static_cast<int>(ms);
-    else if (m_impl->isX2()) m_impl->capOptsX2.exposure_time_2d = static_cast<int>(ms);
-}
-
-void CameraManager::setExposure3D(float ms) {
-    if (m_impl->isX1())      m_impl->capOptsX1.exposure_time_3d = static_cast<int>(ms);
-    else if (m_impl->isX2()) m_impl->capOptsX2.exposure_time_3d = static_cast<int>(ms);
-}
-
-void CameraManager::setGain2D(float value) {
-    if (m_impl->isX1())      m_impl->capOptsX1.gain_2d = value;
-    else if (m_impl->isX2()) m_impl->capOptsX2.gain_2d = value;
-}
-
-void CameraManager::setGain3D(float value) {
-    if (m_impl->isX1())      m_impl->capOptsX1.gain_3d = value;
-    else if (m_impl->isX2()) m_impl->capOptsX2.gain_3d = value;
-}
-
-void CameraManager::setGamma2D(float value) {
-    if (m_impl->isX1())      m_impl->capOptsX1.gamma_2d = value;
-    else if (m_impl->isX2()) m_impl->capOptsX2.gamma_2d = value;
-}
-
-void CameraManager::setGamma3D(float value) {
-    if (m_impl->isX1())      m_impl->capOptsX1.gamma_3d = value;
-    else if (m_impl->isX2()) m_impl->capOptsX2.gamma_3d = value;
-}
-
-void CameraManager::setLineScannerExposureUs(float us) {
-    // Line-scan exposure only exists on X2 cameras.
-    if (m_impl->isX2())
-        m_impl->capOptsX2.line_scanner_exposure_time_us = static_cast<int>(us);
-}
-
-void CameraManager::setParameter(const QString& key, float value)
-{
-    // Clamp to the sane per-key range before applying (defense in depth).
-    const auto range = cameraParamRange(key);
-    if (range.first != range.second)
-        value = std::clamp(value, range.first, range.second);
-
-    if (key == "exposure_time_2d")       setExposure2D(value);
-    else if (key == "exposure_time_3d")  setExposure3D(value);
-    else if (key == "gain_2d")           setGain2D(value);
-    else if (key == "gain_3d")           setGain3D(value);
-    else if (key == "line_scanner_exposure_time_us")
-        setLineScannerExposureUs(value);
-}
-
-std::pair<float, float> CameraManager::cameraParamRange(const QString& key)
-{
-    if (key == QStringLiteral("exposure_time_2d") || key == QStringLiteral("exposure_time_3d"))
-        return { 0.1f, 200.0f };   // ms
-    if (key == QStringLiteral("gain_2d") || key == QStringLiteral("gain_3d"))
-        return { 0.0f, 48.0f };    // dB
-    if (key == QStringLiteral("line_scanner_exposure_time_us"))
-        return { 1.0f, 10000.0f }; // us
-    return { 0.0f, 0.0f };         // unknown -> no clamp
-}
-
-QMap<QString, float> CameraManager::currentSettings() const
-{
+    QMap<QString, float> s;
     if (m_impl->isX1()) {
         const auto& o = m_impl->capOptsX1;
-        return {
-            {"exposure_time_2d", (float)o.exposure_time_2d},
-            {"exposure_time_3d", (float)o.exposure_time_3d},
-            {"gain_2d", o.gain_2d},
-            {"gain_3d", o.gain_3d},
-        };
-    } else {
+        s["exposure_time_2d"] = (float)o.exposure_time_2d;
+        s["exposure_time_3d"] = (float)o.exposure_time_3d;
+        s["gain_2d"] = o.gain_2d;
+        s["gain_3d"] = o.gain_3d;
+    } else if (m_impl->isX2()) {
         const auto& o = m_impl->capOptsX2;
-        QMap<QString, float> s;
         s["exposure_time_2d"] = (float)o.exposure_time_2d;
         s["gain_2d"] = o.gain_2d;
         // In swing line-scan mode the relevant 3D exposure is the per-line
@@ -1698,6 +1559,6 @@ QMap<QString, float> CameraManager::currentSettings() const
         else
             s["exposure_time_3d"] = (float)o.exposure_time_3d;
         s["gain_3d"] = o.gain_3d;
-        return s;
     }
+    return s;
 }

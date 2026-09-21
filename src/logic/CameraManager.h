@@ -4,7 +4,6 @@
 #include <QImage>
 #include <QMap>
 #include <QString>
-#include <QVariantMap>
 #include <vector>
 #include <memory>
 #include <functional>
@@ -77,23 +76,16 @@ public:
     // pump the event loop, so no slot can re-enter the window mid-close.
     bool waitForCaptureIdle(int timeoutMs);
 
-    // Saved camera parameters (exposure/gain) to re-apply every time a device
-    // connects.  Connect resets capture options to the camera's stored values,
-    // so this is applied after Open() and before cameraConnected is emitted.
-    void setParamsOnConnect(const QVariantMap& params);
-
-    // ── Capture-parameter source (第 5 回合 任务 1) ──
-    // true (default): keep the camera's own values, push nothing.
-    // false        : push the AppConfig values, as before.
-    void setUseCameraParams(bool on);
-    bool useCameraParams() const { return m_useCameraParams; }
-    // Values read back from the device at (or after) connect — what 设置 shows
-    // as "相机当前参数".  Empty when nothing was read.
-    QMap<QString, float> cameraReadSettings() const { return m_cameraRead; }
-    // Re-read the device's own parameters right now (设置 →「从相机读取当前参数」).
-    // Also re-applies the saved values when use_camera_params is off, because
-    // the reload overwrites the capture options.  False when not connected.
-    bool reloadCameraParamsFromDevice();
+    // ── Capture parameters (第 12 回合 任务 1) ──
+    //
+    // The app owns none of them any more.  预览和拍照 call the SDK's no-arg
+    // Capture()/Capture2D(), which load whatever the device has stored — the
+    // operator tunes exposure/gain/mode in the camera vendor's own tool and the
+    // app never pushes a value over it.  What is left here is a *read-only*
+    // mirror of the camera's values, kept for one reason: the runtime log has to
+    // be able to say what the camera was actually set to, which is the first
+    // thing to check when a capture comes back dark, pattern-lit or depth-less.
+    QMap<QString, float> cameraCaptureSummary() const;
 
     // ── Camera lifetime tuning (任务 3.4) ──
     void setHealthCheckInterval(int ms);
@@ -133,21 +125,6 @@ public:
 
     // Full 3D capture — emits captureComplete on success
     void captureFullFrame(const QString& saveDir, int index);
-
-    // Camera parameter setters
-    void setExposure2D(float ms);
-    void setExposure3D(float ms);
-    void setGain2D(float value);
-    void setGain3D(float value);
-    void setGamma2D(float value);
-    void setGamma3D(float value);
-    void setLineScannerExposureUs(float us);
-    void setParameter(const QString& key, float value);
-
-    QMap<QString, float> currentSettings() const;
-
-    // Per-key clamp range; returns {0,0} for unknown keys.
-    static std::pair<float, float> cameraParamRange(const QString& key);
 
 signals:
     void previewFrameReady(const QImage& image);
@@ -267,11 +244,6 @@ private:
     bool m_shuttingDown = false;
     bool m_captureInProgress = false;
     bool m_captureTimedOut = false;
-    QVariantMap m_paramsOnConnect;
-    // 任务 1: parameter source.  m_cameraRead holds what the device reported, so
-    // 设置 can show "相机当前参数" even without touching the device again.
-    bool m_useCameraParams = true;
-    QMap<QString, float> m_cameraRead;
     // 任务 3: set once a teardown has completed, cleared by a successful
     // connect, so a repeat shutdown() is a no-op (and a shutdown after a
     // *reconnect* still tears the new session down).
@@ -309,14 +281,14 @@ private:
     std::vector<float> m_nativeMarkerPixels;   // flat [x0,y0,...] in px
     std::vector<float> m_nativeMarkerPoints;   // flat [x0,y0,z0,...] in mm
 
-    // The camera's saved capture mode may be a line-scan mode that yields no
-    // depth; pick the best full-frame mode the device supports.  Shared by the
-    // connect path and the "从相机读取当前参数" reload.
-    void applyPreferredCaptureMode(int supportedModes);
-    // Push the AppConfig exposure/gain, unconditionally.
-    void applySavedParams();
-    // Decide (CameraParamPolicy) and then push — or not.
-    void applyConnectParams();
+    // Read the device's stored capture options into `m_impl->capOpts*` (the
+    // read-only mirror).  Must be called with the device lock held; returns false
+    // when the device reports nothing, in which case the previous mirror stands.
+    bool loadCameraOptionsLocked(const char* who);
+    // One runtime-log line naming the camera's own exposure/gain *and* the
+    // options that decide the shape of a capture (mode / correspond2d / 2D 开关
+    // / 投影 / 坐标系).  This is the only place those are visible to us now.
+    void logCameraOptions(const char* when);
 
     void scheduleReconnect();
     // Drop the last-frame lookup buffers / native detection cache.  Called when
