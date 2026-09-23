@@ -84,6 +84,8 @@
 |---|---|
 | `PROTO_COMMIT`（首次入库，批 0/批 1 基线） | `249fdb3d75592572dc946c60b00c7d2b14d7c52e`（短 `249fdb3`） |
 | `PROTO_COMMIT_BATCH15`（批 1.5 交付） | `15cedf0`（共用校验层 + 位姿守卫 + R12/oracle 证据） |
+| `PROTO_COMMIT_BATCH2`（批 2 交付） | `05fd446`（app 三文件闭环 UI） |
+| `PROTO_COMMIT_BATCH21`（批 2.1 收尾） | `ea7aa1e`（delta fail-closed + 降级可见 + 三帧真值 + 锚点分节） |
 
 **锚点取值命令（§10.1，钉死；禁止「量工作树比历史值」——那必然假阳性，RG-12）**
 
@@ -143,3 +145,20 @@ git show <commit>:prototypes/robot_handeye_transform/core/<file> | sha1sum
 
 **想复核"文件有没有被改过"**：改前后都比 `git show` 出的值；只有在**你刚改过工作树**时，
 才用 `sha1sum core/*.py tests/*.py app/*.py` 量工作树，并明确那是"未提交状态"，不是锚点。
+
+### `ea7aa1e` —— 批 2.1（当前 HEAD 的 .py 状态）
+
+| 文件 | sha1 |
+|---|---|
+| app/control_panel.py | `404601088f7e01a7bcfbfd13fa27b077d476fe27` |
+| app/main.py | `786576a4668fc05590ba8d5615fde0c11a87a77f` |
+| app/window.py | `c07bf4f99484caa4bb834b7e3ea4d290596f67fd` |
+| core/handeye_result.py | `e12e1627ef8fce26f784bd025054b237b1dfa3f1` |
+| core/pose_source.py | `a58d874ed1661901574289ed69872d4afa9e0690` |
+| core/transform_chain.py | `4f15aa421422d0696fd74958cbd6af597c6b87e3` |
+| core/unit_guard.py | `8b9b3add0c4c334fc6677964b9823bc8ebcb097c` |
+| tests/test_handeye_result.py | `96598d6ec4f6f5d99ab50ec143989d85e7ba3134` |
+| tests/test_matrix_guard.py | `a72a19a6cb3941f1f6edbee6ec179820ee591116` |
+| tests/test_pose_source.py | `94e080308d05aa3d5899f4f59315b25c71b0d37e` |
+| tests/test_transform_chain.py | `383e1f2e30a7cc2f6e9fe89a8985f4e37013f793` |
+| tests/test_unit_guard.py | `e42ae64e0010633d8a87d43b83dfec38081e583b` |
