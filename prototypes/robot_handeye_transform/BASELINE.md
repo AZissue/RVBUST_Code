@@ -78,6 +78,16 @@
 4. `unit_guard.check_translation_norm` 补**矩阵侧 NaN/Inf 对称用例**（此前只有位姿侧被测试盯）。
 5. 本文件锚点表改**按 commit 分节** + 钉死 `git show` 取值命令（RG-12）。
 
+**批 3（`cde52e8`）**：新增 `core/validation.py`（`TipTouchValidator` 戳点门禁 A3：
+n≥3 + err_mean≤0.7 mm 硬门禁 + err_max>2.0 仅 warning（R3）+ 姿态离面 ≥20° 硬条件
+（§4.2 可测性要求，fail-closed）+ 每姿态单特征点（姿态内多点拒收，err_max 门限可复现）；
+`TwoFrameOverlapChecker` 重合度快检：warning 级非门禁（R2 轴向盲区），≥30° 旋转前提）、
+`core/session.py`（A6 会话四项落盘/恢复：handeye.json / poses.json / frames/frame_*.ply
+（纯 numpy ASCII PLY，含颜色）/ error_report.json；缺文件/坏格式拒绝恢复，fail-closed 无半截）、
+`tests/test_validation_degenerate.py` / `tests/test_session.py`、`app/` 验证区接线
+（UNVERIFIED/VERIFIED/FAILED 状态机，VERIFIED 才解锁保存会话）。**未改 core 四件套与
+src/**；A8 守住（`git diff -- src/ | sha1sum` 仍 `7eceb8c3a8826bc1…`，七测试 + smoke 全 exit=0）。
+
 ## 原型自身锚点
 
 | 项 | 值 |
@@ -86,6 +96,7 @@
 | `PROTO_COMMIT_BATCH15`（批 1.5 交付） | `15cedf0`（共用校验层 + 位姿守卫 + R12/oracle 证据） |
 | `PROTO_COMMIT_BATCH2`（批 2 交付） | `05fd446`（app 三文件闭环 UI） |
 | `PROTO_COMMIT_BATCH21`（批 2.1 收尾） | `ea7aa1e`（delta fail-closed + 降级可见 + 三帧真值 + 锚点分节） |
+| `PROTO_COMMIT_BATCH3`（批 3 交付） | `cde52e8`（TipTouchValidator 戳点门禁 + 重合度快检 + session 会话 + UI 验证区） |
 
 **锚点取值命令（§10.1，钉死；禁止「量工作树比历史值」——那必然假阳性，RG-12）**
 
@@ -162,3 +173,24 @@ git show <commit>:prototypes/robot_handeye_transform/core/<file> | sha1sum
 | tests/test_pose_source.py | `94e080308d05aa3d5899f4f59315b25c71b0d37e` |
 | tests/test_transform_chain.py | `383e1f2e30a7cc2f6e9fe89a8985f4e37013f793` |
 | tests/test_unit_guard.py | `e42ae64e0010633d8a87d43b83dfec38081e583b` |
+
+### `cde52e8` —— 批 3（当前 HEAD 的 .py 状态）
+
+| 文件 | sha1 |
+|---|---|
+| app/control_panel.py | `273fa0491343451038ee0198c7d8205c906190f5` |
+| app/main.py | `786576a4668fc05590ba8d5615fde0c11a87a77f` |
+| app/window.py | `27df29d276a816f856ac76fdb382537e6446289c` |
+| core/handeye_result.py | `e12e1627ef8fce26f784bd025054b237b1dfa3f1` |
+| core/pose_source.py | `a58d874ed1661901574289ed69872d4afa9e0690` |
+| core/session.py | `b3fede80aa598ce6f3f219874633fa23a0046a6f` |
+| core/transform_chain.py | `4f15aa421422d0696fd74958cbd6af597c6b87e3` |
+| core/unit_guard.py | `8b9b3add0c4c334fc6677964b9823bc8ebcb097c` |
+| core/validation.py | `0875c46616d28ae777ddcfe885d3022c990e1bb0` |
+| tests/test_handeye_result.py | `96598d6ec4f6f5d99ab50ec143989d85e7ba3134` |
+| tests/test_matrix_guard.py | `a72a19a6cb3941f1f6edbee6ec179820ee591116` |
+| tests/test_pose_source.py | `94e080308d05aa3d5899f4f59315b25c71b0d37e` |
+| tests/test_session.py | `d26b3ed0e74eb6f1c1192e1abcf5e482bb7fd8b9` |
+| tests/test_transform_chain.py | `383e1f2e30a7cc2f6e9fe89a8985f4e37013f793` |
+| tests/test_unit_guard.py | `e42ae64e0010633d8a87d43b83dfec38081e583b` |
+| tests/test_validation_degenerate.py | `350e70dc4026a24e701bd3b81958087274b89c4a` |
