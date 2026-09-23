@@ -1,12 +1,16 @@
 # -*- coding: utf-8 -*-
 """
-主窗口（批 2）—— 左控制面板 + 右 3D 点云查看器 + 底部日志。
+主窗口（批 3：A3 验证门禁 + A6 会话接线）—— 左控制面板 + 右 3D 点云查看器 + 底部日志。
 
 闭环（无相机、无机器人可跑）：
   手眼矩阵（JSON / 手动） + 机器人位姿（手动 / Mock 序列 / CSV）
   → 合成相机系点云（固定随机种子，可复现）
   → T_cam2base = compute_cam2base(...)（core，A1 真值测试锁死）
   → 变换到基座系 → EmbeddedPointCloudViewer 显示（相机系 / 基座系 / 叠加）
+  → A3 戳点门禁（TipTouchValidator，唯一可用性判据）→ VERIFIED 才允许保存会话（A6）
+
+状态机（A3）：IDLE → UNVERIFIED（矩阵已加载）→ VERIFIED（戳点 PASS，导出解锁）
+/ FAILED（戳点 FAIL，红字）。重合度快检是 warning 级，不改变状态（R2 轴向盲区）。
 
 复用主项目组件（路线 A：只复用组件层，不接 ui_v2 / backend_bridge）：
   src/ui/viewer_3d.EmbeddedPointCloudViewer、src/ui/worker_thread.run_in_background
@@ -54,7 +58,9 @@ if HAS_SRC:
 
 import handeye_result as he_mod          # noqa: E402  core/
 import pose_source as ps_mod             # noqa: E402  core/
+import session as session_mod            # noqa: E402  core/（A6 会话落盘/恢复）
 import transform_chain                   # noqa: E402  core/
+import validation                        # noqa: E402  core/（A3 戳点门禁 + 重合度快检）
 
 from PySide6.QtCore import Qt                            # noqa: E402
 from PySide6.QtWidgets import (QApplication, QHBoxLayout, QLabel,  # noqa: E402
@@ -100,16 +106,20 @@ class RobotHandEyeWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("手眼变换原型（批 2：无相机 / 无机器人闭环）")
+        self.setWindowTitle("手眼变换原型（批 3：A3 戳点门禁 + A6 会话）")
         self.resize(1400, 850)
 
         self.handeye: Optional[he_mod.HandEyeResult] = None
+        self.validator: Optional[validation.TipTouchValidator] = None
+        self.tip_report: Optional[dict] = None       # 最近一次戳点门禁报告（A6 落盘）
         self.pose_src: ps_mod.PoseSource = ps_mod.ManualPoseSource()
         self.pose_kind = "manual"
         self.frame_index = 0
         self._mock_started = False
         self.last_base_pcd = None
         self.last_pose_used = None
+        self.captured_frames: list = []   # [(xyz N×3, colors N×3|None), ...]（A6）
+        self.captured_poses: list = []    # [T_base2tool, ...]（A6）
         self._workers = []
 
         central = QWidget()
@@ -170,6 +180,10 @@ class RobotHandEyeWindow(QMainWindow):
         p.sig_load_csv.connect(self.on_load_csv)
         p.sig_capture.connect(self.on_capture)
         p.sig_clear.connect(self.on_clear)
+        p.sig_tip_record.connect(self.on_tip_record)
+        p.sig_tip_check.connect(self.on_tip_check)
+        p.sig_overlap.connect(self.on_overlap_check)
+        p.sig_save_session.connect(self.on_save_session)
 
     # ------------------------------------------------------------------
     # 日志 / 状态
@@ -179,12 +193,25 @@ class RobotHandEyeWindow(QMainWindow):
         self.log_box.appendPlainText(str(text))
 
     def _refresh_state(self):
+        """状态机（A3）：IDLE → UNVERIFIED（矩阵已加载）→ VERIFIED / FAILED。"""
+        p = self.panel
         if self.handeye is None:
-            self.panel.set_state("IDLE（未加载手眼矩阵）", "#888888")
+            p.set_state("IDLE（未加载手眼矩阵）", "#888888")
+            p.set_tip_enabled(False)
+            p.btn_export.setEnabled(False)
+            return
+        p.set_tip_enabled(True)
+        if self.handeye.validated:
+            p.set_state("VERIFIED（戳点门禁通过，允许导出）", "#4caf50")
+            p.btn_export.setEnabled(True)
+        elif self.tip_report is not None \
+                and self.tip_report.get("verdict") == "FAIL":
+            p.set_state("FAILED（戳点门禁未通过，矩阵不可用）", "#e05c5c")
+            p.btn_export.setEnabled(False)
         else:
-            self.panel.set_state(
-                "矩阵已加载 · UNVERIFIED（戳点验证批 3 前不允许导出）", "#ffb300")
-        self.panel.btn_export.setEnabled(False)   # A3 门禁：批 3 前一律置灰
+            p.set_state("矩阵已加载 · UNVERIFIED（须通过戳点门禁才可导出）", "#ffb300")
+            p.btn_export.setEnabled(False)
+        p.set_overlap_enabled(len(self.captured_frames) >= 2)
 
     # ------------------------------------------------------------------
     # 手眼矩阵
@@ -213,15 +240,24 @@ class RobotHandEyeWindow(QMainWindow):
     def _on_handeye_result(self, ok: bool, msg: str, res):
         if not ok:
             self.handeye = None
+            self.validator = None
+            self.tip_report = None
             self._refresh_state()
             self._log(f"[拒绝] 手眼矩阵未加载：{msg}")
             return
         self.handeye = res
+        # A3：换矩阵 = 验证状态重置（validated 由加载器置 False），戳点样本清零
+        self.validator = validation.TipTouchValidator(
+            res.eye_in_hand, res.T_handeye_mm)
+        self.tip_report = None
+        self.captured_frames.clear()
+        self.captured_poses.clear()
         self._refresh_state()
         self._log(f"[OK] 手眼矩阵已加载（{res.key()}, ‖t‖="
                   f"{np.linalg.norm(res.T_handeye_mm[:3, 3]):.3f} mm, "
                   f"source={res.source}）")
         self._log(f"     {msg}")
+        self._log("     矩阵状态 UNVERIFIED：请做 ≥3 个离面姿态的戳点验证（A3）。")
 
     # ------------------------------------------------------------------
     # 位姿
@@ -304,6 +340,14 @@ class RobotHandEyeWindow(QMainWindow):
         pcd_base = transform_chain.transform_pcd(pcd_cam, T_cb)
         self.last_base_pcd = pcd_base
         self.last_pose_used = T_bt
+        colors = None
+        try:
+            if pcd_base.has_colors():
+                colors = np.asarray(pcd_base.colors)
+        except Exception:
+            colors = None
+        self.captured_frames.append((np.asarray(pcd_base.points).copy(), colors))
+        self.captured_poses.append(T_bt.copy())
         self._show(pcd_cam, pcd_base)
         n = len(pcd_base.points)
         return True, (f"第 {self.frame_index} 帧：{n} 点已转到基座系"
@@ -347,10 +391,86 @@ class RobotHandEyeWindow(QMainWindow):
         self.frame_index = 0
         self._mock_started = False
         self.last_base_pcd = None
+        self.captured_frames.clear()
+        self.captured_poses.clear()
         if self.viewer is not None:
             self.viewer.clear_all()
         self.lbl_scene.setText("已清空。")
-        self._log("[清空] 3D 视图与帧计数已重置")
+        self._log("[清空] 3D 视图、帧计数与已采集帧列表已重置（戳点样本保留）")
+        self._refresh_state()
+
+    # ------------------------------------------------------------------
+    # 验证（A3 戳点门禁 + R2 重合度快检）与会话保存（A6）
+    # ------------------------------------------------------------------
+    def on_tip_record(self, tip_text: str):
+        """记录一个戳点样本：当前位姿源位姿 + 相机系针尖单点。"""
+        if self.validator is None:
+            self._log("[拒绝] 尚未加载手眼矩阵，无验证对象")
+            return
+        tip = ControlPanel.parse_floats(tip_text)
+        if tip is None or len(tip) != 3:
+            self._log("[拒绝] 针尖坐标需 3 个数（相机系，毫米，每姿态单点）")
+            return
+        ok, msg, T = self.pose_src.get_pose()
+        if not ok or T is None:
+            self._log(f"[拒绝] 无法读取当前位姿（{msg}）：请先录入/加载位姿")
+            return
+        ok2, msg2 = self.validator.add_sample(T, tip)
+        self._log(("[OK] " if ok2 else "[拒绝] ") + msg2)
+
+    def on_tip_check(self):
+        """运行戳点门禁（唯一可用性判据，A3）；PASS 才允许导出。"""
+        if self.validator is None:
+            self._log("[拒绝] 尚未加载手眼矩阵")
+            return
+        rep = self.validator.check()
+        self.tip_report = rep
+        if rep["verdict"] == "PASS":
+            self.handeye.validated = True
+        else:
+            self.handeye.validated = False
+        self._refresh_state()
+        self._log(f"[戳点门禁] verdict={rep['verdict']}  n={rep['n']}  "
+                  f"err_mean={rep['err_mean_mm']:.3f} mm（门禁 ≤ "
+                  f"{rep['mean_gate_mm']:.1f}）  err_max={rep['err_max_mm']:.3f} mm")
+        self._log(f"     姿态离面：{rep['spread_message']}")
+        for w in rep["warnings"]:
+            self._log(f"     [warning] {w}")
+        for r in rep["reasons"]:
+            self._log(f"     [原因] {r}")
+
+    def on_overlap_check(self):
+        """两帧重合度快检（warning 级，**不进门禁、不改变状态**，R2）。"""
+        if len(self.captured_frames) < 2:
+            self._log("[拒绝] 重合度快检需要 ≥2 帧已采集点云")
+            return
+        (xyz_a, _), (xyz_b, _) = self.captured_frames[-2:]
+        Ta, Tb = self.captured_poses[-2], self.captured_poses[-1]
+        rep = validation.TwoFrameOverlapChecker.check(xyz_a, xyz_b, Ta, Tb)
+        self._log(f"[重合度快检] median={rep['median_mm']:.3f} mm  "
+                  f"p95={rep['p95_mm']:.3f} mm（两位姿旋转差 "
+                  f"{rep['rotation_deg']:.1f}°，前提 ≥30°）")
+        self._log(f"     {rep['hint']}")
+        if rep["verdict"] == "PRECONDITION_FAILED":
+            self._log("     [warning] 旋转差 <30°，本报告数值仅供参考（前提不满足）")
+
+    def on_save_session(self):
+        """保存会话（A6）。fail-closed：未 VERIFIED 时按钮置灰，到不了这里。"""
+        if self.handeye is None or not self.handeye.validated:
+            self._log("[拒绝] 会话保存被 A3 门禁拦住：未 VERIFIED")
+            return
+        from PySide6.QtWidgets import QFileDialog
+        target = QFileDialog.getExistingDirectory(
+            self, "选择会话保存目录（将新建 session_ 子目录）")
+        if not target:
+            return
+        import datetime
+        sub = os.path.join(
+            target, "session_" + datetime.datetime.now().strftime("%Y%m%d_%H%M%S"))
+        ok, msg = session_mod.save_session(
+            sub, self.handeye, self.captured_poses, self.captured_frames,
+            error_report=self.tip_report)
+        self._log(("[OK] " if ok else "[拒绝] ") + msg)
 
     # ------------------------------------------------------------------
     # 无人值守自检（--smoke N，offscreen 亦可）
@@ -427,6 +547,87 @@ class RobotHandEyeWindow(QMainWindow):
             bad += 1
         else:
             print("[OK] UI 槽位：delta 位姿 → 已拒绝（fail-closed，R11）")
+        # ---- 批 3：A3 戳点门禁（UI 槽位，正/反例）+ A6 会话往返 ----
+        print("--- smoke：A3 戳点门禁 + A6 会话保存/恢复 ---")
+        self.log_box.appendPlainText("--- smoke：A3 戳点门禁 + A6 会话 ---")
+        P_TIP = np.array([400.0, 100.0, 420.0])
+
+        def _tip_cam_of(T_handeye, T_bt):
+            T_cb = transform_chain.compute_cam2base(True, T_handeye, T_bt)
+            return (np.linalg.inv(T_cb) @ np.append(P_TIP, 1.0))[:3]
+
+        # 1) 真值一致的 3 个离面姿态 → 门禁 PASS → VERIFIED → 导出解锁
+        demo = [ps_mod.euler_to_matrix([x, y, z], [rx, ry, rz], "ZYX")
+                for x, y, z, rx, ry, rz in
+                [(400, 100, 420, 0, 0, 0),
+                 (420, 110, 430, 0, 20, 25),
+                 (410, 120, 425, 25, 0, -20)]]
+        self.pose_src = ps_mod.MockPoseSource(demo, "mm", "absolute")
+        for _ in range(3):
+            _, _, Tp = self.pose_src.get_pose()
+            tip = _tip_cam_of(self.handeye.T_handeye_mm, Tp)
+            self.on_tip_record(", ".join(f"{v:.3f}" for v in tip))
+            self.pose_src.step_next()
+        self.on_tip_check()
+        if self.handeye.validated and self.panel.btn_export.isEnabled():
+            print("[OK] 戳点门禁 PASS → VERIFIED，导出已解锁")
+        else:
+            print("[FAIL] 真值一致的戳点样本应判 PASS 并解锁导出")
+            bad += 1
+        # 2) A6 会话保存/恢复：帧/位姿/矩阵/validated 全部还原
+        import shutil
+        import tempfile
+        sess_tmp = tempfile.mkdtemp(prefix="mcc_smoke_session_")
+        oks, _ = session_mod.save_session(
+            os.path.join(sess_tmp, "session_smoke"), self.handeye,
+            self.captured_poses, self.captured_frames,
+            error_report=self.tip_report)
+        okl, msgl, restored = session_mod.load_session(
+            os.path.join(sess_tmp, "session_smoke"))
+        n_ok = (oks and okl
+                and len(restored["frames"]) == len(self.captured_frames)
+                and len(restored["poses"]) == len(self.captured_poses)
+                and restored["handeye"]["validated"] == self.handeye.validated
+                and np.array_equal(restored["handeye"]["T_handeye_mm"],
+                                   self.handeye.T_handeye_mm))
+        print(("[OK] " if n_ok else "[FAIL] ") + f"A6 会话往返：{msgl}")
+        self.log_box.appendPlainText(
+            "A6 会话往返 " + ("OK" if n_ok else "FAIL") + f"：{msgl}")
+        if not n_ok:
+            bad += 1
+        shutil.rmtree(sess_tmp, ignore_errors=True)
+        # 3) 退化矩阵反例（平移错 110 mm，@qa/@feas 场景）：同一批针尖观测
+        #    必须判 FAIL、导出回锁（A3 核心回归）
+        T_good = self.handeye.T_handeye_mm.copy()
+        T_bad = T_good.copy()
+        T_bad[:3, 3] += np.array([110.0, 0.0, 0.0])
+        okb, msgb, resb = he_mod.HandEyeResult.from_matrix(
+            T_bad.reshape(-1).tolist(), "mm", True)
+        if not okb:
+            print(f"[FAIL] 退化矩阵加载失败（应能加载、由门禁判死）：{msgb}")
+            bad += 1
+        else:
+            self._on_handeye_result(True, msgb, resb)   # 走正常 UI 加载路径
+            for _ in range(3):
+                _, _, Tp = self.pose_src.get_pose()
+                tip = _tip_cam_of(T_good, Tp)   # 针尖观测由真值链产生
+                self.on_tip_record(", ".join(f"{v:.3f}" for v in tip))
+                self.pose_src.step_next()
+            self.on_tip_check()
+            if self.handeye.validated or self.panel.btn_export.isEnabled():
+                print("[FAIL] 退化矩阵戳点必须判 FAIL 并回锁导出（A3）")
+                bad += 1
+            else:
+                print("[OK] 退化矩阵（平移错 110 mm）戳点判 FAIL，导出已回锁")
+        # 4) 重载正确矩阵 → 验证状态重置回 UNVERIFIED，导出仍锁
+        okg, msgg, resg = he_mod.HandEyeResult.from_matrix(
+            T_good.reshape(-1).tolist(), "mm", True)
+        self._on_handeye_result(okg, msgg, resg)
+        if self.handeye.validated or self.panel.btn_export.isEnabled():
+            print("[FAIL] 重载矩阵后应回到 UNVERIFIED（导出置灰）")
+            bad += 1
+        else:
+            print("[OK] 重载矩阵 → UNVERIFIED 重置，导出保持锁定")
         print(f"=== smoke 结束：{frames} 帧，失败 {bad} 项 ===")
         return 0 if bad == 0 else 1
 

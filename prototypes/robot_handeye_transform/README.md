@@ -1,6 +1,6 @@
 # robot_handeye_transform —— 手眼矩阵 + 机器人位姿 → 点云转基座系
 
-> 落位：`prototypes/robot_handeye_transform/` ｜ 方案：`docs/机器人手眼变换原型方案_20260922.md`（v2）
+> 落位：`prototypes/robot_handeye_transform/` ｜ 方案：`docs/机器人手眼变换原型方案_20260922.md`（v4.3）
 > 范围（D1）：**只做变换不做标定求解**。手眼矩阵来自独立工具（RVHandEyeCalibration v3.9.0）
 > 或 `src/core/handeye.py`；本原型吃它的输出。
 
@@ -45,8 +45,9 @@ app/    main.py            入口（无显示器时 QT_QPA_PLATFORM=offscreen；
         window.py          主窗口：EmbeddedPointCloudViewer + WorkerThread + 合成点云闭环
 tests/  test_transform_chain.py / test_handeye_result.py / test_unit_guard.py
         test_matrix_guard.py / test_pose_source.py        （批 1.5 新增）
+        test_validation_degenerate.py / test_session.py   （批 3 新增，A3/A6）
 BASELINE.md  A8 版本锚点（BASE_HEAD / src diff hash / PROTO_COMMIT）
-REGRESSION.md 回归手册（@scribe，RG-01…RG-08）
+REGRESSION.md 回归手册（@scribe，RG-01…RG-12）
 ```
 
 ```bash
@@ -58,6 +59,8 @@ PY="D:/Program Files/Anaconda/envs/rvc/python.exe"
 "$PY" prototypes/robot_handeye_transform/tests/test_matrix_guard.py     # 共用校验层
 "$PY" prototypes/robot_handeye_transform/tests/test_pose_source.py      # A2 位姿侧
 "$PY" prototypes/robot_handeye_transform/tests/test_transform_chain.py  # A1（含 DLL oracle）
+"$PY" prototypes/robot_handeye_transform/tests/test_validation_degenerate.py  # A3/A9/R2/R3
+"$PY" prototypes/robot_handeye_transform/tests/test_session.py          # A6 会话往返
 ```
 
 判 pass/fail 看**进程退出码**（不要用 pytest）。DLL oracle 默认**必需**：缺失时
@@ -118,6 +121,19 @@ PY="D:/Program Files/Anaconda/envs/rvc/python.exe"
 | RG-09 降级末行 | `--allow-skip-oracle`：exit=0 且末行 `[ALL OK — 已降级：A1 独立判据(§[5]) 未执行]` + 降级汇总；不降级：exit=1 |
 | A4 三帧真值 | 第 1/2/3 帧逐帧比对：`0.000e+00 / 2.274e-13 / 1.137e-13 mm`（均 < 1e-9） |
 
+**批 3 实测（2026-09-23，offscreen 实跑）**
+
+| 项 | 结果 |
+|---|---|
+| 七测试退出码 | 全 0（五旧测试无退化 + test_validation_degenerate / test_session 全绿） |
+| A3 退化矩阵回归 | 平移错 110 mm 的矩阵（`success=True/rms_t=0` 型退化）→ 戳点 err_mean=35.874 mm → **判 FAIL**；正确矩阵 → err_mean=0.000000 → PASS |
+| A3 姿态离面（可测性） | 纯平移验证 / 全共轴旋转 → 离面不满足 → FAIL（沿公共轴平移误差不可辨，fail-closed） |
+| A9 判别下限 | 3.0 mm 偏差必判 FAIL；0.2 mm 判 PASS（非亚毫米保证）；1.0 mm 在本合成几何/姿态集 err_mean=0.326 不保证检出——检出率依赖几何与姿态集 |
+| R3 err_max 诊断 | 8 姿态含 1 个 2.4 mm 粗差 → err_max=2.100 warning 在、verdict 仍 PASS（不进硬门禁） |
+| R2 重合度快检 | 同一云复制 → median=0.000000；整体平移 1 mm → median=1.000000（度量正确）；旋转差 <30° → PRECONDITION_FAILED；轴向盲区提示恒在 |
+| A6 会话往返 | handeye（含 validated=True）/ 4 位姿 / 4 帧（含颜色）/ error_report 落盘后逐位还原；缺文件/坏 JSON → 拒绝恢复（fail-closed，无半截会话） |
+| smoke 批 3 段 | 戳点 PASS → VERIFIED 解锁导出 → 会话往返 OK → 退化矩阵判 FAIL 回锁 → 重载矩阵回 UNVERIFIED，全过 |
+
 ## 进度
 
 - [x] 批 0（部分）：prototypes/README 表更新 + A8 基线复核（HEAD=8221b82，
@@ -136,9 +152,21 @@ PY="D:/Program Files/Anaconda/envs/rvc/python.exe"
       ⑦ §[5] 打印 oracle 路径 + 版本 + sha256（程序打印，非人工转录）
       ⑧ 清掉 `SKIPPED = []` 死代码；oracle 缺失默认 **exit≠0**
       ⑨ 三入口尺寸/类型错误统一为自家可读报错
-- [ ] 批 2：app UI（复用主功能组件）—— 起点已满足（PoseSource 签名冻结于批 1.5）
-- [ ] 批 3：validation.py（戳点门禁 + 重合度 warning）+ session.py
+- [x] 批 2：app UI（复用主功能组件）—— `05fd446` 交付，实测见上表
+- [x] 批 2.1：收尾 5 项全落 —— `ea7aa1e`（delta fail-closed / 降级可见 / 三帧真值 /
+      矩阵侧 NaN 对称用例 / 锚点按 commit 分节）
+- [x] 批 3：validation.py（TipTouchValidator 戳点门禁 + TwoFrameOverlapChecker
+      warning 级快检）+ session.py（A6 会话落盘/恢复）+ UI 门禁接线
+      （UNVERIFIED/VERIFIED/FAILED 状态机，VERIFIED 才允许保存会话）
 - [ ] 批 4：offscreen 端到端 + README 收尾 + 真机联调（待 §8 现场信息）
+
+> **批 3 状态（2026-09-23）**：core 新增 `validation.py` / `session.py`，新增
+> `tests/test_validation_degenerate.py` / `tests/test_session.py`，`app/` 两文件接
+> 验证区（戳点记录/门禁/重合度快检/保存会话）。七测试 + `--smoke 3` 全 exit=0，
+> A8 守住（`git diff -- src/ | sha1sum` 仍 `7eceb8c3a8826bc1…`），oracle nn_max 三元组
+> 与基线逐位一致。戳点门禁口径：n≥3、err_mean≤0.7 mm 硬门禁、err_max>2.0 仅
+> warning、姿态离面（≥1 轴与所有其他相对旋转轴夹角 >20°）为硬条件；特征点每姿态
+> **单点**（姿态内多点拒收，err_max 门限才可复现）。
 
 > **批 2 状态（2026-09-23）**：`app/main.py` / `control_panel.py` / `window.py` 三文件已落，
 > 闭环"合成点云 → 变基座系 → 3D 显示"跑通（`--smoke 3` exit=0，实测见上表）。

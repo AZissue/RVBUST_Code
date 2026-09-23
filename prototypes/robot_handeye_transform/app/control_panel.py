@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-控制面板（左）—— 手眼矩阵 / 机器人位姿 / 采集 三组（批 2）。
+控制面板（左）—— 手眼矩阵 / 机器人位姿 / 采集 / 验证导出 四组（批 3 接线）。
 
 设计约定（方案 v4.1）：
   - 单位、安装方式、位姿类型、欧拉顺序**一律不预选**（下拉首项为「请选择」），
     与 core 侧「无默认」一致（D4 / A2 / R11）。面板不做几何校验，全部交给 core
     的 `HandEyeResult` / `admit_pose`，失败原因原样显示（core 已保证可读）。
-  - 导出按钮常置灰：戳点验证（A3）批 3 才实现，未 VERIFIED 不允许导出。
+  - 状态机（A3）：矩阵加载 → UNVERIFIED（戳点按钮可用，导出置灰）→ 戳点门禁
+    PASS → VERIFIED（导出可用）/ FAIL → 红字 FAILED。重合度快检是 warning 级，
+    **不改变**状态（R2 轴向盲区，不能判可用）。
   - 只放核心参数，不堆控件。
 """
 
@@ -47,6 +49,10 @@ class ControlPanel(QWidget):
     sig_load_csv = Signal(str, str, str)           # path, unit, pose_type
     sig_capture = Signal()
     sig_clear = Signal()
+    sig_tip_record = Signal(str)     # 针尖相机系坐标文本 "x,y,z"（毫米）
+    sig_tip_check = Signal()         # 运行戳点门禁
+    sig_overlap = Signal()           # 两帧重合度快检（warning，非门禁）
+    sig_save_session = Signal()      # 保存会话（A6，仅 VERIFIED 可用）
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -172,20 +178,39 @@ class ControlPanel(QWidget):
         return g
 
     def _build_verify_group(self) -> QWidget:
-        g = QGroupBox("验证 / 导出")
+        g = QGroupBox("验证 / 导出（A3 戳点门禁，批 3）")
         v = QVBoxLayout(g)
         v.setSpacing(4)
         self.lbl_state = QLabel("状态：IDLE")
         self.lbl_state.setStyleSheet("color: #ffb300;")
         v.addWidget(self.lbl_state)
-        self.btn_verify = QPushButton("戳点验证（批 3）")
-        self.btn_verify.setEnabled(False)
-        v.addWidget(self.btn_verify)
-        self.btn_export = QPushButton("导出点云 / 会话（未 VERIFIED 置灰）")
+
+        self.edit_tip_xyz = QLineEdit()
+        self.edit_tip_xyz.setPlaceholderText(
+            "针尖相机系坐标 X,Y,Z（毫米；每姿态单点=ROI 质心/球心）")
+        v.addWidget(self.edit_tip_xyz)
+        self.btn_tip_record = QPushButton("戳点：记录本姿态（≥3 个离面姿态）")
+        self.btn_tip_record.setEnabled(False)   # 矩阵加载后才可用
+        self.btn_tip_record.clicked.connect(
+            lambda: self.sig_tip_record.emit(self.edit_tip_xyz.text().strip()))
+        v.addWidget(self.btn_tip_record)
+        self.btn_tip_check = QPushButton("运行戳点门禁")
+        self.btn_tip_check.setEnabled(False)
+        self.btn_tip_check.clicked.connect(self.sig_tip_check.emit)
+        v.addWidget(self.btn_tip_check)
+
+        self.btn_overlap = QPushButton("两帧重合度快检（warning 级，非门禁）")
+        self.btn_overlap.setEnabled(False)      # 采集 ≥2 帧后可用
+        self.btn_overlap.clicked.connect(self.sig_overlap.emit)
+        v.addWidget(self.btn_overlap)
+
+        self.btn_export = QPushButton("保存会话（未 VERIFIED 置灰，A6）")
         self.btn_export.setEnabled(False)
+        self.btn_export.clicked.connect(self.sig_save_session.emit)
         v.addWidget(self.btn_export)
         hint = QLabel("判别下限声明：本工具的戳点门禁可判别的平移偏差下限 ≈ 1.0 mm；"
-                      "验证通过不等于亚毫米保证。")
+                      "验证通过不等于亚毫米保证。重合度快检存在轴向盲区"
+                      "（δ∥旋转轴时恒为 0），不能判可用。")
         hint.setWordWrap(True)
         hint.setStyleSheet("color: #e0a0a0;")
         v.addWidget(hint)
@@ -231,6 +256,13 @@ class ControlPanel(QWidget):
     def set_state(self, text: str, color: str = "#ffb300"):
         self.lbl_state.setText(f"状态：{text}")
         self.lbl_state.setStyleSheet(f"color: {color};")
+
+    def set_tip_enabled(self, enabled: bool):
+        self.btn_tip_record.setEnabled(enabled)
+        self.btn_tip_check.setEnabled(enabled)
+
+    def set_overlap_enabled(self, enabled: bool):
+        self.btn_overlap.setEnabled(enabled)
 
     # ------------------------------------------------------------------
     def _emit_load_handeye(self):
