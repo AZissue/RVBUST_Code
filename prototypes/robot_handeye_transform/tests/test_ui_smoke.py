@@ -14,6 +14,8 @@ offscreen 端到端测试（test_ui_smoke）—— 批 4 / A4 / A5。
   [3] 清空后导出回锁（fail-closed）
   [4] A5 实时性：30 万点**单帧**「复制 + 变换 + 合并入累加器」计时 < 50 ms
       （@qa 基线 17.0 ms；@feas 15.4 ms——本测试只守门限，不冒用基线口径）
+  [5] 批 4.5 合入形态：QWidget 工作区 + 5 接口 + 后台任务走注入 runner
+      （换回自建池 → 本项 FAIL）+ HAS_VIEWER=False 不再静默降级
 """
 
 import os
@@ -65,12 +67,15 @@ check(_REPO_ROOT is not None, "仓库根定位（src/core/pcd_utils.py）",
       _REPO_ROOT or "未找到")
 
 from PySide6.QtWidgets import QApplication      # noqa: E402
-from window import RobotHandEyeWindow           # noqa: E402  app/
+from window import HAS_VIEWER, RobotWorkspace   # noqa: E402  app/（批 4.5：QWidget 工作区）
 from core.pcd_utils import merge_pointclouds    # noqa: E402  src/
 import open3d as o3d                            # noqa: E402
 
 app = QApplication.instance() or QApplication(sys.argv[:1])
-win = RobotHandEyeWindow()
+win = RobotWorkspace()
+
+check(HAS_VIEWER, "3D 查看器可用（ui_v2 Widgets.ViewerPanel，HAS_VIEWER=True）"
+                  "—— 缺失即失败，禁止静默降级（批 4.5 ⑤）")
 
 # 演示矩阵与位姿（同 --smoke 口径；eye-in-hand）
 HE_VALS = [1, 0, 0, 20, 0, 1, 0, -10, 0, 0, 1, 120, 0, 0, 0, 1]
@@ -183,6 +188,41 @@ med = float(np.median(durs))
 check(med < 50.0, "30 万点单帧 复制+变换+合并 中位耗时 < 50 ms（A5 门槛）",
       f"median={med:.1f} ms  runs={['%.1f' % d for d in durs]}")
 check(len(m.points) == 600000, "合并后点数 600000", f"n={len(m.points)}")
+
+print("=" * 70)
+print("[5] 批 4.5 合入形态：QWidget 工作区 + 统一后台 runner（禁自建池，1.0.10）")
+missing = [n for n in ("set_devices", "set_state", "set_background_runner",
+                       "log_message", "dirty_changed") if not hasattr(win, n)]
+check(not missing and not hasattr(win, "setCentralWidget"),
+      "合入形态接口齐备（5 接口）且不再是 QMainWindow",
+      f"缺={missing} 仍是QMainWindow={hasattr(win, 'setCentralWidget')}")
+calls = []
+dirty_events = []
+win.dirty_changed.connect(dirty_events.append)
+
+
+def _rec_runner(work, on_done, must_finish=False, name=None):
+    """记录型 runner：与 BackendBridge._run_background 同签名（同步执行）。"""
+    calls.append(getattr(work, "__name__", "?"))
+    try:
+        on_done(work(), None)
+    except Exception as e:
+        on_done(None, e)
+
+
+win.set_background_runner(_rec_runner)
+win.pose_src = ps_mod.MockPoseSource(DEMO, "mm", "absolute")
+win._mock_started = False
+n_before = len(win.captured_frames)
+win.on_capture()
+check(len(calls) == 1 and calls[0] == "capture_job"
+      and len(win.captured_frames) == n_before + 1,
+      "on_capture 经注入 runner 执行（换回自建池 → 本项 FAIL）",
+      f"calls={calls} frames={n_before}→{len(win.captured_frames)}")
+check(win.panel.btn_capture.isEnabled(), "回调后采集按钮已复位", "")
+check(True in dirty_events, "dirty_changed 已接线（采集成功触发）",
+      f"events={dirty_events}")
+win.set_background_runner(None)
 
 win.close()
 import shutil

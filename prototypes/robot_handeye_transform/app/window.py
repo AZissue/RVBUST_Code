@@ -6,20 +6,30 @@
   手眼矩阵（JSON / 手动） + 机器人位姿（手动 / Mock 序列 / CSV）
   → 合成相机系点云（固定随机种子，可复现）
   → T_cam2base = compute_cam2base(...)（core，A1 真值测试锁死）
-  → 变换到基座系 → EmbeddedPointCloudViewer 显示（相机系 / 基座系 / 叠加）
+  → 变换到基座系 → ViewerPanel 显示（相机系 / 基座系 / 叠加）
   → A3 戳点门禁（TipTouchValidator，唯一可用性判据）→ VERIFIED 才允许保存会话（A6）
 
 状态机（A3）：IDLE → UNVERIFIED（矩阵已加载）→ VERIFIED（戳点 PASS，导出解锁）
 / FAILED（戳点 FAIL，红字）。重合度快检是 warning 级，不改变状态（R2 轴向盲区）。
 
-复用主项目组件（路线 A：只复用组件层，不接 ui_v2 / backend_bridge）：
-  src/ui/viewer_3d.EmbeddedPointCloudViewer、src/ui/worker_thread.run_in_background
+批 4.5（合入预适配）：本文件只提供 **QWidget 工作区** `RobotWorkspace`，接口对齐
+合入形态（`set_devices` / `set_state` / `set_background_runner` + `log_message` /
+`dirty_changed` 信号，照 src/ui_v2/workspaces/turntable_workspace.py:86）。
+QMainWindow 壳移到 app/host.py —— 合入后由 MainWindowShell 提供（工具栏/状态栏/
+QStackedWidget 已在那边，工作区若自带 QMainWindow 就是第二层嵌套）。
+
+复用主项目组件的形态：
+  - 3D 查看器 → src/ui_v2/widgets/viewer_panel.ViewerPanel（ui_v2 公共面板，
+    其内部再包装 ui.viewer_3d）→ 本文件对旧 `ui.*` 的直接依赖为零，
+    Phase 2 搬 viewer_3d 时它跟着 ui_v2 走，打不到这里
+  - 后台任务 → 宿主注入 runner（与 BackendBridge._run_background 同签名），
+    不再 import src/ui/worker_thread，本类不自建线程池（1.0.10）
 
 R6：位姿读取失败（首帧未 move_to）一律报错，**不静默跳过**。
 A9：判别下限声明写在控制面板与 README，禁止把"显示正常"当精度保证。
 
 直接跑（无相机也可）：
-  python app/main.py                 # 手点交互
+  python app/main.py                 # 手点交互（宿主壳 = app/host.py）
   python app/main.py --smoke 3       # 无人值守：自动跑 3 帧，退出码 0/1（offscreen 亦可）
 """
 
@@ -62,22 +72,26 @@ import session as session_mod            # noqa: E402  core/（A6 会话落盘/�
 import transform_chain                   # noqa: E402  core/
 import validation                        # noqa: E402  core/（A3 戳点门禁 + 重合度快检）
 
-from PySide6.QtCore import Qt                            # noqa: E402
-from PySide6.QtWidgets import (QApplication, QHBoxLayout, QLabel,  # noqa: E402
-                               QMainWindow, QPlainTextEdit, QSplitter,
+from PySide6.QtCore import Qt, Signal                    # noqa: E402
+from PySide6.QtWidgets import (QHBoxLayout, QLabel, QSplitter,  # noqa: E402
                                QVBoxLayout, QWidget)
 
+# 批 4.5：查看器改走 ui_v2 公共面板。原型对旧 `ui.*` 的直接依赖清零；
+# ui_v2/widgets/viewer_panel.py 自己包装 ui.viewer_3d，Phase 2 搬库时只改它一处。
 try:
-    from ui.viewer_3d import EmbeddedPointCloudViewer
-    from ui.worker_thread import run_in_background
-    from core.pcd_utils import merge_pointclouds     # 保色合并（K 规：禁止裸 +=）
+    from ui_v2.widgets.viewer_panel import ViewerPanel
     HAS_VIEWER = True
-except Exception as _e:      # 无 GL / 缺依赖时仍要能起 UI（查看器降级）
-    print(f"[WARN] 主项目查看器引入失败（3D 显示降级）: {_e}")
-    EmbeddedPointCloudViewer = None
-    run_in_background = None
-    merge_pointclouds = None
+except Exception as _e:      # 缺依赖 / 无 GL：**显形失败**，不再静默降级
+    print(f"[ERROR] 3D 查看器引入失败（HAS_VIEWER=False）: {_e}")
+    print("[ERROR] 合入形态下该降级非法：--smoke 一律判失败（批 4.5 ⑤）")
+    ViewerPanel = None
     HAS_VIEWER = False
+
+try:
+    from core.pcd_utils import merge_pointclouds     # 保色合并（K 规：禁止裸 +=）
+except Exception as _e:      # src/core 缺失 → 合并导出 fail-closed（见 merged_pcd）
+    print(f"[WARN] src/core 不可用（merge_pointclouds 缺失，合并导出将拒绝）: {_e}")
+    merge_pointclouds = None
 
 from control_panel import ControlPanel       # noqa: E402  同目录
 
@@ -103,13 +117,28 @@ def make_camera_frame(seed: int = 0, n: int = 20000) -> o3d.geometry.PointCloud:
     return pcd
 
 
-class RobotHandEyeWindow(QMainWindow):
-    """手眼矩阵 + 机器人位姿 → 点云转基座系（批 2：显示闭环）。"""
+class RobotWorkspace(QWidget):
+    """手眼矩阵 + 机器人位姿 → 点云转基座系（工作区本体，批 4.5）。
 
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("手眼变换原型（批 3：A3 戳点门禁 + A6 会话）")
-        self.resize(1400, 850)
+    合入形态接口（照 src/ui_v2/workspaces/turntable_workspace.py）：
+        信号 log_message(message, level) / dirty_changed(bool)
+        方法 set_devices(devices) / set_state(state) / set_background_runner(runner)
+    工具栏 / 状态栏 / 日志面板不在本类里：原型阶段由 app/host.py 提供，
+    合入后由 MainWindowShell 提供。
+    """
+
+    STATES = ("idle", "matrix_loaded", "verified")
+
+    log_message = Signal(str, str)
+    """工作区日志（message, level）——宿主/主窗口统一汇入日志面板。"""
+
+    dirty_changed = Signal(bool)
+    """数据脏标记变化（采集到新帧 / 会话已保存 / 已清空）。"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._state = "idle"
+        self._devices: list = []
 
         self.handeye: Optional[he_mod.HandEyeResult] = None
         self.validator: Optional[validation.TipTouchValidator] = None
@@ -122,11 +151,9 @@ class RobotHandEyeWindow(QMainWindow):
         self.last_pose_used = None
         self.captured_frames: list = []   # [(xyz N×3, colors N×3|None), ...]（A6）
         self.captured_poses: list = []    # [T_base2tool, ...]（A6）
-        self._workers = []
+        self._background_runner = None   # 宿主注入（见 set_background_runner）
 
-        central = QWidget()
-        self.setCentralWidget(central)
-        outer = QVBoxLayout(central)
+        outer = QVBoxLayout(self)
         outer.setContentsMargins(4, 4, 4, 4)
         outer.setSpacing(4)
 
@@ -138,15 +165,12 @@ class RobotHandEyeWindow(QMainWindow):
         split.setStretchFactor(1, 1)
         outer.addWidget(split, 1)
 
-        self.log_box = QPlainTextEdit()
-        self.log_box.setReadOnly(True)
-        self.log_box.setMaximumHeight(150)
-        outer.addWidget(self.log_box)
-
         self._wire()
 
-        self._log("手眼变换原型 批 2 启动")
+        self._log("手眼变换原型 批 4.5 工作区启动（合入形态：QWidget + 注入 runner）")
         self._log(f"仓库根 = {REPO_ROOT or '未找到（3D 显示与 src 复用降级）'}")
+        if not HAS_VIEWER:
+            self._log("[ERROR] 3D 查看器不可用：--smoke 将判失败（禁止静默降级）")
         self._log("无相机：点云用合成帧；无机器人：位姿用手动录入 / Mock 序列。")
         self._log("提示：单位、安装方式、位姿类型、欧拉顺序均无默认，必须显式选。")
         self._log("判别下限 ≈ 1.0 mm（A9）：显示正常不等于精度保证。")
@@ -161,13 +185,14 @@ class RobotHandEyeWindow(QMainWindow):
         bar.addWidget(self.lbl_scene, 1)
         v.addLayout(bar)
         if HAS_VIEWER:
-            self.viewer = EmbeddedPointCloudViewer()
-            self.viewer.status_changed.connect(self._log)
+            self.viewer = ViewerPanel("3D 手眼变换预览")
+            self.viewer.viewer_message.connect(self._log)
             self.viewer.set_reference(CAM_ID)
             v.addWidget(self.viewer, 1)
         else:
             self.viewer = None
-            lbl = QLabel("3D 查看器不可用（缺 src/ui 或 GL）—— 其余流程仍可跑，结果只记日志。")
+            lbl = QLabel("3D 查看器不可用（ui_v2 ViewerPanel 引入失败）—— 其余流程仍可跑，"
+                         "但 --smoke 一律判失败（批 4.5：禁止静默降级）。")
             lbl.setWordWrap(True)
             v.addWidget(lbl, 1)
         return holder
@@ -191,9 +216,36 @@ class RobotHandEyeWindow(QMainWindow):
     # ------------------------------------------------------------------
     # 日志 / 状态
     # ------------------------------------------------------------------
-    def _log(self, text: str):
+    def _log(self, text: str, level: str = "info"):
         print(text)
-        self.log_box.appendPlainText(str(text))
+        self.log_message.emit(str(text), level)
+
+    # ------------------------------------------------------------------
+    # 合入形态接口（宿主 / 主窗口侧调用；照 ui_v2 转台工作区）
+    # ------------------------------------------------------------------
+    def set_devices(self, devices):
+        """传入设备列表（合入形态接口）。本原型无相机：只记录并打印。"""
+        self._devices = list(devices or [])
+        self._log(f"[设备] 收到 {len(self._devices)} 台设备（本原型无相机，仅记录）")
+
+    def set_state(self, state: str):
+        """设置工作区状态（与面板上的 A3 状态机并行，宿主/主窗口侧用）。"""
+        if state not in self.STATES:
+            raise ValueError(f"未知状态: {state}")
+        self._state = state
+
+    def current_state(self) -> str:
+        return self._state
+
+    def set_background_runner(self, runner):
+        """注入统一后台 runner（与 BackendBridge._run_background 同签名）。
+
+        签名 `(work, on_done, must_finish=False, name=None)`，
+        回调 `on_done(result, error)`（backend_bridge.py:1966）。
+        注入后后台任务全部走它；未注入（独立自测）时同步执行——
+        本类**不自建线程池**（1.0.10「全工程只留一个后台池」）。
+        """
+        self._background_runner = runner
 
     def _refresh_state(self):
         """状态机（A3）：IDLE → UNVERIFIED（矩阵已加载）→ VERIFIED / FAILED。"""
@@ -373,12 +425,14 @@ class RobotHandEyeWindow(QMainWindow):
             f"{np.round(b.get_extent(), 1).tolist()} mm")
 
     def on_capture(self):
-        # 变换放后台（30 万点级别不卡 UI）；无 src 时同步跑
-        if run_in_background is not None:
+        """采集一帧（变换放后台，30 万点级别不卡 UI）。
+
+        批 4.5：后台任务一律走宿主注入的 runner；未注入时同步执行。
+        本类不再自建 `_workers` 池、不再 import src/ui/worker_thread。
+        """
+        if self._background_runner is not None:
             self._show_loading()
-            w = run_in_background(self, self.capture_job, self._on_capture_done)
-            self._workers.append(w)
-            w.finished.connect(lambda: self._workers.remove(w) if w in self._workers else None)
+            self._background_runner(self.capture_job, self._on_capture_done)
         else:
             self._on_capture_done(self.capture_job(), None)
 
@@ -392,6 +446,8 @@ class RobotHandEyeWindow(QMainWindow):
             return
         ok, msg = result[0], result[1]
         self._log(("[OK] " if ok else "[拒绝] ") + msg)
+        if ok:
+            self.dirty_changed.emit(True)
         self._refresh_state()
 
     def on_clear(self):
@@ -404,6 +460,7 @@ class RobotHandEyeWindow(QMainWindow):
             self.viewer.clear_all()
         self.lbl_scene.setText("已清空。")
         self._log("[清空] 3D 视图、帧计数与已采集帧列表已重置（戳点样本保留）")
+        self.dirty_changed.emit(False)
         self._refresh_state()
 
     # ------------------------------------------------------------------
@@ -478,6 +535,8 @@ class RobotHandEyeWindow(QMainWindow):
             sub, self.handeye, self.captured_poses, self.captured_frames,
             error_report=self.tip_report)
         self._log(("[OK] " if ok else "[拒绝] ") + msg)
+        if ok:
+            self.dirty_changed.emit(False)
 
     def merged_pcd(self):
         """已采集帧的保色合并点云（open3d）。走 merge_pointclouds 逐帧折叠，禁止裸 +=。"""
@@ -534,8 +593,7 @@ class RobotHandEyeWindow(QMainWindow):
         bad = 0
         for i in range(frames):
             ok, msg, pcd = self.capture_job()
-            print(("[OK] " if ok else "[拒绝] ") + msg)
-            self.log_box.appendPlainText(("[OK] " if ok else "[拒绝] ") + msg)
+            self._log(("[OK] " if ok else "[拒绝] ") + msg)
             if not ok:
                 bad += 1
                 continue
@@ -550,16 +608,14 @@ class RobotHandEyeWindow(QMainWindow):
                 tag = "OK" if err < 1e-9 else "FAIL"
                 print(f"[{tag}] 第 {i + 1} 帧基座系点云 vs 解析真值：逐点最大偏差 "
                       f"{err:.3e} mm（门槛 1e-9）")
-                self.log_box.appendPlainText(
-                    f"[{tag}] 第 {i + 1} 帧 vs 解析真值 err={err:.3e} mm")
+                self._log(f"    第 {i + 1} 帧 vs 解析真值 err={err:.3e} mm")
                 if err >= 1e-9:
                     bad += 1
         # 反例：米制当毫米必须被拦（否则说明守卫丢了）
         ok2, msg2 = self.pose_src.append_pose(
             ps_mod.euler_to_matrix([0.4, 0.1, 0.2], [0, 0, 0], "ZYX"),
             "mm", "absolute")
-        print(f"反例（米制当毫米）：{'未被拦住(严重)' if ok2 else '已拦住 -> ' + msg2[:60]}")
-        self.log_box.appendPlainText(f"反例（米制当毫米）：{'未被拦住' if ok2 else '已拦住'} {msg2[:60]}")
+        self._log(f"反例（米制当毫米）：{'未被拦住(严重)' if ok2 else '已拦住 -> ' + msg2[:60]}")
         if ok2:
             bad += 1
         # UI 槽位自检（不经过鼠标，直接调面板→窗口的信号槽，验证接线）
@@ -595,8 +651,7 @@ class RobotHandEyeWindow(QMainWindow):
         else:
             print("[OK] UI 槽位：delta 位姿 → 已拒绝（fail-closed，R11）")
         # ---- 批 3：A3 戳点门禁（UI 槽位，正/反例）+ A6 会话往返 ----
-        print("--- smoke：A3 戳点门禁 + A6 会话保存/恢复 ---")
-        self.log_box.appendPlainText("--- smoke：A3 戳点门禁 + A6 会话 ---")
+        self._log("--- smoke：A3 戳点门禁 + A6 会话保存/恢复 ---")
         P_TIP = np.array([400.0, 100.0, 420.0])
 
         def _tip_cam_of(T_handeye, T_bt):
@@ -637,11 +692,10 @@ class RobotHandEyeWindow(QMainWindow):
                 and restored["handeye"]["validated"] == self.handeye.validated
                 and np.array_equal(restored["handeye"]["T_handeye_mm"],
                                    self.handeye.T_handeye_mm))
-        print(("[OK] " if n_ok else "[FAIL] ") + f"A6 会话往返：{msgl}")
-        self.log_box.appendPlainText(
-            "A6 会话往返 " + ("OK" if n_ok else "FAIL") + f"：{msgl}")
         if not n_ok:
             bad += 1
+        self._log(("[OK] " if n_ok else "[FAIL] ") + f"A6 会话往返：{msgl}")
+        self.dirty_changed.emit(False)   # 会话已落盘（合入形态：脏标记复位）
         shutil.rmtree(sess_tmp, ignore_errors=True)
         # 3) 退化矩阵反例（平移错 110 mm，@qa/@feas 场景）：同一批针尖观测
         #    必须判 FAIL、导出回锁（A3 核心回归）
@@ -675,24 +729,77 @@ class RobotHandEyeWindow(QMainWindow):
             bad += 1
         else:
             print("[OK] 重载矩阵 → UNVERIFIED 重置，导出保持锁定")
+        # ---- 批 4.5：合入形态自检（工作区接口 / 单一后台 runner / 查看器缺失必显形）----
+        self._log("--- smoke：批 4.5 合入形态（QWidget 工作区 + 注入 runner + HAS_VIEWER）---")
+        # ① HAS_VIEWER=False 必须显形（Phase 2 把 src/ui/viewer_3d 搬进 ui_v2 时，
+        #    旧 import 打伤这里会表现为"全绿灯 + 3D 静默消失"；此处钉死为红）
+        if HAS_VIEWER:
+            print(f"[OK] 3D 查看器可用：HAS_VIEWER=True，面板 = "
+                  f"{ViewerPanel.__module__}.{ViewerPanel.__name__}")
+        else:
+            print("[FAIL] HAS_VIEWER=False：合入形态下该降级非法（禁止静默降级，批 4.5 ⑤）")
+            bad += 1
+        # ② 合入形态接口齐备（QWidget 工作区 + 5 接口，照 ui_v2 转台工作区）
+        missing = [n for n in ("set_devices", "set_state", "set_background_runner",
+                               "log_message", "dirty_changed")
+                   if not hasattr(self, n)]
+        still_window = hasattr(self, "setCentralWidget")     # QMainWindow 专属 API
+        if missing or still_window:
+            print(f"[FAIL] 合入形态接口不齐：缺 {missing}，仍是 QMainWindow={still_window}")
+            bad += 1
+        else:
+            print("[OK] 合入形态接口齐备：QWidget 工作区 + set_devices / set_state / "
+                  "set_background_runner / log_message / dirty_changed")
+        # ③ 旧 ui.* 直接依赖必须为零（Phase 2 搬 viewer_3d 打不到本模块）
+        import inspect as _inspect
+        import re as _re
+        _src = _inspect.getsource(sys.modules[__name__]).splitlines()
+        _old_ui = [ln for ln in _src
+                   if _re.match(r"\s*(from|import)\s+ui\.", ln)
+                   and not ln.strip().startswith("#")]
+        if _old_ui:
+            print(f"[FAIL] 仍直接 import 旧 ui.*：{_old_ui}")
+            bad += 1
+        else:
+            print("[OK] 无 `from ui.` / `import ui.` 直接依赖（查看器经 ui_v2 面板）")
+        # ④ 后台任务必须走注入 runner（禁自建池，1.0.10）
+        calls = []
+        dirty_events = []
+        self.dirty_changed.connect(dirty_events.append)
+
+        def _rec_runner(work, on_done, must_finish=False, name=None):
+            """记录型 runner：**与 _run_background 同签名**（(result, error) 回调）。"""
+            calls.append((getattr(work, "__name__", "?"), must_finish, name))
+            try:
+                on_done(work(), None)
+            except Exception as e:
+                on_done(None, e)
+
+        self.set_background_runner(_rec_runner)
+        self.set_devices([])
+        self.set_state("matrix_loaded")
+        self.pose_src = ps_mod.MockPoseSource(demo, "mm", "absolute")
+        self._mock_started = False
+        n_before = len(self.captured_frames)
+        self.on_capture()
+        runner_ok = (len(calls) == 1 and calls[0][0] == "capture_job"
+                     and len(self.captured_frames) == n_before + 1
+                     and self.panel.btn_capture.isEnabled())
+        print(f"[{'OK' if runner_ok else 'FAIL'}] 后台任务走注入 runner：调用 {len(calls)} 次 "
+              f"{calls}；帧 {n_before}→{len(self.captured_frames)}；"
+              f"采集按钮已复位={self.panel.btn_capture.isEnabled()}")
+        if not runner_ok:
+            bad += 1
+        if True in dirty_events:
+            print(f"[OK] dirty_changed 已接线（本次 smoke 共 {len(dirty_events)} 次事件）")
+        else:
+            print("[FAIL] 采集成功未触发 dirty_changed")
+            bad += 1
+        if self.current_state() == "matrix_loaded":
+            print("[OK] set_state / current_state 生效（matrix_loaded）")
+        else:
+            print(f"[FAIL] set_state 未生效：state={self.current_state()!r}")
+            bad += 1
+        self.set_background_runner(None)     # 还原：桩不外泄
         print(f"=== smoke 结束：{frames} 帧，失败 {bad} 项 ===")
         return 0 if bad == 0 else 1
-
-
-def main(argv=None) -> int:
-    argv = list(sys.argv if argv is None else argv)
-    frames = 0
-    if "--smoke" in argv:
-        i = argv.index("--smoke")
-        frames = int(argv[i + 1]) if len(argv) > i + 1 and argv[i + 1].isdigit() else 3
-    app = QApplication.instance() or QApplication(argv[:1])
-    win = RobotHandEyeWindow()
-    win.show()
-    if frames > 0:
-        rc = win.run_smoke(frames)
-        return rc
-    return app.exec()
-
-
-if __name__ == "__main__":
-    sys.exit(main())
