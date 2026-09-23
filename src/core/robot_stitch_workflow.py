@@ -8,9 +8,9 @@
   - 支持 Eye-in-Hand（相机在末端）和 Eye-to-Hand（相机固定）。
 
 坐标链：
-  Eye-in-Hand: T_base2cam = T_base2tool @ T_tool2cam
-               其中 T_tool2cam = inv(T_cam2tool)（手眼标定结果）
-  Eye-to-Hand: T_base2cam = T_cam2base^{-1} = T_base2cam（手眼标定结果）
+  Eye-in-Hand: T_cam2base = T_base2tool @ T_cam2tool
+               其中 T_cam2tool 即手眼标定结果（相机→法兰）
+  Eye-to-Hand: T_cam2base = T_cam2base（手眼标定结果，与机器人位姿无关）
                此时相机固定在基座系，与机器人位姿无关。
 
 每帧拼接：p_base = T_base2cam @ p_cam
