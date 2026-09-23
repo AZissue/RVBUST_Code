@@ -1,154 +1,169 @@
 # -*- coding: utf-8 -*-
 """
-CloudCompare-Like 原型单元测试。
+CloudCompare-Like 原型单元测试（无 UI 依赖）。
 
 运行方式：
-    cd prototypes/cloudcompare_like
-    pytest tests/test_cc.py -v
+    cd D:/RVC_SRC/Python/MultiCameraCalibration
+    python prototypes/cloudcompare_like/tests/test_cc.py
 """
 
+from __future__ import annotations
+
+import os
+import sys
+import unittest
 import numpy as np
-import pytest
+
+# 包路径导入：prototypes 无 __init__.py，依赖命名空间包（PEP 420）。
+# 项目根目录需在 sys.path 上（直接运行本脚本时自动满足：sys.path[0] 为 tests/ 的父链
+# 不可依赖，这里显式插入项目根），src/ 也在 path 上供原型引用 core.utils 等主源码模块。
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.dirname(os.path.abspath(__file__)))))
+for _p in (_PROJECT_ROOT, os.path.join(_PROJECT_ROOT, "src")):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
+import open3d as o3d
+from prototypes.cloudcompare_like.core.cc_workflow import CloudCompareWorkflow, CCNode, ScalarField
+from prototypes.cloudcompare_like.core.cc_scalar_field import compute_scalar_field, apply_colormap
+from prototypes.cloudcompare_like.core.cc_geometry import detect_shape
+from prototypes.cloudcompare_like.core.cc_octree_lod import PointCloudOctree, MultiCloudLODManager
 
 
-def _make_sphere_cloud(n=5000, radius=1.0):
-    """生成测试用球面点云。"""
-    phi = np.random.uniform(0, 2*np.pi, n)
-    theta = np.random.uniform(0, np.pi, n)
-    x = radius * np.sin(theta) * np.cos(phi)
-    y = radius * np.sin(theta) * np.sin(phi)
-    z = radius * np.cos(theta)
-    return np.stack([x, y, z], axis=1).astype(np.float32)
+class TestCCWorkflow(unittest.TestCase):
+    """测试工作流核心。"""
 
+    def setUp(self):
+        self.wf = CloudCompareWorkflow()
+        # 创建测试点云（单位立方体 1000 点）
+        pts = np.random.rand(1000, 3).astype(np.float64)
+        self.pcd = o3d.geometry.PointCloud()
+        self.pcd.points = o3d.utility.Vector3dVector(pts)
 
-class TestGeometry:
-    """测试几何工具模块。"""
+    def test_add_cloud(self):
+        nid = self.wf.add_cloud("test", self.pcd)
+        self.assertIsNotNone(nid)
+        node = self.wf.get_node(nid)
+        self.assertEqual(node.name, "test")
+        self.assertEqual(node.point_count, 1000)
 
-    def test_estimate_normals_shape(self):
-        from core.cc_geometry import estimate_normals
-        pts = _make_sphere_cloud(1000)
-        normals = estimate_normals(pts, k=10)
-        assert normals.shape == (1000, 3)
-        # 归一化检查
-        norms = np.linalg.norm(normals, axis=1)
-        assert np.allclose(norms, 1.0, atol=1e-5)
+    def test_undo_redo(self):
+        nid = self.wf.add_cloud("test", self.pcd)
+        before = np.asarray(self.wf.get_node(nid).pcd.points).copy()
+        # 执行后处理（下采样）
+        self.wf.processor.enable_voxel_downsample = True
+        self.wf.processor.voxel_size = 0.5
+        ok, _, _ = self.wf.apply_process(nid)
+        self.assertTrue(ok)
+        after_count = self.wf.get_node(nid).point_count
+        # 撤销
+        ok, msg = self.wf.undo()
+        self.assertTrue(ok)
+        self.assertEqual(self.wf.get_node(nid).point_count, 1000)
+        # 重做
+        ok, msg = self.wf.redo()
+        self.assertTrue(ok)
+        self.assertEqual(self.wf.get_node(nid).point_count, after_count)
 
-    def test_voxel_downsample(self):
-        from core.cc_geometry import voxel_downsample
-        pts = _make_sphere_cloud(10000)
-        ds, _, _ = voxel_downsample(pts, voxel_size=0.2)
-        assert len(ds) < len(pts)
-        assert ds.dtype == np.float32
+    def test_scalar_field(self):
+        nid = self.wf.add_cloud("test", self.pcd)
+        values = np.random.rand(1000)
+        ok = self.wf.add_scalar_field(nid, "random", values, "jet")
+        self.assertTrue(ok)
+        node = self.wf.get_node(nid)
+        self.assertIn("random", node.scalar_fields)
+        ok = self.wf.set_active_scalar(nid, "random")
+        self.assertTrue(ok)
+        self.assertEqual(node.active_scalar, "random")
 
-    def test_bounding_box(self):
-        from core.cc_geometry import bounding_box
-        pts = _make_sphere_cloud(100)
-        mn, mx = bounding_box(pts)
-        assert np.all(mn <= mx)
-        assert mn.shape == (3,)
-        assert mx.shape == (3,)
+    def test_estimate_normals(self):
+        nid = self.wf.add_cloud("test", self.pcd)
+        ok, msg = self.wf.estimate_normals(nid)
+        self.assertTrue(ok)
+        self.assertTrue(self.wf.get_node(nid).pcd.has_normals())
 
-
-class TestOctreeLOD:
-    """测试 Octree + LOD 模块。"""
-
-    def test_build_and_query(self):
-        from core.cc_octree_lod import OctreeLOD
-        pts = _make_sphere_cloud(5000)
-        lod = OctreeLOD(pts)
-        lod.build_async()
-        lod.wait_ready(timeout=10.0)
-        assert lod.is_ready()
-
-        # 球体查询
-        center = np.array([0.0, 0.0, 0.0], dtype=np.float32)
-        indices = lod.query_sphere(center, 0.5)
-        assert len(indices) > 0
-        assert len(indices) <= len(pts)
-
-    def test_visible_collection(self):
-        from core.cc_octree_lod import OctreeLOD
-        pts = _make_sphere_cloud(5000)
-        lod = OctreeLOD(pts)
-        lod.build_async()
-        lod.wait_ready(timeout=10.0)
-
-        cam_pos = np.array([3.0, 3.0, 3.0], dtype=np.float32)
-        cam_dir = np.array([-1.0, -1.0, -1.0], dtype=np.float32)
-        visible = lod.collect_visible_points(cam_pos, cam_dir, fov=60.0, screen_height=1080)
-        assert visible is not None
-        assert len(visible) > 0
-        assert len(visible) <= len(pts)
-
-
-class TestScalarField:
-    """测试标量场模块。"""
-
-    def test_color_maps(self):
-        from core.cc_scalar_field import get_color_map
-        for name in ["viridis", "jet", "hot", "coolwarm"]:
-            cmap = get_color_map(name)
-            assert cmap.shape == (256, 4)
-            assert cmap.dtype == np.float32
-            assert np.all(cmap >= 0) and np.all(cmap <= 1)
-
-    def test_scalar_field_rgba(self):
-        from core.cc_scalar_field import ScalarField
-        values = np.random.rand(1000).astype(np.float32)
-        sf = ScalarField("test", values)
-        rgba = sf.to_rgba()
-        assert rgba.shape == (1000, 4)
-        assert rgba.dtype == np.float32
-
-    def test_scalar_field_manager(self):
-        from core.cc_scalar_field import ScalarField, ScalarFieldManager
-        mgr = ScalarFieldManager()
-        mgr.add(ScalarField("a", np.random.rand(100).astype(np.float32)))
-        mgr.add(ScalarField("b", np.random.rand(100).astype(np.float32)))
-        assert len(mgr.list_names()) == 2
-        assert mgr.active_field() is not None
-        mgr.remove("a")
-        assert "a" not in mgr.list_names()
-
-
-class TestWorkflow:
-    """测试后处理管线模块。"""
-
-    def test_default_pipeline(self):
-        from core.cc_workflow import PointCloudData, create_default_pipeline
-        pts = _make_sphere_cloud(2000)
-        data = PointCloudData(points=pts)
-        pipeline = create_default_pipeline()
-        result = pipeline.run(data)
-        assert result.n_points > 0
-        assert result.n_points <= data.n_points  # 下采样会减少
-
-    def test_plane_segmentation(self):
-        from core.cc_workflow import PointCloudData, create_segmentation_pipeline
+    def test_detect_plane(self):
         # 创建平面点云
-        x = np.random.uniform(-1, 1, 1000)
-        y = np.random.uniform(-1, 1, 1000)
-        z = np.zeros_like(x)
-        pts = np.stack([x, y, z], axis=1).astype(np.float32)
-        data = PointCloudData(points=pts)
-        pipeline = create_segmentation_pipeline()
-        result = pipeline.run(data)
-        assert result.labels is not None
-        assert "plane_id" in result.scalar_fields
+        xx, yy = np.meshgrid(np.linspace(-1, 1, 50), np.linspace(-1, 1, 50))
+        zz = np.zeros_like(xx)
+        pts = np.column_stack([xx.ravel(), yy.ravel(), zz.ravel()])
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(pts)
+        nid = self.wf.add_cloud("plane", pcd)
+        ok, msg, result = self.wf.detect_geometry(nid, "plane")
+        self.assertTrue(ok)
+        self.assertIn("fitness", result)
+        self.assertGreater(result["fitness"], 0.9)
 
-    def test_undo(self):
-        from core.cc_workflow import PointCloudData, Pipeline
-        from core.cc_workflow import VoxelDownsampleNode
-        pts = _make_sphere_cloud(5000)
-        data = PointCloudData(points=pts)
-        p = Pipeline()
-        p.add(VoxelDownsampleNode(voxel_size=0.2))
-        result = p.run(data)
-        assert result.n_points < pts.shape[0]
-        undone = p.undo()
-        assert undone is not None
-        assert undone.n_points == pts.shape[0]
+
+class TestScalarField(unittest.TestCase):
+    """测试标量场。"""
+
+    def test_height_field(self):
+        pts = np.random.rand(100, 3)
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(pts)
+        vals = compute_scalar_field(pcd, "z")
+        self.assertIsNotNone(vals)
+        self.assertEqual(len(vals), 100)
+
+    def test_density_field(self):
+        pts = np.random.rand(200, 3)
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(pts)
+        vals = compute_scalar_field(pcd, "density", radius=0.5)
+        self.assertIsNotNone(vals)
+        self.assertEqual(len(vals), 200)
+        self.assertTrue(np.all(vals >= 1))
+
+    def test_colormap(self):
+        t = np.linspace(0, 1, 100)
+        colors = apply_colormap(t, "jet")
+        self.assertEqual(colors.shape, (100, 3))
+        self.assertTrue(np.all(colors >= 0) and np.all(colors <= 1))
+
+
+class TestOctreeLOD(unittest.TestCase):
+    """测试 LOD 八叉树。"""
+
+    def test_build_octree(self):
+        pts = np.random.rand(10000, 3).astype(np.float32)
+        octree = PointCloudOctree(pts)
+        self.assertIsNotNone(octree.root)
+        self.assertGreater(len(octree._lod_levels), 0)
+
+    def test_query(self):
+        pts = np.random.rand(100000, 3).astype(np.float32)
+        octree = PointCloudOctree(pts)
+        camera_pos = np.array([0.5, 0.5, 2.0])
+        qpts, qcols = octree.query(camera_pos, target_count=5000)
+        self.assertLessEqual(len(qpts), 5000)
+        self.assertEqual(qpts.shape[1], 3)
+
+    def test_multi_cloud_manager(self):
+        mgr = MultiCloudLODManager(budget_per_cloud=1000)
+        pts1 = np.random.rand(5000, 3).astype(np.float32)
+        pts2 = np.random.rand(5000, 3).astype(np.float32)
+        mgr.add_cloud("c1", pts1)
+        mgr.add_cloud("c2", pts2)
+        result = mgr.query_all(np.array([0.5, 0.5, 2.0]))
+        self.assertIn("c1", result)
+        self.assertIn("c2", result)
+
+
+class TestGeometry(unittest.TestCase):
+    """测试几何检测。"""
+
+    def test_plane_detection(self):
+        xx, yy = np.meshgrid(np.linspace(-1, 1, 50), np.linspace(-1, 1, 50))
+        zz = np.zeros_like(xx)
+        pts = np.column_stack([xx.ravel(), yy.ravel(), zz.ravel()])
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(pts)
+        result = detect_shape(pcd, "plane")
+        self.assertIsNotNone(result)
+        self.assertGreater(result["fitness"], 0.9)
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    unittest.main(verbosity=2)

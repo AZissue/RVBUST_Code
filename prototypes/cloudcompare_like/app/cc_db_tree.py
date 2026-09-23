@@ -34,111 +34,199 @@ class DBTreeItem(QTreeWidgetItem):
         self.setText(0, name)
         self.setFlags(self.flags() | Qt.ItemIsUserCheckable)
         self.setCheckState(0, Qt.Checked)
-        # 点云节点默认允许选择
-        if node_type == "cloud":
-            self.setFlags(self.flags() | Qt.ItemIsSelectable)
+        # 所有节点允许选中（文件节点可选中后整支删除）
+        self.setFlags(self.flags() | Qt.ItemIsSelectable)
 
     def set_icon_color(self, color: tuple):
         """设置节点前面的颜色方块图标。"""
         self._color = color
         r, g, b = int(color[0]*255), int(color[1]*255), int(color[2]*255)
-        self.setForeground(0, QColor(r, g, b))
+        # 用背景色作为视觉标识
+        self.setBackground(0, QColor(r, g, b))
 
 
-class CCDBTree(QWidget):
+class CloudDBTree(QWidget):
     """CloudCompare 式 DB 树控件。"""
 
-    selection_changed = Signal(list)   # 当前选中的 node_id 列表
+    selection_changed = Signal(str)      # 选中的 node_id
     visibility_changed = Signal(str, bool)  # node_id, visible
-    delete_requested = Signal(str)
+    delete_requested = Signal(str)       # node_id
     rename_requested = Signal(str, str)  # node_id, new_name
+    export_requested = Signal(str)       # node_id
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedWidth(220)
-        self._build_ui()
-        self._item_map: dict[str, DBTreeItem] = {}
+        self._node_items: dict = {}  # node_id -> DBTreeItem
+        self._setup_ui()
 
-    def _build_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(4)
+    def _setup_ui(self):
+        lo = QVBoxLayout(self)
+        lo.setContentsMargins(10, 10, 10, 10)
+        lo.setSpacing(8)
 
-        title = QLabel("DB Tree")
-        title.setStyleSheet(f"color: {TEXT_PRIMARY}; font-weight: bold; padding: 4px;")
-        layout.addWidget(title)
+        lbl = QLabel("DB 树")
+        lbl.setStyleSheet(
+            f"color: {TEXT_PRIMARY}; font-size: 14px; font-weight: 700;")
+        lo.addWidget(lbl)
 
-        self.tree = QTreeWidget()
-        self.tree.setHeaderHidden(True)
-        self.tree.setColumnCount(1)
-        self.tree.itemSelectionChanged.connect(self._on_selection_changed)
-        self.tree.itemChanged.connect(self._on_item_changed)
-        self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.tree.customContextMenuRequested.connect(self._show_context_menu)
-        layout.addWidget(self.tree)
+        self._tree = QTreeWidget()
+        self._tree.setHeaderHidden(True)
+        self._tree.setSelectionMode(QTreeWidget.ExtendedSelection)
+        self._tree.setStyleSheet(f"""
+            QTreeWidget {{
+                background-color: {BG_CARD};
+                border: 1px solid {BORDER};
+                border-radius: 6px;
+                color: {TEXT_PRIMARY};
+                outline: none;
+            }}
+            QTreeWidget::item {{
+                padding: 4px 2px;
+                border: none;
+            }}
+            QTreeWidget::item:selected {{
+                background-color: #d32f2f;
+                color: #FFFFFF;
+            }}
+            QTreeWidget::item:selected:!active {{
+                background-color: #b71c1c;
+                color: #FFFFFF;
+            }}
+        """)
+        self._tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self._tree.customContextMenuRequested.connect(self._on_context_menu)
+        self._tree.itemChanged.connect(self._on_item_changed)
+        self._tree.itemSelectionChanged.connect(self._on_selection_changed)
 
-    def _on_selection_changed(self):
-        items = self.tree.selectedItems()
-        ids = [it.node_id for it in items if isinstance(it, DBTreeItem)]
-        self.selection_changed.emit(ids)
+        # Delete 键删除选中节点
+        from PySide6.QtGui import QShortcut, QKeySequence
+        sc = QShortcut(QKeySequence(Qt.Key_Delete), self._tree)
+        sc.activated.connect(self._delete_selected)
+        lo.addWidget(self._tree, 1)
 
-    def _on_item_changed(self, item, column):
-        if isinstance(item, DBTreeItem) and column == 0:
-            visible = item.checkState(0) == Qt.Checked
-            self.visibility_changed.emit(item.node_id, visible)
+    def _delete_selected(self):
+        """删除所有选中的节点（依次发信号，由工作流递归处理子节点）。"""
+        for item in self._tree.selectedItems():
+            if isinstance(item, DBTreeItem):
+                self.delete_requested.emit(item.node_id)
 
-    def _show_context_menu(self, pos):
-        item = self.tree.itemAt(pos)
-        if not isinstance(item, DBTreeItem):
-            return
-        menu = QMenu(self)
-        act_del = QAction("Delete", self)
-        act_del.triggered.connect(lambda: self.delete_requested.emit(item.node_id))
-        menu.addAction(act_del)
-        menu.exec(self.tree.viewport().mapToGlobal(pos))
-
-    # ── 公开 API ──
-
-    def add_file(self, file_id: str, name: str) -> DBTreeItem:
-        """添加顶层文件节点。"""
-        item = DBTreeItem(file_id, name, "file")
-        item.setFlags(item.flags() & ~Qt.ItemIsSelectable)
-        self.tree.addTopLevelItem(item)
-        self._item_map[file_id] = item
+    # ------------------------------------------------------------------
+    # 节点操作
+    # ------------------------------------------------------------------
+    def add_file_node(self, node_id: str, name: str) -> DBTreeItem:
+        item = DBTreeItem(node_id, name, "file")
+        self._tree.addTopLevelItem(item)
+        self._node_items[node_id] = item
+        item.setExpanded(True)
         return item
 
-    def add_cloud(self, cloud_id: str, name: str, parent_id: str,
-                  color: Optional[tuple] = None) -> DBTreeItem:
-        """在文件节点下添加点云节点。"""
-        parent = self._item_map.get(parent_id)
-        if parent is None:
-            parent = self.tree
-        item = DBTreeItem(cloud_id, name, "cloud", parent=parent, color=color)
+    def add_cloud_node(self, node_id: str, name: str, parent_id: Optional[str] = None,
+                       color: Optional[tuple] = None) -> DBTreeItem:
+        parent = self._node_items.get(parent_id)
+        item = DBTreeItem(node_id, name, "cloud", parent=parent, color=color)
         if color:
             item.set_icon_color(color)
-        self._item_map[cloud_id] = item
+        if parent:
+            parent.setExpanded(True)
+        else:
+            self._tree.addTopLevelItem(item)
+        self._node_items[node_id] = item
         return item
 
-    def add_scalar_field(self, sf_id: str, name: str, parent_cloud_id: str) -> DBTreeItem:
-        """在点云节点下添加标量场节点。"""
-        parent = self._item_map.get(parent_cloud_id)
+    def add_scalar_node(self, node_id: str, scalar_name: str, parent_id: str) -> DBTreeItem:
+        parent = self._node_items.get(parent_id)
         if parent is None:
-            return
-        item = DBTreeItem(sf_id, name, "scalar_field", parent=parent)
-        item.setFlags(item.flags() & ~Qt.ItemIsUserCheckable)
-        self._item_map[sf_id] = item
+            return None
+        item = DBTreeItem(f"{node_id}_scalar_{scalar_name}", scalar_name, "scalar", parent=parent)
+        item.setForeground(0, QColor(150, 200, 255))
+        self._node_items[item.node_id] = item
+        parent.setExpanded(True)
         return item
 
     def remove_node(self, node_id: str):
-        item = self._item_map.pop(node_id, None)
-        if item:
-            (item.parent() or self.tree).removeChild(item)
-
-    def set_node_color(self, node_id: str, color: tuple):
-        item = self._item_map.get(node_id)
-        if item and item.node_type == "cloud":
-            item.set_icon_color(color)
+        item = self._node_items.pop(node_id, None)
+        if item is None:
+            return
+        # 递归删除子节点
+        children_ids = [k for k, v in self._node_items.items() if v.parent() == item]
+        for cid in children_ids:
+            self.remove_node(cid)
+        parent = item.parent()
+        if parent:
+            parent.removeChild(item)
+        else:
+            idx = self._tree.indexOfTopLevelItem(item)
+            if idx >= 0:
+                self._tree.takeTopLevelItem(idx)
 
     def clear_all(self):
-        self.tree.clear()
-        self._item_map.clear()
+        self._tree.clear()
+        self._node_items.clear()
+
+    def set_node_visible(self, node_id: str, visible: bool):
+        item = self._node_items.get(node_id)
+        if item:
+            item.setCheckState(0, Qt.Checked if visible else Qt.Unchecked)
+
+    def select_node(self, node_id: str):
+        item = self._node_items.get(node_id)
+        if item:
+            self._tree.setCurrentItem(item)
+
+    def selected_node_id(self) -> Optional[str]:
+        items = self._tree.selectedItems()
+        if not items:
+            return None
+        for item in items:
+            if isinstance(item, DBTreeItem):
+                return item.node_id
+        return None
+
+    def iter_cloud_items(self) -> List[DBTreeItem]:
+        return [item for item in self._node_items.values() if item.node_type == "cloud"]
+
+    # ------------------------------------------------------------------
+    # 事件
+    # ------------------------------------------------------------------
+    def _on_context_menu(self, pos):
+        item = self._tree.itemAt(pos)
+        if item is None or not isinstance(item, DBTreeItem):
+            return
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            f"QMenu {{ background-color: {BG_CARD}; color: {TEXT_PRIMARY}; "
+            f"border: 1px solid {BORDER}; padding: 4px; }}")
+
+        if item.node_type == "cloud":
+            act_export = QAction("导出点云", self)
+            act_export.triggered.connect(lambda: self.export_requested.emit(item.node_id))
+            menu.addAction(act_export)
+            menu.addSeparator()
+
+        act_rename = QAction("重命名", self)
+        act_rename.triggered.connect(lambda: self._rename_item(item))
+        menu.addAction(act_rename)
+
+        act_delete = QAction("删除", self)
+        act_delete.triggered.connect(lambda: self.delete_requested.emit(item.node_id))
+        menu.addAction(act_delete)
+
+        menu.exec(self._tree.viewport().mapToGlobal(pos))
+
+    def _rename_item(self, item: DBTreeItem):
+        from PySide6.QtWidgets import QInputDialog
+        text, ok = QInputDialog.getText(self, "重命名", "新名称:", text=item.text(0))
+        if ok and text:
+            item.setText(0, text)
+            self.rename_requested.emit(item.node_id, text)
+
+    def _on_item_changed(self, item: QTreeWidgetItem, column: int):
+        if column != 0 or not isinstance(item, DBTreeItem):
+            return
+        visible = item.checkState(0) == Qt.Checked
+        self.visibility_changed.emit(item.node_id, visible)
+
+    def _on_selection_changed(self):
+        node_id = self.selected_node_id()
+        if node_id:
+            self.selection_changed.emit(node_id)

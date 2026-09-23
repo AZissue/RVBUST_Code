@@ -1,153 +1,166 @@
 # -*- coding: utf-8 -*-
 """
-标量场管理（Scalar Field）—— CloudCompare 式标量场支持。
+标量场计算与色映射（Scalar Field）。
 
-功能：
-  - 为点云附加一个或多个 float32 标量数组
-  - 自动计算 min/max 做归一化
-  - 支持多种颜色映射（viridis、jet、hot、CoolWarm）
-  - 与 OpenGL 渲染管线联动：标量场 → RGBA 顶点色
+对标 CloudCompare 的 Scalar Fields 功能：
+  - 高度 (Z)
+  - 点密度（局部邻居数）
+  - 曲率估计（PCA 最小特征值）
+  - 强度（Intensity，需输入点云含 intensity 属性）
+  - 距离（到某平面/点的距离）
 """
 
 from __future__ import annotations
 
+from typing import Optional
+
 import numpy as np
 
-from typing import Dict, List, Optional, Tuple
+
+# =========================================================================
+# 色映射表（向量化）
+# =========================================================================
+def _jet_colormap(t: np.ndarray) -> np.ndarray:
+    """matplotlib jet 的向量化实现。"""
+    t = np.clip(np.asarray(t, dtype=np.float64), 0.0, 1.0)
+    r = np.interp(t, [0.0, 0.35, 0.66, 0.89, 1.0], [0.0, 0.0, 1.0, 1.0, 0.5])
+    g = np.interp(t, [0.0, 0.125, 0.375, 0.64, 0.89, 1.0], [0.0, 0.0, 1.0, 1.0, 0.0, 0.0])
+    b = np.interp(t, [0.0, 0.11, 0.34, 0.65, 1.0], [0.5, 1.0, 1.0, 0.0, 0.0])
+    return np.stack([r, g, b], axis=1).astype(np.float32)
 
 
-# ── 颜色映射表（256 级，可直接上传为 1D texture） ──
-
-_COLOR_MAPS: Dict[str, np.ndarray] = {}
-
-
-def _build_viridis() -> np.ndarray:
-    """Matplotlib viridis（感知均匀，默认推荐）。"""
-    t = np.linspace(0, 1, 256)
-    # 简化版分段多项式
-    r = np.clip(-0.001 + 0.089 * t + 0.588 * t**2 + 0.284 * t**3, 0, 1)
-    g = np.clip(0.026 + 0.755 * t + 0.142 * t**2 + 0.041 * t**3, 0, 1)
-    b = np.clip(0.302 + 0.655 * t - 0.025 * t**2 + 0.032 * t**3, 0, 1)
-    return np.stack([r, g, b, np.ones_like(t)], axis=1).astype(np.float32)
+def _hot_colormap(t: np.ndarray) -> np.ndarray:
+    """Hot 色映射。"""
+    t = np.clip(np.asarray(t, dtype=np.float64), 0.0, 1.0)
+    r = np.clip(t * 3.0, 0.0, 1.0)
+    g = np.clip((t - 1.0 / 3.0) * 3.0, 0.0, 1.0)
+    b = np.clip((t - 2.0 / 3.0) * 3.0, 0.0, 1.0)
+    return np.stack([r, g, b], axis=1).astype(np.float32)
 
 
-def _build_jet() -> np.ndarray:
-    """Jet（传统彩虹，对比度高）。"""
-    t = np.linspace(0, 1, 256)
-    r = np.clip(1.5 - 4 * np.abs(t - 0.75), 0, 1)
-    g = np.clip(1.5 - 4 * np.abs(t - 0.5), 0, 1)
-    b = np.clip(1.5 - 4 * np.abs(t - 0.25), 0, 1)
-    return np.stack([r, g, b, np.ones_like(t)], axis=1).astype(np.float32)
+def _coolwarm_colormap(t: np.ndarray) -> np.ndarray:
+    """Coolwarm 色映射（蓝→白→红）。"""
+    t = np.clip(np.asarray(t, dtype=np.float64), 0.0, 1.0)
+    # 简化版：线性插值
+    colors = np.array([[0.23, 0.30, 0.75], [0.86, 0.86, 0.86], [0.71, 0.02, 0.15]])
+    r = np.interp(t, [0.0, 0.5, 1.0], colors[:, 0])
+    g = np.interp(t, [0.0, 0.5, 1.0], colors[:, 1])
+    b = np.interp(t, [0.0, 0.5, 1.0], colors[:, 2])
+    return np.stack([r, g, b], axis=1).astype(np.float32)
 
 
-def _build_hot() -> np.ndarray:
-    """Hot（黑-红-黄-白，适合强度）。"""
-    t = np.linspace(0, 1, 256)
-    r = np.clip(3 * t, 0, 1)
-    g = np.clip(3 * (t - 0.333), 0, 1)
-    b = np.clip(3 * (t - 0.667), 0, 1)
-    return np.stack([r, g, b, np.ones_like(t)], axis=1).astype(np.float32)
+def _viridis_colormap(t: np.ndarray) -> np.ndarray:
+    """Viridis 色映射（简化近似版）。"""
+    t = np.clip(np.asarray(t, dtype=np.float64), 0.0, 1.0)
+    colors = np.array([
+        [0.27, 0.01, 0.33],
+        [0.13, 0.57, 0.55],
+        [0.99, 0.91, 0.13],
+    ])
+    r = np.interp(t, [0.0, 0.5, 1.0], colors[:, 0])
+    g = np.interp(t, [0.0, 0.5, 1.0], colors[:, 1])
+    b = np.interp(t, [0.0, 0.5, 1.0], colors[:, 2])
+    return np.stack([r, g, b], axis=1).astype(np.float32)
 
 
-def _build_coolwarm() -> np.ndarray:
-    """CoolWarm（蓝-白-红，适合有符号数据）。"""
-    t = np.linspace(0, 1, 256)
-    r = np.clip(0.23 + 0.77 * t, 0, 1)
-    g = np.clip(0.93 - 0.5 * np.abs(t - 0.5) * 2, 0, 1)
-    b = np.clip(0.97 - 0.77 * t, 0, 1)
-    return np.stack([r, g, b, np.ones_like(t)], axis=1).astype(np.float32)
+COLORMAP_FUNCS = {
+    "jet": _jet_colormap,
+    "hot": _hot_colormap,
+    "coolwarm": _coolwarm_colormap,
+    "viridis": _viridis_colormap,
+}
 
 
-def get_color_map(name: str) -> np.ndarray:
-    """获取指定颜色映射（256×4 float32 RGBA）。"""
-    if name not in _COLOR_MAPS:
-        builders = {
-            "viridis": _build_viridis,
-            "jet": _build_jet,
-            "hot": _build_hot,
-            "coolwarm": _build_coolwarm,
-        }
-        if name not in builders:
-            name = "viridis"
-        _COLOR_MAPS[name] = builders[name]()
-    return _COLOR_MAPS[name]
+def apply_colormap(values: np.ndarray, cmap: str = "jet") -> np.ndarray:
+    """将 [0,1] 归一化值映射为 RGB 颜色。"""
+    fn = COLORMAP_FUNCS.get(cmap, _jet_colormap)
+    return fn(values)
 
 
-# ── 标量场类 ──
+# =========================================================================
+# 标量场计算
+# =========================================================================
+def compute_scalar_field(pcd, field: str, **kwargs) -> Optional[np.ndarray]:
+    """计算点云的标量场。
 
-class ScalarField:
-    """单一点云标量场。"""
+    Args:
+        pcd: open3d.geometry.PointCloud
+        field: "z" | "density" | "curvature" | "intensity" | "distance_to_plane"
+        **kwargs: 额外参数
 
-    def __init__(self, name: str, values: np.ndarray):
-        assert values.ndim == 1 and values.dtype == np.float32
-        self.name = name
-        self.values = values  # (N,)
-        self._vmin = float(np.nanmin(values))
-        self._vmax = float(np.nanmax(values))
-        self.color_map = "viridis"
-        self.saturation = 1.0
-        self.visible = True
+    Returns:
+        标量值数组 (N,) 或 None
+    """
+    pts = np.asarray(pcd.points)
+    n = len(pts)
+    if n == 0:
+        return None
 
-    @property
-    def vmin(self) -> float:
-        return self._vmin
+    if field == "z":
+        return pts[:, 2].astype(np.float64)
 
-    @vmin.setter
-    def vmin(self, v: float):
-        self._vmin = v
+    elif field == "density":
+        return _compute_density(pcd, kwargs.get("radius", 5.0))
 
-    @property
-    def vmax(self) -> float:
-        return self._vmax
+    elif field == "curvature":
+        return _compute_curvature(pcd, kwargs.get("radius", 10.0),
+                                   kwargs.get("max_nn", 30))
 
-    @vmax.setter
-    def vmax(self, v: float):
-        self._vmax = v
+    elif field == "intensity":
+        return _compute_intensity(pcd)
 
-    def normalized(self) -> np.ndarray:
-        """返回 [0,1] 归一化数组。"""
-        rng = self._vmax - self._vmin
-        if rng < 1e-12:
-            return np.zeros_like(self.values)
-        return np.clip((self.values - self._vmin) / rng, 0, 1)
+    elif field == "distance_to_plane":
+        plane = kwargs.get("plane")  # (a,b,c,d)  ax+by+cz+d=0
+        if plane is None:
+            return None
+        a, b, c, d = plane
+        dists = np.abs(pts @ np.array([a, b, c]) + d) / np.sqrt(a * a + b * b + c * c)
+        return dists.astype(np.float64)
 
-    def to_rgba(self, color_map: Optional[str] = None) -> np.ndarray:
-        """标量值 → RGBA (N,4) float32。"""
-        cmap = get_color_map(color_map or self.color_map)
-        norm = self.normalized()
-        idx = (norm * 255).astype(np.uint8)
-        return cmap[idx]
+    return None
 
 
-class ScalarFieldManager:
-    """管理一个点云的全部标量场。"""
+def _compute_density(pcd, radius: float = 5.0) -> np.ndarray:
+    """基于半径邻居的局部密度。"""
+    import open3d as o3d
+    tree = o3d.geometry.KDTreeFlann(pcd)
+    pts = np.asarray(pcd.points)
+    densities = np.zeros(len(pts), dtype=np.float64)
+    for i in range(len(pts)):
+        _, idx, _ = tree.search_radius_vector_3d(pcd.points[i], radius)
+        densities[i] = len(idx)
+    return densities
 
-    def __init__(self):
-        self._fields: Dict[str, ScalarField] = {}
-        self.active_name: Optional[str] = None
 
-    def add(self, field: ScalarField) -> None:
-        self._fields[field.name] = field
-        if self.active_name is None:
-            self.active_name = field.name
+def _compute_curvature(pcd, radius: float = 10.0, max_nn: int = 30) -> np.ndarray:
+    """基于局部 PCA 的曲率估计（最小特征值 / 特征值和）。"""
+    import open3d as o3d
+    pts = np.asarray(pcd.points)
+    n = len(pts)
+    tree = o3d.geometry.KDTreeFlann(pcd)
+    curvatures = np.zeros(n, dtype=np.float64)
 
-    def remove(self, name: str) -> None:
-        if name in self._fields:
-            del self._fields[name]
-            if self.active_name == name:
-                self.active_name = next(iter(self._fields), None)
+    for i in range(n):
+        _, idx, _ = tree.search_radius_vector_3d(pcd.points[i], radius)
+        if len(idx) < 3:
+            continue
+        neighbors = pts[idx]
+        cov = np.cov((neighbors - neighbors.mean(axis=0)).T)
+        eigvals = np.linalg.eigvalsh(cov)
+        eigvals = np.sort(eigvals)
+        trace = eigvals.sum()
+        if trace > 1e-12:
+            curvatures[i] = eigvals[0] / trace
 
-    def get(self, name: str) -> Optional[ScalarField]:
-        return self._fields.get(name)
+    return curvatures
 
-    def list_names(self) -> List[str]:
-        return list(self._fields.keys())
 
-    def active_field(self) -> Optional[ScalarField]:
-        return self._fields.get(self.active_name) if self.active_name else None
-
-    def set_range(self, name: str, vmin: float, vmax: float) -> None:
-        f = self._fields.get(name)
-        if f:
-            f.vmin = vmin
-            f.vmax = vmax
+def _compute_intensity(pcd) -> Optional[np.ndarray]:
+    """提取 intensity（如果点云支持）。open3d 不原生支持 intensity，
+    这里尝试从颜色反推灰度作为替代。"""
+    if not pcd.has_colors():
+        return None
+    cols = np.asarray(pcd.colors)
+    # 灰度 = 0.299*R + 0.587*G + 0.114*B
+    intensity = 0.299 * cols[:, 0] + 0.587 * cols[:, 1] + 0.114 * cols[:, 2]
+    return intensity.astype(np.float64)

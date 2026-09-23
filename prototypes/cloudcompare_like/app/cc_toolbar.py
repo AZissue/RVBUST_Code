@@ -38,81 +38,114 @@ class CCToolBar(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._build_ui()
+        self._setup_ui()
 
-    def _build_ui(self):
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(6, 2, 6, 2)
-        layout.setSpacing(6)
+    def _setup_ui(self):
+        self.setFixedHeight(40)
+        self.setStyleSheet(
+            f"QWidget {{ background-color: {BG_PANEL}; border-bottom: 1px solid {BORDER}; }}"
+            f"QToolButton, QPushButton {{ background: transparent; border: none; "
+            f"color: {TEXT_SECONDARY}; font-size: 10pt; padding: 2px 8px; min-height: 24px; }}"
+            f"QToolButton:hover, QPushButton:hover {{ color: #ffffff; background: #3a3a3a; "
+            f"border-radius: 3px; }}"
+            f"QComboBox, QSpinBox {{ font-size: 10pt; min-height: 22px; }}"
+            f"QLabel {{ color: #888888; font-size: 10pt; background: transparent; }}"
+        )
+
+        lo = QHBoxLayout(self)
+        lo.setContentsMargins(10, 2, 10, 2)
+        lo.setSpacing(8)
+
+        # 标题
+        lbl = QLabel("CloudCompare-Like")
+        lbl.setStyleSheet(f"color: {TEXT_PRIMARY}; font-size: 13px; font-weight: 700;")
+        lo.addWidget(lbl)
+        lo.addSpacing(20)
 
         # 文件
-        self.btn_open = QPushButton("Open")
-        self.btn_open.clicked.connect(self.open_requested.emit)
-        layout.addWidget(self.btn_open)
+        btn_open = QPushButton("打开")
+        btn_open.clicked.connect(self.open_requested.emit)
+        lo.addWidget(btn_open)
 
-        self.btn_save = QPushButton("Save")
-        self.btn_save.clicked.connect(self.save_requested.emit)
-        layout.addWidget(self.btn_save)
+        btn_save = QPushButton("导出")
+        btn_save.clicked.connect(self.save_requested.emit)
+        lo.addWidget(btn_save)
 
-        layout.addSpacing(12)
+        lo.addSpacing(15)
 
         # 编辑
-        self.btn_undo = QPushButton("Undo")
-        self.btn_undo.clicked.connect(self.undo_requested.emit)
-        layout.addWidget(self.btn_undo)
+        btn_undo = QPushButton("撤销")
+        btn_undo.clicked.connect(self.undo_requested.emit)
+        lo.addWidget(btn_undo)
 
-        self.btn_redo = QPushButton("Redo")
-        self.btn_redo.clicked.connect(self.redo_requested.emit)
-        layout.addWidget(self.btn_redo)
+        btn_redo = QPushButton("重做")
+        btn_redo.clicked.connect(self.redo_requested.emit)
+        lo.addWidget(btn_redo)
 
-        self.btn_delete = QPushButton("Delete")
-        self.btn_delete.clicked.connect(self.delete_requested.emit)
-        layout.addWidget(self.btn_delete)
+        btn_del = QPushButton("删除")
+        btn_del.clicked.connect(self.delete_requested.emit)
+        lo.addWidget(btn_del)
 
-        layout.addSpacing(12)
+        lo.addSpacing(15)
 
-        # 视图
-        self.combo_preset = QComboBox()
-        self.combo_preset.addItems(["Front", "Top", "Left", "ISO", "Back", "Bottom", "Right"])
-        self.combo_preset.currentTextChanged.connect(self.view_preset_requested.emit)
-        layout.addWidget(QLabel("View:"))
-        layout.addWidget(self.combo_preset)
+        # 视角
+        lbl_view = QLabel("视角:")
+        lo.addWidget(lbl_view)
 
-        self.spin_point_size = QSpinBox()
-        self.spin_point_size.setRange(1, 10)
-        self.spin_point_size.setValue(2)
-        self.spin_point_size.valueChanged.connect(self.point_size_changed.emit)
-        layout.addWidget(QLabel("PtSize:"))
-        layout.addWidget(self.spin_point_size)
+        for text, preset in (("顶", "top"), ("前", "front"), ("侧", "side"), ("等轴", "iso")):
+            btn = QToolButton()
+            btn.setText(text)
+            btn.clicked.connect(lambda _=False, p=preset: self.view_preset_requested.emit(p))
+            lo.addWidget(btn)
 
-        self.btn_bg = QPushButton("Dark")
-        self.btn_bg.setCheckable(True)
-        self.btn_bg.setChecked(True)
-        self.btn_bg.toggled.connect(self.background_toggled.emit)
-        layout.addWidget(self.btn_bg)
+        btn_fit = QPushButton("适配")
+        btn_fit.clicked.connect(self.reset_view_requested.emit)
+        lo.addWidget(btn_fit)
 
-        self.btn_reset = QPushButton("Reset View")
-        self.btn_reset.clicked.connect(self.reset_view_requested.emit)
-        layout.addWidget(self.btn_reset)
+        lo.addSpacing(15)
 
-        layout.addSpacing(12)
+        # 点大小
+        lbl_size = QLabel("点大小:")
+        lo.addWidget(lbl_size)
+        self._spin_size = QSpinBox()
+        self._spin_size.setRange(1, 10)
+        self._spin_size.setValue(1)
+        self._spin_size.valueChanged.connect(self.point_size_changed.emit)
+        lo.addWidget(self._spin_size)
 
-        # 选择
-        self.btn_roi = QPushButton("ROI")
-        self.btn_roi.setCheckable(True)
-        self.btn_roi.toggled.connect(self.roi_mode_toggled.emit)
-        layout.addWidget(self.btn_roi)
+        lo.addSpacing(15)
 
-        # 着色
-        self.btn_colorbar = QPushButton("Colorbar")
-        self.btn_colorbar.setCheckable(True)
-        self.btn_colorbar.toggled.connect(self.colorbar_toggled.emit)
-        layout.addWidget(self.btn_colorbar)
+        # 选择工具
+        self._btn_roi = QToolButton()
+        self._btn_roi.setText("ROI框选")
+        self._btn_roi.setCheckable(True)
+        self._btn_roi.clicked.connect(lambda c: self.roi_mode_toggled.emit(c))
+        lo.addWidget(self._btn_roi)
 
-        layout.addStretch()
+        lo.addSpacing(15)
+
+        # Colorbar
+        self._btn_colorbar = QToolButton()
+        self._btn_colorbar.setText("Colorbar")
+        self._btn_colorbar.setCheckable(True)
+        self._btn_colorbar.clicked.connect(lambda c: self.colorbar_toggled.emit(c))
+        lo.addWidget(self._btn_colorbar)
+
+        # 背景
+        self._btn_bg = QToolButton()
+        self._btn_bg.setText("深色")
+        self._btn_bg.setCheckable(True)
+        self._btn_bg.setChecked(True)
+        self._btn_bg.clicked.connect(lambda c: self.background_toggled.emit(not c))
+        lo.addWidget(self._btn_bg)
+
+        lo.addStretch(1)
+
+    def set_roi_active(self, active: bool):
+        self._btn_roi.setChecked(active)
 
     def set_undo_enabled(self, enabled: bool):
-        self.btn_undo.setEnabled(enabled)
+        pass  # 可扩展：灰显按钮
 
     def set_redo_enabled(self, enabled: bool):
-        self.btn_redo.setEnabled(enabled)
+        pass

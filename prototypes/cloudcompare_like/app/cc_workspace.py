@@ -1,383 +1,499 @@
 # -*- coding: utf-8 -*-
 """
-主工作区（Workspace）—— CloudCompare 式主窗口集成。
+CloudCompare 式主工作区（CloudCompareWorkspace）。
 
 布局：
-  ┌─────────┬─────────────────┬──────────┐
-  │ DB Tree │   GL Viewer     │ Properties│
-  │(左,220) │   (中央,自适应)  │(右,240)  │
-  │         │                 │          │
-  │         │   + Toolbar(顶)  │          │
-  │         │   + Console(底)  │          │
-  └─────────┴─────────────────┴──────────┘
+  - 顶部：CCToolBar
+  - 左侧：CloudDBTree（DB 树）
+  - 中间：PointCloudViewerLOD（3D 查看器）
+  - 右侧：PropertiesPanel（属性面板）
+  - 底部：LogPanel（日志）
 
-功能：
-  - 点云加载（自动构建 Octree + LOD）
-  - DB Tree ↔ GL Viewer 双向同步
-  - 属性面板 ↔ 点云数据绑定
-  - 后处理管线一键执行
+信号/接口与 src/ui_v2/workspaces/ 现有工作区对齐，方便后期合并。
 """
 
 from __future__ import annotations
 
 import os
 import sys
+from typing import Optional
+
 import numpy as np
-from typing import Dict, Optional
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
-    QSplitter, QFileDialog, QMessageBox, QProgressBar,
-    QTextEdit, QLabel, QApplication,
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QSplitter, QFileDialog, QMessageBox,
 )
 
-from ui_v2.theme import BG_PANEL, TEXT_SECONDARY, BORDER
+# 让原型能引用 src/ 下的模块
+_APP_DIR = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(_APP_DIR)))
+if os.path.join(_PROJECT_ROOT, "src") not in sys.path:
+    sys.path.insert(0, os.path.join(_PROJECT_ROOT, "src"))
 
-from cc_db_tree import CCDBTree
-from cc_toolbar import CCToolBar
-from cc_properties import CCPropertiesPanel
-from cc_gl_viewer import CCGLViewer
+from core.utils import logger
+from ui_v2.theme import GLOBAL_QSS, BG_WINDOW, BG_PANEL, BORDER
+from ui_v2.widgets import LogPanel
 
-from cc_octree_lod import OctreeLOD
-from cc_scalar_field import ScalarField, ScalarFieldManager
-from cc_geometry import bounding_box, estimate_normals
-from cc_workflow import PointCloudData, Pipeline, create_default_pipeline, create_segmentation_pipeline
+from ..core.cc_workflow import CloudCompareWorkflow, CCNode
+from .cc_gl_viewer import PointCloudViewerLOD
+from .cc_db_tree import CloudDBTree
+from .cc_properties import PropertiesPanel
+from .cc_toolbar import CCToolBar
 
 
-class CloudCompareWindow(QMainWindow):
-    """CloudCompare 式主窗口。"""
+# 默认调色板
+COLOR_PALETTE = [
+    (0.20, 0.80, 1.00), (1.00, 0.60, 0.20), (0.40, 1.00, 0.40),
+    (1.00, 0.40, 0.70), (1.00, 1.00, 0.30), (0.70, 0.50, 1.00),
+    (0.40, 0.90, 0.80), (0.95, 0.50, 0.50),
+]
+
+
+class CloudCompareWorkspace(QWidget):
+    """CloudCompare 式后处理工作区。"""
+
+    STATES = ("idle", "loaded", "processing")
+
+    log_message = Signal(str, str)
+    dirty_changed = Signal(bool)
+    cloud_list_changed = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("CloudCompare-Like Prototype")
-        self.resize(1400, 900)
+        self._state = "idle"
+        self._workflow = CloudCompareWorkflow()
+        self._current_node_id: Optional[str] = None
+        self._color_idx = 0
 
-        self._clouds: Dict[str, dict] = {}  # cloud_id -> {points, colors, normals, lod, sf_manager, ...}
-        self._pipelines: Dict[str, Pipeline] = {}
         self._setup_ui()
         self._connect_signals()
+        self.set_state("idle")
 
+    # ------------------------------------------------------------------
+    # UI 搭建
+    # ------------------------------------------------------------------
     def _setup_ui(self):
-        # 中央分割器
-        central = QWidget()
-        self.setCentralWidget(central)
-        main_layout = QHBoxLayout(central)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
-        self.splitter = QSplitter(Qt.Horizontal)
-        main_layout.addWidget(self.splitter)
+        # 工具栏
+        self._toolbar = CCToolBar(self)
+        root.addWidget(self._toolbar)
 
-        # 左：DB Tree
-        self.db_tree = CCDBTree()
-        self.splitter.addWidget(self.db_tree)
+        # 主体：左 DB 树 | 中 3D | 右属性
+        body = QHBoxLayout()
+        body.setSpacing(0)
+        body.setContentsMargins(0, 0, 0, 0)
 
-        # 中：Viewer + Toolbar + Console
-        center_widget = QWidget()
-        center_layout = QVBoxLayout(center_widget)
-        center_layout.setContentsMargins(0, 0, 0, 0)
-        center_layout.setSpacing(0)
+        self._left_panel = self._build_left_panel()
+        self._left_panel.setMinimumWidth(240)
+        self._left_panel.setMaximumWidth(340)
 
-        self.toolbar = CCToolBar()
-        center_layout.addWidget(self.toolbar)
+        self._viewer = PointCloudViewerLOD(self)
+        self._viewer.setStyleSheet(f"background-color: {BG_WINDOW}; border: none;")
 
-        self.viewer = CCGLViewer()
-        center_layout.addWidget(self.viewer, 1)
+        self._right_panel = self._build_right_panel()
+        self._right_panel.setMinimumWidth(280)
+        self._right_panel.setMaximumWidth(380)
 
-        # 底部控制台
-        self.console = QTextEdit()
-        self.console.setReadOnly(True)
-        self.console.setMaximumHeight(120)
-        self.console.setStyleSheet(f"background: {BG_PANEL}; color: {TEXT_SECONDARY}; font-family: Consolas; font-size: 11px;")
-        center_layout.addWidget(self.console)
+        body.addWidget(self._left_panel)
+        body.addWidget(self._viewer, 1)
+        body.addWidget(self._right_panel)
 
-        self.splitter.addWidget(center_widget)
+        root.addLayout(body, 1)
 
-        # 右：Properties
-        self.properties = CCPropertiesPanel()
-        self.splitter.addWidget(self.properties)
+        # 日志
+        self._log_panel = LogPanel(self)
+        self._log_panel.setFixedHeight(120)
+        self._log_panel.setStyleSheet(
+            f"QWidget {{ background-color: {BG_PANEL}; border-top: 1px solid {BORDER}; }}")
+        root.addWidget(self._log_panel)
 
-        # 比例
-        self.splitter.setSizes([220, 940, 240])
+    def _build_left_panel(self) -> QWidget:
+        panel = QWidget()
+        lo = QVBoxLayout(panel)
+        lo.setContentsMargins(0, 0, 0, 0)
+        lo.setSpacing(0)
 
-        # 进度条（底部状态栏）
-        self.status_bar = self.statusBar()
-        self.progress = QProgressBar()
-        self.progress.setMaximumWidth(200)
-        self.progress.setVisible(False)
-        self.status_bar.addPermanentWidget(self.progress)
-        self.status_bar.showMessage("Ready")
+        self._db_tree = CloudDBTree(self)
+        lo.addWidget(self._db_tree)
+        return panel
 
+    def _build_right_panel(self) -> QWidget:
+        panel = QWidget()
+        lo = QVBoxLayout(panel)
+        lo.setContentsMargins(0, 0, 0, 0)
+        lo.setSpacing(0)
+
+        self._props = PropertiesPanel(self)
+        lo.addWidget(self._props)
+        return panel
+
+    # ------------------------------------------------------------------
+    # 信号连接
+    # ------------------------------------------------------------------
     def _connect_signals(self):
-        # Toolbar
-        self.toolbar.open_requested.connect(self._on_open)
-        self.toolbar.delete_requested.connect(self._on_delete_selected)
-        self.toolbar.reset_view_requested.connect(self.viewer.reset_camera)
-        self.toolbar.point_size_changed.connect(self.viewer.set_point_size)
-        self.toolbar.background_toggled.connect(self.viewer.set_dark_background)
-        self.toolbar.view_preset_requested.connect(self.viewer.set_view_preset)
-        self.toolbar.undo_requested.connect(self._on_undo)
+        # 工具栏
+        self._toolbar.open_requested.connect(self._on_open_files)
+        self._toolbar.save_requested.connect(self._on_export)
+        self._toolbar.delete_requested.connect(self._on_delete)
+        self._toolbar.undo_requested.connect(self._on_undo)
+        self._toolbar.redo_requested.connect(self._on_redo)
+        self._toolbar.view_preset_requested.connect(self._viewer.set_view_preset)
+        self._toolbar.point_size_changed.connect(self._on_point_size_changed)
+        self._toolbar.background_toggled.connect(self._viewer.set_background)
+        self._toolbar.roi_mode_toggled.connect(self._on_roi_mode)
+        self._toolbar.colorbar_toggled.connect(self._on_colorbar_toggled)
+        self._toolbar.reset_view_requested.connect(self._viewer.reset_view)
 
-        # DB Tree
-        self.db_tree.selection_changed.connect(self._on_tree_selection)
-        self.db_tree.visibility_changed.connect(self._on_tree_visibility)
-        self.db_tree.delete_requested.connect(self._on_delete_node)
+        # DB 树
+        self._db_tree.selection_changed.connect(self._on_tree_selection)
+        self._db_tree.visibility_changed.connect(self._on_tree_visibility)
+        self._db_tree.delete_requested.connect(self._on_delete_node)
 
-        # Properties
-        self.properties.transform_changed.connect(self._on_transform_changed)
-        self.properties.color_changed.connect(self._on_color_changed)
-        self.properties.scalar_field_changed.connect(self._on_scalar_field_changed)
-        self.properties.scalar_range_changed.connect(self._on_scalar_range_changed)
+        # 属性面板
+        self._props.point_size_changed.connect(self._on_point_size_changed)
+        self._props.color_mode_changed.connect(self._on_color_mode_changed)
+        self._props.scalar_field_changed.connect(self._on_scalar_field_changed)
+        self._props.colormap_changed.connect(self._on_colormap_changed)
+        self._props.estimate_normals_requested.connect(self._on_estimate_normals)
+        self._props.detect_plane_requested.connect(self._on_detect_plane)
+        self._props.euclidean_cluster_requested.connect(self._on_euclidean_cluster)
+        self._props.auto_tune_requested.connect(self._on_auto_tune)
 
-    def log(self, msg: str):
-        self.console.append(f"[{self._timestamp()}] {msg}")
+    # ------------------------------------------------------------------
+    # 状态机
+    # ------------------------------------------------------------------
+    def set_state(self, state: str):
+        if state not in self.STATES:
+            raise ValueError(f"未知状态: {state}")
+        self._state = state
+        has_cloud = len(self._workflow.list_cloud_nodes()) > 0
+        self._toolbar.set_undo_enabled(self._workflow.can_undo())
+        self._toolbar.set_redo_enabled(self._workflow.can_redo())
+        if not has_cloud:
+            self._props.clear()
 
-    def _timestamp(self) -> str:
-        from datetime import datetime
-        return datetime.now().strftime("%H:%M:%S")
-
-    # ── 文件操作 ──
-
-    def _on_open(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Open Point Cloud", "",
-            "Point Clouds (*.ply *.pcd *.xyz *.bin);;All Files (*.*)"
-        )
-        if not path:
+    # ------------------------------------------------------------------
+    # 点云加载
+    # ------------------------------------------------------------------
+    def _on_open_files(self):
+        files, _ = QFileDialog.getOpenFileNames(
+            self, "选择点云文件", "",
+            "点云文件 (*.ply *.pcd *.xyz);;所有文件 (*)")
+        if not files:
             return
-        self._load_file(path)
+        for path in files:
+            ok, msg, node_id = self._workflow.load_from_file(path)
+            self._log(msg, "info" if ok else "error")
+            if not ok:
+                continue
+            node = self._workflow.get_node(node_id)
+            self._add_node_to_ui(node)
+        self._refresh_viewer()
+        self.set_state("loaded")
 
-    def _load_file(self, path: str):
-        self.status_bar.showMessage(f"Loading {os.path.basename(path)}...")
-        self.progress.setVisible(True)
-        self.progress.setRange(0, 0)  # 无限旋转
-        QApplication.processEvents()
+    def _add_node_to_ui(self, node: CCNode):
+        color = COLOR_PALETTE[self._color_idx % len(COLOR_PALETTE)]
+        self._color_idx += 1
+        node.color = color
 
-        try:
-            points, colors = self._read_point_cloud(path)
-            if points is None:
-                raise ValueError("Unsupported format or empty file")
+        if node.parent_id:
+            parent = self._workflow.get_node(node.parent_id)
+            if parent:
+                self._db_tree.add_cloud_node(node.node_id, node.name,
+                                              parent_id=parent.node_id, color=color)
+        else:
+            self._db_tree.add_cloud_node(node.node_id, node.name, color=color)
 
-            file_id = f"file_{len(self._clouds)}"
-            cloud_id = f"cloud_{len(self._clouds)}"
+        self._current_node_id = node.node_id
+        self._update_properties()
+        self.cloud_list_changed.emit()
+        self.dirty_changed.emit(True)
 
-            # DB Tree
-            file_name = os.path.basename(path)
-            self.db_tree.add_file(file_id, file_name)
-            self.db_tree.add_cloud(cloud_id, file_name, file_id, color=(0.7, 0.7, 0.7))
-
-            # LOD
-            self.log(f"Building Octree + LOD for {len(points):,} points...")
-            lod = OctreeLOD(points)
-            lod.build_async()
-
-            # Scalar fields
-            sf_manager = ScalarFieldManager()
-            if colors is not None and len(colors) == len(points):
-                # 如果有颜色，创建 intensity 标量场
-                intensity = colors.mean(axis=1).astype(np.float32)
-                sf_manager.add(ScalarField("intensity", intensity))
-
-            self._clouds[cloud_id] = {
-                "points": points,
-                "colors": colors,
-                "normals": None,
-                "lod": lod,
-                "sf_manager": sf_manager,
-                "transform": np.eye(4, dtype=np.float32),
-                "visible": True,
-            }
-
-            # 添加到 Viewer
-            self.viewer.add_cloud(cloud_id, points, colors)
-            self.log(f"Loaded {file_name}: {len(points):,} points")
-
-            # 选中
-            self._select_cloud(cloud_id)
-
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to load file:\n{str(e)}")
-            self.log(f"ERROR loading {path}: {e}")
-        finally:
-            self.progress.setVisible(False)
-            self.status_bar.showMessage("Ready")
-
-    def _read_point_cloud(self, path: str) -> tuple:
-        """简单点云读取（支持 xyz / bin / ply）。"""
-        ext = os.path.splitext(path)[1].lower()
-        if ext == '.xyz':
-            data = np.loadtxt(path, dtype=np.float32)
-            if data.ndim == 1:
-                data = data.reshape(1, -1)
-            points = data[:, :3]
-            colors = data[:, 3:6] / 255.0 if data.shape[1] >= 6 else None
-            return points, colors
-        elif ext == '.bin':
-            data = np.fromfile(path, dtype=np.float32).reshape(-1, 3)
-            return data, None
-        elif ext == '.ply':
-            try:
-                from plyfile import PlyData
-                ply = PlyData.read(path)
-                vertex = ply['vertex']
-                points = np.stack([vertex['x'], vertex['y'], vertex['z']], axis=1).astype(np.float32)
-                colors = None
-                if 'red' in vertex:
-                    colors = np.stack([vertex['red'], vertex['green'], vertex['blue']], axis=1).astype(np.float32) / 255.0
-                return points, colors
-            except ImportError:
-                pass
-        return None, None
-
-    # ── 选择同步 ──
-
-    def _select_cloud(self, cloud_id: str):
-        cloud = self._clouds.get(cloud_id)
-        if cloud is None:
+    # ------------------------------------------------------------------
+    # DB 树事件
+    # ------------------------------------------------------------------
+    def _on_tree_selection(self, node_id: str):
+        node = self._workflow.get_node(node_id)
+        if node is None or node.node_type != CCNode.NODE_CLOUD:
             return
-        self._current_cloud_id = cloud_id
-
-        # 更新 Properties
-        pts = cloud["points"]
-        bb = bounding_box(pts)
-        volume = (bb[1][0]-bb[0][0])*(bb[1][1]-bb[0][1])*(bb[1][2]-bb[0][2])
-        density = len(pts) / max(volume, 1e-12)
-        self.properties.set_cloud_info(len(pts), bb, density)
-
-        sf_names = cloud["sf_manager"].list_names()
-        self.properties.set_scalar_fields(sf_names)
-
-        # 更新 Viewer 高亮
-        self.viewer.set_selected_cloud(cloud_id)
-
-    def _on_tree_selection(self, ids: list):
-        for cid in ids:
-            if cid in self._clouds:
-                self._select_cloud(cid)
-                break
+        self._current_node_id = node_id
+        self._workflow.select(node_id)
+        self._update_properties()
+        self._update_bbox_highlight()
 
     def _on_tree_visibility(self, node_id: str, visible: bool):
-        if node_id in self._clouds:
-            self._clouds[node_id]["visible"] = visible
-            self.viewer.set_cloud_visible(node_id, visible)
+        node = self._workflow.get_node(node_id)
+        if node is None:
+            return
+        node.visible = visible
+        self._workflow.set_visible(node_id, visible)
+        self._refresh_viewer()
 
     def _on_delete_node(self, node_id: str):
-        if node_id in self._clouds:
-            self.viewer.remove_cloud(node_id)
-            del self._clouds[node_id]
-            self.db_tree.remove_node(node_id)
-            self.log(f"Deleted cloud {node_id}")
+        self._workflow.remove_node(node_id)
+        self._db_tree.remove_node(node_id)
+        self._viewer.clear_pointclouds()
+        # 当前选中被删除（或其父支被删）时清理选中状态
+        if self._current_node_id and self._workflow.get_node(self._current_node_id) is None:
+            self._current_node_id = None
+        self._refresh_viewer()
+        self._update_properties()
+        self.set_state("loaded" if self._workflow.list_cloud_nodes() else "idle")
 
-    def _on_delete_selected(self):
-        if hasattr(self, '_current_cloud_id') and self._current_cloud_id in self._clouds:
-            self._on_delete_node(self._current_cloud_id)
+    def _on_delete(self):
+        node_id = self._db_tree.selected_node_id()
+        if node_id:
+            self._on_delete_node(node_id)
 
-    # ── 属性变更 ──
-
-    def _on_transform_changed(self, T: np.ndarray):
-        if not hasattr(self, '_current_cloud_id'):
-            return
-        cid = self._current_cloud_id
-        if cid in self._clouds:
-            self._clouds[cid]["transform"] = T
-            self.viewer.set_cloud_transform(cid, T)
-
-    def _on_color_changed(self, color: tuple):
-        if not hasattr(self, '_current_cloud_id'):
-            return
-        cid = self._current_cloud_id
-        if cid in self._clouds:
-            # 纯色覆盖
-            n = len(self._clouds[cid]["points"])
-            colors = np.tile(color, (n, 1)).astype(np.float32)
-            self._clouds[cid]["colors"] = colors
-            self.viewer.update_cloud_colors(cid, colors)
-
-    def _on_scalar_field_changed(self, sf_name: str):
-        if not hasattr(self, '_current_cloud_id'):
-            return
-        cid = self._current_cloud_id
-        cloud = self._clouds.get(cid)
-        if cloud is None:
-            return
-        sf = cloud["sf_manager"].get(sf_name)
-        if sf:
-            rgba = sf.to_rgba()
-            self.viewer.update_cloud_colors(cid, rgba[:, :3])
-
-    def _on_scalar_range_changed(self, vmin: float, vmax: float):
-        if not hasattr(self, '_current_cloud_id'):
-            return
-        cid = self._current_cloud_id
-        cloud = self._clouds.get(cid)
-        if cloud is None:
-            return
-        sf = cloud["sf_manager"].active_field()
-        if sf:
-            sf.vmin = vmin
-            sf.vmax = vmax
-            rgba = sf.to_rgba()
-            self.viewer.update_cloud_colors(cid, rgba[:, :3])
-
-    # ── 后处理管线 ──
-
-    def run_pipeline(self, pipeline: Pipeline, cloud_id: str):
-        """对指定点云执行后处理管线。"""
-        cloud = self._clouds.get(cloud_id)
-        if cloud is None:
+    # ------------------------------------------------------------------
+    # 属性面板事件
+    # ------------------------------------------------------------------
+    def _update_properties(self):
+        node_id = self._current_node_id
+        node = self._workflow.get_node(node_id) if node_id else None
+        if node is None or node.node_type != CCNode.NODE_CLOUD:
+            self._props.clear()
             return
 
-        self.status_bar.showMessage("Running pipeline...")
-        self.progress.setVisible(True)
-        self.progress.setRange(0, 100)
-        QApplication.processEvents()
+        pts = np.asarray(node.pcd.points) if node.pcd else np.zeros((0, 3))
+        n = len(pts)
+        bbox_str = "-"
+        center_str = "-"
+        if n > 0:
+            mask = np.isfinite(pts).all(axis=1)
+            if mask.any():
+                valid = pts[mask]
+                mins = valid.min(axis=0)
+                maxs = valid.max(axis=0)
+                center = (mins + maxs) / 2
+                bbox_str = f"X[{mins[0]:.1f},{maxs[0]:.1f}] Y[{mins[1]:.1f},{maxs[1]:.1f}] Z[{mins[2]:.1f},{maxs[2]:.1f}]"
+                center_str = f"({center[0]:.1f}, {center[1]:.1f}, {center[2]:.1f})"
 
-        def on_progress(stage, p):
-            self.progress.setValue(int(p * 100))
-            self.log(f"Pipeline: {stage} ({p*100:.0f}%)")
-            QApplication.processEvents()
+        scalar_names = list(node.scalar_fields.keys()) if node.scalar_fields else []
+        self._props.set_node(node_id, node.name, n, bbox_str, center_str, scalar_names)
 
-        try:
-            data = PointCloudData(
-                points=cloud["points"],
-                colors=cloud["colors"],
-                normals=cloud["normals"],
-            )
-            result = pipeline.run(data, progress=on_progress)
+    def _on_point_size_changed(self, size: int):
+        self._viewer.set_point_size(size)
+        if self._current_node_id:
+            node = self._workflow.get_node(self._current_node_id)
+            if node:
+                node.point_size = size
 
-            # 更新数据
-            cloud["points"] = result.points
-            cloud["colors"] = result.colors
-            cloud["normals"] = result.normals
-            for name, values in result.scalar_fields.items():
-                cloud["sf_manager"].add(ScalarField(name, values))
+    def _on_color_mode_changed(self, mode: str):
+        self._refresh_viewer()
 
-            # 更新 Viewer
-            self.viewer.update_cloud_geometry(cloud_id, result.points, result.colors)
-            self.log(f"Pipeline complete: {len(result.points):,} points")
+    def _on_scalar_field_changed(self, name: str):
+        if not self._current_node_id:
+            return
+        self._workflow.set_active_scalar(self._current_node_id, name or None)
+        self._refresh_viewer()
 
-            # 更新 Properties
-            self._select_cloud(cloud_id)
+    def _on_colormap_changed(self, cmap: str):
+        if self._current_node_id:
+            node = self._workflow.get_node(self._current_node_id)
+            if node and node.active_scalar:
+                sf = node.scalar_fields.get(node.active_scalar)
+                if sf:
+                    sf.colormap = cmap
+        self._refresh_viewer()
 
-        except Exception as e:
-            QMessageBox.critical(self, "Pipeline Error", str(e))
-            self.log(f"Pipeline ERROR: {e}")
-        finally:
-            self.progress.setVisible(False)
-            self.status_bar.showMessage("Ready")
+    # ------------------------------------------------------------------
+    # 后处理操作
+    # ------------------------------------------------------------------
+    def _on_estimate_normals(self):
+        if not self._current_node_id:
+            self._log("请先选择点云", "warn")
+            return
+        self.set_state("processing")
+        ok, msg = self._workflow.estimate_normals(self._current_node_id)
+        self._log(msg, "success" if ok else "error")
+        self.set_state("loaded")
 
+    def _on_detect_plane(self):
+        if not self._current_node_id:
+            self._log("请先选择点云", "warn")
+            return
+        self.set_state("processing")
+        ok, msg, result = self._workflow.detect_geometry(self._current_node_id, "plane")
+        self._log(msg, "success" if ok else "error")
+        if ok and result:
+            inliers = result.get("inliers", [])
+            if inliers:
+                node = self._workflow.get_node(self._current_node_id)
+                # 平面内点作为子节点挂在源点云下（CloudCompare 风格分支）
+                inlier_pcd = node.pcd.select_by_index(inliers)
+                new_id = self._workflow.add_cloud(f"{node.name}_plane", inlier_pcd,
+                                                   parent_id=node.node_id)
+                new_node = self._workflow.get_node(new_id)
+                self._add_node_to_ui(new_node)
+        self.set_state("loaded")
+
+    def _on_euclidean_cluster(self):
+        if not self._current_node_id:
+            self._log("请先选择点云", "warn")
+            return
+        self.set_state("processing")
+        ok, msg, created = self._workflow.euclidean_clustering(self._current_node_id)
+        self._log(msg, "success" if ok else "error")
+        if ok:
+            for cid in created:
+                node = self._workflow.get_node(cid)
+                if node:
+                    self._add_node_to_ui(node)
+        self.set_state("loaded")
+
+    def _on_auto_tune(self):
+        if not self._current_node_id:
+            self._log("请先选择点云", "warn")
+            return
+        ok, msg, params = self._workflow.auto_tune(self._current_node_id)
+        self._log(msg, "info" if ok else "error")
+        if ok and params:
+            notes = "\n".join(f"• {n}" for n in params.get("notes", []))
+            QMessageBox.information(self, "自动参数估计", notes)
+
+    # ------------------------------------------------------------------
+    # 撤销/重做
+    # ------------------------------------------------------------------
     def _on_undo(self):
-        pass  # 预留：通过 Pipeline.undo() 实现
+        ok, msg = self._workflow.undo()
+        self._log(msg, "info" if ok else "warn")
+        if ok:
+            self._refresh_viewer()
+            self._update_properties()
+        self.set_state("loaded")
 
-    # ── 预设操作 ──
+    def _on_redo(self):
+        ok, msg = self._workflow.redo()
+        self._log(msg, "info" if ok else "warn")
+        if ok:
+            self._refresh_viewer()
+            self._update_properties()
+        self.set_state("loaded")
 
-    def action_default_pipeline(self):
-        if hasattr(self, '_current_cloud_id'):
-            p = create_default_pipeline()
-            self.run_pipeline(p, self._current_cloud_id)
+    # ------------------------------------------------------------------
+    # 导出
+    # ------------------------------------------------------------------
+    def _on_export(self):
+        if not self._current_node_id:
+            self._log("请先选择点云", "warn")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "导出点云", "processed.ply",
+            "PLY 文件 (*.ply);;PCD 文件 (*.pcd)")
+        if not path:
+            return
+        ok, msg = self._workflow.export_cloud(self._current_node_id, path)
+        self._log(msg, "success" if ok else "error")
+        if ok:
+            self.dirty_changed.emit(False)
 
-    def action_segmentation_pipeline(self):
-        if hasattr(self, '_current_cloud_id'):
-            p = create_segmentation_pipeline()
-            self.run_pipeline(p, self._current_cloud_id)
+    # ------------------------------------------------------------------
+    # ROI
+    # ------------------------------------------------------------------
+    def _on_roi_mode(self, enabled: bool):
+        self._viewer.set_roi_mode(enabled)
+        if enabled:
+            self._roi_timer = QTimer(self)
+            self._roi_timer.timeout.connect(self._check_roi)
+            self._roi_timer.start(200)
+        else:
+            if hasattr(self, '_roi_timer') and self._roi_timer:
+                self._roi_timer.stop()
+
+    def _check_roi(self):
+        selection = self._viewer.get_roi_selection()
+        total = sum(len(v) for v in selection.values())
+        if total > 0:
+            self._log(f"ROI 已选中 {total:,} 个点", "info")
+
+    def _on_colorbar_toggled(self, on: bool):
+        if on and self._current_node_id:
+            node = self._workflow.get_node(self._current_node_id)
+            if node and node.active_scalar:
+                sf = node.scalar_fields.get(node.active_scalar)
+                if sf:
+                    self._viewer.set_show_colorbar(True, sf.min_val, sf.max_val, sf.name)
+                    return
+        self._viewer.set_show_colorbar(False)
+
+    # ------------------------------------------------------------------
+    # 3D 刷新
+    # ------------------------------------------------------------------
+    def _refresh_viewer(self):
+        self._viewer.clear_pointclouds()
+        for node in self._workflow.list_cloud_nodes():
+            if not node.visible:
+                continue
+            pts = np.asarray(node.pcd.points, dtype=np.float32)
+            cols = node.get_display_colors()
+            if cols is None:
+                cols = np.tile(np.array(node.color, dtype=np.float32), (len(pts), 1))
+            self._viewer.set_pointcloud(node.node_id, pts, cols,
+                                         visible=True, point_size=node.point_size)
+        self._update_bbox_highlight()
+
+    def _update_bbox_highlight(self):
+        if not self._current_node_id:
+            self._viewer.set_selection_bbox([])
+            return
+        node = self._workflow.get_node(self._current_node_id)
+        if node is None or node.pcd is None or len(node.pcd.points) == 0:
+            self._viewer.set_selection_bbox([])
+            return
+        pts = np.asarray(node.pcd.points)
+        mask = np.isfinite(pts).all(axis=1)
+        if not mask.any():
+            self._viewer.set_selection_bbox([])
+            return
+        valid = pts[mask]
+        self._viewer.set_selection_bbox([(valid.min(axis=0).tolist(), valid.max(axis=0).tolist())])
+
+    # ------------------------------------------------------------------
+    # 日志
+    # ------------------------------------------------------------------
+    def _log(self, message: str, level: str = "info"):
+        self._log_panel.append(message, level)
+        self.log_message.emit(message, level)
+
+
+# =========================================================================
+# 独立运行入口
+# =========================================================================
+class CloudCompareWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("CloudCompare-Like 后处理原型")
+        self.resize(1600, 1000)
+
+        central = QWidget()
+        self.setCentralWidget(central)
+        lo = QVBoxLayout(central)
+        lo.setContentsMargins(0, 0, 0, 0)
+        lo.setSpacing(0)
+
+        self.workspace = CloudCompareWorkspace()
+        lo.addWidget(self.workspace)
+
+        screen = QApplication.primaryScreen()
+        if screen:
+            geo = screen.availableGeometry()
+            self.move((geo.width() - self.width()) // 2,
+                      (geo.height() - self.height()) // 2)
+
+
+def main():
+    app = QApplication(sys.argv)
+    app.setStyleSheet(GLOBAL_QSS)
+    win = CloudCompareWindow()
+    win.show()
+    sys.exit(app.exec())
+
+
+if __name__ == "__main__":
+    main()

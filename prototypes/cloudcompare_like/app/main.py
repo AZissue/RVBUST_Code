@@ -12,13 +12,16 @@ from __future__ import annotations
 import os
 import sys
 
-# 让原型能引用 src/ 下的模块
-_SRC_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-if os.path.join(_SRC_ROOT, "src") not in sys.path:
-    sys.path.insert(0, os.path.join(_SRC_ROOT, "src"))
+# 让原型能引用 src/ 下的模块，以及以包形式导入原型自身
+# （app/ 内部使用包相对导入，如 from ..core.cc_workflow import ...，
+#   因此必须走 prototypes.cloudcompare_like.app 包路径，不能扁平导入）
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+for _p in (os.path.join(_PROJECT_ROOT, "src"), _PROJECT_ROOT):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 from ui_v2.theme import GLOBAL_QSS
-from cc_workspace import CloudCompareWindow
+from prototypes.cloudcompare_like.app.cc_workspace import CloudCompareWindow
 
 from PySide6.QtWidgets import QApplication
 

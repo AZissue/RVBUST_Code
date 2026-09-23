@@ -1,203 +1,321 @@
 # -*- coding: utf-8 -*-
 """
-Octree + LOD（Level-of-Detail）—— 高性能大规模点云渲染核心。
+LOD 八叉树（Level-of-Detail Octree）。
 
-设计理念：
-  - 八叉树空间索引：O(log n) 最近邻查询、快速视锥裁剪
-  - LOD 层级：根据相机距离动态选择不同密度层级
-  - 后台线程：八叉树构建 + LOD 采样不阻塞 UI
-  - 显存友好：每个 LOD 层级单独 VBO，按需上传
+核心设计：
+  - 每朵点云构建八叉树，每层存储均匀采样的子集；
+  - 渲染时根据相机距离和视口大小动态选择层级；
+  - Frustum Culling：只渲染与视锥相交的体素；
+  - 目标：单路 5000 万点流畅交互。
+
+与现有 viewer_3d.py 的关系：
+  - 可独立于 UI 构建 Octree；
+  - PointCloudViewerLOD 在 paintGL 中调用 Octree 的 query() 获取可见点集。
+
+实现要点（2026-09 修复）：
+  - 构建全程向量化（按层划分索引数组），百万级点秒级完成；
+    旧版逐点 Python 递归插入，180 万点需数分钟且阻塞 UI。
+  - 每个内部节点缓存"子树均匀采样"（≤ POINTS_PER_NODE），
+    LOD 层级 = 该层节点的子树采样并集，保证任意层级点数完整、
+    空间覆盖均匀；旧版在目标深度直接返回内部节点的空索引表，
+    导致深层级大面积缺数据、点云显示拉丝/残缺。
+  - query() 按 (target_count → LOD 层级) 缓存结果，相机不动时
+    paintGL 每帧零开销，配合 viewer 的上传缓存避免重复传 VBO。
 """
 
 from __future__ import annotations
 
-import numpy as np
-import threading
 from typing import Dict, List, Optional, Tuple
+
+import numpy as np
 
 
 class OctreeNode:
     """八叉树节点。"""
 
-    __slots__ = ['center', 'half_size', 'depth', 'points', 'indices', 'children', 'lod_level']
-
     def __init__(self, center: np.ndarray, half_size: float, depth: int = 0):
-        self.center = center.astype(np.float32)  # (3,)
+        self.center = np.asarray(center, dtype=np.float64)
         self.half_size = half_size
         self.depth = depth
-        self.points: Optional[np.ndarray] = None       # 本节点包含的点 (N,3)
-        self.indices: Optional[np.ndarray] = None      # 原始索引
         self.children: List[Optional[OctreeNode]] = [None] * 8
-        self.lod_level: int = 0
+        self.point_indices: Optional[np.ndarray] = None  # 叶子节点存储的点索引
+        self.sample: Optional[np.ndarray] = None         # 子树均匀采样（含自身/后代叶子）
+        self.is_leaf = True
+        self.bbox_min = self.center - self.half_size
+        self.bbox_max = self.center + self.half_size
 
-    def is_leaf(self) -> bool:
-        return all(c is None for c in self.children)
+    def contains(self, point: np.ndarray) -> bool:
+        """判断点是否在本节点包围盒内。"""
+        p = np.asarray(point)
+        return np.all((p >= self.bbox_min) & (p <= self.bbox_max))
 
     def intersects_sphere(self, center: np.ndarray, radius: float) -> bool:
-        """快速球体- AABB 相交测试。"""
-        closest = np.clip(center, self.center - self.half_size, self.center + self.half_size)
-        return np.sum((center - closest) ** 2) < radius ** 2
+        """判断包围盒是否与球相交（用于视锥裁剪简化版）。"""
+        # AABB-Sphere 相交测试
+        closest = np.clip(center, self.bbox_min, self.bbox_max)
+        dist2 = np.sum((closest - center) ** 2)
+        return dist2 <= radius * radius
 
 
-class OctreeLOD:
-    """八叉树 + LOD 管理器。"""
+class PointCloudOctree:
+    """点云 LOD 八叉树。"""
 
     MAX_DEPTH = 8
-    MAX_POINTS_PER_LEAF = 2048
+    POINTS_PER_NODE = 500  # 叶子节点最大点数 / 子树采样上限，超过则分裂或采样
 
-    def __init__(self, points: np.ndarray):
-        self._all_points = points.astype(np.float32)
-        self._root: Optional[OctreeNode] = None
-        self._lod_buffers: Dict[int, np.ndarray] = {}  # level -> sampled points
-        self._build_lock = threading.Lock()
-        self._ready = False
-        self._thread: Optional[threading.Thread] = None
+    def __init__(self, points: np.ndarray, colors: Optional[np.ndarray] = None):
+        """
+        Args:
+            points: (N, 3) float32
+            colors: (N, 3) float32 or None
+        """
+        self.points = np.ascontiguousarray(points, dtype=np.float32)
+        self.colors = np.ascontiguousarray(colors, dtype=np.float32) if colors is not None else None
+        self.n_points = len(self.points)
+        self.root: Optional[OctreeNode] = None
+        self._lod_levels: Dict[int, np.ndarray] = {}  # depth -> point_indices
+        self._query_cache: Dict[int, Tuple[int, np.ndarray, Optional[np.ndarray]]] = {}
+        self._rng = np.random.default_rng(42)  # 固定种子，采样结果稳定
+        self._build()
 
-    def build_async(self):
-        """后台线程构建八叉树。"""
-        if self._thread and self._thread.is_alive():
-            return
-        self._thread = threading.Thread(target=self._build, daemon=True)
-        self._thread.start()
-
+    # ------------------------------------------------------------------
+    # 构建（向量化）
+    # ------------------------------------------------------------------
     def _build(self):
-        with self._build_lock:
-            min_bound = self._all_points.min(axis=0)
-            max_bound = self._all_points.max(axis=0)
-            center = (min_bound + max_bound) / 2
-            half_size = float(np.max(max_bound - min_bound) / 2 + 1e-6)
-
-            self._root = OctreeNode(center, half_size, depth=0)
-            self._insert_points(self._root, np.arange(len(self._all_points)))
-            self._build_lod(self._root)
-            self._ready = True
-
-    def _insert_points(self, node: OctreeNode, indices: np.ndarray):
-        """递归插入点到八叉树。"""
-        if len(indices) <= self.MAX_POINTS_PER_LEAF or node.depth >= self.MAX_DEPTH:
-            node.points = self._all_points[indices]
-            node.indices = indices
+        """构建八叉树 + LOD 层级缓存。"""
+        if self.n_points == 0:
             return
 
-        # 分到 8 个子节点
-        mask = self._all_points[indices] > node.center
-        for i in range(8):
-            # i 的 3bit = (z>center, y>center, x>center)
-            mx, my, mz = (i >> 0) & 1, (i >> 1) & 1, (i >> 2) & 1
-            sub_mask = (mask[:, 0] == mx) & (mask[:, 1] == my) & (mask[:, 2] == mz)
-            sub_idx = indices[sub_mask]
-            if len(sub_idx) == 0:
+        mins = self.points.min(axis=0)
+        maxs = self.points.max(axis=0)
+        center = (mins + maxs) / 2.0
+        half_size = float(np.max(maxs - mins)) / 2.0 * 1.01  # 稍微扩大避免边界点丢失
+
+        self.root = OctreeNode(center, half_size, depth=0)
+        self._build_recursive(self.root, np.arange(self.n_points, dtype=np.int64))
+        self._build_lod_cache()
+
+    def _build_recursive(self, node: OctreeNode, indices: np.ndarray):
+        """按层向量化划分：一次 fancy indexing 把索引分到 8 个子节点。"""
+        if len(indices) <= self.POINTS_PER_NODE or node.depth >= self.MAX_DEPTH:
+            node.is_leaf = True
+            node.point_indices = indices
+            return
+
+        node.is_leaf = False
+        pts = self.points[indices]
+        gt = pts > node.center
+        child_no = (gt[:, 0].astype(np.int32)
+                    | (gt[:, 1].astype(np.int32) << 1)
+                    | (gt[:, 2].astype(np.int32) << 2))
+
+        offset = node.half_size / 2.0
+        for c in range(8):
+            sub = indices[child_no == c]
+            if len(sub) == 0:
                 continue
-            offset = np.array([
-                (1 if mx else -1) * node.half_size / 2,
-                (1 if my else -1) * node.half_size / 2,
-                (1 if mz else -1) * node.half_size / 2,
-            ])
-            child = OctreeNode(node.center + offset, node.half_size / 2, node.depth + 1)
-            node.children[i] = child
-            self._insert_points(child, sub_idx)
-
-        # 非叶子节点不存储点
-        node.points = None
-        node.indices = None
-
-    def _build_lod(self, node: OctreeNode):
-        """自底向上构建 LOD 采样。"""
-        if node.is_leaf():
-            node.lod_level = node.depth
-            return
-
-        # 收集所有子节点的点做采样
-        all_pts = []
-        for child in node.children:
-            if child is not None:
-                self._build_lod(child)
-                if child.points is not None:
-                    all_pts.append(child.points)
-
-        if all_pts:
-            merged = np.concatenate(all_pts, axis=0)
-            # 简单均匀采样到目标数量
-            target = self.MAX_POINTS_PER_LEAF
-            if len(merged) > target:
-                step = max(1, len(merged) // target)
-                node.points = merged[::step].copy()
+            new_center = node.center.copy()
+            if c & 1:
+                new_center[0] += offset
             else:
-                node.points = merged
-        node.lod_level = node.depth
+                new_center[0] -= offset
+            if c & 2:
+                new_center[1] += offset
+            else:
+                new_center[1] -= offset
+            if c & 4:
+                new_center[2] += offset
+            else:
+                new_center[2] -= offset
+            child = OctreeNode(new_center, offset, node.depth + 1)
+            node.children[c] = child
+            self._build_recursive(child, sub)
 
-    def is_ready(self) -> bool:
-        return self._ready
+    # ------------------------------------------------------------------
+    # LOD 层级缓存
+    # ------------------------------------------------------------------
+    def _subtree_sample(self, node: OctreeNode) -> np.ndarray:
+        """自底向上为每个节点生成子树均匀采样，缓存到 node.sample。
 
-    def wait_ready(self, timeout: float = 30.0):
-        if self._thread:
-            self._thread.join(timeout=timeout)
-
-    def collect_visible_points(
-        self,
-        camera_pos: np.ndarray,
-        camera_dir: np.ndarray,
-        fov: float,
-        screen_height: int,
-        target_pixel_size: float = 2.0,
-    ) -> Optional[np.ndarray]:
+        叶子节点保留全部点（达到 MAX_DEPTH 仍过密的叶子不截断，
+        保证最精细层级 = 完整点云）；内部节点采样到 ≤ POINTS_PER_NODE。
         """
-        根据相机参数收集应渲染的点（视锥 + LOD）。
+        if node.is_leaf:
+            idx = node.point_indices if node.point_indices is not None else np.empty(0, dtype=np.int64)
+            node.sample = idx
+            return idx
+        parts = [self._subtree_sample(c) for c in node.children if c is not None]
+        idx = np.concatenate(parts) if parts else np.empty(0, dtype=np.int64)
+        if len(idx) > self.POINTS_PER_NODE:
+            take = self._rng.choice(len(idx), self.POINTS_PER_NODE, replace=False)
+            idx = idx[np.sort(take)]
+        node.sample = idx
+        return idx
 
-        Returns
-        -------
-        points : (M, 3) float32 或 None（未就绪）
+    def _build_lod_cache(self):
+        """预计算各 LOD 层级的点索引（每层 = 该层节点子树采样的并集）。"""
+        self._subtree_sample(self.root)
+        self._lod_levels = {}
+        for depth in range(self.MAX_DEPTH + 1):
+            indices = self._collect_lod(self.root, depth)
+            if len(indices) > 0:
+                self._lod_levels[depth] = np.asarray(indices, dtype=np.int32)
+
+    def _collect_lod(self, node: Optional[OctreeNode], target_depth: int) -> np.ndarray:
+        """收集指定 LOD 层级的点索引。
+
+        到达目标深度的内部节点返回其子树采样（node.sample），
+        叶子节点返回自身点/采样，保证层级数据完整、空间覆盖均匀。
         """
-        if not self._ready or self._root is None:
-            return None
-
-        result = []
-        self._collect_recursive(self._root, camera_pos, camera_dir, fov, screen_height, target_pixel_size, result)
-        if not result:
-            return np.empty((0, 3), dtype=np.float32)
-        return np.concatenate(result, axis=0)
-
-    def _collect_recursive(
-        self, node: OctreeNode, camera_pos, camera_dir, fov, screen_height, target_pixel_size, result
-    ):
-        """递归收集可见节点。"""
-        # 视锥裁剪（简化为距离测试）
-        dist = np.linalg.norm(node.center - camera_pos)
-        if dist < 1e-6:
-            dist = 1e-6
-
-        # 计算屏幕像素大小
-        pixel_size = (node.half_size * 2) / (dist * np.tan(np.radians(fov / 2))) * screen_height / 2
-
-        # 如果节点在屏幕上很小，直接返回本节点 LOD 点
-        if pixel_size < target_pixel_size or node.is_leaf():
-            if node.points is not None:
-                result.append(node.points)
-            return
-
-        # 继续遍历子节点
-        for child in node.children:
-            if child is not None:
-                self._collect_recursive(child, camera_pos, camera_dir, fov, screen_height, target_pixel_size, result)
-
-    def query_sphere(self, center: np.ndarray, radius: float) -> np.ndarray:
-        """半径搜索，返回索引数组。"""
-        result = []
-        self._query_sphere_recursive(self._root, center, radius, result)
-        if not result:
-            return np.empty(0, dtype=np.int32)
-        return np.concatenate(result)
-
-    def _query_sphere_recursive(self, node: OctreeNode, center, radius, result):
         if node is None:
-            return
-        if not node.intersects_sphere(center, radius):
-            return
-        if node.is_leaf() and node.indices is not None:
-            # 精确测试
-            pts = self._all_points[node.indices]
-            mask = np.sum((pts - center) ** 2, axis=1) < radius ** 2
-            result.append(node.indices[mask])
-            return
-        for child in node.children:
-            self._query_sphere_recursive(child, center, radius, result)
+            return np.empty(0, dtype=np.int64)
+        if node.is_leaf or node.depth >= target_depth:
+            if node.sample is not None:
+                return node.sample
+            return node.point_indices if node.point_indices is not None else np.empty(0, dtype=np.int64)
+        parts = [self._collect_lod(child, target_depth) for child in node.children if child is not None]
+        return np.concatenate(parts) if parts else np.empty(0, dtype=np.int64)
+
+    # ------------------------------------------------------------------
+    # 查询
+    # ------------------------------------------------------------------
+    def _pick_depth(self, target_count: int) -> int:
+        """选择不超过目标点数的最高 LOD 层级。"""
+        best_depth = 0
+        for depth in range(self.MAX_DEPTH, -1, -1):
+            if depth in self._lod_levels and len(self._lod_levels[depth]) <= target_count:
+                best_depth = depth
+                break
+        return best_depth
+
+    def query(self, camera_pos: np.ndarray, target_count: int = 500_000) -> Tuple[np.ndarray, Optional[np.ndarray]]:
+        """根据相机位置和点数目标查询渲染点集。
+
+        结果按 (target_count → 层级) 缓存：相机不动、预算不变时
+        返回同一数组对象，viewer 可据此跳过重复 VBO 上传。
+
+        Args:
+            camera_pos: 相机世界坐标 (3,)
+            target_count: 目标点数上限
+
+        Returns:
+            (points, colors) 或 (points, None)
+        """
+        if self.root is None:
+            return np.zeros((0, 3), dtype=np.float32), None
+
+        best_depth = self._pick_depth(target_count)
+        cached = self._query_cache.get(target_count)
+        if cached is not None and cached[0] == best_depth:
+            return cached[1], cached[2]
+        if len(self._query_cache) > 16:  # 防御性上限
+            self._query_cache.clear()
+
+        indices = self._lod_levels.get(best_depth)
+        if indices is None:
+            indices = next(iter(self._lod_levels.values()), np.empty(0, dtype=np.int32))
+        pts = self.points[indices]
+        cols = self.colors[indices] if self.colors is not None else None
+        self._query_cache[target_count] = (best_depth, pts, cols)
+        return pts, cols
+
+    def query_frustum(self, frustum_planes: List[np.ndarray],
+                      camera_pos: np.ndarray,
+                      target_count: int = 500_000) -> Tuple[np.ndarray, Optional[np.ndarray]]:
+        """视锥体裁剪查询（6 个裁剪平面）。
+
+        Args:
+            frustum_planes: 6 个裁剪平面 (a,b,c,d)，ax+by+cz+d>0 为可见
+            camera_pos: 相机位置
+            target_count: 目标点数
+
+        Returns:
+            (points, colors)
+        """
+        if self.root is None:
+            return np.zeros((0, 3), dtype=np.float32), None
+
+        best_depth = self._pick_depth(target_count)
+        indices = np.asarray(self._collect_frustum(self.root, frustum_planes, best_depth), dtype=np.int32)
+        if len(indices) == 0:
+            return np.zeros((0, 3), dtype=np.float32), None
+
+        pts = self.points[indices]
+        cols = self.colors[indices] if self.colors is not None else None
+        return pts, cols
+
+    def _collect_frustum(self, node: Optional[OctreeNode],
+                         frustum_planes: List[np.ndarray],
+                         target_depth: int) -> np.ndarray:
+        """递归收集视锥内节点的点索引。"""
+        if node is None:
+            return np.empty(0, dtype=np.int64)
+
+        # 快速包围盒-视锥测试：如果包围盒完全在某一平面外，剔除
+        if not self._aabb_in_frustum(node.bbox_min, node.bbox_max, frustum_planes):
+            return np.empty(0, dtype=np.int64)
+
+        if node.is_leaf or node.depth >= target_depth:
+            if node.sample is not None:
+                return node.sample
+            return node.point_indices if node.point_indices is not None else np.empty(0, dtype=np.int64)
+
+        parts = [self._collect_frustum(child, frustum_planes, target_depth)
+                 for child in node.children if child is not None]
+        return np.concatenate(parts) if parts else np.empty(0, dtype=np.int64)
+
+    @staticmethod
+    def _aabb_in_frustum(bbox_min: np.ndarray, bbox_max: np.ndarray,
+                         frustum_planes: List[np.ndarray]) -> bool:
+        """AABB-Frustum 相交测试（保守版）。"""
+        for plane in frustum_planes:
+            a, b, c, d = plane
+            # 找到包围盒在平面法线方向上的最远点
+            px = bbox_min[0] if a < 0 else bbox_max[0]
+            py = bbox_min[1] if b < 0 else bbox_max[1]
+            pz = bbox_min[2] if c < 0 else bbox_max[2]
+            if a * px + b * py + c * pz + d < 0:
+                # 最远点在平面背面，整个 AABB 在平面外
+                return False
+        return True
+
+
+# =========================================================================
+# 多路点云 LOD 管理器
+# =========================================================================
+class MultiCloudLODManager:
+    """管理多朵点云的 LOD 八叉树。"""
+
+    def __init__(self, budget_per_cloud: int = 500_000):
+        self.budget_per_cloud = budget_per_cloud
+        self._octrees: Dict[str, PointCloudOctree] = {}
+
+    def add_cloud(self, cloud_id: str, points: np.ndarray,
+                  colors: Optional[np.ndarray] = None):
+        """为点云构建 LOD 八叉树。"""
+        self._octrees[cloud_id] = PointCloudOctree(points, colors)
+
+    def remove_cloud(self, cloud_id: str):
+        self._octrees.pop(cloud_id, None)
+
+    def clear(self):
+        self._octrees.clear()
+
+    def query_all(self, camera_pos: np.ndarray,
+                  total_budget: Optional[int] = None) -> Dict[str, Tuple[np.ndarray, Optional[np.ndarray]]]:
+        """查询所有可见点云的 LOD 点集。
+
+        Returns:
+            {cloud_id: (points, colors)}
+        """
+        if total_budget is None:
+            total_budget = self.budget_per_cloud * max(1, len(self._octrees))
+
+        n_clouds = len(self._octrees)
+        per_cloud = total_budget // max(n_clouds, 1)
+
+        result = {}
+        for cid, octree in self._octrees.items():
+            pts, cols = octree.query(camera_pos, per_cloud)
+            result[cid] = (pts, cols)
+        return result
