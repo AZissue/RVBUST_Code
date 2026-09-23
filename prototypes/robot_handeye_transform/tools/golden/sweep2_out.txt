@@ -1,0 +1,45 @@
+[参照] poseType=0 + pose.txt（SDK 自动判断）: ret=0 tme=2.051628
+[参照] 同上但 autoRemove=true: ret=0 tme=2.051628
+
+[主扫 v2] 24 分支，autoRemoveLargeErrorData=FALSE（27 组全用，公平比较）
+  XYZ  deg ret=  0 tme=  138.780645 2D成功=27/27
+  XYZ  rad ret=  0 tme=  437.447869 2D成功=27/27
+  XZY  deg ret=  0 tme=  103.784238 2D成功=27/27
+  XZY  rad ret=  0 tme=  420.253400 2D成功=27/27
+  YXZ  deg ret=  0 tme=  114.410275 2D成功=27/27
+  YXZ  rad ret=  0 tme=  444.116393 2D成功=27/27
+  YZX  deg ret=  0 tme=  146.167222 2D成功=27/27
+  YZX  rad ret=  0 tme=  442.203419 2D成功=27/27
+  ZXY  deg ret=  0 tme=  127.576471 2D成功=27/27
+  ZXY  rad ret=  0 tme=  404.244839 2D成功=27/27
+  ZYX  deg ret=  0 tme=   80.398261 2D成功=27/27
+  ZYX  rad ret=  0 tme=  410.570779 2D成功=27/27
+  xyz  deg ret=  0 tme=    2.051628 2D成功=27/27
+  xyz  rad ret=  0 tme=  432.456718 2D成功=27/27
+  xzy  deg ret=  0 tme=  120.700213 2D成功=27/27
+  xzy  rad ret=  0 tme=  431.172067 2D成功=27/27
+  yxz  deg ret=  0 tme=  104.527080 2D成功=27/27
+  yxz  rad ret=  0 tme=  431.905734 2D成功=27/27
+  yzx  deg ret=  0 tme=  128.483447 2D成功=27/27
+  yzx  rad ret=  0 tme=  425.446951 2D成功=27/27
+  zxy  deg ret=  0 tme=  128.713810 2D成功=27/27
+  zxy  rad ret=  0 tme=  413.562021 2D成功=27/27
+  zyx  deg ret=  0 tme=  109.704723 2D成功=27/27
+  zyx  rad ret=  0 tme=  418.272593 2D成功=27/27
+
+排名（ret=0 的 24/24 个分支）：
+  #1 xyz  deg tme=2.051628
+  #2 ZYX  deg tme=80.398261
+  #3 XZY  deg tme=103.784238
+  #4 yxz  deg tme=104.527080
+  #5 zyx  deg tme=109.704723
+  #6 YXZ  deg tme=114.410275
+  倍数差 #2/#1 = 39.188   #3/#1 = 50.586
+
+最优分支 xyz/deg 的 27 组误差：min=1.1068 max=4.0716 中位=1.8360 mm
+
+[噪声底] 留一 n=27: 均值=2.059625 标准差 σ=0.064173 极差=0.265355
+[噪声底] 子集(23/27) n=10: 均值=2.083396 σ=0.111004 极差=0.374934
+[阈值建议] pass_tol = max(0.05 mm, 3σ) = max(0.05, 0.333011) = 0.333011 mm
+
+耗时 52.9s -> sdk_sweep_v2.json

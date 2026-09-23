@@ -1,0 +1,33 @@
+内核基数公式（R19）: {'n_axis_orders': 6, 'n_rotation_sense': 2, 'n_angle_units': 2, 'decided_orders': 12, 'decided_branches': 24, 'pe_orders': 12, 'pe_branches': 24}
+
+[A11-1 / 早期 r14-①] 一般位姿 n=8，真值逐一注入 12 个 Tait-Bryan（deg）
+  XYZ  verdict=OK           order=XYZ   unit=deg  rms=0.0000000000 通过数=1/24 gap=inf
+  XZY  verdict=OK           order=XZY   unit=deg  rms=0.0000000000 通过数=1/24 gap=inf
+  YXZ  verdict=OK           order=YXZ   unit=deg  rms=0.0000000000 通过数=1/24 gap=inf
+  YZX  verdict=OK           order=YZX   unit=deg  rms=0.0000000000 通过数=1/24 gap=inf
+  ZXY  verdict=OK           order=ZXY   unit=deg  rms=0.0000000000 通过数=1/24 gap=inf
+  ZYX  verdict=OK           order=ZYX   unit=deg  rms=0.0000000000 通过数=1/24 gap=inf
+  xyz  verdict=OK           order=xyz   unit=deg  rms=0.0000000000 通过数=1/24 gap=inf
+  xzy  verdict=OK           order=xzy   unit=deg  rms=0.0000000000 通过数=1/24 gap=inf
+  yxz  verdict=OK           order=yxz   unit=deg  rms=0.0000000000 通过数=1/24 gap=inf
+  yzx  verdict=OK           order=yzx   unit=deg  rms=0.0000000000 通过数=1/24 gap=inf
+  zxy  verdict=OK           order=zxy   unit=deg  rms=0.0000000000 通过数=1/24 gap=inf
+  zyx  verdict=OK           order=zyx   unit=deg  rms=0.0000000000 通过数=1/24 gap=inf
+  → 命中 = 12/12
+
+[早期 r14-② 口径对照] 退化：全部绕单轴 Z（n=8），真值 XYZ
+  verdict=INSUFFICIENT 通过数=0 ranking条数=0
+  notes=['激励不足，拒绝出结论：旋转轴集合张成 <2 维（主轴两两最大夹角 0.000° < 5.0°）→ 只绕单轴', '补：与当前旋转轴夹角 ≥5° 的另一个旋转方向的位姿（只绕单轴的激励多解，实测纯 Z 轴 8 位姿有 4/12 个约定同时拟合通过）']
+  excitation: {"ok": false, "n_distinct_rotations": 8}
+  [对照] 旧内核（纯拟合排名、无激励门）同数据：12→4/12 通过 —— 口径不同，不可互相引用
+
+[早期 r14-③] 真值=proper Euler（XYX / ZYZ）：TB 主候选 + PE 诊断分支
+  XYX: verdict=MULTI TB通过数=0 PE诊断={"best": "XYX/deg", "resid": 1.0252974075407747e-13, "note": "像重复轴约定（proper Euler），需人工确认；本结论不采用该分支"}
+  ZYZ: verdict=MULTI TB通过数=0 PE诊断={"best": "ZYZ/deg", "resid": 8.685498692579318e-14, "note": "像重复轴约定（proper Euler），需人工确认；本结论不采用该分支"}
+
+[早期 r14-④] 角度单位：真值数据用 rad 写
+  XYZ(rad): verdict=OK order=XYZ unit=rad 通过数=1/24 rms=0.0000000000
+  ZYX(rad): verdict=OK order=ZYX unit=rad 通过数=1/24 rms=0.0000000000
+
+[对照：纯位姿表（无相机侧数据）]
+  传入 Ttc=None -> INVALID ['纯位姿表：无相机侧成对观测（T_target2cam），12 个约定各自自洽，欧拉顺序数学上不可判定 → 拒绝出结论（§10.1）']
