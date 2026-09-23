@@ -52,6 +52,7 @@
 | 项 | 值 |
 |---|---|
 | `PROTO_COMMIT`（首次入库，批 0/批 1 基线） | `249fdb3d75592572dc946c60b00c7d2b14d7c52e`（短 `249fdb3`） |
+| `PROTO_COMMIT_BATCH15`（批 1.5 交付） | `15cedf0`（共用校验层 + 位姿守卫 + R12/oracle 证据） |
 
 **批 1 基线（入库版本，@qa 给出的 untracked 代码锚点，@dev 复核一致）**
 
