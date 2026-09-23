@@ -103,3 +103,11 @@ tests/test_unit_guard.py       e42ae64e0010633d8a87d43b83dfec38081e583b  （未�
 cd D:/RVC_SRC/Python/MultiCameraCalibration/prototypes/robot_handeye_transform
 sha1sum core/*.py tests/*.py
 ```
+
+**批 2（commit `05fd446`）**
+
+```
+app/control_panel.py   4137344b5493aae7c565b692983c461de6c5591f
+app/main.py            786576a4668fc05590ba8d5615fde0c11a87a77f
+app/window.py          2d6ed2bef30fc7584e0d270aa44764726eaba13c
+```
