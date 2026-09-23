@@ -40,7 +40,9 @@ core/   handeye_result.py  加载 JSON/手动 4×4 → A7 校验 + K6/K7 守卫 
         transform_chain.py compute_cam2base + transform_pcd（先 copy，K3）
         validation.py      批 3：戳点门禁 + 重合度 warning
         session.py         批 3：会话落盘/恢复
-app/    批 2：复用主功能 UI 组件（EmbeddedPointCloudViewer/CameraPreviewCard/WorkerThread）
+app/    main.py            入口（无显示器时 QT_QPA_PLATFORM=offscreen；--smoke N 无人值守自检）
+        control_panel.py   左：手眼矩阵 / 机器人位姿 / 采集 / 验证（四组，参数不预选）
+        window.py          主窗口：EmbeddedPointCloudViewer + WorkerThread + 合成点云闭环
 tests/  test_transform_chain.py / test_handeye_result.py / test_unit_guard.py
         test_matrix_guard.py / test_pose_source.py        （批 1.5 新增）
 BASELINE.md  A8 版本锚点（BASE_HEAD / src diff hash / PROTO_COMMIT）
@@ -62,6 +64,13 @@ PY="D:/Program Files/Anaconda/envs/rvc/python.exe"
 `[ORACLE SKIPPED]` + **exit≠0**；只在明确接受降级时加 `--allow-skip-oracle`。
 oracle 会打印 DLL 路径 / 版本 / sha256（跨机比对基线，禁止人工转录）。
 测试套件可迁移：仓库根向上查找 `src/core/pcd_utils.py`，或设 `MCC_REPO_ROOT`（R12）。
+
+```bash
+# 批 2 UI（无相机、无机器人；无显示器加 QT_QPA_PLATFORM=offscreen）
+PY="D:/Program Files/Anaconda/envs/rvc/python.exe"
+"$PY" prototypes/robot_handeye_transform/app/main.py            # 交互
+"$PY" prototypes/robot_handeye_transform/app/main.py --smoke 3  # 无人值守，退出码 0 = 全过
+```
 
 ## 实测基线（2026-09-22，conda rvc py3.10 实跑）
 
@@ -88,6 +97,17 @@ oracle 会打印 DLL 路径 / 版本 / sha256（跨机比对基线，禁止人�
 | skip≠pass | 换机模拟（只拷原型目录 + oracle 路径置空）→ `[ORACLE SKIPPED]` + **exit=1**；加 `--allow-skip-oracle` 才 exit=0 |
 | R12 可迁移 | 换机模拟下 §[4] 报可读失败但 §[5] **仍执行**（旧版死在 §[4] 堆栈，看不到 oracle）；设 `MCC_REPO_ROOT` 后 exit=0 |
 
+**批 2 实测（2026-09-23，offscreen 实跑）**
+
+| 项 | 结果 |
+|---|---|
+| `--smoke 3` | 三帧全部 OK，退出码 0；帧间位姿不同（#1/3 → #3/3，‖t_cam2base‖=690.000 / 703.623 / 708.868 mm） |
+| 3D 上屏 | 查看器日志 `全部叠加 (2 台相机)` / `点数: 40,000` = 相机系 20000 + 基座系 20000（白色=相机系参考） |
+| 基座系点云 vs 解析真值 | 逐点最大偏差 **0.000e+00 mm**（门槛 1e-9；真值为内联矩阵乘，与 A1 同口径） |
+| 交互模式起窗口 | `QT_QPA_PLATFORM=offscreen` 常驻 6 秒无 traceback（正常被 kill，124） |
+| UI 槽位（信号接线） | 缺 order → 拒绝且位姿仍为空；米制当毫米 → 拒绝；正确米制录入 → 采集成功 |
+| 位姿序列推进 | Mock 按「先取当前帧再步进」，首帧不跳过（R6） |
+
 ## 进度
 
 - [x] 批 0（部分）：prototypes/README 表更新 + A8 基线复核（HEAD=8221b82，
@@ -109,3 +129,8 @@ oracle 会打印 DLL 路径 / 版本 / sha256（跨机比对基线，禁止人�
 - [ ] 批 2：app UI（复用主功能组件）—— 起点已满足（PoseSource 签名冻结于批 1.5）
 - [ ] 批 3：validation.py（戳点门禁 + 重合度 warning）+ session.py
 - [ ] 批 4：offscreen 端到端 + README 收尾 + 真机联调（待 §8 现场信息）
+
+> **批 2 状态（2026-09-23）**：`app/main.py` / `control_panel.py` / `window.py` 三文件已落，
+> 闭环"合成点云 → 变基座系 → 3D 显示"跑通（`--smoke 3` exit=0，实测见上表）。
+> **两点与方案 v4.1 的差异需 @arch 确认**：① `CameraPreviewCard` **未接**——无相机时它是死控件，
+> 留到批 4 接真机/离线 2D 帧；② `WorkerThread` 只用在"拍一帧"的变换上，验证/保存（批 3）再复用。

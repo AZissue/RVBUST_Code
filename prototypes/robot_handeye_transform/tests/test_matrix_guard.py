@@ -116,6 +116,17 @@ def main():
           "pose_type 大小写/空格归一（同 unit 'mM'→'mm' 口径，不算非法）")
     ok, msg = check_pose_norm(T(), "auto")
     check(not ok, "pose_type='auto' 拒绝（无 auto，同 unit 口径）", msg[:40])
+    # @arch 硬约束：禁止 POSE_NORM_WINDOW_MM.get(pt, 默认值) 兜底——非法 pose_type
+    # 一旦有默认档位就会静默落进某窗口，"返回元组不抛异常"从礼貌变成漏洞
+    import inspect
+    fn_src = inspect.getsource(unit_guard.check_pose_norm)
+    check(".get(" not in fn_src,
+          "check_pose_norm 源码内无 .get() 兜底默认值（@arch 硬约束，源码级锁定）")
+    mid = 100.0  # 同时落在 absolute [30,20000] 与 delta [1,500] 内的歧义值
+    for bad_pt in (None, "", "abs", "both", "auto"):
+        ok, msg = check_pose_norm(T((mid, 0.0, 0.0)), bad_pt)
+        check(not ok, f"‖t‖={mid:g}（两档窗口皆合法）但 pose_type={bad_pt!r} → 仍拒绝",
+              msg[:40])
 
     print("=" * 70)
     print("[5] 判别力规则：lo > v_max/1000 且 hi < 1000·v_min")

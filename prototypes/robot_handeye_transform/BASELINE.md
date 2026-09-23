@@ -47,6 +47,23 @@
 `POST_K2_SRC_DIFF_SHA`。**不批的代价**：A8 只算半闭环（@feas 实读：现有两个 hunk
 全是功能性改动 `write_point_cloud_atomic`，没有任何注释 hunk）。
 
+## 变更说明（供将来 blame 对照）
+
+**批 1.5（`15cedf0`）——注意其中两条是「旧代码真实缺陷」，不是新增特性**
+
+1. `pose_source.euler_to_matrix` 删除 `order="ZYX"` 默认（静默默认=静默错姿态）。
+2. `pose_source._parse` **修掉旧解析器崩溃**：原实现先 `float()` 整行再判列数，
+   任何 **7 列**（含 order）位姿文件都会在 `order` 列抛 `ValueError`。此前无用例覆盖，
+   所以从未暴露；批 1.5 改为**先按列数分流再转数值**，并同时支持逗号/空格/制表符分隔。
+3. `handeye_result.validate_matrix` 由私有实现改为**委托** `unit_guard.check_rigid_4x4`；
+   `ORTH_TOL / DET_TOL / LAST_ROW_TOL` 三个常量随之从 handeye_result 删除 ——
+   变异测试（改容差）今后必须改 `unit_guard`，改 handeye_result 不再有任何效果。
+4. `pose_source` 三入口签名变更（新增必填 `unit` / `pose_type` / `order`），
+   CSV 需带 `# pose_type: absolute|delta` 声明行。
+
+**批 2（本批）**：新增 `app/main.py` / `app/control_panel.py` / `app/window.py`，
+不修改 core/ 与 src/。
+
 ## 原型自身锚点
 
 | 项 | 值 |
