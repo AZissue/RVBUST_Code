@@ -66,6 +66,7 @@ HAS_SRC = REPO_ROOT is not None
 if HAS_SRC:
     sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
 
+import handeye_file as hf_mod            # noqa: E402  core/（批 6A：A10 矩阵落文件）
 import handeye_result as he_mod          # noqa: E402  core/
 import pose_source as ps_mod             # noqa: E402  core/
 import session as session_mod            # noqa: E402  core/（A6 会话落盘/恢复）
@@ -212,6 +213,8 @@ class RobotWorkspace(QWidget):
         p.sig_overlap.connect(self.on_overlap_check)
         p.sig_save_session.connect(self.on_save_session)
         p.sig_save_ply.connect(self.on_save_merged_ply)
+        p.sig_export_handeye_file.connect(self.on_export_handeye_file)
+        p.sig_import_handeye_file.connect(self.on_import_handeye_file)
 
     # ------------------------------------------------------------------
     # 日志 / 状态
@@ -255,7 +258,9 @@ class RobotWorkspace(QWidget):
             p.set_tip_enabled(False)
             p.btn_export.setEnabled(False)
             p.set_save_ply_enabled(False)
+            p.set_export_file_enabled(False)
             return
+        p.set_export_file_enabled(True)     # 批 6A：矩阵落文件不卡 A3 门禁（文件 stamp validated）
         p.set_tip_enabled(True)
         if self.handeye.validated:
             p.set_state("VERIFIED（戳点门禁通过，允许导出）", "#4caf50")
@@ -317,6 +322,77 @@ class RobotWorkspace(QWidget):
                   f"source={res.source}）")
         self._log(f"     {msg}")
         self._log("     矩阵状态 UNVERIFIED：请做 ≥3 个离面姿态的戳点验证（A3）。")
+
+    # ------------------------------------------------------------------
+    # 批 6A：矩阵落文件（A10）
+    # ------------------------------------------------------------------
+    def export_handeye_file(self, path: str) -> bool:
+        """把当前矩阵写成 v1 矩阵文件（无对话框版本，`--smoke` 也走它，A10）。
+
+        - 单位：面板选了就用面板的；未选 → 取内部毫米口径（日志显式说明，不静默）。
+        - `euler.order`：面板「欧拉顺序」若已选则写入（批 6B 起改为判定结果，
+          见补充方案 §4）；未选 → 写 null（= 未判定），不编一个顺序出来。
+        - 不卡 A3 门禁：现场要把矩阵带走用；门禁状态写进文件 `validated` 字段，
+          接手方据此判断要不要复核。
+        """
+        if self.handeye is None:
+            self._log("[拒绝] 尚未加载手眼矩阵，无可导出内容")
+            return False
+        unit_sel = self.panel.combo_he_unit.currentData()
+        unit = unit_sel or "mm"
+        note = "" if unit_sel else "（面板未选单位 → 取内部毫米口径）"
+        order = self.panel.combo_pose_order.currentData()
+        euler = {"order": order,
+                 "intrinsic": (order.isupper() if order else None),
+                 "output_format": hf_mod.EULER_OUTPUT_FORMAT,
+                 "angle_unit": hf_mod.EULER_ANGLE_UNIT}
+        src = (hf_mod.SOURCE_TOOL if self.handeye.source == "manual"
+               else f"{hf_mod.SOURCE_TOOL}; loaded_from="
+                    f"{os.path.basename(self.handeye.source)}")
+        ok, msg = hf_mod.write_matrix_file(
+            path, self.handeye.T_handeye_mm,
+            eye_in_hand=self.handeye.eye_in_hand, unit=unit, source=src,
+            rms=(self.handeye.rms_t_mm, self.handeye.rms_r_deg),
+            n_samples=self.handeye.n_samples, euler=euler,
+            validated=self.handeye.validated)
+        self._log(("[OK] " if ok else "[拒绝] ") + msg + note)
+        if ok and self.handeye.n_samples == 0:
+            self._log("     注意：文件里 rms_t_mm / rms_r_deg / n_samples = 0.0 的"
+                      "含义是**未知**（非 0 误差），不要读成完美标定。")
+        return ok
+
+    def on_export_handeye_file(self):
+        """面板按钮 → 选路径 → `export_handeye_file`。"""
+        import datetime
+        from PySide6.QtWidgets import QFileDialog
+        default = ("handeye_matrix_"
+                   + datetime.datetime.now().strftime("%Y%m%d_%H%M%S") + ".json")
+        path, _ = QFileDialog.getSaveFileName(
+            self, "导出矩阵文件（A10）", default, "矩阵文件 (*.json)")
+        if not path:
+            return
+        self.export_handeye_file(path)
+
+    def import_handeye_file(self, path: str) -> bool:
+        """读矩阵文件（v1 或 MCC 旧 JSON）并走正常加载路径（无对话框版本，A10）。
+
+        单位/安装方式都按面板当前选择传入；未选（None）则交回文件规则：
+        v1 以文件 unit 为准，旧 JSON 无 unit → 拒（提示显式选单位）。
+        """
+        unit, mount = self.panel.handeye_meta()
+        ok, msg, res = hf_mod.read_matrix_file(
+            path, unit_override=unit, eye_in_hand=mount)
+        self._on_handeye_result(ok, msg, res)
+        return ok
+
+    def on_import_handeye_file(self):
+        """面板按钮 → 选文件 → `import_handeye_file`。"""
+        from PySide6.QtWidgets import QFileDialog
+        path, _ = QFileDialog.getOpenFileName(
+            self, "导入矩阵文件（A10）", "", "矩阵文件 (*.json)")
+        if not path:
+            return
+        self.import_handeye_file(path)
 
     # ------------------------------------------------------------------
     # 位姿
@@ -801,5 +877,51 @@ class RobotWorkspace(QWidget):
             print(f"[FAIL] set_state 未生效：state={self.current_state()!r}")
             bad += 1
         self.set_background_runner(None)     # 还原：桩不外泄
+        # ---- 批 6A：矩阵落文件（A10 导出 → 读回 → 逐元素比对 / 单位冲突必拒）----
+        self._log("--- smoke：批 6A 矩阵落文件（A10）---")
+        import json
+        he_tmp = tempfile.mkdtemp(prefix="mcc_smoke_hefile_")
+        f6a = os.path.join(he_tmp, "handeye_matrix.json")
+        exp_ok = self.export_handeye_file(f6a)
+        assert self.handeye is not None, "smoke 前置：矩阵已加载（否则上面早已返回 1）"
+        T_before = self.handeye.T_handeye_mm
+        ok_rd, msg_rd, res_rd = hf_mod.read_matrix_file(f6a)
+        d16 = (float(np.max(np.abs(res_rd.T_handeye_mm - T_before)))
+               if (ok_rd and res_rd is not None) else float("nan"))
+        ok_rt, msg_rt, maxd_rt = hf_mod.roundtrip_check(f6a)
+        n6a = exp_ok and ok_rd and ok_rt and d16 == 0.0
+        print(f"[{'OK' if n6a else 'FAIL'}] 6A 矩阵文件写→读：16 元素逐元素 max|Δ|="
+              f"{d16:.3e}（门槛 {hf_mod.RT_TOL:g}；roundtrip {maxd_rt:.3e}）")
+        if not n6a:
+            bad += 1
+        fu = (res_rd.file_meta.get("unit") if (ok_rd and res_rd is not None) else "mm")
+        conflict = "m" if fu == "mm" else "mm"
+        ok_c, msg_c, _ = hf_mod.read_matrix_file(f6a, unit_override=conflict)
+        print(f"[{'OK' if not ok_c else 'FAIL'}] 6A 单位冲突必拒：文件 unit={fu} + 界面 "
+              f"{conflict} → {'已拒绝' if not ok_c else '竟然放行'}")
+        if ok_c:
+            bad += 1
+        with open(f6a, "r", encoding="utf-8") as fh6:
+            d6 = json.load(fh6)
+        stamp_ok = (d6.get("validated") is False
+                    and self.handeye.validated is False
+                    and self.panel.btn_export_he_file.isEnabled())
+        print(f"[{'OK' if stamp_ok else 'FAIL'}] 6A 门禁留痕：UNVERIFIED 也可导出，"
+              f"文件 validated={d6.get('validated')}（矩阵状态 "
+              f"validated={self.handeye.validated}），导出按钮可用="
+              f"{self.panel.btn_export_he_file.isEnabled()}")
+        if not stamp_ok:
+            bad += 1
+        # 面板导入槽位（不经鼠标，直接调窗口槽；与 RG-14 ④ 同手法）
+        imp_ok = self.import_handeye_file(f6a)
+        imp_same = bool(imp_ok and self.handeye is not None
+                        and np.array_equal(self.handeye.T_handeye_mm, T_before))
+        print(f"[{'OK' if imp_same else 'FAIL'}] 6A 面板导入路径：读回矩阵与导出前"
+              f"逐元素一致={imp_same}；导入后状态 validated="
+              f"{None if self.handeye is None else self.handeye.validated}（应 False）")
+        if not imp_same:
+            bad += 1
+        print(f"       6A 落盘文件 = {f6a}")
+        shutil.rmtree(he_tmp, ignore_errors=True)
         print(f"=== smoke 结束：{frames} 帧，失败 {bad} 项 ===")
         return 0 if bad == 0 else 1

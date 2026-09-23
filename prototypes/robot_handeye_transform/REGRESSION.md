@@ -1,6 +1,6 @@
 # 机器人手眼变换原型 — 回归手册（REGRESSION）
 
-> v1 2026-09-23 汇编（@qa 提出、@scribe 落盘）；v2 2026-09-23 批 1.5 / 批 2 后逐条标状态；v3 2026-09-23——收 @qa 第 2 轮复核（锚点表时效性、矩阵侧 NaN 无对称用例）与 @feas 新缺陷 RG-11，新增 RG-11 / RG-12，误拦列改定性表述；**v4 2026-09-23 批 3 后**——@qa 批 3 独立复核结论入库（RG-05 变异台账补 4 条、新增 RG-13）；**v5 2026-09-23 批 4.5 后（@dev 落）**——新增 **RG-14**（`全部叠加` 8→10 条口径、入口改 `host.py`+`RobotWorkspace`、仓库外红灯是设计、定向变异靶点、传递闭包未减），总纲补第 6/7 条，§1 锚点表按 commit 更新（`POST_K2_SRC_DIFF_SHA` 已回填）。
+> v1 2026-09-23 汇编（@qa 提出、@scribe 落盘）；v2 2026-09-23 批 1.5 / 批 2 后逐条标状态；v3 2026-09-23——收 @qa 第 2 轮复核（锚点表时效性、矩阵侧 NaN 无对称用例）与 @feas 新缺陷 RG-11，新增 RG-11 / RG-12，误拦列改定性表述；**v4 2026-09-23 批 3 后**——@qa 批 3 独立复核结论入库（RG-05 变异台账补 4 条、新增 RG-13）；**v5 2026-09-23 批 4.5 后（@dev 落）**——新增 **RG-14**（`全部叠加` 8→10 条口径、入口改 `host.py`+`RobotWorkspace`、仓库外红灯是设计、定向变异靶点、传递闭包未减），总纲补第 6/7 条，§1 锚点表按 commit 更新（`POST_K2_SRC_DIFF_SHA` 已回填）；**v6 2026-09-23 批 6A 后（@dev 落）**——新增 **RG-15**（矩阵文件 v1 往返判据行、单实现证明手法、导出不卡 A3 门禁的口径待复核），总纲补第 8 条，§0 复跑块加 `test_handeye_file`。
 > 位置与 `BASELINE.md` 同级，随原型进版本控制。用途：**换机 / 他人 / 未来版本复跑时，判定"真跑了"还是"看起来绿了"**。每条含现象、成因、判读规则、来源。
 > 权威口径以方案 `docs\机器人手眼变换原型方案_20260922.md`（当前 v4.3，390 行）为准；本手册只做复跑判读。
 
@@ -13,12 +13,13 @@
 5. 只拷原型目录到别处跑需设 `MCC_REPO_ROOT=<真仓库>`，或把原型放回仓库内（RG-03）；**批 4.5 起"仓库外的红灯"是设计**（RG-14），不是回归。
 6. **批 4.5 起绿灯口径含 UI 段判据行与 `全部叠加` 条数**（= **10** 条，RG-14）——末行"失败 0 项"单独不构成批 4.5 证据。
 7. **禁自建后台池**（1.0.10）：工作区的后台任务只许走注入 runner；复跑时看 RG-14 的判据行 ④。
+8. **批 6A 起绿灯口径含 6A 四行判据**（RG-15）——末行"失败 0 项"单独不构成批 6A 证据。
 
 ```bash
 cd D:/RVC_SRC/Python/MultiCameraCalibration
 unset PYTHONPATH; export QT_QPA_PLATFORM=offscreen
 PY="D:/Program Files/Anaconda/envs/rvc/python.exe"
-for t in test_unit_guard test_handeye_result test_matrix_guard test_pose_source test_transform_chain; do
+for t in test_unit_guard test_handeye_result test_handeye_file test_matrix_guard test_pose_source test_transform_chain; do
   "$PY" prototypes/robot_handeye_transform/tests/$t.py; echo "$t exit=$?"; done
 "$PY" prototypes/robot_handeye_transform/app/main.py --smoke 3; echo "smoke exit=$?"
 ```
@@ -224,6 +225,26 @@ for t in test_unit_guard test_handeye_result test_matrix_guard test_pose_source 
   后者是设计内（R12 只给出 `MCC_REPO_ROOT` 这条出路，没有包装该 import），**不得判为"报错不友好"缺陷**；若要统一成可读报错，属**批 4.7 候选动作，需 @lead 拍板**后做。
 - **批 5 交接硬要求（@verify 备注②）**：`HAS_VIEWER` 显形**目前只活在原型的 `--smoke` 自检段**（`window.py` 那道 `bad += 1`）。批 5 把工作区搬进 `ui_v2` 时，必须把"查看器不可用 ⇒ 判失败（禁止静默降级）"这条判据一并搬过去（工作区自检或 ui_v2 侧测试），**丢了就回到 M2b：绿灯 + 3D 消失**。
 - **来源**：@dev 实现 + 副本变异实跑（`%TMPDIR%/mut_b45.py`）；@lead 独立复跑 `--smoke 3`（10 条）+ 闭包实测 + 两处自主扩权裁决；方案 §5 批 4.5 行。
+
+## RG-15 批 6A 判读规则：矩阵文件往返必须看到数值行（新，2026-09-23 批 6A 后）
+
+- **规则**：`--smoke 3` 末行「失败 0 项」**不构成**批 6A（A10 矩阵落文件）证据——必须同时看到 **4 行** `6A` 判据（缺任一 = "看起来绿了"，判复跑无效）：
+
+  ```
+  [OK] 6A 矩阵文件写→读：16 元素逐元素 max|Δ|=0.000e+00（门槛 1e-12；roundtrip 0.000e+00）
+  [OK] 6A 单位冲突必拒：文件 unit=mm + 界面 m → 已拒绝
+  [OK] 6A 门禁留痕：UNVERIFIED 也可导出，文件 validated=False（矩阵状态 validated=False），导出按钮可用=True
+  [OK] 6A 面板导入路径：读回矩阵与导出前逐元素一致=True；导入后状态 validated=False（应 False）
+  ```
+
+  七/九测试套件同理：`test_handeye_file` 必须出现 `mm 域写→读 16 元素逐元素一致 | max|Δ|=0.000e+00` 与 `[OK  ] 单实现：改 unit_guard.ORTH_TOL 两侧同时放行` 两行，只看末行 `[ALL OK]` 不足。
+- **@dev 复跑基线（2026-09-23，本机，`unset PYTHONPATH` + offscreen）**：9 个测试套件（`test_unit_guard` / `test_handeye_result` / `test_handeye_file` / `test_matrix_guard` / `test_pose_source` / `test_transform_chain` / `test_validation_degenerate` / `test_session` / `test_ui_smoke`）**全部 exit=0**；`app/main.py --smoke 3` **exit=0**、`全部叠加` = **10** 条（RG-14 基线未变）、`失败 0 项`。
+- **写→读逐元素 max|Δ|（A10-1）**：**mm 域实测 0.0、m 域实测 0.0**（本机这批数值）；判据按 `< 1e-12` 判，**不把"某批数值恰好 0.0"当恒等式** —— `m` 域是 `÷1000 → ×1000` 的往返，只有 mm 域是恒等变换。
+- **`sha256` 不是跨次复跑锚点（新增，务必按此引用）**：`write_matrix_file` 返回的 `sha256` 含 `created_at`，**每次写出都不同**（@dev 两次 smoke：`5fbdaafc…1742` / `d41f5b0b…e182`）。它只用于回答"手里这份文件是哪一份"（同文件跨机/跨人流转时逐位可比），**禁止**当"批 6A 复跑是否一致"的锚点；跨次比对用 `max|Δ|` 与判据行。
+- **单实现证明手法（换机可自查，副本内做）**：把 `unit_guard.ORTH_TOL` 置 `1e9` → `read_matrix_file(shear)` 与 `HandEyeResult.from_matrix(shear)` 必须**同时放行**（实测：容差正常时 `read_matrix_file(shear)=False`，置 `1e9` 后两者皆 `True`）——证明 `handeye_file` 未自带第二份几何校验，只是委托。测试内已用 `try/finally` 还原容差（不改仓库文件）。
+- **导出不卡 A3 门禁（口径，待 @lead/@verify 复核）**：`[导出矩阵文件]` 只要**加载了矩阵**就可用（不看 `validated`），理由是用户需求 U1 是"把矩阵带到别处用"；门禁状态改为**写进文件**（`validated` 字段）+ 读回恒置 UNVERIFIED（A3 不信任文件声明）。若后续裁定"矩阵文件同属导出、必须 VERIFIED 才给"，改 `window.py::_refresh_state` 一行即可（`set_export_file_enabled(self.handeye.validated)`）。
+- **已知不覆盖（不是缺陷，口径要写对）**：`rms_t_mm / rms_r_deg / n_samples` 在手动录入来源下写 `0.0`，含义是**未知**；工具目前**没有 rms 显示控件**，只在导出日志里打印"含义是未知"提示（`window.py::export_handeye_file`）。要做屏上"未知"徽标请开新条目。
+- **来源**：@dev 实现 + 实跑（`core/handeye_file.py` / `tests/test_handeye_file.py` / `app/window.py` / `app/control_panel.py`）；方案 `docs\机器人手眼变换原型_补充方案_矩阵落文件与欧拉顺序自动判定_20260923.md` §1 A10-1~A10-5。
 
 ---
 

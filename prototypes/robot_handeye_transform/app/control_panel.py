@@ -54,6 +54,8 @@ class ControlPanel(QWidget):
     sig_overlap = Signal()           # 两帧重合度快检（warning，非门禁）
     sig_save_session = Signal()      # 保存会话（A6，仅 VERIFIED 可用）
     sig_save_ply = Signal()          # 保存合并 PLY（A4，仅 VERIFIED 可用）
+    sig_export_handeye_file = Signal()   # 导出 v1 矩阵文件（A10）
+    sig_import_handeye_file = Signal()   # 导入矩阵文件（v1 或 MCC 旧 JSON，A10）
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -100,6 +102,24 @@ class ControlPanel(QWidget):
         btn2 = QPushButton("手动录入手眼矩阵")
         btn2.clicked.connect(self._emit_manual_handeye)
         v.addWidget(btn2)
+
+        # 批 6A：矩阵落文件（A10）。导出不卡 A3 门禁（现场要把矩阵带走用），
+        # 但文件里 stamp validated，未 VERIFIED 的矩阵接手方须自行复核。
+        row3 = QHBoxLayout()
+        self.btn_export_he_file = QPushButton("导出矩阵文件")
+        self.btn_export_he_file.setEnabled(False)      # 加载矩阵后才可用
+        self.btn_export_he_file.setToolTip(
+            "导出 v1 矩阵文件（含 unit / 欧拉口径 / 时间戳 / rms / sha256）。\n"
+            "未通过戳点门禁也能导出，但文件里 validated=false，接手方须复核。")
+        self.btn_export_he_file.clicked.connect(self.sig_export_handeye_file.emit)
+        row3.addWidget(self.btn_export_he_file)
+        self.btn_import_he_file = QPushButton("导入矩阵文件")
+        self.btn_import_he_file.setToolTip(
+            "读 v1 矩阵文件（单位以文件为准；与界面选择冲突即拒）或 MCC 旧 JSON\n"
+            "（旧格式无 unit 字段 → 界面单位必选）。")
+        self.btn_import_he_file.clicked.connect(self.sig_import_handeye_file.emit)
+        row3.addWidget(self.btn_import_he_file)
+        v.addLayout(row3)
         return g
 
     def _build_pose_group(self) -> QWidget:
@@ -271,6 +291,10 @@ class ControlPanel(QWidget):
 
     def set_save_ply_enabled(self, enabled: bool):
         self.btn_save_ply.setEnabled(enabled)
+
+    def set_export_file_enabled(self, enabled: bool):
+        """批 6A：矩阵加载后才允许导出矩阵文件（A10）。"""
+        self.btn_export_he_file.setEnabled(enabled)
 
     # ------------------------------------------------------------------
     def _emit_load_handeye(self):
