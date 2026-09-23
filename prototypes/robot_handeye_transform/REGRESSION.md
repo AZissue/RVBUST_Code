@@ -1,6 +1,6 @@
 # 机器人手眼变换原型 — 回归手册（REGRESSION）
 
-> v1 2026-09-23 汇编（@qa 提出、@scribe 落盘）；v2 2026-09-23 批 1.5 / 批 2 后逐条标状态；v3 2026-09-23——收 @qa 第 2 轮复核（锚点表时效性、矩阵侧 NaN 无对称用例）与 @feas 新缺陷 RG-11，新增 RG-11 / RG-12，误拦列改定性表述；**v4 2026-09-23 批 3 后**——@qa 批 3 独立复核结论入库（RG-05 变异台账补 4 条、新增 RG-13）；**v5 2026-09-23 批 4.5 后（@dev 落）**——新增 **RG-14**（`全部叠加` 8→10 条口径、入口改 `host.py`+`RobotWorkspace`、仓库外红灯是设计、定向变异靶点、传递闭包未减），总纲补第 6/7 条，§1 锚点表按 commit 更新（`POST_K2_SRC_DIFF_SHA` 已回填）；**v6 2026-09-23 批 6A 后（@dev 落）**——新增 **RG-15**（矩阵文件 v1 往返判据行、单实现证明手法、导出不卡 A3 门禁的口径待复核），总纲补第 8 条，§0 复跑块加 `test_handeye_file`；**v7 2026-09-23 批 6A 收尾后（@dev 落）**——RG-15 判据行 **4→6 行**（门禁留痕+屏上显形 / 未知值写 null / 安装方式未选必拒），收 @lead v2 §10.4 三项裁定与 @verify 复核备注②③（近似键名、数值不做静默强转）。
+> v1 2026-09-23 汇编（@qa 提出、@scribe 落盘）；v2 2026-09-23 批 1.5 / 批 2 后逐条标状态；v3 2026-09-23——收 @qa 第 2 轮复核（锚点表时效性、矩阵侧 NaN 无对称用例）与 @feas 新缺陷 RG-11，新增 RG-11 / RG-12，误拦列改定性表述；**v4 2026-09-23 批 3 后**——@qa 批 3 独立复核结论入库（RG-05 变异台账补 4 条、新增 RG-13）；**v5 2026-09-23 批 4.5 后（@dev 落）**——新增 **RG-14**（`全部叠加` 8→10 条口径、入口改 `host.py`+`RobotWorkspace`、仓库外红灯是设计、定向变异靶点、传递闭包未减），总纲补第 6/7 条，§1 锚点表按 commit 更新（`POST_K2_SRC_DIFF_SHA` 已回填）；**v6 2026-09-23 批 6A 后（@dev 落）**——新增 **RG-15**（矩阵文件 v1 往返判据行、单实现证明手法、导出不卡 A3 门禁的口径待复核），总纲补第 8 条，§0 复跑块加 `test_handeye_file`；**v7 2026-09-23 批 6A 收尾后（@dev 落）**——RG-15 判据行 **4→6 行**（门禁留痕+屏上显形 / 未知值写 null / 安装方式未选必拒），收 @lead v2 §10.4 三项裁定与 @verify 复核备注②③（近似键名、数值不做静默强转）；**v8 2026-09-23 批 6B-1 后（@dev 落）**——新增 **RG-16**（A11-③ 判读规则：内核等价性以 @verify 原始实现为参照、verdict 四值冻结、内核三改待复核、A11-5 覆盖范围如实标注、定向变异靶点实测结果），总纲补第 9 条，§0 复跑块 **6→11 套件**。
 > 位置与 `BASELINE.md` 同级，随原型进版本控制。用途：**换机 / 他人 / 未来版本复跑时，判定"真跑了"还是"看起来绿了"**。每条含现象、成因、判读规则、来源。
 > 权威口径以方案 `docs\机器人手眼变换原型方案_20260922.md`（当前 v4.3，390 行）为准；本手册只做复跑判读。
 
@@ -14,12 +14,13 @@
 6. **批 4.5 起绿灯口径含 UI 段判据行与 `全部叠加` 条数**（= **10** 条，RG-14）——末行"失败 0 项"单独不构成批 4.5 证据。
 7. **禁自建后台池**（1.0.10）：工作区的后台任务只许走注入 runner；复跑时看 RG-14 的判据行 ④。
 8. **批 6A 起绿灯口径含 6A 四行判据**（RG-15）——末行"失败 0 项"单独不构成批 6A 证据。
+9. **批 6B-1 起绿灯口径含 11 个测试套件 + A11 判据行**（RG-16）——`test_order_detect` 必须看到内核等价性 `max|Δ|` 行、`12/12 真值唯一通过`、`激励不足时不出排名表`、边界 `通过=2 … 不给唯一答案`、`verdict 取值恰为冻结四值`；只看末行 `[ALL OK]` 不足。
 
 ```bash
 cd D:/RVC_SRC/Python/MultiCameraCalibration
 unset PYTHONPATH; export QT_QPA_PLATFORM=offscreen
 PY="D:/Program Files/Anaconda/envs/rvc/python.exe"
-for t in test_unit_guard test_handeye_result test_handeye_file test_matrix_guard test_pose_source test_transform_chain; do
+for t in test_unit_guard test_handeye_result test_handeye_file test_matrix_guard test_pose_source test_transform_chain test_validation_degenerate test_pose_table test_order_detect test_session test_ui_smoke; do
   "$PY" prototypes/robot_handeye_transform/tests/$t.py; echo "$t exit=$?"; done
 "$PY" prototypes/robot_handeye_transform/app/main.py --smoke 3; echo "smoke exit=$?"
 ```
@@ -249,6 +250,36 @@ for t in test_unit_guard test_handeye_result test_handeye_file test_matrix_guard
 - **近似键名必须拦（@verify 复核备注② 已收）**：`difflib` 相似度 ≥ 0.7 的未知顶层键直接拒并提示正确键名（实测 `order_detect` → 报 `pose_order_detect`）；完全无关的未知键仍容忍。测试内两条用例（拒 / 容忍）都在 `test_handeye_file` §[7]。
 - **安装方式未选不再伪装（@lead v2 §10.4-③）**：`control_panel.py` 旧版 `bool(None)→False` 把"没选"变成"选了眼在手外"，对 `eye_in_hand=true` 的 JSON 报成"安装方式不一致"。现在信号原样传 `None`：**手动录入**未选 → 直接拒（无文件可推断，D4/K6）；**文件路径**（JSON / v1 矩阵文件）未选 → 以文件声明为准并在日志明说。
 - **来源**：@dev 实现 + 实跑（`core/handeye_file.py` / `tests/test_handeye_file.py` / `app/window.py` / `app/control_panel.py`）；方案 `docs\机器人手眼变换原型_补充方案_矩阵落文件与欧拉顺序自动判定_20260923.md` §1 A10-1~A10-5。
+
+---
+
+## RG-16 批 6B-1（A11-③ 欧拉顺序自动判定）判读规则与已知边界
+
+- **绿灯口径**：`tests/test_pose_table.py` + `tests/test_order_detect.py` 两个新套件 **exit=0**，且必须看到下列**判据行**（只看末行 `[ALL OK]` 不构成证据）：
+  - `[OK  ] 残差向量逐元素一致（真值点 / 闭式初值点 / 6 个随机 p）` —— **内核等价性以 @verify 的原始实现为参照**：只 `exec` 源码取其 `resid`，不复制内容；参照文件缺失时该套件**直接 FAIL**（不静默跳过 —— A1 口径）。参照位置按优先级：`tools/golden/full_handeye.py`（@lead v2.3-⑥ 指定）→ @verify scratch 唯一副本。
+  - `[OK  ] 12/12 真值唯一通过` + 12 行 `真值 XXX → order=XXX rms≈1e-13 次佳=44.786（4e13×）`
+  - `[OK  ] 激励不足时不出排名表`（纯单轴旋转 → `INSUFFICIENT` + 只说"补什么方向"，`ranking=[]`、`order=None`）
+  - `[OK  ] 边界（两个约定同时落在阈内）→ 不给唯一答案`（实测 `通过=2 并列=['XYZ/deg', 'xyz/deg']`，`verdict=MULTI`）
+  - `[OK  ] verdict 取值恰为冻结四值`、`[OK  ] mm / m 两种声明 → 排名逐位一致`
+- **verdict 四值冻结（@lead v2.3-③）**：`OK / MULTI / INSUFFICIENT / INVALID`。后三者**都不出结论**（`order`/`rms`/`T_handeye` 为 `None`）。UI 文案必须分开：`INVALID` = **输入不可用**（记录非法 / 纯位姿表，`dropped_idx` 列出被丢行）；`INSUFFICIENT` = **激励不足**（数据可补，`hints` 给补哪个方向）。
+- **定案只走两条一级/二级判据**：一级 = SDK 基线差（`baseline_diff` 与 `poseType=0` 的 `totalMeanError` 比）；二级 = `pass_tol = max(0.05, 3σ)` 下**唯一通过 + 倍数差 ≥ 10**。弱判据（相对旋转角不变性）**只出现在 `_excitation_metrics` 里做激励诊断，不参与任何定案分支**（A11-4；源码扫描断言固定此事实）。
+- **`0.05` 的含义**：是**合成无噪口径**的绝对残差门限，现场必须重标（R13）；SDK 引擎里比的是与基线的**差值**不是绝对门限（真实数据真值 `tme=2.05 mm` 远超 0.05）。σ 给了就用 `max(0.05, 3σ)` —— 阈值是噪声底，不是魔数。
+- **内核三改（本批实现，@verify 复核单独立项，见提交信息）**：① **残差向量化**（等价性由 `[0]` 节固定）② **AX=ZB 闭式初值**（随机多起点会**假阴性**：真值分支自己停在 rms 8~80 → 报"0 个候选通过"；实测 `n_starts` 1→6 与 `max_nfev` 500→20000 都救不回）③ **零空间解 ±vec(R) 必须先按 `det` 定符号**再做 SO(3) 投影（否则给出错旋转）。
+- **覆盖范围如实标注（禁写成"已覆盖"）**：A11-5 的"**留一冠军自然翻转**"本机**未找到合成用例**（@lead v2.3-④ 裁定不为此卡批次）。现测试断言的是：① 边界只出 `MULTI/INSUFFICIENT`；② 排名表并列全部候选；③ **掩码不变量** —— 任何掩码下都不允许"冠军变了而结论仍是 `OK`"。**后续找到自然翻转用例再补**，不得据此条宣称已覆盖翻转。
+- **重复位姿按去重计**（@verify 真实数据发现）：激励质量看**去重后的不同旋转条数**，不看总条数（真实数据集前 3 行逐位相同、相对旋转 0.00°）。平移散布判据按**维数**选（R25）：n<4 查共线（第 2 奇异值）、n≥4 查共面（第 3 奇异值）—— 按字面"最小奇异值"读会把**所有 n=3 数据集判死**。
+- **性能与超时**：单次判定（24 候选、n=6~8）约 2 s；默认开 LOO 约 41 s；`test_order_detect` 全文件约 **89 s**（12 真值 sweep 用 `n_starts=1, max_nfev=200`）。sweep 不要开 LOO。
+- **定向变异靶点（本批实测 5/5 全部检出，副本内做，交付树不动）**：
+
+  | # | 变异（`core/order_detect.py`） | exit | 具名 `[FAIL]` 行 | 命中判据 |
+  |---|---|---|---|---|
+  | 1 | `MIN_AXIS_SPREAD_DEG = 5.0` → `90.0` | 1 | 2 | 激励门误杀一般位姿数据 → `[0]` 参照/本实现 rms 不一致 |
+  | 2 | 关倍数差门（`if not res["gap"]["ok"]:` → `if False and …`） | 1 | 1 | `[5] 自然边界（1 个通过但倍数差 < 10）→ 判边界不给答案`：变异后直接给出 `verdict=OK`（**错误答案**） |
+  | 3 | 关 ±vec 符号修正（`if np.linalg.det(RZ) < 0:` → `if False:`） | 1 | 1 | `[3] ±vec 符号坑定点用例（n=3 seed=2）`：变异后 `verdict=MULTI`、`champion=ZXY/deg rms=14.84` |
+  | 4 | 唯一通过分支放宽（`if len(passed) != 1:` → `if len(passed) < 1:`） | 1 | 1 | `[5] 边界（两个约定同时落在阈内）`：变异后 `verdict=OK`（**错误答案**） |
+  | 5 | `MIN_TRANSLATION_SV_MM = 5.0` → `1e9` | 1 | 2 | 平移门误杀 → `[0]` rms 不一致 |
+
+  **判据是"具名 FAIL 行点到该判据名"，不是"exit=1"** —— 首轮变异 1 只崩在测试自身的格式化（`rms=None` 时 `:.3e` 抛 TypeError）而没给出判据名，已修（`fnum()` 安全格式化）。**靶点 2/3/4 是首轮"未被检出"的两个覆盖洞补出来的**：倍数差门与 ±vec 符号修正原本都没有有效靶点（前者 MULTI 来自"通过数 ≠ 1"分支，后者所有测试数据集都不触发）。
+- **来源**：@dev 实现 + 实跑（`core/pose_table.py` / `core/order_detect.py` / `tests/test_pose_table.py` / `tests/test_order_detect.py`）；@verify spike（`full_handeye.py` / `min_poses.py`，收编为 golden 参照）；方案 v2.3 §1 A11-③ 判据细则、§10.5-②（R19 基数）、§10.6（真实数据 sweep）、R24/R25。
 
 ---
 
