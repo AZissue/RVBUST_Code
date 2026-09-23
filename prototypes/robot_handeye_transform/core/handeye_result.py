@@ -25,18 +25,16 @@ from typing import Optional
 import numpy as np
 
 try:
-    from .unit_guard import check_translation_norm, normalize_unit, to_mm
+    from .unit_guard import (check_rigid_4x4, check_translation_norm,
+                             normalize_unit, to_mm)
 except ImportError:  # 测试以顶层模块方式引入时
     import sys
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from unit_guard import check_translation_norm, normalize_unit, to_mm
+    from unit_guard import (check_rigid_4x4, check_translation_norm,
+                            normalize_unit, to_mm)
 
 # 眼在手上/外各自的正变换键（K6）
 KEY_T = {True: "T_cam2tool", False: "T_cam2base"}
-
-ORTH_TOL = 1e-6      # 旋转块正交性容差（A7）
-DET_TOL = 1e-6       # det(R)≈+1 容差（A7）
-LAST_ROW_TOL = 1e-9  # 末行 [0,0,0,1] 容差（A7）
 
 
 @dataclass
@@ -172,19 +170,9 @@ class HandEyeResult:
 
 
 def validate_matrix(T: np.ndarray) -> tuple[bool, str]:
-    """A7 矩阵合法性校验。"""
-    T = np.asarray(T, dtype=np.float64)
-    if T.shape != (4, 4):
-        return False, f"必须是 4×4 矩阵，实际 shape={T.shape}"
-    if not np.all(np.isfinite(T)):
-        return False, "含 NaN/Inf 非有限值"
-    R = T[:3, :3]
-    orth = float(np.max(np.abs(R.T @ R - np.eye(3))))
-    if orth >= ORTH_TOL:
-        return False, f"旋转块非正交 ‖RᵀR−I‖∞={orth:.3e}（≥{ORTH_TOL:g}）"
-    det = float(np.linalg.det(R))
-    if abs(det - 1.0) >= DET_TOL:
-        return False, f"det(R)={det:.6f} ≠ +1（含镜像/缩放）"
-    if not np.allclose(T[3], [0.0, 0.0, 0.0, 1.0], atol=LAST_ROW_TOL):
-        return False, f"末行应为 [0,0,0,1]，实际 {T[3].tolist()}"
-    return True, "ok"
+    """A7 矩阵合法性校验（薄封装）。
+
+    实现已抽到 `unit_guard.check_rigid_4x4`（批 1.5）：矩阵侧与位姿侧必须共用
+    同一实现，禁止两份副本（K4 型漂移）。变异测试请改 `unit_guard` 里的容差。
+    """
+    return check_rigid_4x4(T)

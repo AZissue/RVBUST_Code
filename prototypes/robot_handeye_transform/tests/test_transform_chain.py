@@ -3,17 +3,28 @@
 A1 变换链真值测试（test_transform_chain）。
 
 跑法同 test_unit_guard.py（conda rvc python 直跑，看退出码）。
+可选参数 `--allow-skip-oracle`：oracle 不可用时降级为退出码 0（默认缺失即 FAIL）。
 
 覆盖：
   [1] 眼在手上：随机 T_base2tool + T_cam2tool + 合成点云，逐点比解析真值
-  [2] 眼在手外：T_handeye = T_cam2base 直通分支
+      （真值 = 内联矩阵乘，未调被测函数 → 独立证据；@qa 变异测试实测对
+       「乘序颠倒」与「丢平移」均有判别力）
+  [2] 眼在手外：T_handeye = T_cam2base 直通分支（自洽检查，非独立证据）
   [3] K3：transform_pcd 不修改入参点云；颜色保留
   [4] merge_pointclouds 保色（禁裸 +=，K2/arch 实测）
-  [5] 可选第三方 oracle：厂商 HandEyeSDK.dll（handeye_sdk 可导入且 DLL
-      存在才跑，否则 SKIP）——A1 门限 1e-4 mm（@feas 实测 0.000076 mm）
+  [5] 第三方 oracle：厂商 HandEyeSDK.dll —— **A1 唯一独立证据**。
+      默认必需（缺失 → exit≠0），且必须打印 DLL 路径/版本/sha256，
+      否则桌面多装一个更高版本就会静默换实现、nn_max 无法跨机比对（@qa ②）。
+      A1 门限 1e-4 mm（@feas 实测 0.000076 mm）
+
+R12（@feas）：src 定位改为「向上查找含 src/core/pcd_utils.py 的仓库根」或读
+  `MCC_REPO_ROOT`，不再是硬编码 `../../../src` —— 否则只拷原型目录运行会死在
+  §[4]，导致 §[5] 与「oracle 必需」判据永远执行不到。
 """
 
+import hashlib
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -28,7 +39,7 @@ from scipy.spatial.transform import Rotation
 import transform_chain
 
 FAILURES = []
-SKIPPED = []
+ALLOW_SKIP_ORACLE = "--allow-skip-oracle" in sys.argv[1:]
 
 
 def check(cond: bool, label: str, detail: str = ""):
@@ -36,6 +47,24 @@ def check(cond: bool, label: str, detail: str = ""):
     print(f"  [{tag}] {label}" + (f" | {detail}" if detail else ""))
     if not cond:
         FAILURES.append(label)
+
+
+def find_repo_root():
+    """R12：向上查找含 src/core/pcd_utils.py 的目录，或读 MCC_REPO_ROOT。"""
+    env = os.environ.get("MCC_REPO_ROOT")
+    if env:
+        cand = os.path.abspath(env)
+        if os.path.isfile(os.path.join(cand, "src", "core", "pcd_utils.py")):
+            return cand
+        print(f"  [WARN] MCC_REPO_ROOT={env} 下无 src/core/pcd_utils.py，转向上查找")
+    cur = os.path.dirname(os.path.abspath(__file__))
+    while True:
+        if os.path.isfile(os.path.join(cur, "src", "core", "pcd_utils.py")):
+            return cur
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            return None
+        cur = parent
 
 
 def random_rigid(rng, t_range=(200.0, 800.0)) -> np.ndarray:
@@ -112,29 +141,56 @@ def main():
 
     print("=" * 70)
     print("[4] merge_pointclouds 保色（src/core/pcd_utils.py）")
-    sys.path.insert(0, os.path.abspath(os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "src")))
-    from core.pcd_utils import merge_pointclouds
-    a = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(
-        rng.uniform(0, 100, (100, 3))))
-    a.colors = o3d.utility.Vector3dVector(np.full((100, 3), 0.5))
-    b = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(
-        rng.uniform(0, 100, (100, 3))))  # 无色
-    merge_pointclouds(a, b)
-    check(a.has_colors() and len(a.colors) == 200,
-          "带色+无色合并后 colors=200（裸 += 会清零）")
+    repo_root = find_repo_root()
+    if repo_root is None:
+        check(False, "定位 MCC 仓库根（含 src/core/pcd_utils.py）",
+              "R12：请设 MCC_REPO_ROOT 或把原型放回仓库内；本项失败不再连累 §[5]")
+        merge_pointclouds = None
+    else:
+        print(f"  [info] 仓库根 = {repo_root}")
+        sys.path.insert(0, os.path.join(repo_root, "src"))
+        from core.pcd_utils import merge_pointclouds
+    if merge_pointclouds is not None:
+        a = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(
+            rng.uniform(0, 100, (100, 3))))
+        a.colors = o3d.utility.Vector3dVector(np.full((100, 3), 0.5))
+        b = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(
+            rng.uniform(0, 100, (100, 3))))  # 无色
+        merge_pointclouds(a, b)
+        check(a.has_colors() and len(a.colors) == 200,
+              "带色+无色合并后 colors=200（裸 += 会清零）")
 
     print("=" * 70)
-    print("[5] 可选 oracle：HandEyeSDK.dll TransformPointCloudsToRobotBase")
+    print("[5] oracle：HandEyeSDK.dll TransformPointCloudsToRobotBase（A1 唯一独立证据）")
+    oracle_ready = False
     try:
         sys.path.insert(0, r"D:\RVC_SRC\hand-eye-tools")
         import handeye_sdk  # noqa
         dll = handeye_sdk._get_dll()
+        dll_path = str(getattr(handeye_sdk, "_HANDEYE_DLL_PATH", "未知"))
+        ver = "未知"
+        m = re.search(r"RVCHandEyeCalibration_v([\d.]+)_\d+_win_release", dll_path)
+        if m:
+            ver = m.group(1)
+        # 证据纪律（§10）：路径/版本/哈希一律程序打印，禁止人工转录
+        if os.path.isfile(dll_path):
+            with open(dll_path, "rb") as f:
+                sha = hashlib.sha256(f.read()).hexdigest()
+            size = os.path.getsize(dll_path)
+            check(len(sha) == 64, "oracle sha256 长度为 64 位十六进制（程序自查）",
+                  f"len={len(sha)}")
+            print(f"  [info] oracle 路径 = {dll_path}")
+            print(f"  [info] oracle 版本 = v{ver}  大小 = {size} B")
+            print(f"  [info] oracle sha256 = {sha}")
+        else:
+            check(False, "oracle DLL 文件存在", dll_path)
         oracle_ready = True
     except Exception as e:
         dll = None
-        oracle_ready = False
-        print(f"  [SKIP] oracle 不可用（handeye_sdk/DLL 缺失）：{e}")
+        print(f"  [ORACLE SKIPPED] oracle 不可用（handeye_sdk/DLL 缺失）：{e}")
+        if not ALLOW_SKIP_ORACLE:
+            check(False, "oracle 必需（缺失 → exit≠0；显式降级用 --allow-skip-oracle）",
+                  "§[5] 是 A1 唯一独立证据，skip 不等于 pass（@qa ③）")
 
     if oracle_ready:
         import ctypes
@@ -196,9 +252,6 @@ def main():
             shutil.rmtree(work, ignore_errors=True)
 
     print("=" * 70)
-    if SKIPPED:
-        for s in SKIPPED:
-            print(f"  [SKIP] {s}")
     if FAILURES:
         print(f"[FAILED] {len(FAILURES)} 项失败:")
         for f in FAILURES:

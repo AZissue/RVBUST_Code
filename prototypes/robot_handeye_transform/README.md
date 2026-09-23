@@ -33,26 +33,35 @@
 
 ```
 core/   handeye_result.py  加载 JSON/手动 4×4 → A7 校验 + K6/K7 守卫 + A2 单位
-        unit_guard.py      单位换算 + 平移范数物理窗口（纯函数）
+        unit_guard.py      单位换算 + 范数窗口 + **共用校验层**（check_rigid_4x4 /
+                           check_pose_norm，矩阵侧与位姿侧唯一实现）
         pose_source.py     PoseSource：Mock / 手动六自由度 / CSV 回放 / TcpRobot(空)
+                           unit / pose_type / order **三项必填无默认**（批 1.5）
         transform_chain.py compute_cam2base + transform_pcd（先 copy，K3）
         validation.py      批 3：戳点门禁 + 重合度 warning
         session.py         批 3：会话落盘/恢复
 app/    批 2：复用主功能 UI 组件（EmbeddedPointCloudViewer/CameraPreviewCard/WorkerThread）
 tests/  test_transform_chain.py / test_handeye_result.py / test_unit_guard.py
+        test_matrix_guard.py / test_pose_source.py        （批 1.5 新增）
+BASELINE.md  A8 版本锚点（BASE_HEAD / src diff hash / PROTO_COMMIT）
+REGRESSION.md 回归手册（@scribe，RG-01…RG-08）
 ```
 
 ```bash
 cd D:\RVC_SRC\Python\MultiCameraCalibration
 unset PYTHONPATH && export QT_QPA_PLATFORM=offscreen
 PY="D:/Program Files/Anaconda/envs/rvc/python.exe"
-"$PY" prototypes/robot_handeye_transform/tests/test_unit_guard.py        # A2
-"$PY" prototypes/robot_handeye_transform/tests/test_handeye_result.py    # A7
-"$PY" prototypes/robot_handeye_transform/tests/test_transform_chain.py   # A1（含可选 DLL oracle）
+"$PY" prototypes/robot_handeye_transform/tests/test_unit_guard.py       # A2
+"$PY" prototypes/robot_handeye_transform/tests/test_handeye_result.py   # A7
+"$PY" prototypes/robot_handeye_transform/tests/test_matrix_guard.py     # 共用校验层
+"$PY" prototypes/robot_handeye_transform/tests/test_pose_source.py      # A2 位姿侧
+"$PY" prototypes/robot_handeye_transform/tests/test_transform_chain.py  # A1（含 DLL oracle）
 ```
 
-判 pass/fail 看**进程退出码**（不要用 pytest）。DLL oracle 仅在机器上存在
-`D:\RVC_SRC\hand-eye-tools`（handeye_sdk + HandEyeSDK.dll）时启用。
+判 pass/fail 看**进程退出码**（不要用 pytest）。DLL oracle 默认**必需**：缺失时
+`[ORACLE SKIPPED]` + **exit≠0**；只在明确接受降级时加 `--allow-skip-oracle`。
+oracle 会打印 DLL 路径 / 版本 / sha256（跨机比对基线，禁止人工转录）。
+测试套件可迁移：仓库根向上查找 `src/core/pcd_utils.py`，或设 `MCC_REPO_ROOT`（R12）。
 
 ## 实测基线（2026-09-22，conda rvc py3.10 实跑）
 
@@ -65,12 +74,38 @@ PY="D:/Program Files/Anaconda/envs/rvc/python.exe"
 | A7 加载守卫 | NaN/非正交/det=-1/末行错/success=False/缺键/单位非法 → 全部拒绝且可读 |
 | 三个测试退出码 | 全 0 |
 
+**批 1.5 实测（2026-09-23，@dev 本机实跑，conda rvc py3.10）**
+
+| 项 | 结果 |
+|---|---|
+| 五个测试退出码 | 全 0（三旧测试未退化 + 两新测试全绿） |
+| 位姿米制误读（@qa 缺陷①） | `set_pose_xyz_rpy([0.4,0.1,0.2],…,unit="mm")` → 被范数窗口拦（旧版静默错 457.799 mm）；`unit="m"` → 与毫米真值 maxdiff=0.000e+00 |
+| 位姿四类必拒 | NaN / det=−1 镜像 / det=+1 shear / 末行错 → 全拒 |
+| CSV | 16 列、7 列（空格与逗号分隔）放行；6 列 / 缺 pose_type 声明 / 声明不一致 → 拒 |
+| det=+1 shear（@qa 盲点） | `test_matrix_guard` 判 FAIL 必须通过 —— 正交性检查单独有效 |
+| 单实现证明 | 把 `unit_guard.ORTH_TOL` 改 1e9 后，矩阵侧 `validate_matrix` 同步放行（确认委托、无第二份副本） |
+| oracle 证据 | `v3.9.0 / 64,244,224 B / sha256=2ab43b6b…37c29b4`（程序打印，len=64 自查通过） |
+| skip≠pass | 换机模拟（只拷原型目录 + oracle 路径置空）→ `[ORACLE SKIPPED]` + **exit=1**；加 `--allow-skip-oracle` 才 exit=0 |
+| R12 可迁移 | 换机模拟下 §[4] 报可读失败但 §[5] **仍执行**（旧版死在 §[4] 堆栈，看不到 oracle）；设 `MCC_REPO_ROOT` 后 exit=0 |
+
 ## 进度
 
 - [x] 批 0（部分）：prototypes/README 表更新 + A8 基线复核（HEAD=8221b82，
-      src/ diff sha1=7eceb8c3a8826bc1 与 @arch 记录一致）。
+      src/ diff sha1=7eceb8c3a8826bc1 与 @arch/@feas 记录一致，见 `BASELINE.md`）。
       `src/core/robot_stitch_workflow.py` 3 行注释修正**待 @user 批准（§8-③）**。
 - [x] 批 1：core 四件套 + A1/A2/A7 测试全绿
-- [ ] 批 2：app UI（复用主功能组件）
+- [x] 批 1.5（批 2 前置，9 项全落）：
+      ① `check_rigid_4x4` / `check_pose_norm` 抽进 `unit_guard` 共用层，
+      `handeye_result.validate_matrix` 改为委托（单实现有测试证明）
+      ② `pose_source` 三入口补 `unit` + `pose_type` + `order`（全必填无默认）
+      + 刚性校验 + 范数窗口；CSV 6 列拒收、须带 pose_type 声明行
+      ③ 新增 `test_matrix_guard.py` / `test_pose_source.py`
+      ④ 原型首次 commit `249fdb3` + `BASELINE.md`
+      ⑤ det=+1 的 shear 用例（正交性检查单独有效，补 @qa 盲点）
+      ⑥ R12 src 定位：向上找仓库根 / `MCC_REPO_ROOT`（换机可跑）
+      ⑦ §[5] 打印 oracle 路径 + 版本 + sha256（程序打印，非人工转录）
+      ⑧ 清掉 `SKIPPED = []` 死代码；oracle 缺失默认 **exit≠0**
+      ⑨ 三入口尺寸/类型错误统一为自家可读报错
+- [ ] 批 2：app UI（复用主功能组件）—— 起点已满足（PoseSource 签名冻结于批 1.5）
 - [ ] 批 3：validation.py（戳点门禁 + 重合度 warning）+ session.py
 - [ ] 批 4：offscreen 端到端 + README 收尾 + 真机联调（待 §8 现场信息）
