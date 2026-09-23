@@ -25,10 +25,16 @@ def compute_cam2base(eye_in_hand: bool,
                      T_base2tool_mm: np.ndarray) -> np.ndarray:
     """求相机→基座系变换矩阵（毫米域）。
 
+    ⚠️ 入参语义（R11）：`T_base2tool_mm` 必须是**绝对位姿**，不得传增量 Δ。
+    本函数只做矩阵乘法、**不做任何语义校验**——纯数值无法判别"绝对 vs 增量"
+    （两窗重叠区 [30, 500] mm 内两种声明都合法，@feas/@qa 实测判别力为 0）。
+    增量位姿的放行已在 `pose_source.admit_pose()` 处 fail-closed 拒绝；批 5 迁移到
+    src/ 时必须保持"所有位姿都走 PoseSource 三入口"这一不变量，否则此处会静默失效。
+
     Args:
         eye_in_hand: True 手眼结果为 T_cam2tool；False 为 T_cam2base。
         T_handeye_mm: 4×4 手眼矩阵（毫米）。
-        T_base2tool_mm: 4×4 当前机器人位姿（毫米）。
+        T_base2tool_mm: 4×4 当前机器人**绝对**位姿（毫米）。
 
     Returns:
         4×4 T_cam2base（p_base = T_cam2base @ p_cam）。

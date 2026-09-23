@@ -108,6 +108,16 @@ PY="D:/Program Files/Anaconda/envs/rvc/python.exe"
 | UI 槽位（信号接线） | 缺 order → 拒绝且位姿仍为空；米制当毫米 → 拒绝；正确米制录入 → 采集成功 |
 | 位姿序列推进 | Mock 按「先取当前帧再步进」，首帧不跳过（R6） |
 
+**批 2.1 实测（2026-09-23）**
+
+| 项 | 结果 |
+|---|---|
+| 五测试 | 全 exit=0（新增 delta 负向用例、矩阵侧 NaN 对称用例均绿） |
+| RG-11 delta fail-closed | 三入口（Mock / Manual / CSV）+ UI 槽位全拒，报文含"增量位姿（pose_type='delta'）暂不支持"；`check_pose_norm(delta)` 仍工作（预留值） |
+| RG-11 不可判别性证据 | 重叠区 `‖t‖=300 mm` 在 absolute 与 delta 两窗内都放行 → 声明对错数值不可判别，只能 fail-closed |
+| RG-09 降级末行 | `--allow-skip-oracle`：exit=0 且末行 `[ALL OK — 已降级：A1 独立判据(§[5]) 未执行]` + 降级汇总；不降级：exit=1 |
+| A4 三帧真值 | 第 1/2/3 帧逐帧比对：`0.000e+00 / 2.274e-13 / 1.137e-13 mm`（均 < 1e-9） |
+
 ## 进度
 
 - [x] 批 0（部分）：prototypes/README 表更新 + A8 基线复核（HEAD=8221b82，
@@ -132,5 +142,10 @@ PY="D:/Program Files/Anaconda/envs/rvc/python.exe"
 
 > **批 2 状态（2026-09-23）**：`app/main.py` / `control_panel.py` / `window.py` 三文件已落，
 > 闭环"合成点云 → 变基座系 → 3D 显示"跑通（`--smoke 3` exit=0，实测见上表）。
-> **两点与方案 v4.1 的差异需 @arch 确认**：① `CameraPreviewCard` **未接**——无相机时它是死控件，
-> 留到批 4 接真机/离线 2D 帧；② `WorkerThread` 只用在"拍一帧"的变换上，验证/保存（批 3）再复用。
+> **两点与方案 v4.1 的差异已获 @arch 裁决**：① `CameraPreviewCard` **批 2 不接**（A4 无 2D 项，
+> 无相机时是死控件），留到批 4 接真机/离线 2D 帧；② `WorkerThread` 只用在"拍一帧"的变换上，不扩。
+
+> **批 2.1 状态（2026-09-23，收尾 5 项全落）**：RG-11 delta fail-closed（core 级收口 + 三入口
+> 负向用例）、RG-09 降级末行可见、smoke 三帧逐帧真值、矩阵侧 NaN 对称用例、锚点表按 commit 分节。
+> **delta 不支持**：原型未实现增量累积，`admit_pose()` 一律拒绝 delta；UI 下拉「增量（未支持）」
+> 置灰 + tooltip；delta 窗口 `[1, 500] mm` 为预留值（批 2~4 入口不可达）。

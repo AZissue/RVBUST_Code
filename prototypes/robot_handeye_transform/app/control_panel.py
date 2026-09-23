@@ -76,7 +76,7 @@ class ControlPanel(QWidget):
 
         row2 = QHBoxLayout()
         row2.addWidget(QLabel("单位"))
-        self.combo_he_unit = _combo(["mm", "m"])
+        self.combo_he_unit = _combo([("毫米 (mm)", "mm"), ("米 (m)", "m")])
         row2.addWidget(self.combo_he_unit)
         row2.addWidget(QLabel("安装"))
         self.combo_he_mount = _combo([("眼在手上", True), ("眼在手外", False)])
@@ -96,7 +96,7 @@ class ControlPanel(QWidget):
         return g
 
     def _build_pose_group(self) -> QWidget:
-        g = QGroupBox("机器人位姿（T_base2tool）")
+        g = QGroupBox("机器人位姿（T_base2tool，绝对位姿）")
         v = QVBoxLayout(g)
         v.setSpacing(4)
 
@@ -112,10 +112,14 @@ class ControlPanel(QWidget):
 
         row2 = QHBoxLayout()
         row2.addWidget(QLabel("单位"))
-        self.combo_pose_unit = _combo(["mm", "m"])
+        # 全称，避免 "M" 与 "mm" 的单字母歧义（v4.3 §4.4）
+        self.combo_pose_unit = _combo([("毫米 (mm)", "mm"), ("米 (m)", "m")])
         row2.addWidget(self.combo_pose_unit)
         row2.addWidget(QLabel("类型"))
-        self.combo_pose_type = _combo([("绝对", "absolute"), ("增量", "delta")])
+        self.combo_pose_type = _combo([("绝对", "absolute"), ("增量（未支持）", "delta")])
+        self._disable_item(self.combo_pose_type, "delta",
+                           "增量位姿（delta）本原型未实现累积合成，已 fail-closed 禁用"
+                           "（R11）：把 Δ 当绝对位姿用会静默错数百毫米。")
         row2.addWidget(self.combo_pose_type)
         v.addLayout(row2)
 
@@ -186,6 +190,18 @@ class ControlPanel(QWidget):
         hint.setStyleSheet("color: #e0a0a0;")
         v.addWidget(hint)
         return g
+
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _disable_item(combo: QComboBox, data, tooltip: str):
+        """把某个 data 的下拉项置灰 + tooltip（QComboBox 默认模型支持 setEnabled）。"""
+        idx = combo.findData(data)
+        if idx < 0:
+            return
+        item = combo.model().item(idx)
+        if item is not None:
+            item.setEnabled(False)
+            item.setToolTip(tooltip)
 
     # ------------------------------------------------------------------
     # 输入解析（只做文本→数值，不做几何校验）

@@ -61,8 +61,22 @@
 4. `pose_source` 三入口签名变更（新增必填 `unit` / `pose_type` / `order`），
    CSV 需带 `# pose_type: absolute|delta` 声明行。
 
-**批 2（本批）**：新增 `app/main.py` / `app/control_panel.py` / `app/window.py`，
+**批 2（`05fd446`）**：新增 `app/main.py` / `app/control_panel.py` / `app/window.py`，
 不修改 core/ 与 src/。
+
+**批 2.1（本批，收尾 5 项）**
+
+1. **RG-11 fail-closed**：`pose_source.admit_pose()` 对 `pose_type == "delta"` **直接拒绝**。
+   *旧行为（旧代码真实缺陷）*：delta 位姿能通过入口与范数窗口，下游 `compute_cam2base`
+   把它当绝对位姿用 → **静默错 420~620 mm**（@feas/@qa 实测），且两窗重叠区
+   `[30, 500] mm` 内"声明对错"纯数值不可判别。delta 窗口 `[1, 500] mm` 保留为**预留值**，
+   批 2~4 入口不可达。收口在 core（不是 UI 置灰），否则第三方/批 5 下游直接构造 delta 源照样踩洞。
+2. **RG-09 降级可见**：`test_transform_chain` 在 `--allow-skip-oracle` 降级时，末行改为
+   `[ALL OK — 已降级：A1 独立判据(§[5]) 未执行]` 并附降级汇总，**禁止裸 `[ALL OK]`**。
+   *旧行为*：降级路径与真跑同样打印 `[ALL OK]` + exit 0，只看末行/只看退出码的脚本无法区分。
+3. **A4 加严**：`app` 的 `--smoke` 改为**每帧**跑解析真值比对（原只覆盖第 1 帧）。
+4. `unit_guard.check_translation_norm` 补**矩阵侧 NaN/Inf 对称用例**（此前只有位姿侧被测试盯）。
+5. 本文件锚点表改**按 commit 分节** + 钉死 `git show` 取值命令（RG-12）。
 
 ## 原型自身锚点
 
@@ -71,43 +85,61 @@
 | `PROTO_COMMIT`（首次入库，批 0/批 1 基线） | `249fdb3d75592572dc946c60b00c7d2b14d7c52e`（短 `249fdb3`） |
 | `PROTO_COMMIT_BATCH15`（批 1.5 交付） | `15cedf0`（共用校验层 + 位姿守卫 + R12/oracle 证据） |
 
-**批 1 基线（入库版本，@qa 给出的 untracked 代码锚点，@dev 复核一致）**
-
-```
-core/handeye_result.py    fd971471f28f4fafae284a0ae7cbe2440f2295aa
-core/pose_source.py       3bab3cf09a0c9ee23fefce022f24c6bd50742d97
-core/transform_chain.py   3fbec4c574a169818d5210d5280aac4ec043f2fc
-core/unit_guard.py        3f3fc533accc03831ce5a068452f1d4139ade216
-tests/test_handeye_result.py   96598d6ec4f6f5d99ab50ec143989d85e7ba3134
-tests/test_transform_chain.py  5c1b6c2b77d0171a59f845c5e39bfbcfa9cc459c
-tests/test_unit_guard.py       e42ae64e0010633d8a87d43b83dfec38081e583b
-```
-
-**批 1.5 后（本次改动，待 commit）**
-
-```
-core/handeye_result.py    e12e1627ef8fce26f784bd025054b237b1dfa3f1  （validate_matrix 改为委托）
-core/pose_source.py       20c94ad6fba68345a3868bdd27243a07b5a9a42  （三入口补 unit/pose_type/order + 守卫）
-core/transform_chain.py   3fbec4c574a169818d5210d5280aac4ec043f2fc  （未动）
-core/unit_guard.py        8b9b3add0c4c334fc6677964b9823bc8ebcb097c  （共用校验层 + 位姿窗口）
-tests/test_handeye_result.py   96598d6ec4f6f5d99ab50ec143989d85e7ba3134  （未动）
-tests/test_matrix_guard.py     f275647d688a5570be7ca7d3efe47d593d06eb30  （新增）
-tests/test_pose_source.py      1968615a5068f4157a1ba5f11f1bce4df4a0ec95  （新增）
-tests/test_transform_chain.py  4b13671b682a0d00ee2295e3361b93703e9084cb  （R12 + oracle 证据/必需判据）
-tests/test_unit_guard.py       e42ae64e0010633d8a87d43b83dfec38081e583b  （未动）
-```
-
-复核命令：
+**锚点取值命令（§10.1，钉死；禁止「量工作树比历史值」——那必然假阳性，RG-12）**
 
 ```bash
-cd D:/RVC_SRC/Python/MultiCameraCalibration/prototypes/robot_handeye_transform
-sha1sum core/*.py tests/*.py
+cd D:/RVC_SRC/Python/MultiCameraCalibration
+git show <commit>:prototypes/robot_handeye_transform/core/<file> | sha1sum
 ```
 
-**批 2（commit `05fd446`）**
+按 commit 分节（每条都是 `git show` 取出的**当时**内容）：
 
-```
-app/control_panel.py   4137344b5493aae7c565b692983c461de6c5591f
-app/main.py            786576a4668fc05590ba8d5615fde0c11a87a77f
-app/window.py          2d6ed2bef30fc7584e0d270aa44764726eaba13c
-```
+### `249fdb3` —— 批 0/批 1 基线（首次入库）
+
+| 文件 | sha1 |
+|---|---|
+| core/handeye_result.py | `fd971471f28f4fafae284a0ae7cbe2440f2295aa` |
+| core/pose_source.py | `3bab3cf09a0c9ee23fefce022f24c6bd50742d97` |
+| core/transform_chain.py | `3fbec4c574a169818d5210d5280aac4ec043f2fc` |
+| core/unit_guard.py | `3f3fc533accc03831ce5a068452f1d4139ade216` |
+| tests/test_handeye_result.py | `96598d6ec4f6f5d99ab50ec143989d85e7ba3134` |
+| tests/test_transform_chain.py | `5c1b6c2b77d0171a59f845c5e39bfbcfa9cc459c` |
+| tests/test_unit_guard.py | `e42ae64e0010633d8a87d43b83dfec38081e583b` |
+
+### `15cedf0` —— 批 1.5
+
+| 文件 | sha1 |
+|---|---|
+| core/handeye_result.py | `e12e1627ef8fce26f784bd025054b237b1dfa3f1` |
+| core/pose_source.py | `20c94ad6fba68345a3868bdd27243a07b5a9a42d` |
+| core/transform_chain.py | `3fbec4c574a169818d5210d5280aac4ec043f2fc` |
+| core/unit_guard.py | `8b9b3add0c4c334fc6677964b9823bc8ebcb097c` |
+| tests/test_handeye_result.py | `96598d6ec4f6f5d99ab50ec143989d85e7ba3134` |
+| tests/test_matrix_guard.py | `f275647d688a5570be7ca7d3efe47d593d06eb30` |
+| tests/test_pose_source.py | `1968615a5068f4157a1ba5f11f1bce4df4a0ec95` |
+| tests/test_transform_chain.py | `4b13671b682a0d00ee2295e3361b93703e9084cb` |
+| tests/test_unit_guard.py | `e42ae64e0010633d8a87d43b83dfec38081e583b` |
+
+> @qa 上一轮报的「`test_matrix_guard.py` 不一致」由此表可解释：`249fdb3` 时该文件不存在、
+> `15cedf0` 时是 `f275647d…`、`05fd446` 起是 `1a1862ba…`（批 2 加了 @arch 硬约束用例）。
+> 旧表把 `15cedf0` 的值留在「批 1.5 后」标题下让人去量工作树 → 结构性假阳性（RG-12）。
+
+### `05fd446` —— 批 2（也是 `384615c` / `1fee333` 时点的 .py 状态）
+
+| 文件 | sha1 |
+|---|---|
+| app/control_panel.py | `4137344b5493aae7c565b692983c461de6c5591f` |
+| app/main.py | `786576a4668fc05590ba8d5615fde0c11a87a77f` |
+| app/window.py | `2d6ed2bef30fc7584e0d270aa44764726eaba13c` |
+| core/handeye_result.py | `e12e1627ef8fce26f784bd025054b237b1dfa3f1` |
+| core/pose_source.py | `20c94ad6fba68345a3868bdd27243a07b5a9a42d` |
+| core/transform_chain.py | `3fbec4c574a169818d5210d5280aac4ec043f2fc` |
+| core/unit_guard.py | `8b9b3add0c4c334fc6677964b9823bc8ebcb097c` |
+| tests/test_handeye_result.py | `96598d6ec4f6f5d99ab50ec143989d85e7ba3134` |
+| tests/test_matrix_guard.py | `1a1862ba9bc99fab8ac2a18f4fa1c005687be86f` |
+| tests/test_pose_source.py | `1968615a5068f4157a1ba5f11f1bce4df4a0ec95` |
+| tests/test_transform_chain.py | `4b13671b682a0d00ee2295e3361b93703e9084cb` |
+| tests/test_unit_guard.py | `e42ae64e0010633d8a87d43b83dfec38081e583b` |
+
+**想复核"文件有没有被改过"**：改前后都比 `git show` 出的值；只有在**你刚改过工作树**时，
+才用 `sha1sum core/*.py tests/*.py app/*.py` 量工作树，并明确那是"未提交状态"，不是锚点。

@@ -27,7 +27,8 @@ import numpy as np
 import handeye_result
 import unit_guard
 from unit_guard import (POSE_DOMAIN_MM, POSE_NORM_WINDOW_MM, PoseError,
-                        check_pose_norm, check_rigid_4x4, normalize_pose_type)
+                        check_pose_norm, check_rigid_4x4, check_translation_norm,
+                        normalize_pose_type)
 
 FAILURES = []
 
@@ -88,6 +89,8 @@ def main():
         ok, msg = check_pose_norm(T((norm, 0.0, 0.0)), "absolute")
         check(ok is expect, f"absolute ‖t‖={norm:g} → {'放行' if expect else '拒绝'}", msg)
     d_lo, d_hi = POSE_NORM_WINDOW_MM["delta"]
+    # 注意：delta 窗口是**预留值**（批 2~4 不可达）——`pose_source.admit_pose()` 已对
+    # delta 做 fail-closed 拒绝（R11）。本段只锁窗口函数本身的判别力，不代表 delta 可用。
     for norm, expect in ((d_lo - 0.1, False), (d_lo, True),
                          (d_hi, True), (d_hi + 1.0, False)):
         ok, msg = check_pose_norm(T((norm, 0.0, 0.0)), "delta")
@@ -103,6 +106,11 @@ def main():
     check(not ok, "Inf 位姿 → 拒绝", msg)
     ok, msg = check_rigid_4x4(nan_T)
     check(not ok, "NaN 位姿在刚性校验即拒绝（更早一道）", msg)
+    # 矩阵侧对称用例（@qa②：双保险里此前只有位姿侧被测试盯着）
+    ok, msg = check_translation_norm(nan_T, True)
+    check(not ok, "矩阵侧 check_translation_norm 遇 NaN 也拒绝（对称用例）", msg)
+    ok, msg = check_translation_norm(inf_T, False)
+    check(not ok, "矩阵侧 Inf 同样拒绝", msg)
 
     print("=" * 70)
     print("[4] unit / pose_type 无默认")

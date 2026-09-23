@@ -40,6 +40,7 @@ import transform_chain
 
 FAILURES = []
 ALLOW_SKIP_ORACLE = "--allow-skip-oracle" in sys.argv[1:]
+ORACLE_DEGRADED = False   # RG-09：降级路径要在末行与汇总里显式可见，禁裸 [ALL OK]
 
 
 def check(cond: bool, label: str, detail: str = ""):
@@ -163,6 +164,7 @@ def main():
     print("=" * 70)
     print("[5] oracle：HandEyeSDK.dll TransformPointCloudsToRobotBase（A1 唯一独立证据）")
     oracle_ready = False
+    global ORACLE_DEGRADED
     try:
         sys.path.insert(0, r"D:\RVC_SRC\hand-eye-tools")
         import handeye_sdk  # noqa
@@ -191,6 +193,8 @@ def main():
         if not ALLOW_SKIP_ORACLE:
             check(False, "oracle 必需（缺失 → exit≠0；显式降级用 --allow-skip-oracle）",
                   "§[5] 是 A1 唯一独立证据，skip 不等于 pass（@qa ③）")
+        else:
+            ORACLE_DEGRADED = True
 
     if oracle_ready:
         import ctypes
@@ -257,7 +261,14 @@ def main():
         for f in FAILURES:
             print(f"  - {f}")
         sys.exit(1)
-    print("[ALL OK] test_transform_chain")
+    if ORACLE_DEGRADED:
+        # RG-09（@feas）：降级路径禁止打印裸 [ALL OK]——只看 ALL OK / 只看退出码的
+        # CI 与第三方脚本会踩回 RG-01 同一个坑。降级必须在末行与汇总里显式可见。
+        print("[ALL OK — 已降级：A1 独立判据(§[5] oracle) 未执行] test_transform_chain")
+        print("[降级汇总] oracle 未运行（--allow-skip-oracle）：本份输出**不含 A1 唯一"
+              "独立证据**，不得当作完整 A1 通过；请在有机器的环境复跑。")
+    else:
+        print("[ALL OK] test_transform_chain")
     sys.exit(0)
 
 

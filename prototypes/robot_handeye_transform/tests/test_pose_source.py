@@ -28,6 +28,7 @@ import pose_source
 import transform_chain
 from pose_source import (CsvPoseSource, ManualPoseSource, MockPoseSource,
                          PoseError, euler_to_matrix)
+from unit_guard import check_pose_norm
 
 FAILURES = []
 
@@ -116,19 +117,37 @@ def main():
     check(src.count() == 0, "失败录入不留半截序列（count=0）", f"count={src.count()}")
 
     print("=" * 70)
-    print("[5] pose_type 锁定与 delta 窗口")
+    print("[5] pose_type：同源锁定 + delta fail-closed（R11 / v4.3）")
     src = MockPoseSource()
     ok, _ = src.set_poses([T((300.0, 0, 0))], "mm", "absolute")
     check(ok, "absolute 序列载入")
     ok, msg = src.append_pose(T((301.0, 0, 0)), "mm", "delta")
-    check(not ok and "锁定" in msg, "中途改 pose_type → 拒绝", msg)
+    check(not ok, "绝对源追加 delta → 拒绝", msg[:60])
+    # core 级负向断言：三入口一律不放行 delta（不在链上断言数值——compute_cam2base
+    # 签名里没有 pose_type，无法自证；能断言的只有"入口不放行"）
     src2 = MockPoseSource()
-    ok, msg = src2.set_poses([T((1.0, 0, 0)), T((2.0, 0, 0))], "mm", "delta")
-    check(ok, "delta 1mm/2mm 步长放行", msg)
-    ok, msg = src2.set_poses([T((1000.0, 0, 0))], "mm", "delta")
-    check(not ok, "delta 1000mm（1mm×1000 误读）→ 拒绝", msg[:70])
-    ok, msg = src2.set_poses([T((0.5, 0, 0))], "mm", "delta")
-    check(not ok, "delta 0.5mm（低于窗口下界）→ 拒绝", msg[:70])
+    ok, msg = src2.set_poses([T((300.0, 0, 0))], "mm", "delta")
+    check(not ok and "暂不支持" in msg and src2.count() == 0,
+          "Mock.set_poses delta → 拒绝且不留半截", msg[:60])
+    ok, msg = src2.append_pose(T((300.0, 0, 0)), "mm", "delta")
+    check(not ok and "暂不支持" in msg, "Mock.append_pose delta → 拒绝", msg[:60])
+    m = ManualPoseSource()
+    ok, msg = m.set_pose_matrix(T((300.0, 0, 0)), "mm", "delta")
+    check(not ok and m.get_pose()[0] is False, "Manual.set_pose_matrix delta → 拒绝", msg[:60])
+    ok, msg = m.set_pose_xyz_rpy([300.0, 0, 0], [0, 0, 0], "ZYX", "mm", "delta")
+    check(not ok, "Manual.set_pose_xyz_rpy delta → 拒绝", msg[:60])
+    p7d = write_csv("# pose_type: delta\n400,100,200,0,0,0,ZYX\n")
+    ok, msg, s = CsvPoseSource.load(p7d, "mm", "delta")
+    check(not ok and "暂不支持" in msg,
+          "CSV 声明 delta 且入参一致 → 仍拒（fail-closed 先于窗口）", msg[:60])
+    os.unlink(p7d)
+    # 窗口函数本身仍可用（delta 窗口保留为预留值，批 2~4 不可达）
+    ok, msg = check_pose_norm(T((50.0, 0, 0)), "delta")
+    check(ok, "check_pose_norm(delta) 仍工作（预留值，非入口可达）", msg[:50])
+    # 关键证据：重叠区 [30, 500] 内两种声明都合法 → 数值不可能判别声明对错
+    for pt in ("absolute", "delta"):
+        okw, _ = check_pose_norm(T((300.0, 0, 0)), pt)
+        check(okw, f"重叠区 ‖t‖=300 mm 在 {pt} 窗口内（故只能 fail-closed）")
 
     print("=" * 70)
     print("[6] CSV 入口")

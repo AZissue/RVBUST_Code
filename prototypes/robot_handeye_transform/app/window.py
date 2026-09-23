@@ -109,6 +109,7 @@ class RobotHandEyeWindow(QMainWindow):
         self.frame_index = 0
         self._mock_started = False
         self.last_base_pcd = None
+        self.last_pose_used = None
         self._workers = []
 
         central = QWidget()
@@ -302,6 +303,7 @@ class RobotHandEyeWindow(QMainWindow):
             self.handeye.eye_in_hand, self.handeye.T_handeye_mm, T_bt)
         pcd_base = transform_chain.transform_pcd(pcd_cam, T_cb)
         self.last_base_pcd = pcd_base
+        self.last_pose_used = T_bt
         self._show(pcd_cam, pcd_base)
         n = len(pcd_base.points)
         return True, (f"第 {self.frame_index} 帧：{n} 点已转到基座系"
@@ -370,18 +372,19 @@ class RobotHandEyeWindow(QMainWindow):
             if not ok:
                 bad += 1
                 continue
-            if i == 0 and pcd is not None:
-                # 解析真值自检（A1 同口径：真值内联矩阵乘，不调被测函数）
-                pc = np.asarray(make_camera_frame(seed=1).points)
-                T_bt1 = ps_mod.euler_to_matrix([400.0, 100.0, 420.0],
-                                               [0.0, 0.0, 0.0], "ZYX")
-                truth = (T_bt1 @ self.handeye.T_handeye_mm @ np.concatenate(
-                    [pc, np.ones((len(pc), 1))], axis=1).T).T[:, :3]
+            if pcd is not None:
+                # A4 加严（@feas/@arch v4.3）：**每帧**都跑解析真值比对，不只第 1 帧。
+                # 真值 = 内联矩阵乘（不调被测函数），与 A1 §[1] 同口径 → core 层 + app
+                # 接线层两级同口径证据。
+                pc_truth = np.asarray(make_camera_frame(seed=i + 1).points)
+                truth = (self.last_pose_used @ self.handeye.T_handeye_mm @ np.concatenate(
+                    [pc_truth, np.ones((len(pc_truth), 1))], axis=1).T).T[:, :3]
                 err = float(np.max(np.abs(np.asarray(pcd.points) - truth)))
                 tag = "OK" if err < 1e-9 else "FAIL"
-                print(f"[{tag}] 第 1 帧基座系点云 vs 解析真值：逐点最大偏差 "
+                print(f"[{tag}] 第 {i + 1} 帧基座系点云 vs 解析真值：逐点最大偏差 "
                       f"{err:.3e} mm（门槛 1e-9）")
-                self.log_box.appendPlainText(f"[{tag}] 基座系点云 vs 解析真值 err={err:.3e} mm")
+                self.log_box.appendPlainText(
+                    f"[{tag}] 第 {i + 1} 帧 vs 解析真值 err={err:.3e} mm")
                 if err >= 1e-9:
                     bad += 1
         # 反例：米制当毫米必须被拦（否则说明守卫丢了）
@@ -416,6 +419,14 @@ class RobotHandEyeWindow(QMainWindow):
             bad += 1
         else:
             print("[OK] UI 槽位：米制当毫米 → 已拒绝，未产生静默错位姿")
+        # RG-11 fail-closed：UI 槽位传 delta 也必须被拒（core 收口，不是靠下拉置灰）
+        self.pose_src = ps_mod.ManualPoseSource()
+        self.on_manual_pose("400,100,420", "0,0,15", "ZYX", "mm", "delta")
+        if self.pose_src.get_pose()[0]:
+            print("[FAIL] delta 位姿经 UI 槽位竟然录入成功（RG-11 未收口）")
+            bad += 1
+        else:
+            print("[OK] UI 槽位：delta 位姿 → 已拒绝（fail-closed，R11）")
         print(f"=== smoke 结束：{frames} 帧，失败 {bad} 项 ===")
         return 0 if bad == 0 else 1
 

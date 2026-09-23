@@ -82,6 +82,15 @@ def admit_pose(pose, unit, pose_type, label: str = "位姿"
     except (ValueError, PoseError) as e:
         return False, str(e), None
 
+    # R11 fail-closed（@arch v4.3 裁定）：原型未实现增量累积/合成，放行 delta 会让
+    # 下游把它当绝对位姿用 → 静默错几百毫米（@feas 420/450 mm、@qa 555~620 mm 实测）。
+    # 收口在 core 而不是 UI：否则第三方/批 5 迁移后的下游直接构造 delta 源照样踩洞。
+    if pt == "delta":
+        return False, (
+            "增量位姿（pose_type='delta'）暂不支持：本原型未实现增量累积，"
+            "把 Δ 当绝对位姿用会静默错数百毫米（R11 fail-closed）。"
+            "请改用 absolute 绝对位姿；delta 窗口 [1, 500] mm 作为预留值保留。"), None
+
     arr = _as_4x4(pose)
     if arr is None:
         shape = np.shape(pose)
