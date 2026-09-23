@@ -218,6 +218,11 @@ for t in test_unit_guard test_handeye_result test_matrix_guard test_pose_source 
   | 上一条 **加上** ① 分支去掉 `bad += 1`（= 批 4.5 前的静默降级） | exit=0 且 `全部叠加`=0 条 ← 旧隐患"绿灯 + 3D 消失"可复现，说明那道判据是唯一起作用的一道 |
 
 - **传递闭包未减（已知边界，非缺陷）**：`import ui_v2.widgets.viewer_panel` 连带 **2057 模块**（`ui.main_window` / `ui.viewer_3d` / `ui.worker_thread` / `core.camera_manager` 全进 `sys.modules`；批 4.5 前 `import ui.viewer_3d` 亦为 2033 模块）。"对旧 `ui.*` 直接依赖清零"只成立于**直接 import 层**；按迁移方案 §4 Phase 0.3 的裁决**不改 `src/`**，随 Phase 0 统一收口。
+- **仓库外两种失败形态不同，验收口径要分开写（@verify 备注①，2026-09-23 批 4.5 复核）**：
+  **app 路径** = 三行**可读报错**（`[ERROR] 3D 查看器引入失败…` / `[ERROR] 合入形态下该降级非法：--smoke 一律判失败（批 4.5 ⑤）` / `仓库根 = 未找到`）；
+  **tests 路径** = **原生 traceback**（`ModuleNotFoundError: No module named 'core'`，抛点 `tests/test_ui_smoke.py:71` 的模块级 `from core.pcd_utils import merge_pointclouds`）+ exit≠0。
+  后者是设计内（R12 只给出 `MCC_REPO_ROOT` 这条出路，没有包装该 import），**不得判为"报错不友好"缺陷**；若要统一成可读报错，属**批 4.7 候选动作，需 @lead 拍板**后做。
+- **批 5 交接硬要求（@verify 备注②）**：`HAS_VIEWER` 显形**目前只活在原型的 `--smoke` 自检段**（`window.py` 那道 `bad += 1`）。批 5 把工作区搬进 `ui_v2` 时，必须把"查看器不可用 ⇒ 判失败（禁止静默降级）"这条判据一并搬过去（工作区自检或 ui_v2 侧测试），**丢了就回到 M2b：绿灯 + 3D 消失**。
 - **来源**：@dev 实现 + 副本变异实跑（`%TMPDIR%/mut_b45.py`）；@lead 独立复跑 `--smoke 3`（10 条）+ 闭包实测 + 两处自主扩权裁决；方案 §5 批 4.5 行。
 
 ---
