@@ -25,6 +25,14 @@ hidden_imports += collect_submodules('numpy')
 hidden_imports += collect_submodules('scipy')
 hidden_imports += collect_submodules('OpenGL')
 
+# Phase 0（UI 复用拆分批）：src/ui/__init__.py 已清空重导出、src/ui_v2/__init__.py 改 PEP 562 惰性导出，
+# PyInstaller 静态分析扫不到这两个包被惰性引用的子模块 → 显式收集（新增对外名时无需再改这里）。
+_src_path = os.path.join(ROOT, 'src')
+if _src_path not in sys.path:
+    sys.path.insert(0, _src_path)
+hidden_imports += collect_submodules('ui')
+hidden_imports += collect_submodules('ui_v2')
+
 # RVC 运行时 DLL
 rvc_binaries = []
 if os.path.isdir(RVC_RUNTIME):

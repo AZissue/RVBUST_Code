@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 # 引入主项目 ui_v2 主题
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 try:
-    from ui_v2 import GLOBAL_QSS
+    from ui_v2.theme import GLOBAL_QSS
     HAS_THEME = True
 except Exception as e:
     print(f"ui_v2 主题加载失败: {e}")
