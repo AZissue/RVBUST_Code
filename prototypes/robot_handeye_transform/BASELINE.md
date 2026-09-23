@@ -88,6 +88,19 @@ n≥3 + err_mean≤0.7 mm 硬门禁 + err_max>2.0 仅 warning（R3）+ 姿态离
 （UNVERIFIED/VERIFIED/FAILED 状态机，VERIFIED 才解锁保存会话）。**未改 core 四件套与
 src/**；A8 守住（`git diff -- src/ | sha1sum` 仍 `7eceb8c3a8826bc1…`，七测试 + smoke 全 exit=0）。
 
+**批 4（`7ef769c`，offscreen 部分）**：新增 `tests/test_ui_smoke.py`（A4 端到端：
+3 帧采集 → 合并 60000 点 → 保存 PLY → 重载往返点数一致 + NN median=0.000000<0.5；
+A5 计时：30 万点单帧复制+变换+合并 median=28.6 ms < 50 ms；门禁接线按钮状态机），
+`app/` 加「保存合并 PLY」按钮（`sig_save_ply` + `set_save_ply_enabled`）与
+`window.merged_pcd()` / `on_save_merged_ply()`（QFileDialog，VERIFIED 门禁，
+`_refresh_state` 按"VERIFIED 且 ≥1 帧"控钮态）。**未改 core 六文件与 src/**；
+A8 守住（八测试 + smoke 3 全 exit=0）。**对后来者关键的签名事实**：
+`src/core/pcd_utils.merge_pointclouds` 是**两参折叠式** `merge_pointclouds(merged, pcd)`
+——先 copy 首帧再逐帧 fold，**不是列表入参**（传列表直接 TypeError）；
+A5 计时口径为"单帧"：累加器重建在计时外，被测段只有 `transform_pcd`（内含 copy）
++ `merge_pointclouds(acc, c1)` 两段，与 @qa 基线同项。真机联调与 CameraPreviewCard
+待 §8 现场信息，不在本批。
+
 ## 原型自身锚点
 
 | 项 | 值 |
@@ -98,6 +111,7 @@ src/**；A8 守住（`git diff -- src/ | sha1sum` 仍 `7eceb8c3a8826bc1…`，�
 | `PROTO_COMMIT_BATCH21`（批 2.1 收尾） | `ea7aa1e`（delta fail-closed + 降级可见 + 三帧真值 + 锚点分节） |
 | `PROTO_COMMIT_BATCH3`（批 3 交付） | `cde52e8`（TipTouchValidator 戳点门禁 + 重合度快检 + session 会话 + UI 验证区） |
 | `PROTO_COMMIT_BATCH3_QA`（批 3 复核修复） | `1b065d2`（handeye_to_dict 缺键 KeyError → 可读拒收；REGRESSION 手册 v4） |
+| `PROTO_COMMIT_BATCH4`（批 4 交付，offscreen 部分） | `7ef769c`（test_ui_smoke A4/A5 + 保存合并 PLY，VERIFIED 门禁） |
 
 **锚点取值命令（§10.1，钉死；禁止「量工作树比历史值」——那必然假阳性，RG-12）**
 
@@ -196,7 +210,7 @@ git show <commit>:prototypes/robot_handeye_transform/core/<file> | sha1sum
 | tests/test_unit_guard.py | `e42ae64e0010633d8a87d43b83dfec38081e583b` |
 | tests/test_validation_degenerate.py | `350e70dc4026a24e701bd3b81958087274b89c4a` |
 
-### `1b065d2` —— 批 3 复核修复（当前 HEAD 的 .py 状态）
+### `1b065d2` —— 批 3 复核修复
 
 | 文件 | sha1 |
 |---|---|
@@ -214,5 +228,27 @@ git show <commit>:prototypes/robot_handeye_transform/core/<file> | sha1sum
 | tests/test_pose_source.py | `94e080308d05aa3d5899f4f59315b25c71b0d37e` |
 | tests/test_session.py | `9295512996a58acffe41389a9a1055d93650c02d` |
 | tests/test_transform_chain.py | `383e1f2e30a7cc2f6e9fe89a8985f4e37013f793` |
+| tests/test_unit_guard.py | `e42ae64e0010633d8a87d43b83dfec38081e583b` |
+| tests/test_validation_degenerate.py | `350e70dc4026a24e701bd3b81958087274b89c4a` |
+
+### `7ef769c` —— 批 4（当前 HEAD 的 .py 状态）
+
+| 文件 | sha1 |
+|---|---|
+| app/control_panel.py | `a54c77519f21f10b8692589d7d13a50a37e37154` |
+| app/main.py | `786576a4668fc05590ba8d5615fde0c11a87a77f` |
+| app/window.py | `0f314413835c595581a65f9dd135502a618f8967` |
+| core/handeye_result.py | `e12e1627ef8fce26f784bd025054b237b1dfa3f1` |
+| core/pose_source.py | `a58d874ed1661901574289ed69872d4afa9e0690` |
+| core/session.py | `22467691ac323c7e3aff66d783b9b2b33b3b328d` |
+| core/transform_chain.py | `4f15aa421422d0696fd74958cbd6af597c6b87e3` |
+| core/unit_guard.py | `8b9b3add0c4c334fc6677964b9823bc8ebcb097c` |
+| core/validation.py | `0875c46616d28ae777ddcfe885d3022c990e1bb0` |
+| tests/test_handeye_result.py | `96598d6ec4f6f5d99ab50ec143989d85e7ba3134` |
+| tests/test_matrix_guard.py | `a72a19a6cb3941f1f6edbee6ec179820ee591116` |
+| tests/test_pose_source.py | `94e080308d05aa3d5899f4f59315b25c71b0d37e` |
+| tests/test_session.py | `9295512996a58acffe41389a9a1055d93650c02d` |
+| tests/test_transform_chain.py | `383e1f2e30a7cc2f6e9fe89a8985f4e37013f793` |
+| tests/test_ui_smoke.py | `bd5a06b0052bcc533d8fd9bd186e2b9d1b9ee4d5` |
 | tests/test_unit_guard.py | `e42ae64e0010633d8a87d43b83dfec38081e583b` |
 | tests/test_validation_degenerate.py | `350e70dc4026a24e701bd3b81958087274b89c4a` |
