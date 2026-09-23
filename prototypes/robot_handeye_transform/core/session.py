@@ -240,6 +240,14 @@ def save_session(session_dir: str, handeye,
                   f"（位姿 {len(pose_mats)}、帧 {len(frame_arrays)}）")
 
 
+def _is_frame_file(name: str) -> bool:
+    """帧文件判据：`.ply` 且排除原子写残留（`a.tmp.ply` 也以 .ply 结尾）。
+
+    崩溃残留的半写临时文件若被当成有效帧读入，会导致帧数与位姿数不一致。
+    """
+    return name.endswith(".ply") and ".tmp." not in name
+
+
 def load_session(session_dir: str) -> tuple[bool, str, Optional[dict]]:
     """恢复会话（A6：点数一致、位姿一致、validated 状态还原）。
 
@@ -273,7 +281,7 @@ def load_session(session_dir: str) -> tuple[bool, str, Optional[dict]]:
         frames = []
         if os.path.isdir(frames_dir):
             for name in sorted(os.listdir(frames_dir)):
-                if name.endswith(".ply"):
+                if _is_frame_file(name):
                     xyz, colors = read_ply(os.path.join(frames_dir, name))
                     frames.append({"xyz": xyz, "colors": colors})
         err_path = os.path.join(session_dir, ERROR_REPORT_FILE)

@@ -12,6 +12,7 @@
       poses.json 位姿数非法 / 坏 JSON → 拒绝恢复，不返回半截会话
   [4] 入参守卫：坏帧（NaN/尺寸错）/ 坏位姿 / 坏矩阵 → 拒绝落盘（不写半截）
   [5] 覆盖写：同目录二次保存先清旧帧（不混入上次残留）
+  [6] 原子写残留：frames/ 内 crash 残留的 `*.tmp.ply` 不被当有效帧读入
 """
 
 import json
@@ -27,7 +28,7 @@ import numpy as np
 
 import handeye_result
 import session
-from session import load_session, save_session
+from session import load_session, save_session, write_ply
 
 FAILURES = []
 
@@ -172,6 +173,21 @@ ok15, msg15, restored15 = load_session(sess_dir)
 check(ok15 and len(restored15["frames"]) == 1
       and len(restored15["poses"]) == 1,
       "旧帧被清掉，不混入上次残留", msg15)
+
+print("=" * 70)
+print("[6] 原子写残留：frames/ 内 .tmp.ply 不被当有效帧（加载侧过滤）")
+ok16, msg16 = save_session(sess_dir, he, POSES, FRAMES)
+check(ok16, "重建 3 帧会话", msg16[:40])
+resid = os.path.join(sess_dir, "frames", "frame_003.tmp.ply")
+write_ply(resid, np.zeros((7, 3)), None)
+check(os.path.basename(resid).endswith(".ply"),
+      "残留文件名确实以 .ply 结尾（旧判据会命中）", os.path.basename(resid))
+ok17, msg17, restored17 = load_session(sess_dir)
+check(ok17 and len(restored17["frames"]) == 3
+      and all(len(fr["xyz"]) == 500 for fr in restored17["frames"]),
+      "残留 .tmp.ply 未被读入（帧数仍 3、无 7 点帧）",
+      f"frames={len(restored17['frames']) if restored17 else 'None'} "
+      f"点数={[len(fr['xyz']) for fr in restored17['frames']] if restored17 else '-'}")
 
 shutil.rmtree(work, ignore_errors=True)
 print("=" * 70)
