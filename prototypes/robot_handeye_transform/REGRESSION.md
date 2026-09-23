@@ -260,6 +260,7 @@ for t in test_unit_guard test_handeye_result test_handeye_file test_matrix_guard
   - `[OK  ] 12/12 真值唯一通过` + 12 行 `真值 XXX → order=XXX rms≈1e-13 次佳=44.786（4e13×）`
   - `[OK  ] 激励不足时不出排名表`（纯单轴旋转 → `INSUFFICIENT` + 只说"补什么方向"，`ranking=[]`、`order=None`）
   - `[OK  ] 边界（两个约定同时落在阈内）→ 不给唯一答案`（实测 `通过=2 并列=['XYZ/deg', 'xyz/deg']`，`verdict=MULTI`）
+  - `[OK  ] 两个 golden 内核互相逐元素一致（同一 p 同残差）`、`[OK  ] golden 的 12 个候选 = 本内核 CANDIDATE_ORDERS` —— `min_poses.py` 与 `full_handeye.py` 互为印证（同一纪律：只 exec 不复制）
   - `[OK  ] verdict 取值恰为冻结四值`、`[OK  ] mm / m 两种声明 → 排名逐位一致`
 - **verdict 四值冻结（@lead v2.3-③）**：`OK / MULTI / INSUFFICIENT / INVALID`。后三者**都不出结论**（`order`/`rms`/`T_handeye` 为 `None`）。UI 文案必须分开：`INVALID` = **输入不可用**（记录非法 / 纯位姿表，`dropped_idx` 列出被丢行）；`INSUFFICIENT` = **激励不足**（数据可补，`hints` 给补哪个方向）。
 - **定案只走两条一级/二级判据**：一级 = SDK 基线差（`baseline_diff` 与 `poseType=0` 的 `totalMeanError` 比）；二级 = `pass_tol = max(0.05, 3σ)` 下**唯一通过 + 倍数差 ≥ 10**。弱判据（相对旋转角不变性）**只出现在 `_excitation_metrics` 里做激励诊断，不参与任何定案分支**（A11-4；源码扫描断言固定此事实）。
@@ -267,7 +268,8 @@ for t in test_unit_guard test_handeye_result test_handeye_file test_matrix_guard
 - **内核三改（本批实现，@verify 复核单独立项，见提交信息）**：① **残差向量化**（等价性由 `[0]` 节固定）② **AX=ZB 闭式初值**（随机多起点会**假阴性**：真值分支自己停在 rms 8~80 → 报"0 个候选通过"；实测 `n_starts` 1→6 与 `max_nfev` 500→20000 都救不回）③ **零空间解 ±vec(R) 必须先按 `det` 定符号**再做 SO(3) 投影（否则给出错旋转）。
 - **覆盖范围如实标注（禁写成"已覆盖"）**：A11-5 的"**留一冠军自然翻转**"本机**未找到合成用例**（@lead v2.3-④ 裁定不为此卡批次）。现测试断言的是：① 边界只出 `MULTI/INSUFFICIENT`；② 排名表并列全部候选；③ **掩码不变量** —— 任何掩码下都不允许"冠军变了而结论仍是 `OK`"。**后续找到自然翻转用例再补**，不得据此条宣称已覆盖翻转。
 - **重复位姿按去重计**（@verify 真实数据发现）：激励质量看**去重后的不同旋转条数**，不看总条数（真实数据集前 3 行逐位相同、相对旋转 0.00°）。平移散布判据按**维数**选（R25）：n<4 查共线（第 2 奇异值）、n≥4 查共面（第 3 奇异值）—— 按字面"最小奇异值"读会把**所有 n=3 数据集判死**。
-- **性能与超时**：单次判定（24 候选、n=6~8）约 2 s；默认开 LOO 约 41 s；`test_order_detect` 全文件约 **89 s**（12 真值 sweep 用 `n_starts=1, max_nfev=200`）。sweep 不要开 LOO。
+- **性能与超时**：单次判定（24 候选、n=6~8）约 2 s；默认开 LOO 约 41 s；`test_order_detect` 全文件约 **100 s**（12 真值 sweep 用 `n_starts=1, max_nfev=200`）。sweep 不要开 LOO。
+- **两套口径不可互相引用（实测，golden 的 n=2 差异）**：`min_poses.py` 的**纯拟合排名口径**（无激励门）在 **n=2 上是数据相关的** —— 它自带数据 1/12（"能定案"），本机另取一批 n=2 数据（seed=13）实测 **0/12**；本内核按 A11-2 硬下限 `n<3` 直接 `INSUFFICIENT`。两者都不给答案，本内核更严；引用 "12→4/12 / 18→6/18 / 24→8/24" 一类数字时必须带"纯拟合排名口径、无激励门"。golden 全量 sweep 单例 **27.1 s**，代价不进测试（测试只做免费的交叉校验：候选集一致 + 两内核残差逐元素一致 1.137e-13）。
 - **定向变异靶点（本批实测 5/5 全部检出，副本内做，交付树不动）**：
 
   | # | 变异（`core/order_detect.py`） | exit | 具名 `[FAIL]` 行 | 命中判据 |

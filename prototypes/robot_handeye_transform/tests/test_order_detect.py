@@ -60,6 +60,25 @@ def fnum(v, fmt=".3e") -> str:
     return format(v, fmt) if isinstance(v, (int, float)) else str(v)
 
 
+def load_golden_head(name: str):
+    """exec golden 目录里某脚本的**函数定义部分**（跳过顶层 sweep），返回命名空间。
+
+    与 `load_golden_resid` 同一纪律：引用 golden、不复制内容；缺失即测试失败。
+    """
+    for d in GOLDEN_DIRS:
+        p = os.path.join(d, name)
+        if not os.path.exists(p):
+            continue
+        with open(p, "r", encoding="utf-8") as f:
+            src = f.read()
+        ns = {}
+        marker = re.search(r"^rng\s*=", src, flags=re.M)
+        head = src[:marker.start()] if marker else src
+        exec(compile(head, p, "exec"), ns)              # noqa: S102
+        return ns, f"{p}（exec 函数定义，未复制内容）"
+    return None, f"未找到 {name}（找过 {GOLDEN_DIRS}）"
+
+
 def check(cond: bool, label: str, detail: str = ""):
     tag = "OK  " if cond else "FAIL"
     print(f"  [{tag}] {label}" + (f" | {detail}" if detail else ""))
@@ -498,6 +517,33 @@ try:
 except od.OrderDetectError as e:
     err = str(e)
 check("不支持的欧拉顺序" in err, "未知顺序 → 报错（不静默换口径）", err)
+
+print("=" * 78)
+print("[11] golden 交叉校验：min_poses.py 与 full_handeye.py 互为印证（引用，不复制）")
+GOLDEN_MP, mp_desc = load_golden_head("min_poses.py")
+check(GOLDEN_MP is not None, "min_poses.py 可加载（golden，缺失即 FAIL）", mp_desc)
+if GOLDEN_MP is not None:
+    mp_names = {s.lower() for s in GOLDEN_MP["SEQS"]}
+    od_names = {s.lower() for s in od.CANDIDATE_ORDERS}
+    check(len(GOLDEN_MP["SEQS"]) == len(od.CANDIDATE_ORDERS) == 12
+          and mp_names == od_names and len(mp_names) == 6,
+          "golden 的 12 个候选 = 本内核 CANDIDATE_ORDERS（6 个轴序名 × 内外旋两支）",
+          f"golden={sorted(GOLDEN_MP['SEQS'])} 本内核={sorted(od.CANDIDATE_ORDERS)}")
+    if golden_resid is not None:
+        xyz, abc, Ttc = OC.build(5, seed=41)
+        Tgb_g = [od.branch_matrix(od.Branch("XYZ", "deg"), xyz[i], abc[i]) for i in range(5)]
+        worst_gg = 0.0
+        for k in range(4):
+            p = np.random.default_rng(700 + k).normal(0.0, 30.0, 12)
+            a = np.asarray(golden_resid(p, Tgb_g, Ttc), dtype=float)
+            b = np.asarray(GOLDEN_MP["resid"](p, Tgb_g, Ttc), dtype=float)
+            worst_gg = max(worst_gg, float(np.max(np.abs(a - b))))
+        check(worst_gg < 1e-12, "两个 golden 内核互相逐元素一致（同一 p 同残差）",
+              f"max|Δ|={worst_gg:.3e}")
+    print("  [NOTE] 口径对照（**未在测试内执行 golden 全量 sweep**，实测单例 27.1 s 代价不进测试）：")
+    print("         min_poses 的纯拟合口径（无激励门）在 n=2 上是**数据相关**的 —— 它自己的数据 1/12，")
+    print("         本机另取一批 n=2 数据（seed=13）实测 **0/12**；本内核按 A11-2 硬下限 n<3 直接")
+    print("         INSUFFICIENT。两者都不给答案，本内核更严（RG-16 记此口径差异）。")
 
 print("=" * 78)
 if FAILURES:
