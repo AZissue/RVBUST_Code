@@ -70,11 +70,13 @@ from PySide6.QtWidgets import (QApplication, QHBoxLayout, QLabel,  # noqa: E402
 try:
     from ui.viewer_3d import EmbeddedPointCloudViewer
     from ui.worker_thread import run_in_background
+    from core.pcd_utils import merge_pointclouds     # 保色合并（K 规：禁止裸 +=）
     HAS_VIEWER = True
 except Exception as _e:      # 无 GL / 缺依赖时仍要能起 UI（查看器降级）
     print(f"[WARN] 主项目查看器引入失败（3D 显示降级）: {_e}")
     EmbeddedPointCloudViewer = None
     run_in_background = None
+    merge_pointclouds = None
     HAS_VIEWER = False
 
 from control_panel import ControlPanel       # noqa: E402  同目录
@@ -184,6 +186,7 @@ class RobotHandEyeWindow(QMainWindow):
         p.sig_tip_check.connect(self.on_tip_check)
         p.sig_overlap.connect(self.on_overlap_check)
         p.sig_save_session.connect(self.on_save_session)
+        p.sig_save_ply.connect(self.on_save_merged_ply)
 
     # ------------------------------------------------------------------
     # 日志 / 状态
@@ -199,6 +202,7 @@ class RobotHandEyeWindow(QMainWindow):
             p.set_state("IDLE（未加载手眼矩阵）", "#888888")
             p.set_tip_enabled(False)
             p.btn_export.setEnabled(False)
+            p.set_save_ply_enabled(False)
             return
         p.set_tip_enabled(True)
         if self.handeye.validated:
@@ -212,6 +216,9 @@ class RobotHandEyeWindow(QMainWindow):
             p.set_state("矩阵已加载 · UNVERIFIED（须通过戳点门禁才可导出）", "#ffb300")
             p.btn_export.setEnabled(False)
         p.set_overlap_enabled(len(self.captured_frames) >= 2)
+        # A4：合并 PLY 同属导出，同样吃 A3 门禁（VERIFIED 且 ≥1 帧）
+        p.set_save_ply_enabled(self.handeye.validated
+                               and len(self.captured_frames) >= 1)
 
     # ------------------------------------------------------------------
     # 手眼矩阵
@@ -471,6 +478,46 @@ class RobotHandEyeWindow(QMainWindow):
             sub, self.handeye, self.captured_poses, self.captured_frames,
             error_report=self.tip_report)
         self._log(("[OK] " if ok else "[拒绝] ") + msg)
+
+    def merged_pcd(self):
+        """已采集帧的保色合并点云（open3d）。走 merge_pointclouds 逐帧折叠，禁止裸 +=。"""
+        if not self.captured_frames:
+            return None
+        clouds = []
+        for xyz, colors in self.captured_frames:
+            pc = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(xyz))
+            if colors is not None:
+                pc.colors = o3d.utility.Vector3dVector(colors)
+            clouds.append(pc)
+        if merge_pointclouds is None:
+            raise RuntimeError("src/core 不可用（merge_pointclouds 缺失）："
+                               "合并导出已 fail-closed 禁用")
+        # merge_pointclouds(merged, pcd) 原地折叠 accumulator → 先 copy 首帧（K3）
+        merged = o3d.geometry.PointCloud(clouds[0])
+        for c in clouds[1:]:
+            merged = merge_pointclouds(merged, c)
+        return merged
+
+    def on_save_merged_ply(self):
+        """保存合并 PLY（A4）。fail-closed：未 VERIFIED 或无帧时按钮置灰，到不了这里。"""
+        if self.handeye is None or not self.handeye.validated:
+            self._log("[拒绝] 合并 PLY 保存被 A3 门禁拦住：未 VERIFIED")
+            return
+        if not self.captured_frames:
+            self._log("[拒绝] 尚未采集任何帧，无内容可保存")
+            return
+        from PySide6.QtWidgets import QFileDialog
+        path, _ = QFileDialog.getSaveFileName(
+            self, "保存合并点云", "merged_base.ply", "PLY (*.ply)")
+        if not path:
+            return
+        try:
+            merged = self.merged_pcd()
+            ok = o3d.io.write_point_cloud(path, merged)
+            self._log(("[OK] " if ok else "[拒绝] ") +
+                      f"合并点云已保存：{path}（{len(merged.points)} 点）")
+        except Exception as e:
+            self._log(f"[拒绝] 合并 PLY 保存失败：{e}")
 
     # ------------------------------------------------------------------
     # 无人值守自检（--smoke N，offscreen 亦可）

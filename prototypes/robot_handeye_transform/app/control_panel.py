@@ -53,6 +53,7 @@ class ControlPanel(QWidget):
     sig_tip_check = Signal()         # 运行戳点门禁
     sig_overlap = Signal()           # 两帧重合度快检（warning，非门禁）
     sig_save_session = Signal()      # 保存会话（A6，仅 VERIFIED 可用）
+    sig_save_ply = Signal()          # 保存合并 PLY（A4，仅 VERIFIED 可用）
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -171,6 +172,10 @@ class ControlPanel(QWidget):
         btn_clear.clicked.connect(self.sig_clear.emit)
         row.addWidget(btn_clear)
         v.addLayout(row)
+        self.btn_save_ply = QPushButton("保存合并 PLY（未 VERIFIED 置灰）")
+        self.btn_save_ply.setEnabled(False)
+        self.btn_save_ply.clicked.connect(self.sig_save_ply.emit)
+        v.addWidget(self.btn_save_ply)
         self.lbl_points = QLabel("无相机：使用合成点云（可复现，固定随机种子）")
         self.lbl_points.setWordWrap(True)
         self.lbl_points.setStyleSheet("color: #888;")
@@ -263,6 +268,9 @@ class ControlPanel(QWidget):
 
     def set_overlap_enabled(self, enabled: bool):
         self.btn_overlap.setEnabled(enabled)
+
+    def set_save_ply_enabled(self, enabled: bool):
+        self.btn_save_ply.setEnabled(enabled)
 
     # ------------------------------------------------------------------
     def _emit_load_handeye(self):

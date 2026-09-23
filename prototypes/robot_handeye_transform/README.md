@@ -46,8 +46,9 @@ app/    main.py            入口（无显示器时 QT_QPA_PLATFORM=offscreen；
 tests/  test_transform_chain.py / test_handeye_result.py / test_unit_guard.py
         test_matrix_guard.py / test_pose_source.py        （批 1.5 新增）
         test_validation_degenerate.py / test_session.py   （批 3 新增，A3/A6）
+        test_ui_smoke.py                                  （批 4 新增，A4/A5，offscreen）
 BASELINE.md  A8 版本锚点（BASE_HEAD / src diff hash / PROTO_COMMIT）
-REGRESSION.md 回归手册（@scribe，RG-01…RG-12）
+REGRESSION.md 回归手册（@scribe，RG-01…RG-13）
 ```
 
 ```bash
@@ -61,6 +62,7 @@ PY="D:/Program Files/Anaconda/envs/rvc/python.exe"
 "$PY" prototypes/robot_handeye_transform/tests/test_transform_chain.py  # A1（含 DLL oracle）
 "$PY" prototypes/robot_handeye_transform/tests/test_validation_degenerate.py  # A3/A9/R2/R3
 "$PY" prototypes/robot_handeye_transform/tests/test_session.py          # A6 会话往返
+"$PY" prototypes/robot_handeye_transform/tests/test_ui_smoke.py         # A4/A5（offscreen）
 ```
 
 判 pass/fail 看**进程退出码**（不要用 pytest）。DLL oracle 默认**必需**：缺失时
@@ -134,6 +136,17 @@ PY="D:/Program Files/Anaconda/envs/rvc/python.exe"
 | A6 会话往返 | handeye（含 validated=True）/ 4 位姿 / 4 帧（含颜色）/ error_report 落盘后逐位还原；缺文件/坏 JSON → 拒绝恢复（fail-closed，无半截会话） |
 | smoke 批 3 段 | 戳点 PASS → VERIFIED 解锁导出 → 会话往返 OK → 退化矩阵判 FAIL 回锁 → 重载矩阵回 UNVERIFIED，全过 |
 
+**批 4 实测（2026-09-23，offscreen 实跑）**
+
+| 项 | 结果 |
+|---|---|
+| 八测试退出码 | 全 0（七旧测试无退化 + test_ui_smoke 两轮复跑 exit=0/0） |
+| A4 三帧逐帧真值 | 合并前三帧比对：`0.000e+00 / 2.274e-13 / 2.274e-13 mm`（均 < 1e-9） |
+| A4 合并规模 | 3 × 20000 = **60000** 点（`merge_pointclouds` 两参折叠式：copy 首帧后逐帧 fold，非列表入参） |
+| A4 PLY 往返 | 落盘 → 重载点数 60000/60000 一致；NN 距离 median=0.000000 < 0.5 |
+| A5 实时性 | 30 万点**单帧** 复制+变换+合并 median=28.6 ms < 50 ms（5 次 runs 23.0/28.1/28.6/31.7/30.3；计时只含被测两段，累加器重建在计时外） |
+| 门禁接线 | 保存合并 PLY 按钮状态机全过：未 VERIFIED / 0 帧置灰 → VERIFIED 且 ≥1 帧解锁；清空后回锁但会话保存键保持解锁（两者语义不同，已写注释钉死） |
+
 ## 进度
 
 - [x] 批 0（部分）：prototypes/README 表更新 + A8 基线复核（HEAD=8221b82，
@@ -158,7 +171,20 @@ PY="D:/Program Files/Anaconda/envs/rvc/python.exe"
 - [x] 批 3：validation.py（TipTouchValidator 戳点门禁 + TwoFrameOverlapChecker
       warning 级快检）+ session.py（A6 会话落盘/恢复）+ UI 门禁接线
       （UNVERIFIED/VERIFIED/FAILED 状态机，VERIFIED 才允许保存会话）
-- [ ] 批 4：offscreen 端到端 + README 收尾 + 真机联调（待 §8 现场信息）
+- [x] 批 4（offscreen 部分）：test_ui_smoke（A4 端到端 + A5 计时 + 门禁接线）+
+      UI「保存合并 PLY」（走 `merge_pointclouds`，VERIFIED 门禁）。
+      **真机联调与 CameraPreviewCard 待 §8 现场信息（机器人品牌/位姿格式、
+      手眼矩阵是否落成文件、K2 注释批准），不在本批范围。**
+
+> **批 4 状态（2026-09-23，offscreen 部分完成）**：新增 `tests/test_ui_smoke.py`
+> （8 节），app 加「保存合并 PLY」按钮 + `merged_pcd()` + `on_save_merged_ply()`
+> （QFileDialog，VERIFIED 门禁），`_refresh_state` 按"VERIFIED 且 ≥1 帧"控钮态。
+> 八测试 + `--smoke 3` 全 exit=0，A8 守住（`git diff -- src/ | sha1sum` 仍
+> `7eceb8c3a8826bc1…`）。关键实现事实：`src/core/pcd_utils.merge_pointclouds`
+> 是**两参折叠式** `merge_pointclouds(merged, pcd)`（copy 首帧后逐帧 fold），
+> 不是列表入参；A5 计时口径为"单帧"——累加器重建在计时外，被测段只有
+> `transform_pcd`（内含 copy）+ `merge_pointclouds(acc, c1)` 两段，与 @qa 基线同项。
+> 真机联调与 CameraPreviewCard 依赖方案 §8 现场信息，明确归入后续批次。
 
 > **批 3 状态（2026-09-23）**：core 新增 `validation.py` / `session.py`，新增
 > `tests/test_validation_degenerate.py` / `tests/test_session.py`，`app/` 两文件接
