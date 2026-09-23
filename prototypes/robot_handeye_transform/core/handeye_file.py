@@ -11,9 +11,11 @@
     eye_in_hand   JSON true/false（**必须 bool**，字符串/数字一律拒）
     unit          "mm" | "m"
     matrix        16 个数，**行优先**（与官方 MAT 口径一致）
-    rms_t_mm / rms_r_deg / n_samples
+    rms_t_mm / rms_r_deg / n_samples  数值，或 **null**（= 未知，见下）
     euler         {order, intrinsic, output_format, angle_unit}
     可选：pose_order_detect（A11 顺序判定结论，与矩阵同一份落盘）
+    可选：verification（A3 门禁留痕，写侧一律写出；缺失按 UNVERIFIED 处理）
+    可选：validated（布尔冗余，与 verification 必须自洽，矛盾即拒）
 
 规则（实现口径，均有对应验收条款）：
 
@@ -27,10 +29,17 @@
     `HandEyeResult.from_matrix` —— 本模块不新增任何几何校验（方案 §4.2 禁第二份实现）。
   - **全精度落盘**：JSON 的 float 由 Python `repr` 序列化（不做 %.6f 之类的舍入），
     因此"写→读→逐元素比对"的 max|Δ| 实测为 **0.0**（A10-1，门槛 1e-12）。
+  - **`null` = 未知，不是 0**（@lead v2 §10.4-②）：手动录入来源没有 rms/n_samples，
+    写 `null`（写 0.0 会被读成"完美标定"）；读回时置 `res.rms_unknown = True`，
+    UI 必须显示"未知"。数值字段只接受 JSON number（`"0.1"` 字符串、`true`
+    一律拒 —— 强转会掩盖格式错误）。
   - **`validated` 不信文件声明**：读回后恒为 False（A3 fail-closed）；文件里的
-    `validated` 只作留痕，供人手看，不构成"已验证"。
+    `validated` / `verification` 只作留痕，供人手看，不构成"已验证"。
   - **v1 文件里并存旧 MCC 键**（`T_cam2tool` / `T_cam2base`）时必须自洽：与本文件
     `eye_in_hand` 不匹配的键、或数值与 `matrix` 不一致的键 → 拒绝（两个来源不允许并存）。
+  - **近似键名要拦**（@verify 复核备注②）：把 `pose_order_detect` 拼成 `order_detect`
+    会被"未知字段"规则静默吞掉 → 与已知键名近似的未知键直接拒（`difflib` 相似度
+    ≥ 0.7），提示正确键名；完全无关的未知键仍容忍（前向兼容）。
   - **原子写**：先写同目录 `a.tmp.json` 再 `os.replace`（照 `src/core/utils.py:56` 配方），
     避免半写文件被下游当成有效矩阵读走。
 
@@ -40,6 +49,7 @@
 from __future__ import annotations
 
 import datetime
+import difflib
 import hashlib
 import json
 import os
@@ -74,6 +84,14 @@ REQUIRED_EULER_FIELDS = ("order", "intrinsic", "output_format", "angle_unit")
 #: 旧 MCC JSON 的正/反变换键（K6）；v1 文件里若并存，必须与 eye_in_hand 自洽
 LEGACY_KEY = {True: "T_cam2tool", False: "T_cam2base"}
 LEGACY_KEY_OPPOSITE = {True: "T_cam2base", False: "T_cam2tool"}
+
+#: v1 已知键（含可选块）；不在表内且与表内键名**近似**的键 → 拒（见 _check_near_miss_keys）
+KNOWN_KEYS = (set(REQUIRED_FIELDS) | {"validated", "pose_order_detect", "verification"}
+              | set(LEGACY_KEY.values()) | set(LEGACY_KEY_OPPOSITE.values()))
+NEAR_MISS_CUTOFF = 0.7      # difflib 相似度门槛
+
+#: verification.state 允许值（写侧一律写出；读侧缺失按 UNVERIFIED 处理）
+VERIFICATION_STATES = ("VERIFIED", "UNVERIFIED", "FAILED")
 
 RT_TOL = 1e-12  #: 写→读→逐元素比对门槛（A10-1）
 
@@ -137,6 +155,75 @@ def _check_euler(euler) -> tuple[bool, str, Optional[dict]]:
                         "angle_unit": EULER_ANGLE_UNIT}
 
 
+def _check_numeric_or_null(value, name: str, *, integer: bool = False
+                           ) -> tuple[bool, str]:
+    """数值字段校验：JSON number 或 null；**字符串/bool 一律拒**（强转会掩盖格式错误）。
+
+    null = 未知（@lead v2 §10.4-②：rms/n_samples 未知时写 null，不写 0）。
+    """
+    if value is None:
+        return True, "ok"
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False, (f"{name} 必须是 JSON 数值或 null（未知），收到 {value!r}："
+                       f"字符串/bool 不接受（强转会掩盖格式错误）")
+    if integer and not isinstance(value, int):
+        return False, f"{name} 必须是整数或 null（未知），收到 {value!r}"
+    if not np.isfinite(float(value)):
+        return False, f"{name} 必须是有限数值，收到 {value!r}"
+    return True, "ok"
+
+
+def _check_verification(verification, validated_claim: Optional[bool]
+                        ) -> tuple[bool, str, Optional[dict]]:
+    """verification 块校验（A3 门禁留痕，@lead v2 §10.4-①）。
+
+    - `state` 必填且 ∈ VERIFICATION_STATES；
+    - `validated`（可选）必须与 `state` 自洽，且与顶层 `validated` 不矛盾（两个来源不许并存）。
+    - 本块**只是留痕**：读回后矩阵状态一律 UNVERIFIED（A3）。
+    """
+    if not isinstance(verification, dict):
+        return False, ("verification 必须是字典"
+                       f"（state/validated/tip_verdict/err_mean_mm），收到 "
+                       f"{type(verification).__name__}"), None
+    if "state" not in verification:
+        return False, "verification 缺 state（VERIFIED / UNVERIFIED / FAILED）", None
+    state = verification["state"]
+    if state not in VERIFICATION_STATES:
+        return False, (f"verification.state 必须是 {VERIFICATION_STATES} 之一，"
+                       f"收到 {state!r}"), None
+    block = dict(verification)
+    if "validated" in block:
+        v = block["validated"]
+        if not isinstance(v, bool):
+            return False, f"verification.validated 必须是 true/false，收到 {v!r}", None
+        if v != (state == "VERIFIED"):
+            return False, (f"verification 自相矛盾：state={state} 但 validated={v}"
+                           f"（应 {state == 'VERIFIED'}）"), None
+        if validated_claim is not None and bool(v) != bool(validated_claim):
+            return False, (f"verification.validated={v} 与顶层 validated="
+                           f"{validated_claim} 矛盾：同一事不许两个来源"), None
+    else:
+        block["validated"] = (state == "VERIFIED")
+    return True, "ok", block
+
+
+def _check_near_miss_keys(data: dict) -> tuple[bool, str]:
+    """近似键名守卫（@verify 复核备注②）。
+
+    把 `pose_order_detect` 拼成 `order_detect` 会被"未知字段容忍"静默吞掉 ——
+    与已知键名相似度 ≥ 0.7 的未知键直接拒并提示正确键名；完全无关的未知键仍容忍。
+    """
+    for key in data:
+        if key in KNOWN_KEYS:
+            continue
+        near = difflib.get_close_matches(key, sorted(KNOWN_KEYS), n=1,
+                                         cutoff=NEAR_MISS_CUTOFF)
+        if near:
+            return False, (f"未知字段 '{key}' 与已知字段 '{near[0]}' 名字近似："
+                           f"拒绝（拼错的字段会被静默忽略，结论就丢了）")
+    return True, "ok"
+
+
 def _check_legacy_keys(data: dict, eye_in_hand: bool, matrix_mm: np.ndarray
                        ) -> tuple[bool, str]:
     """v1 文件里并存旧 MCC 键时必须自洽（A10-4 第 3 类）。"""
@@ -165,7 +252,7 @@ def _check_legacy_keys(data: dict, eye_in_hand: bool, matrix_mm: np.ndarray
 def write_matrix_file(path: str, T_handeye_mm, *, eye_in_hand: bool, unit: str,
                       source: str, rms=(None, None), n_samples=None,
                       euler=None, order_detect=None, validated: bool = False,
-                      created_at: Optional[str] = None
+                      verification=None, created_at: Optional[str] = None
                       ) -> tuple[bool, str]:
     """把毫米域手眼矩阵写成 v1 矩阵文件（fail-closed：先校验，校验不过不落盘）。
 
@@ -175,13 +262,15 @@ def write_matrix_file(path: str, T_handeye_mm, *, eye_in_hand: bool, unit: str,
         eye_in_hand: True=T_cam2tool（眼在手上）/ False=T_cam2base，**必须显式 bool**。
         unit: 文件里数值的单位 "mm" | "m"（必填，无 auto，A2/D4）。
         source: 产出工具名+版本，或 "manual"。
-        rms: (rms_t_mm, rms_r_deg)；None → 写 0.0（**UI 必须标注为"未知"**，
-            不许显示成 0.000 让人误读成完美标定）。
-        n_samples: 标定样本数；None → 0。
+        rms: (rms_t_mm, rms_r_deg)；None → 写 **null = 未知**（不许写 0.0：
+            会被读成"完美标定"，@lead v2 §10.4-②）。
+        n_samples: 标定样本数；None → 写 null（未知）。
         euler: {order, intrinsic, output_format, angle_unit}；None → order/intrinsic
             写 null（= 未判定），口径两项写死常量。
         order_detect: A11 判定结论块（可选，程序写入，本模块不解释其内容）。
-        validated: 仅留痕，读回时一律 False（A3）。
+        validated: 门禁状态；仅留痕，读回时一律 False（A3）。
+        verification: A3 门禁留痕块；None → 由 validated 生成
+            `{"state": "VERIFIED"|"UNVERIFIED", "validated": <bool>}`。
         created_at: 测试注入用；None → 当前本地时间（带时区）。
 
     Returns:
@@ -223,6 +312,21 @@ def write_matrix_file(path: str, T_handeye_mm, *, eye_in_hand: bool, unit: str,
         return False, f"order_detect 必须是字典或 None（收到 {type(order_detect).__name__}）"
 
     rms_t, rms_r = (rms or (None, None))
+    ok, msg = _check_numeric_or_null(rms_t, "rms_t_mm")
+    if ok:
+        ok, msg = _check_numeric_or_null(rms_r, "rms_r_deg")
+    if ok:
+        ok, msg = _check_numeric_or_null(n_samples, "n_samples", integer=True)
+    if not ok:
+        return False, f"拒绝落盘：{msg}"
+
+    ok, msg, ver_block = _check_verification(
+        verification if verification is not None
+        else {"state": "VERIFIED" if validated else "UNVERIFIED",
+              "validated": validated}, validated)
+    if not ok:
+        return False, msg
+
     if created_at is None:
         created_at = _now_iso()
     else:
@@ -239,11 +343,12 @@ def write_matrix_file(path: str, T_handeye_mm, *, eye_in_hand: bool, unit: str,
         "eye_in_hand": eye_in_hand,
         "unit": unit,
         "matrix": [float(v) for v in T_file.reshape(-1)],   # 行优先
-        "rms_t_mm": 0.0 if rms_t is None else float(rms_t),
-        "rms_r_deg": 0.0 if rms_r is None else float(rms_r),
-        "n_samples": int(n_samples) if n_samples is not None else 0,
+        "rms_t_mm": None if rms_t is None else float(rms_t),
+        "rms_r_deg": None if rms_r is None else float(rms_r),
+        "n_samples": None if n_samples is None else int(n_samples),
         "euler": euler_block,
-        "validated": validated,     # 留痕；读回时一律 False
+        "validated": validated,     # 留痕；读回后一律 False
+        "verification": ver_block,
     }
     if order_detect is not None:
         data["pose_order_detect"] = order_detect
@@ -315,6 +420,9 @@ def read_matrix_file(path: str, *, unit_override: Optional[str] = None,
         return HandEyeResult.load(path, unit_override, eye_in_hand)
 
     # ---- v1 ----
+    ok, msg = _check_near_miss_keys(data)
+    if not ok:
+        return False, msg, None
     missing = [k for k in REQUIRED_FIELDS if k not in data]
     if missing:
         return False, (f"矩阵文件缺必填字段 {missing}（v1 不允许补默认值，A10-2）："
@@ -370,12 +478,28 @@ def read_matrix_file(path: str, *, unit_override: Optional[str] = None,
     if not ok:
         return False, msg, None
 
-    try:
-        rms_t = float(data["rms_t_mm"])
-        rms_r = float(data["rms_r_deg"])
-        n_samples = int(data["n_samples"])
-    except (TypeError, ValueError) as e:
-        return False, f"rms_t_mm / rms_r_deg / n_samples 必须是数值：{e}", None
+    ok, msg = _check_numeric_or_null(data["rms_t_mm"], "rms_t_mm")
+    if ok:
+        ok, msg = _check_numeric_or_null(data["rms_r_deg"], "rms_r_deg")
+    if ok:
+        ok, msg = _check_numeric_or_null(data["n_samples"], "n_samples", integer=True)
+    if not ok:
+        return False, msg, None
+    rms_t = float(data["rms_t_mm"]) if data["rms_t_mm"] is not None else 0.0
+    rms_r = float(data["rms_r_deg"]) if data["rms_r_deg"] is not None else 0.0
+    n_samples = int(data["n_samples"]) if data["n_samples"] is not None else 0
+    # null = 未知（不是 0）：交给 UI 显示"未知"，不许当成"完美标定"（@lead v2 §10.4-②）
+    rms_unknown = (data["rms_t_mm"] is None or data["rms_r_deg"] is None
+                   or data["n_samples"] is None)
+
+    validated_claim = data["validated"] if "validated" in data else None
+    if validated_claim is not None and not isinstance(validated_claim, bool):
+        return False, (f"validated 必须是 JSON true/false，收到 {validated_claim!r}"), None
+    ver_block = None
+    if "verification" in data:
+        ok, msg, ver_block = _check_verification(data["verification"], validated_claim)
+        if not ok:
+            return False, msg, None
 
     pod = data.get("pose_order_detect")
     if pod is not None and not isinstance(pod, dict):
@@ -390,17 +514,23 @@ def read_matrix_file(path: str, *, unit_override: Optional[str] = None,
     res.file_meta = {
         "format": FORMAT_NAME, "version": data["version"],
         "created_at": data["created_at"], "unit": unit,
-        "source": data["source"], "validated_claim": bool(data.get("validated", False)),
+        "source": data["source"], "validated_claim": bool(validated_claim),
+        "verification_state": (ver_block or {}).get("state"),
     }
     res.euler = euler_block
     res.pose_order_detect = pod
+    res.verification = ver_block          # None = 文件无该块（老文件）
+    res.rms_unknown = rms_unknown
 
-    claim = "true" if data.get("validated") else "false"
+    ver_note = (f"verification.state={ver_block['state']}" if ver_block
+                else "无 verification 块（按 UNVERIFIED 处理）")
+    rms_note = "rms/n_samples=未知" if rms_unknown else \
+        f"rms_t={rms_t:g} rms_r={rms_r:g} n={n_samples}"
     return True, (f"v1 矩阵文件已加载：unit={unit}"
                   f"（{'以文件为准' if unit_override is None else '文件与界面一致'}），"
                   f"source={data['source']}，created_at={data['created_at']}，"
-                  f"euler.order={euler_block['order']!r}；"
-                  f"文件声明 validated={claim} → 本工具一律置 UNVERIFIED（A3）"), res
+                  f"euler.order={euler_block['order']!r}，{rms_note}；"
+                  f"{ver_note} → 本工具一律置 UNVERIFIED（A3）"), res
 
 
 # ----------------------------------------------------------------------

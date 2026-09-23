@@ -259,8 +259,13 @@ class RobotWorkspace(QWidget):
             p.btn_export.setEnabled(False)
             p.set_save_ply_enabled(False)
             p.set_export_file_enabled(False)
+            p.set_export_gate(False, False)
+            p.set_he_meta("")
             return
         p.set_export_file_enabled(True)     # 批 6A：矩阵落文件不卡 A3 门禁（文件 stamp validated）
+        # 批 6A 屏上显形（@lead v2 §10.4-①）：门禁状态 + rms/n_samples（未知显示"未知"）
+        p.set_export_gate(True, bool(self.handeye.validated))
+        p.set_he_meta(self.handeye_meta_text())
         p.set_tip_enabled(True)
         if self.handeye.validated:
             p.set_state("VERIFIED（戳点门禁通过，允许导出）", "#4caf50")
@@ -280,23 +285,34 @@ class RobotWorkspace(QWidget):
     # ------------------------------------------------------------------
     # 手眼矩阵
     # ------------------------------------------------------------------
-    def on_load_handeye(self, path: str, unit: Optional[str], eye_in_hand: bool):
+    def on_load_handeye(self, path: str, unit: Optional[str], eye_in_hand):
         if not path:
             self._log("[拒绝] 请填写 handeye.json 路径")
             return
         if unit is None:
             self._log("[拒绝] 单位必须显式选择 mm 或 m（无默认，D4）")
             return
+        # 安装方式未选 = None：**原样传下去**，由 JSON 自己的 eye_in_hand 决定并在日志明说。
+        # 旧版把 None 转成 False 再传，对 eye_in_hand=true 的 JSON 会报
+        # "安装方式不一致"（其实是"没选"）——@lead v2 §10.4-③。
+        if eye_in_hand is None:
+            self._log("[提示] 未选安装方式 → 以 JSON 内 eye_in_hand 为准"
+                      "（与 JSON 声明冲突时会拒绝）")
         ok, msg, res = he_mod.HandEyeResult.load(path, unit, eye_in_hand)
         self._on_handeye_result(ok, msg, res)
 
-    def on_manual_handeye(self, text: str, unit: Optional[str], eye_in_hand: bool):
+    def on_manual_handeye(self, text: str, unit: Optional[str], eye_in_hand):
         vals = ControlPanel.parse_floats(text)
         if vals is None:
             self._log("[拒绝] 手动录入需 16 个数（行优先，逗号/空格分隔）")
             return
         if unit is None:
             self._log("[拒绝] 单位必须显式选择 mm 或 m（无默认，D4）")
+            return
+        if eye_in_hand is None:
+            # 手动录入没有文件可推断安装方式 → 必须显式选（D4：安装方式不预选）
+            self._log("[拒绝] 安装方式必须显式选择（眼在手上 / 眼在手外）："
+                      "手动录入无文件可推断，静默默认会写出反装矩阵（K6）")
             return
         ok, msg, res = he_mod.HandEyeResult.from_matrix(vals, unit, eye_in_hand)
         self._on_handeye_result(ok, msg, res)
@@ -326,6 +342,20 @@ class RobotWorkspace(QWidget):
     # ------------------------------------------------------------------
     # 批 6A：矩阵落文件（A10）
     # ------------------------------------------------------------------
+    def handeye_meta_text(self) -> str:
+        """矩阵元数据回显文本（`未知` 不许显示成 0，@lead v2 §10.4-②）。"""
+        h = self.handeye
+        if h is None:
+            return ""
+        unknown = bool(getattr(h, "rms_unknown", False)) or h.n_samples == 0
+        rms_txt = ("rms=未知 · n_samples=未知（文件里是 null，不是 0）" if unknown
+                   else f"rms_t={h.rms_t_mm:g} mm · rms_r={h.rms_r_deg:g}° · "
+                        f"n_samples={h.n_samples}")
+        ver = getattr(h, "verification", None)
+        ver_txt = f"verification={ver['state']}" if ver else "无 verification 块"
+        return (f"来源 {os.path.basename(h.source)} · {rms_txt} · {ver_txt} · "
+                f"‖t‖={np.linalg.norm(h.T_handeye_mm[:3, 3]):.3f} mm")
+
     def export_handeye_file(self, path: str) -> bool:
         """把当前矩阵写成 v1 矩阵文件（无对话框版本，`--smoke` 也走它，A10）。
 
@@ -349,16 +379,32 @@ class RobotWorkspace(QWidget):
         src = (hf_mod.SOURCE_TOOL if self.handeye.source == "manual"
                else f"{hf_mod.SOURCE_TOOL}; loaded_from="
                     f"{os.path.basename(self.handeye.source)}")
+        # 未知的 rms/n_samples 写 null，不写 0.0（@lead v2 §10.4-②）
+        unknown = (bool(getattr(self.handeye, "rms_unknown", False))
+                   or self.handeye.n_samples == 0)
+        rms = (None, None) if unknown else (self.handeye.rms_t_mm,
+                                            self.handeye.rms_r_deg)
+        n_samples = None if unknown else self.handeye.n_samples
+        # A3 门禁留痕块（@lead v2 §10.4-①）：屏上黄条与文件里同一份事实
+        tip = self.tip_report or {}
+        verification = {
+            "state": ("VERIFIED" if self.handeye.validated
+                      else ("FAILED" if tip.get("verdict") == "FAIL"
+                            else "UNVERIFIED")),
+            "validated": bool(self.handeye.validated),
+            "tip_verdict": tip.get("verdict"),
+            "err_mean_mm": (float(tip["err_mean_mm"])
+                            if tip.get("err_mean_mm") is not None else None),
+        }
         ok, msg = hf_mod.write_matrix_file(
             path, self.handeye.T_handeye_mm,
             eye_in_hand=self.handeye.eye_in_hand, unit=unit, source=src,
-            rms=(self.handeye.rms_t_mm, self.handeye.rms_r_deg),
-            n_samples=self.handeye.n_samples, euler=euler,
-            validated=self.handeye.validated)
+            rms=rms, n_samples=n_samples, euler=euler,
+            validated=self.handeye.validated, verification=verification)
         self._log(("[OK] " if ok else "[拒绝] ") + msg + note)
-        if ok and self.handeye.n_samples == 0:
-            self._log("     注意：文件里 rms_t_mm / rms_r_deg / n_samples = 0.0 的"
-                      "含义是**未知**（非 0 误差），不要读成完美标定。")
+        if ok and unknown:
+            self._log("     注意：文件里 rms_t_mm / rms_r_deg / n_samples = null 的"
+                      "含义是**未知**（源数据没有这几个量），不是 0 误差。")
         return ok
 
     def on_export_handeye_file(self):
@@ -905,12 +951,39 @@ class RobotWorkspace(QWidget):
             d6 = json.load(fh6)
         stamp_ok = (d6.get("validated") is False
                     and self.handeye.validated is False
-                    and self.panel.btn_export_he_file.isEnabled())
-        print(f"[{'OK' if stamp_ok else 'FAIL'}] 6A 门禁留痕：UNVERIFIED 也可导出，"
-              f"文件 validated={d6.get('validated')}（矩阵状态 "
-              f"validated={self.handeye.validated}），导出按钮可用="
-              f"{self.panel.btn_export_he_file.isEnabled()}")
+                    and (d6.get("verification") or {}).get("state") == "UNVERIFIED"
+                    and self.panel.btn_export_he_file.isEnabled()
+                    and self.panel.lbl_export_gate.isVisible())
+        print(f"[{'OK' if stamp_ok else 'FAIL'}] 6A 门禁留痕+屏上显形：UNVERIFIED 也可导出，"
+              f"文件 validated={d6.get('validated')}／verification.state="
+              f"{(d6.get('verification') or {}).get('state')}，导出按钮可用="
+              f"{self.panel.btn_export_he_file.isEnabled()}，屏上黄条可见="
+              f"{self.panel.lbl_export_gate.isVisible()}")
         if not stamp_ok:
+            bad += 1
+        # 未知值必须写 null（不是 0.0），读回必须标记为未知（@lead v2 §10.4-②）
+        null_ok = (d6.get("rms_t_mm") is None and d6.get("rms_r_deg") is None
+                   and d6.get("n_samples") is None
+                   and bool(getattr(res_rd, "rms_unknown", False))
+                   and "未知" in self.handeye_meta_text())
+        print(f"[{'OK' if null_ok else 'FAIL'}] 6A 未知值写 null：文件 rms_t_mm="
+              f"{d6.get('rms_t_mm')!r} / rms_r_deg={d6.get('rms_r_deg')!r} / "
+              f"n_samples={d6.get('n_samples')!r}；读回 rms_unknown="
+              f"{getattr(res_rd, 'rms_unknown', None)}；屏上元数据行含'未知'="
+              f"{'未知' in self.handeye_meta_text()}")
+        if not null_ok:
+            bad += 1
+        # 安装方式未选：手动录入必须报"未选"，不许伪装成 False 再报"不一致"（§10.4-③）
+        self.panel.combo_he_mount.setCurrentIndex(0)      # 回到「请选择」
+        self.panel.combo_he_unit.setCurrentIndex(1)       # 毫米
+        n_frames_before = len(self.captured_frames)
+        self.on_manual_handeye("1,0,0,20, 0,1,0,-10, 0,0,1,120, 0,0,0,1", "mm", None)
+        mount_ok = (self.handeye is not None
+                    and np.array_equal(self.handeye.T_handeye_mm, T_before)
+                    and len(self.captured_frames) == n_frames_before)
+        print(f"[{'OK' if mount_ok else 'FAIL'}] 6A 安装方式未选 → 手动录入已拒："
+              f"矩阵未被替换={mount_ok}（旧版会静默当'眼在手外'录进去）")
+        if not mount_ok:
             bad += 1
         # 面板导入槽位（不经鼠标，直接调窗口槽；与 RG-14 ④ 同手法）
         imp_ok = self.import_handeye_file(f6a)

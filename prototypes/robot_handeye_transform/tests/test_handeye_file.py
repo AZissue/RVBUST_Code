@@ -21,6 +21,9 @@ A10 手眼矩阵落文件测试（test_handeye_file）。
       test_handeye_result.py 子进程 exit=0
   [6] 留痕语义：文件里的 validated 不被信任（读回恒 False）；euler /
       pose_order_detect 块往返保留；非刚性矩阵拒绝落盘且不留半截文件
+  [7] 收尾（@lead v2 §10.4 / @verify 备注②③）：verification 块自洽性 →
+      未知 rms/n_samples 写 null（不写 0.0）→ 数值字段不做静默强转 →
+      近似键名（`order_detect` 拼错）必须拒
 """
 
 import json
@@ -315,9 +318,18 @@ def main():
     f7 = p("m6_manual.json")
     ok, msg = write_matrix_file(f7, T0, eye_in_hand=True, unit="mm", source="manual")
     d = read_json(f7)
-    check(ok and d["rms_t_mm"] == 0.0 and d["n_samples"] == 0
+    check(ok and d["rms_t_mm"] is None and d["rms_r_deg"] is None
+          and d["n_samples"] is None
           and d["euler"]["order"] is None and d["euler"]["intrinsic"] is None,
-          "无 rms/n_samples/order 时写 0.0 / null（UI 必须标注'未知'，不许装成完美标定）")
+          "无 rms/n_samples 时写 **null**（未知），不是 0.0（@lead v2 §10.4-②）",
+          f"rms_t_mm={d['rms_t_mm']!r} n_samples={d['n_samples']!r}")
+    check(d["verification"] == {"state": "UNVERIFIED", "validated": False},
+          "默认 verification 块由 validated 生成", str(d["verification"]))
+    ok, msg, res7 = read_matrix_file(f7)
+    check(ok and res7.rms_unknown is True and res7.rms_t_mm == 0.0
+          and res7.verification["state"] == "UNVERIFIED",
+          "读回：null → rms_unknown=True（数据类字段仍为 0.0 供旧代码用）",
+          f"rms_unknown={res7.rms_unknown}")
     ok, msg = write_matrix_file(p("m6_e2.json"), T0, eye_in_hand=True, unit="mm",
                                 source="manual",
                                 euler={"order": "ZYX", "intrinsic": "yes",
@@ -333,6 +345,60 @@ def main():
     ok, msg = write_matrix_file(p("m6_e5.json"), T0, eye_in_hand=True, unit="mm",
                                 source="")
     check(not ok, "source 空 → 写入即拒", msg[:96])
+
+    # ==================================================================
+    print("=" * 74)
+    print("[7] 收尾三项 / @verify 备注②③：verification 自洽 / 数值严格 / 近似键名")
+    ok, msg = write_matrix_file(p("m7_ver.json"), T0, eye_in_hand=True, unit="mm",
+                                source="manual", validated=True,
+                                verification={"state": "VERIFIED", "validated": True,
+                                              "tip_verdict": "PASS", "err_mean_mm": 0.31},
+                                created_at="2026-09-23T15:40:00+08:00")
+    check(ok, "verification 块落盘（VERIFIED + 戳点指标）", msg[:110])
+    ok, msg, rv = read_matrix_file(p("m7_ver.json"))
+    check(ok and rv.validated is False and rv.verification["state"] == "VERIFIED"
+          and rv.verification["err_mean_mm"] == 0.31,
+          "文件说 VERIFIED → 读回仍 UNVERIFIED，但留痕可读（A3）",
+          f"state={rv.verification['state']} validated={rv.validated}")
+    for label, ver in (
+            ("state 非法", {"state": "OK"}),
+            ("state 与 validated 自相矛盾", {"state": "UNVERIFIED", "validated": True}),
+            ("非字典", [1, 2]),
+            ("缺 state", {"validated": False})):
+        d = read_json(p("m7_ver.json")); d["verification"] = ver
+        ok, msg, _ = read_matrix_file(write_json(p("m7_badver.json"), d))
+        check(not ok, f"verification {label} → 拒", msg[:96])
+    d = read_json(p("m7_ver.json")); d["validated"] = False   # 与 verification 矛盾
+    ok, msg, _ = read_matrix_file(write_json(p("m7_badver2.json"), d))
+    check(not ok and "矛盾" in msg,
+          "verification.validated 与顶层 validated 矛盾 → 拒（同一事不许两个来源）", msg[:96])
+    d = read_json(p("m6.json")); del d["verification"]
+    ok, msg, rv2 = read_matrix_file(write_json(p("m7_nover.json"), d))
+    check(ok and rv2.verification is None
+          and rv2.file_meta["verification_state"] is None,
+          "老文件无 verification 块 → 容忍，按 UNVERIFIED 处理（fail-closed）", msg[:96])
+
+    d = read_json(p("m7_nover.json"))
+    for label, key, value in (
+            ("rms 写字符串", "rms_t_mm", "0.1"),
+            ("rms 写 bool", "rms_r_deg", True),
+            ("n_samples 写字符串", "n_samples", "9"),
+            ("n_samples 写小数", "n_samples", 1.5)):
+        dd = dict(d); dd[key] = value
+        ok, msg, _ = read_matrix_file(write_json(p("m7_num.json"), dd))
+        check(not ok, f"{label}（{key}={value!r}）→ 拒（不做静默强转）", msg[:96])
+    ok, msg = write_matrix_file(p("m7_w.json"), T0, eye_in_hand=True, unit="mm",
+                                source="manual", rms=("0.1", 0.1), n_samples=3)
+    check(not ok and "数值" in msg, "写侧：rms 给字符串 → 拒", msg[:96])
+
+    d = read_json(p("m7_nover.json"))
+    dd = dict(d); dd["order_detect"] = {"detected": "ZYX"}       # 拼错（应为 pose_order_detect）
+    ok, msg, _ = read_matrix_file(write_json(p("m7_typo.json"), dd))
+    check(not ok and "pose_order_detect" in msg,
+          "@verify ②：拼成 'order_detect' → 拒并提示正确键名（不再静默吞掉）", msg[:110])
+    dd = dict(d); dd["my_note"] = "现场备注"
+    ok, msg, _ = read_matrix_file(write_json(p("m7_extra.json"), dd))
+    check(ok, "@verify ②：完全无关的未知键仍容忍（前向兼容）", msg[:96])
 
     shutil.rmtree(TMP, ignore_errors=True)
     print("=" * 74)

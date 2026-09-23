@@ -41,8 +41,8 @@ def _combo(items, empty_text: str = PLACEHOLDER) -> QComboBox:
 class ControlPanel(QWidget):
     """左侧控制面板。信号里的参数都是原始输入，校验由 core 做。"""
 
-    sig_load_handeye = Signal(str, str, bool)      # path, unit, eye_in_hand
-    sig_manual_handeye = Signal(str, str, bool)    # 16 数文本, unit, eye_in_hand
+    sig_load_handeye = Signal(str, str, object)    # path, unit, eye_in_hand(True/False/None)
+    sig_manual_handeye = Signal(str, str, object)  # 16 数文本, unit, eye_in_hand(必须显式)
     sig_pose_kind = Signal(str)                    # manual | mock | csv
     sig_manual_pose = Signal(str, str, str, str, str)  # xyz, rpy, order, unit, pose_type
     sig_mock_step = Signal()
@@ -120,6 +120,17 @@ class ControlPanel(QWidget):
         self.btn_import_he_file.clicked.connect(self.sig_import_handeye_file.emit)
         row3.addWidget(self.btn_import_he_file)
         v.addLayout(row3)
+
+        # 屏上显形（@lead v2 §10.4-①）：门禁留痕黄条 + 元数据行（未知值必须显示"未知"）
+        self.lbl_export_gate = QLabel("")
+        self.lbl_export_gate.setWordWrap(True)
+        self.lbl_export_gate.setVisible(False)
+        v.addWidget(self.lbl_export_gate)
+        self.lbl_he_meta = QLabel("")
+        self.lbl_he_meta.setWordWrap(True)
+        self.lbl_he_meta.setStyleSheet("color: #888888;")
+        self.lbl_he_meta.setVisible(False)
+        v.addWidget(self.lbl_he_meta)
         return g
 
     def _build_pose_group(self) -> QWidget:
@@ -296,16 +307,39 @@ class ControlPanel(QWidget):
         """批 6A：矩阵加载后才允许导出矩阵文件（A10）。"""
         self.btn_export_he_file.setEnabled(enabled)
 
+    def set_export_gate(self, loaded: bool, validated: bool):
+        """批 6A 屏上显形（@lead v2 §10.4-①）：门禁留痕不许只活在日志里。"""
+        if not loaded:
+            self.lbl_export_gate.setVisible(False)
+            return
+        if validated:
+            self.lbl_export_gate.setText(
+                "✔ 已 VERIFIED：导出的矩阵文件 verification.state=VERIFIED")
+            self.lbl_export_gate.setStyleSheet("color: #4caf50;")
+        else:
+            self.lbl_export_gate.setText(
+                "⚠ 未 VERIFIED：仍可导出矩阵文件，但文件里 "
+                "verification.state=UNVERIFIED，接手方须复核")
+            self.lbl_export_gate.setStyleSheet("color: #ffb300;")
+        self.lbl_export_gate.setVisible(True)
+
+    def set_he_meta(self, text: str):
+        """批 6A：矩阵元数据回显。rms/n_samples 未知时**必须显示"未知"**（不显示 0）。"""
+        self.lbl_he_meta.setText(text)
+        self.lbl_he_meta.setVisible(bool(text))
+
     # ------------------------------------------------------------------
     def _emit_load_handeye(self):
         unit, mount = self.handeye_meta()
+        # mount 未选 = None **原样**传出（旧版 bool(None)→False 会把"未选"伪装成
+        # "选了眼在手外"，报错信息说成"安装方式不一致"——@lead v2 §10.4-③ 修）
         self.sig_load_handeye.emit(self.edit_he_path.text().strip(),
-                                   unit, bool(mount))
+                                   unit, mount)
 
     def _emit_manual_handeye(self):
         unit, mount = self.handeye_meta()
         self.sig_manual_handeye.emit(self.edit_he_manual.text().strip(),
-                                     unit, bool(mount))
+                                     unit, mount)
 
     def _emit_manual_pose(self):
         unit, pose_type, order = self.pose_meta()
