@@ -16,8 +16,8 @@
 |---|---|
 | `BASE_HEAD` | `8221b82`（2026-09-09，分支 `MultiCameraCalibration`） |
 | `BASE_SRC_DIFF_SHA`（K2 改**前**，2026-09-23 @dev 复核） | `7eceb8c3a8826bc13076a235205fb18d44717c6a` |
-| `POST_K2_SRC_DIFF_SHA`（K2 改**后**） | **待回填** —— K2 三行注释修正尚未获 @user 批准（方案 §8-③），未落地 |
-| 工作树原有未提交改动 | 15 文件 +363/−236（**非本原型引入**，不清理也不背锅，R9） |
+| `POST_K2_SRC_DIFF_SHA`（K2 改**后**，2026-09-23 回填） | `23bfa1ed0dba0b1c88c313429c955ea7f2acc497`（commit `11926c2`，K2 三行注释已获 @user 批准并落地） |
+| 工作树原有未提交改动 | 16 文件 +381/−267（**非本原型引入**，不清理也不背锅，R9）。2026-09-23 下午起含一批并行的「原子写重构」（`write_point_cloud_atomic` / `write_json_atomic`，12+ 文件，含 `robot_stitch_workflow.py` 的 2 个功能性 hunk）——K2 提交时已用 `git apply --cached` 把注释 hunk 与这 2 个外部 hunk 分离，**K2 commit 只含 3+/3- 注释行** |
 
 一致性记录：该值与 @arch 方案 v4 的 A8 记述、@feas 独立复跑值逐字符一致。
 
@@ -35,7 +35,7 @@
 用的是 `T_cam2tool`（实现对，注释错）；13 行 `T_cam2base⁻¹ = T_base2cam` 自相矛盾。
 14 行正确，不动。
 
-**拟改后原文（待批）**
+**改后原文（已落地：commit `11926c2`，2026-09-23，3+/3- 纯注释，零行为影响）**
 
 ```
 11  Eye-in-Hand: T_cam2base = T_base2tool @ T_cam2tool
@@ -43,9 +43,11 @@
 13  Eye-to-Hand: T_cam2base = T_cam2base（手眼标定结果，与机器人位姿无关）
 ```
 
-批准后需：① 落地这 3 行；② 把新的 `git diff -- src/ | sha1sum` 写进上表
-`POST_K2_SRC_DIFF_SHA`。**不批的代价**：A8 只算半闭环（@feas 实读：现有两个 hunk
-全是功能性改动 `write_point_cloud_atomic`，没有任何注释 hunk）。
+**落地记录（2026-09-23）**：@user 批准（方案 §8-③）后由 @dev 执行。落地时工作树
+已混入并行的原子写重构（同文件 2 个功能性 hunk），用 `git apply --cached` 只暂存
+注释 hunk，commit `11926c2` 经 `git show --stat` 核实为 1 文件 3+/3-；改后
+`git diff -- src/ | sha1sum` = `23bfa1ed…`（残留 diff 全为外部原子写重构，非本原型）。
+A8 自此**全闭环**：原型对 src/ 的全部改动就是这 3 行注释，且已进 HEAD。
 
 ## 变更说明（供将来 blame 对照）
 

@@ -149,9 +149,10 @@ PY="D:/Program Files/Anaconda/envs/rvc/python.exe"
 
 ## 进度
 
-- [x] 批 0（部分）：prototypes/README 表更新 + A8 基线复核（HEAD=8221b82，
+- [x] 批 0：prototypes/README 表更新 + A8 基线复核（HEAD=8221b82，
       src/ diff sha1=7eceb8c3a8826bc1 与 @arch/@feas 记录一致，见 `BASELINE.md`）。
-      `src/core/robot_stitch_workflow.py` 3 行注释修正**待 @user 批准（§8-③）**。
+      `src/core/robot_stitch_workflow.py` 3 行注释修正（K2）**已落地**：commit `11926c2`
+      （3+/3- 纯注释，§8-③ 已获 @user 批准），A8 **全闭环**。
 - [x] 批 1：core 四件套 + A1/A2/A7 测试全绿
 - [x] 批 1.5（批 2 前置，9 项全落）：
       ① `check_rigid_4x4` / `check_pose_norm` 抽进 `unit_guard` 共用层，
