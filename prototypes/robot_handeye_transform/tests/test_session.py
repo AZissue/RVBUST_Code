@@ -157,6 +157,10 @@ check(not ok12, "坏位姿拒收", msg12[:40])
 ok13, msg13 = save_session(
     bad_dir, np.eye(3) * np.nan, POSES, FRAMES[:1])
 check(not ok13, "坏矩阵拒收", msg13[:40])
+ok13b, msg13b = save_session(
+    bad_dir, {"eye_in_hand": True}, POSES, FRAMES[:1])
+check(not ok13b, "缺 T_handeye_mm 字段的 handeye 字典拒收（不抛 KeyError）",
+      msg13b[:50])
 check(not os.path.exists(bad_dir), "拒绝时不写盘（无半截会话）",
       f"exists={os.path.exists(bad_dir)}")
 

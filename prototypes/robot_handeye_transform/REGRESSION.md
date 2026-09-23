@@ -1,6 +1,6 @@
 # 机器人手眼变换原型 — 回归手册（REGRESSION）
 
-> v1 2026-09-23 汇编（@qa 提出、@scribe 落盘）；v2 2026-09-23 批 1.5 / 批 2 后逐条标状态；**v3 2026-09-23**——收 @qa 第 2 轮复核（锚点表时效性、矩阵侧 NaN 无对称用例）与 @feas 新缺陷 RG-11，新增 RG-11 / RG-12，误拦列改定性表述。
+> v1 2026-09-23 汇编（@qa 提出、@scribe 落盘）；v2 2026-09-23 批 1.5 / 批 2 后逐条标状态；v3 2026-09-23——收 @qa 第 2 轮复核（锚点表时效性、矩阵侧 NaN 无对称用例）与 @feas 新缺陷 RG-11，新增 RG-11 / RG-12，误拦列改定性表述；**v4 2026-09-23 批 3 后**——@qa 批 3 独立复核结论入库（RG-05 变异台账补 4 条、新增 RG-13）。
 > 位置与 `BASELINE.md` 同级，随原型进版本控制。用途：**换机 / 他人 / 未来版本复跑时，判定"真跑了"还是"看起来绿了"**。每条含现象、成因、判读规则、来源。
 > 权威口径以方案 `docs\机器人手眼变换原型方案_20260922.md`（当前 v4.3，390 行）为准；本手册只做复跑判读。
 
@@ -88,7 +88,17 @@ for t in test_unit_guard test_handeye_result test_matrix_guard test_pose_source 
 
 - **@dev 给 @qa 的待独立验证变异点**：① `unit_guard.ORTH_TOL=1e9` → shear 用例必须 FAIL；② `check_pose_norm` 的 `not (lo<=n<=hi)` 改回 `n<lo or n>hi` → NaN 用例必须 FAIL；③ `to_mm` 改 ×100 → 旧两测试 FAIL。
 - **@qa v3 独立种入的 7 类变异**：`ORTH_TOL=1e9` / `to_mm`×100 / 窗口加 `.get()` 兜底 / 跳过刚性校验 / 位姿侧 NaN 写法回退 → **全部被拦住**（`test_matrix_guard` / `test_pose_source` FAIL，`.get()` 由源码级断言拦住）；唯一未拦的是**矩阵侧** NaN 写法回退（见 RG-04 新发现）。
-- **来源**：@qa `qa_mutation_test.py`（两轮）；@feas `feas_probe_mut.py` / `mut_out2.txt`。
+- **@qa v4 批 3 独立种入的 4 类变异**（临时副本，`core/validation.py` / `core/session.py`，全部被拦住）：
+
+| 变异 | 期望 | 实跑 |
+|---|---|---|
+| M5 禁掉 err_mean 硬门禁（`> gate and False`） | 退化矩阵用例（110 mm）不再 FAIL → 测试 exit≠0 | ✅ `test_validation_degenerate` exit=1 |
+| M6 禁掉姿态离面判据（`need=-2.0`） | 纯平移/共轴用例不再 FAIL → exit≠0 | ✅ exit=1 |
+| M7 `write_ply` 丢颜色（`has_color=False`） | 颜色一致性用例 FAIL → exit≠0 | ✅ `test_session` exit=1 |
+| M8 禁掉位姿 16 数校验（`!=16`→`!=99`） | 坏 poses.json 用例不再 FAIL → exit≠0 | ✅ exit=1 |
+
+- **批 3 复核中修复的一处真实缺陷**：`session.handeye_to_dict` 收到**缺 `T_handeye_mm` 键的字典**时抛未捕获 `KeyError`（不是自家可读报错、也不保证不写盘）——`test_session` 已补负向用例（`{"eye_in_hand": True}` → 拒收，可读报错）。
+- **来源**：@qa `qa_mutation_test.py`（两轮）；@feas `feas_probe_mut.py` / `mut_out2.txt`；@qa 批 3 复核（v4，两轮复跑逐位一致 + 4 变异）。
 
 ## RG-06 NaN 静默放行（实现写法坑）
 
@@ -163,6 +173,24 @@ for t in test_unit_guard test_handeye_result test_matrix_guard test_pose_source 
 - **规则（@arch 新增 §10.1）**：哈希表一律**按 commit 分节**，取值命令钉死 `git show <commit>:<path> | sha1sum`；**禁止"量工作树比历史值"**（`BASELINE.md` 原文给的 `sha1sum core/*.py tests/*.py` 量的是工作树，与 `15cedf0` 时刻的值比必然假阳性）。批 2.1 第 ⑤ 项按此改，**不是**把 `f275647d` 换成 `1a1862ba` 了事。
 - **`.gitignore` 盲区**：原型目录运行会落一个被忽略的 `MultiCameraCalibration.log`（81 B）——**`.gitignore` 不构成"零写入"证据**，A8 污染检查天然漏这类产物（量级无害，但口径要写对）。
 - **来源**：@qa 缺陷①与备注；@arch §10.1；@scribe 复核。
+
+## RG-13 批 3 判读规则：smoke 的 A3/A6 段必须看到实际判定行（新，2026-09-23 批 3 后）
+
+- **规则**：`--smoke 3` 末行「失败 0 项」**不构成**批 3 证据——必须同时在输出里看到：
+  ① 两行 `[戳点门禁] verdict=`（真值样本 `PASS` + 退化矩阵反例 `FAIL`，各带
+  `err_mean` 数值）；② 一行 `A6 会话往返 OK`（含位姿/帧计数）。缺任一则与 RG-01
+  同性质的"看起来绿了"，判复跑无效。七测试套件同理：退出码 0 之外，
+  `test_validation_degenerate` 必须出现「退化矩阵必须判 FAIL」的 `[OK ]` 行、
+  `test_session` 必须出现「四项落盘」行。
+- **背景**：批 3（`cde52e8`）把 A3 戳点门禁与 A6 会话接进 UI 状态机
+  （UNVERIFIED/VERIFIED/FAILED，VERIFIED 才解锁「保存会话」）。门禁口径钉死：
+  n≥3、err_mean ≤ 0.7 mm 硬门禁、err_max > 2.0 mm 仅 warning（R3）、姿态离面
+  （≥1 个相对旋转轴与所有其他轴夹角 >20°）为硬条件、特征点每姿态单点
+  （姿态内多点拒收——不钉死则 err_max 门限不可复现，@feas §4.2）。
+- **复核记录（@qa v4，2026-09-23）**：七测试 + smoke 各 2 轮，除临时目录随机名外
+  输出逐位一致；4 类变异全部被拦（见 RG-05 台账 M5~M8）；修复一处真实缺陷
+  （`handeye_to_dict` 缺键 `KeyError` → 可读拒收）。
+- **来源**：@qa 批 3 独立复核。
 
 ---
 

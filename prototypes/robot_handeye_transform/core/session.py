@@ -142,7 +142,11 @@ def handeye_to_dict(handeye) -> dict:
     else:
         raise SessionError(
             "handeye 必须是 HandEyeResult 或同字段字典（含 T_handeye_mm）")
-    T = np.asarray(data["T_handeye_mm"], dtype=np.float64)
+    try:
+        T = np.asarray(data["T_handeye_mm"], dtype=np.float64)
+    except (KeyError, TypeError, ValueError) as e:
+        raise SessionError(
+            f"handeye 缺/坏 T_handeye_mm 字段（须为 4×4 数值矩阵）: {e}") from None
     if T.shape != (4, 4) or not np.all(np.isfinite(T)):
         raise SessionError("手眼矩阵必须是有限 4×4 才能落盘")
     return {
