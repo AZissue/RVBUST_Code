@@ -1,6 +1,6 @@
 # 机器人手眼变换原型 — 回归手册（REGRESSION）
 
-> v1 2026-09-23 汇编（@qa 提出、@scribe 落盘）；v2 2026-09-23 批 1.5 / 批 2 后逐条标状态；v3 2026-09-23——收 @qa 第 2 轮复核（锚点表时效性、矩阵侧 NaN 无对称用例）与 @feas 新缺陷 RG-11，新增 RG-11 / RG-12，误拦列改定性表述；**v4 2026-09-23 批 3 后**——@qa 批 3 独立复核结论入库（RG-05 变异台账补 4 条、新增 RG-13）。
+> v1 2026-09-23 汇编（@qa 提出、@scribe 落盘）；v2 2026-09-23 批 1.5 / 批 2 后逐条标状态；v3 2026-09-23——收 @qa 第 2 轮复核（锚点表时效性、矩阵侧 NaN 无对称用例）与 @feas 新缺陷 RG-11，新增 RG-11 / RG-12，误拦列改定性表述；**v4 2026-09-23 批 3 后**——@qa 批 3 独立复核结论入库（RG-05 变异台账补 4 条、新增 RG-13）；**v5 2026-09-23 批 4.5 后（@dev 落）**——新增 **RG-14**（`全部叠加` 8→10 条口径、入口改 `host.py`+`RobotWorkspace`、仓库外红灯是设计、定向变异靶点、传递闭包未减），总纲补第 6/7 条，§1 锚点表按 commit 更新（`POST_K2_SRC_DIFF_SHA` 已回填）。
 > 位置与 `BASELINE.md` 同级，随原型进版本控制。用途：**换机 / 他人 / 未来版本复跑时，判定"真跑了"还是"看起来绿了"**。每条含现象、成因、判读规则、来源。
 > 权威口径以方案 `docs\机器人手眼变换原型方案_20260922.md`（当前 v4.3，390 行）为准；本手册只做复跑判读。
 
@@ -10,7 +10,9 @@
 2. **退出码 0 不等于判据真跑了**：凡依赖外部资产的节（DLL oracle），必须**在输出里看到该节的实际数值行**才算执行（RG-01、RG-09）。
 3. **任何用作比对基线/锚点的 hash、路径、版本号，一律由程序打印后原样粘回**，禁止人工转录（RG-08）。
 4. 复跑前固定环境：`unset PYTHONPATH; export QT_QPA_PLATFORM=offscreen`，解释器 `D:/Program Files/Anaconda/envs/rvc/python.exe`（conda `rvc`，py3.10）。
-5. 只拷原型目录到别处跑需设 `MCC_REPO_ROOT=<真仓库>`，或把原型放回仓库内（RG-03）。
+5. 只拷原型目录到别处跑需设 `MCC_REPO_ROOT=<真仓库>`，或把原型放回仓库内（RG-03）；**批 4.5 起"仓库外的红灯"是设计**（RG-14），不是回归。
+6. **批 4.5 起绿灯口径含 UI 段判据行与 `全部叠加` 条数**（= **10** 条，RG-14）——末行"失败 0 项"单独不构成批 4.5 证据。
+7. **禁自建后台池**（1.0.10）：工作区的后台任务只许走注入 runner；复跑时看 RG-14 的判据行 ④。
 
 ```bash
 cd D:/RVC_SRC/Python/MultiCameraCalibration
@@ -192,6 +194,32 @@ for t in test_unit_guard test_handeye_result test_matrix_guard test_pose_source 
   （`handeye_to_dict` 缺键 `KeyError` → 可读拒收）。
 - **来源**：@qa 批 3 独立复核。
 
+## RG-14 批 4.5 判读规则：`全部叠加` 条数与"单一 runner"（新，2026-09-23 批 4.5 后）
+
+- **基线口径变更**：`app/main.py --smoke 3` 日志里的 `全部叠加` 条数 **8 → 10**（批 4 基线 8 条；批 4.5 的 smoke 自检段多做 1 次采集，每帧 2 路 → +2）。复跑按 **10** 比，同时仍须 ≥1（方案 §5 批 4.5 行）；**0 条 = 3D 没上屏**。
+- **批 4.5 判据行**（缺任一 = "看起来绿了"，判复跑无效）：
+
+  ```
+  [OK] 3D 查看器可用：HAS_VIEWER=True，面板 = ui_v2.widgets.viewer_panel.ViewerPanel
+  [OK] 合入形态接口齐备：QWidget 工作区 + set_devices / set_state / set_background_runner / log_message / dirty_changed
+  [OK] 无 `from ui.` / `import ui.` 直接依赖（查看器经 ui_v2 面板）
+  [OK] 后台任务走注入 runner：调用 1 次 [('capture_job', False, None)]；帧 n→n+1；采集按钮已复位=True
+  [OK] dirty_changed 已接线（本次 smoke 共 1 次事件） / [OK] set_state / current_state 生效（matrix_loaded）
+  ```
+
+- **入口变更（重命名，不是丢失）**：`app/main.py` → `app/host.py`（QMainWindow 壳 + 日志面板 + 同步 stub runner，与 `BackendBridge._run_background` 同签名）→ `app/window.py::RobotWorkspace(QWidget)`。复跑脚本 grep 旧类名 `RobotHandEyeWindow` 会 **0 命中**。
+- **必须在仓库树内运行**（实测，2026-09-23）：仓库外不设 `MCC_REPO_ROOT` 时 `--smoke 3` = **exit=1** + 三行可读报错（`No module named 'ui_v2'` / `src/core 不可用（merge_pointclouds 缺失）` / `仓库根 = 未找到`）；`tests/test_ui_smoke.py` = exit=1 + `ModuleNotFoundError: No module named 'core'` 堆栈（R12 只覆盖了 `MCC_REPO_ROOT` 这条出路）。**这两种红灯都是设计（批 4.5 ⑤），不是回归。**
+- **定向变异靶点（换机复跑可自查，均在副本内做，不动仓库）**：
+
+  | 变异 | 期望实测 |
+  |---|---|
+  | `on_capture` 不走注入 runner（改回自建池 / 直接同步） | exit=1，`[FAIL] 后台任务走注入 runner：调用 0 次` |
+  | `from ui_v2.widgets.viewer_panel import ViewerPanel` 掐断 | exit=1，`[FAIL] HAS_VIEWER=False`（`全部叠加`=0 条） |
+  | 上一条 **加上** ① 分支去掉 `bad += 1`（= 批 4.5 前的静默降级） | exit=0 且 `全部叠加`=0 条 ← 旧隐患"绿灯 + 3D 消失"可复现，说明那道判据是唯一起作用的一道 |
+
+- **传递闭包未减（已知边界，非缺陷）**：`import ui_v2.widgets.viewer_panel` 连带 **2057 模块**（`ui.main_window` / `ui.viewer_3d` / `ui.worker_thread` / `core.camera_manager` 全进 `sys.modules`；批 4.5 前 `import ui.viewer_3d` 亦为 2033 模块）。"对旧 `ui.*` 直接依赖清零"只成立于**直接 import 层**；按迁移方案 §4 Phase 0.3 的裁决**不改 `src/`**，随 Phase 0 统一收口。
+- **来源**：@dev 实现 + 副本变异实跑（`%TMPDIR%/mut_b45.py`）；@lead 独立复跑 `--smoke 3`（10 条）+ 闭包实测 + 两处自主扩权裁决；方案 §5 批 4.5 行。
+
 ---
 
 ## 1. 复跑资产与锚点
@@ -199,9 +227,9 @@ for t in test_unit_guard test_handeye_result test_matrix_guard test_pose_source 
 | 内容 | 路径 / 值 |
 |---|---|
 | 原型与测试 | `D:\RVC_SRC\Python\MultiCameraCalibration\prototypes\robot_handeye_transform\`（`core/`、`tests/`、`app/`、`README.md`、`BASELINE.md`、`REGRESSION.md`） |
-| 基线锚点 | `prototypes\robot_handeye_transform\BASELINE.md`（113 行；`PROTO_COMMIT` = `249fdb3d75592572dc946c60b00c7d2b14d7c52e`，`PROTO_COMMIT_BATCH15` = `15cedf0`；`POST_K2_SRC_DIFF_SHA` 待 @user 批 K2 后回填） |
-| 批次 commit | `249fdb3` 批 0/1 入库 / `15cedf0` 批 1.5 / `42b6a66` 回填 / `05fd446` 批 2 app / `384615c` 回填 |
-| A8 基线（K2 前） | `git diff -- src/ 2>/dev/null \| sha1sum \| awk '{print $1}'` = `7eceb8c3a8826bc13076a235205fb18d44717c6a` |
+| 基线锚点 | `prototypes\robot_handeye_transform\BASELINE.md`（`PROTO_COMMIT` = `249fdb3d75592572dc946c60b00c7d2b14d7c52e`，`PROTO_COMMIT_BATCH15` = `15cedf0`；`POST_K2_SRC_DIFF_SHA` = `23bfa1ed0dba0b1c88c313429c955ea7f2acc497`，K2 已获 @user 批准并于 `11926c2` 落地、`7b84df6` 回填——**本行 2026-09-23 批 4.5 后更新，原"待回填"已失效**） |
+| 批次 commit | `249fdb3` 批 0/1 入库 / `15cedf0` 批 1.5 / `42b6a66` 回填 / `05fd446` 批 2 app / `384615c` 回填 / `ea7aa1e` 批 2.1 / `cde52e8`+`1b065d2` 批 3 / `11926c2` K2 注释 / `7ef769c`+`6750de2` 批 4 / `7b84df6` K2 锚点回填 / **`fb6792a`+`4b41c14` 批 4.5** |
+| A8 基线 | K2 前 `git diff -- src/ 2>/dev/null \| sha1sum \| awk '{print $1}'` = `7eceb8c3a8826bc13076a235205fb18d44717c6a`；**K2 后（现行）= `23bfa1ed0dba0b1c88c313429c955ea7f2acc497`**（批 4.5 两提交后复测未变） |
 | DLL oracle 依赖 | `D:\RVC_SRC\hand-eye-tools` + 桌面 `RVCHandEyeCalibration_v*_win_release`（见 RG-02） |
 | @qa 探针 | `C:\Users\jingz\AppData\Local\hermes\profiles\qa\cache\scratch\`（`qa_probe_handeye.py`、`qa_mutation_test.py`、`sim_out.txt`） |
 | @feas 探针 | `C:\Users\jingz\AppData\Local\hermes\profiles\feas\cache\scratch\`（`feas_probe_mut.py`、`feas_r10_window.py`、`feas_r10_formula.py`、`feas_r12_reloc.py`、`mut_out2.txt`、`proto_v2_sim/`） |

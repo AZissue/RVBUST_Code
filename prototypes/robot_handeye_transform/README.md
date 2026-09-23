@@ -40,9 +40,12 @@ core/   handeye_result.py  加载 JSON/手动 4×4 → A7 校验 + K6/K7 守卫 
         transform_chain.py compute_cam2base + transform_pcd（先 copy，K3）
         validation.py      批 3：戳点门禁 + 重合度 warning
         session.py         批 3：会话落盘/恢复
-app/    main.py            入口（无显示器时 QT_QPA_PLATFORM=offscreen；--smoke N 无人值守自检）
+app/    main.py            入口 → host.py（无显示器时 QT_QPA_PLATFORM=offscreen；--smoke N 无人值守自检）
+        host.py            独立宿主（批 4.5）：QMainWindow 壳 + 日志面板 + 同步 stub runner
+                           （与 BackendBridge._run_background 同签名；合入后由 MainWindowShell 替换）
         control_panel.py   左：手眼矩阵 / 机器人位姿 / 采集 / 验证（四组，参数不预选）
-        window.py          主窗口：EmbeddedPointCloudViewer + WorkerThread + 合成点云闭环
+        window.py          RobotWorkspace(QWidget)：ui_v2 ViewerPanel + 注入 runner + 合成点云闭环
+                           （批 4.5 起本文件**只提供工作区本体**，窗口/日志控件在宿主里）
 tests/  test_transform_chain.py / test_handeye_result.py / test_unit_guard.py
         test_matrix_guard.py / test_pose_source.py        （批 1.5 新增）
         test_validation_degenerate.py / test_session.py   （批 3 新增，A3/A6）
@@ -71,11 +74,30 @@ oracle 会打印 DLL 路径 / 版本 / sha256（跨机比对基线，禁止人�
 测试套件可迁移：仓库根向上查找 `src/core/pcd_utils.py`，或设 `MCC_REPO_ROOT`（R12）。
 
 ```bash
-# 批 2 UI（无相机、无机器人；无显示器加 QT_QPA_PLATFORM=offscreen）
+# UI（无相机、无机器人；无显示器加 QT_QPA_PLATFORM=offscreen）
 PY="D:/Program Files/Anaconda/envs/rvc/python.exe"
 "$PY" prototypes/robot_handeye_transform/app/main.py            # 交互
 "$PY" prototypes/robot_handeye_transform/app/main.py --smoke 3  # 无人值守，退出码 0 = 全过
 ```
+
+**入口结构（批 4.5 起）**：`app/main.py` → `app/host.py`（独立宿主：QMainWindow 壳 + 日志面板
++ 同步 stub runner）→ `app/window.py` 的 `RobotWorkspace(QWidget)`（工作区本体，接口 =
+`set_devices` / `set_state` / `set_background_runner` + `log_message` / `dirty_changed`）。
+**独立运行时的界面就是合入后的形态**：工具栏 / 状态栏 / 日志面板由壳提供，合入时壳换成
+`MainWindowShell` + `BackendBridge._run_background`，工作区零改动。
+
+**⚠️ 必须在仓库树内运行**（app 与 tests 都靠"向上找含 `src/core/pcd_utils.py` 的仓库根"定位 `src/`）：
+
+| 场景 | 实测结果（2026-09-23） |
+|---|---|
+| 原型拷到仓库外、不设 `MCC_REPO_ROOT` | `--smoke 3` → **exit=1** + 三行可读报错（`No module named 'ui_v2'` / `src/core 不可用（merge_pointclouds 缺失）` / `仓库根 = 未找到`），无静默绿灯；`test_ui_smoke` → exit=1 + `ModuleNotFoundError: No module named 'core'` 堆栈 |
+| 原型在仓库外、设 `MCC_REPO_ROOT=<真仓库>` | **可跑**：`--smoke 3` exit=0（`全部叠加`=10）、`test_ui_smoke` exit=0（2026-09-23 实测；批 4.5 变异台架即在此模式下运行） |
+
+**另一条已知边界（@lead 实测闭包）**：`import ui_v2.widgets.viewer_panel` 会连带加载 **2057 个模块**
+（`ui.main_window` / `ui.viewer_3d` / `ui.worker_thread` / `core.camera_manager` 全进
+`sys.modules`）——"原型对旧 `ui.*` 直接依赖清零"只在**直接 import 层**成立（`grep` 0 命中），
+**传递闭包没减**。这是迁移方案 §2.2 的 `ui/__init__` 放大器所致，按 §4 Phase 0.3 的裁决
+**不改 `src/`**，随 Phase 0 统一收口；原型的代价就是"必须在仓库树内运行"。
 
 ## 实测基线（2026-09-22，conda rvc py3.10 实跑）
 
@@ -147,6 +169,20 @@ PY="D:/Program Files/Anaconda/envs/rvc/python.exe"
 | A5 实时性 | 30 万点**单帧** 复制+变换+合并 median=28.6 ms < 50 ms（5 次 runs 23.0/28.1/28.6/31.7/30.3；计时只含被测两段，累加器重建在计时外） |
 | 门禁接线 | 保存合并 PLY 按钮状态机全过：未 VERIFIED / 0 帧置灰 → VERIFIED 且 ≥1 帧解锁；清空后回锁但会话保存键保持解锁（两者语义不同，已写注释钉死） |
 
+**批 4.5 实测（2026-09-23，合入预适配；offscreen 实跑 + 副本变异）**
+
+| 项 | 结果 |
+|---|---|
+| 八测试退出码 | 全 0（七旧测试无退化 + `test_ui_smoke` 含新增 §[5] 合入形态段） |
+| `--smoke 3` | exit=0，失败 0 项；日志 `全部叠加` = **10 条** = 批 4 基线 **8** 条 + 批 4.5 自检段额外 1 次采集（×2 路）——**上轮"8 条"口径作废** |
+| 合入形态接口 | `QWidget` 工作区 + 5 接口齐备、不再是 QMainWindow（smoke 内自检 `[OK]`） |
+| 旧 `ui.*` 直接依赖 | 源码级自检 + `grep "^\s*\(from\|import\)\s\+ui\."` = **0 命中**；查看器经 `ui_v2.widgets.viewer_panel.ViewerPanel` |
+| 后台 runner 单一来源 | 记录型 runner：调用 **1** 次 `capture_job`、帧 0→1、回调后按钮复位、`dirty_changed` 触发 `True`（1.0.10 禁自建池） |
+| 定向变异 M1（`on_capture` 不走注入 runner） | **exit=1**（`[FAIL] 后台任务走注入 runner：调用 0 次`）——自建池路径已被守住 |
+| 定向变异 M2a（查看器 import 掐断，守卫在） | **exit=1** + `[FAIL] HAS_VIEWER=False`；`全部叠加`=0 条 |
+| 定向变异 M2b（掐断 **且** 打回静默降级 = 批 4.5 前旧行为） | **exit=0** 且 `全部叠加`=0 条 —— 旧隐患（"绿灯 + 3D 消失"）可复现，证明 smoke 里那道 `HAS_VIEWER` 判据是唯一起作用的一道 |
+| A8 锚点 | `git diff -- src/ \| sha1sum` = `23bfa1ed…`（`fb6792a` / `4b41c14` 两提交后未变）；`grep -rni "handeye\|robot" src/ui_v2/` = 0 命中 |
+
 ## 进度
 
 - [x] 批 0：prototypes/README 表更新 + A8 基线复核（HEAD=8221b82，
@@ -176,6 +212,23 @@ PY="D:/Program Files/Anaconda/envs/rvc/python.exe"
       UI「保存合并 PLY」（走 `merge_pointclouds`，VERIFIED 门禁）。
       **真机联调与 CameraPreviewCard 待 §8 现场信息（机器人品牌/位姿格式、
       手眼矩阵是否落成文件、K2 注释批准），不在本批范围。**
+- [x] 批 4.5（合入预适配，@lead 拍板插入；与批 4 真机联调互不阻塞）—— `fb6792a`：
+      ① `RobotHandEyeWindow(QMainWindow)` → `RobotWorkspace(QWidget)`，接口对齐
+      `workspaces/turntable_workspace.py`（`set_devices` / `set_state` /
+      `set_background_runner` + `log_message` / `dirty_changed`），窗口/日志控件移出
+      ② viewer 换 `ui_v2.widgets.viewer_panel.ViewerPanel`（`viewer_message` 转发
+      `status_changed`），原型对旧 `ui.*` **直接依赖清零**
+      ③ 删 `_workers` 池与 `ui.worker_thread` 依赖，后台任务走注入 runner（1.0.10）
+      ④ 新增 `app/host.py` 独立宿主（QMainWindow 壳 + 同步 stub runner，同签名）
+      ⑤ `HAS_VIEWER=False` 不再静默降级：`--smoke` 判失败
+      ⑥ 独立提交 `4b41c14`：`session.py` 加载侧过滤原子写残留 `*.tmp.ply`（+ `test_session` §[6]）
+
+> **批 4.5 状态（2026-09-23）**：八测试 + `--smoke 3` 全 exit=0，`全部叠加`=10 条，
+> A8 锚点 `23bfa1ed…` 未变。三条定向变异（runner 换回自建 / 查看器掐断 / 掐断+静默降级）
+> 实测分别为 exit=1 / exit=1 / exit=0 且 3D 消失，见上表。**合入形态 = 原型形态**：
+> 批 5 迁移时只有"壳换成 MainWindowShell + 注入真实 runner"这一处动作，工作区零改动。
+> 残留已知边界两条：① 传递闭包未减（2057 模块，`ui/__init__` 放大器，随 Phase 0 收口）；
+> ② 必须在仓库树内运行（或设 `MCC_REPO_ROOT`），仓库外的失败是红灯不是绿灯。
 
 > **批 4 状态（2026-09-23，offscreen 部分完成）**：新增 `tests/test_ui_smoke.py`
 > （8 节），app 加「保存合并 PLY」按钮 + `merged_pcd()` + `on_save_merged_ply()`
