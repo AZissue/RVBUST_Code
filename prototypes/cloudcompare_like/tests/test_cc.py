@@ -463,6 +463,35 @@ class TestMergeClouds(unittest.TestCase):
         self.assertIn("不存在或为空", msg)
         self.assertIsNone(new_id)
 
+    def test_merge_sources_untouched(self):
+        """S3b：合并 = 新增节点，源节点点序/属性逐点不变、不入撤销历史。
+
+        merge_pointclouds 会对缺色/缺法线的输入就地补默认属性（pcd_utils.py:18-37），
+        workflow 若传 node.pcd 本体，源节点会被不可逆改写（无色 → 0.85 灰、
+        无法线 → 零法线），export_cloud 导出的也是被污染的数据。
+        """
+        a = self._cloud(300, color=(1.0, 0.0, 0.0), normal=(0.0, 0.0, 1.0))
+        b = self._cloud(200)
+        a_pts, a_cols, a_nrm = (np.asarray(a.points).copy(),
+                                np.asarray(a.colors).copy(),
+                                np.asarray(a.normals).copy())
+        b_pts = np.asarray(b.points).copy()
+        ida = self.wf.add_cloud("a", a)
+        idb = self.wf.add_cloud("b", b)
+
+        ok, msg, new_id = self.wf.merge_clouds([ida, idb], "ab")
+        self.assertTrue(ok, msg)
+        self.assertIsNotNone(new_id)
+
+        src_a, src_b = self.wf.get_node(ida).pcd, self.wf.get_node(idb).pcd
+        self.assertTrue(np.array_equal(np.asarray(src_a.points), a_pts), "源 a 点序被改写")
+        self.assertTrue(np.array_equal(np.asarray(src_a.colors), a_cols), "源 a 颜色被改写")
+        self.assertTrue(np.array_equal(np.asarray(src_a.normals), a_nrm), "源 a 法线被改写")
+        self.assertTrue(np.array_equal(np.asarray(src_b.points), b_pts), "源 b 点序被改写")
+        self.assertFalse(src_b.has_colors(), "缺色源节点被就地填了 0.85 灰")
+        self.assertFalse(src_b.has_normals(), "缺法线源节点被就地填了零法线")
+        self.assertFalse(self.wf.can_undo(), "合并不应进入撤销历史")
+
 
 class TestHistoryReferenceSafety(unittest.TestCase):
     """撤销记录必须持有「操作前」的独立副本。

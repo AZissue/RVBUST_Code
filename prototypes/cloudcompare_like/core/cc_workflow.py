@@ -520,7 +520,9 @@ class CloudCompareWorkflow:
             node = self._nodes.get(nid)
             if node is None or node.node_type != CCNode.NODE_CLOUD or node.pcd is None:
                 return False, f"点云 {nid} 不存在或为空", None
-            pcds.append(node.pcd)
+            # 保护性副本：merge_pointclouds 会对缺色/缺法线的输入就地补默认属性，
+            # 直接传 node.pcd 本体将不可逆改写源节点（S3b）。
+            pcds.append(copy.deepcopy(node.pcd))
 
         self._state = "processing"
         try:
