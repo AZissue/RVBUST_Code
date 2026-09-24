@@ -316,19 +316,45 @@ class TestICPRegister(unittest.TestCase):
         self.assertFalse(self.wf.get_node(self.tgt_id).pcd.has_normals(),
                          "ICP 撤销后目标节点残留法线")
 
-    def test_icp_point_to_plane_preserves_existing_target_normals(self):
-        """目标已带法线时必须原样使用：不重估、不改写、不删除。"""
-        tgt_pcd = self.wf.get_node(self.tgt_id).pcd
-        tgt_pcd.estimate_normals(
-            o3d.geometry.KDTreeSearchParamHybrid(radius=0.2, max_nn=30))
-        normals_before = np.asarray(tgt_pcd.normals).copy()
-        ok, msg, _ = self.wf.icp_register(self.src_id, self.tgt_id,
-                                          estimation_method="point_to_plane")
+    def _fresh_pair(self, tgt_normals):
+        """同几何的一对新 workflow/节点（ICP 会改写源节点，两组对照必须各起一套）。"""
+        wf = CloudCompareWorkflow()
+        src_pcd = o3d.geometry.PointCloud()
+        src_pcd.points = o3d.utility.Vector3dVector(self.pts_src)
+        tgt_pcd = o3d.geometry.PointCloud()
+        tgt_pcd.points = o3d.utility.Vector3dVector(self.pts_src.copy())
+        tgt_pcd.transform(self.T_true)
+        if tgt_normals is not None:
+            tgt_pcd.normals = o3d.utility.Vector3dVector(tgt_normals)
+        return wf, wf.add_cloud("src", src_pcd), wf.add_cloud("tgt", tgt_pcd)
+
+    def test_icp_point_to_plane_uses_existing_target_normals(self):
+        """目标已带法线：原样使用（不重估、不改写），且这些法线必须真的进入求解。
+
+        判据用**哨兵法线**：目标法线人为设成常数方向 (0,0,1)——真实曲面法线不可能恒为
+        同一方向，故"有没有被重估"可由数值直接判别。另一组对照组不给法线（走内部重估）。
+        若把目标法线无声重估（修过头），哨兵会被覆写成真实法线且两组解完全相同 → 两条
+        断言同时变红。注：不能用"法线取反"当哨兵——点对面代价是残差平方，正负号无差别。
+        """
+        n = len(self.pts_src)
+        sentinel = np.tile(np.array([0.0, 0.0, 1.0]), (n, 1))
+
+        wf_s, src_s, tgt_s = self._fresh_pair(sentinel)
+        ok, msg, res_s = wf_s.icp_register(src_s, tgt_s, estimation_method="point_to_plane")
         self.assertTrue(ok, msg)
-        tgt_after = self.wf.get_node(self.tgt_id).pcd
-        self.assertTrue(tgt_after.has_normals(), "目标已有法线却丢了")
-        np.testing.assert_allclose(np.asarray(tgt_after.normals), normals_before,
-                                   atol=1e-12, err_msg="目标节点已存在的法线被改写")
+        np.testing.assert_allclose(np.asarray(wf_s.get_node(tgt_s).pcd.normals), sentinel,
+                                   atol=1e-12, err_msg="目标已有法线被重估/覆写")
+
+        wf_a, src_a, tgt_a = self._fresh_pair(None)
+        ok, msg, res_a = wf_a.icp_register(src_a, tgt_a, estimation_method="point_to_plane")
+        self.assertTrue(ok, msg)
+        self.assertFalse(wf_a.get_node(tgt_a).pcd.has_normals(),
+                         "对照组：内部重估也不得写回目标节点")
+
+        diff = float(np.abs(res_s.transformation - res_a.transformation).max())
+        self.assertGreater(diff, 1e-3,
+                           f"哨兵法线与内部重估法线得到同一解（最大差 {diff:.2e}）"
+                           f" → 目标已存法线被忽略、配准偷偷重估了")
 
 
 class TestMergeClouds(unittest.TestCase):
