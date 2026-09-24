@@ -114,8 +114,10 @@ class TestUiSmokeExport(unittest.TestCase):
             colors_before = np.asarray(node.pcd.colors).copy()
             norms_before = norms.copy()
 
-            undo_before = (self._ws._workflow.can_undo(),
-                           self._ws._workflow.can_redo())
+            # 不污染撤销栈：历史栈深+游标快照相等（K3-D1'：布尔对在有前置
+            # 历史时恒真无判别力，栈深可捕获"导出误入历史"变异）
+            hist_before = (len(self._ws._workflow._history),
+                           self._ws._workflow._history_index)
             with self._save_dialog(out):
                 self._trigger_menu_export(cid)
 
@@ -134,8 +136,8 @@ class TestUiSmokeExport(unittest.TestCase):
             self.assertTrue(np.allclose(np.asarray(node.pcd.normals),
                                         norms_before))
             # 不污染撤销栈
-            self.assertEqual((self._ws._workflow.can_undo(),
-                              self._ws._workflow.can_redo()), undo_before)
+            self.assertEqual((len(self._ws._workflow._history),
+                              self._ws._workflow._history_index), hist_before)
             # 成功日志可见（非静默）
             self.assertTrue(any(lvl == "success" and "已导出" in m
                                 for lvl, m in self._logs))
