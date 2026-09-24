@@ -58,7 +58,9 @@ from ui_v2.widgets.device_table import DeviceInfo               # noqa: E402
 OUT = os.path.join(REPO, "docs", "ui_review", "offscreen" if _OFFSCREEN else "")
 os.makedirs(OUT, exist_ok=True)
 
-FONT_ALLOWED = ("Segoe UI", "Microsoft YaHei", "Microsoft YaHei UI")
+# S3 判据（K2-D1 裁定 2）：QSS 生效后控件字体必须严格等于 "Segoe UI"。
+# 白名单（含 Microsoft YaHei UI）已证伪：QSS 整层失效时控件字体恰为
+# 'Microsoft YaHei UI'，in 判定同样 PASS → 假通过，故只认严格相等。
 STATE_TOKENS = {"idle": TEXT_MUTED, "loaded": STATUS_OK,
                 "processing": STATUS_WARN, "failed": STATUS_ERR}
 
@@ -324,8 +326,8 @@ def main() -> int:
         check("S3 字体（offscreen 豁免）", True,
               f"控件字体={fam!r}（字体族判据仅真机）")
     else:
-        check("S3 字体一致", fam in FONT_ALLOWED,
-              f"QSS 生效后控件字体={fam!r} ∈ {FONT_ALLOWED}；"
+        check("S3 字体一致", fam == "Segoe UI",
+              f"QSS 生效后控件字体={fam!r}（严格相等 'Segoe UI'）；"
               f"app.font()={app.font().family()!r}")
 
     check_state_color(img_idle, "idle", real_w, real_h)

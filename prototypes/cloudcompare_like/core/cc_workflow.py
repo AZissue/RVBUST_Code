@@ -226,6 +226,18 @@ class CloudCompareWorkflow:
             self._state = "idle"
         return True
 
+    def rename_node(self, node_id: str, name: str) -> bool:
+        """重命名节点（K2-D2/W12：树、workflow、属性面板三方同一份名字）。
+
+        不进撤销历史（K1-fix 口径，与 remove_node 同级、无 undo/redo 记录）。
+        """
+        node = self._nodes.get(node_id)
+        if node is None or not name:
+            return False
+        node.name = name
+        logger.info(f"重命名节点 {node_id} -> {name}")
+        return True
+
     def get_node(self, node_id: str) -> Optional[CCNode]:
         return self._nodes.get(node_id)
 

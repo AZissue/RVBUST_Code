@@ -265,6 +265,7 @@ class CloudCompareWorkspace(QWidget):
         self._db_tree.selection_changed.connect(self._on_tree_selection)
         self._db_tree.visibility_changed.connect(self._on_tree_visibility)
         self._db_tree.delete_requested.connect(self._on_delete_node)
+        self._db_tree.rename_requested.connect(self._on_rename_node)
         self._db_tree.fit_view_requested.connect(self._on_fit_view)
 
         # 属性面板
@@ -412,6 +413,14 @@ class CloudCompareWorkspace(QWidget):
         node.visible = visible
         self._workflow.set_visible(node_id, visible)
         self._refresh_viewer()
+
+    def _on_rename_node(self, node_id: str, name: str):
+        """K2-D2：树已由 _rename_item 改完显示，这里同步 workflow 与属性面板。"""
+        if not self._workflow.rename_node(node_id, name):
+            self._log(f"重命名失败（节点不存在或空名）: {node_id}", "error")
+            return
+        if self._current_node_id == node_id and self._props._node_id == node_id:
+            self._props._lbl_name.setText(name)
 
     def _on_delete_node(self, node_id: str):
         self._workflow.remove_node(node_id)

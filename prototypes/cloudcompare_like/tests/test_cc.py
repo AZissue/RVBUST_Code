@@ -1086,6 +1086,34 @@ class TestDBTreeDisplay(unittest.TestCase):
         for expected in ("适配视角", "导出点云", "重命名", "删除"):
             self.assertIn(expected, texts, f"右键菜单缺「{expected}」: {texts}")
 
+    def test_context_menu_export_disabled(self):
+        """K2-D3：导出未接线前菜单项禁用 + tooltip 明示，点击不再静默无响应。"""
+        self._QApplication.instance() or self._QApplication([])  # noqa: F841
+        ws = self._Workspace()
+        with tempfile.TemporaryDirectory() as d:
+            cid = self._load_one(ws, d)
+        item = ws._db_tree._node_items[cid]
+        acts = {a.text(): a for a in ws._db_tree._build_context_menu(item).actions()}
+        self.assertFalse(acts["导出点云"].isEnabled(),
+                         "端到端导出并入 K3 前菜单项必须禁用")
+        self.assertTrue(acts["导出点云"].toolTip(), "禁用项必须有 tooltip 明示原因")
+
+    def test_rename_syncs_workflow_and_props(self):
+        """K2-D2/W12：重命名后树、workflow、属性面板三方同名（无状态漂移）。"""
+        self._QApplication.instance() or self._QApplication([])  # noqa: F841
+        ws = self._Workspace()
+        with tempfile.TemporaryDirectory() as d:
+            cid = self._load_one(ws, d)
+        ws._on_tree_selection(cid)  # 让属性面板显示该节点
+        item = ws._db_tree._node_items[cid]
+        item.setText(0, "renamed_cloud")  # 复刻 _rename_item 的树侧动作
+        ws._db_tree.rename_requested.emit(cid, "renamed_cloud")
+        node = ws._workflow.get_node(cid)
+        self.assertIsNotNone(node)
+        self.assertEqual(node.name, "renamed_cloud")
+        self.assertEqual(ws._props._lbl_name.text(), "renamed_cloud")
+        self.assertEqual(item.text(0), "renamed_cloud")
+
     def test_double_click_fits_view(self):
         self._QApplication.instance() or self._QApplication([])  # noqa: F841
         ws = self._Workspace()

@@ -252,6 +252,10 @@ class CloudDBTree(QWidget):
             menu.addAction(act_fit)
 
             act_export = QAction("导出点云", self)
+            # K2-D3：端到端导出未接线前禁用并明示，避免静默无响应；
+            # 导出实现并入 K3，届时恢复 enabled。
+            act_export.setEnabled(False)
+            act_export.setToolTip("端到端导出将在 K3 提供")
             act_export.triggered.connect(lambda: self.export_requested.emit(item.node_id))
             menu.addAction(act_export)
             menu.addSeparator()
