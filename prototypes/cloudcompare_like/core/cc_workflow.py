@@ -344,7 +344,7 @@ class CloudCompareWorkflow:
         node = self._nodes.get(node_id)
         if node is None or node.node_type != CCNode.NODE_CLOUD:
             return False, "点云不存在"
-        before = node.pcd
+        before = copy.deepcopy(node.pcd)
         try:
             node.pcd.estimate_normals(
                 o3d.geometry.KDTreeSearchParamHybrid(radius=radius, max_nn=max_nn))
@@ -472,7 +472,10 @@ class CloudCompareWorkflow:
                 criteria,
                 o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=50))
 
-            aligned = src.transform(result.transformation)
+            # open3d 的 transform() 就地改写并返回 self，若直接 push 会把 before/after
+            # 指向同一对象 → undo 变成空操作。必须先深拷贝再变换（其余 handler 同理）。
+            aligned = copy.deepcopy(src)
+            aligned.transform(result.transformation)
             src_node.pcd = aligned
             self._push_history("ICP配准", source_id, src, aligned)
 
