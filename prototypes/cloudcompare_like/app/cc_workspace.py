@@ -51,6 +51,95 @@ COLOR_PALETTE = [
 ]
 
 
+# =========================================================================
+# ICP 结果解读（纯函数、无 Qt 依赖：日志 / 属性面板 / 单测共用同一口径）
+# =========================================================================
+# §10.2 G-S2 裁定：实测 12 组 fitness 全部为 1.000000（含姿态差 1.13° 的局部极小那
+# 组），单报 fitness 会把局部极小当成功。故结果必须同时给 inlier_rmse 与姿态角/平
+# 移；「fitness 高但残差没落到点距以下」时提示给初值。
+ICP_LOCAL_MIN_FITNESS = 0.90      # 低于此值不算"看起来已经对齐上"
+ICP_LOCAL_MIN_RMSE_RATIO = 0.50   # inlier_rmse / 平均点距 的超阈比
+
+
+def rotation_angle_deg(R) -> float:
+    """3x3 旋转矩阵 → 等效轴角（度）。"""
+    R = np.asarray(R, dtype=np.float64)[:3, :3]
+    return float(np.degrees(np.arccos(np.clip((np.trace(R) - 1.0) / 2.0, -1.0, 1.0))))
+
+
+def avg_point_spacing(pcd, sample: int = 500) -> Optional[float]:
+    """平均点距（最近邻距离中位数）；口径同 core.cc_workflow.icp_register 的自动 max_distance。"""
+    import open3d as o3d
+    if pcd is None:
+        return None
+    pts = pcd.points
+    n = len(pts)
+    if n < 10:
+        return None
+    tree = o3d.geometry.KDTreeFlann(pcd)
+    rng = np.random.default_rng(42)
+    idx = rng.choice(n, size=min(sample, n), replace=False)
+    ds = []
+    for i in idx:
+        _, _, d2 = tree.search_knn_vector_3d(pts[int(i)], 2)
+        if len(d2) > 1:
+            ds.append(float(np.sqrt(d2[1])))
+    return float(np.median(ds)) if ds else None
+
+
+def judge_icp_result(result, point_spacing: Optional[float] = None,
+                     init_transform=None):
+    """ICP 结果 → (属性面板文本, 是否疑似局部极小, 日志文本)。
+
+    姿态角/平移按**相对初值**的口径给出（未给初值 = 单位阵 = 相对原始位姿），算法与
+    单测真值比对一致：angle(R_est @ R_init^T)、‖t_est − t_init‖。UI 里没有真值，
+    能给的"误差"就是相对初值（默认即原始位姿）的偏差；初值被真正使用时该值才趋 0。
+    疑局部极小 = fitness 高但 inlier_rmse 未落到平均点距的 ICP_LOCAL_MIN_RMSE_RATIO
+    倍以下；点距未知则不下判断（不臆造阈值）。
+    """
+    T = np.asarray(result.transformation, dtype=np.float64)
+    init = np.eye(4) if init_transform is None else np.asarray(init_transform, dtype=np.float64)
+    angle = rotation_angle_deg(T[:3, :3] @ init[:3, :3].T)
+    trans = float(np.linalg.norm(T[:3, 3] - init[:3, 3]))
+    rmse = float(result.inlier_rmse)
+    fitness = float(result.fitness)
+
+    head = f"fitness={fitness:.6f}  inlier_rmse={rmse:.4e}"
+    if point_spacing:
+        head += f"  inlier_rmse/点距={rmse / point_spacing:.2f}"
+    # 长度量的单位随点云数据（本工具不做单位换算），角度恒为度 —— 显式标注，免得读成 mm
+    pose_short = f"姿态角误差={angle:.3f}°  平移误差={trans:.4f}（相对初值，长度=点云单位）"
+    rows = "\n".join(" ".join(f"{v: .4f}" for v in row) for row in T)
+
+    # 两类别报警：① fitness=0 = 一个对应点都没有，此时 open3d 的 inlier_rmse 恒为 0，
+    # 单看"残差 0"会被读成完美对齐；② 高 fitness 但残差没落到点距以下 = 疑局部极小。
+    if fitness <= 0.0:
+        warn_short = "无有效对应点（fitness=0），本次结果不可用"
+        warn_long = ("⚠ 无有效对应点（fitness=0.000000），本次结果不可用："
+                     "inlier_rmse=0 只表示「没有点参与残差」，不是对齐精度。"
+                     "请检查两点云是否重叠，或调大最大距离后重试")
+    elif (point_spacing and rmse > ICP_LOCAL_MIN_RMSE_RATIO * point_spacing
+          and fitness >= ICP_LOCAL_MIN_FITNESS):
+        warn_short = "疑落入局部极小，建议给初值"
+        warn_long = (f"⚠ 疑落入局部极小，建议给初值：fitness={fitness:.6f} 已高，"
+                     f"但 inlier_rmse={rmse:.4e} 未落到点距 {point_spacing:.4e} 的 "
+                     f"{ICP_LOCAL_MIN_RMSE_RATIO:g} 倍以下")
+    else:
+        warn_short = warn_long = ""
+    warn = bool(warn_long)
+
+    panel = f"{head}\n{pose_short}\n{rows}"
+    if warn:
+        panel += f"\n⚠ {warn_short}"
+    log = (f"ICP 结果: {head}\n"
+           f"姿态角误差={angle:.3f}°  平移误差={trans:.4f}"
+           f"（相对初值；长度=点云单位；未给初值即原始位姿）")
+    if warn:
+        log += "\n" + warn_long
+    log += f"\n变换矩阵 (源→目标):\n{rows}"
+    return panel, warn, log
+
+
 class CloudCompareWorkspace(QWidget):
     """CloudCompare 式后处理工作区。"""
 
@@ -163,6 +252,7 @@ class CloudCompareWorkspace(QWidget):
         self._props.detect_plane_requested.connect(self._on_detect_plane)
         self._props.euclidean_cluster_requested.connect(self._on_euclidean_cluster)
         self._props.auto_tune_requested.connect(self._on_auto_tune)
+        self._props.icp_requested.connect(self._on_icp)
 
     # ------------------------------------------------------------------
     # 状态机
@@ -258,6 +348,7 @@ class CloudCompareWorkspace(QWidget):
         node = self._workflow.get_node(node_id) if node_id else None
         if node is None or node.node_type != CCNode.NODE_CLOUD:
             self._props.clear()
+            self._props.set_icp_targets([])
             return
 
         pts = np.asarray(node.pcd.points) if node.pcd else np.zeros((0, 3))
@@ -276,6 +367,14 @@ class CloudCompareWorkspace(QWidget):
 
         scalar_names = list(node.scalar_fields.keys()) if node.scalar_fields else []
         self._props.set_node(node_id, node.name, n, bbox_str, center_str, scalar_names)
+        self._refresh_icp_targets()
+
+    def _refresh_icp_targets(self):
+        """ICP 目标候选 = 除当前源点云以外的全部点云节点。"""
+        items = [(node.node_id, f"{node.name} ({node.point_count:,} 点)")
+                 for node in self._workflow.list_cloud_nodes()
+                 if node.node_id != self._current_node_id]
+        self._props.set_icp_targets(items)
 
     def _on_point_size_changed(self, size: int):
         self._viewer.set_point_size(size)
@@ -356,6 +455,39 @@ class CloudCompareWorkspace(QWidget):
         if ok and params:
             notes = "\n".join(f"• {n}" for n in params.get("notes", []))
             QMessageBox.information(self, "自动参数估计", notes)
+
+    def _on_icp(self, target_id: str, method: str, max_distance: float):
+        """ICP 配准：源 = 当前选中点云，目标 = 属性面板下拉选择。"""
+        if not self._current_node_id:
+            self._log("请先选择源点云（ICP 源为当前选中点云）", "warn")
+            return
+        if not target_id:
+            self._log("请先选择 ICP 目标点云", "warn")
+            return
+        if target_id == self._current_node_id:
+            self._log("ICP 源与目标不能是同一点云", "warn")
+            return
+
+        src_node = self._workflow.get_node(self._current_node_id)
+        # 点距用于判"残差是否真的落到点距以下"（局部极小与真收敛在这里才分得开）
+        spacing = avg_point_spacing(src_node.pcd) if src_node is not None else None
+
+        self.set_state("processing")
+        ok, msg, result = self._workflow.icp_register(
+            self._current_node_id, target_id,
+            max_distance=(max_distance if max_distance > 0 else None),
+            estimation_method=method)
+        if not ok or result is None:
+            self._log(msg, "error")
+            self.set_state("loaded")
+            return
+
+        self._refresh_viewer()
+        self._update_properties()
+        panel, warn, log_text = judge_icp_result(result, point_spacing=spacing)
+        self._props.set_icp_result(panel, warn=warn)
+        self._log(log_text, "warn" if warn else "success")
+        self.set_state("loaded")
 
     # ------------------------------------------------------------------
     # 撤销/重做

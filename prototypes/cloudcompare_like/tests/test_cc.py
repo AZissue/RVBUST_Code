@@ -29,6 +29,17 @@ from prototypes.cloudcompare_like.core.cc_scalar_field import compute_scalar_fie
 from prototypes.cloudcompare_like.core.cc_geometry import detect_shape
 from prototypes.cloudcompare_like.core.cc_octree_lod import PointCloudOctree, MultiCloudLODManager
 
+# app 层（结果标签/局部极小口径）在无显示环境下也要可导入：先钉 offscreen 再导入 Qt。
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+try:
+    from prototypes.cloudcompare_like.app.cc_workspace import (
+        judge_icp_result, avg_point_spacing, rotation_angle_deg)
+    _HAS_APP = True
+    _APP_IMPORT_ERR = ""
+except Exception as _e:  # PySide6/open3d-GUI 缺失时跳过该组，配准本体仍由 core 断言覆盖
+    _HAS_APP = False
+    _APP_IMPORT_ERR = repr(_e)
+
 
 class TestCCWorkflow(unittest.TestCase):
     """测试工作流核心。"""
@@ -228,7 +239,12 @@ class TestICPRegister(unittest.TestCase):
         self.tgt_id = self.wf.add_cloud("tgt", tgt_pcd)
 
     def test_icp_truth_convergence(self):
-        """合成已知变换：对齐后最近邻残差 + 变换真值误差双断言。"""
+        """`point_to_point` **冷启动**：宽松式（§10.2）——姿态 <5°、平移 <30mm、后残差 <4mm。
+
+        该组实测就是 ptp 的真实局部极小（rmse 1.651e-3 / maxdiff 1.690e-2 / 姿态差 1.13°），
+        局部极小非缺陷，故不许用严格式判它；严格式见 `test_icp_init_transform_honored`
+        与 `test_icp_point_to_plane_keeps_target_untouched`。
+        """
         pre = _nn_mean_dist(self.pts_src, self.wf.get_node(self.tgt_id).pcd)
 
         ok, msg, res = self.wf.icp_register(self.src_id, self.tgt_id)
@@ -272,10 +288,14 @@ class TestICPRegister(unittest.TestCase):
                                    before, atol=1e-9)
 
     def test_icp_init_transform_honored(self):
-        """init_transform=T_true 时残差保持在同一量级（初值被真正使用）。"""
+        """`point_to_point` 给真值初值：严格式（§10.2）——rmse ≤1e-3、矩阵最大元素差 ≤1e-6。"""
         ok, msg, res = self.wf.icp_register(self.src_id, self.tgt_id,
                                             init_transform=self.T_true.copy())
         self.assertTrue(ok, msg)
+        self.assertIsNotNone(res)
+        self.assertLessEqual(res.inlier_rmse, 1e-3, f"inlier_rmse={res.inlier_rmse:.3e} 超严格式上限")
+        maxdiff = float(np.abs(res.transformation - self.T_true).max())
+        self.assertLessEqual(maxdiff, 1e-6, f"矩阵最大元素差 {maxdiff:.3e} 超严格式上限")
         post = _nn_mean_dist(np.asarray(self.wf.get_node(self.src_id).pcd.points),
                              self.wf.get_node(self.tgt_id).pcd)
         self.assertLess(post, 4e-3, f"给定真值初值后残差 {post*1000:.2f}mm")
@@ -305,6 +325,10 @@ class TestICPRegister(unittest.TestCase):
                                             estimation_method="point_to_plane")
         self.assertTrue(ok, msg)
         self.assertIsNotNone(res)
+        # 严格式（§10.2）：point_to_plane 冷启动不接受"大概对齐了"
+        self.assertLessEqual(res.inlier_rmse, 1e-3, f"inlier_rmse={res.inlier_rmse:.3e} 超严格式上限")
+        maxdiff = float(np.abs(res.transformation - self.T_true).max())
+        self.assertLessEqual(maxdiff, 1e-6, f"矩阵最大元素差 {maxdiff:.3e} 超严格式上限")
         # 临时副本不得把配准跑空：残差仍须回到点距量级
         post = _nn_mean_dist(np.asarray(self.wf.get_node(self.src_id).pcd.points),
                              self.wf.get_node(self.tgt_id).pcd)
@@ -505,6 +529,164 @@ class TestProcessNoOpHistory(unittest.TestCase):
         self.assertTrue(ok, msg)
         self.assertEqual(wf.get_node(nid).point_count, 500,
                          "撤销后未回到含 NaN 的原始点云")
+
+
+class TestICPResultReport(unittest.TestCase):
+    """ICP 结果的**展示口径**（§10.2 连带要求）——判据是"人看得见的那两行"。
+
+    背景：`_asym_blob(8000)` 上实测 12 组 fitness 全部 1.000000（含姿态差 1.13° 的局部
+    极小那组），只报 fitness 会把局部极小当成功。故：① 结果必须同时给 fitness /
+    inlier_rmse / 姿态角误差 / 平移误差；② 残差没落到点距以下时要提示"疑落入局部极小，
+    建议给初值"。此处直接调 app 层纯函数，不依赖窗口显示。
+    """
+
+    def setUp(self):
+        if not _HAS_APP:
+            self.skipTest(f"app 层不可导入: {_APP_IMPORT_ERR}")
+        self.pts_src = _asym_blob(8000)
+        self.T_true = _make_T(8.0, -5.0, 12.0, (0.03, -0.02, 0.05))
+
+    def _run(self, method: str, init=None):
+        """同一对真值点云、指定估计方法与初值跑一次 ICP，返回 (result, 点距)。"""
+        wf = CloudCompareWorkflow()
+        src = o3d.geometry.PointCloud()
+        src.points = o3d.utility.Vector3dVector(self.pts_src)
+        tgt = o3d.geometry.PointCloud()
+        tgt.points = o3d.utility.Vector3dVector(self.pts_src.copy())
+        tgt.transform(self.T_true)
+        sid = wf.add_cloud("src", src)
+        tid = wf.add_cloud("tgt", tgt)
+        spacing = avg_point_spacing(wf.get_node(sid).pcd)
+        ok, msg, res = wf.icp_register(sid, tid, init_transform=init,
+                                       estimation_method=method)
+        self.assertTrue(ok, msg)
+        self.assertIsNotNone(res)
+        return res, spacing
+
+    def test_label_carries_all_four_metrics(self):
+        """三组都要四项齐全：fitness / inlier_rmse / 姿态角误差 / 平移误差（+ 4x4 矩阵）。"""
+        cases = [("point_to_point", None), ("point_to_point", self.T_true.copy()),
+                 ("point_to_plane", None)]
+        for method, init in cases:
+            res, spacing = self._run(method, init)
+            panel, _, log = judge_icp_result(res, point_spacing=spacing)
+            tag = f"{method}{'+真值初值' if init is not None else '冷启动'}"
+            for field in ("fitness=", "inlier_rmse=", "姿态角误差=", "平移误差="):
+                self.assertIn(field, panel, f"{tag}: 结果标签缺 {field}")
+            self.assertEqual(panel.count("\n") - 4, 1 + (1 if "⚠" in panel else 0),
+                             f"{tag}: 标签行数异常\n{panel}")
+            matrix_rows = [ln for ln in panel.split("\n") if len(ln.split()) == 4]
+            self.assertEqual(len(matrix_rows), 4, f"{tag}: 标签应含 4 行矩阵\n{panel}")
+            # 长度量单位随点云，角度是度：必须标注，否则 0.0601 会被读成 mm
+            self.assertIn("点云单位", panel, f"{tag}: 平移量未标单位")
+            self.assertIn("°", panel, f"{tag}: 角度未带度符号")
+            for field in ("fitness=", "inlier_rmse=", "姿态角误差=", "平移误差="):
+                self.assertIn(field, log, f"{tag}: 日志缺 {field}")
+
+    def test_local_minimum_flag_discriminates(self):
+        """局部极小提示只看"残差有没有落到点距以下"，且判定不得退回 fitness。
+
+        实测三组 fitness 全为 1.000000、点距中位 1.542mm：ptp 冷启动 rmse 1.651e-3
+        （=1.07×点距）→ 必须提示；ptp 真值初值与 p2pl 冷启动 rmse ≤1e-10 → 必须不提示。
+        """
+        strict = [("point_to_point", self.T_true.copy()), ("point_to_plane", None)]
+        loose = [("point_to_point", None)]
+
+        for method, init in loose:
+            res, spacing = self._run(method, init)
+            panel, warn, log = judge_icp_result(res, point_spacing=spacing)
+            self.assertGreaterEqual(res.fitness, 0.999,
+                                    "该组 fitness 不是 1.0 级，判别前提变了，需重核阈值")
+            self.assertTrue(warn, f"ptp 冷启动 rmse={res.inlier_rmse:.3e} 未提示局部极小")
+            self.assertIn("疑落入局部极小，建议给初值", log)
+            self.assertIn("疑落入局部极小", panel)  # 面板上也要看得见（不是只写日志）
+
+        for method, init in strict:
+            res, spacing = self._run(method, init)
+            _, warn, log = judge_icp_result(res, point_spacing=spacing)
+            self.assertGreaterEqual(res.fitness, 0.999)
+            self.assertFalse(warn, f"{method} rmse={res.inlier_rmse:.3e} 被误判为局部极小")
+            self.assertNotIn("疑落入局部极小", log)
+
+    def test_zero_correspondence_not_read_as_perfect(self):
+        """fitness=0（一个对应点都没有）时 inlier_rmse 恒为 0，必须标成"不可用"。
+
+        否则面板上"inlier_rmse=0"会被读成完美对齐——这是 S1 报告里 fitness 陷阱的镜像版本。
+        """
+        wf = CloudCompareWorkflow()
+        src = o3d.geometry.PointCloud()
+        src.points = o3d.utility.Vector3dVector(self.pts_src)
+        tgt = o3d.geometry.PointCloud()
+        tgt.points = o3d.utility.Vector3dVector(self.pts_src + np.array([1.0, 0.0, 0.0]))
+        sid = wf.add_cloud("src", src)
+        tid = wf.add_cloud("tgt", tgt)
+
+        ok, msg, res = wf.icp_register(sid, tid, max_distance=1e-3)
+        self.assertTrue(ok, msg)
+        self.assertEqual(res.fitness, 0.0, "前置条件：两朵点云相距 1m 应无任何对应点")
+        self.assertEqual(res.inlier_rmse, 0.0, "前置条件：open3d 无对应时 inlier_rmse 为 0")
+
+        panel, warn, log = judge_icp_result(res, point_spacing=avg_point_spacing(wf.get_node(sid).pcd))
+        self.assertTrue(warn, "零对应却未告警 → fitness=0 / rmse=0 会被读成完美配准")
+        self.assertIn("不可用", panel)
+        self.assertIn("无有效对应点", log)
+        self.assertNotIn("疑落入局部极小", log, "零对应与局部极小是两回事，提示不得混用")
+
+    def test_pose_error_is_relative_to_initial_guess(self):
+        """姿态/平移误差口径 = 相对初值（未给初值即原始位姿），与 core 真值比对同式。"""
+        res, _ = self._run("point_to_point", self.T_true.copy())
+        panel, _, _ = judge_icp_result(res, point_spacing=None, init_transform=self.T_true)
+        self.assertIn("姿态角误差=0.000°", panel)
+        self.assertIn("平移误差=0.0000", panel)
+
+        res0, _ = self._run("point_to_point", None)
+        panel0, _, _ = judge_icp_result(res0, point_spacing=None)
+        _, _, log0 = judge_icp_result(res0, point_spacing=None, init_transform=np.eye(4))
+        # 冷启动那组相对单位阵 ≈ 真值位姿本身（姿态角 8/-5/12° 的等效轴角 ≈15°）
+        self.assertGreater(rotation_angle_deg(res0.transformation[:3, :3]), 10.0)
+        self.assertIn("姿态角误差=", panel0)
+        self.assertIn("相对初值", log0)
+
+    def test_panel_to_handler_wiring_offscreen(self):
+        """接线闭环：属性面板按钮 → icp_requested → workspace._on_icp → 结果上标签/日志。
+
+        这一段正是 S2 要接的"UI 零接线"，纯函数测不到，故在 offscreen 下真点一次按钮：
+        源 = 当前选中点云，目标由下拉提供，结果标签须含四项指标。
+        """
+        from PySide6.QtWidgets import QApplication
+        from prototypes.cloudcompare_like.app.cc_workspace import CloudCompareWorkspace
+
+        app = QApplication.instance() or QApplication([])  # noqa: F841
+        ws = CloudCompareWorkspace()
+        src = o3d.geometry.PointCloud()
+        src.points = o3d.utility.Vector3dVector(self.pts_src)
+        tgt = o3d.geometry.PointCloud()
+        tgt.points = o3d.utility.Vector3dVector(self.pts_src.copy())
+        tgt.transform(self.T_true)
+        sid = ws._workflow.add_cloud("src", src)
+        tid = ws._workflow.add_cloud("tgt", tgt)
+
+        ws._current_node_id = sid
+        ws._props.set_icp_targets([(tid, "tgt")])
+        ws._props._combo_icp_method.setCurrentIndex(
+            ws._props._combo_icp_method.findData("point_to_point"))
+        logged = []
+        ws.log_message.connect(lambda msg, level: logged.append((msg, level)))
+
+        ws._props._btn_icp.click()
+
+        label = ws._props._lbl_icp_result.text()
+        self.assertIn("fitness=", label)
+        self.assertIn("inlier_rmse=", label)
+        self.assertIn("姿态角误差=", label)
+        self.assertIn("平移误差=", label)
+        self.assertTrue(logged, "点按钮后 log_message 未发出任何日志")
+        text = "\n".join(m for m, _ in logged)
+        self.assertIn("变换矩阵 (源→目标)", text)
+        self.assertTrue(any(lv == "warn" and "疑落入局部极小" in m for m, lv in logged),
+                        f"ptp 冷启动未给出局部极小告警，日志={logged!r}")
+        # 源点云已被就地改写并可撤销（接线没把 workflow 的历史/状态绕过去）
+        self.assertTrue(ws._workflow.can_undo())
 
 
 if __name__ == "__main__":

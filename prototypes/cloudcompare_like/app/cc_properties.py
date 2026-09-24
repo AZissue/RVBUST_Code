@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QFormLayout, QSlider, QSizePolicy,
 )
 
-from ui_v2.theme import TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, BG_PANEL, BORDER
+from ui_v2.theme import TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, STATUS_WARN, BG_PANEL, BORDER
 
 
 class PropertiesPanel(QWidget):
@@ -38,6 +38,8 @@ class PropertiesPanel(QWidget):
     estimate_normals_requested = Signal()
     detect_plane_requested = Signal()
     euclidean_cluster_requested = Signal()
+    # ICP 配准：源 = 当前选中点云；参数 = (目标 node_id, 估计方法, 最大对应距离 0=自动)
+    icp_requested = Signal(str, str, float)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -140,6 +142,41 @@ class PropertiesPanel(QWidget):
         btn_auto.clicked.connect(self.auto_tune_requested.emit)
         proc_lo.addWidget(btn_auto)
 
+        # --- ICP 配准（源 = 当前选中点云，目标在下方选择） ---
+        row_tgt = QHBoxLayout()
+        row_tgt.addWidget(QLabel("ICP 目标:"))
+        self._combo_icp_target = QComboBox()
+        self._combo_icp_target.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        row_tgt.addWidget(self._combo_icp_target, 1)
+        proc_lo.addLayout(row_tgt)
+
+        row_meth = QHBoxLayout()
+        row_meth.addWidget(QLabel("估计方法:"))
+        self._combo_icp_method = QComboBox()
+        self._combo_icp_method.addItem("点到点", "point_to_point")
+        self._combo_icp_method.addItem("点到面", "point_to_plane")
+        row_meth.addWidget(self._combo_icp_method, 1)
+        proc_lo.addLayout(row_meth)
+
+        row_dist = QHBoxLayout()
+        row_dist.addWidget(QLabel("最大距离:"))
+        self._spin_icp_max_dist = QDoubleSpinBox()
+        self._spin_icp_max_dist.setDecimals(3)
+        self._spin_icp_max_dist.setRange(0.0, 1e6)
+        self._spin_icp_max_dist.setValue(0.0)
+        self._spin_icp_max_dist.setToolTip("0 = 自动（按平均点距估计）；单位与点云数据一致")
+        row_dist.addWidget(self._spin_icp_max_dist, 1)
+        proc_lo.addLayout(row_dist)
+
+        self._btn_icp = QPushButton("ICP 配准")
+        self._btn_icp.clicked.connect(self._emit_icp_requested)
+        proc_lo.addWidget(self._btn_icp)
+
+        self._lbl_icp_result = QLabel("")
+        self._lbl_icp_result.setWordWrap(True)
+        self._lbl_icp_result.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 11px;")
+        proc_lo.addWidget(self._lbl_icp_result)
+
         lo.addWidget(process_group)
 
         lo.addStretch(1)
@@ -171,6 +208,37 @@ class PropertiesPanel(QWidget):
         self._lbl_center.setText("-")
         self._combo_scalar.clear()
         self._combo_scalar.addItem("无", "")
+        self._lbl_icp_result.setText("")
+
+    # ------------------------------------------------------------------
+    # ICP 配准控件
+    # ------------------------------------------------------------------
+    def _emit_icp_requested(self):
+        self.icp_requested.emit(self.get_icp_target(), self.get_icp_method(),
+                                float(self._spin_icp_max_dist.value()))
+
+    def set_icp_targets(self, items):
+        """刷新可选目标点云；items = [(node_id, 显示名)]，选择项仍在列表里则保留。"""
+        current = self.get_icp_target()
+        self._combo_icp_target.clear()
+        for node_id, label in items:
+            self._combo_icp_target.addItem(label, node_id)
+        if current:
+            idx = self._combo_icp_target.findData(current)
+            if idx >= 0:
+                self._combo_icp_target.setCurrentIndex(idx)
+
+    def get_icp_target(self) -> str:
+        return self._combo_icp_target.currentData() or ""
+
+    def get_icp_method(self) -> str:
+        return self._combo_icp_method.currentData()
+
+    def set_icp_result(self, text: str, warn: bool = False):
+        """显示 ICP 结果；warn=True（疑局部极小）改用告警色，避免与普通结果同色被忽略。"""
+        color = STATUS_WARN if warn else TEXT_MUTED
+        self._lbl_icp_result.setStyleSheet(f"color: {color}; font-size: 11px;")
+        self._lbl_icp_result.setText(text or "")
 
     def set_point_size(self, size: int):
         self._spin_size.setValue(size)
