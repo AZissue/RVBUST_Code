@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QToolButton, QLabel, QSizePolicy,
 )
 
-from ui_v2.theme import TEXT_PRIMARY, TEXT_SECONDARY, BG_PANEL, BORDER
+from ui_v2.theme import TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, BG_PANEL, BG_CARD, BORDER
 
 
 class CCToolBar(QWidget):
@@ -42,14 +42,17 @@ class CCToolBar(QWidget):
 
     def _setup_ui(self):
         self.setFixedHeight(40)
+        self.setObjectName("ccToolbar")
+        # 局部 QSS 只管字号/间距；底色/边框/hover/checked 全部交回 GLOBAL_QSS
+        # （S3.5 复刻口径：QPushButton 默认 BG_CARD、QToolButton:checked ACCENT_DIM）。
+        # 注意必须用 objectName 限定背景规则——Qt 的 QWidget{} 类选择器会命中所有
+        # 子控件，把按钮底也刷成 BG_PANEL，应用级 QPushButton/QToolButton 规则全废。
         self.setStyleSheet(
-            f"QWidget {{ background-color: {BG_PANEL}; border-bottom: 1px solid {BORDER}; }}"
-            f"QToolButton, QPushButton {{ background: transparent; border: none; "
-            f"color: {TEXT_SECONDARY}; font-size: 10pt; padding: 2px 8px; min-height: 24px; }}"
-            f"QToolButton:hover, QPushButton:hover {{ color: #ffffff; background: #3a3a3a; "
-            f"border-radius: 3px; }}"
+            f"QWidget#ccToolbar {{ background-color: {BG_PANEL}; "
+            f"border-bottom: 1px solid {BORDER}; }}"
+            f"QToolButton, QPushButton {{ font-size: 10pt; padding: 2px 8px; min-height: 24px; }}"
             f"QComboBox, QSpinBox {{ font-size: 10pt; min-height: 22px; }}"
-            f"QLabel {{ color: #888888; font-size: 10pt; background: transparent; }}"
+            f"QLabel {{ color: {TEXT_MUTED}; font-size: 10pt; background: transparent; }}"
         )
 
         lo = QHBoxLayout(self)

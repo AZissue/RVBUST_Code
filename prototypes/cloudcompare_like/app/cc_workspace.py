@@ -2,12 +2,15 @@
 """
 CloudCompare 式主工作区（CloudCompareWorkspace）。
 
-布局：
+布局（S3.5 外壳重构后）：
   - 顶部：CCToolBar
-  - 左侧：CloudDBTree（DB 树）
+  - 左侧：CloudDBTree（DB 树），包在 QScrollArea 内
   - 中间：PointCloudViewerLOD（3D 查看器）
   - 右侧：PropertiesPanel（属性面板）
-  - 底部：LogPanel（日志）
+  - 日志：不内置面板，经 `log_message` 信号交给宿主（浮动日志叠加层）
+
+宿主壳（顶栏 / 状态栏 / 浮动日志）见同文件 `CloudCompareWindow`，照
+prototypes/robot_handeye_transform/app/host.py 口径，合入形态下由主程序提供。
 
 信号/接口与 src/ui_v2/workspaces/ 现有工作区对齐，方便后期合并。
 """
@@ -16,14 +19,16 @@ from __future__ import annotations
 
 import os
 import sys
-from typing import Optional
+from typing import List, Optional
 
 import numpy as np
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import Qt, QTimer, Signal, QMimeData, QUrl
+from PySide6.QtGui import QDragEnterEvent, QDropEvent
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QSplitter, QFileDialog, QMessageBox,
+    QSplitter, QFileDialog, QMessageBox, QScrollArea, QFrame, QLabel,
+    QToolButton,
 )
 
 # 让原型能引用 src/ 下的模块
@@ -33,14 +38,23 @@ if os.path.join(_PROJECT_ROOT, "src") not in sys.path:
     sys.path.insert(0, os.path.join(_PROJECT_ROOT, "src"))
 
 from core.utils import logger
-from ui_v2.theme import GLOBAL_QSS, BG_WINDOW, BG_PANEL, BORDER
-from ui_v2.widgets import LogPanel
+from ui_v2 import icons as ui_icons
+from ui_v2.theme import (
+    ACCENT, ACCENT_DIM, BG_CARD, BG_PANEL, BG_WINDOW, BORDER, GLOBAL_QSS,
+    RADIUS, SPACE, STATUS_ERR, STATUS_OK, STATUS_WARN, TEXT_MUTED,
+    TEXT_PRIMARY, TEXT_SECONDARY,
+)
+from ui_v2.widgets.floating_log_panel import FloatingLogPanel
 
 from ..core.cc_workflow import CloudCompareWorkflow, CCNode
 from .cc_gl_viewer import PointCloudViewerLOD
 from .cc_db_tree import CloudDBTree
 from .cc_properties import PropertiesPanel
 from .cc_toolbar import CCToolBar
+
+
+# 载入接受的扩展名（小写，含点）
+LOAD_SUFFIXES = (".ply", ".pcd", ".xyz")
 
 
 # 默认调色板
@@ -149,11 +163,13 @@ def judge_icp_result(result, point_spacing: Optional[float] = None,
 class CloudCompareWorkspace(QWidget):
     """CloudCompare 式后处理工作区。"""
 
-    STATES = ("idle", "loaded", "processing")
+    # §10.10 裁定 B：保留四态（failed 由真坏文件触发，禁三态化抹掉 STATUS_ERR）
+    STATES = ("idle", "loaded", "processing", "failed")
 
     log_message = Signal(str, str)
     dirty_changed = Signal(bool)
     cloud_list_changed = Signal()
+    state_changed = Signal(str)          # set_state 后发射（宿主状态栏同步）
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -161,6 +177,8 @@ class CloudCompareWorkspace(QWidget):
         self._workflow = CloudCompareWorkflow()
         self._current_node_id: Optional[str] = None
         self._color_idx = 0
+
+        self.setAcceptDrops(True)        # 拖拽载入点云（与「打开」同一 _load_files 路径）
 
         self._setup_ui()
         self._connect_signals()
@@ -185,7 +203,7 @@ class CloudCompareWorkspace(QWidget):
 
         self._left_panel = self._build_left_panel()
         self._left_panel.setMinimumWidth(240)
-        self._left_panel.setMaximumWidth(340)
+        self._left_panel.setMaximumWidth(360)
 
         self._viewer = PointCloudViewerLOD(self)
         self._viewer.setStyleSheet(f"background-color: {BG_WINDOW}; border: none;")
@@ -200,22 +218,21 @@ class CloudCompareWorkspace(QWidget):
 
         root.addLayout(body, 1)
 
-        # 日志
-        self._log_panel = LogPanel(self)
-        self._log_panel.setFixedHeight(120)
-        self._log_panel.setStyleSheet(
-            f"QWidget {{ background-color: {BG_PANEL}; border-top: 1px solid {BORDER}; }}")
-        root.addWidget(self._log_panel)
+    def _build_left_panel(self) -> QScrollArea:
+        """左面板：DB 树包进 QScrollArea（外壳四件之一，小窗/窄栏不裁列）。"""
+        self._db_tree = CloudDBTree(self)
 
-    def _build_left_panel(self) -> QWidget:
-        panel = QWidget()
-        lo = QVBoxLayout(panel)
+        inner = QWidget()
+        lo = QVBoxLayout(inner)
         lo.setContentsMargins(0, 0, 0, 0)
         lo.setSpacing(0)
-
-        self._db_tree = CloudDBTree(self)
         lo.addWidget(self._db_tree)
-        return panel
+
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(inner)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        return scroll
 
     def _build_right_panel(self) -> QWidget:
         panel = QWidget()
@@ -248,6 +265,7 @@ class CloudCompareWorkspace(QWidget):
         self._db_tree.selection_changed.connect(self._on_tree_selection)
         self._db_tree.visibility_changed.connect(self._on_tree_visibility)
         self._db_tree.delete_requested.connect(self._on_delete_node)
+        self._db_tree.fit_view_requested.connect(self._on_fit_view)
 
         # 属性面板
         self._props.point_size_changed.connect(self._on_point_size_changed)
@@ -273,6 +291,10 @@ class CloudCompareWorkspace(QWidget):
         self._toolbar.set_redo_enabled(self._workflow.can_redo())
         if not has_cloud:
             self._props.clear()
+        self.state_changed.emit(state)
+
+    def current_state(self) -> str:
+        return self._state
 
     # ------------------------------------------------------------------
     # 点云加载
@@ -283,15 +305,69 @@ class CloudCompareWorkspace(QWidget):
             "点云文件 (*.ply *.pcd *.xyz);;所有文件 (*)")
         if not files:
             return
-        for path in files:
-            ok, msg, node_id = self._workflow.load_from_file(path)
-            self._log(msg, "info" if ok else "error")
-            if not ok:
+        self._load_files(list(files))
+
+    def _load_files(self, paths: List[str]):
+        """载入入口（对话框 / 拖拽共用同一条路径，W14 口径）。
+
+        失败不静默（W11）：不支持的扩展名与解析失败都落 error 级日志，且不新增
+        树节点。状态语义：有成功 → loaded；整批失败且当前无点云 → failed（S4 真
+        分支）；已有点云时的失败批次保持原状态（不打扰当前工作）。
+        """
+        ok_count = 0
+        fail_count = 0
+        for path in paths:
+            suffix = os.path.splitext(path)[1].lower()
+            if suffix not in LOAD_SUFFIXES:
+                fail_count += 1
+                self._log(f"不支持的文件类型（{suffix or '无扩展名'}）: {path}", "error")
                 continue
+            ok, msg, node_id = self._workflow.load_from_file(path)
+            if not ok:
+                fail_count += 1
+                # W11 失败可见：error 级日志必须带文件名（workflow 报错文案本身不含路径）
+                self._log(f"{msg}（{os.path.basename(path)}）", "error")
+                continue
+            ok_count += 1
+            self._log(msg, "info")
             node = self._workflow.get_node(node_id)
             self._add_node_to_ui(node)
-        self._refresh_viewer()
-        self.set_state("loaded")
+        if ok_count:
+            self._refresh_viewer()
+            self.set_state("loaded")
+        elif fail_count:
+            if not self._workflow.list_cloud_nodes():
+                self.set_state("failed")
+
+    # ------------------------------------------------------------------
+    # 拖拽载入（与「打开」同一条 _load_files 路径）
+    # ------------------------------------------------------------------
+    def dragEnterEvent(self, event: QDragEnterEvent):
+        if self._accepted_drop_paths(event.mimeData()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event: QDropEvent):
+        paths = self._accepted_drop_paths(event.mimeData())
+        if paths:
+            event.acceptProposedAction()
+            self._load_files(paths)
+        else:
+            event.ignore()
+
+    @staticmethod
+    def _accepted_drop_paths(mime: QMimeData) -> List[str]:
+        """mime 中可载入的本地文件路径（无则空表 → 不触发载入，W14 口径）。"""
+        if not mime.hasUrls():
+            return []
+        out = []
+        for url in mime.urls():
+            if url.isLocalFile():
+                p = url.toLocalFile()
+                if os.path.splitext(p)[1].lower() in LOAD_SUFFIXES:
+                    out.append(p)
+        return out
 
     def _add_node_to_ui(self, node: CCNode):
         color = COLOR_PALETTE[self._color_idx % len(COLOR_PALETTE)]
@@ -301,10 +377,15 @@ class CloudCompareWorkspace(QWidget):
         if node.parent_id:
             parent = self._workflow.get_node(node.parent_id)
             if parent:
+                # 文件父节点首次出现时先落树（层级：file → cloud，G-S3.5-d）
+                if self._db_tree._node_items.get(parent.node_id) is None:
+                    self._db_tree.add_file_node(parent.node_id, parent.name)
                 self._db_tree.add_cloud_node(node.node_id, node.name,
-                                              parent_id=parent.node_id, color=color)
+                                              parent_id=parent.node_id, color=color,
+                                              point_count=node.point_count)
         else:
-            self._db_tree.add_cloud_node(node.node_id, node.name, color=color)
+            self._db_tree.add_cloud_node(node.node_id, node.name, color=color,
+                                          point_count=node.point_count)
 
         self._current_node_id = node.node_id
         self._update_properties()
@@ -347,6 +428,20 @@ class CloudCompareWorkspace(QWidget):
         node_id = self._db_tree.selected_node_id()
         if node_id:
             self._on_delete_node(node_id)
+
+    def _on_fit_view(self, node_id: str):
+        """双击 / 右键「适配视角」：相机对准指定点云（文件节点取其第一朵子点云）。"""
+        node = self._workflow.get_node(node_id)
+        if node is None:
+            return
+        if node.node_type == CCNode.NODE_CLOUD:
+            self._viewer.fit_to_cloud(node_id)
+            return
+        for child in self._workflow.list_cloud_nodes():
+            if child.parent_id == node_id:
+                self._viewer.fit_to_cloud(child.node_id)
+                return
+        self._log("该节点下没有可适配的点云", "warn")
 
     # ------------------------------------------------------------------
     # 属性面板事件
@@ -510,7 +605,8 @@ class CloudCompareWorkspace(QWidget):
             node = self._workflow.get_node(new_id)
             if node is not None:
                 self._db_tree.add_cloud_node(node.node_id, node.name, parent_id=None,
-                                             color=(1.0, 0.8, 0.2))  # 顶层，与 v1 一致
+                                             color=(1.0, 0.8, 0.2),  # 顶层，与 v1 一致
+                                             point_count=node.point_count)
                 self._refresh_viewer()
                 self._update_properties()
                 self._refresh_icp_targets()  # 新节点进 ICP 目标下拉
@@ -617,13 +713,25 @@ class CloudCompareWorkspace(QWidget):
     # 日志
     # ------------------------------------------------------------------
     def _log(self, message: str, level: str = "info"):
-        self._log_panel.append(message, level)
+        # 工作区不内置日志面板：交给宿主浮动日志（CloudCompareWindow 接线），
+        # 独立测试里只发信号（W15：宿主侧断言 blockCount 递增）。
         self.log_message.emit(message, level)
 
 
 # =========================================================================
-# 独立运行入口
+# 独立运行入口（宿主壳：顶栏 + 工作区 + 状态栏 + 浮动日志叠加层）
 # =========================================================================
+# 照 prototypes/robot_handeye_transform/app/host.py 口径（M2a-1 设计语言复刻）：
+# 顶栏/状态栏形态照 src/ui_v2/main_window.py；合入形态下壳由主程序提供，
+# 本壳只是把同一套接口拉起来，避免「验证的形态 ≠ 最终形态」。
+
+# 工作区状态 → 状态栏状态点颜色（§10.10 裁定 B：四态）
+_STATE_DOT = {"idle": TEXT_MUTED, "loaded": STATUS_OK,
+              "processing": STATUS_WARN, "failed": STATUS_ERR}
+_STATE_TEXT = {"idle": "待机", "loaded": "已载入",
+               "processing": "处理中", "failed": "载入失败"}
+
+
 class CloudCompareWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -636,14 +744,173 @@ class CloudCompareWindow(QMainWindow):
         lo.setContentsMargins(0, 0, 0, 0)
         lo.setSpacing(0)
 
+        self._toolbar = self._build_toolbar()
+        lo.addWidget(self._toolbar)
+
         self.workspace = CloudCompareWorkspace()
-        lo.addWidget(self.workspace)
+        lo.addWidget(self.workspace, 1)
+
+        self._statusbar = self._build_statusbar()
+        lo.addWidget(self._statusbar)
+
+        # 浮动日志面板：叠加层（不挤占中央工作区），「日志」按钮 toggle
+        self._log_panel = FloatingLogPanel(self)
+        self._log_panel.closed.connect(self._on_log_panel_closed)
+        self._log_panel.hide()
+
+        self.workspace.log_message.connect(self._on_workspace_log)
+        self.workspace.state_changed.connect(self._refresh_statusbar)
+        self._refresh_statusbar(self.workspace.current_state())
 
         screen = QApplication.primaryScreen()
         if screen:
             geo = screen.availableGeometry()
             self.move((geo.width() - self.width()) // 2,
                       (geo.height() - self.height()) // 2)
+
+    # ------------------------------------------------------------------ 顶栏
+    def _build_toolbar(self) -> QWidget:
+        """顶栏（照 main_window.py 口径：模式徽章 ｜ QToolButton 组 ｜ 右侧日志开关）。"""
+        bar = QWidget()
+        bar.setObjectName("hostToolbar")
+        bar.setStyleSheet(
+            f"QWidget#hostToolbar {{ background-color: {BG_PANEL}; "
+            f"border-bottom: 1px solid {BORDER}; }}")
+        lo = QHBoxLayout(bar)
+        lo.setContentsMargins(10, 6, 10, 6)
+        lo.setSpacing(4)
+
+        badge = QLabel("后处理")
+        badge.setStyleSheet(
+            f"background-color: {ACCENT_DIM}; color: {ACCENT}; border: none; "
+            f"border-radius: 10px; padding: 1px 8px; font-weight: 700;")
+        lo.addWidget(badge)
+
+        sep = QLabel("｜")
+        sep.setStyleSheet(f"color: {TEXT_MUTED};")
+        lo.addWidget(sep)
+
+        btn_help = QToolButton()
+        btn_help.setText("帮助")
+        btn_help.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        ui_icons.apply(btn_help, "help", TEXT_SECONDARY, 15)
+        btn_help.clicked.connect(self._show_help)
+        lo.addWidget(btn_help)
+
+        lo.addStretch(1)
+
+        self._btn_log = QToolButton()
+        self._btn_log.setText("日志")
+        self._btn_log.setCheckable(True)
+        self._btn_log.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        ui_icons.apply(self._btn_log, "terminal", TEXT_SECONDARY, 15)
+        self._btn_log.toggled.connect(self._log_dock_toggle)
+        lo.addWidget(self._btn_log)
+
+        return bar
+
+    # ---------------------------------------------------------------- 状态栏
+    def _build_statusbar(self) -> QWidget:
+        """状态栏（照 main_window.py 口径：状态点 + 步骤 ｜ 最近一条日志）。"""
+        bar = QWidget()
+        bar.setObjectName("hostStatusbar")
+        bar.setStyleSheet(
+            f"QWidget#hostStatusbar {{ background-color: {BG_PANEL}; "
+            f"border-top: 1px solid {BORDER}; }}")
+        lo = QHBoxLayout(bar)
+        lo.setContentsMargins(10, 5, 10, 5)
+        lo.setSpacing(10)
+
+        left = QFrame()
+        left.setStyleSheet(
+            f"QFrame {{ background-color: {BG_CARD}; border: none; "
+            f"border-radius: {RADIUS}; }}")
+        left_lo = QHBoxLayout(left)
+        left_lo.setContentsMargins(8, 3, 8, 3)
+        left_lo.setSpacing(8)
+
+        self._st_state_dot = QLabel("●")
+        self._st_state_dot.setObjectName("stateDot")
+        self._st_state_dot.setStyleSheet(
+            f"color: {_STATE_DOT['idle']}; font-size: 12px;")
+        left_lo.addWidget(self._st_state_dot)
+
+        self._st_step = QLabel(_STATE_TEXT["idle"])
+        self._st_step.setStyleSheet(f"color: {TEXT_SECONDARY};")
+        left_lo.addWidget(self._st_step)
+
+        lo.addWidget(left)
+        lo.addStretch(1)
+
+        right = QFrame()
+        right.setStyleSheet(
+            f"QFrame {{ background-color: {BG_CARD}; border: none; "
+            f"border-radius: {RADIUS}; }}")
+        right_lo = QHBoxLayout(right)
+        right_lo.setContentsMargins(8, 3, 8, 3)
+
+        self._st_hint = QLabel("")
+        self._st_hint.setStyleSheet(f"color: {TEXT_MUTED};")
+        right_lo.addWidget(self._st_hint)
+        lo.addWidget(right, 1)
+
+        return bar
+
+    def _refresh_statusbar(self, state: str):
+        self._st_state_dot.setStyleSheet(
+            f"color: {_STATE_DOT.get(state, TEXT_MUTED)}; font-size: 12px;")
+        self._st_step.setText(_STATE_TEXT.get(state, state))
+
+    # ------------------------------------------------------------------ 日志
+    def set_log_visible(self, visible: bool):
+        """显示/隐藏浮动日志面板（截图脚本与外部调用用；等价于点「日志」）。"""
+        self._btn_log.setChecked(bool(visible))
+
+    def _log_dock_toggle(self, checked: bool):
+        if checked:
+            self._position_log_panel()
+            self._log_panel.show()
+            self._log_panel.raise_()
+        else:
+            self._log_panel.hide()
+
+    def _on_log_panel_closed(self):
+        """用户点面板关闭按钮：隐藏面板并取消顶栏「日志」勾选。"""
+        self._btn_log.setChecked(False)
+        self._log_panel.hide()
+
+    def _position_log_panel(self):
+        """把浮动日志面板定位到窗口右侧偏下（避开顶栏与状态栏），照 main_window.py。"""
+        margin = SPACE
+        panel_w = self._log_panel.width()
+        panel_h = self._log_panel.height()
+        x = self.width() - panel_w - margin
+        toolbar_h = self._toolbar.height() if self._toolbar else 42
+        status_h = self._statusbar.height() if self._statusbar else 28
+        y = self.height() - panel_h - status_h - margin
+        x = max(margin, x)
+        y = max(toolbar_h + margin, y)
+        self._log_panel.move(x, y)
+
+    def _on_workspace_log(self, text: str, level: str = "info"):
+        self._log_panel.append(str(text), level)
+        self._st_hint.setText(str(text).splitlines()[-1][:120])
+
+    # ------------------------------------------------------------------ 帮助
+    def _show_help(self):
+        QMessageBox.information(
+            self, "后处理原型 · 使用说明",
+            "1) 「打开」或直接把 .ply / .pcd / .xyz 拖进窗口载入点云\n"
+            "2) DB 树多选点云 → 属性面板「合并」；选中单朵 → ICP 配准\n"
+            "3) 双击节点 / 右键「适配视角」把相机对准该点云\n"
+            "4) 顶栏「日志」开关浮动日志面板")
+
+    # ------------------------------------------------------------------ 事件
+    def resizeEvent(self, event):
+        """窗口尺寸变化时重定位浮动日志面板（S7：小窗也不许跑出窗外）。"""
+        super().resizeEvent(event)
+        if getattr(self, "_log_panel", None) is not None and self._log_panel.isVisible():
+            self._position_log_panel()
 
 
 def main():

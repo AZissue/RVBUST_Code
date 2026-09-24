@@ -22,6 +22,7 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 
 from core.utils import logger
+from ui_v2.theme import ACCENT, ACCENT_DIM, BG_CARD, BORDER, TEXT_PRIMARY
 
 # 尝试导入 LOD（失败不影响基本渲染）
 try:
@@ -34,6 +35,17 @@ except Exception:
 # 背景色
 BG_DARK = (0.10, 0.10, 0.13, 1.0)
 BG_LIGHT = (0.90, 0.90, 0.92, 1.0)
+
+
+def _app_font(widget: QWidget, point_size: int) -> QFont:
+    """自绘 overlay 文字取控件自身字体（GLOBAL_QSS 作用后的字族），只调字号。
+
+    §10.10① 裁定：取 `self.font()`，不用 `QApplication.font()`（实测 YaHei UI，
+    不吃 QSS）；QFont 为值语义，拿到即副本，直接 setPointSize 即可。
+    """
+    font = widget.font()
+    font.setPointSize(point_size)
+    return font
 
 
 def _jet_color(t: float) -> list:
@@ -77,7 +89,7 @@ class ScaleBarWidget(QWidget):
         painter.drawLine(x_start, y, x_end, y)
         painter.drawLine(x_start, y - 5, x_start, y + 5)
         painter.drawLine(x_end, y - 5, x_end, y + 5)
-        painter.setFont(QFont("Arial", 9))
+        painter.setFont(_app_font(self, 9))
         text = f"{world_len:.0f} mm" if world_len >= 1 else f"{world_len*1000:.0f} μm"
         text_width = painter.fontMetrics().horizontalAdvance(text)
         painter.drawText(x_start + (self.BAR_PX - text_width) // 2, y - 8, text)
@@ -121,7 +133,7 @@ class ColorBarWidget(QWidget):
         painter.setPen(QPen(QColor(200, 200, 200), 1))
         painter.drawRect(x, y, w, h)
 
-        painter.setFont(QFont("Arial", 8))
+        painter.setFont(_app_font(self, 8))
         painter.setPen(QPen(QColor(200, 200, 200), 1))
         painter.drawText(x + w + 5, y + 10, f"{self._max_val:.2f}")
         painter.drawText(x + w + 5, y + h, f"{self._min_val:.2f}")
@@ -225,8 +237,9 @@ class PointCloudViewerLOD(QOpenGLWidget):
         # 叠加层
         self._overlay_label = QLabel(self)
         self._overlay_label.setStyleSheet(
-            "QLabel { background-color: rgba(0, 0, 0, 150); color: #e6e6e6; "
-            "border-radius: 6px; padding: 6px 10px; font-size: 9pt; }"
+            f"QLabel {{ background-color: {BG_CARD}; color: {TEXT_PRIMARY}; "
+            f"border: 1px solid {BORDER}; border-radius: 6px; padding: 6px 10px; "
+            f"font-size: 9pt; }}"
         )
         self._overlay_label.setAttribute(Qt.WA_TransparentForMouseEvents)
         self._overlay_label.move(10, 10)
@@ -699,6 +712,23 @@ class PointCloudViewerLOD(QOpenGLWidget):
         self.camera.reset()
         self.update()
 
+    def fit_to_cloud(self, cloud_id: str):
+        """适配视角：相机对准指定点云（目标=质心，距离=包围 extent×1.5，口径同
+        `_update_scene_bounds`）。点云不存在时保持现状。"""
+        cloud = self._clouds.get(cloud_id)
+        if not cloud:
+            return
+        pts = np.asarray(cloud["points"], dtype=np.float32)
+        mask = np.isfinite(pts).all(axis=1)
+        if not mask.any():
+            return
+        valid = pts[mask]
+        centroid = valid.mean(axis=0)
+        extent = max(float(np.linalg.norm(valid.max(axis=0) - valid.min(axis=0))), 1e-3)
+        self.camera.target = centroid.astype(np.float32)
+        self.camera.distance = max(extent * 1.5, 1.0)
+        self.update()
+
     def resizeGL(self, w: int, h: int):
         if self._has_gl:
             from OpenGL import GL
@@ -782,7 +812,8 @@ class PointCloudViewerLOD(QOpenGLWidget):
             from PySide6.QtWidgets import QRubberBand
             self._roi_rubberband = QRubberBand(QRubberBand.Rectangle, self)
             self._roi_rubberband.setStyleSheet(
-                "QRubberBand { border: 2px dashed #FF5252; background-color: rgba(255,82,82,30); }"
+                f"QRubberBand {{ border: 2px dashed {ACCENT}; "
+                f"background-color: {ACCENT_DIM}; }}"
             )
 
     @staticmethod

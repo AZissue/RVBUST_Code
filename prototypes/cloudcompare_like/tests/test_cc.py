@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 import unittest
 import numpy as np
 
@@ -885,6 +886,275 @@ class TestMergeWiring(unittest.TestCase):
         self.assertTrue(warn0)
         self.assertIn("无有效对应点", log0)
         self.assertNotIn("对应点过少", log0)
+
+
+class TestLoadFilesWiring(unittest.TestCase):
+    """G-S3.5-c 载入闭环：多文件 / 失败不静默（W11）/ 拖拽同路径（W14）/ 四处同步。"""
+
+    def setUp(self):
+        if not _HAS_APP:
+            self.skipTest(f"app 层不可导入: {_APP_IMPORT_ERR}")
+        from PySide6.QtWidgets import QApplication
+        from prototypes.cloudcompare_like.app.cc_workspace import CloudCompareWorkspace
+        self._QApplication = QApplication
+        self._Workspace = CloudCompareWorkspace
+
+    @staticmethod
+    def _write_ply(directory, name, n=200, seed=0):
+        rng = np.random.default_rng(seed)
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(rng.normal(size=(n, 3)))
+        path = os.path.join(directory, name)
+        assert o3d.io.write_point_cloud(path, pcd), f"写测试点云失败: {path}"
+        return path
+
+    def test_multi_file_load_tree_and_sync(self):
+        """多文件载入：file→cloud 层级入树，状态/视图/ICP 下拉同步。"""
+        self._QApplication.instance() or self._QApplication([])  # noqa: F841
+        ws = self._Workspace()
+        with tempfile.TemporaryDirectory() as d:
+            pa = self._write_ply(d, "a.ply", 1200, 1)
+            pb = self._write_ply(d, "b.pcd", 2300, 2)
+            ws._load_files([pa, pb])
+
+        tree = ws._db_tree
+        self.assertEqual(tree._tree.topLevelItemCount(), 2, "每文件一个顶层文件节点")
+        for i in range(tree._tree.topLevelItemCount()):
+            item = tree._tree.topLevelItem(i)
+            self.assertEqual(item.text(1), "文件")
+            self.assertEqual(item.childCount(), 1, "文件节点下应挂 1 朵点云")
+            cloud_item = item.child(0)
+            self.assertEqual(cloud_item.text(1), "点云")
+            self.assertIn(",", cloud_item.text(2), "点数列应显示千分位计数")
+        self.assertEqual(ws._state, "loaded")
+        self.assertEqual(len(ws._workflow.list_cloud_nodes()), 2)
+        # 视图同步：viewer 持有全部可见点云
+        self.assertEqual(set(ws._viewer._clouds.keys()),
+                         {n.node_id for n in ws._workflow.list_cloud_nodes()})
+        # ICP 目标下拉同步：当前选中云之外的全部点云
+        self.assertEqual(ws._props._combo_icp_target.count(), 1)
+
+    def test_load_failure_not_silent_from_loaded(self):
+        """W11：已载入状态下吃坏文件 → error 日志 + 树不新增 + 状态不变。"""
+        self._QApplication.instance() or self._QApplication([])  # noqa: F841
+        ws = self._Workspace()
+        with tempfile.TemporaryDirectory() as d:
+            good = self._write_ply(d, "good.ply", 100, 3)
+            ws._load_files([good])
+            self.assertEqual(ws._state, "loaded")
+
+            bad = os.path.join(d, "bad.ply")
+            with open(bad, "w", encoding="utf-8") as f:
+                f.write("this is not a point cloud")
+            junk = os.path.join(d, "notes.txt")
+            with open(junk, "w", encoding="utf-8") as f:
+                f.write("x")
+
+            logged = []
+            ws.log_message.connect(lambda m, lv: logged.append((m, lv)))
+            nodes_before = len(ws._db_tree._node_items)
+            clouds_before = len(ws._workflow.list_cloud_nodes())
+            ws._load_files([bad, junk])
+
+        self.assertEqual(len(ws._db_tree._node_items), nodes_before, "树不得新增节点")
+        self.assertEqual(len(ws._workflow.list_cloud_nodes()), clouds_before)
+        self.assertEqual(ws._state, "loaded", "已载入状态下失败批次不得改状态")
+        errors = [m for m, lv in logged if lv == "error"]
+        self.assertEqual(len(errors), 2, f"坏文件与不支持的类型都应有 error 日志: {logged!r}")
+        self.assertTrue(any("bad.ply" in m for m in errors))
+        self.assertTrue(any("notes.txt" in m for m in errors))
+
+    def test_load_failed_state_from_idle(self):
+        """裁定 B：idle 吃真坏文件 → failed（S4 状态色的真实分支，非改标签伪造）。"""
+        self._QApplication.instance() or self._QApplication([])  # noqa: F841
+        ws = self._Workspace()
+        with tempfile.TemporaryDirectory() as d:
+            bad = os.path.join(d, "broken.ply")
+            with open(bad, "w", encoding="utf-8") as f:
+                f.write("ply\nbroken header\n")
+            ws._load_files([bad])
+        self.assertEqual(ws._state, "failed")
+
+    def test_mixed_batch_loaded_state_and_error_log(self):
+        """混合批次（1 成功 + 1 失败）：状态点落 loaded 且 error 日志同现，二者缺一即缺陷。"""
+        self._QApplication.instance() or self._QApplication([])  # noqa: F841
+        ws = self._Workspace()
+        with tempfile.TemporaryDirectory() as d:
+            good = self._write_ply(d, "good.ply", 100, 8)
+            bad = os.path.join(d, "bad.ply")
+            with open(bad, "w", encoding="utf-8") as f:
+                f.write("not a point cloud")
+            logged = []
+            ws.log_message.connect(lambda m, lv: logged.append((m, lv)))
+            ws._load_files([good, bad])
+        self.assertEqual(ws._state, "loaded", "有成功必须落 loaded")
+        self.assertTrue(any(lv == "error" and "bad.ply" in m for m, lv in logged),
+                        f"失败文件必须同现 error 日志: {logged!r}")
+
+    def test_drag_drop_same_load_path(self):
+        """W14：合成 QMimeData 投递，走与对话框完全相同的 _load_files 实参元组。"""
+        from PySide6.QtCore import QMimeData, QPointF, Qt, QUrl
+        from PySide6.QtGui import QDropEvent
+
+        self._QApplication.instance() or self._QApplication([])  # noqa: F841
+        ws = self._Workspace()
+        with tempfile.TemporaryDirectory() as d:
+            pa = self._write_ply(d, "a.ply", 120, 4)
+            recorded = []
+            ws._load_files = lambda paths: recorded.append(tuple(paths))
+
+            mime = QMimeData()
+            mime.setUrls([QUrl.fromLocalFile(pa)])
+            drop = QDropEvent(QPointF(10, 10), Qt.CopyAction, mime,
+                              Qt.LeftButton, Qt.NoModifier)
+            ws.dropEvent(drop)
+            self.assertTrue(drop.isAccepted())
+            # QUrl 规一化分隔符后必须与对话框入口的实参一致
+            self.assertEqual(tuple(os.path.normpath(p) for p in recorded[0]),
+                             (os.path.normpath(pa),),
+                             "拖拽应与对话框产出相同实参元组")
+
+            # 空 mime（无 urls）→ 不触发载入
+            empty = QMimeData()
+            drop2 = QDropEvent(QPointF(10, 10), Qt.CopyAction, empty,
+                               Qt.LeftButton, Qt.NoModifier)
+            ws.dropEvent(drop2)
+            self.assertFalse(drop2.isAccepted())
+            self.assertEqual(len(recorded), 1, "空 mime 不得触发载入")
+
+
+class TestDBTreeDisplay(unittest.TestCase):
+    """G-S3.5-d DB 树显示：三列 / 层级 / 可见性同步 / 右键四项 / 双击适配。"""
+
+    def setUp(self):
+        if not _HAS_APP:
+            self.skipTest(f"app 层不可导入: {_APP_IMPORT_ERR}")
+        from PySide6.QtWidgets import QApplication
+        from prototypes.cloudcompare_like.app.cc_workspace import CloudCompareWorkspace
+        self._QApplication = QApplication
+        self._Workspace = CloudCompareWorkspace
+
+    def _load_one(self, ws, directory, name="a.ply", n=150, seed=5):
+        rng = np.random.default_rng(seed)
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(rng.normal(size=(n, 3)))
+        path = os.path.join(directory, name)
+        assert o3d.io.write_point_cloud(path, pcd)
+        ws._load_files([path])
+        return ws._workflow.list_cloud_nodes()[-1].node_id
+
+    def test_three_columns_and_hierarchy(self):
+        self._QApplication.instance() or self._QApplication([])  # noqa: F841
+        ws = self._Workspace()
+        with tempfile.TemporaryDirectory() as d:
+            cid = self._load_one(ws, d, n=1500)
+        tree = ws._db_tree
+        self.assertFalse(tree._tree.isHeaderHidden(), "表头必须可见（三列）")
+        header = tree._tree.headerItem()
+        self.assertEqual([header.text(c) for c in range(3)], ["名称", "类型", "点数"])
+        file_item = tree._tree.topLevelItem(0)
+        cloud_item = file_item.child(0)
+        self.assertEqual(cloud_item.text(2), "1,500")
+        # 标量场节点层级：file → cloud → scalar
+        scalar_item = tree.add_scalar_node(cid, "z", cid)
+        self.assertIs(scalar_item.parent(), cloud_item)
+        self.assertEqual(scalar_item.text(1), "标量场")
+        self.assertEqual(scalar_item.text(2), "-")
+
+    def test_visibility_syncs_viewer(self):
+        from PySide6.QtCore import Qt
+        self._QApplication.instance() or self._QApplication([])  # noqa: F841
+        ws = self._Workspace()
+        with tempfile.TemporaryDirectory() as d:
+            ida = self._load_one(ws, d, "a.ply", 100, 6)
+            idb = self._load_one(ws, d, "b.ply", 100, 7)
+        self.assertEqual(set(ws._viewer._clouds.keys()), {ida, idb})
+        ws._db_tree._node_items[ida].setCheckState(0, Qt.Unchecked)
+        self.assertNotIn(ida, ws._viewer._clouds, "取消勾选后视图应移除该点云")
+        self.assertIn(idb, ws._viewer._clouds)
+        node = ws._workflow.get_node(ida)
+        self.assertFalse(node.visible, "workflow 侧可见性应同步")
+
+    def test_context_menu_four_actions(self):
+        self._QApplication.instance() or self._QApplication([])  # noqa: F841
+        ws = self._Workspace()
+        with tempfile.TemporaryDirectory() as d:
+            cid = self._load_one(ws, d)
+        item = ws._db_tree._node_items[cid]
+        menu = ws._db_tree._build_context_menu(item)
+        texts = [a.text() for a in menu.actions()]
+        for expected in ("适配视角", "导出点云", "重命名", "删除"):
+            self.assertIn(expected, texts, f"右键菜单缺「{expected}」: {texts}")
+
+    def test_double_click_fits_view(self):
+        self._QApplication.instance() or self._QApplication([])  # noqa: F841
+        ws = self._Workspace()
+        with tempfile.TemporaryDirectory() as d:
+            cid = self._load_one(ws, d)
+        fitted = []
+        ws._viewer.fit_to_cloud = lambda cloud_id: fitted.append(cloud_id)
+        item = ws._db_tree._node_items[cid]
+        ws._db_tree._tree.itemDoubleClicked.emit(item, 0)
+        self.assertEqual(fitted, [cid], "双击点云应触发适配视角")
+
+
+class TestShellOffscreen(unittest.TestCase):
+    """G-S3.5-a① 外壳四件 + W15 浮动日志不吞日志（offscreen 构造断言）。"""
+
+    def setUp(self):
+        if not _HAS_APP:
+            self.skipTest(f"app 层不可导入: {_APP_IMPORT_ERR}")
+        from PySide6.QtWidgets import QApplication, QScrollArea
+        from prototypes.cloudcompare_like.app.cc_workspace import CloudCompareWindow
+        self._QApplication = QApplication
+        self._QScrollArea = QScrollArea
+        self._Window = CloudCompareWindow
+
+    def _make_window(self):
+        app = self._QApplication.instance() or self._QApplication([])  # noqa: F841
+        win = self._Window()
+        win.show()
+        app.processEvents()
+        return win
+
+    def test_shell_four_pieces(self):
+        win = self._make_window()
+        self.assertTrue(win._toolbar.isVisible(), "顶栏缺失")
+        self.assertTrue(win._statusbar.isVisible(), "状态栏缺失")
+        self.assertIsInstance(win.workspace._left_panel, self._QScrollArea,
+                              "左面板必须是 QScrollArea")
+        win.set_log_visible(True)
+        self.assertTrue(win._log_panel.isVisible(), "浮动日志面板未显示")
+        self.assertFalse(win._log_panel.isWindow(), "日志必须是叠加层而非独立窗")
+
+    def test_floating_log_receives_workspace_log(self):
+        """W15：LogPanel → 浮动后 _log 仍可达（blockCount 递增 + 状态栏提示同步）。
+
+        QPlainTextEdit 首行写入空文档不产生新 block（blockCount 恒 1 起），
+        故连续写两行、断言第二行带来递增。
+        """
+        win = self._make_window()
+        win.set_log_visible(True)
+        win.workspace._log("外壳接线自检 1", "info")
+        app = self._QApplication.instance()
+        app.processEvents()
+        before = win._log_panel._text.document().blockCount()
+        win.workspace._log("外壳接线自检 2", "info")
+        app.processEvents()
+        after = win._log_panel._text.document().blockCount()
+        self.assertGreater(after, before, "浮动日志吞掉了工作区日志")
+        self.assertIn("外壳接线自检 2", win._st_hint.text())
+
+    def test_state_dot_follows_workspace(self):
+        """四态：idle 吃真坏文件 → 状态点/文案落 failed（STATUS_ERR 分支真实可达）。"""
+        win = self._make_window()
+        with tempfile.TemporaryDirectory() as d:
+            bad = os.path.join(d, "broken.ply")
+            with open(bad, "w", encoding="utf-8") as f:
+                f.write("ply\nbroken header\n")
+            win.workspace._load_files([bad])
+        self.assertEqual(win.workspace._state, "failed")
+        self.assertIn("载入失败", win._st_step.text())
 
 
 if __name__ == "__main__":

@@ -19,23 +19,38 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QTreeWidget, QTreeWidgetItem, QMenu,
 )
 
-from ui_v2.theme import TEXT_PRIMARY, TEXT_SECONDARY, BG_CARD, BG_PANEL, BORDER
+from ui_v2.theme import (
+    ACCENT, ACCENT_PRESSED, BG_CARD, BG_PANEL, BORDER, TEXT_PRIMARY, TEXT_SECONDARY,
+)
+
+# 节点类型 → 第二列显示文本
+_TYPE_LABEL = {"file": "文件", "cloud": "点云", "scalar": "标量场"}
 
 
 class DBTreeItem(QTreeWidgetItem):
     """DB 树通用节点。"""
 
     def __init__(self, node_id: str, name: str, node_type: str,
-                 parent=None, color: Optional[tuple] = None):
+                 parent=None, color: Optional[tuple] = None,
+                 point_count: int = 0):
         super().__init__(parent)
         self.node_id = node_id
         self.node_type = node_type
         self._color = color or (0.7, 0.7, 0.7)
         self.setText(0, name)
+        self.setText(1, _TYPE_LABEL.get(node_type, node_type))
+        self.set_point_count(point_count)
         self.setFlags(self.flags() | Qt.ItemIsUserCheckable)
         self.setCheckState(0, Qt.Checked)
         # 所有节点允许选中（文件节点可选中后整支删除）
         self.setFlags(self.flags() | Qt.ItemIsSelectable)
+
+    def set_point_count(self, n: int):
+        """第三列点数；标量场/文件节点无点数显示 \"-\"。"""
+        if self.node_type == "cloud" and n > 0:
+            self.setText(2, f"{n:,}")
+        else:
+            self.setText(2, "-")
 
     def set_icon_color(self, color: tuple):
         """设置节点前面的颜色方块图标。"""
@@ -53,6 +68,7 @@ class CloudDBTree(QWidget):
     delete_requested = Signal(str)       # node_id
     rename_requested = Signal(str, str)  # node_id, new_name
     export_requested = Signal(str)       # node_id
+    fit_view_requested = Signal(str)     # node_id（双击/右键「适配视角」）
     merge_requested = Signal()           # 合并入口触发；ids 由工作区从树读
 
     def __init__(self, parent=None):
@@ -71,7 +87,8 @@ class CloudDBTree(QWidget):
         lo.addWidget(lbl)
 
         self._tree = QTreeWidget()
-        self._tree.setHeaderHidden(True)
+        self._tree.setHeaderLabels(["名称", "类型", "点数"])
+        self._tree.setHeaderHidden(False)
         self._tree.setSelectionMode(QTreeWidget.ExtendedSelection)
         self._tree.setStyleSheet(f"""
             QTreeWidget {{
@@ -86,18 +103,19 @@ class CloudDBTree(QWidget):
                 border: none;
             }}
             QTreeWidget::item:selected {{
-                background-color: #d32f2f;
-                color: #FFFFFF;
+                background-color: {ACCENT};
+                color: {TEXT_PRIMARY};
             }}
             QTreeWidget::item:selected:!active {{
-                background-color: #b71c1c;
-                color: #FFFFFF;
+                background-color: {ACCENT_PRESSED};
+                color: {TEXT_PRIMARY};
             }}
         """)
         self._tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self._tree.customContextMenuRequested.connect(self._on_context_menu)
         self._tree.itemChanged.connect(self._on_item_changed)
         self._tree.itemSelectionChanged.connect(self._on_selection_changed)
+        self._tree.itemDoubleClicked.connect(self._on_item_double_clicked)
 
         # Delete 键删除选中节点
         from PySide6.QtGui import QShortcut, QKeySequence
@@ -122,9 +140,11 @@ class CloudDBTree(QWidget):
         return item
 
     def add_cloud_node(self, node_id: str, name: str, parent_id: Optional[str] = None,
-                       color: Optional[tuple] = None) -> DBTreeItem:
+                       color: Optional[tuple] = None,
+                       point_count: int = 0) -> DBTreeItem:
         parent = self._node_items.get(parent_id)
-        item = DBTreeItem(node_id, name, "cloud", parent=parent, color=color)
+        item = DBTreeItem(node_id, name, "cloud", parent=parent, color=color,
+                          point_count=point_count)
         if color:
             item.set_icon_color(color)
         if parent:
@@ -133,6 +153,11 @@ class CloudDBTree(QWidget):
             self._tree.addTopLevelItem(item)
         self._node_items[node_id] = item
         return item
+
+    def set_point_count(self, node_id: str, n: int):
+        item = self._node_items.get(node_id)
+        if item:
+            item.set_point_count(n)
 
     def add_scalar_node(self, node_id: str, scalar_name: str, parent_id: str) -> DBTreeItem:
         parent = self._node_items.get(parent_id)
@@ -212,12 +237,20 @@ class CloudDBTree(QWidget):
         item = self._tree.itemAt(pos)
         if item is None or not isinstance(item, DBTreeItem):
             return
+        self._build_context_menu(item).exec(self._tree.viewport().mapToGlobal(pos))
+
+    def _build_context_menu(self, item: DBTreeItem) -> QMenu:
+        """构造右键菜单（不 exec，供测试直接断言动作集合）。"""
         menu = QMenu(self)
         menu.setStyleSheet(
             f"QMenu {{ background-color: {BG_CARD}; color: {TEXT_PRIMARY}; "
             f"border: 1px solid {BORDER}; padding: 4px; }}")
 
         if item.node_type == "cloud":
+            act_fit = QAction("适配视角", self)
+            act_fit.triggered.connect(lambda: self.fit_view_requested.emit(item.node_id))
+            menu.addAction(act_fit)
+
             act_export = QAction("导出点云", self)
             act_export.triggered.connect(lambda: self.export_requested.emit(item.node_id))
             menu.addAction(act_export)
@@ -231,7 +264,11 @@ class CloudDBTree(QWidget):
         act_delete.triggered.connect(lambda: self.delete_requested.emit(item.node_id))
         menu.addAction(act_delete)
 
-        menu.exec(self._tree.viewport().mapToGlobal(pos))
+        return menu
+
+    def _on_item_double_clicked(self, item: QTreeWidgetItem, column: int):
+        if isinstance(item, DBTreeItem):
+            self.fit_view_requested.emit(item.node_id)
 
     def _rename_item(self, item: DBTreeItem):
         from PySide6.QtWidgets import QInputDialog
