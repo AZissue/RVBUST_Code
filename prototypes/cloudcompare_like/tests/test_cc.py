@@ -689,5 +689,174 @@ class TestICPResultReport(unittest.TestCase):
         self.assertTrue(ws._workflow.can_undo())
 
 
+class TestMergeWiring(unittest.TestCase):
+    """S3 合并接线（G-S3）：DB 树多选 → 面板按钮 → workflow.merge_clouds → 回树。
+
+    树为唯一真值：选中集由工作区从树读，测试在 offscreen 下对树 item 设选中态后
+    真点一次按钮，走完整 UI 数据路径（与 S2 的 ICP 接线测试同法）。
+    """
+
+    def setUp(self):
+        if not _HAS_APP:
+            self.skipTest(f"app 层不可导入: {_APP_IMPORT_ERR}")
+        from PySide6.QtWidgets import QApplication
+        from prototypes.cloudcompare_like.app.cc_workspace import CloudCompareWorkspace
+        self._QApplication = QApplication
+        self._Workspace = CloudCompareWorkspace
+
+    def _make_workspace_with(self, specs):
+        """specs = [(name, n, color, normal)] → (ws, [node_id,...])。树/工作区同步建。"""
+        ws = self._Workspace()
+        ids = []
+        for name, n, color, normal in specs:
+            pcd = TestMergeClouds._cloud(n, color=color, normal=normal)
+            nid = ws._workflow.add_cloud(name, pcd)
+            ws._add_node_to_ui(ws._workflow.get_node(nid))
+            ids.append(nid)
+        return ws, ids
+
+    def test_merge_wiring_offscreen(self):
+        """接线闭环 + 属性并集经 UI 路径（混合属性输入）+ 历史口径（G-S3-a/b/c）。"""
+        app = self._QApplication.instance() or self._QApplication([])  # noqa: F841
+        ws, (ida, idb) = self._make_workspace_with([
+            ("a", 300, (1.0, 0.0, 0.0), (0.0, 0.0, 1.0)),  # 有色有法线
+            ("b", 200, None, None),                          # 无色无法线
+        ])
+
+        # G-S3-b 前置：合并 = 新增节点不入历史，前后 undo/redo 状态必须不变
+        undo_before, redo_before = ws._workflow.can_undo(), ws._workflow.can_redo()
+
+        ws._db_tree._node_items[ida].setSelected(True)
+        ws._db_tree._node_items[idb].setSelected(True)
+        self.assertTrue(ws._props._btn_merge.isEnabled(), "选中 2 朵后合并按钮应启用")
+
+        logged = []
+        ws.log_message.connect(lambda msg, level: logged.append((msg, level)))
+        ws._props._btn_merge.click()
+
+        # G-S3-c：新节点入 workflow + 入树（顶层，与 v1 一致），源节点保留
+        clouds = ws._workflow.list_cloud_nodes()
+        self.assertEqual(len(clouds), 3, "合并应新增 1 节点且源节点保留")
+        merged_id = next(n.node_id for n in clouds if n.node_id not in (ida, idb))
+        merged_item = ws._db_tree._node_items.get(merged_id)
+        self.assertIsNotNone(merged_item, "合并结果未入树")
+        self.assertIsNone(merged_item.parent(), "合并结果应为顶层节点（与 v1 一致）")
+        self.assertIsNotNone(ws._db_tree._node_items.get(ida), "源节点 a 应保留")
+        self.assertIsNotNone(ws._db_tree._node_items.get(idb), "源节点 b 应保留")
+
+        merged = ws._workflow.get_node(merged_id).pcd
+        self.assertEqual(len(merged.points), 500)
+
+        # G-S3-a 经 UI 路径（W2a′ 硬要求：断言属性槽长度，不只点数）：
+        # 颜色逐点并集，无色一侧按 pcd_utils 口径填 0.85 灰
+        self.assertTrue(merged.has_colors())
+        cols = np.asarray(merged.colors)
+        self.assertEqual(len(cols), 500, "属性槽长度必须 = 总点数（变异判别点）")
+        self.assertTrue(np.allclose(cols[:300], [1.0, 0.0, 0.0]), "前半段颜色丢失")
+        self.assertTrue(np.allclose(cols[300:], 0.85), "无色一侧应为 0.85 灰（并集填充）")
+        # 法线逐点并集，无法线一侧零填充（全零段不可用）
+        self.assertTrue(merged.has_normals())
+        nrm = np.asarray(merged.normals)
+        self.assertEqual(len(nrm), 500)
+        self.assertTrue(np.allclose(nrm[:300], [0.0, 0.0, 1.0]))
+        self.assertTrue(np.allclose(nrm[300:], 0.0))
+
+        # G-S3-c：日志一行 + 状态回落 loaded
+        self.assertTrue(any("合并完成" in m and lv == "success" for m, lv in logged),
+                        f"缺合并成功日志: {logged!r}")
+        self.assertEqual(ws._state, "loaded")
+
+        # G-S3-b：合并前后 undo/redo 状态不变；对合并结果做一次处理后可 undo 复原
+        self.assertEqual(ws._workflow.can_undo(), undo_before)
+        self.assertEqual(ws._workflow.can_redo(), redo_before)
+        ok, msg = ws._workflow.estimate_normals(merged_id)
+        self.assertTrue(ok, msg)
+        self.assertTrue(ws._workflow.can_undo(), "处理合并结果后应可撤销")
+        self.assertFalse(np.allclose(np.asarray(ws._workflow.get_node(merged_id).pcd.normals)[300:], 0.0),
+                         "前置：法线估计后零填充段应被改写")
+        ok, msg = ws._workflow.undo()
+        self.assertTrue(ok, msg)
+        self.assertTrue(np.allclose(np.asarray(ws._workflow.get_node(merged_id).pcd.normals)[300:], 0.0),
+                        "undo 后合并结果应复原为合并当场的零填充状态")
+
+    def test_merge_order_follows_tree_display(self):
+        """W2b/W2d：合并输入顺序 = 树显示序（非点击序）；混合选中只收 cloud 节点。"""
+        app = self._QApplication.instance() or self._QApplication([])  # noqa: F841
+        ws = self._Workspace()
+        wf, tree = ws._workflow, ws._db_tree
+        # 走真实 UI 建树路径：云节点顶层入树（文件节点在 S3 无必经路径，略）
+        ida = wf.add_cloud("a", TestMergeClouds._cloud(300, color=(1.0, 0.0, 0.0)))
+        idb = wf.add_cloud("b", TestMergeClouds._cloud(200, color=(0.0, 1.0, 0.0)))
+        idc = wf.add_cloud("c", TestMergeClouds._cloud(100, color=(0.0, 0.0, 1.0)))
+        ws._add_node_to_ui(wf.get_node(ida))
+        ws._add_node_to_ui(wf.get_node(idb))
+        ws._add_node_to_ui(wf.get_node(idc))
+        # 给 a 挂一个标量场节点（混合选中项的一部分）
+        a_item = tree._node_items[ida]
+        tree.add_scalar_node(ida, "curvature", ida)
+
+        # 反点击序选：先 c、再 b、最后 a（外加 a 的标量节点）
+        tree._node_items[idc].setSelected(True)
+        tree._node_items[idb].setSelected(True)
+        tree._node_items[f"{ida}_scalar_curvature"].setSelected(True)
+        a_item.setSelected(True)
+
+        # W2d：标量节点被过滤，ids 只含 cloud；W2b：顺序 = 树显示序（a→b→c）
+        self.assertEqual(tree.selected_cloud_ids(), [ida, idb, idc])
+
+        logged = []
+        ws.log_message.connect(lambda msg, level: logged.append((msg, level)))
+        ws._props._btn_merge.click()
+
+        clouds = wf.list_cloud_nodes()
+        merged_id = next(n.node_id for n in clouds
+                         if n.node_id not in (ida, idb, idc))
+        cols = np.asarray(wf.get_node(merged_id).pcd.colors)
+        # 树显示序 a→b→c：前 300 红、中 200 绿、后 100 蓝（与点击顺序无关）
+        self.assertTrue(np.allclose(cols[:300], [1.0, 0.0, 0.0]), "a 段颜色/顺序错")
+        self.assertTrue(np.allclose(cols[300:500], [0.0, 1.0, 0.0]), "b 段颜色/顺序错")
+        self.assertTrue(np.allclose(cols[500:], [0.0, 0.0, 1.0]), "c 段颜色/顺序错")
+
+    def test_merge_button_enabled_state(self):
+        """合并按钮 enabled 随选中数变化：<2 禁用，≥2 启用。"""
+        app = self._QApplication.instance() or self._QApplication([])  # noqa: F841
+        ws, (ida, idb) = self._make_workspace_with([("a", 10, None, None),
+                                                    ("b", 10, None, None)])
+        self.assertFalse(ws._props._btn_merge.isEnabled())
+        self.assertIn("需 ≥2", ws._props._lbl_merge.text())
+
+        ws._db_tree._node_items[ida].setSelected(True)
+        ws._on_tree_selection(ida)
+        self.assertFalse(ws._props._btn_merge.isEnabled(), "仅选 1 朵应禁用")
+        self.assertIn("已选 1 朵", ws._props._lbl_merge.text())
+
+        ws._db_tree._node_items[idb].setSelected(True)
+        ws._on_tree_selection(idb)
+        self.assertTrue(ws._props._btn_merge.isEnabled(), "选 2 朵应启用")
+        self.assertIn("已选 2 朵", ws._props._lbl_merge.text())
+
+    def test_judge_icp_result_low_fitness_warns(self):
+        """G-S3-d：0 < fitness < 0.90 必须告警且文案含 fitness 值（不依赖点距）。"""
+        from types import SimpleNamespace
+        from prototypes.cloudcompare_like.app.cc_workspace import (
+            ICP_LOCAL_MIN_FITNESS, judge_icp_result)
+
+        result = SimpleNamespace(
+            transformation=np.eye(4), fitness=0.42, inlier_rmse=1.0e-3)
+        panel, warn, log = judge_icp_result(result, point_spacing=None)
+        self.assertTrue(warn, "低 fitness 未告警")
+        self.assertIn("0.420000", log, "告警文案必须含 fitness 值")
+        self.assertIn(f"低于 {ICP_LOCAL_MIN_FITNESS:g}", log)
+        self.assertIn("对应点过少", panel, "面板上也要看得见")
+
+        # 边界：fitness=0 仍走"无有效对应点"分支，不得被新分支吞掉
+        result0 = SimpleNamespace(
+            transformation=np.eye(4), fitness=0.0, inlier_rmse=0.0)
+        _, warn0, log0 = judge_icp_result(result0, point_spacing=None)
+        self.assertTrue(warn0)
+        self.assertIn("无有效对应点", log0)
+        self.assertNotIn("对应点过少", log0)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

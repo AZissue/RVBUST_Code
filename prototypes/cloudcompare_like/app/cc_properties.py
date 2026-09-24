@@ -40,6 +40,8 @@ class PropertiesPanel(QWidget):
     euclidean_cluster_requested = Signal()
     # ICP 配准：源 = 当前选中点云；参数 = (目标 node_id, 估计方法, 最大对应距离 0=自动)
     icp_requested = Signal(str, str, float)
+    # 合并：无参，选中集合由工作区从 DB 树读（树为唯一真值）
+    merge_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -177,6 +179,16 @@ class PropertiesPanel(QWidget):
         self._lbl_icp_result.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 11px;")
         proc_lo.addWidget(self._lbl_icp_result)
 
+        # --- 合并选中点云（源 = DB 树多选，≥2 朵；入口与处理组统一） ---
+        self._btn_merge = QPushButton("合并选中点云")
+        self._btn_merge.setEnabled(False)
+        self._btn_merge.clicked.connect(self.merge_requested.emit)
+        proc_lo.addWidget(self._btn_merge)
+
+        self._lbl_merge = QLabel("已选 0 朵（需 ≥2）")
+        self._lbl_merge.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 11px;")
+        proc_lo.addWidget(self._lbl_merge)
+
         lo.addWidget(process_group)
 
         lo.addStretch(1)
@@ -239,6 +251,11 @@ class PropertiesPanel(QWidget):
         color = STATUS_WARN if warn else TEXT_MUTED
         self._lbl_icp_result.setStyleSheet(f"color: {color}; font-size: 11px;")
         self._lbl_icp_result.setText(text or "")
+
+    def set_merge_state(self, n: int):
+        """合并入口状态：n = 当前选中的点云数；<2 禁用按钮并提示。"""
+        self._btn_merge.setEnabled(n >= 2)
+        self._lbl_merge.setText(f"已选 {n} 朵（需 ≥2）" if n < 2 else f"已选 {n} 朵")
 
     def set_point_size(self, size: int):
         self._spin_size.setValue(size)

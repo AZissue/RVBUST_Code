@@ -53,6 +53,7 @@ class CloudDBTree(QWidget):
     delete_requested = Signal(str)       # node_id
     rename_requested = Signal(str, str)  # node_id, new_name
     export_requested = Signal(str)       # node_id
+    merge_requested = Signal()           # 合并入口触发；ids 由工作区从树读
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -181,6 +182,25 @@ class CloudDBTree(QWidget):
             if isinstance(item, DBTreeItem):
                 return item.node_id
         return None
+
+    def selected_cloud_ids(self) -> List[str]:
+        """当前选中的点云节点 id，顺序 = DB 树显示顺序（非点击顺序）。
+
+        QTreeWidget.selectedItems() 返回顺序随点击先后变化，直接用它合并会让结果
+        点序不确定；这里按树遍历序收集，保证合并输入顺序稳定。
+        """
+        ids: List[str] = []
+
+        def _walk(item):
+            if (isinstance(item, DBTreeItem)
+                    and item.node_type == "cloud" and item.isSelected()):
+                ids.append(item.node_id)
+            for i in range(item.childCount()):
+                _walk(item.child(i))
+
+        for i in range(self._tree.topLevelItemCount()):
+            _walk(self._tree.topLevelItem(i))
+        return ids
 
     def iter_cloud_items(self) -> List[DBTreeItem]:
         return [item for item in self._node_items.values() if item.node_type == "cloud"]

@@ -118,6 +118,12 @@ def judge_icp_result(result, point_spacing: Optional[float] = None,
         warn_long = ("⚠ 无有效对应点（fitness=0.000000），本次结果不可用："
                      "inlier_rmse=0 只表示「没有点参与残差」，不是对齐精度。"
                      "请检查两点云是否重叠，或调大最大距离后重试")
+    elif fitness < ICP_LOCAL_MIN_FITNESS:
+        # 0 < fitness < 阈值：有对应点但参与残差的点太少，rmse 只代表少数点
+        warn_short = "对应点过少，结果需人工确认"
+        warn_long = (f"⚠ fitness={fitness:.6f} 低于 {ICP_LOCAL_MIN_FITNESS:g}："
+                     f"仅少数点参与残差，inlier_rmse={rmse:.4e} 不代表整体对齐精度，"
+                     f"请检查重叠区或调大最大距离")
     elif (point_spacing and rmse > ICP_LOCAL_MIN_RMSE_RATIO * point_spacing
           and fitness >= ICP_LOCAL_MIN_FITNESS):
         warn_short = "疑落入局部极小，建议给初值"
@@ -253,6 +259,7 @@ class CloudCompareWorkspace(QWidget):
         self._props.euclidean_cluster_requested.connect(self._on_euclidean_cluster)
         self._props.auto_tune_requested.connect(self._on_auto_tune)
         self._props.icp_requested.connect(self._on_icp)
+        self._props.merge_requested.connect(self._on_merge)
 
     # ------------------------------------------------------------------
     # 状态机
@@ -315,6 +322,7 @@ class CloudCompareWorkspace(QWidget):
         self._workflow.select(node_id)
         self._update_properties()
         self._update_bbox_highlight()
+        self._props.set_merge_state(len(self._db_tree.selected_cloud_ids()))
 
     def _on_tree_visibility(self, node_id: str, visible: bool):
         node = self._workflow.get_node(node_id)
@@ -487,6 +495,25 @@ class CloudCompareWorkspace(QWidget):
         panel, warn, log_text = judge_icp_result(result, point_spacing=spacing)
         self._props.set_icp_result(panel, warn=warn)
         self._log(log_text, "warn" if warn else "success")
+        self.set_state("loaded")
+
+    def _on_merge(self):
+        """合并 DB 树多选的点云；树为唯一真值，选中集从树读（同构 v1 工作区）。"""
+        ids = self._db_tree.selected_cloud_ids()
+        if len(ids) < 2:
+            self._log("请至少选择两朵点云进行合并", "warn")
+            return
+        self.set_state("processing")
+        ok, msg, new_id = self._workflow.merge_clouds(ids)
+        self._log(msg, "success" if ok else "error")
+        if ok and new_id:
+            node = self._workflow.get_node(new_id)
+            if node is not None:
+                self._db_tree.add_cloud_node(node.node_id, node.name, parent_id=None,
+                                             color=(1.0, 0.8, 0.2))  # 顶层，与 v1 一致
+                self._refresh_viewer()
+                self._update_properties()
+                self._refresh_icp_targets()  # 新节点进 ICP 目标下拉
         self.set_state("loaded")
 
     # ------------------------------------------------------------------
