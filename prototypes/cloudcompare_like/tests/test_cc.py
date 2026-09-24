@@ -292,6 +292,44 @@ class TestICPRegister(unittest.TestCase):
         self.assertIn("不是点云节点", msg)
         self.assertIsNone(res)
 
+    def test_icp_point_to_plane_keeps_target_untouched(self):
+        """D2：point_to_plane 不得给目标节点就地加法线。
+
+        open3d 的 `estimate_normals()` 就地改写目标节点，而节点自身没有可撤销的历史：
+        就地写入会让目标节点凭空多出法线属性（UI 着色/法线显示随之变化），且 undo 撤不掉。
+        口径：目标法线只在本轮配准的临时副本上估计。
+        """
+        self.assertFalse(self.wf.get_node(self.tgt_id).pcd.has_normals(),
+                         "前置条件：目标节点初始无法线")
+        ok, msg, res = self.wf.icp_register(self.src_id, self.tgt_id,
+                                            estimation_method="point_to_plane")
+        self.assertTrue(ok, msg)
+        self.assertIsNotNone(res)
+        # 临时副本不得把配准跑空：残差仍须回到点距量级
+        post = _nn_mean_dist(np.asarray(self.wf.get_node(self.src_id).pcd.points),
+                             self.wf.get_node(self.tgt_id).pcd)
+        self.assertLess(post, 4e-3, f"point_to_plane 对齐后残差 {post*1000:.2f}mm")
+        self.assertFalse(self.wf.get_node(self.tgt_id).pcd.has_normals(),
+                         "目标节点被就地加了法线 → 凭空多出未入历史的属性")
+        ok, msg = self.wf.undo()
+        self.assertTrue(ok, msg)
+        self.assertFalse(self.wf.get_node(self.tgt_id).pcd.has_normals(),
+                         "ICP 撤销后目标节点残留法线")
+
+    def test_icp_point_to_plane_preserves_existing_target_normals(self):
+        """目标已带法线时必须原样使用：不重估、不改写、不删除。"""
+        tgt_pcd = self.wf.get_node(self.tgt_id).pcd
+        tgt_pcd.estimate_normals(
+            o3d.geometry.KDTreeSearchParamHybrid(radius=0.2, max_nn=30))
+        normals_before = np.asarray(tgt_pcd.normals).copy()
+        ok, msg, _ = self.wf.icp_register(self.src_id, self.tgt_id,
+                                          estimation_method="point_to_plane")
+        self.assertTrue(ok, msg)
+        tgt_after = self.wf.get_node(self.tgt_id).pcd
+        self.assertTrue(tgt_after.has_normals(), "目标已有法线却丢了")
+        np.testing.assert_allclose(np.asarray(tgt_after.normals), normals_before,
+                                   atol=1e-12, err_msg="目标节点已存在的法线被改写")
+
 
 class TestMergeClouds(unittest.TestCase):
     """点云合并（属性对齐口径）。"""
@@ -395,6 +433,52 @@ class TestHistoryReferenceSafety(unittest.TestCase):
         self.assertTrue(ok, msg)
         self.assertFalse(wf.get_node(nid).pcd.has_normals(),
                          "撤销法线估计后仍带法线 → before 与节点对象是同一引用")
+
+
+class TestProcessNoOpHistory(unittest.TestCase):
+    """D1：`apply_process` 不产生变化时不得压入空操作历史。
+
+    全算子禁用且点云无 NaN/零点时，`PointCloudProcessor.process()` 原样返回入参对象，
+    旧写法把它当 after 记入历史（before 与 after 同一引用）→ `undo` 占一个槽位却什么
+    都没变，`can_undo()` 也从 False 变 True（UI 撤销按钮随之点亮）。
+    """
+
+    def _wf_with(self, pts: np.ndarray):
+        wf = CloudCompareWorkflow()
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(pts)
+        return wf, wf.add_cloud("n", pcd)
+
+    def test_all_operators_disabled_pushes_no_history(self):
+        wf, nid = self._wf_with(_asym_blob(500))
+        ref = wf.get_node(nid).pcd
+        self.assertFalse(wf.can_undo(), "前置条件：新点云无可撤销操作")
+
+        ok, msg, stats = wf.apply_process(nid)
+
+        self.assertFalse(ok, f"未启用任何算子却报成功：{msg}")
+        self.assertIsNone(stats)
+        self.assertFalse(wf.can_undo(),
+                         "全算子禁用路径压入了空操作历史 → 撤销变成 no-op")
+        self.assertIs(wf.get_node(nid).pcd, ref, "无变化路径不应替换节点点云对象")
+        self.assertEqual(wf.get_node(nid).point_count, 500)
+
+    def test_nan_removal_still_enters_history(self):
+        """口径边界：剔除无效点是真实变化，即便算子全禁用也必须入历史且可撤销。"""
+        pts = _asym_blob(500)
+        pts[:20] = np.nan
+        wf, nid = self._wf_with(pts)
+
+        ok, msg, stats = wf.apply_process(nid)
+
+        self.assertTrue(ok, msg)
+        self.assertEqual(stats.get("invalid_removed"), 20)
+        self.assertEqual(wf.get_node(nid).point_count, 480)
+        self.assertTrue(wf.can_undo(), "剔除了 20 个无效点却未入历史")
+        ok, msg = wf.undo()
+        self.assertTrue(ok, msg)
+        self.assertEqual(wf.get_node(nid).point_count, 500,
+                         "撤销后未回到含 NaN 的原始点云")
 
 
 if __name__ == "__main__":

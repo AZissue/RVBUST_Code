@@ -327,6 +327,14 @@ class CloudCompareWorkflow:
             logger.error(f"后处理失败: {e}")
             return False, f"后处理失败: {e}", None
 
+        # D1：全算子禁用（且无 NaN/零点可剔）时 process() 原样返回入参对象，before 即
+        # result → 压进历史就是一条空操作（占撤销栈但什么都没变）。口径：不产生变化的
+        # 调用不入历史，并如实回报未执行，不伪装成功。
+        if result is before:
+            self._state = "loaded"
+            logger.warning(f"{node.name} 后处理未执行：未启用任何算子且无无效点")
+            return False, "后处理未执行：未启用任何算子且无无效点", None
+
         node.pcd = result
         self._push_history("后处理", node_id, before, result)
         self._state = "loaded"
@@ -459,16 +467,21 @@ class CloudCompareWorkflow:
             if init_transform is None:
                 init_transform = np.eye(4)
 
+            # D2：目标节点不被就地改写。point_to_plane 需要目标法线，法线只在本轮配准的
+            # 临时副本上估计（节点自身无历史可撤，就地写入会凭空多出从未记录的属性）。
             if estimation_method == "point_to_plane":
+                tgt_for_icp = tgt
                 if not tgt.has_normals():
-                    tgt.estimate_normals(
+                    tgt_for_icp = copy.deepcopy(tgt)
+                    tgt_for_icp.estimate_normals(
                         o3d.geometry.KDTreeSearchParamHybrid(radius=max_distance * 2, max_nn=30))
                 criteria = o3d.pipelines.registration.TransformationEstimationPointToPlane()
             else:
+                tgt_for_icp = tgt
                 criteria = o3d.pipelines.registration.TransformationEstimationPointToPoint()
 
             result = o3d.pipelines.registration.registration_icp(
-                src, tgt, max_distance, init_transform,
+                src, tgt_for_icp, max_distance, init_transform,
                 criteria,
                 o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=50))
 
