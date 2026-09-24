@@ -266,6 +266,7 @@ class CloudCompareWorkspace(QWidget):
         self._db_tree.visibility_changed.connect(self._on_tree_visibility)
         self._db_tree.delete_requested.connect(self._on_delete_node)
         self._db_tree.rename_requested.connect(self._on_rename_node)
+        self._db_tree.export_requested.connect(self._on_export_node)
         self._db_tree.fit_view_requested.connect(self._on_fit_view)
 
         # 属性面板
@@ -641,21 +642,48 @@ class CloudCompareWorkspace(QWidget):
         self.set_state("loaded")
 
     # ------------------------------------------------------------------
-    # 导出
+    # 导出（G-K3：端到端，触发后文件落地；取消/失败均不静默）
     # ------------------------------------------------------------------
+    EXPORT_SUFFIXES = (".ply", ".pcd")
+
     def _on_export(self):
         if not self._current_node_id:
             self._log("请先选择点云", "warn")
             return
+        self._export_node(self._current_node_id)
+
+    def _on_export_node(self, node_id: str):
+        """DB 树右键「导出点云」接收方（K3 接线，D3 反回归靠文件落地判据）。"""
+        self._export_node(node_id)
+
+    def _notify_error(self, title: str, message: str):
+        """G-K3 边界：写出失败明示报错（日志 + 对话框），禁吞异常。"""
+        QMessageBox.warning(self, title, message)
+
+    def _export_node(self, node_id: str):
+        node = self._workflow.get_node(node_id)
+        if node is None or node.node_type != CCNode.NODE_CLOUD:
+            self._log("导出仅支持点云节点", "warn")
+            return
         path, _ = QFileDialog.getSaveFileName(
-            self, "导出点云", "processed.ply",
+            self, "导出点云", f"{os.path.splitext(node.name)[0]}.ply",
             "PLY 文件 (*.ply);;PCD 文件 (*.pcd)")
         if not path:
-            return
-        ok, msg = self._workflow.export_cloud(self._current_node_id, path)
-        self._log(msg, "success" if ok else "error")
+            return  # 取消路径：无文件、无日志、无异常
+        # G-K3 边界：非法后缀兜底补 .ply + 日志明示（W9/W11：禁止静默替换口径）
+        suffix = os.path.splitext(path)[1].lower()
+        if suffix not in self.EXPORT_SUFFIXES:
+            fixed = os.path.splitext(path)[0] + ".ply"
+            self._log(f"不支持的扩展名（{suffix or '无'}），已按 PLY 导出: {fixed}",
+                      "warn")
+            path = fixed
+        ok, msg = self._workflow.export_cloud(node_id, path)
         if ok:
+            self._log(msg, "success")
             self.dirty_changed.emit(False)
+        else:
+            self._log(msg, "error")
+            self._notify_error("导出失败", msg)
 
     # ------------------------------------------------------------------
     # ROI

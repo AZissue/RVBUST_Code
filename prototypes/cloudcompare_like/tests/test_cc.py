@@ -1086,17 +1086,21 @@ class TestDBTreeDisplay(unittest.TestCase):
         for expected in ("适配视角", "导出点云", "重命名", "删除"):
             self.assertIn(expected, texts, f"右键菜单缺「{expected}」: {texts}")
 
-    def test_context_menu_export_disabled(self):
-        """K2-D3：导出未接线前菜单项禁用 + tooltip 明示，点击不再静默无响应。"""
+    def test_context_menu_export_state(self):
+        """G-K3：cloud 节点导出项可用（端到端已接线）；file 节点禁用 + tooltip。"""
         self._QApplication.instance() or self._QApplication([])  # noqa: F841
         ws = self._Workspace()
         with tempfile.TemporaryDirectory() as d:
             cid = self._load_one(ws, d)
-        item = ws._db_tree._node_items[cid]
-        acts = {a.text(): a for a in ws._db_tree._build_context_menu(item).actions()}
-        self.assertFalse(acts["导出点云"].isEnabled(),
-                         "端到端导出并入 K3 前菜单项必须禁用")
-        self.assertTrue(acts["导出点云"].toolTip(), "禁用项必须有 tooltip 明示原因")
+        cloud_item = ws._db_tree._node_items[cid]
+        acts = {a.text(): a for a in ws._db_tree._build_context_menu(cloud_item).actions()}
+        self.assertTrue(acts["导出点云"].isEnabled(),
+                        "K3 起导出端到端已接线，cloud 节点菜单项必须可用")
+        file_item = ws._db_tree._tree.topLevelItem(0)
+        file_acts = {a.text(): a for a in ws._db_tree._build_context_menu(file_item).actions()}
+        self.assertFalse(file_acts["导出点云"].isEnabled(),
+                         "file 节点不可导出，菜单项必须禁用")
+        self.assertTrue(file_acts["导出点云"].toolTip(), "禁用项必须有 tooltip 明示原因")
 
     def test_rename_syncs_workflow_and_props(self):
         """K2-D2/W12：重命名后树、workflow、属性面板三方同名（无状态漂移）。"""

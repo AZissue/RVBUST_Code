@@ -246,17 +246,21 @@ class CloudDBTree(QWidget):
             f"QMenu {{ background-color: {BG_CARD}; color: {TEXT_PRIMARY}; "
             f"border: 1px solid {BORDER}; padding: 4px; }}")
 
-        if item.node_type == "cloud":
-            act_fit = QAction("适配视角", self)
-            act_fit.triggered.connect(lambda: self.fit_view_requested.emit(item.node_id))
-            menu.addAction(act_fit)
+        if item.node_type in ("cloud", "file"):
+            if item.node_type == "cloud":
+                act_fit = QAction("适配视角", self)
+                act_fit.triggered.connect(lambda: self.fit_view_requested.emit(item.node_id))
+                menu.addAction(act_fit)
 
             act_export = QAction("导出点云", self)
-            # K2-D3：端到端导出未接线前禁用并明示，避免静默无响应；
-            # 导出实现并入 K3，届时恢复 enabled。
-            act_export.setEnabled(False)
-            act_export.setToolTip("端到端导出将在 K3 提供")
             act_export.triggered.connect(lambda: self.export_requested.emit(item.node_id))
+            if item.node_type == "cloud":
+                # K3：端到端导出已接线（G-K3 判据 = 触发后文件落地）
+                act_export.setToolTip("导出该点云")
+            else:
+                # G-K3 边界：file 节点不可导出 → 禁用 + tooltip 明示（沿用 D3 模式）
+                act_export.setEnabled(False)
+                act_export.setToolTip("file 节点不可导出，请选择其下的点云节点")
             menu.addAction(act_export)
             menu.addSeparator()
 
