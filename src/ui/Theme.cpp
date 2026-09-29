@@ -341,16 +341,20 @@ QString spinBoxStyle()
     .arg(BORDER_FOCUS);
 }
 
-// ── 2D/3D 视窗的浮层（用户反馈 4）─────────────────────────────────────
-// 用户原话：「无边框、无底色、半透明背景即可」——视窗里的标签和工具栏按钮
-// 不再盖住图像：只有一层很淡的半透明底（alpha ≤ 0.30），底下画面透得出来。
+// ── 2D/3D 视窗的浮层（T-001 判据 3）──────────────────────────────────
+// 人原话：「不要有边框不要有背景色，只要每个按钮的背景模糊即可」。
+// 所以这里**不再给恒定 alpha 的实心底色**（那正是上一轮留下的"一块底色"）：
+// 常态背景 transparent，背后的画面由控件自己铺——2D 侧在 Image2DView 里铺
+// 背后画面的模糊副本，3D 侧走 Windows 合成的 blur-behind（见 VisSceneView）。
+// 只有 hover / pressed / checked 这些"反馈"状态才叠一层很淡的颜色，状态看得见，
+// 模糊也还透得出来。圆角在这里，模糊的裁剪圆角与它保持一致（4px）。
 
 QString viewOverlayLabelStyle()
 {
     return QStringLiteral(R"(
         QLabel {
             color: #FFFFFF;
-            background-color: rgba(0, 0, 0, 0.20);
+            background-color: transparent;
             border: none;
             border-radius: 4px;
             padding: 3px 8px;
@@ -365,20 +369,20 @@ QString viewOverlayButtonStyle()
     return QStringLiteral(R"(
         QPushButton {
             color: #E6EAF2;
-            background-color: rgba(0, 0, 0, 0.20);
+            background-color: transparent;
             border: none;
             border-radius: 4px;
             padding: 3px 9px;
             font-size: %1px;
         }
-        QPushButton:hover { background-color: rgba(0, 0, 0, 0.28); }
+        QPushButton:hover { background-color: rgba(255, 255, 255, 0.12); }
         QPushButton:pressed { background-color: rgba(22, 119, 255, 0.30); }
         QPushButton:checked {
-            background-color: rgba(22, 119, 255, 0.30);
+            background-color: rgba(22, 119, 255, 0.34);
             color: #FFFFFF;
             font-weight: 600;
         }
-        QPushButton:disabled { color: #9AA0AA; background-color: rgba(0, 0, 0, 0.12); }
+        QPushButton:disabled { color: #9AA0AA; background-color: transparent; }
     )")
     .arg(FONT_HINT);
 }

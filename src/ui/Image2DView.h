@@ -85,6 +85,12 @@ private:
     void render();
     void buildPageBar();
     void updatePageBarGeometry();
+    // 浮层「毛玻璃」底的模糊源（T-001 判据 3）。2D 画面是本进程画的 pixmap
+    // （m_cachedVisible），抓得到，所以这里给的是真模糊；返回 w 在视窗里的矩形
+    // 所对应的模糊副本（w 完全在画面外时返回空图）。
+    QImage overlayBlurUnder(const QWidget* w) const;
+    // 画面变了以后让浮层重新取一次背后的模糊底（只 update 那几个小控件）。
+    void updateOverlayBackdrops();
     // Regenerates m_originalPixmap for the active page.  Cheap no-op when the
     // camera image is unchanged and the page did not move.
     void refreshPagePixmap();
@@ -96,6 +102,8 @@ private:
     QLabel* m_imageLabel;
     QLabel* m_titleLabel;
     QLabel* m_zoomLabel;
+    // 需要铺模糊底的浮层控件（标题/缩放标签 + 工具栏按钮）。
+    QVector<QWidget*> m_glassWidgets;
 
     // Page machinery (all inside this widget: no extra window).
     QPointer<QWidget> m_pageBar;

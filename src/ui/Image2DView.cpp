@@ -16,12 +16,85 @@
 #include <QTimer>
 #include <algorithm>
 #include <cmath>
+#include <functional>
+#include <utility>
 
 namespace {
 
 // A left-drag shorter than this is still a click (pixel picking must keep
 // working); the Python tool uses the same 4 px gate for ROI drags.
 constexpr int kRoiMinDrag = 4;
+
+// ── 浮层的「毛玻璃」底（T-001 判据 3）──────────────────────────────────
+// 圆角与 Theme::viewOverlayButtonStyle()/viewOverlayLabelStyle() 里的
+// border-radius 保持一致，模糊的裁剪圆角才不会和 QSS 画出来的形状差一截。
+constexpr int kGlassRadius = 4;
+// 廉价的高斯近似：先把要铺的那一小块缩到 1/8（FastTransformation，取平均），
+// 再平滑放大回原尺寸。浮层控件只有几十像素高，这一对缩放在微秒级——比一次
+// 真正的高斯卷积便宜两个数量级，也不会把 30fps 的实时预览拖住。
+constexpr int kGlassBlurFactor = 8;
+
+// 浮层控件：无描边、无实心底色，底是**背后画面的模糊副本**。
+// QSS 只负责文字与状态色（常态背景 transparent），模糊由 paintEvent 在画文字
+// 之前铺进控件的圆角形状里；不模糊的地方（按钮外）由父窗口照常画出清晰画面。
+template <class Base>
+class GlassOverlay : public Base
+{
+public:
+    explicit GlassOverlay(QWidget* parent) : Base(parent) {}
+    // 模糊源：给定控件，返回它背后的模糊副本（图像坐标与控件同为 1:1）。
+    void setGlassSource(std::function<QImage(const QWidget*)> source)
+    {
+        m_glassSource = std::move(source);
+    }
+
+protected:
+    void paintEvent(QPaintEvent* event) override
+    {
+        if (m_glassSource) {
+            const QImage blur = m_glassSource(this);
+            if (!blur.isNull()) {
+                QPainter p(this);
+                p.setRenderHint(QPainter::Antialiasing, true);
+                QPainterPath path;
+                path.addRoundedRect(QRectF(rect()), kGlassRadius, kGlassRadius);
+                p.setClipPath(path);
+                p.drawImage(rect(), blur);
+            }
+        }
+        Base::paintEvent(event);
+    }
+
+private:
+    std::function<QImage(const QWidget*)> m_glassSource;
+};
+
+using GlassButton = GlassOverlay<QPushButton>;
+using GlassLabel = GlassOverlay<QLabel>;
+
+// Qt 5.14 的 QWidget::mapTo() / mapFrom() 有个会崩的前提（源码见
+// qtbase/src/widgets/kernel/qwidget.cpp）：
+//
+//     const QWidget *w = this;
+//     while (w != parent) {                       // 条件里没有 w！
+//         Q_ASSERT_X(w, "QWidget::mapTo(...)", "parent must be in parent hierarchy");
+//         p = w->mapToParent(p);
+//         w = w->parentWidget();
+//     }
+//
+// parent 不在祖先链上时，循环会一直走到顶层控件之外的 nullptr，而那句断言在
+// Release（NDEBUG）里被编掉，于是对空指针调用 mapToParent()，解引用
+// data->crect —— 0xC0000005（故障指令落在 Qt5Widgets.dll，A 的日志里就是这个码、
+// 这个模块）。所以这里自己先把祖先关系确认掉，再调 Qt 的映射函数。
+bool isAncestor(const QWidget* ancestor, const QWidget* w)
+{
+    for (const QWidget* p = w ? w->parentWidget() : nullptr; p; p = p->parentWidget()) {
+        if (p == ancestor)
+            return true;
+    }
+    return false;
+}
+
 
 // Palette of the Python reference implementation (mviz.py) so the generated
 // pages look the same as the tool being matched.
@@ -80,15 +153,25 @@ Image2DView::Image2DView(QWidget* parent)
 
     // Overlay labels (title top-left, zoom top-right) float over the image and
     // are transparent to mouse events so pixel picking still works through them.
-    m_titleLabel = new QLabel(QStringLiteral("2D 实时图像"), this);
-    // 用户反馈 4：无边框、无实心底色，只有一层很淡的半透明底（标题保留加粗）。
-    m_titleLabel->setStyleSheet(Theme::viewOverlayLabelStyle()
-                                + QStringLiteral("QLabel { font-weight: 600; }"));
-    m_titleLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
+    // T-001 判据 3：无边框、无实心底色，底是背后画面的模糊副本（标题保留加粗）。
+    const auto glassSource = [this](const QWidget* w) { return overlayBlurUnder(w); };
 
-    m_zoomLabel = new QLabel(QStringLiteral("适应"), this);
-    m_zoomLabel->setStyleSheet(Theme::viewOverlayLabelStyle());
-    m_zoomLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
+    auto* titleLabel = new GlassLabel(this);
+    titleLabel->setText(QStringLiteral("2D 实时图像"));
+    titleLabel->setGlassSource(glassSource);
+    titleLabel->setStyleSheet(Theme::viewOverlayLabelStyle()
+                              + QStringLiteral("QLabel { font-weight: 600; }"));
+    titleLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
+    m_titleLabel = titleLabel;
+    m_glassWidgets.push_back(titleLabel);
+
+    auto* zoomLabel = new GlassLabel(this);
+    zoomLabel->setText(QStringLiteral("适应"));
+    zoomLabel->setGlassSource(glassSource);
+    zoomLabel->setStyleSheet(Theme::viewOverlayLabelStyle());
+    zoomLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
+    m_zoomLabel = zoomLabel;
+    m_glassWidgets.push_back(zoomLabel);
 
     // Zoom-drag uses a fast (nearest-neighbor) scale; a short debounce timer
     // then re-renders the final frame with smooth scaling.
@@ -242,11 +325,15 @@ void Image2DView::buildPageBar()
     const QStringList names = { QStringLiteral("图像"), QStringLiteral("偏差图"),
                                 QStringLiteral("尺寸总图"), QStringLiteral("截面轮廓"),
                                 QStringLiteral("重复性趋势") };
-    // 用户反馈 4：工具栏按钮同样去掉边框与实心底色，只留一层淡半透明底。
+    // T-001 判据 3：工具栏按钮同样去掉边框与实心底色，底换成背后画面的模糊副本
+    // （和视窗里两个标签用同一个模糊源）。
     const QString style = Theme::viewOverlayButtonStyle();
+    const auto glassSource = [this](const QWidget* w) { return overlayBlurUnder(w); };
 
     for (int i = 0; i < names.size(); ++i) {
-        auto* btn = new QPushButton(names[i], bar);
+        auto* btn = new GlassButton(bar);
+        btn->setText(names[i]);
+        btn->setGlassSource(glassSource);
         btn->setCheckable(true);
         btn->setAutoExclusive(true);
         btn->setChecked(i == 0);
@@ -256,11 +343,14 @@ void Image2DView::buildPageBar()
         connect(btn, &QPushButton::clicked, this, [this, i]() { setPage(static_cast<Page>(i)); });
         row->addWidget(btn);
         m_pageButtons.push_back(btn);
+        m_glassWidgets.push_back(btn);
     }
 
     // 清除 ROI（第 7 回合 P3.3）：面板里的「清除区域」保留，视窗工具栏也放一个。
     // 它只发信号——真正的状态在工具面板里，清完由 roisChanged 回到这里擦掉叠加。
-    auto* clearBtn = new QPushButton(QStringLiteral("清除 ROI"), bar);
+    auto* clearBtn = new GlassButton(bar);
+    clearBtn->setText(QStringLiteral("清除 ROI"));
+    clearBtn->setGlassSource(glassSource);
     clearBtn->setObjectName(QStringLiteral("view2d_clear_roi"));
     clearBtn->setStyleSheet(style);
     clearBtn->setCursor(Qt::PointingHandCursor);
@@ -269,6 +359,7 @@ void Image2DView::buildPageBar()
     connect(clearBtn, &QPushButton::clicked, this, &Image2DView::roiClearRequested);
     row->addWidget(clearBtn);
     m_clearRoiBtn = clearBtn;
+    m_glassWidgets.push_back(clearBtn);
 
     bar->adjustSize();
     bar->raise();
@@ -283,6 +374,57 @@ void Image2DView::updatePageBarGeometry()
     m_pageBar->adjustSize();
     m_pageBar->move(8, std::max(8, height() - m_pageBar->height() - 8));
     m_pageBar->raise();
+}
+
+// ── 浮层的模糊底（T-001 判据 3）────────────────────────────────────────
+// m_cachedVisible 就是 m_imageLabel 上此刻那张画面，所以控件在画面里的矩形
+// 可以直接映射过去；这里只对控件那几十像素做一次降采样+平滑放大，成本与
+// 控件面积成正比，和画面大小无关——30fps 的实时预览也扛得住。
+//
+// 坐标映射（T-001 回归的根因，别再改回去）：**不能**写
+//     w->mapTo(m_imageLabel, QPoint(0, 0))
+// ——那几个浮层控件（标题/缩放标签是 this 的子控件，工具条按钮在 bar 里面）都
+// 不是 m_imageLabel 的后代，m_imageLabel 只是它们的**兄弟**，不在祖先链上。
+// Qt 5.14 的 mapTo() 在这种情况下会一路走过顶层控件、在 nullptr 上继续
+// mapToParent()（Release 下断言被编掉）→ 0xC0000005（见文件上方 isAncestor 的说明）。
+// 正确做法：先映射到**合法祖先** this（button→bar→this / label→this 都在链上），
+// 再用 m_imageLabel 在 this 里的位置（m_imageLabel 是 this 的直接子控件，
+// pos() 就是它的左上角）换算到画面坐标。
+QImage Image2DView::overlayBlurUnder(const QWidget* w) const
+{
+    if (!w || !m_imageLabel || m_cachedVisible.isNull())
+        return {};
+    // 祖先链对不上就别调 Qt 的映射函数：宁可不铺底，也不能让进程崩。
+    if (!isAncestor(this, w) || m_imageLabel->parentWidget() != this)
+        return {};
+
+    const QPoint originInView = w->mapTo(this, QPoint(0, 0));
+    const QRect want(originInView - m_imageLabel->pos(), w->size());
+    const QRect have = want.intersected(QRect(QPoint(0, 0), m_cachedVisible.size()));
+    if (have.isEmpty())
+        return {};
+
+    const QSize small(std::max(1, have.width() / kGlassBlurFactor),
+                      std::max(1, have.height() / kGlassBlurFactor));
+    const QImage blurred =
+        m_cachedVisible.copy(have).toImage()
+            .scaled(small, Qt::IgnoreAspectRatio, Qt::FastTransformation)
+            .scaled(have.size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+
+    // 控件有一部分落在画面外时只铺画面内的那块，其余留透明（露出父窗口的像素）。
+    QImage out(want.size(), QImage::Format_ARGB32_Premultiplied);
+    out.fill(Qt::transparent);
+    QPainter p(&out);
+    p.drawImage(have.topLeft() - want.topLeft(), blurred);
+    return out;
+}
+
+void Image2DView::updateOverlayBackdrops()
+{
+    for (QWidget* w : m_glassWidgets) {
+        if (w && w->isVisible())
+            w->update();
+    }
 }
 
 void Image2DView::setPage(Page page)
@@ -838,7 +980,11 @@ QPixmap Image2DView::renderRepeatPage(const QSize& size) const
 
 void Image2DView::render()
 {
-    if (m_originalPixmap.isNull()) return;
+    if (m_originalPixmap.isNull()) {
+        // 画面没了（clear / 还没收到帧）：浮层也要把上一次的模糊底擦掉。
+        updateOverlayBackdrops();
+        return;
+    }
 
     int vw = m_imageLabel->width();
     int vh = m_imageLabel->height();
@@ -959,6 +1105,9 @@ void Image2DView::render()
     vp.end();
 
     m_imageLabel->setPixmap(m_cachedVisible);
+
+    // 画面换了，浮层背后的模糊底跟着换（只重画那几个小控件，不重画画面）。
+    updateOverlayBackdrops();
 
     // Cost trace for the D3 acceptance number: only report renders that are
     // actually expensive enough to show up in a UI-stall sample.

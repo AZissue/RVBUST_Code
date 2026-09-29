@@ -474,6 +474,97 @@ static void positionVisWindow(VisSceneViewImpl& d, QWidget* viewport)
 #endif // HAS_RVBUST_VIS
 
 // ═══════════════════════════════════════════════════════════════
+// 3D 浮层的「背景模糊」（T-001 判据 3）
+//
+// 这三个按钮和那条提示是原生窗口（WA_NativeWindow + WA_DontCreateNativeAncestors
+// + WA_TranslucentBackground），盖在 OSG 的原生 GL 子窗口上。Qt 侧 grab() 抓不到
+// 背后的 GL 画面，所以 2D 那套「把背后像素抓下来自己模糊」在这里不成立。
+// 现成可用、又能拿到**真**模糊的通路只剩一条：让桌面窗口管理器在合成时做——
+// 给窗口挂 accent 策略 ACCENT_ENABLE_BLURBEHIND，DWM 就会把该窗口背后的内容
+// （这里正是 GL 场景）模糊后填进窗口，Qt 侧一个像素都不用画。
+//
+// 用 GetProcAddress 动态取符号：不新增链接依赖、不引第三方库、也不引 Qt 模块；
+// 符号不存在（老系统/被裁剪的 user32）时静默跳过，窗口仍是透明浮层，
+// 由 Theme::viewOverlayButtonStyle() 保证没有描边、没有恒定底色。
+// ═══════════════════════════════════════════════════════════════
+#ifdef Q_OS_WIN
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+
+namespace {
+
+// Windows SDK 只给了函数指针类型，这几个结构体是它未公开的配对物。
+enum AccentState {
+    kAccentDisabled = 0,
+    kAccentEnableBlurBehind = 3,
+};
+
+struct AccentPolicy {
+    int accentState;
+    int flags;
+    int gradientColor;   // AABBGGRR
+    int animationId;
+};
+
+// 这个结构体是 SetWindowCompositionAttribute 的参数，Windows SDK 只给了函数指针
+// 类型、没导出这个未公开的配对物，所以要自己写。dataSize 是 **SIZE_T**，不是
+// unsigned long：LLP64 下 unsigned long 只有 4 字节，SIZE_T 在 x64 是 8 字节。
+// 写错的话结构体比 API 期望的少 4 字节，dataSize 后面那 4 字节是编译器填充
+// （`{}` 是否清零不保证），调用方一次误读就可能拿到天文数字。
+struct WindowCompositionAttributeData {
+    int attribute;
+    void* data;
+    SIZE_T dataSize;
+};
+static_assert(sizeof(WindowCompositionAttributeData) == 3 * sizeof(void*),
+              "WindowCompositionAttributeData 必须与 user32 期望的布局一致");
+
+constexpr int kWindowCompositionAttributeAccentPolicy = 19;
+
+bool setBlurBehind(HWND hwnd)
+{
+    // 只查一次；user32 一直活着，函数地址不会变。
+    static const auto setAttribute =
+        reinterpret_cast<BOOL(WINAPI*)(HWND, WindowCompositionAttributeData*)>(
+            GetProcAddress(GetModuleHandleW(L"user32.dll"),
+                           "SetWindowCompositionAttribute"));
+    if (!setAttribute || hwnd == nullptr)
+        return false;
+
+    AccentPolicy policy{};
+    policy.accentState = kAccentEnableBlurBehind;
+
+    WindowCompositionAttributeData data{};
+    data.attribute = kWindowCompositionAttributeAccentPolicy;
+    data.data = &policy;
+    data.dataSize = sizeof(policy);
+    return setAttribute(hwnd, &data) != FALSE;
+}
+
+// 给一个浮层控件挂上（或重新挂上）DWM 模糊。winId() 只是把原生窗口做出来，
+// 不改动任何 Qt 侧窗口属性——三个按钮的原生属性契约不受影响。
+void applyBlurBehind(QWidget* w)
+{
+    if (!w)
+        return;
+    if (!setBlurBehind(reinterpret_cast<HWND>(w->winId())))
+        RuntimeLog::log("3D: DWM blur-behind not applied to overlay \"%s\"",
+                        w->objectName().toUtf8().constData());
+}
+
+} // namespace
+#else
+// 非 Windows：没有 DWM 这条通路，浮层保持"无描边 + 透明底"，
+// 裁掉的底色由 Theme 侧保证（不在这里补恒定半透明底）。
+static void applyBlurBehind(QWidget*) {}
+#endif // Q_OS_WIN
+
+// ═══════════════════════════════════════════════════════════════
 // Constructor / Destructor
 // ═══════════════════════════════════════════════════════════════
 
@@ -598,14 +689,24 @@ void VisSceneView::setupToolbar()
                      &VisSceneView::deviationColoringToggled);
 
     m_pickHint = new QLabel(QStringLiteral("识别后可点击场景中的点选择填充"), m_containerWidget);
+    m_pickHint->setObjectName(QStringLiteral("vis_pick_hint"));
     m_pickHint->setAttribute(Qt::WA_NativeWindow, true);
     m_pickHint->setAttribute(Qt::WA_DontCreateNativeAncestors, true);
     m_pickHint->setAttribute(Qt::WA_TranslucentBackground, true);
+    // T-001 判据 3：这里原来硬编码了 background: rgba(0,0,0,0.5)——3D 视窗底部那条
+    // 最显眼的"实心底色"就是它。改成与其它浮层同一套：无描边、无恒定底色，
+    // 底由下面的 DWM 模糊给。
     m_pickHint->setStyleSheet(QStringLiteral(
-        "color: %1; background: rgba(0,0,0,0.5); border: none; border-radius: 4px; "
+        "color: %1; background: transparent; border: none; border-radius: 4px; "
         "padding: 3px 8px; font-size: 11px;")
         .arg(Theme::PRIMARY));
     m_pickHint->hide();
+
+    // 3D 侧的真模糊：这四个浮层都挂上 DWM 的 blur-behind（见文件上方的说明）。
+    applyBlurBehind(m_resetButton);
+    applyBlurBehind(m_historyButton);
+    applyBlurBehind(m_deviationButton);
+    applyBlurBehind(m_pickHint);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1567,6 +1668,11 @@ void VisSceneView::resizeEvent(QResizeEvent* event)
 void VisSceneView::showEvent(QShowEvent* event)
 {
     QWidget::showEvent(event);
+    // Qt 在隐藏/显示之间可能重建原生窗口，accent 策略会跟着掉；露出来时补挂一次。
+    applyBlurBehind(m_resetButton);
+    applyBlurBehind(m_historyButton);
+    applyBlurBehind(m_deviationButton);
+    applyBlurBehind(m_pickHint);
 #ifdef HAS_RVBUST_VIS
     if (m_shuttingDown) return;
     if (d && !d->initialized)

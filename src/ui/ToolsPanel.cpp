@@ -241,9 +241,6 @@ void ToolsPanel::updateDistanceResult()
 void ToolsPanel::buildPixelTo3DPage(QStackedWidget* stack)
 {
     auto* page = new QWidget(stack);
-    // 冻结判据「当前页是不是像素→3D」比对的是 stack 里的那一页，而现在
-    // stack 里装的是滚动区，所以这里存滚动区而不是内层 page。
-    m_p2dPage = wrapScrollable(page, stack);
     auto* pageLayout = new QVBoxLayout(page);
 
     auto* group = new QGroupBox(QStringLiteral("像素→3D（离线反投影）"), page);
@@ -342,7 +339,15 @@ void ToolsPanel::buildPixelTo3DPage(QStackedWidget* stack)
 
     pageLayout->addWidget(group);
     pageLayout->addStretch();
-    stack->addWidget(wrapScrollable(page, stack));
+
+    // 这一页**只能**被包一次滚动区：wrapScrollable() 会把 page 重新挂到滚动区的
+    // 视口里，套第二次就会把 page 从第一个滚动区手里抢走——第一个滚动区变成既
+    // 不在任何 layout 里、又还挂在 stack 上的孤儿，停在 stack 左上角（选中「欧氏
+    // 距离」时正好压住那一页的标题），而且选中本页会以 0xC00000FD 崩掉。
+    // 冻结判据「当前页是不是像素→3D」比对的是 stack 里的那一页，所以存下来的必须
+    // 就是塞进 stack 的那一个滚动区（见 §8 契约冻结）。
+    m_p2dPage = wrapScrollable(page, stack);
+    stack->addWidget(m_p2dPage);
 
     connect(browseBtn, &QPushButton::clicked, this, [this]() {
         const QString dir = QFileDialog::getExistingDirectory(
