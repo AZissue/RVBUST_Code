@@ -17,6 +17,7 @@
 //     既有链路（3D 偏差着色、四个显示页签、ROI 叠加）完全不变。
 //
 // 子类只写 compute()：本方法自己的算法 + 自己那几行结果 + 自己的显示载荷。
+#include <QImage>
 #include <QMap>
 #include <QRect>
 #include <QString>
@@ -47,6 +48,10 @@ struct MeasureContext {
     const QVector<QRect>* roiRects = nullptr;                   // 图像像素矩形
     int gridW = 0;
     int gridH = 0;
+    // T-012：亚像素边界要找图像灰度的边缘，所以把这一帧的图像（灰度视图）与
+    // 整个 3D 网格也交给子类（网格用于"从 ROI 往外长材料区"找外缘）。
+    const MeasureTools::GrayImage* image = nullptr;
+    const std::vector<double>* grid = nullptr;
 
     // ── 输出：结果表 ──
     std::vector<Measurement::ResultRow> rows;
@@ -87,6 +92,9 @@ public:
     // 面板交接：一帧点云（网格 + 尺寸 + 图像尺寸）。
     void setCloud(const FrameBuffer::DoubleBuf& grid, int gridW, int gridH,
                   int imageW, int imageH, const QString& cloudText);
+    // T-012：与 setCloud 同一次拍照的那张 2D 图像（亚像素边缘用）。单独一个入口，
+    // setCloud 的签名保持不变。非灰度格式在这里转成 8bit 灰度存起来。
+    void setImage(const QImage& image);
     // ROI 矩形（图像像素）。基类按 spec 的 roiCount 取点；多余的框会被忽略。
     // `note` 是面板按 planRoiDrag/roiStateText 得出的那一句提示（P3.2）。
     void setRoiRects(const QVector<QRect>& rects, const QString& note);
@@ -141,6 +149,9 @@ private:
     int m_gridH = 0;
     int m_imageW = 0;
     int m_imageH = 0;
+    std::vector<unsigned char> m_gray;   // 本次拍照的 8bit 灰度图像（行主序）
+    int m_grayW = 0;
+    int m_grayH = 0;
     QVector<QRect> m_rects;
 
     std::vector<MeasureTools::Vec3> m_pts[2];

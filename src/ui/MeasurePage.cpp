@@ -15,6 +15,7 @@
 #include <QVBoxLayout>
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 namespace {
 
@@ -247,6 +248,28 @@ void MeasurePage::setCloud(const FrameBuffer::DoubleBuf& grid, int gridW, int gr
     resetResult();
 }
 
+void MeasurePage::setImage(const QImage& image)
+{
+    m_gray.clear();
+    m_grayW = 0;
+    m_grayH = 0;
+    if (image.isNull())
+        return;
+    QImage gray = image;
+    if (gray.format() != QImage::Format_Grayscale8)
+        gray = gray.convertToFormat(QImage::Format_Grayscale8);
+    if (gray.isNull() || gray.width() <= 0 || gray.height() <= 0)
+        return;
+    m_grayW = gray.width();
+    m_grayH = gray.height();
+    m_gray.resize(static_cast<std::size_t>(m_grayW) * static_cast<std::size_t>(m_grayH));
+    for (int y = 0; y < m_grayH; ++y) {
+        const uchar* line = gray.constScanLine(y);
+        std::memcpy(&m_gray[static_cast<std::size_t>(y) * static_cast<std::size_t>(m_grayW)],
+                    line, static_cast<std::size_t>(m_grayW));
+    }
+}
+
 void MeasurePage::setRoiRects(const QVector<QRect>& rects, const QString& note)
 {
     m_rects = rects;
@@ -395,6 +418,17 @@ void MeasurePage::run(bool logResult)
     ctx.roiRects = &m_rects;
     ctx.gridW = m_gridW;
     ctx.gridH = m_gridH;
+    // 这一帧的灰度图像（亚像素边缘用）与整个网格（外缘泛洪用）。
+    MeasureTools::GrayImage gimg;
+    if (m_grayW > 0 && m_grayH > 0
+        && m_gray.size() >= static_cast<std::size_t>(m_grayW) * static_cast<std::size_t>(m_grayH)) {
+        gimg.data = m_gray.data();
+        gimg.width = m_grayW;
+        gimg.height = m_grayH;
+        gimg.stride = m_grayW;
+    }
+    ctx.image = &gimg;
+    ctx.grid = m_grid ? &(*m_grid) : nullptr;
 
     compute(ctx);   // ← 子类唯一的入口
 

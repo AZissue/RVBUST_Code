@@ -321,6 +321,82 @@ struct HoleBoundary {
 HoleBoundary holeBoundary(const std::vector<Vec3>& roiPoints, int minSectors = 36,
                           double bandSigmaK = 3.0, double minCoverage = 0.75);
 
+// ── 8. boundary circle (image-guided sub-pixel edge) ───────────────────
+//
+// T-012.  The two tools above answer "what does the *point set* look like",
+// which is not the same question as "where is the edge of the part": on a
+// ⌀63.5 solid disc the Kåsa fit returns the material's statistical radius
+// (√(2/3)·R for a uniform disc, less with the relief slots) — 48 mm instead of
+// 63.5 — and the 3-D grid's own pitch (0.0755 mm) is already 0.6 % of a ⌀6
+// hole, an order of magnitude coarser than the 0.2 % the drawing demands.
+//
+// This kernel keeps the *geometry* in the 3-D cloud and takes the *sub-pixel
+// position of the edge* from the captured grayscale image:
+//
+//   * the boundary is defined by material, not by the ROI.  A hole is
+//     material-outside; an outer edge (a solid disc, a step's outer rim) is
+//     material-inside and is found by growing the material region outwards
+//     from the ROI, which is exactly the capability that did not exist;
+//   * the edge itself is the intensity inflection point along a ray, located
+//     to ~0.1 px by parabolic interpolation of the radial gradient — at
+//     0.075 mm/px that is ~0.008 mm, inside the 0.2 % budget;
+//   * pixels are mapped into the fitted plane by a least-squares affine fit
+//     (the local approximation of the perspective map), so the circle is
+//     fitted without the foreshortening an image-space fit would carry.
+//
+// When no image is handed in (or no edge can be found) the result falls back
+// to the 3-D boundary and says so (`subpixel = false`) rather than returning a
+// confident wrong number.
+
+// 8-bit grayscale view of the captured 2-D image.  Borrowed, never owned.
+struct GrayImage {
+    const unsigned char* data = nullptr;
+    int width = 0;
+    int height = 0;
+    int stride = 0;                 // bytes per row (>= width)
+    bool valid() const
+    {
+        return data != nullptr && width > 0 && height > 0 && stride >= width;
+    }
+    int at(int x, int y) const { return data[y * stride + x]; }
+};
+
+struct BoundaryCircle {
+    double diameter = 0.0;      // primary: 2 * radius
+    double radius = 0.0;        // mm, in the fitted material plane
+    Vec3 center{};              // 3-D centre on that plane
+    double centerU = 0.0;       // centre in image pixels
+    double centerV = 0.0;
+    Vec3 normal{};              // plane normal, oriented n[2] <= 0
+    double roundness = 0.0;     // radius PV of the edge samples (mm)
+    double rms = 0.0;           // RMS of the edge samples about the fit (mm)
+    double mmPerPx = 0.0;       // local image scale actually used (mm / pixel)
+    double coverage = 0.0;      // good rays / rays scanned
+    int sectors = 0;            // rays scanned
+    int used = 0;               // edge samples in the final fit
+    bool subpixel = false;      // true when the edge came from the image
+    bool reliable = false;
+    bool valid = false;
+    std::string message;
+    std::string debug;          // T-012 临时：中间量，交回前删
+};
+
+// Material-boundary circle: found in the 3-D grid, refined to sub-pixel on the
+// image.  `materialInside = false` measures a hole (material outside, hole
+// inside); `true` measures the outer edge of a solid / raised step (material
+// inside, background outside).  `roiCells[i]` is the grid cell of `roiPoints[i]`
+// (index w*y + x); the grid is w*h*3 doubles, NaN outside the valid volume, and
+// is used to grow the material region for the outer-edge case.  `img` may be
+// invalid, in which case the 3-D boundary is reported with subpixel = false.
+BoundaryCircle measureBoundaryCircle(
+    const std::vector<Vec3>& roiPoints,
+    const std::vector<std::size_t>& roiCells,
+    int gridW, int gridH,
+    const std::vector<double>& grid,
+    int imageW, int imageH,
+    const GrayImage& img,
+    bool materialInside);
+
 // ── ROI helpers (shared by the 2D panel and the 3D overlay) ────────────
 
 // Image pixel rectangle -> grid cell rectangle.

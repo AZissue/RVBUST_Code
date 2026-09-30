@@ -1149,6 +1149,872 @@ HoleBoundary holeBoundary(const std::vector<Vec3>& roiPoints, int minSectors,
     return hb;
 }
 
+// ── 8. boundary circle (image-guided sub-pixel edge) ───────────────────
+
+namespace {
+
+// 3x3 linear system, Gaussian elimination with partial pivoting.
+bool solve3(double m[3][3], const double rhs[3], double out[3])
+{
+    double a[3][4];
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 3; ++c)
+            a[r][c] = m[r][c];
+        a[r][3] = rhs[r];
+    }
+    for (int col = 0; col < 3; ++col) {
+        int piv = col;
+        for (int r = col + 1; r < 3; ++r)
+            if (std::fabs(a[r][col]) > std::fabs(a[piv][col]))
+                piv = r;
+        if (std::fabs(a[piv][col]) < 1e-18)
+            return false;
+        if (piv != col)
+            for (int c = 0; c < 4; ++c)
+                std::swap(a[col][c], a[piv][c]);
+        for (int r = col + 1; r < 3; ++r) {
+            const double f = a[r][col] / a[col][col];
+            for (int c = col; c < 4; ++c)
+                a[r][c] -= f * a[col][c];
+        }
+    }
+    for (int r = 2; r >= 0; --r) {
+        double v = a[r][3];
+        for (int c = r + 1; c < 3; ++c)
+            v -= a[r][c] * out[c];
+        out[r] = v / a[r][r];
+    }
+    return true;
+}
+
+// Image pixel -> fitted-plane coordinates: [xi, eta] = A * [u, v] + t.  On a
+// plane a perspective map is locally affine, so this both removes the
+// foreshortening an image-space circle fit would carry and gives the local
+// mm/pixel scale (sqrt|det A|).
+struct AffineMap {
+    double a = 0.0, b = 0.0, c = 0.0, d = 0.0, e = 0.0, f = 0.0;
+    bool ok = false;
+    double det() const { return a * d - b * c; }
+    void apply(double u, double v, double& xi, double& eta) const
+    {
+        xi = a * u + b * v + e;
+        eta = c * u + d * v + f;
+    }
+    bool invert(double xi, double eta, double& u, double& v) const
+    {
+        const double D = det();
+        if (std::fabs(D) < 1e-12)
+            return false;
+        u = (d * (xi - e) - b * (eta - f)) / D;
+        v = (-c * (xi - e) + a * (eta - f)) / D;
+        return true;
+    }
+};
+
+bool solveAffine(const std::vector<std::array<double, 2>>& uv,
+                 const std::vector<std::array<double, 2>>& xy, AffineMap& out)
+{
+    if (uv.size() < 3 || uv.size() != xy.size())
+        return false;
+    double s[3][3] = {};
+    double rx[3] = {};
+    double ry[3] = {};
+    for (std::size_t i = 0; i < uv.size(); ++i) {
+        const double p[3] = { uv[i][0], uv[i][1], 1.0 };
+        for (int r = 0; r < 3; ++r) {
+            for (int c = 0; c < 3; ++c)
+                s[r][c] += p[r] * p[c];
+            rx[r] += p[r] * xy[i][0];
+            ry[r] += p[r] * xy[i][1];
+        }
+    }
+    double sol[3];
+    if (!solve3(s, rx, sol))
+        return false;
+    out.a = sol[0];
+    out.b = sol[1];
+    out.e = sol[2];
+    if (!solve3(s, ry, sol))
+        return false;
+    out.c = sol[0];
+    out.d = sol[1];
+    out.f = sol[2];
+    out.ok = true;
+    return true;
+}
+
+double percentile(std::vector<double> v, double p)
+{
+    if (v.empty())
+        return 0.0;
+    std::sort(v.begin(), v.end());
+    if (v.size() == 1)
+        return v[0];
+    const double rank = p * static_cast<double>(v.size() - 1);
+    const std::size_t lo = static_cast<std::size_t>(std::floor(rank));
+    const std::size_t hi = std::min(lo + 1, v.size() - 1);
+    const double frac = rank - static_cast<double>(lo);
+    return v[lo] * (1.0 - frac) + v[hi] * frac;
+}
+
+// Plane through three points, normal oriented n[2] <= 0 (towards the camera).
+bool planeFrom3(const Vec3& a, const Vec3& b, const Vec3& c, Plane& p)
+{
+    const Vec3 ab = sub(b, a);
+    const Vec3 ac = sub(c, a);
+    Vec3 n{ ab[1] * ac[2] - ab[2] * ac[1],
+            ab[2] * ac[0] - ab[0] * ac[2],
+            ab[0] * ac[1] - ab[1] * ac[0] };
+    const double len = std::sqrt(dot(n, n));
+    if (!(len > 1e-9))
+        return false;
+    n = { n[0] / len, n[1] / len, n[2] / len };
+    if (n[2] > 0.0)
+        n = { -n[0], -n[1], -n[2] };
+    p.normal = n;
+    p.d = -dot(n, a);
+    return true;
+}
+
+// Dominant-plane fit (RANSAC + LSQ refit).
+//
+// A plain least-squares fit — even with the MAD tail rejection the other
+// kernels use — cannot cope with a ROI that straddles two levels: MAD only ever
+// drops a *minority* tail, so a ROI half on the disc face and half on the lower
+// annulus (or on the plate behind it) fits the *average* of the two and reports
+// a band wide enough to swallow everything (the ⌀63.5 ROI fitted a 29 mm band
+// and then "measured" 96 mm).  Sampling triples and keeping the largest
+// consensus set locks onto the surface with the most area instead.
+bool fitDominantPlane(const std::vector<Vec3>& pts, double tol, Plane& out)
+{
+    if (pts.size() < 3)
+        return false;
+    const std::size_t n = pts.size();
+    int best = -1;
+    Vec3 bn{ 0.0, 0.0, -1.0 };
+    double bd = 0.0;
+    std::uint32_t rng = 0x9e3779b9u;
+    const int iters = std::min(600, 40 + static_cast<int>(n) / 20);
+    for (int it = 0; it < iters; ++it) {
+        std::size_t idx[3];
+        for (int k = 0; k < 3; ++k) {
+            rng = rng * 1664525u + 1013904223u;
+            idx[k] = static_cast<std::size_t>(rng) % n;
+        }
+        if (idx[0] == idx[1] || idx[1] == idx[2] || idx[0] == idx[2])
+            continue;
+        Plane cand;
+        if (!planeFrom3(pts[idx[0]], pts[idx[1]], pts[idx[2]], cand))
+            continue;
+        int cnt = 0;
+        for (const Vec3& p : pts)
+            if (std::fabs(dot(cand.normal, p) + cand.d) <= tol)
+                ++cnt;
+        if (cnt > best) {
+            best = cnt;
+            bn = cand.normal;
+            bd = cand.d;
+        }
+    }
+    if (best < 3)
+        return false;
+    Plane seed;
+    seed.normal = bn;
+    seed.d = bd;
+    std::vector<Vec3> inl;
+    inl.reserve(static_cast<std::size_t>(best));
+    for (const Vec3& p : pts)
+        if (std::fabs(dot(seed.normal, p) + seed.d) <= tol)
+            inl.push_back(p);
+    if (!fitPlaneRaw(inl, out))
+        return false;
+    return true;
+}
+
+// Flood-fill the 4-connected component of `mask` (nonzero = inside) that holds
+// `seed`.  Returns false when the seed is out of range or not inside the mask.
+bool floodComponent(const std::vector<char>& mask, int w, int h, std::size_t seed,
+                    std::vector<std::size_t>& comp)
+{
+    comp.clear();
+    if (w <= 0 || h <= 0 || seed >= static_cast<std::size_t>(w) * h || !mask[seed])
+        return false;
+    std::vector<char> seen(mask.size(), 0);
+    std::vector<std::size_t> stack;
+    stack.push_back(seed);
+    seen[seed] = 1;
+    while (!stack.empty()) {
+        const std::size_t cur = stack.back();
+        stack.pop_back();
+        comp.push_back(cur);
+        const int cx = static_cast<int>(cur % static_cast<std::size_t>(w));
+        const int cy = static_cast<int>(cur / static_cast<std::size_t>(w));
+        const int nx[4] = { cx - 1, cx + 1, cx, cx };
+        const int ny[4] = { cy, cy, cy - 1, cy + 1 };
+        for (int k = 0; k < 4; ++k) {
+            if (nx[k] < 0 || nx[k] >= w || ny[k] < 0 || ny[k] >= h)
+                continue;
+            const std::size_t nb = static_cast<std::size_t>(ny[k]) * w + nx[k];
+            if (mask[nb] && !seen[nb]) {
+                seen[nb] = 1;
+                stack.push_back(nb);
+            }
+        }
+    }
+    return true;
+}
+
+double bilinear(const GrayImage& img, double u, double v)
+{
+    if (!img.valid())
+        return 0.0;
+    const double maxU = img.width - 1.0;
+    const double maxV = img.height - 1.0;
+    u = std::min(maxU, std::max(0.0, u));
+    v = std::min(maxV, std::max(0.0, v));
+    const int x0 = static_cast<int>(u);
+    const int y0 = static_cast<int>(v);
+    const int x1 = std::min(x0 + 1, img.width - 1);
+    const int y1 = std::min(y0 + 1, img.height - 1);
+    const double fx = u - x0;
+    const double fy = v - y0;
+    const double a = img.at(x0, y0), b = img.at(x1, y0);
+    const double c = img.at(x0, y1), d = img.at(x1, y1);
+    return (a * (1.0 - fx) + b * fx) * (1.0 - fy) + (c * (1.0 - fx) + d * fx) * fy;
+}
+
+// Radial sub-pixel edge scan around (u0, v0): for every ray, sample the
+// intensity outward over [r0-window, r0+window], take the *first* location
+// where |dI/dr| reaches half its peak (walking out of the material that is the
+// boundary), and refine it to the gradient's parabola vertex — the intensity
+// inflection point, i.e. the sub-pixel edge.
+void scanEdgeRays(const GrayImage& img, double u0, double v0, double r0,
+                  double window, std::vector<std::array<double, 2>>& out)
+{
+    out.clear();
+    if (!img.valid() || window <= 0.0)
+        return;
+    const int rays = 360;
+    const double step = 0.5;
+    const int m = std::max(7, static_cast<int>(2.0 * window / step) + 1);
+    std::vector<double> prof(static_cast<std::size_t>(m));
+    std::vector<double> grad(static_cast<std::size_t>(m), 0.0);
+    const double twoPi = 2.0 * kPi;
+    for (int k = 0; k < rays; ++k) {
+        const double ang = twoPi * static_cast<double>(k) / rays;
+        const double dx = std::cos(ang), dy = std::sin(ang);
+        double lo = 1e300, hi = -1e300;
+        for (int j = 0; j < m; ++j) {
+            const double r = r0 - window + static_cast<double>(j) * step;
+            const double x = u0 + r * dx, y = v0 + r * dy;
+            if (x < 0.0 || y < 0.0 || x > img.width - 1 || y > img.height - 1) {
+                prof[static_cast<std::size_t>(j)] =
+                    std::numeric_limits<double>::quiet_NaN();
+                continue;
+            }
+            const double val = bilinear(img, x, y);
+            prof[static_cast<std::size_t>(j)] = val;
+            lo = std::min(lo, val);
+            hi = std::max(hi, val);
+        }
+        if (!(hi - lo >= 12.0))
+            continue;                       // flat profile: no edge to trust
+        for (int j = 1; j + 1 < m; ++j) {
+            const double p0 = prof[static_cast<std::size_t>(j - 1)];
+            const double p2 = prof[static_cast<std::size_t>(j + 1)];
+            grad[static_cast<std::size_t>(j)] =
+                (std::isfinite(p0) && std::isfinite(p2)) ? 0.5 * (p2 - p0) : 0.0;
+        }
+        grad[0] = 0.0;
+        grad[static_cast<std::size_t>(m - 1)] = 0.0;
+        double peak = 0.0;
+        for (int j = 0; j < m; ++j)
+            peak = std::max(peak, std::fabs(grad[static_cast<std::size_t>(j)]));
+        if (peak < std::max(3.0, 0.15 * (hi - lo)))
+            continue;
+        // The edge we are after is where the *material* ends.  On the ⌀26 hub
+        // the material is followed by a dark groove (the step down to the base
+        // plate) and then more material, so the boundary is the interior
+        // intensity *minimum*: the strongest gradient alone sits a few px
+        // inside it (23.54 mm where the step is really at 172 px).  A hole, by
+        // contrast, is a single dark→bright ramp with no interior minimum, so
+        // there we fall back to the strongest intensity step (its inflection
+        // point).
+        int best = -1;
+        double bestG = 0.0;
+        for (int j = 1; j + 1 < m; ++j) {
+            if (std::isfinite(grad[static_cast<std::size_t>(j)])
+                && std::fabs(grad[static_cast<std::size_t>(j)]) > bestG) {
+                bestG = std::fabs(grad[static_cast<std::size_t>(j)]);
+                best = j;
+            }
+        }
+        const double p1 = prof[1];
+        const double pN = prof[static_cast<std::size_t>(m - 2)];
+        int dip = -1;
+        double dipV = 1e300;
+        if (std::isfinite(p1) && std::isfinite(pN)) {
+            const double endLevel = std::min(p1, pN);
+            for (int j = 2; j + 2 < m; ++j) {
+                const double pj = prof[static_cast<std::size_t>(j)];
+                if (!std::isfinite(pj))
+                    continue;
+                if (pj < prof[static_cast<std::size_t>(j - 1)]
+                    && pj <= prof[static_cast<std::size_t>(j + 1)]
+                    && pj <= endLevel - 0.35 * (hi - lo) && pj < dipV) {
+                    dipV = pj;
+                    dip = j;
+                }
+            }
+        }
+        if (dip > 0) {
+            const double q0 = prof[static_cast<std::size_t>(dip - 1)];
+            const double q1 = prof[static_cast<std::size_t>(dip)];
+            const double q2 = prof[static_cast<std::size_t>(dip + 1)];
+            const double den = q0 - 2.0 * q1 + q2;
+            double delta = (std::fabs(den) > 1e-12) ? 0.5 * (q0 - q2) / den : 0.0;
+            if (delta < -1.0 || delta > 1.0)
+                delta = 0.0;
+            const double r = r0 - window + (static_cast<double>(dip) + delta) * step;
+            out.push_back({ u0 + r * dx, v0 + r * dy });
+            continue;
+        }
+        if (best <= 0 || best >= m - 1)
+            continue;                       // edge runs off the window
+        const double g0 = grad[static_cast<std::size_t>(best - 1)];
+        const double g1 = grad[static_cast<std::size_t>(best)];
+        const double g2 = grad[static_cast<std::size_t>(best + 1)];
+        const double den = g0 - 2.0 * g1 + g2;
+        double delta = (std::fabs(den) > 1e-12) ? 0.5 * (g0 - g2) / den : 0.0;
+        if (delta < -1.0 || delta > 1.0)
+            delta = 0.0;
+        const double r = r0 - window + (static_cast<double>(best) + delta) * step;
+        out.push_back({ u0 + r * dx, v0 + r * dy });
+    }
+}
+
+} // namespace
+
+BoundaryCircle measureBoundaryCircle(
+    const std::vector<Vec3>& roiPoints,
+    const std::vector<std::size_t>& roiCells,
+    int gridW, int gridH,
+    const std::vector<double>& grid,
+    int imageW, int imageH,
+    const GrayImage& img,
+    bool materialInside)
+{
+    BoundaryCircle bc;
+    const std::size_t n = std::min(roiPoints.size(), roiCells.size());
+    std::vector<Vec3> pts;
+    std::vector<std::size_t> cells;
+    pts.reserve(n);
+    cells.reserve(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        if (isFinite(roiPoints[i])) {
+            pts.push_back(roiPoints[i]);
+            cells.push_back(roiCells[i]);
+        }
+    }
+    if (pts.size() < 12) {
+        bc.message = "点数不足（边界圆法至少需要 12 点）";
+        return bc;
+    }
+
+    // 1. dominant material plane + narrow band (a ROI drawn around a hole is
+    //    mostly material; a ROI drawn inside a solid part is all material).
+    //    RANSAC, not plain LSQ: the ⌀63.5 ROI covers the whole disc and the
+    //    plate behind it, and a LSQ plane through all of that is the average of
+    //    every level ("measured" 96 mm with a 29 mm band).
+    Plane plane;
+    const double tol = 0.08;            // ≈ one grid pitch (0.0755 mm)
+    if (!fitDominantPlane(pts, tol, plane)) {
+        bc.message = plane.message.empty() ? std::string("平面拟合失败") : plane.message;
+        return bc;
+    }
+    std::vector<double> dev = deviations(pts, plane);
+    std::vector<std::size_t> keep;
+    keep.reserve(pts.size());
+    for (std::size_t i = 0; i < pts.size(); ++i)
+        if (std::fabs(dev[i]) <= tol)
+            keep.push_back(i);
+    std::vector<Vec3> mat;
+    std::vector<std::size_t> matCells;
+    mat.reserve(keep.size());
+    matCells.reserve(keep.size());
+    for (std::size_t i : keep) {
+        mat.push_back(pts[i]);
+        matCells.push_back(cells[i]);
+    }
+    if (mat.size() >= 3)
+        fitPlaneRaw(mat, plane);
+    dev = deviations(mat, plane);
+    std::vector<double> absDev(dev.size());
+    for (std::size_t i = 0; i < dev.size(); ++i)
+        absDev[i] = std::fabs(dev[i]);
+    const double sigma = kMadScale * medianOf(absDev);
+    const double band = std::max(3.0 * sigma, 0.05);
+
+    std::vector<Vec3> bpts;
+    std::vector<std::size_t> bcells;
+    for (std::size_t i = 0; i < mat.size(); ++i) {
+        if (std::fabs(dev[i]) <= band) {
+            bpts.push_back(mat[i]);
+            bcells.push_back(matCells[i]);
+        }
+    }
+    if (bpts.size() < 12) {
+        bc.message = "平面带内材料点不足（孔壁/背景点已排除）";
+        return bc;
+    }
+    bc.debug = "DBG pts=" + std::to_string(pts.size())
+        + " mat=" + std::to_string(mat.size())
+        + " band=" + std::to_string(bpts.size())
+        + " bandMm=" + std::to_string(band)
+        + " n=(" + std::to_string(plane.normal[0]) + "," + std::to_string(plane.normal[1])
+        + "," + std::to_string(plane.normal[2]) + ")";
+
+    // 2. in-plane frame around the material centroid.
+    Vec3 u, v;
+    planeBasis(plane.normal, u, v);
+    const Vec3 c3 = centroid(bpts);
+
+    const bool haveGrid = gridW > 0 && gridH > 0
+        && grid.size() >= static_cast<std::size_t>(gridW) * gridH * 3;
+    const bool haveImage = imageW > 0 && imageH > 0 && img.valid();
+    const double sx = (haveGrid && imageW > 0) ? static_cast<double>(imageW) / gridW : 1.0;
+    const double sy = (haveGrid && imageH > 0) ? static_cast<double>(imageH) / gridH : 1.0;
+    auto cellToPx = [&](std::size_t cell, double& pu, double& pv) {
+        const int cx = static_cast<int>(cell % static_cast<std::size_t>(gridW));
+        const int cy = static_cast<int>(cell / static_cast<std::size_t>(gridW));
+        pu = (cx + 0.5) * sx;
+        pv = (cy + 0.5) * sy;
+    };
+
+    std::vector<std::array<double, 2>> px(bpts.size());
+    std::vector<std::array<double, 2>> planeXY(bpts.size());
+    std::vector<double> planeR(bpts.size());
+    double su = 0.0, sv = 0.0;
+    for (std::size_t i = 0; i < bpts.size(); ++i) {
+        const Vec3 q = sub(bpts[i], c3);
+        const double xi = dot(q, u), eta = dot(q, v);
+        planeXY[i] = { xi, eta };
+        planeR[i] = std::sqrt(xi * xi + eta * eta);
+        double pu = 0.0, pv = 0.0;
+        if (haveGrid)
+            cellToPx(bcells[i], pu, pv);
+        px[i] = { pu, pv };
+        su += pu;
+        sv += pv;
+    }
+    const double bandCu = su / static_cast<double>(bpts.size());
+    const double bandCv = sv / static_cast<double>(bpts.size());
+    {
+        double uLo = 1e300, uHi = -1e300, vLo = 1e300, vHi = -1e300;
+        for (const auto& q : px) {
+            uLo = std::min(uLo, q[0]); uHi = std::max(uHi, q[0]);
+            vLo = std::min(vLo, q[1]); vHi = std::max(vHi, q[1]);
+        }
+        std::vector<double> srt = planeR;
+        std::sort(srt.begin(), srt.end());
+        auto q = [&](double f) {
+            return srt[std::min(srt.size() - 1, static_cast<std::size_t>(f * srt.size()))];
+        };
+        bc.debug += " pxBox=(" + std::to_string(uLo) + "," + std::to_string(vLo) + ")-("
+            + std::to_string(uHi) + "," + std::to_string(vHi) + ")"
+            + " bandC=(" + std::to_string(bandCu) + "," + std::to_string(bandCv) + ")"
+            + " Rq=" + std::to_string(q(0.05)) + "/" + std::to_string(q(0.25)) + "/"
+            + std::to_string(q(0.50)) + "/" + std::to_string(q(0.75)) + "/"
+            + std::to_string(q(0.95));
+    }
+
+    // 3. seed centre / radius.
+    double u0 = bandCu, v0 = bandCv, r0px = 0.0;
+    AffineMap map;
+    std::vector<Vec3> contour3d;        // 3-D points of the outer contour (ring only)
+    if (haveGrid && haveImage)
+        solveAffine(px, planeXY, map);
+
+    if (map.ok) {
+        const double s = std::sqrt(std::fabs(map.det()));
+        if (s > 0.0)
+            bc.mmPerPx = s;
+        if (!materialInside) {
+            // Hole.  The centre must come from where the *material is absent*,
+            // not from the material centroid: an operator drags the rectangle
+            // around a hole, but "around" is not "centred on".  On the real ⌀6
+            // ROI the hole sits right-of-centre (the material is a crescent on
+            // the left), so the material centroid lands ~2 mm off the hole axis;
+            // the inner tenth of the band radii is then a point *inside* the
+            // hole (1.5 mm instead of 3.0 mm) and the image scan hunts texture
+            // inside the hole — that is the 2.06 mm of the first attempt.
+            //
+            // So: build the material mask over the whole grid (a cell is material
+            // when it holds a point inside the plane band), flood the *complement*
+            // from the ROI centre, and read the hole centre and its equivalent
+            // radius off that component.  The complement is the hole for a real
+            // hole (the sensor returns nothing, or only the wall/floor outside the
+            // band), and it is enclosed by material so the flood cannot leak into
+            // the background.
+            const std::size_t total = static_cast<std::size_t>(gridW) * gridH;
+            std::vector<char> matMask(total, 0);
+            const Vec3 nn = plane.normal;
+            for (std::size_t i = 0; i < total; ++i) {
+                const double x = grid[i * 3], y = grid[i * 3 + 1], z = grid[i * 3 + 2];
+                if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z))
+                    continue;
+                if (x == 0.0 && y == 0.0 && z == 0.0)
+                    continue;
+                const double d = nn[0] * x + nn[1] * y + nn[2] * z + plane.d;
+                if (std::fabs(d) <= band)
+                    matMask[i] = 1;
+            }
+            std::vector<char> emptyMask(total);
+            for (std::size_t i = 0; i < total; ++i)
+                emptyMask[i] = matMask[i] ? 0 : 1;
+            // Seed: the middle of the ROI's own cell rectangle (the operator's
+            // "centre" of the drag), not the material centroid.
+            std::size_t cxLo = cells[0] % static_cast<std::size_t>(gridW), cxHi = cxLo;
+            std::size_t cyLo = cells[0] / static_cast<std::size_t>(gridW), cyHi = cyLo;
+            for (std::size_t c : cells) {
+                const std::size_t cx = c % static_cast<std::size_t>(gridW);
+                const std::size_t cy = c / static_cast<std::size_t>(gridW);
+                cxLo = std::min(cxLo, cx); cxHi = std::max(cxHi, cx);
+                cyLo = std::min(cyLo, cy); cyHi = std::max(cyHi, cy);
+            }
+            const std::size_t roiSeed =
+                static_cast<std::size_t>((cyLo + cyHi) / 2) * gridW + (cxLo + cxHi) / 2;
+            std::vector<std::size_t> hole;
+            const bool gotHole = floodComponent(emptyMask, gridW, gridH, roiSeed, hole)
+                && hole.size() >= 50 && hole.size() < total / 2;
+            std::size_t hxLo = total, hxHi = 0, hyLo = total, hyHi = 0;
+            for (std::size_t c : hole) {
+                const std::size_t cx = c % static_cast<std::size_t>(gridW);
+                const std::size_t cy = c / static_cast<std::size_t>(gridW);
+                hxLo = std::min(hxLo, cx); hxHi = std::max(hxHi, cx);
+                hyLo = std::min(hyLo, cy); hyHi = std::max(hyHi, cy);
+            }
+            const bool enclosed = gotHole && hxLo > 0 && hyLo > 0 && hxHi + 1 < gridW
+                && hyHi + 1 < gridH;
+            if (enclosed) {
+                double su = 0.0, sv = 0.0;
+                for (std::size_t c : hole) {
+                    double pu = 0.0, pv = 0.0;
+                    cellToPx(c, pu, pv);
+                    su += pu;
+                    sv += pv;
+                }
+                u0 = su / static_cast<double>(hole.size());
+                v0 = sv / static_cast<double>(hole.size());
+                r0px = std::sqrt(static_cast<double>(hole.size()) * sx * sy / kPi);
+                bc.debug += " holeFlood=" + std::to_string(hole.size())
+                    + " c=(" + std::to_string(u0) + "," + std::to_string(v0) + ")"
+                    + " r=" + std::to_string(r0px);
+                // T-012 debug: the 3-D material inner boundary about that centre
+                // (per-sector innermost band point, median) — tells the bore apart
+                // from the chamfered opening the image shows.
+                std::vector<double> innerR(360, -1.0);
+                for (std::size_t i = 0; i < bpts.size(); ++i) {
+                    const double du = px[i][0] - u0, dv = px[i][1] - v0;
+                    const double rr = std::sqrt(du * du + dv * dv);
+                    int sg = static_cast<int>((std::atan2(dv, du) + kPi) / (2.0 * kPi) * 360.0);
+                    sg = std::max(0, std::min(sg, 359));
+                    if (innerR[static_cast<std::size_t>(sg)] < 0.0
+                        || rr < innerR[static_cast<std::size_t>(sg)])
+                        innerR[static_cast<std::size_t>(sg)] = rr;
+                }
+                std::vector<double> valid;
+                for (double v : innerR)
+                    if (v >= 0.0)
+                        valid.push_back(v);
+                if (!valid.empty()) {
+                    std::sort(valid.begin(), valid.end());
+                    bc.debug += " inner3d_med=" + std::to_string(valid[valid.size() / 2])
+                        + " min=" + std::to_string(valid.front())
+                        + " max=" + std::to_string(valid.back())
+                        + " n=" + std::to_string(valid.size());
+                }
+            } else {
+                // No enclosed void to seed from: fall back to the inner tenth of
+                // the band radii (the ROI really is a ring of material).
+                const double rRim = percentile(planeR, 0.10);
+                if (s > 0.0)
+                    r0px = rRim / s;
+                bc.debug += " holeFlood=none(" + std::to_string(hole.size()) + ")";
+            }
+        } else {
+            // Outer edge: grow the material region out of the ROI over the whole
+            // grid (|plane deviation| <= band) and keep the component that holds
+            // the ROI — the capability that did not exist before.
+            const std::size_t total = static_cast<std::size_t>(gridW) * gridH;
+            std::vector<char> inRegion(total, 0);
+            const Vec3 nn = plane.normal;
+            for (std::size_t i = 0; i < total; ++i) {
+                const double x = grid[i * 3], y = grid[i * 3 + 1], z = grid[i * 3 + 2];
+                if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z))
+                    continue;
+                if (x == 0.0 && y == 0.0 && z == 0.0)
+                    continue;
+                const double d = nn[0] * x + nn[1] * y + nn[2] * z + plane.d;
+                if (std::fabs(d) <= band)
+                    inRegion[i] = 1;
+            }
+            const std::size_t seed = bcells[bcells.size() / 2];
+            std::vector<std::size_t> stack;
+            std::vector<char> vis(total, 0);
+            std::vector<std::size_t> comp;
+            if (seed < total && inRegion[seed]) {
+                stack.push_back(seed);
+                vis[seed] = 1;
+                while (!stack.empty()) {
+                    const std::size_t cur = stack.back();
+                    stack.pop_back();
+                    comp.push_back(cur);
+                    const int cx = static_cast<int>(cur % static_cast<std::size_t>(gridW));
+                    const int cy = static_cast<int>(cur / static_cast<std::size_t>(gridW));
+                    const int nx[4] = { cx - 1, cx + 1, cx, cx };
+                    const int ny[4] = { cy, cy, cy - 1, cy + 1 };
+                    for (int k = 0; k < 4; ++k) {
+                        if (nx[k] < 0 || nx[k] >= gridW || ny[k] < 0 || ny[k] >= gridH)
+                            continue;
+                        const std::size_t nb = static_cast<std::size_t>(ny[k]) * gridW + nx[k];
+                        if (inRegion[nb] && !vis[nb]) {
+                            vis[nb] = 1;
+                            stack.push_back(nb);
+                        }
+                    }
+                }
+            }
+            if (!comp.empty()) {
+                std::vector<char> inComp(total, 0);
+                for (std::size_t c : comp)
+                    inComp[c] = 1;
+                // Outer contour: per angular sector about the ROI centre, the
+                // region cell with the largest in-plane radius (this skips the
+                // relief slots, which are interior boundaries).
+                const int sectors = 720;
+                std::vector<double> bestR(static_cast<std::size_t>(sectors), -1.0);
+                std::vector<std::array<double, 3>> bestP(static_cast<std::size_t>(sectors));
+                for (std::size_t c : comp) {
+                    const int cx = static_cast<int>(c % static_cast<std::size_t>(gridW));
+                    const int cy = static_cast<int>(c / static_cast<std::size_t>(gridW));
+                    bool boundary = false;
+                    const int nx[4] = { cx - 1, cx + 1, cx, cx };
+                    const int ny[4] = { cy, cy, cy - 1, cy + 1 };
+                    for (int k = 0; k < 4 && !boundary; ++k) {
+                        if (nx[k] < 0 || nx[k] >= gridW || ny[k] < 0 || ny[k] >= gridH) {
+                            boundary = true;
+                            break;
+                        }
+                        const std::size_t nb =
+                            static_cast<std::size_t>(ny[k]) * gridW + nx[k];
+                        if (!inComp[nb])
+                            boundary = true;
+                    }
+                    if (!boundary)
+                        continue;
+                    const double x = grid[c * 3], y = grid[c * 3 + 1], z = grid[c * 3 + 2];
+                    const Vec3 q = sub(Vec3{ x, y, z }, c3);
+                    const double xi = dot(q, u), eta = dot(q, v);
+                    const double rr = std::sqrt(xi * xi + eta * eta);
+                    const double ang = std::atan2(eta, xi);
+                    int s = static_cast<int>((ang + kPi) / (2.0 * kPi) * sectors);
+                    s = std::max(0, std::min(s, sectors - 1));
+                    if (rr > bestR[static_cast<std::size_t>(s)]) {
+                        bestR[static_cast<std::size_t>(s)] = rr;
+                        bestP[static_cast<std::size_t>(s)] = { x, y, z };
+                    }
+                }
+                std::vector<std::array<double, 2>> cxy;
+                for (int s = 0; s < sectors; ++s) {
+                    if (bestR[static_cast<std::size_t>(s)] < 0.0)
+                        continue;
+                    const Vec3& p = bestP[static_cast<std::size_t>(s)];
+                    contour3d.push_back(p);
+                    const Vec3 q = sub(p, c3);
+                    cxy.push_back({ dot(q, u), dot(q, v) });
+                }
+                if (!cxy.empty()) {
+                    std::vector<Vec3> flat;
+                    flat.reserve(cxy.size());
+                    for (const auto& q : cxy)
+                        flat.push_back({ q[0], q[1], 0.0 });
+                    const Circle cs = fitCircle(flat, 1, 2.5);
+                    if (cs.valid) {
+                        if (map.invert(cs.center[0], cs.center[1], u0, v0)) {
+                            const double s2 = std::sqrt(std::fabs(map.det()));
+                            if (s2 > 0.0)
+                                r0px = cs.radius / s2;
+                        }
+                    }
+                }
+            }
+            // Grow the affine map over the whole region for a better-conditioned
+            // (and better-extrapolating) fit than the ROI-only version.
+            if (!comp.empty()) {
+                std::vector<std::array<double, 2>> ruv;
+                std::vector<std::array<double, 2>> rxy;
+                const std::size_t stride = comp.size() > 40000 ? comp.size() / 40000 + 1 : 1;
+                for (std::size_t idx = 0; idx < comp.size(); idx += stride) {
+                    const std::size_t c = comp[idx];
+                    const int cx = static_cast<int>(c % static_cast<std::size_t>(gridW));
+                    const int cy = static_cast<int>(c / static_cast<std::size_t>(gridW));
+                    const double x = grid[c * 3], y = grid[c * 3 + 1], z = grid[c * 3 + 2];
+                    const Vec3 q = sub(Vec3{ x, y, z }, c3);
+                    ruv.push_back({ (cx + 0.5) * sx, (cy + 0.5) * sy });
+                    rxy.push_back({ dot(q, u), dot(q, v) });
+                }
+                AffineMap wide;
+                if (solveAffine(ruv, rxy, wide)) {
+                    map = wide;
+                    const double s2 = std::sqrt(std::fabs(map.det()));
+                    if (s2 > 0.0)
+                        bc.mmPerPx = s2;
+                }
+            }
+        }
+    }
+    bc.centerU = u0;
+    bc.centerV = v0;
+    if (img.valid()) {
+        std::string hx, vy;
+        for (int dx = -64; dx <= 64; dx += 2)
+            hx += " " + std::to_string(static_cast<int>(bilinear(img, u0 + dx, v0)));
+        for (int dy = -64; dy <= 64; dy += 2)
+            vy += " " + std::to_string(static_cast<int>(bilinear(img, u0, v0 + dy)));
+        bc.debug += " HX" + hx + " VY" + vy;
+        std::string prof;
+        for (int r = 0; r <= 224; r += 4) {
+            std::vector<double> vals;
+            for (int k = 0; k < 90; ++k) {
+                const double a = 2.0 * kPi * k / 90.0;
+                const double x = u0 + r * std::cos(a), y = v0 + r * std::sin(a);
+                if (x < 0.0 || y < 0.0 || x > img.width - 1 || y > img.height - 1)
+                    continue;
+                vals.push_back(bilinear(img, x, y));
+            }
+            if (vals.empty())
+                continue;
+            std::sort(vals.begin(), vals.end());
+            prof += " " + std::to_string(r) + ":"
+                + std::to_string(static_cast<int>(vals[vals.size() / 2]));
+        }
+        bc.debug += " RAD" + prof;
+    }
+    bc.debug += " | rRimMm=" + std::to_string(percentile(planeR, 0.10))
+        + " rMaxMm=" + std::to_string(*std::max_element(planeR.begin(), planeR.end()))
+        + " rMinMm=" + std::to_string(*std::min_element(planeR.begin(), planeR.end()))
+        + " mmPerPx=" + std::to_string(bc.mmPerPx)
+        + " u0=" + std::to_string(u0) + " v0=" + std::to_string(v0)
+        + " r0px=" + std::to_string(r0px)
+        + " mapOK=" + std::to_string(map.ok ? 1 : 0)
+        + " imgWH=" + std::to_string(img.width) + "x" + std::to_string(img.height)
+        + " gridWH=" + std::to_string(gridW) + "x" + std::to_string(gridH);
+
+    // 4. sub-pixel scan + iterated circle fit in the plane frame.
+    Circle final;
+    if (haveImage && map.ok && r0px > 2.0) {
+        const double window = materialInside ? 10.0 : 6.0;
+        std::vector<std::array<double, 2>> edge;
+        for (int iter = 0; iter < 3; ++iter) {
+            scanEdgeRays(img, u0, v0, r0px, window, edge);
+            bc.debug += " | it" + std::to_string(iter) + " r0px=" + std::to_string(r0px)
+                + " edges=" + std::to_string(edge.size());
+            if (edge.size() < 24)
+                break;
+            std::vector<Vec3> flat;
+            flat.reserve(edge.size());
+            for (const auto& e : edge) {
+                double xi = 0.0, eta = 0.0;
+                map.apply(e[0], e[1], xi, eta);
+                flat.push_back({ xi, eta, 0.0 });
+            }
+            const Circle c = fitCircle(flat, 1, 2.5);
+            if (!c.valid)
+                break;
+            bc.debug += " fitRpx=" + std::to_string(c.radius / (bc.mmPerPx > 0 ? bc.mmPerPx : 1.0))
+                + " fitRnd=" + std::to_string(c.roundness);
+            final = c;
+            double nu = 0.0, nv = 0.0;
+            const double s = std::sqrt(std::fabs(map.det()));
+            if (map.invert(c.center[0], c.center[1], nu, nv)) {
+                u0 = nu;
+                v0 = nv;
+                if (s > 0.0)
+                    r0px = c.radius / s;
+                bc.centerU = u0;
+                bc.centerV = v0;
+            }
+        }
+    }
+
+    if (final.valid && final.used >= 24) {
+        bc.radius = final.radius;
+        bc.diameter = 2.0 * final.radius;
+        bc.roundness = final.roundness;
+        bc.rms = final.rms;
+        bc.used = static_cast<int>(final.used);
+        bc.center = { c3[0] + final.center[0] * u[0] + final.center[1] * v[0],
+                      c3[1] + final.center[0] * u[1] + final.center[1] * v[1],
+                      c3[2] + final.center[0] * u[2] + final.center[1] * v[2] };
+        bc.normal = plane.normal;
+        bc.sectors = 360;
+        bc.coverage = static_cast<double>(final.used) / 360.0;
+        bc.subpixel = true;
+        bc.reliable = bc.coverage >= 0.5 && bc.radius > 0.0
+            && bc.roundness <= 0.2 * bc.radius;
+        bc.valid = true;
+        if (!bc.reliable)
+            bc.message = "图像边缘样本不足或离散度过大，结果仅供参照";
+        return bc;
+    }
+
+    // 5. fall back to the 3-D boundary (no image, or no usable edge).
+    if (!materialInside) {
+        const HoleBoundary hb = holeBoundary(pts);
+        if (!hb.valid) {
+            bc.message = hb.message;
+            return bc;
+        }
+        bc.diameter = hb.diameter;
+        bc.radius = hb.radius;
+        bc.center = hb.center;
+        bc.normal = hb.normal;
+        bc.roundness = hb.roundness;
+        bc.rms = hb.rms;
+        bc.used = static_cast<int>(hb.used);
+        bc.sectors = hb.sectors;
+        bc.coverage = hb.coverage;
+        bc.reliable = hb.reliable;
+        bc.valid = true;
+        bc.message = "图像不可用，退回 3D 孔壁边界（粗）";
+        return bc;
+    }
+
+    if (contour3d.size() >= 5) {
+        const Circle c = fitCircle(contour3d, 1, 2.5);
+        if (c.valid) {
+            const double pitch = estimatePitch(planeXY);
+            bc.radius = c.radius + 0.5 * pitch;   // contour cells sit inside the edge
+            bc.diameter = 2.0 * bc.radius;
+            bc.center = c.center;
+            bc.normal = c.normal;
+            bc.roundness = c.roundness;
+            bc.rms = c.rms;
+            bc.used = static_cast<int>(c.used);
+            bc.sectors = static_cast<int>(contour3d.size());
+            bc.coverage = 1.0;
+            bc.reliable = false;
+            bc.valid = true;
+            bc.message = "图像不可用，退回 3D 外缘边界（粗）";
+            return bc;
+        }
+    }
+
+    bc.message = "找不到材料边界（ROI 内没有可用的边缘）";
+    return bc;
+}
+
 SectionProfile sectionProfile(const std::vector<Vec3>& pts, int bins)
 {
     SectionProfile sp;

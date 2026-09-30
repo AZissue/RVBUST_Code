@@ -240,39 +240,46 @@ protected:
     void compute(MeasureContext& ctx) override
     {
         const std::vector<Vec3>& pts = ctx.roi[0];
-        if (pts.size() < 5) {
-            ctx.refusal = QStringLiteral("圆环拟合需要在 ROI A（环形材料）内至少 5 个点，"
+        if (pts.size() < 12) {
+            ctx.refusal = QStringLiteral("圆环拟合需要在 ROI A（环形材料）内至少 12 个点，"
                                          "当前 %1 个。")
                               .arg(static_cast<qulonglong>(pts.size()));
             return;
         }
-        // 两遍 MAD 剔除，与 Python 工具一致。
-        const MeasureTools::Circle c = MeasureTools::fitCircle(pts, 2, 2.5);
-        if (!c.valid) {
-            ctx.refusal = fromStd(c.message);
+        // T-012：量的是"材料→背景"的外缘（实心外圆、台阶外缘），从 ROI 内的材料
+        // 连通区往外长，再在图像上把这条边抠到亚像素；不再是全体点的统计半径。
+        const std::vector<double> noGrid;
+        const std::vector<double>& gridRef = ctx.grid ? *ctx.grid : noGrid;
+        const MeasureTools::BoundaryCircle bc = MeasureTools::measureBoundaryCircle(
+            pts, ctx.roiCells[0], ctx.gridW, ctx.gridH, gridRef,
+            ctx.image ? ctx.image->width : 0, ctx.image ? ctx.image->height : 0,
+            ctx.image ? *ctx.image : MeasureTools::GrayImage{}, true);
+        if (!bc.valid) {
+            ctx.refusal = fromStd(bc.message);
             return;
         }
-        const int used = static_cast<int>(c.used);
-        const QString conf = confidenceFor(used, c.rms);
-        row(ctx, QStringLiteral("圆环直径"), fmt4(c.diameter), QStringLiteral("mm"), used, conf);
-        row(ctx, QStringLiteral("圆环半径"), fmt4(c.radius), QStringLiteral("mm"), used, conf);
-        row(ctx, QStringLiteral("圆环圆度(半径极差)"), fmt4(c.roundness), QStringLiteral("mm"),
+        const int used = bc.used > 0 ? bc.used : bc.sectors;
+        const QString conf = bc.reliable ? confidenceFor(used, bc.rms)
+                                         : QStringLiteral("参考");
+        row(ctx, QStringLiteral("圆环直径"), fmt4(bc.diameter), QStringLiteral("mm"), used, conf);
+        row(ctx, QStringLiteral("圆环半径"), fmt4(bc.radius), QStringLiteral("mm"), used, conf);
+        row(ctx, QStringLiteral("圆环圆度(半径极差)"), fmt4(bc.roundness), QStringLiteral("mm"),
             used, conf);
         row(ctx, QStringLiteral("圆环圆心"),
             QStringLiteral("(%1, %2, %3)")
-                .arg(fmt4(c.center[0])).arg(fmt4(c.center[1])).arg(fmt4(c.center[2])),
+                .arg(fmt4(bc.center[0])).arg(fmt4(bc.center[1])).arg(fmt4(bc.center[2])),
             QStringLiteral("mm"), used, conf);
         ctx.primaryKey = QStringLiteral("圆环直径");
-        ctx.primaryValue = c.diameter;
+        ctx.primaryValue = bc.diameter;
         ctx.hasPrimary = true;
 
         // 偏差图显示"到拟合圆的半径残差"：同一个符号距离思路，只是基准换成圆。
         std::vector<double> radial(pts.size());
         for (std::size_t k = 0; k < pts.size(); ++k) {
-            const double dx = pts[k][0] - c.center[0];
-            const double dy = pts[k][1] - c.center[1];
-            const double dz = pts[k][2] - c.center[2];
-            radial[k] = std::sqrt(dx * dx + dy * dy + dz * dz) - c.radius;
+            const double dx = pts[k][0] - bc.center[0];
+            const double dy = pts[k][1] - bc.center[1];
+            const double dz = pts[k][2] - bc.center[2];
+            radial[k] = std::sqrt(dx * dx + dy * dy + dz * dz) - bc.radius;
         }
         ctx.hasDeviation = true;
         ctx.devValues = radial;
@@ -280,20 +287,25 @@ protected:
         ctx.devCoolWarm = false;
 
         const QRect r = ctx.roiRects->value(0);
-        ctx.annotations.push_back({ QStringLiteral("⌀%1 mm").arg(fmt4(c.diameter)),
+        ctx.annotations.push_back({ QStringLiteral("⌀%1 mm").arg(fmt4(bc.diameter)),
                                     QPoint(r.center().x(), r.center().y()), false });
         ctx.hasPlane = true;
-        ctx.planePoint = c.center;
-        ctx.planeNormal = c.normal;
-        // 圆度相对半径很大 = 框到的不是一圈圆环（最常见的就是拿矩形 ROI 框了一个孔）。
-        // 这里明确提示去用孔洞边界法——用户踩过的正是这个坑。
-        if (c.radius > 1e-9 && c.roundness > 0.25 * c.radius) {
-            ctx.confidenceNote = QStringLiteral("圆度/半径 = %1%，ROI 可能不是圆环；"
-                                                "要测孔径请用「孔径(孔洞边界法)」")
-                                     .arg(fmt4(100.0 * c.roundness / c.radius));
-        } else {
-            ctx.confidenceNote = QStringLiteral("仅适用于环形 ROI（圆环面 / 法兰环）");
-        }
+        ctx.planePoint = bc.center;
+        ctx.planeNormal = bc.normal;
+        // T-012：本工具现在量的是最外侧的材料边界（实心外圆 / 台阶外缘）。
+        ctx.footer = bc.subpixel
+            ? QStringLiteral("图像亚像素外缘 %1 条，局部尺度 %2 mm/px")
+                  .arg(bc.used).arg(fmt4(bc.mmPerPx))
+            : QStringLiteral("图像不可用，本结果为 3D 外缘边界（粗）");
+        ctx.confidenceNote = bc.subpixel
+            ? QStringLiteral("材料外缘（从外往内）：亚像素边缘 %1/360 条（覆盖 %2%%），"
+                             "圆度 %3 mm，尺度 %4 mm/px")
+                  .arg(used).arg(fmt4(100.0 * bc.coverage))
+                  .arg(fmt4(bc.roundness)).arg(fmt4(bc.mmPerPx))
+            : QStringLiteral("退回 3D 外缘边界：%1").arg(fromStd(bc.message));
+        if (!bc.reliable)
+            ctx.confidenceNote += QStringLiteral("；覆盖或圆度不达标，已标「参考」");
+        ctx.confidenceNote += QStringLiteral("；") + QString::fromStdString(bc.debug);
     }
 };
 
@@ -313,39 +325,44 @@ protected:
                               .arg(static_cast<qulonglong>(pts.size()));
             return;
         }
-        const MeasureTools::HoleBoundary hb = MeasureTools::holeBoundary(pts);
-        if (!hb.valid) {
-            ctx.refusal = fromStd(hb.message);
+        const std::vector<double> noGrid;
+        const std::vector<double>& gridRef = ctx.grid ? *ctx.grid : noGrid;
+        const MeasureTools::BoundaryCircle bc = MeasureTools::measureBoundaryCircle(
+            pts, ctx.roiCells[0], ctx.gridW, ctx.gridH, gridRef,
+            ctx.image ? ctx.image->width : 0, ctx.image ? ctx.image->height : 0,
+            ctx.image ? *ctx.image : MeasureTools::GrayImage{}, false);
+        if (!bc.valid) {
+            ctx.refusal = fromStd(bc.message);
             return;
         }
-        const int used = static_cast<int>(hb.used);
-        // 可信度列：扇区覆盖不足时直接标"参考"——这是 P2 对用户承诺的降级口径。
-        const QString conf = hb.reliable ? confidenceFor(used, hb.rms)
+        const int used = bc.used > 0 ? bc.used : bc.sectors;
+        // 可信度列：边缘样本不足时直接标"参考"——这是 P2 对用户承诺的降级口径。
+        const QString conf = bc.reliable ? confidenceFor(used, bc.rms)
                                          : QStringLiteral("参考");
-        row(ctx, QStringLiteral("孔直径"), fmt4(hb.diameter), QStringLiteral("mm"), used, conf);
-        row(ctx, QStringLiteral("孔半径"), fmt4(hb.radius), QStringLiteral("mm"), used, conf);
+        row(ctx, QStringLiteral("孔直径"), fmt4(bc.diameter), QStringLiteral("mm"), used, conf);
+        row(ctx, QStringLiteral("孔半径"), fmt4(bc.radius), QStringLiteral("mm"), used, conf);
         row(ctx, QStringLiteral("孔圆心"),
             QStringLiteral("(%1, %2, %3)")
-                .arg(fmt4(hb.center[0])).arg(fmt4(hb.center[1])).arg(fmt4(hb.center[2])),
+                .arg(fmt4(bc.center[0])).arg(fmt4(bc.center[1])).arg(fmt4(bc.center[2])),
             QStringLiteral("mm"), used, conf);
-        row(ctx, QStringLiteral("孔圆度(半径极差)"), fmt4(hb.roundness), QStringLiteral("mm"),
+        row(ctx, QStringLiteral("孔圆度(半径极差)"), fmt4(bc.roundness), QStringLiteral("mm"),
             used, conf);
         row(ctx, QStringLiteral("扇区覆盖"),
-            QStringLiteral("%1/%2").arg(hb.sectorsUsed).arg(hb.sectors),
+            QStringLiteral("%1/%2").arg(used).arg(bc.sectors),
             QString(), used, conf);
-        row(ctx, QStringLiteral("圆拟合直径(未修正)"), fmt4(hb.fitDiameter),
+        row(ctx, QStringLiteral("圆拟合直径(未修正)"), fmt4(bc.diameter),
             QStringLiteral("mm"), used, conf);
         ctx.primaryKey = QStringLiteral("孔直径");
-        ctx.primaryValue = hb.diameter;
+        ctx.primaryValue = bc.diameter;
         ctx.hasPrimary = true;
 
         // 偏差图 = 到孔壁圆的半径残差（turbo，与旧圆拟合同一套视觉）。
         std::vector<double> radial(pts.size());
         for (std::size_t k = 0; k < pts.size(); ++k) {
-            const double dx = pts[k][0] - hb.center[0];
-            const double dy = pts[k][1] - hb.center[1];
-            const double dz = pts[k][2] - hb.center[2];
-            radial[k] = std::sqrt(dx * dx + dy * dy + dz * dz) - hb.radius;
+            const double dx = pts[k][0] - bc.center[0];
+            const double dy = pts[k][1] - bc.center[1];
+            const double dz = pts[k][2] - bc.center[2];
+            radial[k] = std::sqrt(dx * dx + dy * dy + dz * dz) - bc.radius;
         }
         ctx.hasDeviation = true;
         ctx.devValues = radial;
@@ -353,24 +370,29 @@ protected:
         ctx.devCoolWarm = false;
 
         const QRect r = ctx.roiRects->value(0);
-        ctx.annotations.push_back({ QStringLiteral("⌀%1 mm").arg(fmt4(hb.diameter)),
+        ctx.annotations.push_back({ QStringLiteral("⌀%1 mm").arg(fmt4(bc.diameter)),
                                     QPoint(r.center().x(), r.center().y()), false });
         ctx.hasPlane = true;
-        ctx.planePoint = hb.center;
-        ctx.planeNormal = hb.normal;
+        ctx.planePoint = bc.center;
+        ctx.planeNormal = bc.normal;
 
-        ctx.footer = QStringLiteral("孔壁点 %1，点距 %2 mm，减去半个点距 %3 mm")
-                         .arg(static_cast<qulonglong>(hb.used))
-                         .arg(fmt4(hb.pitch))
-                         .arg(fmt4(hb.pitchCorrection));
-        ctx.confidenceNote =
-            QStringLiteral("扇区覆盖 %1/%2 = %3%%（门槛 75%），孔壁点 %4，点距 %5 mm")
-                .arg(hb.sectorsUsed).arg(hb.sectors)
-                .arg(fmt4(100.0 * hb.coverage))
-                .arg(static_cast<qulonglong>(hb.used))
-                .arg(fmt4(hb.pitch));
-        if (!hb.reliable)
+        ctx.footer = bc.subpixel
+            ? QStringLiteral("图像亚像素边缘 %1 条，局部尺度 %2 mm/px")
+                  .arg(bc.used).arg(fmt4(bc.mmPerPx))
+            : QStringLiteral("图像不可用，本结果为 3D 边界（粗）");
+        ctx.confidenceNote = bc.subpixel
+            ? QStringLiteral("亚像素边缘 %1/360 条（覆盖 %2%%），圆度 %3 mm，尺度 %4 mm/px")
+                  .arg(used).arg(fmt4(100.0 * bc.coverage))
+                  .arg(fmt4(bc.roundness)).arg(fmt4(bc.mmPerPx))
+            : QStringLiteral("退回 3D 边界：%1").arg(fromStd(bc.message));
+        if (!bc.reliable)
             ctx.confidenceNote += QStringLiteral("；覆盖或圆度不达标，已标「参考」");
+        ctx.confidenceNote += QStringLiteral("；") + QString::fromStdString(bc.debug);
+        if (ctx.roiRects && !ctx.roiRects->isEmpty()) {
+            const QRect rr = ctx.roiRects->value(0);
+            ctx.confidenceNote += QStringLiteral(" roiImg=(%1,%2)-(%3,%4)")
+                .arg(rr.left()).arg(rr.top()).arg(rr.right()).arg(rr.bottom());
+        }
     }
 };
 

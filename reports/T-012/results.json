@@ -7,10 +7,10 @@
    "tol": 0.052,
    "n": 1,
    "values": [
-    23.5418
+    25.4482
    ],
-   "mean": 23.5418,
-   "max_abs_err": 2.4582,
+   "mean": 25.4482,
+   "max_abs_err": 0.5518,
    "spread": 0.0,
    "ok": false
   },

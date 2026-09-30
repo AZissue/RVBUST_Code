@@ -5,6 +5,7 @@
 #include <QStackedWidget>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QImage>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMap>
@@ -51,6 +52,8 @@ public:
     // point-map cells — the two do not have to share a resolution.
     void setMeasurementCloud(const FrameBuffer::DoubleBuf& grid, int gridW, int gridH,
                              int imageW, int imageH);
+    // T-012：与那次拍照同一帧的 2D 图像（亚像素边缘用）。单独入口，上面那个签名不变。
+    void setMeasurementImage(const QImage& image);
     // A rectangle dragged on the 2D view (image pixels).  Landed per the active
     // method's declared ROI requirement (MeasureTools::planRoiDrag) — the user
     // is told what happened, never silently restarted.
@@ -239,6 +242,7 @@ private:
     int m_measureGridH = 0;
     int m_imageW = 0;
     int m_imageH = 0;
+    QImage m_measureImage;                     // 本次拍照的 2D 图像（亚像素边缘用）
     QVector<QRect> m_roiRects;                 // image pixels, max 2
     QMap<QString, QVector<double>> m_series;   // repeatability series (memory only)
 };
