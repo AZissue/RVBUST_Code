@@ -354,6 +354,16 @@ void Image2DView::updatePageBarGeometry()
 // pos() 就是它的左上角）换算到画面坐标。
 QImage Image2DView::overlayBlurUnder(const QWidget* w) const
 {
+    // T-010 仪表：本次调用无论走哪条 return，都要把耗时计进去（RAII 守卫）。
+    // mutable 成员让 const 方法也能累计；nsecsElapsed() 本身的开销在几十 ns，
+    // 相对这里要量的 copy+两次 scaled 可以忽略。
+    ++m_overlayCalls;
+    m_overlayBlurTimer.start();
+    struct BlurMeter {
+        const Image2DView* self;
+        ~BlurMeter() { self->m_overlayBlurUs += self->m_overlayBlurTimer.nsecsElapsed() / 1000; }
+    } blurMeter{this};
+
     if (!w || !m_imageLabel || m_cachedVisible.isNull())
         return {};
     // 祖先链对不上就别调 Qt 的映射函数：宁可不铺底，也不能让进程崩。
@@ -378,7 +388,36 @@ QImage Image2DView::overlayBlurUnder(const QWidget* w) const
     out.fill(Qt::transparent);
     QPainter p(&out);
     p.drawImage(have.topLeft() - want.topLeft(), blurred);
+    ++m_overlayPaints;   // T-010 仪表：返回非空图 = 这次真铺了一层模糊底
     return out;
+}
+
+// T-010 仪表：每满 1 s 输出一行，并清零重开窗口。仪表留在代码里（契约冻结）。
+void Image2DView::tickOverlayMeter()
+{
+    if (!m_overlayWindowStarted) {
+        m_overlayWindow.restart();
+        m_overlayWindowStarted = true;
+        return;
+    }
+    const qint64 windowMs = m_overlayWindow.elapsed();
+    if (windowMs < 1000)
+        return;
+
+    const quint64 frames = m_overlayFrames > 0 ? m_overlayFrames : 1;
+    const double perFrameUs = static_cast<double>(m_overlayBlurUs) / static_cast<double>(frames);
+    RuntimeLog::log("[OVERLAY] per_frame_us=%.1f paints=%llu calls=%llu frames=%llu window=%lldms",
+                    perFrameUs,
+                    static_cast<unsigned long long>(m_overlayPaints),
+                    static_cast<unsigned long long>(m_overlayCalls),
+                    static_cast<unsigned long long>(m_overlayFrames),
+                    static_cast<long long>(windowMs));
+
+    m_overlayBlurUs = 0;
+    m_overlayCalls = 0;
+    m_overlayPaints = 0;
+    m_overlayFrames = 0;
+    m_overlayWindow.restart();
 }
 
 void Image2DView::updateOverlayBackdrops()
@@ -945,6 +984,8 @@ void Image2DView::render()
     if (m_originalPixmap.isNull()) {
         // 画面没了（clear / 还没收到帧）：浮层也要把上一次的模糊底擦掉。
         updateOverlayBackdrops();
+        ++m_overlayFrames;
+        tickOverlayMeter();
         return;
     }
 
@@ -1070,6 +1111,8 @@ void Image2DView::render()
 
     // 画面换了，浮层背后的模糊底跟着换（只重画那几个小控件，不重画画面）。
     updateOverlayBackdrops();
+    ++m_overlayFrames;       // T-010 仪表：这一帧会让 8 个浮层控件各重画一次
+    tickOverlayMeter();
 
     // Cost trace for the D3 acceptance number: only report renders that are
     // actually expensive enough to show up in a UI-stall sample.

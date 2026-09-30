@@ -91,6 +91,10 @@ private:
     QImage overlayBlurUnder(const QWidget* w) const;
     // 画面变了以后让浮层重新取一次背后的模糊底（只 update 那几个小控件）。
     void updateOverlayBackdrops();
+    // 浮层模糊底的开销仪表（T-010）：每满 1 s 往 runtime 日志写一行
+    // [OVERLAY] per_frame_us=… paints=… calls=… frames=…。仪表就是本任务的证据，
+    // 契约冻结要求它**留在代码里**，别在优化后删掉。
+    void tickOverlayMeter();
     // Regenerates m_originalPixmap for the active page.  Cheap no-op when the
     // camera image is unchanged and the page did not move.
     void refreshPagePixmap();
@@ -104,6 +108,18 @@ private:
     QLabel* m_zoomLabel;
     // 需要铺模糊底的浮层控件（标题/缩放标签 + 工具栏按钮）。
     QVector<QWidget*> m_glassWidgets;
+
+    // ── 浮层模糊底的开销仪表（T-010）────────────────────────────────
+    // overlayBlurUnder() 是 const，但仪表要在它里面累计时间/次数，所以这几项
+    // 是 mutable。口径：per_frame_us = 一个统计窗口内模糊总耗时 ÷ 该窗口内
+    // 触发浮层重画的帧数（≈ 预览 fps），即 8 个浮层控件摊到单帧上花多少。
+    mutable qint64 m_overlayBlurUs = 0;    // 窗口内 overlayBlurUnder 累计耗时（µs）
+    mutable quint64 m_overlayCalls = 0;    // 窗口内 overlayBlurUnder 调用次数（= 浮层重画次数）
+    mutable quint64 m_overlayPaints = 0;   // 窗口内真正铺了模糊底的次数（返回非空图）
+    quint64 m_overlayFrames = 0;           // 窗口内触发浮层重画的帧数（render() 次数）
+    mutable QElapsedTimer m_overlayBlurTimer;   // 单次 overlayBlurUnder 计时
+    QElapsedTimer m_overlayWindow;         // 1 s 统计窗口
+    bool m_overlayWindowStarted = false;
 
     // Page machinery (all inside this widget: no extra window).
     QPointer<QWidget> m_pageBar;

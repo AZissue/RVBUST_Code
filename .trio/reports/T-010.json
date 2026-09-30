@@ -1,0 +1,15 @@
+{
+  "task": "T-010",
+  "brief": ".trio/tasks/T-010.md",
+  "session": "ace1e64f-074f-4b0d-8137-0dbec0cd0351",
+  "exit_code": 0,
+  "stopped_by": null,
+  "cost_cny": 0.18,
+  "session_spent_cny": 0.18,
+  "cost_note": "cost_cny 是单轮余额差，余额接口滞后时可能为 0.00；session_spent_cny 是会话累计",
+  "real_balance_after": 56.56,
+  "actions": 21,
+  "repeat_counts": {},
+  "raw_stream": ".trio/log/raw/b-T-010.jsonl",
+  "finished_at": "2026-09-30T21:05:30+08:00"
+}
