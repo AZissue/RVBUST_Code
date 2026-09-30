@@ -1,0 +1,7 @@
+{"step": "picked session dir", "dir": "D:\\MyCode\\MyHandEyeTools\\data\\calibration_data_20260917_123415_100"}
+{"step": "p2d page edits", "count": 4, "tops": [275, 356, 394, 432]}
+{"step": "froze main 2D view to data/1.png"}
+{"step": "screenshot", "shot": "D:\\MyCode\\MyHandEyeTools\\reports\\T-001\\glass_2d_main.png", "rect": [279, 42, 1657, 897]}
+{"step": "toolbar button rects (window coords)", "tabs": {}}
+{"step": "clicked main 2D view", "screen": [509, 422], "alive": true}
+{"step": "pixel->3D panel text delta", "changed": ["请先连接相机并拍照后再点击取点", "-18.499, -9.483, 388.268"], "result_line": ["-18.499, -9.483, 388.268"], "shot": "D:\\MyCode\\MyHandEyeTools\\reports\\T-001\\glass_pixel3d_after_click.png"}

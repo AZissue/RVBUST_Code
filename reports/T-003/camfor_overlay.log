@@ -1,0 +1,11 @@
+{"started": 16252, "sn": "I1GM112B652"}
+{"step": "clicked 连接 (attempt 1)", "shot": "D:\\MyCode\\MyHandEyeTools\\reports\\T-002\\cam_00_connect_clicked_1.png"}
+{"step": "device dialog up", "shot": "D:\\MyCode\\MyHandEyeTools\\reports\\T-002\\cam_02_device_dialog.png"}
+{"step": "picked device row: 'I1GM112B652'"}
+{"step": "confirmed with 确定"}
+{"step": "connected (process alive)", "shot": "D:\\MyCode\\MyHandEyeTools\\reports\\T-002\\cam_04_connected.png"}
+{"step": "clicked 预览"}
+{"step": "预览 存活 12 秒", "shot": "D:\\MyCode\\MyHandEyeTools\\reports\\T-002\\cam_06_preview_alive.png"}
+{"step": "clicked 拍照"}
+{"step": "拍照 存活 12 秒", "shot": "D:\\MyCode\\MyHandEyeTools\\reports\\T-002\\cam_08_capture_alive.png"}
+{"result": "NOT REPRODUCED (alive)"}

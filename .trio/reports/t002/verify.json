@@ -1,0 +1,42 @@
+{
+  "task": "T-002",
+  "mode": "verify",
+  "at": "2026-09-30 09:42:40",
+  "verdict": 0,
+  "manual": [
+    6
+  ],
+  "baseline": [],
+  "checks": [
+    {
+      "n": 1,
+      "name": "3D 视窗里不再有「识别后可点击…」提示（且日志里有）",
+      "ok": true,
+      "detail": "$ python reports/T-002/probe_pickhint.py\n退出码 0（期望 0）\n{\"step\": \"connected\"}\n{\"step\": \"captured + recognised\", \"shot\": \"D:\\\\MyCode\\\\MyHandEyeTools\\\\reports\\\\T-002\\\\pickhint_after_recognise.png\"}\n{\"step\": \"hint occurrences\", \"log_left\": 1254, \"nodes\": []}\n{\"result\": \"PASS: 视窗里没有该提示\", \"in_view\": 0, \"in_log\": 0}"
+    },
+    {
+      "n": 2,
+      "name": "回归：工具面板 15 项逐项选中不崩",
+      "ok": true,
+      "detail": "$ python reports/T-003/repro_crash.py\n退出码 0（期望 0）\n{\"started\": 8860, \"exe\": \"D:\\\\MyCode\\\\MyHandEyeTools\\\\build\\\\src\\\\Release\\\\HandEyeCalibrationTool.exe\"}\n{\"step\": \"main window up\", \"shot\": \"D:\\\\MyCode\\\\MyHandEyeTools\\\\reports\\\\T-003\\\\00_main.png\"}\n{\"step\": \"tools panel opened\", \"top\": [\"工具\", \"手眼标定数据收集助手 V1.0\"], \"shot\": \"D:\\\\MyCode\\\\MyHandEyeTools\\\\reports\\\\T-003\\\\01_tools.png\"}\n{\"step\": \"selected 欧氏距离\", \"alive\": true, \"exit_code\": null, \"shot\": \"D:\\\\MyCode\\\\MyHandEyeTools\\\\reports\\\\T-003\\\\02_after_欧氏距离.png\"}\n{\"step\": \"selected 手眼标定\", \"alive\": true, \"exit_code\": null, \"shot\": \"D:\\\\MyCode\\\\MyHandEyeTools\\\\reports\\\\T-003\\\\03_after_手眼标定.png\"}\n{\"step\": \"selected 坐标转换\", \"alive\": true, \"exit_code\": null, \"shot\": \"D:\\\\MyCode\\\\MyHandEyeTools\\\\reports\\\\T-003\\\\04_after_坐标转换.png\"}\n{\"step\": \"selected 机器人通信\", \"alive\": true, \"exit_code\": null, \"shot\": \"D:\\\\MyCode\\\\MyHandEyeTools\\\\reports\\\\T-003\\\\05_after_机器人通信.png\"}\n{\"step\": \"selected 像素→3D\", \"alive\": true, \"exit_code\": null, \"shot\": \"D:\\\\MyCode\\\\MyHandEyeTools\\\\reports\\\\T-003\\\\06_after_像素-3D.png\"}\n{\"step\": \"selected 平面度\", \"alive\": true, \"exit_code\": null, \"shot\": \"D:\\\\MyCode\\\\MyHandEyeTools\\\\reports\\\\T-003\\\\07_after_平面度.png\"}\n{\"result\": \"NOT REPRODUCED (alive)\", \"exit_code\": null}"
+    },
+    {
+      "n": 3,
+      "name": "回归：连相机后预览/拍照不崩（SN I1GM112B652）",
+      "ok": true,
+      "detail": "$ python reports/T-002/repro_camera_crash.py\n退出码 0（期望 0）\n{\"started\": 19368, \"sn\": \"I1GM112B652\"}\n{\"step\": \"clicked 连接 (attempt 1)\", \"shot\": \"D:\\\\MyCode\\\\MyHandEyeTools\\\\reports\\\\T-002\\\\cam_00_connect_clicked_1.png\"}\n{\"step\": \"device dialog up\", \"shot\": \"D:\\\\MyCode\\\\MyHandEyeTools\\\\reports\\\\T-002\\\\cam_02_device_dialog.png\"}\n{\"step\": \"picked device row: 'I1GM112B652'\"}\n{\"step\": \"confirmed with 确定\"}\n{\"step\": \"connected (process alive)\", \"shot\": \"D:\\\\MyCode\\\\MyHandEyeTools\\\\reports\\\\T-002\\\\cam_04_connected.png\"}\n{\"step\": \"clicked 预览\"}\n{\"step\": \"预览 存活 12 秒\", \"shot\": \"D:\\\\MyCode\\\\MyHandEyeTools\\\\reports\\\\T-002\\\\cam_06_preview_alive.png\"}\n{\"step\": \"clicked 拍照\"}\n{\"step\": \"拍照 存活 12 秒\", \"shot\": \"D:\\\\MyCode\\\\MyHandEyeTools\\\\reports\\\\T-002\\\\cam_08_capture_alive.png\"}\n{\"result\": \"NOT REPRODUCED (alive)\"}"
+    },
+    {
+      "n": 4,
+      "name": "既有 ctest 全过",
+      "ok": true,
+      "detail": "$ ctest --test-dir build -C Release --output-on-failure\n退出码 0（期望 0）\nTest project D:/MyCode/MyHandEyeTools/build\n    Start 1: unit_tests\n1/2 Test #1: unit_tests .......................   Passed    1.21 sec\n    Start 2: measurement_truth\n2/2 Test #2: measurement_truth ................   Passed    0.35 sec\n\n100% tests passed out of 2\n\nTotal Test time (real) =   1.57 sec"
+    },
+    {
+      "n": 5,
+      "name": "工作集不越界",
+      "ok": true,
+      "detail": "$ python reports/T-003/workingset_guard.py\n退出码 0（期望 0）\nchanged files: 9\n  ok   .gitignore\n  ok   .trio/\n  ok   AGENTS.md\n  ok   reports/\n  ok   src/app/MainWindow.cpp\n  ok   src/ui/Image2DView.cpp\n  ok   src/ui/Theme.cpp\n  ok   src/ui/VisSceneView.cpp\n  ok   src/ui/VisSceneView.h\n\n✓ 没有动到工作集外的文件"
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "task": "T-002",
+  "brief": ".trio/tasks/T-002.md",
+  "session": "51515372-3621-48a7-be74-c74fca2d5252",
+  "exit_code": 0,
+  "stopped_by": null,
+  "cost_cny": 0.32,
+  "session_spent_cny": 0.32,
+  "cost_note": "cost_cny 是单轮余额差，余额接口滞后时可能为 0.00；session_spent_cny 是会话累计",
+  "real_balance_after": 66.06,
+  "actions": 43,
+  "repeat_counts": {
+    "Bash: cmake --build D:/MyCode/MyHandEyeTools/build --config Release": 2
+  },
+  "raw_stream": ".trio/log/raw/b-T-002.jsonl",
+  "finished_at": "2026-09-30T09:40:14+08:00"
+}

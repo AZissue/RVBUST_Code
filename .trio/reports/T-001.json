@@ -1,0 +1,20 @@
+{
+  "task": "T-001",
+  "brief": ".trio/tasks/T-001-r2.md",
+  "session": "e7633ae2-213c-4471-8519-4070f8a28b2c",
+  "exit_code": 0,
+  "stopped_by": null,
+  "cost_cny": 1.19,
+  "session_spent_cny": 1.19,
+  "cost_note": "cost_cny 是单轮余额差，余额接口滞后时可能为 0.00；session_spent_cny 是会话累计",
+  "real_balance_after": 68.64,
+  "actions": 79,
+  "repeat_counts": {
+    "Read: D:\\MyCode\\MyHandEyeTools\\src\\ui\\Image2DView.cpp": 5,
+    "Read: D:\\MyCode\\MyHandEyeTools\\src\\app\\MainWindow.cpp": 2,
+    "Read: D:\\MyCode\\MyHandEyeTools\\src\\main.cpp": 2,
+    "Read: D:\\MyCode\\MyHandEyeTools\\src\\ui\\VisSceneView.cpp": 2
+  },
+  "raw_stream": ".trio/log/raw/b-T-001.jsonl",
+  "finished_at": "2026-09-29T17:46:19+08:00"
+}

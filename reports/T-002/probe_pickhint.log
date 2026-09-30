@@ -1,0 +1,4 @@
+{"step": "connected"}
+{"step": "captured + recognised", "shot": "D:\\MyCode\\MyHandEyeTools\\reports\\T-002\\pickhint_after_recognise.png"}
+{"step": "hint occurrences", "log_left": 1254, "nodes": [{"type": "Text", "left": 976, "top": 615, "text": "识别后可点击场景中的点选择填充"}]}
+{"result": "FAIL: 提示仍在视窗里", "in_view": 1, "in_log": 0}

@@ -46,3 +46,10 @@ Thumbs.db
 .pair/shots/
 # Generated probe data for the pixel->3D UI check (recreate with .pair/tools/make_pixel_probe.py)
 .pair/reports/ui-probe-*/
+
+# —— 三方协作框架（由 .trio/trio.py 补）
+*.py[cod]
+.trio/log/
+.trio/reports/**/*.jsonl
+.trio/reports/*.jsonl
+.trio/reports/**/*.raw.json
