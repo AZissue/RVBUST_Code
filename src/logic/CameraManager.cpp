@@ -213,6 +213,21 @@ CameraManager::~CameraManager()
     m_impl->destroying = true;
     if (m_workerToken)
         m_workerToken->cancelRequested = true;
+
+    // Then wait out the preview round that may already be in flight.  A preview
+    // worker that passed its token check is inside capturePreviewFrameX1()/X2()
+    // driving `this` / `m_impl`; tearing `m_impl` down (or letting shutdown()
+    // close the device) underneath it is the use-after-free T-011 is about.
+    // Waiting here closes that window.  Only the preview future is waited on:
+    // a worker whose round was *queued but not started* sees the token above and
+    // returns immediately, and a capture worker's lifetime is already covered by
+    // shutdown()'s bounded device-lock wait.  Stopping the timer first also
+    // keeps a queued tick from starting a fresh round while we wait (the timer
+    // cannot fire anyway — we never pump the event loop here).
+    m_previewTimer->stop();
+    if (m_previewFuture.isRunning())
+        m_previewFuture.waitForFinished();
+
     shutdown();
     m_impl.reset();
 }
@@ -994,8 +1009,10 @@ void CameraManager::onPreviewTick()
     // without ever touching `this`.
     auto token = m_workerToken;
 
-    // Capture2D runs in a pool thread so the UI event loop never blocks.
-    QtConcurrent::run([this, gen, token]() {
+    // Capture2D runs in a pool thread so the UI event loop never blocks.  The
+    // future is kept so ~CameraManager() can wait this round out before it
+    // tears `m_impl` down (see the destructor).
+    m_previewFuture = QtConcurrent::run([this, gen, token]() {
         if (!token || token->cancelRequested.load())
             return;
 

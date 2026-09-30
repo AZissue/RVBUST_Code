@@ -1,0 +1,17 @@
+{
+  "task": "T-011",
+  "brief": ".trio/tasks/T-011.md",
+  "session": "89a4ad8c-d8bc-4438-847a-ab055b138150",
+  "exit_code": 0,
+  "stopped_by": null,
+  "cost_cny": 0.05,
+  "session_spent_cny": 0.05,
+  "cost_note": "cost_cny 是单轮余额差，余额接口滞后时可能为 0.00；session_spent_cny 是会话累计",
+  "real_balance_after": 57.41,
+  "actions": 22,
+  "repeat_counts": {
+    "Read: D:\\MyCode\\MyHandEyeTools\\src\\logic\\CameraManager.cpp": 2
+  },
+  "raw_stream": ".trio/log/raw/b-T-011.jsonl",
+  "finished_at": "2026-09-30T20:51:13+08:00"
+}

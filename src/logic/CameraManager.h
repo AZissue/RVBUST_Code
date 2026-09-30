@@ -10,6 +10,7 @@
 #include <atomic>
 #include <chrono>
 #include <mutex>
+#include <QFuture>
 #include <QFutureWatcher>
 
 #include "logic/FrameBuffer.h"
@@ -233,6 +234,14 @@ private:
 
     int m_cameraId = 0;   // X2: left/extra; X1: always Left
     QTimer* m_previewTimer = nullptr;
+    // The one preview round currently in flight.  onPreviewTick() runs at most
+    // one at a time (m_previewBusy), and stores its future here so
+    // ~CameraManager() can wait that round out before it tears `m_impl` down
+    // (a worker that has passed its token check is inside
+    // capturePreviewFrameX1()/X2(), i.e. driving `this` / `m_impl`).
+    // Only ever written on the UI thread, which also runs the destructor, so no
+    // lock is needed.
+    QFuture<void> m_previewFuture;
     QFutureWatcher<std::vector<DeviceEntry>>* m_scanWatcher = nullptr;
     QFutureWatcher<CaptureResult>* m_captureWatcher = nullptr;
     QTimer* m_captureWatchdog = nullptr;

@@ -1,0 +1,34 @@
+{
+  "task": "T-011",
+  "mode": "verify",
+  "at": "2026-09-30 20:53:41",
+  "verdict": 0,
+  "manual": [],
+  "baseline": [],
+  "checks": [
+    {
+      "n": 1,
+      "name": "预览 worker 的生命周期被绑住（不捕获裸 this 或析构显式等待）",
+      "ok": true,
+      "detail": "$ python reports/T-011/preview_lifetime.py\n退出码 0（期望 0）\n{\"check\": \"预览/concurrent worker 不捕获裸 this\", \"ok\": false, \"lambdas\": 5, \"capturing_this\": [\"this\", \"this, gen, token\", \"this, saveDir, index, token\", \"this, saveDir, index, token\", \"this, serial, token\"]}\n{\"check\": \"析构路径显式等待在飞的 worker（waitForFinished）\", \"ok\": true, \"found\": 1}\n{\"check\": \"预览仍然跑在线程池（没有退化成 UI 线程同步调用）\", \"ok\": true}\n{\"result\": \"PASS\", \"note\": \"A（不捕获 this）或 B（析构等待）任一成立即算过\"}"
+    },
+    {
+      "n": 2,
+      "name": "真机：连相机→预览→关窗口 ×5 不崩、退出码正常",
+      "ok": true,
+      "detail": "$ python reports/T-011/exit_cycles.py 5\n退出码 0（期望 0）\n{\"step\": \"cycle\", \"cycle\": 1, \"exit_code\": 0, \"note\": \"\"}\n{\"step\": \"cycle\", \"cycle\": 2, \"exit_code\": 0, \"note\": \"\"}\n{\"step\": \"cycle\", \"cycle\": 3, \"exit_code\": 0, \"note\": \"\"}\n{\"step\": \"cycle\", \"cycle\": 4, \"exit_code\": 0, \"note\": \"\"}\n{\"step\": \"cycle\", \"cycle\": 5, \"exit_code\": 0, \"note\": \"\"}\n{\"check\": \"没有新的 [CRASH] 行\", \"ok\": true, \"new\": []}\n{\"check\": \"每轮都是正常退出\", \"ok\": true, \"bad\": []}\n{\"result\": \"PASS\", \"cycles\": 5}"
+    },
+    {
+      "n": 3,
+      "name": "既有测试不退化（unit_tests + measurement_truth）",
+      "ok": true,
+      "detail": "$ ctest --test-dir build -C Release --output-on-failure\n退出码 0（期望 0）\nTest project D:/MyCode/MyHandEyeTools/build\n    Start 1: unit_tests\n1/2 Test #1: unit_tests .......................   Passed    1.22 sec\n    Start 2: measurement_truth\n2/2 Test #2: measurement_truth ................   Passed    0.34 sec\n\n100% tests passed out of 2\n\nTotal Test time (real) =   1.58 sec"
+    },
+    {
+      "n": 4,
+      "name": "工作集守门",
+      "ok": true,
+      "detail": "$ python reports/tools/workingset_guard.py src/logic/CameraManager.h src/logic/CameraManager.cpp src/app/MainWindow.cpp src/logic/MeasureTools.h src/logic/MeasureTools.cpp src/ui/MeasurePage.h src/ui/MeasurePage.cpp src/ui/MeasurePages.cpp src/ui/ToolsPanel.h\n退出码 0（期望 0）\nchanged files: 17\n  A    .trio/config.json\n  A    .trio/reports/T-011.json\n  A    .trio/reports/t011/\n  A    .trio/tasks/T-011.checks.py\n  A    .trio/tasks/T-011.md\n  A    reports/T-011/\n  A    reports/T-012/live_shot.png\n  A    reports/T-012/results.json\n  ok   src/app/MainWindow.cpp\n  ok   src/logic/CameraManager.cpp\n  ok   src/logic/CameraManager.h\n  ok   src/logic/MeasureTools.cpp\n  ok   src/logic/MeasureTools.h\n  ok   src/ui/MeasurePage.cpp\n  ok   src/ui/MeasurePage.h\n  ok   src/ui/MeasurePages.cpp\n  ok   src/ui/ToolsPanel.h\n\n✓ 工作集内"
+    }
+  ]
+}
