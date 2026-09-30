@@ -37,6 +37,9 @@ public:
 
     // File export (HandEyeManager-compatible format)
     bool writeHandEyeOutput();
+    // Human-readable reason for the most recent export failure (includes the
+    // file name).  Empty when the last export succeeded or wrote nothing.
+    QString lastExportError() const;
 
     // Backup / restore
     void saveBackup(bool force = false);
@@ -51,8 +54,8 @@ private slots:
     void onBackupFlush();
 
 private:
-    void writeMarkerOutput();
-    void writeTcpOutput();
+    bool writeMarkerOutput();
+    bool writeTcpOutput();
     void cleanupBackups();
     void writeBackupNow();
 
@@ -64,4 +67,5 @@ private:
     CalibType m_calibType = CalibType::Marker;
     QTimer* m_backupTimer = nullptr;
     bool m_backupPending = false;
+    QString m_lastExportError;
 };

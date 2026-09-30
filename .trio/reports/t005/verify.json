@@ -1,0 +1,28 @@
+{
+  "task": "T-005",
+  "mode": "verify",
+  "at": "2026-09-30 19:06:21",
+  "verdict": 0,
+  "manual": [],
+  "baseline": [],
+  "checks": [
+    {
+      "n": 1,
+      "name": "导出失败被上报 + 界面不假成功 + 备份带版本/恢复跳过损坏文件",
+      "ok": true,
+      "detail": "$ python reports/tools/qt_class_probe.py save_export 8\n退出码 0（期望 0）\n{\"check\": \"unit_tests exited without being killed\", \"ok\": true, \"exit_code\": 0}\n{\"check\": \"save_export: class report was written\", \"ok\": true}\n{\"check\": \"save_export: no failures\", \"ok\": true, \"passed\": 8, \"failed\": 0}\n{\"check\": \"save_export: at least 8 cases ran\", \"ok\": true, \"passed\": 8}\n{\"result\": \"PASS\"}"
+    },
+    {
+      "n": 2,
+      "name": "工作集守门",
+      "ok": true,
+      "detail": "$ python reports/tools/workingset_guard.py src/logic/DataManager.h src/logic/DataManager.cpp src/logic/CaptureFlow.h src/logic/CaptureFlow.cpp\n退出码 0（期望 0）\n工作集：src/logic/DataManager.h, src/logic/DataManager.cpp, src/logic/CaptureFlow.h, src/logic/CaptureFlow.cpp\nchanged files: 13\n  A    .trio/config.json\n  A    .trio/reports/T-005.json\n  A    .trio/reports/t005/\n  A    .trio/tasks/T-005.checks.py\n  A    .trio/tasks/T-005.md\n  A    reports/tools/\n  ok   src/logic/CaptureFlow.cpp\n  ok   src/logic/DataManager.cpp\n  ok   src/logic/DataManager.h\n  A    tests/CMakeLists.txt\n  A    tests/test_main.cpp\n  A    tests/test_save_export.cpp\n  A    tests/test_save_export.h\n\n✓ 工作集内"
+    },
+    {
+      "n": 3,
+      "name": "既有测试不退化（unit_tests + measurement_truth）",
+      "ok": true,
+      "detail": "$ ctest --test-dir build -C Release --output-on-failure\n退出码 0（期望 0）\nTest project D:/MyCode/MyHandEyeTools/build\n    Start 1: unit_tests\n1/2 Test #1: unit_tests .......................   Passed    1.17 sec\n    Start 2: measurement_truth\n2/2 Test #2: measurement_truth ................   Passed    0.32 sec\n\n100% tests passed out of 2\n\nTotal Test time (real) =   1.51 sec"
+    }
+  ]
+}

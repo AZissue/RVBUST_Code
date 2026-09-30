@@ -29,6 +29,7 @@
 #include "test_log_presentation.h"
 #include "test_pixel_to_3d_service.h"
 #include "test_efort_pose_reader.h"
+#include "test_save_export.h"
 
 namespace {
 
@@ -186,6 +187,12 @@ int main(int argc, char** argv)
         // ——mm/度归一化、坏值拒绝、SDK 返回码映射。
         TestEfortPoseReader t24;
         status |= runClass(&t24, argc, argv, "efort_pose_reader");
+    }
+    {
+        // T-005（Codex 验收）：导出写失败不许被吞掉（DataManager 返回值 + 原因、
+        // CaptureFlow 不许报"保存成功"、备份原子写/带 version/恢复跳过损坏文件）。
+        TestSaveExport t25;
+        status |= runClass(&t25, argc, argv, "save_export");
     }
     return status;
 }

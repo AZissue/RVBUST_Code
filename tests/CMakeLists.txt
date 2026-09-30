@@ -34,6 +34,10 @@ set(TEST_SOURCES
     # 第 11 回合任务 008（Codex 验收测试）：埃夫特适配器的位姿归一化与
     # SDK 返回码映射（真机不可用，这里钉住"我们自己的换算"）。
     test_efort_pose_reader.cpp
+    # T-005（Codex 验收测试）：保存路径的"假成功"——导出文件写失败必须能被
+    # 上报（DataManager 返回值 + 原因），CaptureFlow 不许报"保存成功"；
+    # 备份必须是原子写、带 version、恢复时跳过损坏文件。
+    test_save_export.cpp
 )
 
 add_executable(unit_tests ${TEST_SOURCES}
@@ -61,6 +65,8 @@ add_executable(unit_tests ${TEST_SOURCES}
     # real object and not only against the pure CameraRelease::plan.  The tests
     # never connect, so no RVC call is reached.
     ${CMAKE_SOURCE_DIR}/src/logic/CameraManager.cpp
+    # T-005：CaptureFlow::save()/undo() 的导出失败上报要在真对象上验。
+    ${CMAKE_SOURCE_DIR}/src/logic/CaptureFlow.cpp
 )
 
 target_include_directories(unit_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)

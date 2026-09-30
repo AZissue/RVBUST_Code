@@ -493,13 +493,28 @@ void CaptureFlow::save(const QString& cameraTargetXyz, const QString& robotCaptu
 
     m_data->addRecord(permPng, permPly, cameraTargetXyz, robotCapturePose, robotTargetXyz,
                       m_lastErrorPct, m_lastMarkerCount);
-    m_data->writeHandEyeOutput();
-    RuntimeLog::log("save OK: record %d (%s)", m_data->count(),
-                    qPrintable(QFileInfo(saveDir).fileName()));
-
+    // The record is already in memory and the PNG/PLY are on disk; exporting
+    // the SDK-facing .txt files can still fail.  Report it instead of claiming
+    // success — the record itself is kept (deleting it would lose data).
+    const bool exportOk = m_data->writeHandEyeOutput();
     const int n = m_data->count();
-    emit toastRequested(QStringLiteral("第 %1 组数据保存成功").arg(n), true);
-    emitLog(this, QStringLiteral("success"), QStringLiteral("第 %1 组数据已保存").arg(n));
+
+    if (!exportOk) {
+        const QString err = m_data->lastExportError();
+        const QString detail = err.isEmpty()
+            ? QStringLiteral("未知写入错误") : err;
+        RuntimeLog::log("save: record %d added but export FAILED: %s",
+                        n, qPrintable(detail));
+        emit toastRequested(
+            QStringLiteral("第 %1 组数据保存失败: %2").arg(n).arg(detail), false);
+        emitLog(this, QStringLiteral("error"),
+                QStringLiteral("第 %1 组数据导出失败: %2").arg(n).arg(detail));
+    } else {
+        RuntimeLog::log("save OK: record %d (%s)", n,
+                        qPrintable(QFileInfo(saveDir).fileName()));
+        emit toastRequested(QStringLiteral("第 %1 组数据保存成功").arg(n), true);
+        emitLog(this, QStringLiteral("success"), QStringLiteral("第 %1 组数据已保存").arg(n));
+    }
 
     clearCapturedState();
     setDetectEnabled(false);
@@ -513,11 +528,22 @@ void CaptureFlow::undo()
 {
     RuntimeLog::log("undo requested (count=%d)", m_data->count());
     if (m_data->removeLast()) {
-        m_data->writeHandEyeOutput();
+        const bool exportOk = m_data->writeHandEyeOutput();
+        const QString exportErr = m_data->lastExportError();
         RuntimeLog::log("undo OK: removed record, count=%d", m_data->count());
-        emit toastRequested(QStringLiteral("已撤销上一次保存"), true);
-        emitLog(this, QStringLiteral("info"),
-                QStringLiteral("撤销: 第 %1 组数据已删除").arg(m_data->count() + 1));
+        if (!exportOk) {
+            const QString detail = exportErr.isEmpty()
+                ? QStringLiteral("未知写入错误") : exportErr;
+            RuntimeLog::log("undo: export FAILED: %s", qPrintable(detail));
+            emit toastRequested(
+                QStringLiteral("已撤销，但导出文件更新失败: %1").arg(detail), false);
+            emitLog(this, QStringLiteral("error"),
+                    QStringLiteral("撤销后导出文件更新失败: %1").arg(detail));
+        } else {
+            emit toastRequested(QStringLiteral("已撤销上一次保存"), true);
+            emitLog(this, QStringLiteral("info"),
+                    QStringLiteral("撤销: 第 %1 组数据已删除").arg(m_data->count() + 1));
+        }
     } else {
         emit toastRequested(QStringLiteral("没有可撤销的数据"), false);
     }

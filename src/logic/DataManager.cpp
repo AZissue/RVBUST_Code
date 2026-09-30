@@ -143,47 +143,65 @@ std::vector<CaptureRecord> DataManager::allRecords() const
 
 bool DataManager::writeHandEyeOutput()
 {
-    if (m_records.empty())
-        return false;
-
+    m_lastExportError.clear();
+    // Always (re)write the export files — even with zero records they are
+    // written empty so the on-disk state reflects the current session.  A
+    // failure to write is reported through the return value / lastExportError()
+    // instead of being silently swallowed.
     if (m_calibType == CalibType::Marker)
-        writeMarkerOutput();
-    else
-        writeTcpOutput();
-
-    return true;
+        return writeMarkerOutput();
+    return writeTcpOutput();
 }
 
-void DataManager::writeMarkerOutput()
+QString DataManager::lastExportError() const
 {
-    QSaveFile file(m_saveDir + QStringLiteral("/pose.txt"));
+    return m_lastExportError;
+}
+
+bool DataManager::writeMarkerOutput()
+{
+    const QString path = m_saveDir + QStringLiteral("/pose.txt");
+    QSaveFile file(path);
     if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         QTextStream out(&file);
         out.setCodec("UTF-8");
         for (const auto& rec : m_records)
             out << rec.robotCapturePose << "\n";
-        if (!file.commit())
-            qWarning("DataManager: failed to commit %s", qPrintable(file.fileName()));
+        if (file.commit())
+            return true;
+        m_lastExportError = QStringLiteral("写入 %1 失败: %2")
+            .arg(QFileInfo(path).fileName(), file.errorString());
     } else {
-        qWarning("DataManager: failed to write %s", qPrintable(file.fileName()));
+        m_lastExportError = QStringLiteral("无法写入 %1: %2")
+            .arg(QFileInfo(path).fileName(), file.errorString());
     }
+    qWarning("DataManager: failed to write %s", qPrintable(path));
+    return false;
 }
 
-void DataManager::writeTcpOutput()
+bool DataManager::writeTcpOutput()
 {
-    auto writeFile = [](const QString& path, const auto& records,
-                         const auto& field) {
+    bool ok = true;
+    auto writeFile = [this, &ok](const QString& path, const auto& records,
+                                 const auto& field) {
         QSaveFile file(path);
         if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
             QTextStream out(&file);
             out.setCodec("UTF-8");
             for (const auto& rec : records)
                 out << field(rec) << "\n";
-            if (!file.commit())
-                qWarning("DataManager: failed to commit %s", qPrintable(file.fileName()));
+            if (file.commit())
+                return;
+            if (ok)
+                m_lastExportError = QStringLiteral("写入 %1 失败: %2")
+                    .arg(QFileInfo(path).fileName(), file.errorString());
         } else {
-            qWarning("DataManager: failed to write %s", qPrintable(path));
+            if (ok)
+                m_lastExportError = QStringLiteral("无法写入 %1: %2")
+                    .arg(QFileInfo(path).fileName(), file.errorString());
         }
+        ok = false;
+        qWarning("DataManager: failed to write %s", qPrintable(path));
     };
 
     writeFile(m_saveDir + QStringLiteral("/cameraCapturePointXyz.txt"),
@@ -195,6 +213,7 @@ void DataManager::writeTcpOutput()
         writeFile(m_saveDir + QStringLiteral("/cameraCaptureRobotPose.txt"),
                   m_records, [](const CaptureRecord& r) { return r.robotCapturePose; });
     }
+    return ok;
 }
 
 // ── Backup ──
@@ -231,6 +250,7 @@ void DataManager::writeBackupNow()
     auto path = QStringLiteral("%1/calibration_data_%2.json").arg(m_backupDir, ts);
 
     QJsonObject root;
+    root["version"] = 1;
     root["eye_in_hand"] = (m_eyeHand == EyeHandMode::EyeInHand);
     root["marker_type"] = (m_calibType == CalibType::Marker);
 
@@ -250,9 +270,13 @@ void DataManager::writeBackupNow()
     }
     root["records"] = recordsArr;
 
-    QFile file(path);
+    // Atomic write: QSaveFile writes a temp file and renames it into place on
+    // commit, so a killed process can never leave a half-written backup behind.
+    QSaveFile file(path);
     if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+        if (!file.commit())
+            qWarning("DataManager: failed to commit backup %s", qPrintable(path));
     } else {
         qWarning("DataManager: failed to write backup %s", qPrintable(path));
     }
@@ -331,11 +355,26 @@ QString DataManager::findLatestBackup(const QString& baseDir)
     if (candidates.isEmpty())
         return {};
 
+    // Only consider backups whose content is a complete, valid backup document.
+    // The mtime is used to pick the newest *of those* — a newer truncated
+    // (half-written) file must never win over an older intact one.
+    auto isIntactBackup = [](const QString& p) {
+        QFile file(p);
+        if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
+            return false;
+        const auto doc = QJsonDocument::fromJson(file.readAll());
+        return doc.isObject() && doc.object().value("records").isArray();
+    };
+
     QFileInfo latest;
     for (const auto& f : candidates) {
+        if (!isIntactBackup(f))
+            continue;
         QFileInfo fi(f);
         if (!latest.exists() || fi.lastModified() > latest.lastModified())
             latest = fi;
     }
+    if (!latest.exists())
+        return {};
     return latest.absoluteFilePath();
 }
