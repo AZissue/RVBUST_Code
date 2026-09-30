@@ -181,6 +181,38 @@ inline Result read(const std::string& path)
         return r;
     }
 
+    // The header's claimed vertex count is untrusted input: a corrupt file, or
+    // one produced by another tool, can claim far more vertices than the body
+    // can possibly hold (e.g. "element vertex 99999999999").  Reserving memory
+    // for such a claim would throw std::bad_alloc into callers that do not
+    // guard against it, so reject the file here, before touching the vector.
+    const std::streampos bodyStart = f.tellg();
+    if (bodyStart < 0) {
+        r.error = "claimed vertex count exceeds file size";
+        return r;
+    }
+    f.seekg(0, std::ios::end);
+    const std::streampos fileEnd = f.tellg();
+    f.seekg(bodyStart);
+    const long long remainingBytes =
+        static_cast<long long>(fileEnd - bodyStart);
+    // Lower bound on the bytes each vertex must occupy in the remaining body:
+    //  - binary: every record is exactly recordSize bytes;
+    //  - ascii:  every vertex has vertexProps.size() whitespace-separated
+    //            tokens and each token is at least one byte.  The bound is
+    //            conservative (a real vertex takes >= this), so extra trailing
+    //            elements (faces, etc.) only make remainingBytes larger and
+    //            never cause a good file to be rejected.
+    const long long minBytesPerVertex =
+        (fmt == detail::Format::Ascii)
+            ? static_cast<long long>(vertexProps.size())
+            : static_cast<long long>(recordSize);
+    if (minBytesPerVertex <= 0
+            || vertexCount > remainingBytes / minBytesPerVertex) {
+        r.error = "claimed vertex count exceeds file size";
+        return r;
+    }
+
     r.xyz.reserve(static_cast<std::size_t>(vertexCount) * 3);
     if (fmt == detail::Format::Ascii) {
         std::string word;

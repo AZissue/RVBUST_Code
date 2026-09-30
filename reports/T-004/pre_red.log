@@ -1,0 +1,5 @@
+{"check": "unit_tests exited without being killed", "ok": false, "exit_code": 3765269347}
+{"check": "pixel_to_3d class report was written (process survived)", "ok": true, "path": "rep.pixel_to_3d.txt"}
+{"check": "pixel_to_3d: no failures", "ok": false, "passed": 11, "failed": 1}
+{"check": "pixel_to_3d: at least 12 cases ran", "ok": false, "passed": 11}
+{"result": "FAIL", "failures": ["FAIL!  : TestPixelTo3D::plyReaderRejectsOversizedVertexCount() Caught unhandled exception"]}

@@ -1,0 +1,28 @@
+{
+  "task": "T-004",
+  "mode": "verify",
+  "at": "2026-09-30 19:01:16",
+  "verdict": 0,
+  "manual": [],
+  "baseline": [],
+  "checks": [
+    {
+      "n": 1,
+      "name": "坏头部（声称顶点数远超文件内容）报错返回，进程存活",
+      "ok": true,
+      "detail": "$ python reports/T-004/ply_probe.py\n退出码 0（期望 0）\n{\"check\": \"unit_tests exited without being killed\", \"ok\": true, \"exit_code\": 0}\n{\"check\": \"pixel_to_3d class report was written (process survived)\", \"ok\": true, \"path\": \"rep.pixel_to_3d.txt\"}\n{\"check\": \"pixel_to_3d: no failures\", \"ok\": true, \"passed\": 14, \"failed\": 0}\n{\"check\": \"pixel_to_3d: at least 12 cases ran\", \"ok\": true, \"passed\": 14}\n{\"result\": \"PASS\"}"
+    },
+    {
+      "n": 2,
+      "name": "工作集守门：本轮只动了 src/logic/PlyPointReader.h",
+      "ok": true,
+      "detail": "$ python reports/T-004/workingset_guard.py\n退出码 0（期望 0）\nchanged files: 11\n  ok   .trio/config.json\n  ok   .trio/reports/T-004.json\n  ok   .trio/reports/t004/\n  ok   .trio/solutions/S-004.md\n  ok   .trio/tasks/BACKLOG-2.0.md\n  ok   .trio/tasks/T-004.checks.py\n  ok   .trio/tasks/T-004.md\n  ok   reports/T-004/\n  ok   src/logic/PlyPointReader.h\n  ok   tests/test_pixel_to_3d.cpp\n  ok   tests/test_pixel_to_3d.h\n\n✓ 工作集内"
+    },
+    {
+      "n": 3,
+      "name": "既有测试不退化（unit_tests + measurement_truth）",
+      "ok": true,
+      "detail": "$ ctest --test-dir build -C Release --output-on-failure\n退出码 0（期望 0）\nTest project D:/MyCode/MyHandEyeTools/build\n    Start 1: unit_tests\n1/2 Test #1: unit_tests .......................   Passed    1.12 sec\n    Start 2: measurement_truth\n2/2 Test #2: measurement_truth ................   Passed    0.36 sec\n\n100% tests passed out of 2\n\nTotal Test time (real) =   1.48 sec"
+    }
+  ]
+}

@@ -240,3 +240,47 @@ void TestPixelTo3D::plyReaderSkipsNonVertexScalarProperties()
     QCOMPARE(r.xyz[4], 5.0);
     QCOMPARE(r.xyz[8], 9.0);
 }
+
+// T-004 判据：头部里的顶点数只是一个**声称值**。解析器在读任何数据之前就按它
+// reserve() 的话，"element vertex 99999999999" 这种坏文件（或一个字节被改坏的
+// 好文件）会抛 std::bad_alloc，而调用点 ToolsPanel::updatePixelTo3DResult() 没有
+// try —— 整个进程 terminate。用户看到的是"点了离线像素→3D，程序没了"。
+void TestPixelTo3D::plyReaderRejectsOversizedVertexCount()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.path() + QStringLiteral("/huge_count.ply");
+    QFile f(path);
+    QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Text));
+    f.write("ply\nformat ascii 1.0\nelement vertex 99999999999\n"
+            "property float x\nproperty float y\nproperty float z\n"
+            "end_header\n"
+            "1.0 2.0 3.0\n");
+    f.close();
+
+    const auto r = PlyPointReader::read(path.toStdString());
+    QVERIFY2(!r.ok, "an impossible vertex count must come back as an error");
+    QVERIFY(!r.error.empty());
+}
+
+// 同一个病的二进制版本：文件里只有 3 个顶点，头部声称两百万个。这里要钉住的
+// 是"先看文件够不够，再决定分配多少"——只按文件大小做前置校验的实现会同时通过
+// 这一条和上面那条。
+void TestPixelTo3D::plyReaderRejectsShortBinaryWithBigClaim()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.path() + QStringLiteral("/short_binary.ply");
+    QFile f(path);
+    QVERIFY(f.open(QIODevice::WriteOnly));
+    f.write("ply\nformat binary_little_endian 1.0\nelement vertex 2000000\n"
+            "property float x\nproperty float y\nproperty float z\n"
+            "end_header\n");
+    const float pts[9] = { 1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f, 8.f, 9.f };
+    f.write(reinterpret_cast<const char*>(pts), sizeof(pts));
+    f.close();
+
+    const auto r = PlyPointReader::read(path.toStdString());
+    QVERIFY2(!r.ok, "a truncated binary body must come back as an error");
+    QVERIFY(!r.error.empty());
+}
