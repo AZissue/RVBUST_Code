@@ -348,7 +348,8 @@ QString spinBoxStyle()
 // 背后画面的模糊副本，3D 侧走 Windows 合成的 blur-behind（见 VisSceneView）。
 // 只有 hover / pressed / checked 这些"反馈"状态才叠一层很淡的颜色，状态看得见，
 // 模糊也还透得出来。圆角在这里，模糊的裁剪圆角与它保持一致（8px，与
-// Image2DView.cpp 的 kGlassRadius 一致——T-002 判据 6）。
+// 共用浮层组件 ui/ViewOverlay.h 的 ViewOverlay::kGlassRadius 同值——
+// T-002 判据 6 / T-003 契约冻结）。
 
 QString viewOverlayLabelStyle()
 {

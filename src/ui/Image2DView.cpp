@@ -2,6 +2,7 @@
 #include "logic/MeasureTools.h"
 #include "logic/RuntimeLog.h"
 #include "ui/Theme.h"
+#include "ui/ViewOverlay.h"   // 与 3D 视窗共用的浮层（玻璃）按钮/标签组件（T-003）
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QWheelEvent>
@@ -26,56 +27,12 @@ namespace {
 constexpr int kRoiMinDrag = 4;
 
 // ── 浮层的「毛玻璃」底（T-001 判据 3）──────────────────────────────────
-// 圆角与 Theme::viewOverlayButtonStyle()/viewOverlayLabelStyle() 里的
-// border-radius 保持一致，模糊的裁剪圆角才不会和 QSS 画出来的形状差一截。
-constexpr int kGlassRadius = 8;
+// 浮层控件本身（圆角、模糊铺设）已抽到共用的 ui/ViewOverlay.h（T-003），
+// 圆角常量只有那边一处定义（ViewOverlay::kGlassRadius，与 QSS 的 8px 同值）。
 // 廉价的高斯近似：先把要铺的那一小块缩到 1/8（FastTransformation，取平均），
 // 再平滑放大回原尺寸。浮层控件只有几十像素高，这一对缩放在微秒级——比一次
 // 真正的高斯卷积便宜两个数量级，也不会把 30fps 的实时预览拖住。
 constexpr int kGlassBlurFactor = 8;
-
-// 浮层控件：无描边、无实心底色，底是**背后画面的模糊副本**。
-// QSS 只负责文字与状态色（常态背景 transparent），模糊由 paintEvent 在画文字
-// 之前铺进控件的圆角形状里；不模糊的地方（按钮外）由父窗口照常画出清晰画面。
-template <class Base>
-class GlassOverlay : public Base
-{
-public:
-    explicit GlassOverlay(QWidget* parent) : Base(parent) {}
-    // 模糊源：给定控件，返回它背后的模糊副本（图像坐标与控件同为 1:1）。
-    void setGlassSource(std::function<QImage(const QWidget*)> source)
-    {
-        m_glassSource = std::move(source);
-    }
-
-protected:
-    void paintEvent(QPaintEvent* event) override
-    {
-        if (m_glassSource) {
-            const QImage blur = m_glassSource(this);
-            if (!blur.isNull()) {
-                QPainter p(this);
-                p.setRenderHint(QPainter::Antialiasing, true);
-                QPainterPath path;
-                path.addRoundedRect(QRectF(rect()), kGlassRadius, kGlassRadius);
-                p.setClipPath(path);
-                // T-002 判据 6「按钮底再透 30%」：模糊底由 100% 不透明改成
-                // 70% 合成，剩下 30% 由父窗口那张清晰画面透上来。
-                p.setOpacity(0.70);
-                p.drawImage(rect(), blur);
-                // 文字 / hover / checked 这些 QSS 层仍按原不透明度画。
-                p.setOpacity(1.0);
-            }
-        }
-        Base::paintEvent(event);
-    }
-
-private:
-    std::function<QImage(const QWidget*)> m_glassSource;
-};
-
-using GlassButton = GlassOverlay<QPushButton>;
-using GlassLabel = GlassOverlay<QLabel>;
 
 // Qt 5.14 的 QWidget::mapTo() / mapFrom() 有个会崩的前提（源码见
 // qtbase/src/widgets/kernel/qwidget.cpp）：

@@ -1,5 +1,6 @@
 #include "ui/VisSceneView.h"
 #include "ui/Theme.h"
+#include "ui/ViewOverlay.h"   // 与 2D 视窗共用的浮层（玻璃）按钮组件（T-003）
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -650,15 +651,15 @@ void VisSceneView::setupToolbar()
     // Vis embedding relies on).  WA_TranslucentBackground lets the rounded pill
     // corners blend into the scene instead of showing an opaque rectangle.
     //
-    // T-002 判据 6：3D 侧没有真模糊（DWM blur-behind 在本机原生子窗口上不生效，
-    // 见下方）。为了让三个按钮与 2D 同一套观感，这里给一层等效的半透明底
-    // alpha = 0.14（原来那层恒定底是 0.20，0.20 × 0.7 = 0.14），圆角由
-    // Theme::viewOverlayButtonStyle() 统一成 8px。
-    const QString overlayBtnStyle =
-        Theme::viewOverlayButtonStyle()
-        + QStringLiteral("QPushButton { background-color: rgba(255, 255, 255, 0.14); }");
+    // T-003：与 2D 视窗共用同一个浮层按钮组件（上方的 GlassButton）与同一套样式
+    // （Theme::viewOverlayButtonStyle()）。原来这里在样式串后面追加的 3D 专属
+    // 白色底（一段 QPushButton 的半透明背景覆盖）已经删掉——那正是「两个工具栏
+    // 配色不一样」的根因。3D 侧没有模糊源（DWM blur-behind 在本机原生子窗口上不生效，
+    // 见下方），所以共享组件的毛玻璃层什么都不画、保持透明，与 2D 的常态底色一致。
+    const QString overlayBtnStyle = Theme::viewOverlayButtonStyle();
 
-    m_resetButton = new QPushButton(QStringLiteral("复位"), m_containerWidget);
+    m_resetButton = new GlassButton(m_containerWidget);
+    m_resetButton->setText(QStringLiteral("复位"));
     m_resetButton->setCursor(Qt::PointingHandCursor);
     m_resetButton->setToolTip(QStringLiteral("复位到默认视角"));
     m_resetButton->setAttribute(Qt::WA_NativeWindow, true);
@@ -668,7 +669,8 @@ void VisSceneView::setupToolbar()
     QObject::connect(m_resetButton, SIGNAL(clicked()), this, SLOT(resetViewNoAnim()));
 
     // "叠加历史" toggle: shows/hides the accumulated board-pose history frames.
-    m_historyButton = new QPushButton(QStringLiteral("叠加历史"), m_containerWidget);
+    m_historyButton = new GlassButton(m_containerWidget);
+    m_historyButton->setText(QStringLiteral("叠加历史"));
     m_historyButton->setCheckable(true);
     m_historyButton->setChecked(m_boardHistoryVisible);
     m_historyButton->setCursor(Qt::PointingHandCursor);
@@ -684,7 +686,8 @@ void VisSceneView::setupToolbar()
     // colouring is computed by the tools panel, so the button only reports the
     // user's wish (deviationColoringToggled) and is answered by a re-published
     // snapshot — this view never reaches into the measurement code itself.
-    m_deviationButton = new QPushButton(QStringLiteral("偏差着色"), m_containerWidget);
+    m_deviationButton = new GlassButton(m_containerWidget);
+    m_deviationButton->setText(QStringLiteral("偏差着色"));
     m_deviationButton->setObjectName(QStringLiteral("vis_deviation_toggle"));
     m_deviationButton->setCheckable(true);
     m_deviationButton->setCursor(Qt::PointingHandCursor);
