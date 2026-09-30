@@ -28,7 +28,7 @@ constexpr int kRoiMinDrag = 4;
 // ── 浮层的「毛玻璃」底（T-001 判据 3）──────────────────────────────────
 // 圆角与 Theme::viewOverlayButtonStyle()/viewOverlayLabelStyle() 里的
 // border-radius 保持一致，模糊的裁剪圆角才不会和 QSS 画出来的形状差一截。
-constexpr int kGlassRadius = 4;
+constexpr int kGlassRadius = 8;
 // 廉价的高斯近似：先把要铺的那一小块缩到 1/8（FastTransformation，取平均），
 // 再平滑放大回原尺寸。浮层控件只有几十像素高，这一对缩放在微秒级——比一次
 // 真正的高斯卷积便宜两个数量级，也不会把 30fps 的实时预览拖住。
@@ -59,7 +59,12 @@ protected:
                 QPainterPath path;
                 path.addRoundedRect(QRectF(rect()), kGlassRadius, kGlassRadius);
                 p.setClipPath(path);
+                // T-002 判据 6「按钮底再透 30%」：模糊底由 100% 不透明改成
+                // 70% 合成，剩下 30% 由父窗口那张清晰画面透上来。
+                p.setOpacity(0.70);
                 p.drawImage(rect(), blur);
+                // 文字 / hover / checked 这些 QSS 层仍按原不透明度画。
+                p.setOpacity(1.0);
             }
         }
         Base::paintEvent(event);
@@ -136,8 +141,8 @@ Image2DView::Image2DView(QWidget* parent)
     : QWidget(parent)
 {
     setMinimumSize(400, 300);
-    setStyleSheet(QStringLiteral("border: 2px solid %1; border-radius: %2px;")
-                  .arg(Theme::BORDER_DEFAULT).arg(Theme::BORDER_RADIUS));
+    // T-002 判据 6：2D 视窗四周原来那圈 2px 描边（工具栏就贴在内底边）去掉。
+    // 工具栏容器 #view2d_page_bar 保持无描边。
 
     auto* mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(0, 0, 0, 0);

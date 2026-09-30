@@ -644,18 +644,27 @@ VisSceneView::~VisSceneView()
 void VisSceneView::setupToolbar()
 {
     // Floating overlays that must render ABOVE the native OSG child window.
-    // Native widgets always stack above alien siblings, so the reset button and
-    // pick hint are made native themselves; WA_DontCreateNativeAncestors mirrors
+    // Native widgets always stack above alien siblings, so the three toolbar
+    // buttons are made native themselves; WA_DontCreateNativeAncestors mirrors
     // m_viewport so the alien m_containerWidget is not forced native (which the
     // Vis embedding relies on).  WA_TranslucentBackground lets the rounded pill
     // corners blend into the scene instead of showing an opaque rectangle.
+    //
+    // T-002 判据 6：3D 侧没有真模糊（DWM blur-behind 在本机原生子窗口上不生效，
+    // 见下方）。为了让三个按钮与 2D 同一套观感，这里给一层等效的半透明底
+    // alpha = 0.14（原来那层恒定底是 0.20，0.20 × 0.7 = 0.14），圆角由
+    // Theme::viewOverlayButtonStyle() 统一成 8px。
+    const QString overlayBtnStyle =
+        Theme::viewOverlayButtonStyle()
+        + QStringLiteral("QPushButton { background-color: rgba(255, 255, 255, 0.14); }");
+
     m_resetButton = new QPushButton(QStringLiteral("复位"), m_containerWidget);
     m_resetButton->setCursor(Qt::PointingHandCursor);
     m_resetButton->setToolTip(QStringLiteral("复位到默认视角"));
     m_resetButton->setAttribute(Qt::WA_NativeWindow, true);
     m_resetButton->setAttribute(Qt::WA_DontCreateNativeAncestors, true);
     m_resetButton->setAttribute(Qt::WA_TranslucentBackground, true);
-    m_resetButton->setStyleSheet(Theme::viewOverlayButtonStyle());
+    m_resetButton->setStyleSheet(overlayBtnStyle);
     QObject::connect(m_resetButton, SIGNAL(clicked()), this, SLOT(resetViewNoAnim()));
 
     // "叠加历史" toggle: shows/hides the accumulated board-pose history frames.
@@ -667,7 +676,7 @@ void VisSceneView::setupToolbar()
     m_historyButton->setAttribute(Qt::WA_NativeWindow, true);
     m_historyButton->setAttribute(Qt::WA_DontCreateNativeAncestors, true);
     m_historyButton->setAttribute(Qt::WA_TranslucentBackground, true);
-    m_historyButton->setStyleSheet(Theme::viewOverlayButtonStyle());
+    m_historyButton->setStyleSheet(overlayBtnStyle);
     QObject::connect(m_historyButton, SIGNAL(toggled(bool)), this, SLOT(onHistoryToggled(bool)));
 
     // "偏差着色" toggle: the 3D half of the measurement colouring.  It lives in
@@ -684,29 +693,18 @@ void VisSceneView::setupToolbar()
     m_deviationButton->setAttribute(Qt::WA_NativeWindow, true);
     m_deviationButton->setAttribute(Qt::WA_DontCreateNativeAncestors, true);
     m_deviationButton->setAttribute(Qt::WA_TranslucentBackground, true);
-    m_deviationButton->setStyleSheet(Theme::viewOverlayButtonStyle());
+    m_deviationButton->setStyleSheet(overlayBtnStyle);
     QObject::connect(m_deviationButton, &QPushButton::toggled, this,
                      &VisSceneView::deviationColoringToggled);
 
-    m_pickHint = new QLabel(QStringLiteral("识别后可点击场景中的点选择填充"), m_containerWidget);
-    m_pickHint->setObjectName(QStringLiteral("vis_pick_hint"));
-    m_pickHint->setAttribute(Qt::WA_NativeWindow, true);
-    m_pickHint->setAttribute(Qt::WA_DontCreateNativeAncestors, true);
-    m_pickHint->setAttribute(Qt::WA_TranslucentBackground, true);
-    // T-001 判据 3：这里原来硬编码了 background: rgba(0,0,0,0.5)——3D 视窗底部那条
-    // 最显眼的"实心底色"就是它。改成与其它浮层同一套：无描边、无恒定底色，
-    // 底由下面的 DWM 模糊给。
-    m_pickHint->setStyleSheet(QStringLiteral(
-        "color: %1; background: transparent; border: none; border-radius: 4px; "
-        "padding: 3px 8px; font-size: 11px;")
-        .arg(Theme::PRIMARY));
-    m_pickHint->hide();
+    // T-002 判据 1：原来那条「识别后可点击场景中的点选择填充」的视窗内提示
+    // （m_pickHint）已删除——它改由 logRequested 进操作日志，见
+    // maybeAnnouncePickHint()。
 
-    // 3D 侧的真模糊：这四个浮层都挂上 DWM 的 blur-behind（见文件上方的说明）。
+    // 3D 侧的真模糊：这三个浮层都挂上 DWM 的 blur-behind（见文件上方的说明）。
     applyBlurBehind(m_resetButton);
     applyBlurBehind(m_historyButton);
     applyBlurBehind(m_deviationButton);
-    applyBlurBehind(m_pickHint);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -804,8 +802,8 @@ void VisSceneView::setSelectableMarkers(
         m.pos = p;
         m_pickMarkers.push_back(m);
     }
-    if (m_pickHint)
-        m_pickHint->setVisible(m_pickEnabled && !m_pickMarkers.empty());
+    // T-002 判据 1：原本在这里显示视窗内提示；改成进操作日志。
+    maybeAnnouncePickHint();
 #ifdef HAS_RVBUST_VIS
     if (d)
         d->wndProcCtx.hoverFeedArmed = m_pickEnabled && !m_pickMarkers.empty();
@@ -822,12 +820,27 @@ void VisSceneView::setMarkerPickEnabled(bool enabled)
         if (m_hoverTip) m_hoverTip->hide();
         ++m_pickQueryId;   // invalidate in-flight query results
     }
-    if (m_pickHint)
-        m_pickHint->setVisible(enabled && !m_pickMarkers.empty());
+    // T-002 判据 1：原本在这里显示视窗内提示；改成进操作日志。
+    maybeAnnouncePickHint();
 #ifdef HAS_RVBUST_VIS
     if (d)
         d->wndProcCtx.hoverFeedArmed = enabled && !m_pickMarkers.empty();
 #endif
+}
+
+// T-002 判据 1：进入「可点选」状态（识别出标记 + 已开点选）时，把原来那条
+// 视窗内提示写进操作日志，一次识别只写一行（m_pickHintAnnounced 去重）。
+void VisSceneView::maybeAnnouncePickHint()
+{
+    const bool pickable = m_pickEnabled && !m_pickMarkers.empty();
+    if (!pickable) {
+        m_pickHintAnnounced = false;   // 下次再识别时允许重新提示
+        return;
+    }
+    if (m_pickHintAnnounced)
+        return;
+    m_pickHintAnnounced = true;
+    emit logRequested(QStringLiteral("识别后可点击场景中的点选择填充"));
 }
 
 void VisSceneView::onVisMouseMoved()
@@ -1018,8 +1031,8 @@ void VisSceneView::clear()
     // Qt-side pick state (independent of the Vis backend)
     m_pickMarkers.clear();
     m_pickEnabled = false;
+    m_pickHintAnnounced = false;
     ++m_pickQueryId;
-    if (m_pickHint) m_pickHint->hide();
     if (m_hoverTimer) m_hoverTimer->stop();
     if (m_hoverTip) m_hoverTip->hide();
 
@@ -1633,7 +1646,7 @@ void VisSceneView::resizeEvent(QResizeEvent* event)
     if (m_viewport)
         m_viewport->setGeometry(0, 0, cw, ch);
 
-    // Floating "复位" button (bottom-left) + "叠加历史" toggle + pick hint.
+    // Floating "复位" button (bottom-left) + "叠加历史" toggle.
     if (m_resetButton) {
         m_resetButton->adjustSize();
         m_resetButton->move(8, ch - m_resetButton->height() - 8);
@@ -1652,15 +1665,6 @@ void VisSceneView::resizeEvent(QResizeEvent* event)
                                 ch - m_deviationButton->height() - 8);
         m_deviationButton->raise();
     }
-    if (m_pickHint) {
-        m_pickHint->adjustSize();
-        const int hintX = 8 + (m_resetButton ? m_resetButton->width() + 8 : 0)
-                            + (m_historyButton ? m_historyButton->width() + 8 : 0)
-                            + (m_deviationButton ? m_deviationButton->width() + 8 : 0);
-        m_pickHint->move(hintX, ch - m_pickHint->height() - 8);
-        m_pickHint->raise();
-    }
-
     if (m_resizeTimer)
         m_resizeTimer->start();
 }
@@ -1672,7 +1676,6 @@ void VisSceneView::showEvent(QShowEvent* event)
     applyBlurBehind(m_resetButton);
     applyBlurBehind(m_historyButton);
     applyBlurBehind(m_deviationButton);
-    applyBlurBehind(m_pickHint);
 #ifdef HAS_RVBUST_VIS
     if (m_shuttingDown) return;
     if (d && !d->initialized)

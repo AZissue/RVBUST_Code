@@ -105,6 +105,9 @@ public:
 signals:
     void markerPicked(int index, float x, float y, float z);
     void deviationColoringToggled(bool on);
+    // T-002 判据 1：原本画在 3D 视窗里的「识别后可点击场景中的点选择填充」
+    // 提示改走操作日志。识别出标记、进入可点选状态时发一次（每次识别只发一行）。
+    void logRequested(const QString& message);
 
 protected:
     void resizeEvent(QResizeEvent* event) override;
@@ -145,6 +148,8 @@ private:
     void onPickQueryFinished();
     void showHoverResult(const PickResult& result);
     void handleClickResult(const PickResult& result);
+    // T-002 判据 1：可点选状态成立时发一次日志（已发过就不重复）。
+    void maybeAnnouncePickHint();
 
     QPushButton* m_resetButton = nullptr;
     QPushButton* m_historyButton = nullptr;   // toggles board-history overlay
@@ -153,9 +158,11 @@ private:
     QWidget* m_viewport = nullptr;
     QLabel* m_placeholder = nullptr;
     QLabel* m_imageOverlay = nullptr;
-    QLabel* m_pickHint = nullptr;
+    // T-002 判据 1：原来那条「识别后可点击场景中的点选择填充」视窗内提示已删除，
+    // 改由 logRequested 进操作日志；m_pickHintAnnounced 保证一次识别只写一行。
     QLabel* m_hoverTip = nullptr;   // light-weight hover label (white text +
                                     // black outline, no tooltip window)
+    bool m_pickHintAnnounced = false;
     bool m_shuttingDown = false;
 
     // Board-pose overlay state (stage 8)

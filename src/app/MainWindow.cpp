@@ -469,6 +469,11 @@ void MainWindow::wireSignals()
                 m_logger->info(QStringLiteral("3D 选择识别点 #%1 填充相机目标点")
                                .arg(index));
             });
+    // T-002 判据 1：3D 视窗里那条「识别后可点击场景中的点选择填充」提示不再画在
+    // 视窗里，改由 VisSceneView 发 logRequested，这里接到操作日志（与
+    // ToolsPanel::logMessage 同一套）。
+    connect(m_view3d, &VisSceneView::logRequested, this,
+            [this](const QString& line) { m_logger->info(line); });
     // Measurement tool (3D 测量一体化工具 parity).  The panel computes, the
     // views only paint: ROI rectangles go to the 2D view, the snapshot goes to
     // the 2D display pages and to the 3D deviation/annotation overlay.

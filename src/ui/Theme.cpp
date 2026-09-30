@@ -347,7 +347,8 @@ QString spinBoxStyle()
 // 常态背景 transparent，背后的画面由控件自己铺——2D 侧在 Image2DView 里铺
 // 背后画面的模糊副本，3D 侧走 Windows 合成的 blur-behind（见 VisSceneView）。
 // 只有 hover / pressed / checked 这些"反馈"状态才叠一层很淡的颜色，状态看得见，
-// 模糊也还透得出来。圆角在这里，模糊的裁剪圆角与它保持一致（4px）。
+// 模糊也还透得出来。圆角在这里，模糊的裁剪圆角与它保持一致（8px，与
+// Image2DView.cpp 的 kGlassRadius 一致——T-002 判据 6）。
 
 QString viewOverlayLabelStyle()
 {
@@ -356,7 +357,7 @@ QString viewOverlayLabelStyle()
             color: #FFFFFF;
             background-color: transparent;
             border: none;
-            border-radius: 4px;
+            border-radius: 8px;
             padding: 3px 8px;
             font-size: %1px;
         }
@@ -371,7 +372,7 @@ QString viewOverlayButtonStyle()
             color: #E6EAF2;
             background-color: transparent;
             border: none;
-            border-radius: 4px;
+            border-radius: 8px;
             padding: 3px 9px;
             font-size: %1px;
         }
