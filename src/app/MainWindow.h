@@ -110,8 +110,14 @@ private:
     void onRobotReadTouch();
     void onRobotSimulateConnect();
     bool readRobotPose(RobotPose::Pose& pose);
-    QString robotLastError() const;
+    QString robotLastError();
     void updateRobotReadBar();
+
+    // ── 机器人协议分派（唯一一处）──
+    // 协议号 → 读卡器实例。原来 onRobotConnect / readRobotPose / robotLastError /
+    // onRobotDisconnect / onRobotSimulateConnect 各自把协议号 if/switch 抄了一遍；
+    // 现在这五个地方都只经过这里。加第五种协议只需在下面的 switch 里多一个 case。
+    RobotPose::Reader* robotReaderFor(int protocol);
 
     // Card updates
     void onCardChanged(const QString& field, const QString& value);

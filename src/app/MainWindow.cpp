@@ -1112,107 +1112,46 @@ void MainWindow::onRobotConnect(const QString& host, quint16 port,
 {
     m_robotProtocol = protocol;
 
+    // 协议特有的「连接前设置」+ 已连接文案里的协议标签，集中在这里一处。
+    QString label;
     if (protocol == 3) {
         // 埃夫特：走厂商 EfortSDK（EftSdk.dll）。地址串与端口由适配器决定，
         // 与 UR/NRC 一样没有寄存器格式/系数要配。
-        if (!m_eftReader.connect(host, port)) {
-            m_robotSimulated = false;
-            m_robotConnected = false;
-            m_toolsPanel->setRobotStatus(QStringLiteral("连接失败"), true);
-            m_sidePanel->setTip(
-                QStringLiteral("机器人连接失败：%1").arg(m_eftReader.lastError()),
-                true);
-            m_logger->error(QStringLiteral("机器人连接失败：%1")
-                                .arg(m_eftReader.lastError()));
-            updateRobotReadBar();
-            return;
-        }
-        m_robotSimulated = false;
-        m_robotConnected = true;
-        m_toolsPanel->setRobotConnected(true);
-        m_toolsPanel->setRobotStatus(QStringLiteral("已连接"), false);
-        m_sidePanel->setTip(
-            QStringLiteral("机器人已连接（%1，埃夫特 EfortSDK）").arg(host), false);
-        m_logger->success(
-            QStringLiteral("机器人已连接（%1，埃夫特 EfortSDK）").arg(host));
-        updateRobotReadBar();
-        return;
-    }
-
-    if (protocol == 2) {
+        label = QStringLiteral("%1，埃夫特 EfortSDK").arg(host);
+    } else if (protocol == 2) {
         // 博纳斯/纳博特 JSON over TCP: like UR, no register format/scale to
         // configure — the adapter owns the framing and the JSON payload.
         m_nrcReader.setTimeoutMs(1500);
-        if (!m_nrcReader.connect(host, port)) {
-            m_robotSimulated = false;
-            m_robotConnected = false;
-            m_toolsPanel->setRobotStatus(QStringLiteral("连接失败"), true);
-            m_sidePanel->setTip(
-                QStringLiteral("机器人连接失败：%1").arg(m_nrcReader.lastError()),
-                true);
-            m_logger->error(QStringLiteral("机器人连接失败：%1")
-                                .arg(m_nrcReader.lastError()));
-            updateRobotReadBar();
-            return;
-        }
-        m_robotSimulated = false;
-        m_robotConnected = true;
-        m_toolsPanel->setRobotConnected(true);
-        m_toolsPanel->setRobotStatus(QStringLiteral("已连接"), false);
-        m_sidePanel->setTip(
-            QStringLiteral("机器人已连接（%1:%2，博纳斯 JSON/TCP）").arg(host).arg(port), false);
-        m_logger->success(
-            QStringLiteral("机器人已连接（%1:%2，博纳斯 JSON/TCP）").arg(host).arg(port));
-        updateRobotReadBar();
-        return;
-    }
-
-    if (protocol == 1) {
+        label = QStringLiteral("%1:%2，博纳斯 JSON/TCP").arg(host).arg(port);
+    } else if (protocol == 1) {
         // UR Realtime interface: no register format/scale to configure.
         m_urReader.setTimeoutMs(1500);
-        if (!m_urReader.connect(host, port)) {
-            m_robotSimulated = false;
-            m_robotConnected = false;
-            m_toolsPanel->setRobotStatus(QStringLiteral("连接失败"), true);
-            m_sidePanel->setTip(
-                QStringLiteral("机器人连接失败：%1").arg(m_urReader.lastError()),
-                true);
-            m_logger->error(QStringLiteral("机器人连接失败：%1")
-                                .arg(m_urReader.lastError()));
-            updateRobotReadBar();
-            return;
+        label = QStringLiteral("%1:%2，UR Realtime").arg(host).arg(port);
+    } else {
+        RobotPose::ModbusConfig cfg;
+        switch (format) {
+        case 1:  cfg.format = RobotPose::RegisterFormat::Int32Scaled; break;
+        case 2:  cfg.format = RobotPose::RegisterFormat::Int16Scaled; break;
+        default: cfg.format = RobotPose::RegisterFormat::Float32; break;
         }
-        m_robotSimulated = false;
-        m_robotConnected = true;
-        m_toolsPanel->setRobotConnected(true);
-        m_toolsPanel->setRobotStatus(QStringLiteral("已连接"), false);
-        m_sidePanel->setTip(QStringLiteral("机器人已连接（%1:%2，UR Realtime）").arg(host).arg(port), false);
-        m_logger->success(QStringLiteral("机器人已连接（%1:%2，UR Realtime）").arg(host).arg(port));
-        updateRobotReadBar();
-        return;
+        cfg.scale = scale;
+        cfg.unitId = unitId;
+        cfg.startAddress = startAddress;
+        cfg.timeoutMs = 1500;
+        m_robotReader.setConfig(cfg);
+        label = QStringLiteral("%1:%2").arg(host).arg(port);
     }
 
-    RobotPose::ModbusConfig cfg;
-    switch (format) {
-    case 1:  cfg.format = RobotPose::RegisterFormat::Int32Scaled; break;
-    case 2:  cfg.format = RobotPose::RegisterFormat::Int16Scaled; break;
-    default: cfg.format = RobotPose::RegisterFormat::Float32; break;
-    }
-    cfg.scale = scale;
-    cfg.unitId = unitId;
-    cfg.startAddress = startAddress;
-    cfg.timeoutMs = 1500;
-    m_robotReader.setConfig(cfg);
-
-    if (!m_robotReader.connect(host, port)) {
+    RobotPose::Reader* reader = robotReaderFor(protocol);
+    if (!reader->connect(host, port)) {
         m_robotSimulated = false;
         m_robotConnected = false;
         m_toolsPanel->setRobotStatus(QStringLiteral("连接失败"), true);
         m_sidePanel->setTip(
-            QStringLiteral("机器人连接失败：%1").arg(m_robotReader.lastError()),
+            QStringLiteral("机器人连接失败：%1").arg(reader->lastError()),
             true);
         m_logger->error(QStringLiteral("机器人连接失败：%1")
-                            .arg(m_robotReader.lastError()));
+                            .arg(reader->lastError()));
         updateRobotReadBar();
         return;
     }
@@ -1220,17 +1159,25 @@ void MainWindow::onRobotConnect(const QString& host, quint16 port,
     m_robotConnected = true;
     m_toolsPanel->setRobotConnected(true);
     m_toolsPanel->setRobotStatus(QStringLiteral("已连接"), false);
-    m_sidePanel->setTip(QStringLiteral("机器人已连接（%1:%2）").arg(host).arg(port), false);
-    m_logger->success(QStringLiteral("机器人已连接（%1:%2）").arg(host).arg(port));
+    m_sidePanel->setTip(QStringLiteral("机器人已连接（%1）").arg(label), false);
+    m_logger->success(QStringLiteral("机器人已连接（%1）").arg(label));
     updateRobotReadBar();
+}
+
+RobotPose::Reader* MainWindow::robotReaderFor(int protocol)
+{
+    switch (protocol) {
+    case 3:  return &m_eftReader;
+    case 2:  return &m_nrcReader;
+    case 1:  return &m_urReader;
+    default: return &m_robotReader;   // 0 = Modbus TCP，其它协议号也按 Modbus
+    }
 }
 
 void MainWindow::onRobotDisconnect()
 {
-    m_robotReader.disconnect();
-    m_urReader.disconnect();
-    m_nrcReader.disconnect();
-    m_eftReader.disconnect();
+    for (int p = 0; p <= 3; ++p)
+        robotReaderFor(p)->disconnect();
     m_robotConnected = false;
     m_robotSimulated = false;
     m_toolsPanel->setRobotConnected(false);
@@ -1243,10 +1190,8 @@ void MainWindow::onRobotSimulateConnect()
 {
     // "模拟连接成功" — no real Modbus socket; only sets the logical connected
     // state so the read buttons / cards can be exercised in the UI.
-    m_robotReader.disconnect();
-    m_urReader.disconnect();
-    m_nrcReader.disconnect();
-    m_eftReader.disconnect();
+    for (int p = 0; p <= 3; ++p)
+        robotReaderFor(p)->disconnect();
     m_robotSimulated = true;
     m_robotConnected = true;
     m_toolsPanel->setRobotConnected(true);
@@ -1267,22 +1212,12 @@ bool MainWindow::readRobotPose(RobotPose::Pose& pose)
         pose.rpy = { 0.0, 0.0, 0.0 };
         return true;
     }
-    if (m_robotProtocol == 3)
-        return m_eftReader.readPose(pose) == RobotPose::Status::Ok;
-    if (m_robotProtocol == 2)
-        return m_nrcReader.readPose(pose) == RobotPose::Status::Ok;
-    if (m_robotProtocol == 1)
-        return m_urReader.readPose(pose) == RobotPose::Status::Ok;
-    return m_robotReader.readPose(pose) == RobotPose::Status::Ok;
+    return robotReaderFor(m_robotProtocol)->readPose(pose) == RobotPose::Status::Ok;
 }
 
-QString MainWindow::robotLastError() const
+QString MainWindow::robotLastError()
 {
-    if (m_robotProtocol == 3)
-        return m_eftReader.lastError();
-    if (m_robotProtocol == 2)
-        return m_nrcReader.lastError();
-    return m_robotProtocol == 1 ? m_urReader.lastError() : m_robotReader.lastError();
+    return robotReaderFor(m_robotProtocol)->lastError();
 }
 
 void MainWindow::onRobotRead()
