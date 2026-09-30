@@ -10,4 +10,6 @@ private slots:
     void errorTextMapping();
     // T-008：SDK 内部异常（桥接层拦截到的 SEH/异常）不能再被说成"参数无效"。
     void sdkInternalErrorIsDistinctFromBadParameters();
+    // T-008 r2：标定结果的正文格式化收敛成一个纯函数（两个界面页共用）。
+    void formatResultCarriesMatrixAndPerFrameErrors();
 };

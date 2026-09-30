@@ -58,3 +58,41 @@ void TestCalibrationService::sdkInternalErrorIsDistinctFromBadParameters()
                  || crashed.contains(QStringLiteral("崩溃")),
              qPrintable(QStringLiteral("文案没说是 SDK 的事：") + crashed));
 }
+
+// T-008 r2 判据：标定结果正文由 `CalibrationService::formatResult()` 一处产出，
+// 两个界面页（主界面「计算」与工具页「手眼标定」）都调它 —— 现在这段格式化
+// 在 MainWindow.cpp:1077 与 ToolsPanel.cpp:860 各抄了一份。
+//
+// 这条用例钉住"正文不能因为重构而变形"：组数、总平均误差、4×4 矩阵（行主序、6 位小数）、
+// 逐组误差、以及识别失败那一组的标注。
+void TestCalibrationService::formatResultCarriesMatrixAndPerFrameErrors()
+{
+    CalibrationService::Result r;
+    r.ok = true;
+    r.usedCount = 2;
+    r.totalMeanError = 0.123;
+    for (int i = 0; i < 16; ++i)
+        r.matrix[static_cast<std::size_t>(i)] = i + 1;      // 1..16
+    r.errors = { 0.031, 0.215 };
+    r.success2D = { 1, 0 };                                 // 第 2 组 2D 识别失败
+    r.success3D = { 1, 1 };
+
+    const QString text = CalibrationService::formatResult(r);
+    QVERIFY2(text.contains(QStringLiteral("标定成功")), qPrintable(text));
+    QVERIFY2(text.contains(QStringLiteral("2 组数据")), qPrintable(text));
+    QVERIFY2(text.contains(QStringLiteral("0.123")), qPrintable(text));
+    QVERIFY2(text.contains(QStringLiteral("4×4 矩阵")), qPrintable(text));
+    QVERIFY2(text.contains(QStringLiteral("1.000000")), qPrintable(text));   // 第 1 行第 1 列
+    QVERIFY2(text.contains(QStringLiteral("16.000000")), qPrintable(text));  // 第 4 行第 4 列
+    QVERIFY2(text.contains(QStringLiteral("逐组误差")), qPrintable(text));
+    QVERIFY2(text.contains(QStringLiteral("第 1 组")), qPrintable(text));
+    QVERIFY2(text.contains(QStringLiteral("0.031")), qPrintable(text));
+    QVERIFY2(text.contains(QStringLiteral("识别失败")), qPrintable(text));
+
+    CalibrationService::Result bad;
+    bad.ok = false;
+    bad.error = QStringLiteral("位姿文件数据无效");
+    const QString failText = CalibrationService::formatResult(bad);
+    QVERIFY2(failText.contains(QStringLiteral("标定失败")), qPrintable(failText));
+    QVERIFY2(failText.contains(bad.error), qPrintable(failText));
+}

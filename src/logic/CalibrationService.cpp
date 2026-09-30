@@ -8,6 +8,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QSaveFile>
+#include <QStringList>
 #include <QTextStream>
 #include <algorithm>
 
@@ -43,6 +44,37 @@ QString errorText(int retCode)
                               "请附带日志联系技术支持");
     default: return QStringLiteral("标定失败（返回码 %1）").arg(retCode);
     }
+}
+
+QString formatResult(const Result& r)
+{
+    if (!r.ok)
+        return QStringLiteral("标定失败：%1").arg(r.error);
+
+    QString text = QStringLiteral("标定成功（使用 %1 组数据）\n"
+                                  "总平均误差: %2 mm\n\n"
+                                  "4×4 矩阵（行主序）:\n")
+        .arg(r.usedCount).arg(r.totalMeanError, 0, 'f', 3);
+    for (int row = 0; row < 4; ++row) {
+        QStringList vals;
+        for (int col = 0; col < 4; ++col)
+            vals << QString::number(
+                r.matrix[static_cast<std::size_t>(row * 4 + col)], 'f', 6);
+        text += vals.join(QStringLiteral("  ")) + QLatin1Char('\n');
+    }
+
+    text += QStringLiteral("\n逐组误差:\n");
+    const std::size_t n = r.errors.size();
+    for (std::size_t i = 0; i < n; ++i) {
+        const bool failed2d = static_cast<std::size_t>(r.success2D.size()) > i
+            && r.success2D[i] != 1;
+        const bool failed3d = static_cast<std::size_t>(r.success3D.size()) > i
+            && r.success3D[i] != 1;
+        text += QStringLiteral("  第 %1 组: %2 mm%3\n")
+            .arg(i + 1).arg(r.errors[i], 0, 'f', 3)
+            .arg((failed2d || failed3d) ? QStringLiteral("（识别失败）") : QString());
+    }
+    return text;
 }
 
 Result calibrateMarker(const QString& folder,

@@ -40,6 +40,12 @@ QString normalizePoseLine(const QString& raw);
 // SDK return code -> Chinese message.
 QString errorText(int retCode);
 
+// Render a Result as the user-facing body shown in both GUIs (main window's
+// calculate view and the tools panel's hand-eye page): the success summary
+// with the matrix and per-frame errors, or the failure line.  Single source of
+// truth so the wording lives in one place.
+QString formatResult(const Result& r);
+
 // Run marker calibration.  folder contains 1.png..N.png / 1.ply..N.ply and
 // poseLines must have N entries matching record order.
 Result calibrateMarker(const QString& folder,

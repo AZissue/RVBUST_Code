@@ -17,7 +17,7 @@
 | T-005 | 审查 #3 | 保存/撤销的导出文件写失败要让用户看见；备份改原子写 + 恢复时验内容 | `CaptureFlow.cpp`、`DataManager.*` | 中-高（静默数据丢失） | 小 | **已完成** f01cbdd |
 | T-006 | 审查 #4 | PLY 里非 float 的 x/y/z 不再静默给错数（要么正确解码，要么明确报错） | `src/logic/PlyPointReader.h` | 中（静默错值） | 小 | **已完成**（r1+r2 两轮） |
 | T-007 | 审查 #1 | 机器人四种协议的分派只写一处（删掉约 130 行复制粘贴） | `MainWindow.cpp/.h` | 低 | 小 | 待开 |
-| T-008 | 审查 #6/#10/#8/#11 | 清理包。**r1 已完成**：SDK 异常码不再冒充"参数无效"、PLY 的 list 属性不再静默错值。**r2 待开**：标定结果格式化去重、品牌色收敛、Tab 缩进。verify.py 的基线通道缺口见 `reports/T-008/FRAMEWORK-NOTE.md`（属骨架仓，不在本仓改） | r2：`CalibrationService.*`、`Theme.*`、`URRealtimeReader.*` | 很低 | 小 | r1 完成，r2 待开 |
+| T-008 | 审查 #6/#10/#8/#11 | 清理包。**r1 完成**：SDK 异常码不再冒充"参数无效"、PLY 的 list 属性不再静默错值。**r2 完成**：标定正文格式化去重（两个调用点各删 22 行）。**r3 待开（低优先）**：品牌色收敛、`URRealtimeReader` 的 Tab 缩进。verify.py 基线通道缺口见 `reports/T-008/FRAMEWORK-NOTE.md`（属骨架仓，不在本仓改） | r3：`Theme.*`、`DeviceListDialog.cpp`、`ToolsPanel.cpp`、`ActionButtons.cpp`、`VisSceneView.cpp`、`URRealtimeReader.*` | 很低 | 小 | r1/r2 完成，r3 待开 |
 | T-009 | 审查 #2 | 读机器人位姿不再冻 UI（现在阻塞 1.5 s，还触发看门狗误报） | `MainWindow.cpp`、`logic/*Reader*` | 中 | 小-中 | 待开 |
 | T-010 | 审查 #9 | 玻璃浮层不再每帧重做模糊（先量再改） | `ViewOverlay.h`、`Image2DView.cpp` | 低 | 小 | 待开 |
 | T-011 | 审查 #7 | 相机析构与预览 worker 的 use-after-free 窗口 | `CameraManager.cpp/.h` | 中（退出路径偶发崩） | 中 | 待开 |
@@ -80,3 +80,4 @@ T-012 做出来的参数（离群迭代次数、MAD k、扇区数、平面带宽
 | T-006 | 2（r1 全绿后 A 复核发现同类的第二个入口，回灌 r2） | 通过 | 本轮 |
 | T-007 | 1 | 通过（真机探针：模拟连接 + 两次读位姿 100.000/110.000） | `d23165f` |
 | T-008 | 2（r1 只做两件"会说错话"的事，清理项留 r2） | r1 通过 | `d558eec` |
+| T-008 | r2（标定正文去重） | 通过（B 漏了重建，A 构建后 7/7；A 的用例数下限算错已改） | 本轮 |
