@@ -38,6 +38,9 @@ QString errorText(int retCode)
     case -5: return QStringLiteral("位姿数量与点云文件数不一致");
     case -6: return QStringLiteral("部分图像/点云未能识别出标定板（见逐组结果）");
     case -7: return QStringLiteral("位姿旋转轴不足两组非平行轴，请调整姿态后重采");
+    case HandEyeSDKBridge::kSdkInternalError:
+        return QStringLiteral("SDK 内部异常（标定接口调用崩溃，输入参数未必有问题），"
+                              "请附带日志联系技术支持");
     default: return QStringLiteral("标定失败（返回码 %1）").arg(retCode);
     }
 }

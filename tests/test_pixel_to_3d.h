@@ -27,4 +27,7 @@ private slots:
     void plyReaderBinaryIntXyz();           // 红：int32 被当成 float 重解释
     void plyReaderBinaryShortUnsignedXyz(); // 红：short/ushort/uchar 全返回 0
     void plyReaderUnknownPropertyNeverSilentlyWrong();  // 追加条：布局不许被悄悄挪位
+    // T-008：顶点元素上的 list 属性（`property list uchar int ...`）同样不许
+    // 被悄悄丢掉 —— 丢掉它 = 后面的 x/y/z 偏移整体前移 = 静默错值。
+    void plyReaderListPropertyNeverSilentlyWrong();
 };

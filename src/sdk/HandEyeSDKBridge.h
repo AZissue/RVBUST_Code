@@ -7,6 +7,13 @@
 
 namespace HandEyeSDKBridge {
 
+// Return code used by the wrappers below when the SDK call never ran to
+// completion because it raised a structured (SEH) exception — see safeCall()
+// in the .cpp.  The SDK's own code space is 0 (success) and small negative
+// values (-1..-7), so this sentinel sits far outside it: a crash inside the
+// DLL is reported as an SDK fault, not as bad parameters.
+inline constexpr int kSdkInternalError = -1000;
+
 // ── Detection wrappers ──
 
 std::vector<std::pair<float, float>>

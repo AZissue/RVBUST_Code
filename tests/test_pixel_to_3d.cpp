@@ -394,3 +394,35 @@ void TestPixelTo3D::plyReaderUnknownPropertyNeverSilentlyWrong()
              "an unknown property type must not shift the vertex layout: "
              "decode x/y/z correctly or refuse the file — never return wrong numbers");
 }
+
+// T-008：T-006 补全了标量类型，但**顶点元素上的 list 属性**仍然会走进
+// `p.size == 0` → 被 `if (p.size > 0)` 丢掉那条老路，后面的 x/y/z 偏移整体前移。
+// 判据与 T-006 那条一样，实现无关：要么真按 list 的正确长度解出来，要么明确拒绝；
+// **不许 ok=true 而坐标是错位置拼出来的**。
+void TestPixelTo3D::plyReaderListPropertyNeverSilentlyWrong()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.path() + QStringLiteral("/list_prop.ply");
+    QFile f(path);
+    QVERIFY(f.open(QIODevice::WriteOnly));
+    f.write("ply\nformat binary_little_endian 1.0\nelement vertex 1\n"
+            "property list uchar int idx\n"
+            "property float x\nproperty float y\nproperty float z\n"
+            "end_header\n");
+    const quint8 count = 3;
+    const qint32 idx[3] = { 0, 1, 2 };
+    const float pts[3] = { 1.5f, 2.5f, 3.5f };
+    f.write(reinterpret_cast<const char*>(&count), sizeof(count));
+    f.write(reinterpret_cast<const char*>(idx), sizeof(idx));
+    f.write(reinterpret_cast<const char*>(pts), sizeof(pts));
+    f.close();
+
+    const auto r = PlyPointReader::read(path.toStdString());
+    const bool decoded = r.ok && r.xyz.size() == 3
+        && r.xyz[0] == 1.5 && r.xyz[1] == 2.5 && r.xyz[2] == 3.5;
+    const bool refused = !r.ok && !r.error.empty();
+    QVERIFY2(decoded || refused,
+             "a list property on the vertex element must not shift the layout: "
+             "decode x/y/z correctly or refuse the file — never return wrong numbers");
+}

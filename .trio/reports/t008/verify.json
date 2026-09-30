@@ -1,0 +1,40 @@
+{
+  "task": "T-008",
+  "mode": "verify",
+  "at": "2026-09-30 19:21:55",
+  "verdict": 0,
+  "manual": [],
+  "baseline": [],
+  "checks": [
+    {
+      "n": 1,
+      "name": "PLY 顶点元素上的 list 属性不再静默错值",
+      "ok": true,
+      "detail": "$ python reports/tools/qt_class_probe.py pixel_to_3d 19\n退出码 0（期望 0）\n{\"check\": \"unit_tests exited without being killed\", \"ok\": true, \"exit_code\": 0}\n{\"check\": \"pixel_to_3d: class report was written\", \"ok\": true}\n{\"check\": \"pixel_to_3d: no failures\", \"ok\": true, \"passed\": 19, \"failed\": 0}\n{\"check\": \"pixel_to_3d: at least 19 cases ran\", \"ok\": true, \"passed\": 19}\n{\"result\": \"PASS\"}"
+    },
+    {
+      "n": 2,
+      "name": "SDK 内部异常不再被说成「参数无效」（文案层）",
+      "ok": true,
+      "detail": "$ python reports/tools/qt_class_probe.py calibration_service 6\n退出码 0（期望 0）\n{\"check\": \"unit_tests exited without being killed\", \"ok\": true, \"exit_code\": 0}\n{\"check\": \"calibration_service: class report was written\", \"ok\": true}\n{\"check\": \"calibration_service: no failures\", \"ok\": true, \"passed\": 6, \"failed\": 0}\n{\"check\": \"calibration_service: at least 6 cases ran\", \"ok\": true, \"passed\": 6}\n{\"result\": \"PASS\"}"
+    },
+    {
+      "n": 3,
+      "name": "桥接层真的用了独立的 kSdkInternalError",
+      "ok": true,
+      "detail": "$ python reports/T-008/bridge_sentinel.py\n退出码 0（期望 0）\n{\"check\": \"HandEyeSDKBridge.h 声明了 kSdkInternalError\", \"ok\": true}\n{\"check\": \"handEyeCalibrationMarker 在异常路径上返回 kSdkInternalError\", \"ok\": true, \"body_lines\": 8}\n{\"check\": \"handEyeCalibrationTcpTouch 在异常路径上返回 kSdkInternalError\", \"ok\": true, \"body_lines\": 9}\n{\"check\": \"kSdkInternalError 的值与 -1 / 0 都不同\", \"ok\": true, \"value\": -1000}\n{\"result\": \"PASS\"}"
+    },
+    {
+      "n": 4,
+      "name": "既有测试不退化（unit_tests + measurement_truth）",
+      "ok": true,
+      "detail": "$ ctest --test-dir build -C Release --output-on-failure\n退出码 0（期望 0）\nTest project D:/MyCode/MyHandEyeTools/build\n    Start 1: unit_tests\n1/2 Test #1: unit_tests .......................   Passed    1.23 sec\n    Start 2: measurement_truth\n2/2 Test #2: measurement_truth ................   Passed    0.33 sec\n\n100% tests passed out of 2\n\nTotal Test time (real) =   1.56 sec"
+    },
+    {
+      "n": 5,
+      "name": "工作集守门",
+      "ok": true,
+      "detail": "$ python reports/tools/workingset_guard.py src/sdk/HandEyeSDKBridge.h src/sdk/HandEyeSDKBridge.cpp src/logic/CalibrationService.cpp src/logic/PlyPointReader.h\n退出码 0（期望 0）\n工作集：src/sdk/HandEyeSDKBridge.h, src/sdk/HandEyeSDKBridge.cpp, src/logic/CalibrationService.cpp, src/logic/PlyPointReader.h\nchanged files: 13\n  A    .trio/config.json\n  A    .trio/reports/T-008.json\n  A    .trio/reports/t008/\n  A    .trio/tasks/T-008.checks.py\n  A    .trio/tasks/T-008.md\n  A    reports/T-008/\n  ok   src/logic/CalibrationService.cpp\n  ok   src/sdk/HandEyeSDKBridge.cpp\n  ok   src/sdk/HandEyeSDKBridge.h\n  A    tests/test_calibration_service.cpp\n  A    tests/test_calibration_service.h\n  A    tests/test_pixel_to_3d.cpp\n  A    tests/test_pixel_to_3d.h\n\n✓ 工作集内"
+    }
+  ]
+}

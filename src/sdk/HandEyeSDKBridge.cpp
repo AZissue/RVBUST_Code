@@ -162,10 +162,11 @@ int handEyeCalibrationMarker(const std::string& folder,
                              const std::string& robotPoseFile,
                              const HandEyeParam& params, HandEyeResult& result)
 {
-    int ret = -1;
-    safeCall([&]() {
+    int ret = kSdkInternalError;
+    const bool ok = safeCall([&]() {
         ret = HandEyeCalibrationMarker(folder.c_str(), robotPoseFile.c_str(), params, result);
     });
+    if (!ok) return kSdkInternalError;
     return ret;
 }
 
@@ -174,11 +175,12 @@ int handEyeCalibrationTcpTouch(const std::string& cameraXyzFile,
                                const std::string& tcpXyzFile,
                                const HandEyeParam& params, HandEyeResult& result)
 {
-    int ret = -1;
-    safeCall([&]() {
+    int ret = kSdkInternalError;
+    const bool ok = safeCall([&]() {
         ret = HandEyeCalibrationTcpTouch(cameraXyzFile.c_str(), robotPoseFile.c_str(),
                                          tcpXyzFile.c_str(), params, result);
     });
+    if (!ok) return kSdkInternalError;
     return ret;
 }
 
