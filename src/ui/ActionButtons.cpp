@@ -161,10 +161,11 @@ void ActionButtons::applyPreviewStyle()
     if (m_previewActive) {
         m_btnPreview->setText(QStringLiteral("停止预览"));
         m_btnPreview->setStyleSheet(QStringLiteral(R"(
-            QPushButton { color: #FFF; background: rgba(22,119,255,0.15); border: 1px solid %1;
+            QPushButton { color: #FFF; background: %3; border: 1px solid %1;
                           border-radius: 8px; font-size: 14px; font-weight: 500; }
             QPushButton:hover { border-color: %2; color: #FFF; }
-        )").arg(Theme::PRIMARY).arg(Theme::PRIMARY_HOVER));
+        )").arg(Theme::PRIMARY).arg(Theme::PRIMARY_HOVER)
+           .arg(Theme::withAlpha(Theme::PRIMARY, 0.15)));
     } else {
         m_btnPreview->setText(QStringLiteral("预览"));
         m_btnPreview->setStyleSheet(Theme::secondaryButtonStyle());

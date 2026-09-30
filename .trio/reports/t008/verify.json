@@ -1,34 +1,34 @@
 {
   "task": "T-008",
   "mode": "verify",
-  "at": "2026-09-30 19:26:15",
+  "at": "2026-09-30 20:41:43",
   "verdict": 0,
   "manual": [],
   "baseline": [],
   "checks": [
     {
       "n": 1,
-      "name": "标定正文只在 CalibrationService 里拼一次（两个字面量各 1 处）",
+      "name": "颜色收敛到 Theme::withAlpha()、Tab 缩进清零",
       "ok": true,
-      "detail": "$ python reports/T-008/dedupe_probe.py\n退出码 0（期望 0）\n{\"check\": \"「4×4 矩阵（行主序）」在 src/ 里只出现 1 次\", \"ok\": true, \"now\": 1, \"before\": 2, \"where\": [\"src/logic/CalibrationService.cpp:1\"]}\n{\"check\": \"「逐组误差」在 src/ 里只出现 1 次\", \"ok\": true, \"now\": 1, \"before\": 2, \"where\": [\"src/logic/CalibrationService.cpp:1\"]}\n{\"check\": \"app/MainWindow.cpp 调用 CalibrationService::formatResult()\", \"ok\": true}\n{\"check\": \"ui/ToolsPanel.cpp 调用 CalibrationService::formatResult()\", \"ok\": true}\n{\"result\": \"PASS\"}"
+      "detail": "$ python reports/T-008/cleanup_probe.py\n退出码 0（期望 0）\n{\"check\": \"Theme 之外没有手写的品牌蓝 rgba(22,119,255…)\", \"ok\": true, \"now\": 0, \"before\": 5, \"where\": []}\n{\"check\": \"VisSceneView 不再手写背景色 rgb(26,31,46)\", \"ok\": true, \"now\": 0, \"before\": 1}\n{\"check\": \"Theme.h 提供 withAlpha()\", \"ok\": true}\n{\"check\": \"ToolsPanel.cpp 经 Theme::withAlpha() 取色\", \"ok\": true}\n{\"check\": \"DeviceListDialog.cpp 经 Theme::withAlpha() 取色\", \"ok\": true}\n{\"check\": \"ActionButtons.cpp 经 Theme::withAlpha() 取色\", \"ok\": true}\n{\"check\": \"src/logic/URRealtimeReader.h 没有 Tab 缩进\", \"ok\": true, \"now\": 0}\n{\"check\": \"src/logic/URRealtimeReader.cpp 没有 Tab 缩进\", \"ok\": true, \"now\": 0}\n{\"check\": \"URRealtimeReader 整体无 Tab 缩进\", \"ok\": true, \"now\": 0, \"before\": 84}\n{\"check\": \"ToolsPanel.cpp：alpha 与原字面量一致\", \"ok\": true, \"old\": [\"0.12\"], \"new\": [\"0.12\"]}\n{\"check\": \"DeviceListDialog.cpp：alpha 与原字面量一致\", \"ok\": true, \"old\": [\"0.12\", \"0.12\", \"0.55\"], \"new\": [\"0.12\", \"0.12\", \"0.55\"]}\n{\"check\": \"ActionButtons.cpp：alpha 与原字面量一致\", \"ok\": true, \"old\": [\"0.15\"], \"new\": [\"0.15\"]}\n{\"result\": \"PASS\"}"
     },
     {
       "n": 2,
-      "name": "正文内容不因重构变形（formatResult 的用例）",
+      "name": "颜色值没变（alpha 逐点与 HEAD 字面量一致）",
       "ok": true,
-      "detail": "$ python reports/tools/qt_class_probe.py calibration_service 7\n退出码 0（期望 0）\n{\"check\": \"unit_tests exited without being killed\", \"ok\": true, \"exit_code\": 0}\n{\"check\": \"calibration_service: class report was written\", \"ok\": true}\n{\"check\": \"calibration_service: no failures\", \"ok\": true, \"passed\": 7, \"failed\": 0}\n{\"check\": \"calibration_service: at least 7 cases ran\", \"ok\": true, \"passed\": 7}\n{\"result\": \"PASS\"}"
+      "detail": "$ python reports/T-008/cleanup_probe.py\n退出码 0（期望 0）\n{\"check\": \"Theme 之外没有手写的品牌蓝 rgba(22,119,255…)\", \"ok\": true, \"now\": 0, \"before\": 5, \"where\": []}\n{\"check\": \"VisSceneView 不再手写背景色 rgb(26,31,46)\", \"ok\": true, \"now\": 0, \"before\": 1}\n{\"check\": \"Theme.h 提供 withAlpha()\", \"ok\": true}\n{\"check\": \"ToolsPanel.cpp 经 Theme::withAlpha() 取色\", \"ok\": true}\n{\"check\": \"DeviceListDialog.cpp 经 Theme::withAlpha() 取色\", \"ok\": true}\n{\"check\": \"ActionButtons.cpp 经 Theme::withAlpha() 取色\", \"ok\": true}\n{\"check\": \"src/logic/URRealtimeReader.h 没有 Tab 缩进\", \"ok\": true, \"now\": 0}\n{\"check\": \"src/logic/URRealtimeReader.cpp 没有 Tab 缩进\", \"ok\": true, \"now\": 0}\n{\"check\": \"URRealtimeReader 整体无 Tab 缩进\", \"ok\": true, \"now\": 0, \"before\": 84}\n{\"check\": \"ToolsPanel.cpp：alpha 与原字面量一致\", \"ok\": true, \"old\": [\"0.12\"], \"new\": [\"0.12\"]}\n{\"check\": \"DeviceListDialog.cpp：alpha 与原字面量一致\", \"ok\": true, \"old\": [\"0.12\", \"0.12\", \"0.55\"], \"new\": [\"0.12\", \"0.12\", \"0.55\"]}\n{\"check\": \"ActionButtons.cpp：alpha 与原字面量一致\", \"ok\": true, \"old\": [\"0.15\"], \"new\": [\"0.15\"]}\n{\"result\": \"PASS\"}"
     },
     {
       "n": 3,
       "name": "既有测试不退化（unit_tests + measurement_truth）",
       "ok": true,
-      "detail": "$ ctest --test-dir build -C Release --output-on-failure\n退出码 0（期望 0）\nTest project D:/MyCode/MyHandEyeTools/build\n    Start 1: unit_tests\n1/2 Test #1: unit_tests .......................   Passed    1.20 sec\n    Start 2: measurement_truth\n2/2 Test #2: measurement_truth ................   Passed    0.33 sec\n\n100% tests passed out of 2\n\nTotal Test time (real) =   1.54 sec"
+      "detail": "$ ctest --test-dir build -C Release --output-on-failure\n退出码 0（期望 0）\nTest project D:/MyCode/MyHandEyeTools/build\n    Start 1: unit_tests\n1/2 Test #1: unit_tests .......................   Passed    1.25 sec\n    Start 2: measurement_truth\n2/2 Test #2: measurement_truth ................   Passed    0.34 sec\n\n100% tests passed out of 2\n\nTotal Test time (real) =   1.60 sec"
     },
     {
       "n": 4,
       "name": "工作集守门",
       "ok": true,
-      "detail": "$ python reports/tools/workingset_guard.py src/logic/CalibrationService.h src/logic/CalibrationService.cpp src/app/MainWindow.cpp src/ui/ToolsPanel.cpp\n退出码 0（期望 0）\n工作集：src/logic/CalibrationService.h, src/logic/CalibrationService.cpp, src/app/MainWindow.cpp, src/ui/ToolsPanel.cpp\nchanged files: 13\n  A    .trio/config.json\n  A    .trio/reports/T-008.json\n  A    .trio/reports/t008/verify.json\n  A    .trio/tasks/T-008-r2.md\n  A    .trio/tasks/T-008.checks.py\n  A    reports/T-008/dedupe_probe.py\n  A    reports/T-008/verify_r1.json\n  ok   src/app/MainWindow.cpp\n  ok   src/logic/CalibrationService.cpp\n  ok   src/logic/CalibrationService.h\n  ok   src/ui/ToolsPanel.cpp\n  A    tests/test_calibration_service.cpp\n  A    tests/test_calibration_service.h\n\n✓ 工作集内"
+      "detail": "$ python reports/tools/workingset_guard.py src/ui/Theme.h src/ui/Theme.cpp src/ui/ToolsPanel.cpp src/ui/DeviceListDialog.cpp src/ui/ActionButtons.cpp src/ui/VisSceneView.cpp src/logic/URRealtimeReader.h src/logic/URRealtimeReader.cpp src/app/MainWindow.cpp src/logic/MeasureTools.h src/logic/MeasureTools.cpp src/ui/MeasurePage.h src/ui/MeasurePage.cpp src/ui/MeasurePages.cpp src/ui/ToolsPanel.h\n退出码 0（期望 0）\n  A    reports/T-008/visual_smoke.py\n  A    reports/T-012/live_shot.png\n  A    reports/T-012/results.json\n  ok   src/app/MainWindow.cpp\n  ok   src/logic/MeasureTools.cpp\n  ok   src/logic/MeasureTools.h\n  ok   src/logic/URRealtimeReader.cpp\n  ok   src/logic/URRealtimeReader.h\n  ok   src/ui/ActionButtons.cpp\n  ok   src/ui/DeviceListDialog.cpp\n  ok   src/ui/MeasurePage.cpp\n  ok   src/ui/MeasurePage.h\n  ok   src/ui/MeasurePages.cpp\n  ok   src/ui/Theme.cpp\n  ok   src/ui/Theme.h\n  ok   src/ui/ToolsPanel.cpp\n  ok   src/ui/ToolsPanel.h\n  ok   src/ui/VisSceneView.cpp\n\n✓ 工作集内"
     }
   ]
 }

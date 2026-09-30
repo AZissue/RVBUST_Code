@@ -583,8 +583,10 @@ VisSceneView::VisSceneView(QWidget* parent)
 
     m_containerWidget = new QWidget(this);
     m_containerWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    m_containerWidget->setStyleSheet(QStringLiteral("background-color: rgb(26, 31, 46); "
-                                                     "border-radius: %1px;").arg(Theme::BORDER_RADIUS));
+    m_containerWidget->setStyleSheet(QStringLiteral("background-color: %1; "
+                                                     "border-radius: %2px;")
+                                         .arg(Theme::BG_SCENE_3D)
+                                         .arg(Theme::BORDER_RADIUS));
     layout->addWidget(m_containerWidget, 1);
 
     m_viewport = new QWidget(m_containerWidget);

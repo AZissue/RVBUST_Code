@@ -1,6 +1,19 @@
 #include "ui/Theme.h"
 
+#include <QColor>
+#include <QString>
+
 namespace Theme {
+
+QString withAlpha(const char* color, double alpha)
+{
+    const QColor c(QString::fromLatin1(color));
+    return QStringLiteral("rgba(%1,%2,%3,%4)")
+        .arg(c.red())
+        .arg(c.green())
+        .arg(c.blue())
+        .arg(alpha);
+}
 
 QString globalStylesheet()
 {
@@ -168,24 +181,28 @@ QString busyButtonStyle()
         QPushButton, QPushButton:disabled {
             color: #FFFFFF;
             background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                                        stop:0 rgba(22,119,255,0.55),
-                                        stop:1 rgba(22,119,255,0.12));
-            border: 1px solid %1;
-            border-radius: %2px;
+                                        stop:0 %1,
+                                        stop:1 %2);
+            border: 1px solid %3;
+            border-radius: %4px;
             padding: 0 24px;
-            font-size: %3px;
+            font-size: %5px;
             font-weight: 500;
             height: 40px;
         }
         QPushButton:hover {
             background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                                        stop:0 rgba(64,150,255,0.65),
-                                        stop:1 rgba(64,150,255,0.18));
+                                        stop:0 %6,
+                                        stop:1 %7);
         }
     )")
+    .arg(withAlpha(PRIMARY, 0.55))
+    .arg(withAlpha(PRIMARY, 0.12))
     .arg(PRIMARY)
     .arg(BORDER_RADIUS)
-    .arg(FONT_BODY);
+    .arg(FONT_BODY)
+    .arg(withAlpha(PRIMARY_HOVER, 0.65))
+    .arg(withAlpha(PRIMARY_HOVER, 0.18));
 }
 
 QString flashButtonStyle()
@@ -193,15 +210,16 @@ QString flashButtonStyle()
     return QStringLiteral(R"(
         QPushButton {
             color: #FFFFFF;
-            background-color: rgba(22,119,255,0.85);
-            border: 1px solid %1;
-            border-radius: %2px;
+            background-color: %1;
+            border: 1px solid %2;
+            border-radius: %3px;
             padding: 0 24px;
-            font-size: %3px;
+            font-size: %4px;
             font-weight: 500;
             height: 40px;
         }
     )")
+    .arg(withAlpha(PRIMARY, 0.85))
     .arg(PRIMARY)
     .arg(BORDER_RADIUS)
     .arg(FONT_BODY);
@@ -378,15 +396,17 @@ QString viewOverlayButtonStyle()
             font-size: %1px;
         }
         QPushButton:hover { background-color: rgba(255, 255, 255, 0.12); }
-        QPushButton:pressed { background-color: rgba(22, 119, 255, 0.30); }
+        QPushButton:pressed { background-color: %2; }
         QPushButton:checked {
-            background-color: rgba(22, 119, 255, 0.34);
+            background-color: %3;
             color: #FFFFFF;
             font-weight: 600;
         }
         QPushButton:disabled { color: #9AA0AA; background-color: transparent; }
     )")
-    .arg(FONT_HINT);
+    .arg(FONT_HINT)
+    .arg(withAlpha(PRIMARY, 0.30))
+    .arg(withAlpha(PRIMARY, 0.34));
 }
 
 } // namespace Theme

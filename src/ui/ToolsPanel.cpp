@@ -120,9 +120,10 @@ void ToolsPanel::buildUi()
         "QListWidget { background: %1; border: 1px solid %2; border-radius: %3px;"
         " font-size: %4px; }"
         "QListWidget::item { padding: 8px 10px; }"
-        "QListWidget::item:selected { background: rgba(22,119,255,0.12); color: %5; }")
+        "QListWidget::item:selected { background: %6; color: %5; }")
         .arg(Theme::BG_MAIN).arg(Theme::BORDER_DEFAULT).arg(Theme::BORDER_RADIUS)
-        .arg(Theme::FONT_BODY).arg(Theme::PRIMARY));
+        .arg(Theme::FONT_BODY).arg(Theme::PRIMARY)
+        .arg(Theme::withAlpha(Theme::PRIMARY, 0.12)));
     layout->addWidget(m_toolList);
 
     m_stack = new QStackedWidget(this);
@@ -1453,6 +1454,13 @@ void ToolsPanel::setMeasurementCloud(const FrameBuffer::DoubleBuf& grid, int gri
                                                               m_roiRects.size())));
         emit measurementUpdated(m_page->snapshot());
     }
+}
+
+void ToolsPanel::setMeasurementImage(const QImage& image)
+{
+    m_measureImage = image;               // QImage is implicitly shared: no pixel copy
+    for (MeasurePage* page : m_pages)
+        page->setImage(m_measureImage);
 }
 
 void ToolsPanel::onRoiSelected(const QRect& rect)

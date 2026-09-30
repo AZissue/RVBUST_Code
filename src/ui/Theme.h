@@ -21,6 +21,9 @@ inline constexpr const char* SUCCESS       = "#52C41A";
 inline constexpr const char* WARNING       = "#FAAD14";
 inline constexpr const char* ERROR         = "#F5222D";
 inline constexpr const char* ERROR_BG      = "#FFF2F0";
+// 3D 视窗容器的底衬色（T-008 r3：从 VisSceneView.cpp 的字面量收敛到这里，
+// 取值逐位不变——原来写的是 rgb(26, 31, 46)）。
+inline constexpr const char* BG_SCENE_3D   = "#1A1F2E";
 
 // ── Fonts ──
 inline constexpr const char* FONT_FAMILY   = "Microsoft YaHei";
@@ -37,6 +40,9 @@ inline constexpr const char* BTN_SHADOW    = "0 2px 4px rgba(22, 119, 255, 0.2)"
 inline constexpr const char* ACTIVE_SHADOW = "0 4px 12px rgba(22, 119, 255, 0.15)";
 
 // ── QSS factories ──
+// 把 Theme 的颜色常量包成 "rgba(r, g, b, a)"（alpha ∈ [0,1]）。品牌蓝这类
+// "同一个色、不同 alpha" 的写法都经这里取值，改主题色只需改上面的常量。
+QString withAlpha(const char* color, double alpha);
 QString globalStylesheet();
 QString primaryButtonStyle();
 QString secondaryButtonStyle();

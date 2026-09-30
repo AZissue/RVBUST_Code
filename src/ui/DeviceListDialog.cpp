@@ -70,11 +70,12 @@ void DeviceListDialog::buildUi(const std::vector<DeviceEntry>& devices)
         QTableWidget { background-color: %1; border: 1px solid %2; border-radius: %3px;
                        font-size: %4px; color: %5; }
         QTableWidget::item { padding: 6px 10px; }
-        QTableWidget::item:selected { background-color: rgba(22,119,255,0.12); color: %5; }
+        QTableWidget::item:selected { background-color: %7; color: %5; }
         QHeaderView::section { background-color: %1; color: %6; font-size: %4px;
                                border: none; padding: 6px 10px; font-weight: 600; }
     )").arg(Theme::BG_MAIN).arg(Theme::BORDER_DEFAULT).arg(Theme::BORDER_RADIUS)
-       .arg(Theme::FONT_BODY).arg(Theme::TEXT_BODY).arg(Theme::TEXT_HINT));
+       .arg(Theme::FONT_BODY).arg(Theme::TEXT_BODY).arg(Theme::TEXT_HINT)
+       .arg(Theme::withAlpha(Theme::PRIMARY, 0.12)));
 
     connect(m_table, &QTableWidget::itemSelectionChanged, this, &DeviceListDialog::onSelectionChanged);
     connect(m_table, &QTableWidget::cellDoubleClicked, this, &DeviceListDialog::onDoubleClicked);
@@ -193,13 +194,15 @@ void DeviceListDialog::onRefresh()
         QPushButton, QPushButton:disabled {
             color: #FFFFFF;
             background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                                        stop:0 rgba(22,119,255,0.55),
-                                        stop:1 rgba(22,119,255,0.12));
+                                        stop:0 %3,
+                                        stop:1 %4);
             border: 1px solid %1;
             border-radius: 4px;
             font-size: %2px;
         }
-    )").arg(Theme::PRIMARY).arg(Theme::FONT_HINT));
+    )").arg(Theme::PRIMARY).arg(Theme::FONT_HINT)
+       .arg(Theme::withAlpha(Theme::PRIMARY, 0.55))
+       .arg(Theme::withAlpha(Theme::PRIMARY, 0.12)));
 
     m_refreshWatcher->setFuture(QtConcurrent::run(m_refreshFn));
 }

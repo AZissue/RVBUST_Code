@@ -31,21 +31,21 @@ namespace RobotPose {
 
 class URRealtimeReader : public Reader {
 public:
-	URRealtimeReader() = default;
-	~URRealtimeReader() override;
+    URRealtimeReader() = default;
+    ~URRealtimeReader() override;
 
-	bool connect(const QString& host, quint16 port) override;
-	void disconnect() override;
-	Status readPose(Pose& out) override;
-	QString lastError() const override;
+    bool connect(const QString& host, quint16 port) override;
+    void disconnect() override;
+    Status readPose(Pose& out) override;
+    QString lastError() const override;
 
-	void setTimeoutMs(int ms) { m_timeoutMs = ms; }
-	bool isConnected() const;
+    void setTimeoutMs(int ms) { m_timeoutMs = ms; }
+    bool isConnected() const;
 
 private:
-	QTcpSocket* m_socket = nullptr;
-	int m_timeoutMs = 1500;
-	QString m_error;
+    QTcpSocket* m_socket = nullptr;
+    int m_timeoutMs = 1500;
+    QString m_error;
 };
 
 } // namespace RobotPose
