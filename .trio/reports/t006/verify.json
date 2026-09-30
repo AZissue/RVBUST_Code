@@ -1,0 +1,28 @@
+{
+  "task": "T-006",
+  "mode": "verify",
+  "at": "2026-09-30 19:11:57",
+  "verdict": 0,
+  "manual": [],
+  "baseline": [],
+  "checks": [
+    {
+      "n": 1,
+      "name": "PLY 的 x/y/z 按声明类型解码；认不出的属性类型绝不给错值",
+      "ok": true,
+      "detail": "$ python reports/tools/qt_class_probe.py pixel_to_3d 18\n退出码 0（期望 0）\n{\"check\": \"unit_tests exited without being killed\", \"ok\": true, \"exit_code\": 0}\n{\"check\": \"pixel_to_3d: class report was written\", \"ok\": true}\n{\"check\": \"pixel_to_3d: no failures\", \"ok\": true, \"passed\": 18, \"failed\": 0}\n{\"check\": \"pixel_to_3d: at least 18 cases ran\", \"ok\": true, \"passed\": 18}\n{\"result\": \"PASS\"}"
+    },
+    {
+      "n": 2,
+      "name": "工作集守门：本轮只动了 src/logic/PlyPointReader.h",
+      "ok": true,
+      "detail": "$ python reports/tools/workingset_guard.py src/logic/PlyPointReader.h\n退出码 0（期望 0）\n工作集：src/logic/PlyPointReader.h\nchanged files: 8\n  A    .trio/reports/T-006.json\n  A    .trio/reports/t006/\n  A    .trio/tasks/T-006-r2.md\n  A    .trio/tasks/T-006.checks.py\n  A    .trio/tasks/T-006.md\n  ok   src/logic/PlyPointReader.h\n  A    tests/test_pixel_to_3d.cpp\n  A    tests/test_pixel_to_3d.h\n\n✓ 工作集内"
+    },
+    {
+      "n": 3,
+      "name": "既有测试不退化（unit_tests + measurement_truth）",
+      "ok": true,
+      "detail": "$ ctest --test-dir build -C Release --output-on-failure\n退出码 0（期望 0）\nTest project D:/MyCode/MyHandEyeTools/build\n    Start 1: unit_tests\n1/2 Test #1: unit_tests .......................   Passed    1.21 sec\n    Start 2: measurement_truth\n2/2 Test #2: measurement_truth ................   Passed    0.35 sec\n\n100% tests passed out of 2\n\nTotal Test time (real) =   1.56 sec"
+    }
+  ]
+}

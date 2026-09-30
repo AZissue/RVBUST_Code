@@ -19,4 +19,12 @@ private slots:
     // 报错返回，而不是先按声称值 reserve() 再被 bad_alloc 带走整个进程。
     void plyReaderRejectsOversizedVertexCount();
     void plyReaderRejectsShortBinaryWithBigClaim();
+    // T-006（Codex 验收测试）：x/y/z 的**声明类型**必须被尊重。
+    // 现状：`readScalar()` 只看字节数——4 字节一律按 IEEE float 重新解释位，
+    // 1/2 字节直接返回 0.0——所以二进制文件里的 int / short / ushort / uchar
+    // 坐标会静默变成垃圾值或 0。
+    void plyReaderAsciiTypedXyz();          // 不变量：ascii 走 strtod，本来就对
+    void plyReaderBinaryIntXyz();           // 红：int32 被当成 float 重解释
+    void plyReaderBinaryShortUnsignedXyz(); // 红：short/ushort/uchar 全返回 0
+    void plyReaderUnknownPropertyNeverSilentlyWrong();  // 追加条：布局不许被悄悄挪位
 };

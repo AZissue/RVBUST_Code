@@ -284,3 +284,113 @@ void TestPixelTo3D::plyReaderRejectsShortBinaryWithBigClaim()
     QVERIFY2(!r.ok, "a truncated binary body must come back as an error");
     QVERIFY(!r.error.empty());
 }
+
+// T-006 判据：ascii 路径不受影响（它一直是 strtod，声明成什么类型都当十进制读）。
+// 这条是**不变量**：类型解码重写之后，ascii 的结果必须一模一样。
+void TestPixelTo3D::plyReaderAsciiTypedXyz()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.path() + QStringLiteral("/typed_ascii.ply");
+    QFile f(path);
+    QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Text));
+    f.write("ply\nformat ascii 1.0\nelement vertex 2\n"
+            "property int x\nproperty short y\nproperty uchar z\n"
+            "end_header\n"
+            "12 -7 300\n-1 2 3\n");
+    f.close();
+
+    const auto r = PlyPointReader::read(path.toStdString());
+    QVERIFY2(r.ok, r.error.c_str());
+    QCOMPARE(r.xyz.size(), static_cast<std::size_t>(6));
+    QCOMPARE(r.xyz[0], 12.0);
+    QCOMPARE(r.xyz[1], -7.0);
+    QCOMPARE(r.xyz[2], 300.0);
+    QCOMPARE(r.xyz[3], -1.0);
+    QCOMPARE(r.xyz[5], 3.0);
+}
+
+// T-006 判据（红）：二进制 int32 的 x/y/z。现在 `readScalar()` 把 4 字节一律
+// memcpy 成 float，于是 12 会变成 1.68e-44 这种反规格化数——"看着有值、其实全错"。
+void TestPixelTo3D::plyReaderBinaryIntXyz()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.path() + QStringLiteral("/int_binary.ply");
+    QFile f(path);
+    QVERIFY(f.open(QIODevice::WriteOnly));
+    f.write("ply\nformat binary_little_endian 1.0\nelement vertex 2\n"
+            "property int32 x\nproperty int32 y\nproperty int32 z\n"
+            "end_header\n");
+    const qint32 vals[6] = { 12, -7, 300, -1, 2, 3 };
+    f.write(reinterpret_cast<const char*>(vals), sizeof(vals));
+    f.close();
+
+    const auto r = PlyPointReader::read(path.toStdString());
+    QVERIFY2(r.ok, r.error.c_str());
+    QCOMPARE(r.xyz.size(), static_cast<std::size_t>(6));
+    QCOMPARE(r.xyz[0], 12.0);
+    QCOMPARE(r.xyz[1], -7.0);
+    QCOMPARE(r.xyz[2], 300.0);
+    QCOMPARE(r.xyz[3], -1.0);
+    QCOMPARE(r.xyz[5], 3.0);
+}
+
+// T-006 判据（红）：一条记录里混着 int16 / uint16 / uint8 三种宽度。
+// 现在 1/2 字节的坐标全返回 0.0（readScalar 只处理 size==4/8）。
+void TestPixelTo3D::plyReaderBinaryShortUnsignedXyz()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.path() + QStringLiteral("/short_binary.ply");
+    QFile f(path);
+    QVERIFY(f.open(QIODevice::WriteOnly));
+    f.write("ply\nformat binary_little_endian 1.0\nelement vertex 1\n"
+            "property short x\nproperty ushort y\nproperty uchar z\n"
+            "end_header\n");
+    const qint16 x = -300;
+    const quint16 y = 40000;
+    const quint8 z = 200;
+    f.write(reinterpret_cast<const char*>(&x), sizeof(x));
+    f.write(reinterpret_cast<const char*>(&y), sizeof(y));
+    f.write(reinterpret_cast<const char*>(&z), sizeof(z));
+    f.close();
+
+    const auto r = PlyPointReader::read(path.toStdString());
+    QVERIFY2(r.ok, r.error.c_str());
+    QCOMPARE(r.xyz.size(), static_cast<std::size_t>(3));
+    QCOMPARE(r.xyz[0], -300.0);
+    QCOMPARE(r.xyz[1], 40000.0);
+    QCOMPARE(r.xyz[2], 200.0);
+}
+
+// T-006 追加条：顶点里混进一个**类型不认识**的属性（`int64`）时，解析器要么按正确的
+// 记录长度把 x/y/z 解出来，要么明确报错；**绝不允许"ok=true 但坐标是别的字节拼出来的"**。
+//
+// 现状：`typeSize("int64") == 0`，于是这个属性被 `if (p.size > 0)` 丢掉、不进 recordSize ——
+// 后面的 x/y/z 偏移整体前移 8 字节，读出来的是前一个属性的尾巴。文件没问题、测试也没报错，
+// 只是数字全是错的。这正是 T-006 要消灭的那一类"静默错值"。
+void TestPixelTo3D::plyReaderUnknownPropertyNeverSilentlyWrong()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.path() + QStringLiteral("/unknown_prop.ply");
+    QFile f(path);
+    QVERIFY(f.open(QIODevice::WriteOnly));
+    f.write("ply\nformat binary_little_endian 1.0\nelement vertex 1\n"
+            "property int64 stamp\nproperty float x\nproperty float y\nproperty float z\n"
+            "end_header\n");
+    const qint64 stamp = 0x0000000000000000LL;
+    const float pts[3] = { 1.5f, 2.5f, 3.5f };
+    f.write(reinterpret_cast<const char*>(&stamp), sizeof(stamp));
+    f.write(reinterpret_cast<const char*>(pts), sizeof(pts));
+    f.close();
+
+    const auto r = PlyPointReader::read(path.toStdString());
+    const bool decoded = r.ok && r.xyz.size() == 3
+        && r.xyz[0] == 1.5 && r.xyz[1] == 2.5 && r.xyz[2] == 3.5;
+    const bool refused = !r.ok && !r.error.empty();
+    QVERIFY2(decoded || refused,
+             "an unknown property type must not shift the vertex layout: "
+             "decode x/y/z correctly or refuse the file — never return wrong numbers");
+}

@@ -13,11 +13,11 @@
 
 | 任务 | 来源 | 一句话目标 | 主要工作集 | 风险 | 工作量 | 状态 |
 |---|---|---|---|---|---|---|
-| T-004 | 审查 #5 | PLY 头部声称的点数超过文件实际大小 → 报错不崩（现在会 `bad_alloc` → terminate） | `src/logic/PlyPointReader.h` | 低概率/高后果 | 很小 | 进行中 |
-| T-005 | 审查 #3 | 保存/撤销的导出文件写失败要让用户看见；备份改原子写 + 恢复时验内容 | `CaptureFlow.cpp`、`DataManager.*` | 中-高（静默数据丢失） | 小 | 待开 |
-| T-006 | 审查 #4 | PLY 里非 float 的 x/y/z 不再静默给错数（要么正确解码，要么明确报错） | `src/logic/PlyPointReader.h` | 中（静默错值） | 小 | 待开 |
+| T-004 | 审查 #5 | PLY 头部声称的点数超过文件实际大小 → 报错不崩（现在会 `bad_alloc` → terminate） | `src/logic/PlyPointReader.h` | 低概率/高后果 | 很小 | **已完成** b9e9cdc |
+| T-005 | 审查 #3 | 保存/撤销的导出文件写失败要让用户看见；备份改原子写 + 恢复时验内容 | `CaptureFlow.cpp`、`DataManager.*` | 中-高（静默数据丢失） | 小 | **已完成** f01cbdd |
+| T-006 | 审查 #4 | PLY 里非 float 的 x/y/z 不再静默给错数（要么正确解码，要么明确报错） | `src/logic/PlyPointReader.h` | 中（静默错值） | 小 | **已完成**（r1+r2 两轮） |
 | T-007 | 审查 #1 | 机器人四种协议的分派只写一处（删掉约 130 行复制粘贴） | `MainWindow.cpp/.h` | 低 | 小 | 待开 |
-| T-008 | 审查 #6/#10/#8/#11 | 清理包：标定结果格式化去重、SDK 异常码不再冒充"参数无效"、品牌色收敛、杂项 | `CalibrationService.*`、`HandEyeSDKBridge.*`、`Theme.*` 等 | 很低 | 小 | 待开 |
+| T-008 | 审查 #6/#10/#8/#11 | 清理包：标定结果格式化去重、SDK 异常码不再冒充"参数无效"、品牌色收敛、杂项、**修 verify.py 基线通道**、**PLY 未知/ list 属性类型不再被静默丢弃** | `CalibrationService.*`、`HandEyeSDKBridge.*`、`Theme.*`、`PlyPointReader.h`、`.trio/verify.py` | 很低 | 小 | 待开 |
 | T-009 | 审查 #2 | 读机器人位姿不再冻 UI（现在阻塞 1.5 s，还触发看门狗误报） | `MainWindow.cpp`、`logic/*Reader*` | 中 | 小-中 | 待开 |
 | T-010 | 审查 #9 | 玻璃浮层不再每帧重做模糊（先量再改） | `ViewOverlay.h`、`Image2DView.cpp` | 低 | 小 | 待开 |
 | T-011 | 审查 #7 | 相机析构与预览 worker 的 use-after-free 窗口 | `CameraManager.cpp/.h` | 中（退出路径偶发崩） | 中 | 待开 |
@@ -70,3 +70,11 @@ T-012 做出来的参数（离群迭代次数、MAD k、扇区数、平面带宽
 2. **标称值**取人给的图纸值（9 / 5 / 6 / 26 / 63.5），A 不另行标定。
 3. `.trio/config.json` 里的 `test_baseline` 是 0（骨架仓按 python unittest 写的），
    本仓的"既有测试不许减少"目前靠 A 手跑 `ctest` 兜着——见 T-008 的杂项。
+
+## 逐任务进展
+
+| 任务 | 轮次 | 结论 | 提交 |
+|---|---|---|---|
+| T-004 | 1 | 通过 | `b9e9cdc` |
+| T-005 | 1 | 通过（B 主动声明一条语义偏离，A 判定可接受） | `f01cbdd` |
+| T-006 | 2（r1 全绿后 A 复核发现同类的第二个入口，回灌 r2） | 通过 | 本轮 |
