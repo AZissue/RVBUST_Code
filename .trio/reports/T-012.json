@@ -1,0 +1,25 @@
+{
+  "task": "T-012",
+  "brief": ".trio/tasks/T-012-r2.md",
+  "session": "879c42db-ee50-475b-a85b-de620c696331",
+  "exit_code": null,
+  "stopped_by": {
+    "reason": "wall",
+    "detail": "单回合墙钟 600s > 600s",
+    "at": "20:04:22",
+    "actions": 50,
+    "elapsed": 600.4
+  },
+  "cost_cny": 0.31,
+  "session_spent_cny": 0.8,
+  "cost_note": "cost_cny 是单轮余额差，余额接口滞后时可能为 0.00；session_spent_cny 是会话累计",
+  "real_balance_after": 59.82,
+  "actions": 50,
+  "repeat_counts": {
+    "Read: D:\\MyCode\\MyHandEyeTools\\src\\logic\\MeasureTools.cpp": 2,
+    "Bash: timeout 300 python reports/T-012/measure_probe.py --tool \"孔径(孔洞边界法)\" --roi 447,335,492,380 2>&1 | tail -2": 2,
+    "Bash: cmake --build /d/MyCode/MyHandEyeTools/build --config Release 2>&1 | grep -iE \"error|HandEyeCalibrationTool.vcxproj ->\" | tail -5": 2
+  },
+  "raw_stream": ".trio/log/raw/b-T-012.jsonl",
+  "finished_at": "2026-09-30T20:04:25+08:00"
+}

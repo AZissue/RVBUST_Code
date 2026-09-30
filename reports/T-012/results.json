@@ -1,0 +1,26 @@
+{
+ "reps": 1,
+ "features": [
+  {
+   "feature": "hub_d26",
+   "nominal": 26.0,
+   "tol": 0.052,
+   "n": 1,
+   "values": [
+    23.5418
+   ],
+   "mean": 23.5418,
+   "max_abs_err": 2.4582,
+   "spread": 0.0,
+   "ok": false
+  },
+  {
+   "feature": "disc_d63_5",
+   "nominal": 63.5,
+   "tol": 0.127,
+   "n": 0,
+   "ok": false,
+   "note": "没有读到任何读数"
+  }
+ ]
+}

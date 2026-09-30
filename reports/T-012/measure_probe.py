@@ -8,6 +8,7 @@
     python reports/T-012/measure_probe.py --shot                 # 只连相机+拍照+截图
     python reports/T-012/measure_probe.py --tool 孔径(孔洞边界法) --roi x1,y1,x2,y2
     python reports/T-012/measure_probe.py --tool 圆环拟合 --roi x1,y1,x2,y2
+    python reports/T-012/measure_probe.py --matrix 5             # 五个特征 ×5 次拍照（判据用）
 
 坐标是 **2D 视窗控件内的像素**（不是屏幕坐标）：探针会把 2D 视窗控件的屏幕矩形打出来，
 ROI 坐标按 `图像坐标` 与控件内坐标 1:1 换算（视窗按"适应"显示，探针会把缩放比打出来）。
@@ -185,6 +186,43 @@ def log_tail_values() -> list[str]:
     return hits
 
 
+FEATURES = [
+    # name, 标称 mm, 容差 = 0.2% × 标称, 工具, ROI（2D 视窗控件内像素矩形）
+    ("hole_d6_disc", 6.0, "孔径(孔洞边界法)", (447, 335, 492, 380)),
+    ("hub_d26", 26.0, "圆环拟合", (395, 283, 545, 433)),
+    ("disc_d63_5", 63.5, "圆环拟合", (285, 140, 655, 515)),
+    ("plate_up_d9", 9.0, "孔径(孔洞边界法)", (45, 122, 105, 182)),
+    ("plate_low_d5", 5.0, "孔径(孔洞边界法)", (58, 135, 92, 169)),
+]
+DIAM_RE = re.compile(r"(?:孔|圆环)直径\s*=\s*([-\d.]+)\s*mm")
+
+
+def measure_one(mw, main_hwnd, panel_hwnd, tool, roi, rect, seen_before):
+    """选工具 → 拖 ROI → 点测量 → 返回新出现的读数（mm）或 None。"""
+    item = ui.find_button(mw, tool, timeout=5.0)
+    if item is None:
+        return None, "工具列表里找不到 " + tool
+    ui.post_click(item, panel_hwnd)
+    time.sleep(0.6)
+    post_drag(main_hwnd, rect.left + roi[0], rect.top + roi[1],
+              rect.left + roi[2], rect.top + roi[3])
+    time.sleep(0.8)
+    if not click_text(mw, "测量", timeout=5.0):
+        return None, "找不到「测量」按钮"
+    time.sleep(2.0)
+    lines = log_tail_values()
+    if len(lines) <= len(seen_before):
+        # 没有新行 = 这次测量没写出结果（被拒 / ROI 没生效）。**不要**回退到旧行，
+        # 那会把上一个特征的读数当成这个特征的（第一版就是这么错的）。
+        return None, "没有新的 [测量-结果] 行"
+    fresh = lines[len(seen_before):]
+    for line in reversed(fresh):
+        m = DIAM_RE.search(line)
+        if m:
+            return float(m.group(1)), line
+    return None, "新行里没有「直径 = … mm」：" + (fresh[-1][:120] if fresh else "")
+
+
 def main() -> int:
     args = sys.argv[1:]
     shot_only = "--shot" in args
@@ -261,8 +299,15 @@ def main() -> int:
 
         # ── 开工具面板、选测量方法 ──
         main_hwnd = hwnd_by_title(proc.pid, "手眼标定数据收集助手")
-        ui.post_click(ui.find_button(mw, "工具"), main_hwnd)
-        panel_hwnd = hwnd_by_title(proc.pid, "工具")
+        # 面板要等：偶发一次"工具面板没打开"（第二轮真机跑时踩到），所以给足
+        # 时间并重试——探针自己抖不该被记成被测对象的问题。
+        panel_hwnd = None
+        for _ in range(4):
+            ui.post_click(ui.find_button(mw, "工具"), main_hwnd)
+            panel_hwnd = hwnd_by_title(proc.pid, "工具", timeout=12.0)
+            if panel_hwnd is not None:
+                break
+            time.sleep(1.0)
         if panel_hwnd is None:
             say(error="工具面板没打开")
             return 1
@@ -308,14 +353,49 @@ def main() -> int:
         say(shot=str(OUT / "live_shot.png"))
 
         if shot_only or roi is None:
-            say(result="SHOT ONLY")
-            return 0
+            if "--matrix" not in args:
+                say(result="SHOT ONLY")
+                return 0
 
         # ── 拖 ROI + 测量 ──
         if rect is None:
             say(error="找不到 2D 视窗矩形")
             return 1
         before = log_tail_values()
+        repeats = 1
+        for i, a in enumerate(args):
+            if a == "--matrix" and i + 1 < len(args):
+                repeats = int(args[i + 1])
+
+        if "--matrix" in args:
+            results = []
+            for rep in range(repeats):
+                if rep:
+                    # 重新拍照：ROI 会随新帧被清掉，必须重新框（判据要的是"重复测量"）
+                    if not click_text(mw, "拍照"):
+                        say(error="重复拍照失败")
+                        return 1
+                    time.sleep(9.0)
+                for name, nominal, tool, f_roi in FEATURES:
+                    seen = log_tail_values()
+                    value, detail = measure_one(mw, main_hwnd, panel_hwnd,
+                                                tool, f_roi, rect, seen)
+                    tol = round(nominal * 0.002, 4)
+                    ok = value is not None and abs(value - nominal) <= tol
+                    results.append({"feature": name, "nominal": nominal,
+                                    "tol": tol, "repeat": rep + 1,
+                                    "measured": value, "ok": ok,
+                                    "detail": detail if value is None else ""})
+                    say(step="measure", feature=name, repeat=rep + 1,
+                        nominal=nominal, measured=value, tol=tol, ok=ok)
+            (OUT / "results.json").write_text(
+                json.dumps(results, ensure_ascii=False, indent=1), encoding="utf-8")
+            bad = [r for r in results if not r["ok"]]
+            say(step="matrix-done", total=len(results), bad=len(bad),
+                results_file=str(OUT / "results.json"))
+            say(result=("PASS" if not bad else "FAIL"))
+            return 0 if not bad else 1
+
         post_drag(main_hwnd, rect.left + roi[0], rect.top + roi[1],
                   rect.left + roi[2], rect.top + roi[3])
         time.sleep(1.2)
