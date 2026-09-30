@@ -1,25 +1,26 @@
 {
   "task": "T-012",
   "brief": ".trio/tasks/T-012-r2.md",
-  "session": "879c42db-ee50-475b-a85b-de620c696331",
+  "session": "960a5a6f-3e2d-43f4-b260-e3886bfc1e99",
   "exit_code": null,
   "stopped_by": {
-    "reason": "wall",
-    "detail": "单回合墙钟 600s > 600s",
-    "at": "20:04:22",
-    "actions": 50,
-    "elapsed": 600.4
+    "reason": "repeat",
+    "detail": "同一动作重复 12 次：Read: D:\\MyCode\\MyHandEyeTools\\src\\logic\\MeasureTools.cpp",
+    "at": "20:31:17",
+    "actions": 87,
+    "elapsed": 1594.8
   },
-  "cost_cny": 0.31,
-  "session_spent_cny": 0.8,
+  "cost_cny": 0.88,
+  "session_spent_cny": 1.68,
   "cost_note": "cost_cny 是单轮余额差，余额接口滞后时可能为 0.00；session_spent_cny 是会话累计",
-  "real_balance_after": 59.82,
-  "actions": 50,
+  "real_balance_after": 58.94,
+  "actions": 87,
   "repeat_counts": {
-    "Read: D:\\MyCode\\MyHandEyeTools\\src\\logic\\MeasureTools.cpp": 2,
-    "Bash: timeout 300 python reports/T-012/measure_probe.py --tool \"孔径(孔洞边界法)\" --roi 447,335,492,380 2>&1 | tail -2": 2,
-    "Bash: cmake --build /d/MyCode/MyHandEyeTools/build --config Release 2>&1 | grep -iE \"error|HandEyeCalibrationTool.vcxproj ->\" | tail -5": 2
+    "Read: D:\\MyCode\\MyHandEyeTools\\src\\ui\\MeasurePage.cpp": 2,
+    "Read: D:\\MyCode\\MyHandEyeTools\\src\\logic\\MeasureTools.cpp": 12,
+    "Bash: cmake --build /d/MyCode/MyHandEyeTools/build --config Release 2>&1 | grep -iE \"error|HandEyeCalibrationTool.vcxproj ->\" | tail -8": 5,
+    "Bash: timeout 300 python reports/T-012/measure_probe.py --tool \"圆环拟合\" --roi 285,140,655,515 2>&1 | tail -1; grep -o \"圆环直径 = [0-9.]* mm[^\\\"]*it2[^\\\"]*\" build/src/Release/logs/app_20260930.log | tail -1": 2
   },
   "raw_stream": ".trio/log/raw/b-T-012.jsonl",
-  "finished_at": "2026-09-30T20:04:25+08:00"
+  "finished_at": "2026-09-30T20:31:21+08:00"
 }
