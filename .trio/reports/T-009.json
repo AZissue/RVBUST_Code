@@ -1,0 +1,18 @@
+{
+  "task": "T-009",
+  "brief": ".trio/tasks/T-009.md",
+  "session": "df31b7af-3ff3-4627-abeb-94984a39271d",
+  "exit_code": 0,
+  "stopped_by": null,
+  "cost_cny": 0.3,
+  "session_spent_cny": 0.3,
+  "cost_note": "cost_cny 是单轮余额差，余额接口滞后时可能为 0.00；session_spent_cny 是会话累计",
+  "real_balance_after": 56.93,
+  "actions": 45,
+  "repeat_counts": {
+    "Read: D:\\MyCode\\MyHandEyeTools\\src\\app\\MainWindow.h": 2,
+    "Read: D:\\MyCode\\MyHandEyeTools\\src\\app\\MainWindow.cpp": 9
+  },
+  "raw_stream": ".trio/log/raw/b-T-009.jsonl",
+  "finished_at": "2026-09-30T21:00:56+08:00"
+}
