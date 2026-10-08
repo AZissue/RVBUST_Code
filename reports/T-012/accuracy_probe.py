@@ -6,9 +6,13 @@
 所以这里一次只让 `measure_probe.py` 测**一个**特征：每个样本都是
 "新起程序 → 连相机 → 拍照 → 框一个 ROI → 测量"，读数不可能串。
 
-判据（人的口径：误差 ≤ 0.2% × 标称）：
-  * 每个特征 max|实测-标称| ≤ 0.2% × 标称；
-  * 且每个特征 (max - min) ≤ 0.2% × 标称（重复性也在这个带里）。
+判据（人 2026-10-08 改判：误差 ≤ 0.5% × 标称；原口径 0.2% 已废）：
+  * 每个特征 max|实测-标称| ≤ 0.5% × 标称；
+  * 且每个特征 (max - min) ≤ 0.5% × 标称（重复性也在这个带里）。
+
+为什么放宽：0.2% 在 Ø6 上要求 ±0.012 mm，而 3D 点距是 0.0755 mm ——
+半像素修正后残差仍有 ±0.038 mm（在 Ø6 上已是 0.63%），纯 3D 网格路径**物理上够不到**，
+不是投入不够。改判的来龙去脉见 BASELINE.md 末尾「判据变更」一节。
 
 用法：
     python reports/T-012/accuracy_probe.py                  # 五特征 × 5 次（整套，约 20 分钟）
@@ -92,7 +96,7 @@ def main() -> int:
     rows, bad = [], 0
     for name in names:
         nominal, tool, roi = FEATURES[name]
-        tol = round(nominal * 0.002, 4)
+        tol = round(nominal * 0.005, 4)
         vals = samples[name]
         if not vals:
             rows.append({"feature": name, "nominal": nominal, "tol": tol,

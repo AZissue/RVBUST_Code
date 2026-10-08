@@ -4,6 +4,10 @@
 （Ø6 +0.2648、Ø5 −0.263、Ø63.5 48.28 只有真值的 76%、Ø26 与 Ø9 连读数都没有）。
 判据 3/4 是不变量。
 
+**容差 2026-10-08 由人改判：0.2% → 0.5%×标称**（三选一中选②；理由见
+reports/T-012/BASELINE.md「判据变更」）。真值算在 accuracy_probe.py 里，
+本文件只写名字，改容差不用改这里。
+
 每条真机判据 ≈ 90 秒（两个特征，各起一次程序、各连一次相机）。
 
 发任务书前：python .trio/verify.py T-012 --pre --no-baseline
@@ -28,7 +32,7 @@ WORKINGSET = [
 CHECKS = [
     {
         "n": 1,
-        "name": "孔径：Ø6 / Ø5 真机 ≤0.2%×标称",
+        "name": "孔径：Ø6 / Ø5 真机 ≤0.5%×标称",
         "cmd": ["python", "reports/T-012/accuracy_probe.py",
                 "--reps", "1", "--only", "hole_d6_disc,plate_low_d5"],
         "exit": 0,
@@ -37,7 +41,7 @@ CHECKS = [
     },
     {
         "n": 2,
-        "name": "圆环：Ø26 / Ø63.5 真机 ≤0.2%×标称",
+        "name": "圆环：Ø26 / Ø63.5 真机 ≤0.5%×标称",
         "cmd": ["python", "reports/T-012/accuracy_probe.py",
                 "--reps", "1", "--only", "hub_d26,disc_d63_5"],
         "exit": 0,
