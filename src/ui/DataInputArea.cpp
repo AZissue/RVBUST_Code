@@ -1,5 +1,6 @@
 #include "ui/DataInputArea.h"
 #include "ui/Theme.h"
+#include "models/CalibrationMode.h"
 
 DataInputArea::DataInputArea(QWidget* parent)
     : QWidget(parent)
@@ -42,19 +43,22 @@ DataInputArea::DataInputArea(QWidget* parent)
 }
 
 // 参数名从 markerType 改成 isMarkerCalib：它问的是"哪种标定"（标定板 / 戳点），
-// 不是"哪种标定板"。以前这个歧义名字很容易被读成 MarkerType，而下面的判据
-// （DataQualityCheck::sourceFor）必须和它逐字一致。
+// 不是"哪种标定板"。以前这个歧义名字很容易被读成 MarkerType，而显隐判据
+// 必须和质检选列、保存校验、读位姿按钮一致 —— 现在四处都调同一个函数。
 void DataInputArea::updateVisibility(bool eyeInHand, bool isMarkerCalib)
 {
     // Card 1: always visible
     m_cardCamTarget->show();
 
-    // Card 2: hidden only in "eye-to-hand + tcp"
-    bool hidePose = !eyeInHand && !isMarkerCalib;
-    m_cardRobotPose->setVisible(!hidePose);
+    // 判据在 models/CalibrationMode.h：只有「眼在手外 + 戳点」不采拍照位姿。
+    const bool poseCol = needsCapturePose(
+        eyeInHand ? EyeHandMode::EyeInHand : EyeHandMode::EyeToHand,
+        isMarkerCalib ? CalibType::Marker : CalibType::TcpTouch);
+    m_cardRobotPose->setVisible(poseCol);
 
     // Card 3: visible only in TCP mode
-    m_cardRobotTarget->setVisible(!isMarkerCalib);
+    m_cardRobotTarget->setVisible(needsRobotTarget(
+        isMarkerCalib ? CalibType::Marker : CalibType::TcpTouch));
 
     // Height stays FIXED regardless of visible card count.
     // Cards expand/shrink within this locked space via layout stretch,

@@ -1,5 +1,7 @@
 #include "app/MainWindow.h"
 
+#include "AppInfo.h"
+
 #include "logic/CameraManager.h"
 #include "logic/CalibrationService.h"
 #include "logic/CaptureFlow.h"
@@ -88,7 +90,7 @@ MainWindow::MainWindow(QWidget* parent)
 {
     m_config.load();
 
-    setWindowTitle(QStringLiteral("手眼标定数据收集助手 V1.0"));
+    setWindowTitle(AppInfo::title());
     // Size/position is finalized in showEvent() (after the window frame exists)
     // so the window is centered and its title bar is never stranded off-screen.
     setMinimumSize(1280, 720);
@@ -627,10 +629,10 @@ void MainWindow::wireSignals()
     });
     connect(m_topNav, &TopNavBar::helpClicked, this, [this]() {
         QMessageBox::about(this, QStringLiteral("关于"),
-            QStringLiteral("手眼标定数据收集助手 V1.0\n\n"
-                           "基于 RVC X1/X2 相机的手眼标定数据采集工具。\n\n"
-                           "支持眼在手上/眼在手外两种安装方式，\n"
-                           "以及标记物标定和戳点标定两种标定方法。"));
+            AppInfo::summary()
+                + QStringLiteral("\n\n"
+                                 "支持眼在手上 / 眼在手外两种安装方式，\n"
+                                 "以及标记物标定和戳点标定两种标定方法。"));
     });
 
     // Action buttons
@@ -957,7 +959,10 @@ void MainWindow::onCapture()
     // enabled.  T-009: this is now an asynchronous request — the blocking read
     // runs on the robot worker thread, and the card is filled in when the
     // answer arrives (onRobotPoseReady); the capture pipeline is unaffected.
-    if (m_robotAutoRead && m_robotConnected) {
+    // 这一列在本模式不存在时（眼在手外+戳点）不要读：卡片是隐藏的，读回来的值只会
+    // 跟着记录存进一个本模式不用的列。
+    if (m_robotAutoRead && m_robotConnected
+            && needsCapturePose(m_eyeHandMode, m_calibType)) {
         emit robotReadPoseRequested(RobotReadAutoBeforeCapture);
     }
     // Stop preview and hide right-camera overlay before 3D capture
@@ -1397,6 +1402,12 @@ void MainWindow::onRobotPoseReady(int kind, bool ok, const QStringList& fields,
         return;
     }
 
+    // 拍照位姿这一列在本模式下可能不存在（眼在手外 + 戳点）：按钮已隐藏、自动读
+    // 也已跳过，这里再兜一次 —— 写进一张看不见的卡片没有意义，还会顺着记录存进
+    // 一个本模式不用的列。
+    if (!needsCapturePose(m_eyeHandMode, m_calibType))
+        return;
+
     const QString value = fields.join(QStringLiteral(" "));
     auto* card = m_dataInput->card(QStringLiteral("robot_capture_pose"));
     if (card)
@@ -1414,13 +1425,15 @@ void MainWindow::onRobotPoseReady(int kind, bool ok, const QStringList& fields,
 
 void MainWindow::updateRobotReadBar()
 {
-    // The read buttons live in the ActionButtons row; show them only while a
-    // robot connection is active, and 「戳点位姿」 additionally only in
-    // 戳点标定 mode.
-    const bool tcp = (m_calibType == CalibType::TcpTouch);
+    // The read buttons live in the ActionButtons row.  Each one mirrors the card
+    // it fills: a button for a column this mode does not have must not appear.
+    // 从前「拍照位姿」只看 m_robotConnected，所以眼在手外+戳点时（那一列根本不存在）
+    // 机器人一连上它就冒出来 —— 判据走 needsCapturePose()，与卡片显隐同源。
+    const bool poseCol = needsCapturePose(m_eyeHandMode, m_calibType);
+    const bool tcpCol  = needsRobotTarget(m_calibType);
     if (m_actionButtons) {
-        m_actionButtons->setReadCapturePoseVisible(m_robotConnected);
-        m_actionButtons->setReadTouchPoseVisible(m_robotConnected && tcp);
+        m_actionButtons->setReadCapturePoseVisible(m_robotConnected && poseCol);
+        m_actionButtons->setReadTouchPoseVisible(m_robotConnected && tcpCol);
     }
 }
 

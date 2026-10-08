@@ -1,6 +1,7 @@
 #include "ui/SidePanel.h"
 #include "ui/Theme.h"
 #include "models/CaptureRecord.h"
+#include "models/CalibrationMode.h"
 #include "logic/LogPresentation.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -223,9 +224,12 @@ void SidePanel::updateFilePreview(bool eyeInHand, bool markerType,
     m_markerType = markerType;
     m_cachedRecords = records;
 
+    // tab 显隐与卡片区同一判据（models/CalibrationMode.h），别再手写一遍。
+    const auto eyeHand = eyeInHand ? EyeHandMode::EyeInHand : EyeHandMode::EyeToHand;
+    const auto calib   = markerType ? CalibType::Marker : CalibType::TcpTouch;
     m_tabCamTarget->show();
-    m_tabRobotTarget->setVisible(!markerType);
-    m_tabRobotPose->setVisible(!(!eyeInHand && !markerType));
+    m_tabRobotTarget->setVisible(needsRobotTarget(calib));
+    m_tabRobotPose->setVisible(needsCapturePose(eyeHand, calib));
     m_tabCalibResult->show();
 
     if (m_activeTab == QStringLiteral("calib_result")) {

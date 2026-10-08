@@ -9,6 +9,7 @@
 
 #include "logic/PoseGuide.h"
 #include "logic/ToolInputParser.h"
+#include "models/CalibrationMode.h"
 
 // Batch quality check for a calibration session (stage 8).
 //
@@ -45,14 +46,16 @@ inline QString sourceName(PoseSource s)
         ? QStringLiteral("机器人目标点") : QStringLiteral("机器人拍照位姿");
 }
 
-// 模式 → 数据列。判据与 DataInputArea::updateVisibility() 的 hidePose 同源：
-//   hidePose = !eyeInHand && !isMarkerCalib
-// 即"眼在手外 + 戳点"不采拍照位姿。两处必须一致，sourceForModeAgreesWithInputCards()
-// 把这条一致性钉成了单测。
+// 模式 → 数据列。判据不再是这里手写的：直接问 needsCapturePose()（见
+// models/CalibrationMode.h），和卡片显隐、保存校验、读位姿按钮是同一个函数。
+// 即"眼在手外 + 戳点"不采拍照位姿。sourceForFollowsCalibrationMode() 把这条
+// 一致性钉成了单测。
 inline PoseSource sourceFor(bool eyeInHand, bool isMarkerCalib)
 {
-    return (!eyeInHand && !isMarkerCalib) ? PoseSource::RobotTargetXyz
-                                          : PoseSource::RobotCapturePose;
+    const bool capturePose = needsCapturePose(
+        eyeInHand ? EyeHandMode::EyeInHand : EyeHandMode::EyeToHand,
+        isMarkerCalib ? CalibType::Marker : CalibType::TcpTouch);
+    return capturePose ? PoseSource::RobotCapturePose : PoseSource::RobotTargetXyz;
 }
 
 struct Record {

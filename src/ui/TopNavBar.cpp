@@ -1,5 +1,6 @@
 #include "ui/TopNavBar.h"
 #include "ui/Theme.h"
+#include "AppInfo.h"
 #include <QHBoxLayout>
 
 TopNavBar::TopNavBar(QWidget* parent)
@@ -14,7 +15,7 @@ TopNavBar::TopNavBar(QWidget* parent)
     layout->setSpacing(16);
 
     // Title
-    m_title = new QLabel(QStringLiteral("手眼标定数据收集助手 V1.0"), this);
+    m_title = new QLabel(AppInfo::title(), this);
     m_title->setStyleSheet(QStringLiteral("font-size: %1px; font-weight: 600; color: %2; border: none;")
                            .arg(Theme::FONT_H1).arg(Theme::TEXT_TITLE));
     layout->addWidget(m_title);

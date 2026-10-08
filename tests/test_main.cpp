@@ -30,6 +30,7 @@
 #include "test_pixel_to_3d_service.h"
 #include "test_efort_pose_reader.h"
 #include "test_save_export.h"
+#include "test_app_info.h"
 
 namespace {
 
@@ -193,6 +194,12 @@ int main(int argc, char** argv)
         // CaptureFlow 不许报"保存成功"、备份原子写/带 version/恢复跳过损坏文件）。
         TestSaveExport t25;
         status |= runClass(&t25, argc, argv, "save_export");
+    }
+    {
+        // 程序名与版本号只有一个出处（src/AppInfo.h）：升到 2.0 时界面还显示
+        // V1.0，就是因为那句话当时硬编码在三处。
+        TestAppInfo t26;
+        status |= runClass(&t26, argc, argv, "app_info");
     }
     return status;
 }

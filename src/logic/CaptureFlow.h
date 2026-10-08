@@ -159,7 +159,8 @@ public:
             if (!numericCheck(robotTargetXyz, 3))
                 return { false, QStringLiteral("robot_target_xyz"),
                          QStringLiteral("机器人 TCP 点坐标应为 3 个数值（x y z）") };
-            if (mode.isEyeInHand()) {
+            // 判据 = needsCapturePose()：戳点标定里只有"眼在手外"不要拍照位姿。
+            if (mode.needsCapturePose()) {
                 if (robotCapturePose.trimmed().isEmpty())
                     return { false, QStringLiteral("robot_capture_pose"),
                              QStringLiteral("机器人拍照位姿不能为空") };

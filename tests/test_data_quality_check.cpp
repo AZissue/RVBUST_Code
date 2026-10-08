@@ -164,12 +164,34 @@ DataQualityCheck::Params targetParams()
 
 void TestDataQualityCheck::sourceForFollowsCalibrationMode()
 {
-    // 判据 = DataInputArea 的 hidePose = !eyeInHand && !isMarkerCalib
-    QVERIFY(DataQualityCheck::sourceFor(/*eyeInHand*/ false, /*marker*/ false)
-            == Source::RobotTargetXyz);   // 眼在手外 + 戳点：唯一的例外
-    QVERIFY(DataQualityCheck::sourceFor(true, false) == Source::RobotCapturePose);
-    QVERIFY(DataQualityCheck::sourceFor(true, true) == Source::RobotCapturePose);
-    QVERIFY(DataQualityCheck::sourceFor(false, true) == Source::RobotCapturePose);
+    // 判据只有一处：needsCapturePose()（models/CalibrationMode.h）。
+    // 「眼在手外 + 戳点」是唯一不要机器人拍照位姿的组合 —— 这两句写死的是期望值，
+    // 不是从被测函数推出来的，所以谁把这条规则改错了都会在这里断。
+    QVERIFY(!needsCapturePose(EyeHandMode::EyeToHand, CalibType::TcpTouch));
+    QVERIFY(needsCapturePose(EyeHandMode::EyeInHand, CalibType::TcpTouch));
+    QVERIFY(needsCapturePose(EyeHandMode::EyeInHand, CalibType::Marker));
+    QVERIFY(needsCapturePose(EyeHandMode::EyeToHand, CalibType::Marker));
+
+    QVERIFY(!needsRobotTarget(CalibType::Marker));
+    QVERIFY(needsRobotTarget(CalibType::TcpTouch));
+
+    // ……以及"这一列要不要采" ≤「质检按哪一列判定」必须一致。从前这条规则散在五处
+    // 各写各的，2026-10-08 一天里三处因为漏看它出错（质检假报告、计算走错通道、
+    // 「拍照位姿」按钮没隐去），所以这里把两个入口两两对上。
+    struct Combo { bool eyeInHand; bool marker; };
+    const Combo combos[] = { { false, false }, { true, false },
+                             { true, true },   { false, true } };
+    for (const Combo& c : combos) {
+        const auto eyeHand = c.eyeInHand ? EyeHandMode::EyeInHand : EyeHandMode::EyeToHand;
+        const auto calib   = c.marker ? CalibType::Marker : CalibType::TcpTouch;
+        const auto expected = needsCapturePose(eyeHand, calib)
+                                  ? Source::RobotCapturePose
+                                  : Source::RobotTargetXyz;
+        QVERIFY2(DataQualityCheck::sourceFor(c.eyeInHand, c.marker) == expected,
+                 qPrintable(QStringLiteral("eyeInHand=%1 marker=%2 时质检选列与"
+                                           "卡片显隐判据不一致")
+                                .arg(c.eyeInHand).arg(c.marker)));
+    }
 
     QVERIFY(!DataQualityCheck::sourceHasOrientation(Source::RobotTargetXyz));
     QVERIFY(DataQualityCheck::sourceHasOrientation(Source::RobotCapturePose));

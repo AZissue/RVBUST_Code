@@ -38,6 +38,9 @@ set(TEST_SOURCES
     # 上报（DataManager 返回值 + 原因），CaptureFlow 不许报"保存成功"；
     # 备份必须是原子写、带 version、恢复时跳过损坏文件。
     test_save_export.cpp
+    # 2026-10-08：程序名与版本号的唯一出处（src/AppInfo.h，header-only）。
+    # 用户在 2.0 版本里还看到 V1.0 —— 那句话当时硬编码在窗口标题/顶栏/帮助三处。
+    test_app_info.cpp
 )
 
 add_executable(unit_tests ${TEST_SOURCES}
