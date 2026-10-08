@@ -80,6 +80,7 @@ tests/                        → unit_tests（QtTest）+ measure_truth（已知
 | 像素→3D | `logic/PixelTo3DService.{h,cpp}`（共享服务）、`logic/PixelTo3DTools.h`（纯换算） |
 | 坐标转换 / 走点验证 | `logic/TransformTools.h` |
 | 机器人四协议的读位姿 | `logic/RobotPose.*`、`URRealtimeReader.*`、`NrcJsonReader.*`、`EfortPoseReader.*`；分派在 `RobotWorker::readerFor()` |
+| 机器人通信的**真机假设**（字节序/偏移/字段名/单位） | 四项待证实项的判据与操作步骤：`reports/机器人通信真机联测任务书.md`；只读探针 `reports/tools/probe_modbus_pose.py`、`reports/tools/probe_ur_offset.py`（都有 `--selftest`）。**拿到现场证据前别凭猜改那四个 reader** |
 | 会话生命周期（开新一组、清空、切模式） | `MainWindow::resetSession()` 是唯一的开新会话点；入口只有三个：启动（`MainWindow.cpp` 构造末尾）、`onModeChanged()` 的 `typeChanged` 分支、顶栏「新建会话」→ `onNewSessionRequested()`。按钮 enabled = 有记录且非 busy，四处同步：`dataChanged` / `setBusy` / `setConnectBusy` / `clearBusy` |
 | 键盘快捷键 | `MainWindow::registerShortcuts()`：Ctrl+S 保存 / Ctrl+Z 撤销 / F5 刷新预览 / F11 全屏 / F1 使用说明（`QKeySequence::HelpContents`） |
 | 程序名 / 版本号 | `src/AppInfo.h`（别在页面里写死 —— 2026-10-08 就是因为三处硬编码，升 2.0 时界面还显示 V1.0） |
