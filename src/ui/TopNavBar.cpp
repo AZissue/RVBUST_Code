@@ -54,6 +54,22 @@ TopNavBar::TopNavBar(QWidget* parent)
     )").arg(Theme::PRIMARY).arg(Theme::FONT_HINT).arg(Theme::PRIMARY_HOVER));
     layout->addWidget(m_btnConnect);
 
+    // 新建会话 —— 「标定完一组、再起一组」的入口。从前只能靠启动程序或切换
+    // 标定类型这个副作用开新会话，现场没有别的路可走。
+    m_btnNewSession = new QPushButton(QStringLiteral("新建会话"), this);
+    m_btnNewSession->setFixedSize(76, 28);
+    m_btnNewSession->setToolTip(
+        QStringLiteral("开始一组新的标定数据（已采集的记录保留在磁盘上，不会删除）"));
+    m_btnNewSession->setStyleSheet(QStringLiteral(R"(
+        QPushButton { color: %1; background: transparent; border: 1px solid %2;
+                      border-radius: 4px; font-size: %3px; }
+        QPushButton:hover { border-color: %1; color: %1; }
+        QPushButton:disabled { color: %4; border-color: %4; }
+    )").arg(Theme::PRIMARY).arg(Theme::BORDER_DEFAULT)
+       .arg(Theme::FONT_HINT).arg(Theme::TEXT_HINT));
+    m_btnNewSession->setEnabled(false);   // 还没有记录，没什么可重开的
+    layout->addWidget(m_btnNewSession);
+
     // Settings / Help
     m_btnSettings = new QPushButton(QStringLiteral("设置"), this);
     m_btnSettings->setFixedSize(48, 28);
@@ -70,6 +86,12 @@ TopNavBar::TopNavBar(QWidget* parent)
     connect(m_btnConnect,  &QPushButton::clicked, this, &TopNavBar::onConnectBtnClicked);
     connect(m_btnSettings, &QPushButton::clicked, this, &TopNavBar::settingsClicked);
     connect(m_btnHelp,     &QPushButton::clicked, this, &TopNavBar::helpClicked);
+    connect(m_btnNewSession, &QPushButton::clicked, this, &TopNavBar::newSessionClicked);
+}
+
+void TopNavBar::setNewSessionEnabled(bool enabled)
+{
+    m_btnNewSession->setEnabled(enabled);
 }
 
 void TopNavBar::updateProgress(int current, int total)

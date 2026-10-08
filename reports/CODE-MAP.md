@@ -71,6 +71,7 @@ tests/                        → unit_tests（QtTest）+ measure_truth（已知
 | 像素→3D | `logic/PixelTo3DService.{h,cpp}`（共享服务）、`logic/PixelTo3DTools.h`（纯换算） |
 | 坐标转换 / 走点验证 | `logic/TransformTools.h` |
 | 机器人四协议的读位姿 | `logic/RobotPose.*`、`URRealtimeReader.*`、`NrcJsonReader.*`、`EfortPoseReader.*`；分派在 `RobotWorker::readerFor()` |
+| 会话生命周期（开新一组、清空、切模式） | `MainWindow::resetSession()` 是唯一的开新会话点；入口只有三个：启动（`MainWindow.cpp` 构造末尾）、`onModeChanged()` 的 `typeChanged` 分支、顶栏「新建会话」→ `onNewSessionRequested()`。按钮 enabled = 有记录且非 busy，四处同步：`dataChanged` / `setBusy` / `setConnectBusy` / `clearBusy` |
 | 界面配色/字号/按钮样式 | `ui/Theme.h`（别在页面里写死色值） |
 | 操作日志上屏规则 | `logic/LogPresentation.h::shouldShowInPanel()` 唯一判据；`LogManager` 只管落文件 |
 | 启动/连接/释放相机的顺序与兜底 | `logic/CameraManager.*` + `logic/CameraRelease.h`（`shutdown()` 幂等）；Windows 注销路径在 `MainWindow::nativeEvent()` |
@@ -153,3 +154,7 @@ D:/MyCode/MyHandEyeTools/build/src/Release/HandEyeCalibrationTool.exe
   按方式显隐（`updateCalibrationModeVisibility()`）。行显隐用 `QFormLayout::labelForField()`
   连标签一起隐藏（Qt 5.14 没有 `setRowVisible`）。
 - `MainWindow::updatePoseGuide()` 改成无参：读哪张卡片由 `sourceFor()` 决定。
+- **换会话时必须同步失效的两份缓存**（新加会话入口时踩到的）：
+  `SidePanel` 的「标定结果」（`setCalibrationResult(QString())` 会显示占位文案）与
+  `ToolsPanel` 的会话三列（`clearSessionData()`）。只清 `DataManager` 的记录不够 ——
+  面板上的这两份都是**独立副本**，不清就会拿上一组的数据算出这一组的结果。

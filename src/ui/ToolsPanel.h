@@ -110,6 +110,9 @@ public slots:
                            const QStringList& poseLines,
                            const QStringList& tcpLines,
                            bool eyeInHand, bool marker, bool concentric);
+    // 主窗口换了会话（「新建会话」/ 启动建第一组）：丢掉缓存的三列与目录。
+    // 不丢的话「计算」会拿上一组的位姿算出这一组的结果 —— 数据是错的，界面看不出来。
+    void clearSessionData();
     // 主 2D 视窗上的左键点击（离线取点）：填进像素输入框并立刻重算
     void onMainViewPixelClicked(int x, int y);
     // 主窗口的查询结果：ok=false 时 message 是可读中文原因

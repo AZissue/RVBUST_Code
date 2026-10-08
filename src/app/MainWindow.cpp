@@ -435,6 +435,9 @@ void MainWindow::wireSignals()
             this, &MainWindow::onCalibrate);
     connect(m_data, &DataManager::dataChanged, this, [this]() {
         m_actionButtons->setCalcEnabled(m_data->count() > 0);
+        // 没有记录时「新建会话」没什么可重开的；有任务在跑时也不许换会话
+        // （计算读到一半换掉目录，结果就串了）。
+        m_topNav->setNewSessionEnabled(m_data->count() > 0 && !m_busy);
     });
     // 工具面板「手眼标定」页：用当前会话一键算（路径与位姿由主窗口给回）
     connect(m_toolsPanel, &ToolsPanel::calibrationSessionRequested, this,
@@ -615,6 +618,8 @@ void MainWindow::wireSignals()
             this, &MainWindow::onDisconnectCamera);
     connect(m_topNav, &TopNavBar::settingsClicked,
             this, &MainWindow::showSettingsDialog);
+    connect(m_topNav, &TopNavBar::newSessionClicked,
+            this, &MainWindow::onNewSessionRequested);
     connect(m_modeSelector, &ModeSelector::toolsClicked, this, [this]() {
         m_toolsPanel->show();
         m_toolsPanel->raise();
@@ -818,6 +823,40 @@ void MainWindow::resetSession()
     m_sidePanel->setQualityReport(
         QStringLiteral("<span style='color:%1'>采集数据后点击「运行质检」查看结果</span>")
             .arg(Theme::TEXT_HINT));
+
+    // 上一组的结果属于上一组：结果卡与工具页的会话缓存都要跟着会话一起清。
+    // 工具页那份不清的话，「用当前会话 → 计算」会拿旧会话的三列配上新目录。
+    m_sidePanel->setCalibrationResult(QString());
+    m_toolsPanel->clearSessionData();
+
+    // 「新建会话」按钮：新会话是空的，没什么可重开的（等第一组保存后自动亮）。
+    m_topNav->setNewSessionEnabled(false);
+}
+
+// 顶栏「新建会话」。记录只存在内存里，磁盘上的会话目录与 backup 都不动，
+// 所以这里的确认框说的是"开始新的一组"，不是"删除数据"。
+void MainWindow::onNewSessionRequested()
+{
+    if (m_busy)
+        return;   // 兜底：按钮已在 busy 时禁用，这里防快捷路径
+
+    const int count = m_data->count();
+    if (count > 0) {
+        const QString dir = QDir::toNativeSeparators(m_data->saveDir());
+        auto reply = QMessageBox::question(
+            this, QStringLiteral("新建会话"),
+            QStringLiteral("将开始一组新的标定数据（安装方式与标定方法不变）。\n\n"
+                           "当前 %1 组记录已保存在：\n%2\n\n"
+                           "记录不会从磁盘删除，只是不再显示在这一组里。是否继续？")
+                .arg(count).arg(dir));
+        // 模态等待是用户思考时间，不是界面卡顿 —— 不记进 UI stall 看门狗。
+        m_watchdog.reset();
+        if (reply != QMessageBox::Yes)
+            return;
+    }
+
+    resetSession();
+    m_logger->info(QStringLiteral("新建会话（用户手动开始新的一组）"));
 }
 
 // ── Camera ────────────────────────────────────────────────────────────
@@ -1734,6 +1773,7 @@ void MainWindow::setBusy(const QString& text, ActionButtons::BusyTarget target)
 {
     m_busy = true;
     m_actionButtons->setBusy(target, text);
+    m_topNav->setNewSessionEnabled(false);
     // Paint the busy state synchronously without dispatching queued events.
     // A nested processEvents() here would run the camera/capture handlers while
     // this call is still on the stack — the re-entrancy the field crash needs.
@@ -1744,6 +1784,7 @@ void MainWindow::setConnectBusy(const QString& text)
 {
     m_busy = true;
     m_topNav->setConnectBusy(true, text);
+    m_topNav->setNewSessionEnabled(false);
     m_topNav->repaint();   // same non-reentrant paint, see setBusy()
 }
 
@@ -1751,6 +1792,7 @@ void MainWindow::clearBusy()
 {
     m_busy = false;
     m_topNav->setConnectBusy(false, {});
+    m_topNav->setNewSessionEnabled(m_data->count() > 0);
     m_actionButtons->clearBusy();
 }
 

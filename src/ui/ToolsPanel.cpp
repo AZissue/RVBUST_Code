@@ -909,6 +909,20 @@ void ToolsPanel::useCurrentSession(const QString& folder,
     runCalibration(m_sessionFolder, m_sessionCamera, m_sessionPoses, m_sessionTcp);
 }
 
+// 主窗口换了会话（启动建第一组，或用户点了「新建会话」）。
+// 缓存的三列必须丢掉：留着的话，会话模式下点「计算」会拿**上一组**的位姿配上
+// 这一组的目录算出结果 —— 数字是错的，而界面上完全看不出来。
+void ToolsPanel::clearSessionData()
+{
+    m_sessionActive = false;
+    m_sessionFolder.clear();
+    m_sessionCamera.clear();
+    m_sessionPoses.clear();
+    m_sessionTcp.clear();
+    m_calibHint->clear();
+    m_calibResult->clear();
+}
+
 void ToolsPanel::updateCalibrationResult()
 {
     if (m_calibWatcher->isRunning())

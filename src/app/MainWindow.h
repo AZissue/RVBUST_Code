@@ -119,6 +119,9 @@ private:
     void onModeChanged(bool eyeInHand, bool markerType, bool concentric);
     void onCaliboardParamsChanged(int patternW, int patternH, float circleStep);
     void resetSession();
+    // 顶栏「新建会话」：确认后开一组新数据（模式不变）。这是除「启动」与
+    // 「切换标定类型」之外唯一的开新会话入口 —— 以前没有它，现场只能重启程序。
+    void onNewSessionRequested();
 
     // Camera
     void onConnectCamera();
