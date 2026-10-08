@@ -377,6 +377,15 @@ struct BoundaryCircle {
     bool subpixel = false;      // true when the edge came from the image
     bool reliable = false;
     bool valid = false;
+    // T-013 / P1: a part whose edge carries a second step / groove / counterbore
+    // just inside it hands us several transitions along every ray.  `diameter`
+    // is always the *outermost* material boundary (the drawing's dimension);
+    // when the rays kept crossing an inner one too, its Ø and the chosen Ø are
+    // both listed here (ascending) and `ambiguous` is set, so the operator can
+    // see that the tool had a choice — that inner edge is exactly what this
+    // tool used to report.  Empty on a normal single-step boundary.
+    std::vector<double> candidates;
+    bool ambiguous = false;
     std::string message;
     std::string debug;          // T-012 临时：中间量，交回前删
 };

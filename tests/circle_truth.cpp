@@ -297,7 +297,10 @@ struct Outcome {
     double roundness = 0.0;
     double coverage = 0.0;
     double mmPerPx = 0.0;
+    bool ambiguous = false;         // two transitions found inside the boundary
+    double innerCandidate = 0.0;    // the inner one (mm, Ø), when there is one
     std::string message;
+    std::string debug;
 };
 
 Outcome run(const Scene& s, const Data& d)
@@ -346,7 +349,11 @@ Outcome run(const Scene& s, const Data& d)
     o.roundness = bc.roundness;
     o.coverage = bc.coverage;
     o.mmPerPx = bc.mmPerPx;
+    o.debug = bc.debug;
     o.message = bc.message;
+    o.ambiguous = bc.ambiguous;
+    if (bc.candidates.size() >= 2)
+        o.innerCandidate = bc.candidates.front();
     const double dx = bc.center[0] - d.circleCenter[0];
     const double dy = bc.center[1] - d.circleCenter[1];
     const double dz = bc.center[2] - d.circleCenter[2];
@@ -359,21 +366,33 @@ Outcome run(const Scene& s, const Data& d)
 // stays usable, the numbers are still printed every run, and the day one of
 // these starts passing the run says so loudly.  Deleting a name here without
 // fixing the code makes the run red again.
+//
+// 2026-10-08 (P1/P3): all eight are fixed — edge selection now enumerates every
+// transition and takes the outermost material boundary (P1), and the disc's
+// 3-D outer contour is built with or without an image (P3).  The list is empty
+// on purpose: from here on, any scene outside 0.5 % fails the run.
 bool isKnownDefect(const std::string& name)
 {
-    static const char* kKnown[] = {
-        // 边缘选择（L2）：多跃变工件上报内部台阶/沉孔，而不是材料边界
+    (void)name;
+    return false;
+}
+
+// Scenes whose edge carries a second transition *inside* it (a counterbore, a
+// step).  The Ø must be the outer one — that is the drawing's dimension — and
+// the kernel has to say that it saw the inner one too, otherwise the operator
+// has no way to know the tool made a choice.  A scene here that stops being
+// reported as ambiguous is a regression even though its Ø may still be right.
+bool expectsAmbiguity(const std::string& name)
+{
+    static const char* kMulti[] = {
+        "hole_d9   cboreR6 d2",
+        "hole_d9   cboreR5.5 d.5",
         "disc_d26  stepR10",
         "disc_d26  stepR12",
         "disc_d26  stepR12 d2",
         "disc_d26  cham+step",
-        "hole_d9   cboreR6 d2",
-        "hole_d9   cboreR5.5 d.5",
-        // 无图像时圆环拟合的 3D 外缘兜底不可达（contour3d 只在 map.ok 里建）
-        "disc_d26  3D tilt15",
-        "disc_d26  3D tilt0",
     };
-    for (const char* k : kKnown)
+    for (const char* k : kMulti)
         if (name == k)
             return true;
     return false;
@@ -383,9 +402,6 @@ bool isKnownDefect(const std::string& name)
 
 int main(int argc, char** argv)
 {
-    (void)argc;
-    (void)argv;
-
     std::vector<Scene> scenes;
     auto add = [&](const char* name, bool inside, double r, double tilt, double pitch,
                    double blur, double imgNoise, int cells, int scale, bool useImage,
@@ -416,6 +432,10 @@ int main(int argc, char** argv)
     add("hole_d6   blur1 noise2", false, 3.00, 15, p, 1.0, 2.0, 200, 2, true);
     add("hole_d6   blur2 noise4", false, 3.00, 15, p, 2.0, 4.0, 200, 2, true);
     add("hole_d5   blur1 noise2", false, 2.50, 15, p, 1.0, 2.0, 200, 2, true);
+    // 真机尺度：`tests/data/circle/2.ply` 的点间距是 0.0675 mm，孔 ⌀5.44 只占图像
+    // 的 80 px。上面那些场景的 pitch 是 0.0755、特征 200 px 上下，尺度差一倍以上，
+    // 而"扫描窗口按像素给"这件事在像素少的场景里最敏感 —— 用它钉住小特征这一档。
+    add("hole_d5.44 realpitch",  false, 2.72, 15, 0.0675, 1.0, 2.0, 400, 2, true);
     add("hole_d9   blur1 noise2", false, 4.50, 15, p, 1.0, 2.0, 240, 2, true);
     add("hole_d26  blur1 noise2", false, 13.0, 15, p, 1.0, 2.0, 500, 2, true);
     add("hole_d6   tilt45 blur1", false, 3.00, 45, p, 1.0, 2.0, 200, 2, true);
@@ -464,9 +484,15 @@ int main(int argc, char** argv)
     int skipped = 0;
     int known = 0;
     int fixed = 0;
+    int missed = 0;
     for (const Scene& s : scenes) {
         const Data d = build(s);
         const Outcome o = run(s, d);
+        // `circle_truth.exe <scene name>` dumps the kernel's intermediate
+        // quantities for one scene — the only way to see inside a GUI-subsystem
+        // test binary.
+        if (argc > 1 && s.name == argv[1])
+            std::printf("DEBUG %s\n%s\n", s.name.c_str(), o.debug.c_str());
         // Drawing Ø = the outermost material boundary.  For a hole that is the
         // chamfer opening (2R+2c); for a disc it is the silhouette (2R).
         double outer = s.materialInside ? 2.0 * s.radius
@@ -485,9 +511,14 @@ int main(int argc, char** argv)
                     o.reliable ? "yes" : "no",
                     outer, inner, o.diameter, o.valid ? err : 0.0, pct, o.centerErr,
                     o.roundness, o.coverage,
-                    o.valid ? "" : o.message.c_str(),
+                    o.message.c_str(),
                     (!bad && tracked) ? "   *** FIXED — drop from isKnownDefect() ***"
                                       : (bad && tracked ? "   [known defect]" : ""));
+        if (expectsAmbiguity(s.name) && !o.ambiguous) {
+            ++missed;
+            std::printf("   ^^ MISSING: two transitions expected, the kernel "
+                        "reported one (a second inner edge went unreported)\n");
+        }
         if (o.message.rfind("OUT OF FRAME", 0) == 0)
             ++skipped;
         else if (bad && tracked)
@@ -498,10 +529,10 @@ int main(int argc, char** argv)
             ++failed;
     }
     std::printf("\n%zu scenes | %d OUTSIDE criterion | %d known defects (reported, not hidden) | "
-                "%d newly FIXED | %d skipped\n",
-                scenes.size(), failed, known, fixed, skipped);
+                "%d newly FIXED | %d ambiguous edge(s) missed | %d skipped\n",
+                scenes.size(), failed, known, fixed, missed, skipped);
     if (fixed > 0)
         std::printf("NOTE: %d previously-known defect(s) now pass — remove them from "
                     "isKnownDefect() so the run keeps its teeth.\n", fixed);
-    return failed == 0 ? 0 : 1;
+    return (failed == 0 && missed == 0) ? 0 : 1;
 }
