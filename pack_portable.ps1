@@ -33,12 +33,22 @@ if (-not (Test-Path (Join-Path $SourceDir "HandEyeCalibrationTool.exe"))) {
 if (Test-Path $pkgDir) { Remove-Item -LiteralPath $pkgDir -Recurse }
 New-Item -ItemType Directory -Path $pkgDir | Out-Null
 
-# 2) exe + DLLs (drop Debug Qt and test artifacts)
+# 2) the app exe + all runtime DLLs (drop Debug Qt and test artifacts).
+# Ship exactly one .exe: test targets (unit_tests / measure_truth / circle_truth)
+# are console apps and must not leak into the delivery. Matching on the app exe
+# rather than on a blocklist keeps this correct as new test targets appear.
+# Debug-variant vendor DLLs: the CMake deploy step copies the Debug Efort SDK and
+# its dependencies too. Verified by a byte scan of every shipped exe/dll that only
+# EftSdkd.dll references them - the Release delivery never loads them.
+$debugVendorDlls = @(
+    "EftSdkd.dll", "log4cpp-d.dll", "rlibcpp-bcc-d.dll", "rlibcpp-tool-d.dll"
+)
 Get-ChildItem $SourceDir -File | Where-Object {
-    $_.Extension -in ".exe", ".dll" -and
-    $_.Name -notin @("unit_tests.exe") -and
-    $_.Name -notmatch "^Qt5\w*d\.dll$" -and   # Qt5Cored/Guid/Widgetsd
-    $_.Name -ne "Qt5Test.dll"
+    $_.Name -eq "HandEyeCalibrationTool.exe" -or
+    ($_.Extension -eq ".dll" -and
+     $_.Name -notin $debugVendorDlls -and
+     $_.Name -notmatch "^Qt5\w*d\.dll$" -and   # Qt5Cored/Guid/Widgetsd
+     $_.Name -ne "Qt5Test.dll")
 } | ForEach-Object {
     Copy-Item -LiteralPath $_.FullName -Destination $pkgDir
 }
