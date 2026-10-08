@@ -147,3 +147,21 @@ endif()
 
 add_test(NAME measurement_truth COMMAND measure_truth
     --data-dir "${CMAKE_SOURCE_DIR}/codex_testData")
+
+# ── known-truth circle harness (2026-10-08) ────────────────────────────
+# 圆环拟合(实心外缘) 与 孔径 现在都只走 measureBoundaryCircle，而它此前零单测。
+# 这里用针孔相机 + 倾斜平面程序化生成"已知半径"的网格与图像，直接读回
+# 「实测直径 − 真值」，把"误差较大"变成一条可复跑的曲线。
+# 无 Qt GUI、无相机、无 SDK，纯计算，所以是普通无头 ctest 用例。
+add_executable(circle_truth
+    circle_truth.cpp
+    ${CMAKE_SOURCE_DIR}/src/logic/MeasureTools.cpp
+)
+target_include_directories(circle_truth PRIVATE ${CMAKE_SOURCE_DIR}/src)
+
+if(WIN32)
+    set_target_properties(circle_truth PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "$<TARGET_FILE_DIR:HandEyeCalibrationTool>")
+endif()
+
+add_test(NAME circle_truth COMMAND circle_truth)
