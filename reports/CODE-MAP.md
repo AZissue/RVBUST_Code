@@ -57,6 +57,8 @@ tests/                        → unit_tests（QtTest）+ measure_truth（已知
   任何新的机器人阻塞调用都必须加进它，不许在 UI 线程直调（防整机挂死）。
 - `ToolsPanel`（`src/ui/ToolsPanel.*`）——「工具」面板：像素→3D、手眼标定、坐标转换、
   机器人通信、8 个测量方法页（`MeasurePage` 基类 + `MeasurePages.cpp`）。
+- `HelpDialog`（`src/ui/HelpDialog.*` + `src/logic/HelpContent.h`）—— 使用说明窗。
+  非模态、首次打开才创建。改说明文字只需动 `HelpContent.h`；改控件才动 `HelpDialog`。
 - `CaptureFlow`（`src/logic/CaptureFlow.*`）—— 拍照→识别→保存→撤销的状态机与校验。
 
 ---
@@ -79,7 +81,9 @@ tests/                        → unit_tests（QtTest）+ measure_truth（已知
 | 坐标转换 / 走点验证 | `logic/TransformTools.h` |
 | 机器人四协议的读位姿 | `logic/RobotPose.*`、`URRealtimeReader.*`、`NrcJsonReader.*`、`EfortPoseReader.*`；分派在 `RobotWorker::readerFor()` |
 | 会话生命周期（开新一组、清空、切模式） | `MainWindow::resetSession()` 是唯一的开新会话点；入口只有三个：启动（`MainWindow.cpp` 构造末尾）、`onModeChanged()` 的 `typeChanged` 分支、顶栏「新建会话」→ `onNewSessionRequested()`。按钮 enabled = 有记录且非 busy，四处同步：`dataChanged` / `setBusy` / `setConnectBusy` / `clearBusy` |
+| 键盘快捷键 | `MainWindow::registerShortcuts()`：Ctrl+S 保存 / Ctrl+Z 撤销 / F5 刷新预览 / F11 全屏 / F1 使用说明（`QKeySequence::HelpContents`） |
 | 程序名 / 版本号 | `src/AppInfo.h`（别在页面里写死 —— 2026-10-08 就是因为三处硬编码，升 2.0 时界面还显示 V1.0） |
+| 使用说明（帮助窗 / F1）的正文与章节 | 正文 = `logic/HelpContent.h`（纯数据表，`chapters()`/`changelog()`/`renderBody()`）；窗口 = `ui/HelpDialog.*`；入口 = `MainWindow::showHelp()`（顶栏「帮助」+ F1）。**测量方法一章是遍历 `MeasureMethods.h` 生成的**，别手抄；版本号用 `%CURRENT_VERSION%` 占位符，界面拿 `AppInfo::version()` 替换（正文里写死版本号会被单测挡下） |
 | 界面配色/字号/按钮样式 | `ui/Theme.h`（别在页面里写死色值） |
 | 操作日志上屏规则 | `logic/LogPresentation.h::shouldShowInPanel()` 唯一判据；`LogManager` 只管落文件 |
 | 启动/连接/释放相机的顺序与兜底 | `logic/CameraManager.*` + `logic/CameraRelease.h`（`shutdown()` 幂等）；Windows 注销路径在 `MainWindow::nativeEvent()` |

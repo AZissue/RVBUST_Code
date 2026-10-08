@@ -41,6 +41,8 @@ set(SOURCES
     ui/MeasurePages.cpp
     ui/DeviceListDialog.cpp
     ui/SettingsDialog.cpp
+    # 使用说明窗口（左侧章节 + 右侧正文）；正文在 logic/HelpContent.h
+    ui/HelpDialog.cpp
 )
 
 add_executable(${PROJECT_NAME} ${SOURCES})

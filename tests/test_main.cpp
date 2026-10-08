@@ -31,6 +31,7 @@
 #include "test_efort_pose_reader.h"
 #include "test_save_export.h"
 #include "test_app_info.h"
+#include "test_help_content.h"
 
 namespace {
 
@@ -200,6 +201,12 @@ int main(int argc, char** argv)
         // V1.0，就是因为那句话当时硬编码在三处。
         TestAppInfo t26;
         status |= runClass(&t26, argc, argv, "app_info");
+    }
+    {
+        // 使用说明的内容表（src/logic/HelpContent.h）：章节完整、测量方法一章
+        // 覆盖每个方法、正文不许写死版本号、更新记录第一条就是当前版本。
+        TestHelpContent t27;
+        status |= runClass(&t27, argc, argv, "help_content");
     }
     return status;
 }

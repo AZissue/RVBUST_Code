@@ -41,6 +41,11 @@ set(TEST_SOURCES
     # 2026-10-08：程序名与版本号的唯一出处（src/AppInfo.h，header-only）。
     # 用户在 2.0 版本里还看到 V1.0 —— 那句话当时硬编码在窗口标题/顶栏/帮助三处。
     test_app_info.cpp
+    # 2026-10-08：使用说明的内容表（src/logic/HelpContent.h，header-only）。
+    # 说明里逐字写着界面上的按钮名 —— 改名而说明没跟上，用户会照着说明找不到
+    # 东西。这里钉住章节完整性、测量方法一章必须覆盖每个方法、以及"正文不许
+    # 写死版本号"。
+    test_help_content.cpp
 )
 
 add_executable(unit_tests ${TEST_SOURCES}

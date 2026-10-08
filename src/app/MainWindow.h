@@ -33,6 +33,7 @@ class ActionButtons;
 class SidePanel;
 class ToastOverlay;
 class ToolsPanel;
+class HelpDialog;
 class QShowEvent;
 class QTimer;
 class QThread;
@@ -122,6 +123,10 @@ private:
     // 顶栏「新建会话」：确认后开一组新数据（模式不变）。这是除「启动」与
     // 「切换标定类型」之外唯一的开新会话入口 —— 以前没有它，现场只能重启程序。
     void onNewSessionRequested();
+
+    // 使用说明（顶栏「帮助」按钮 / F1）。chapterId 为空时打开第一章；
+    // 正文里的章节互链也走它。窗口首次调用时才创建。
+    void showHelp(const QString& chapterId = QString());
 
     // Camera
     void onConnectCamera();
@@ -241,6 +246,8 @@ private:
     SidePanel*      m_sidePanel     = nullptr;
     ToastOverlay*   m_toast         = nullptr;
     ToolsPanel*     m_toolsPanel    = nullptr;
+    // 使用说明窗口（顶栏「帮助」/ F1）：非模态、首次打开时创建，之后常驻一份。
+    HelpDialog*     m_helpDialog    = nullptr;
 
     // Measurement overlay state (3D): object handles of the last annotations and
     // whether the uploaded cloud currently carries deviation colours.

@@ -28,6 +28,7 @@
 #include "ui/SettingsDialog.h"
 #include "ui/DeviceListDialog.h"
 #include "ui/ToolsPanel.h"
+#include "ui/HelpDialog.h"
 
 #include "ui/Theme.h"
 
@@ -627,13 +628,10 @@ void MainWindow::wireSignals()
         m_toolsPanel->raise();
         m_toolsPanel->activateWindow();
     });
-    connect(m_topNav, &TopNavBar::helpClicked, this, [this]() {
-        QMessageBox::about(this, QStringLiteral("关于"),
-            AppInfo::summary()
-                + QStringLiteral("\n\n"
-                                 "支持眼在手上 / 眼在手外两种安装方式，\n"
-                                 "以及标记物标定和戳点标定两种标定方法。"));
-    });
+    // 「帮助」不再是那个只报版本号的小弹框：打开的是真正的使用说明
+    // （左侧章节 + 右侧正文，正文在 logic/HelpContent.h）。原来那个
+    // QMessageBox::about 只显示一行版本信息，用户的原话是"帮助里没写怎么用"。
+    connect(m_topNav, &TopNavBar::helpClicked, this, [this]() { showHelp(); });
 
     // Action buttons
     connect(m_actionButtons, &ActionButtons::captureClicked,
@@ -716,6 +714,24 @@ void MainWindow::registerShortcuts()
     connect(shortcutFull, &QShortcut::activated, this, [this]() {
         if (isFullScreen()) showNormal(); else showFullScreen();
     });
+
+    // 使用说明。QKeySequence::HelpContents 在 Windows 上就是 F1，写标准键而不是
+    // 写死 "F1"，换平台也不会错。
+    auto* shortcutHelp = new QShortcut(QKeySequence::HelpContents, this);
+    connect(shortcutHelp, &QShortcut::activated, this, [this]() { showHelp(); });
+}
+
+void MainWindow::showHelp(const QString& chapterId)
+{
+    // 首次打开才建窗口：说明窗口里有一整个 QTextBrowser，启动时不必要。
+    // 之后常驻一份，反复按 F1 只是把它抬到前面。
+    if (!m_helpDialog)
+        m_helpDialog = new HelpDialog(this);
+    if (!chapterId.isEmpty())
+        m_helpDialog->showChapter(chapterId);
+    m_helpDialog->show();
+    m_helpDialog->raise();
+    m_helpDialog->activateWindow();
 }
 
 // ── Mode Management ───────────────────────────────────────────────────
