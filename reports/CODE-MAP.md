@@ -72,11 +72,12 @@ tests/                        → unit_tests（QtTest）+ measure_truth（已知
 | 识别回退链、同心圆/标定板的检测调用 | `logic/DetectionEngine.cpp`（回退链是硬约束，见 PROJECT.md 第 3 节） |
 | 保存目录、导出文件（`pose.txt` / `cameraCapturePointXyz.txt` / `tcp.txt`）、备份 JSON | `logic/DataManager.cpp`：`writeHandEyeOutput()` → `writeMarkerOutput()` / `writeTcpOutput()` / `writeBackup()` / `loadBackup()` |
 | 一帧记录的字段 | `models/CaptureRecord.h`；落盘字段名在同文件 + `DataManager::loadBackup()`（键名 `marker_count` 等） |
-| 手眼标定计算（两个方法 + 返回码文案 + 结果排版） | `logic/CalibrationService.{h,cpp}`；入口是 `calibrate()`，按 `Params::calibType` 分派 |
+| 手眼标定计算（两个方法 + 返回码文案 + 结果排版） | `logic/CalibrationService.{h,cpp}`；入口是 `calibrate()`，按 `Params::calibType` 分派。想动"标定结果不够好"之前先读 `reports/阶段6-鲁棒标定方案讨论.md`（先量后改，且别放弃"助手=官方 SDK"这条已验证的一致性） |
 | SDK 崩溃/返回码的最底层包装 | `sdk/HandEyeSDKBridge.{h,cpp}`（`safeCall` + `kSdkInternalError`） |
 | 质检（数量/近重复/离群/分散度/相机目标点/标记点数） | `logic/DataQualityCheck.h`（header-only 纯逻辑）；UI 侧只负责组装 `Record` 与渲染 HTML |
 | 「当前位姿 vs 最近已采」引导 | `logic/PoseGuide.h`（判定）+ `MainWindow::updatePoseGuide()`（选卡片、写文案） |
-| 测量算法（8 个方法） | `logic/MeasureTools.*`（kernel）+ `logic/MeasureMethods.h`（方法目录/ROI 需求）+ `ui/MeasurePages.cpp`（每页的 `compute()`） |
+| 测量算法（8 个方法） | `logic/MeasureTools.*`（kernel）+ `logic/MeasureMethods.h`（方法目录/ROI 需求）+ `ui/MeasurePages.cpp`（每页的 `compute()`）。**改之前先读 `reports/阶段10-测量功能优化方案.md`**（含"真值回归测的 kernel 与界面在跑的 kernel 已脱节"这个坑） |
+| 测量精度的硬判据（T-012） | `reports/T-012/accuracy_probe.py`（判据）+ `reports/T-012/BASELINE.md`（基线与改判理由）。**界面在跑的是 `measureBoundaryCircle`，而 `measurement_truth` 测的是 `holeBoundary`** —— 别把 ctest 全绿当成精度达标 |
 | 像素→3D | `logic/PixelTo3DService.{h,cpp}`（共享服务）、`logic/PixelTo3DTools.h`（纯换算） |
 | 坐标转换 / 走点验证 | `logic/TransformTools.h` |
 | 机器人四协议的读位姿 | `logic/RobotPose.*`、`URRealtimeReader.*`、`NrcJsonReader.*`、`EfortPoseReader.*`；分派在 `RobotWorker::readerFor()` |
