@@ -1,26 +1,67 @@
 # STATUS.md — 进度状态（每次会话结束必须更新）
 
-> 最后更新：2026-09-30
+> 最后更新：2026-10-08
 > 只保留「当前快照」，不积累历史；旧条目删除即可，git 历史里仍可追溯。
 
 ## ⏭ 交接块（新会话先读这里）
+
+- **2026-10-08（用户直接指派，不走三方协作：修两个 BUG + 出代码地图）**
+  - 来源：用户明确说「你来修改就可以了，不用管三方协作」（`.trio/` 流程本次**不适用**），
+    并批准把代码地图落成文件。两条 BUG：
+  - **BUG 1「运行质检」出假报告**：眼在手外 + 戳点标定 + 同心圆，静止连采 15 组一样的数据，
+    质检却报「拍照位姿的近重复 / 离群 / 单帧误差 / 分散度全部正常」。
+    **根因**：`MainWindow::refreshQualityReport()` 无条件用 `robotCapturePose` 建记录，
+    而该模式这一列**根本没有**（`hidePose = !eyeInHand && !isMarkerCalib`），
+    于是所有基于位姿的检查都在**空索引集**上跑，一律"通过"。
+  - **BUG 2「计算」报错**：同场景点计算 → `标定失败:第1组机器人拍照位姿格式无效(应为6个数值)`。
+    **根因**：两个 UI 入口都无条件调 `CalibrationService::calibrateMarker()`，
+    戳点标定该走 `HandEyeCalibrationTcpTouch`。
+    两条 BUG 同一类病根：**除 `CaptureFlow::validateSaveInputs` 与 `DataInputArea::updateVisibility`
+    之外，没有任何链路看 `CalibType`**。
+  - **改法**：
+    - `logic/DataQualityCheck.h`：新增 `PoseSource`/`sourceFor()`/`sourceHasOrientation()`/`sourceName()`，
+      "用哪一列判定"变成显式参数，报告新增「数据源」一行；新增 `Level::NotApplicable`
+      （"没数据可判"再也不显示"通过"）；新增**相机目标点离群**与**标记点数一致性**两项检查
+      （后者是同心圆模式下唯一可用的单帧信号）；明细行封顶 12 条 + 计数照实报（15 组相同 = 105 对）。
+      另外 `Record` 加 `cameraXyz`/`hasCameraTarget`，`Params` 加 `source`、相机离群阈值。
+    - `logic/CalibrationService.{h,cpp}`：入口收敛成 `calibrate()`，按 `Params::calibType` 分派；
+      新增 `calibrateTcpTouch()`（进 SDK 前逐组逐列中文校验）、戳点专用返回码表 `tcpErrorText()`
+      （与标定板的 `errorText()` 表**不通用**，同为 -2 含义不同）；`success2D/3D` 对戳点**留空**
+      （SDK 文档写明无意义，照抄会让 `formatResult` 把每组标成"识别失败"）。
+    - `sdk/HandEyeSDKBridge.cpp`：眼在手外时拍照位姿文件传 **nullptr** 而非空串（`HandEye.h` 的要求）。
+    - `app/MainWindow.{h,cpp}`：`updatePoseGuide()` 改为无参、由模式决定读哪张卡片；
+      `refreshQualityReport()` 按源建记录 + 补 8 行 + `NotApplicable` 灰色标签；
+      `onCalibrate()` / `onCalibrationSessionRequested()` 三列**不过滤**（下标必须对齐）传下去。
+    - `ui/ToolsPanel.{h,cpp}`：离线标定页加「标定方式」下拉 + 相机点位文件 / 戳点文件两行（按方式显隐）。
+    - `ui/DataInputArea.{h,cpp}`：参数名 `markerType` → `isMarkerCalib`（消歧义，判据不变）。
+    - 单测新增 14 条（质检 9 + 标定 5），全部**在设计上不进 DLL**（用空/坏行卡在前置校验）。
+  - **验证**：D 工作区构建 exit 0、三个 exe 时间戳刷新、`ctest` **2/2 通过**；
+    `build/unit_tests_report.data_quality_check.txt` 22 PASS、`...calibration_service.txt` 12 PASS。
+  - **未做/待办**：①两个 BUG 的修复**只覆盖到"不再报假结果 / 不再报格式错"**，
+    **戳点标定的最终数值必须真机验证**（本次无相机/机器人）；
+    ②`reports/CODE-MAP.md`（本次新写，改代码的导航图）已落盘；
+    ③**未提交**：15 个已跟踪文件的改动 + `reports/CODE-MAP.md` 仍是工作树状态，等用户确认后再 `git commit`（不推送）；
+    ④双工作区**仍分叉**（AICode 停在 09-18，本次全部改动只在 `D:\MyCode\MyHandEyeTools`），按用户指示未同步。
+  - **给用户的人工验证清单**（UI 不做自动化测试）：
+    1. 选「眼在手外 + 戳点标定 + 同心圆」，静止连采 15 组相同数据 → 点「运行质检」：
+       预期 —— 出现「数据源」一行且写明**机器人目标点**；近重复报 105 对并将明细封顶；
+       分散度报"分散不足"；单帧误差显示**不适用**（灰色）而非"正常"；
+       结论**不含**"数据可用于标定"。
+    2. 同场景点「计算」：预期 —— 不再报"第 1 组机器人拍照位姿格式无效"；
+       要么出标定结果，要么给出**针对戳点**的可读报错（如"没有可用的机器人目标点数据（戳点）"）。
+    3. 「工具」→ 手眼标定页：切换「标定方式」下拉，预期「相机点位文件 / 戳点文件」
+       两行随方式显隐，位姿文件名在 `pose.txt` / `cameraCaptureRobotPose.txt` 间切换。
+    4. 回归：切回「眼在手上 + 标定板」，质检与计算行为应与改动前一致。
 
 - **2026-09-30（2.0 批次：8/10 完成，走「人 / A / B」三方协作）**
   - 来源：用户 09-30 的两条指令 —— ①按 A 的代码审查做完 8 条优化（一任务一验收一提交，
     全部做完再统一汇报）；②新加两条 2.0 需求（测量精度 / 测量界面参数化）。
     **任务表与逐项状态全在 `.trio/tasks/BACKLOG-2.0.md`**，本块只记结论。
-  - **已完成并提交（8 条，全部双证：真机/探针 + 既有测试）**：
-    - `b9e9cdc` PLY 头部声称的点数超过文件大小 → 报错不崩（原会 `bad_alloc` 杀进程）
-    - `f01cbdd` 保存/撤销的导出文件写失败不再"假成功"；备份改原子写 + 版本字段 + 恢复跳过损坏文件
-    - `822e707` PLY 的 x/y/z 按**声明类型**解码（原 int32 被当 float 重解释、int16/uint8 直接给 0）
-    - `d23165f` 机器人四协议分派从四份复制粘贴收敛成 `robotReaderFor()` 一处（`MainWindow.cpp` 净减 109 行）
-    - `d558eec` / `0ea79a6` / `59f1f8f` 清理包三段：SDK 异常不再冒充"参数无效" + PLY 的 list 属性不再静默错值 /
-      标定正文收敛到 `CalibrationService::formatResult` / 品牌色收敛到 `Theme::withAlpha()` + Tab 清零
-    - `14157d6` 机器人通道整体搬进专属线程（`RobotWorker` + `moveToThread`）——
-      此前点连接/读位姿会在 UI 线程冻 1.5 s（程序自带的看门狗记过 `UI stall 1575 ms`）
-    - `57d0da5` 浮层模糊底加开销仪表：真机实测 **median 148.8 µs / max 194.1 µs 每帧**（≈0.9% 帧预算）
-      → 结论是"不用优化"，仪表留在代码里
-    - `7c7bf88` 相机析构等预览 worker（`m_previewFuture.waitForFinished()`），关窗口不再有 UAF 窗口
+  - **已完成并提交（8 条，全部双证：真机/探针 + 既有测试）**：PLY 头部点数超文件大小不再 `bad_alloc`、
+    导出写失败不再"假成功"、PLY x/y/z 按声明类型解码、机器人四协议分派收敛成 `robotReaderFor()` 一处、
+    包三段清理（SDK 异常不冒充"参数无效" / 标定正文收敛到 `formatResult` / 品牌色收敛到 `Theme::withAlpha()`）、
+    机器人通道搬进专属线程 `RobotWorker`（原 UI 冻 1.5 s）、浮层模糊加开销仪表（实测 median 148.8 µs，结论"不用优化"）、
+    相机析构等预览 worker。逐条 hash 与细节见 git 历史（`7c7bf88`..`b9e9cdc`）。
   - **待用户拍板的（卡在这里，两条都等人）**：
     - **T-012 测量精度**（用户的 2.0 第 9 条）：Ø9/Ø5/Ø6/Ø26/Ø63.5 要 ≤0.2%×标称。
       真机基线：**Ø6=6.2648**（标称 6）、**Ø5=4.7370**（标称 5）、**Ø63.5=48.2832**（真值的 76%）、

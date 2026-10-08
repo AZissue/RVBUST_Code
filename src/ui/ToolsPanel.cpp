@@ -616,6 +616,7 @@ void ToolsPanel::buildCalibrationPage(QStackedWidget* stack)
     auto* group = new QGroupBox(QStringLiteral("手眼标定（离线计算）"), page);
     auto* form = new QFormLayout(group);
     form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    m_calibForm = form;
 
     // Data folder
     auto* dirRow = new QHBoxLayout();
@@ -630,10 +631,32 @@ void ToolsPanel::buildCalibrationPage(QStackedWidget* stack)
     dirRow->addWidget(browseBtn);
     form->addRow(QStringLiteral("数据文件夹"), dirRow);
 
+    // 标定方式：既决定下面哪几行要填，也决定「计算」走哪个 SDK 接口。
+    // 以前这里没有这一项，两个方法都走 HandEyeCalibrationMarker —— 戳点标定
+    // 必然报「第 1 组机器人拍照位姿格式无效」。
+    m_calibTypeCombo = new ArrowComboBox(group);
+    m_calibTypeCombo->addItem(QStringLiteral("标定板识别（同心圆 / 黑白圆）"));
+    m_calibTypeCombo->addItem(QStringLiteral("戳点标定（TCP touch）"));
+    m_calibTypeCombo->setStyleSheet(Theme::comboBoxStyle());
+    form->addRow(QStringLiteral("标定方式"), m_calibTypeCombo);
+
     m_calibPoseFile = makeTextInput(group);
     m_calibPoseFile->setObjectName(QStringLiteral("calib_pose_file"));
     m_calibPoseFile->setText(QStringLiteral("pose.txt"));
     form->addRow(QStringLiteral("位姿文件"), m_calibPoseFile);
+
+    // 标定板 / 戳点两个方法的数据列不同（见 HandEye.h）：
+    //   标定板 = 数据文件夹里的 1.png/1.ply + pose.txt
+    //   戳点   = cameraCapturePointXyz.txt + tcp.txt (+ cameraCaptureRobotPose.txt 仅眼在手上)
+    m_calibCameraFile = makeTextInput(group);
+    m_calibCameraFile->setObjectName(QStringLiteral("calib_camera_file"));
+    m_calibCameraFile->setText(QStringLiteral("cameraCapturePointXyz.txt"));
+    form->addRow(QStringLiteral("相机点位文件"), m_calibCameraFile);
+
+    m_calibTcpFile = makeTextInput(group);
+    m_calibTcpFile->setObjectName(QStringLiteral("calib_tcp_file"));
+    m_calibTcpFile->setText(QStringLiteral("tcp.txt"));
+    form->addRow(QStringLiteral("戳点文件"), m_calibTcpFile);
 
     m_calibEyeCombo = new ArrowComboBox(group);
     m_calibEyeCombo->addItem(QStringLiteral("眼在手外（相机固定）"));
@@ -719,20 +742,68 @@ void ToolsPanel::buildCalibrationPage(QStackedWidget* stack)
         if (!m_calibResult->toPlainText().isEmpty())
             QApplication::clipboard()->setText(m_calibResult->toPlainText());
     });
-    for (QLineEdit* edit : { m_calibDir, m_calibPoseFile })
+    for (QLineEdit* edit : { m_calibDir, m_calibPoseFile, m_calibCameraFile, m_calibTcpFile })
         connect(edit, &QLineEdit::textChanged, this, [this](const QString&) {
             m_calibHint->clear();
-            // 用户自己改路径 = 回到手工方式：丢掉「用当前会话」带来的内存位姿，
-            // 之后的「计算」按文件夹 + 位姿文件走。
+            // 用户自己改路径 = 回到手工方式：丢掉「用当前会话」带来的内存数据，
+            // 之后的「计算」按文件夹 + 文件走。
             m_sessionActive = false;
             m_sessionFolder.clear();
             m_sessionPoses.clear();
+            m_sessionCamera.clear();
+            m_sessionTcp.clear();
         });
+
+    // 标定方式 / 安装方式变了 → 该显示哪几行、位姿文件叫什么名字都要跟着变。
+    for (QComboBox* combo : { m_calibTypeCombo, m_calibEyeCombo })
+        connect(combo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                this, [this](int) {
+                    m_calibHint->clear();
+                    updateCalibrationModeVisibility();
+                });
+    updateCalibrationModeVisibility();
+}
+
+void ToolsPanel::updateCalibrationModeVisibility()
+{
+    if (!m_calibForm || !m_calibTypeCombo || !m_calibEyeCombo)
+        return;
+
+    const bool tcp = m_calibTypeCombo->currentIndex() == 1;
+    const bool eyeInHand = m_calibEyeCombo->currentIndex() == 1;
+    // 眼在手外 + 戳点标定没有机器人拍照位姿这一列（与 DataInputArea 卡片同判据）。
+    const bool needPose = !tcp || eyeInHand;
+
+    auto rowVisible = [this](QWidget* field, bool on) {
+        if (!field) return;
+        if (QWidget* label = m_calibForm->labelForField(field))
+            label->setVisible(on);
+        field->setVisible(on);
+    };
+
+    rowVisible(m_calibPoseFile, needPose);
+    rowVisible(m_calibCameraFile, tcp);
+    rowVisible(m_calibTcpFile, tcp);
+    rowVisible(m_calibMarkerCombo, !tcp);
+    rowVisible(m_calibPoseUnitCombo, needPose);
+    rowVisible(m_calibAngleUnitCombo, needPose);
+
+    // 位姿文件的默认名随方式变（会话导出用哪份文件就填哪份），用户自己改过的不动。
+    const QString cur = m_calibPoseFile->text().trimmed();
+    const QString defMarker = QStringLiteral("pose.txt");
+    const QString defTcp = QStringLiteral("cameraCaptureRobotPose.txt");
+    if (needPose && (cur.isEmpty() || cur == defMarker || cur == defTcp)) {
+        const QString want = tcp ? defTcp : defMarker;
+        if (cur != want)
+            m_calibPoseFile->setText(want);
+    }
 }
 
 CalibrationService::Params ToolsPanel::calibParams() const
 {
     CalibrationService::Params params;
+    params.calibType = m_calibTypeCombo->currentIndex() == 1
+        ? CalibType::TcpTouch : CalibType::Marker;
     params.eyeInHand = m_calibEyeCombo->currentIndex() == 1;
     params.markerType = m_calibMarkerCombo->currentIndex() == 0 ? 1 : 0;
     params.isPoseMm = m_calibPoseUnitCombo->currentIndex() == 0;
@@ -742,59 +813,100 @@ CalibrationService::Params ToolsPanel::calibParams() const
 }
 
 void ToolsPanel::runCalibration(const QString& folder,
-                                const std::vector<QString>& poseLines)
+                                const std::vector<QString>& cameraLines,
+                                const std::vector<QString>& poseLines,
+                                const std::vector<QString>& tcpLines)
 {
     const CalibrationService::Params params = calibParams();
     m_calibCalcBtn->setEnabled(false);
     m_calibCalcBtn->setText(QStringLiteral("计算中..."));
-    m_calibWatcher->setFuture(QtConcurrent::run([folder, poseLines, params]() {
-        return CalibrationService::calibrateMarker(folder, poseLines, params);
-    }));
+    m_calibWatcher->setFuture(QtConcurrent::run(
+        [folder, cameraLines, poseLines, tcpLines, params]() {
+            return CalibrationService::calibrate(folder, cameraLines, poseLines,
+                                                 tcpLines, params);
+        }));
 }
 
 void ToolsPanel::useCurrentSession(const QString& folder,
+                                   const QStringList& cameraLines,
                                    const QStringList& poseLines,
-                                   bool eyeInHand, bool concentric)
+                                   const QStringList& tcpLines,
+                                   bool eyeInHand, bool marker, bool concentric)
 {
     if (m_calibWatcher->isRunning())
         return;
 
-    // 先写路径再置状态：setText 会触发 textChanged（那里会清掉会话状态）。
+    // 先写路径/方式再置状态：setText / setCurrentIndex 都会触发信号，
+    // 那几个槽会清掉会话状态。
     m_calibDir->setText(folder);
+    m_calibTypeCombo->setCurrentIndex(marker ? 0 : 1);
     m_calibEyeCombo->setCurrentIndex(eyeInHand ? 1 : 0);
     m_calibMarkerCombo->setCurrentIndex(concentric ? 0 : 1);
+    updateCalibrationModeVisibility();
     m_calibResult->clear();
 
-    std::vector<QString> lines;
-    lines.reserve(static_cast<std::size_t>(poseLines.size()));
-    for (const QString& line : poseLines) {
-        if (!line.trimmed().isEmpty())
-            lines.push_back(line);
-    }
+    auto clearSession = [this]() {
+        m_sessionActive = false;
+        m_sessionFolder.clear();
+        m_sessionPoses.clear();
+        m_sessionCamera.clear();
+        m_sessionTcp.clear();
+    };
+    // 返回第一个空行的组号（1 基），没有空行返回 0。
+    auto firstEmpty = [](const QStringList& lines) {
+        for (int i = 0; i < lines.size(); ++i)
+            if (lines[i].trimmed().isEmpty())
+                return i + 1;
+        return 0;
+    };
 
-    if (lines.empty()) {
-        m_sessionActive = false;
-        m_sessionFolder.clear();
-        m_sessionPoses.clear();
-        m_calibHint->setText(QStringLiteral(
-            "当前会话还没有可用的机器人位姿（请先拍照并填写机器人位姿）"));
-        return;
-    }
     if (folder.trimmed().isEmpty()) {
-        m_sessionActive = false;
-        m_sessionFolder.clear();
-        m_sessionPoses.clear();
+        clearSession();
         m_calibHint->setText(QStringLiteral(
             "当前会话还没有保存目录（请先保存一组标定数据）"));
         return;
     }
 
+    // 按当前方式校验**本方式需要的那几列**是否整列有值。列不对齐就直接说清楚，
+    // 别把错位的数据喂给 SDK（那样只会得到"数据无效"这种看不出原因的返回码）。
+    const bool tcp = !marker;
+    if (tcp) {
+        if (cameraLines.isEmpty() || cameraLines.size() != tcpLines.size()
+                || firstEmpty(cameraLines) > 0 || firstEmpty(tcpLines) > 0) {
+            clearSession();
+            m_calibHint->setText(QStringLiteral(
+                "戳点标定需要每组的相机目标点与机器人目标点（当前会话这两列有缺失）"));
+            return;
+        }
+        if (eyeInHand && (poseLines.size() != cameraLines.size() || firstEmpty(poseLines) > 0)) {
+            clearSession();
+            m_calibHint->setText(QStringLiteral(
+                "眼在手上戳点标定还需要每组的机器人拍照位姿（当前会话有缺失）"));
+            return;
+        }
+    } else if (poseLines.isEmpty() || firstEmpty(poseLines) > 0) {
+        clearSession();
+        m_calibHint->setText(QStringLiteral(
+            "当前会话还没有可用的机器人拍照位姿（请先拍照并填写机器人位姿）"));
+        return;
+    }
+
+    auto copyIn = [](const QStringList& src) {
+        std::vector<QString> out;
+        out.reserve(static_cast<std::size_t>(src.size()));
+        for (const QString& line : src)
+            out.push_back(line);
+        return out;
+    };
+
     m_sessionActive = true;
     m_sessionFolder = folder;
-    m_sessionPoses = lines;
-    m_calibHint->setText(QStringLiteral("当前会话：%1（%2 组位姿）")
-        .arg(folder).arg(static_cast<int>(lines.size())));
-    runCalibration(m_sessionFolder, m_sessionPoses);
+    m_sessionCamera = copyIn(cameraLines);
+    m_sessionPoses = copyIn(poseLines);
+    m_sessionTcp = copyIn(tcpLines);
+    m_calibHint->setText(QStringLiteral("当前会话：%1（%2 组数据）")
+        .arg(folder).arg(cameraLines.size()));
+    runCalibration(m_sessionFolder, m_sessionCamera, m_sessionPoses, m_sessionTcp);
 }
 
 void ToolsPanel::updateCalibrationResult()
@@ -802,10 +914,10 @@ void ToolsPanel::updateCalibrationResult()
     if (m_calibWatcher->isRunning())
         return;
     if (m_sessionActive) {
-        // 会话模式：「计算」重算当前会话（用内存里的位姿，不是磁盘上的 pose.txt）。
-        m_calibHint->setText(QStringLiteral("当前会话：%1（%2 组位姿）")
-            .arg(m_sessionFolder).arg(m_sessionPoses.size()));
-        runCalibration(m_sessionFolder, m_sessionPoses);
+        // 会话模式：「计算」重算当前会话（用内存里的三列，不是磁盘上的文件）。
+        m_calibHint->setText(QStringLiteral("当前会话：%1（%2 组数据）")
+            .arg(m_sessionFolder).arg(m_sessionCamera.size()));
+        runCalibration(m_sessionFolder, m_sessionCamera, m_sessionPoses, m_sessionTcp);
         return;
     }
     m_calibHint->clear();
@@ -818,31 +930,49 @@ void ToolsPanel::updateCalibrationResult()
         fail(QStringLiteral("请先选择数据文件夹"));
         return;
     }
-    const QString poseName = m_calibPoseFile->text().trimmed();
-    if (poseName.isEmpty()) {
-        fail(QStringLiteral("位姿文件名不能为空"));
-        return;
-    }
-    const QString posePath = dir + QLatin1Char('/') + poseName;
-    QFile poseFile(posePath);
-    if (!poseFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        fail(QStringLiteral("无法读取位姿文件: %1").arg(poseName));
-        return;
-    }
-    std::vector<QString> poseLines;
-    QTextStream ts(&poseFile);
-    ts.setCodec("UTF-8");
-    while (!ts.atEnd()) {
-        const QString line = ts.readLine().trimmed();
-        if (!line.isEmpty())
-            poseLines.push_back(line);
-    }
-    if (poseLines.empty()) {
-        fail(QStringLiteral("位姿文件为空"));
-        return;
-    }
 
-    runCalibration(dir, poseLines);
+    const CalibrationService::Params params = calibParams();
+    const bool tcp = (params.calibType == CalibType::TcpTouch);
+    const bool needPose = !tcp || params.eyeInHand;
+
+    auto readLines = [&](const QLineEdit* edit, const QString& what,
+                         std::vector<QString>& out) -> bool {
+        const QString name = edit->text().trimmed();
+        if (name.isEmpty()) {
+            fail(QStringLiteral("%1文件名不能为空").arg(what));
+            return false;
+        }
+        QFile file(dir + QLatin1Char('/') + name);
+        if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            fail(QStringLiteral("无法读取%1: %2").arg(what).arg(name));
+            return false;
+        }
+        QTextStream ts(&file);
+        ts.setCodec("UTF-8");
+        while (!ts.atEnd()) {
+            const QString line = ts.readLine().trimmed();
+            if (!line.isEmpty())
+                out.push_back(line);
+        }
+        if (out.empty()) {
+            fail(QStringLiteral("%1为空").arg(what));
+            return false;
+        }
+        return true;
+    };
+
+    std::vector<QString> cameraLines, poseLines, tcpLines;
+    if (tcp) {
+        if (!readLines(m_calibCameraFile, QStringLiteral("相机点位文件"), cameraLines))
+            return;
+        if (!readLines(m_calibTcpFile, QStringLiteral("戳点文件"), tcpLines))
+            return;
+    }
+    if (needPose
+            && !readLines(m_calibPoseFile, QStringLiteral("位姿文件"), poseLines))
+        return;
+
+    runCalibration(dir, cameraLines, poseLines, tcpLines);
 }
 
 void ToolsPanel::onCalibrationFinished()

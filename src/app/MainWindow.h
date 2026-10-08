@@ -190,7 +190,9 @@ private:
     void onCardChanged(const QString& field, const QString& value);
 
     // Stage 8 advisory features (report only, never block the workflow)
-    void updatePoseGuide(const QString& poseText);
+    // 刷「当前 vs 最近已采」引导。读哪张卡片由当前标定方式决定
+    // （DataQualityCheck::sourceFor），所以不需要调用方给值。
+    void updatePoseGuide();
     void refreshQualityReport();
     void onBoardMarkers(const std::vector<std::array<float, 3>>& pts3d);
     void syncBoardHistory();

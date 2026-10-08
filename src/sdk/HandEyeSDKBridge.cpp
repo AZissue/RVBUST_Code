@@ -176,8 +176,12 @@ int handEyeCalibrationTcpTouch(const std::string& cameraXyzFile,
                                const HandEyeParam& params, HandEyeResult& result)
 {
     int ret = kSdkInternalError;
+    // 眼在手外**没有**机器人拍照位姿这一列，SDK 明确要求传 nullptr（见 HandEye.h）。
+    // 传空字符串会被当成"文件内容无效"返回 -5，现场看到的是"拍照位姿数据无效"，
+    // 与真实原因（本来就不该有这一列）完全对不上。
+    const char* posePtr = robotPoseFile.empty() ? nullptr : robotPoseFile.c_str();
     const bool ok = safeCall([&]() {
-        ret = HandEyeCalibrationTcpTouch(cameraXyzFile.c_str(), robotPoseFile.c_str(),
+        ret = HandEyeCalibrationTcpTouch(cameraXyzFile.c_str(), posePtr,
                                          tcpXyzFile.c_str(), params, result);
     });
     if (!ok) return kSdkInternalError;

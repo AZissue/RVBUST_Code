@@ -96,3 +96,119 @@ void TestCalibrationService::formatResultCarriesMatrixAndPerFrameErrors()
     QVERIFY2(failText.contains(QStringLiteral("标定失败")), qPrintable(failText));
     QVERIFY2(failText.contains(bad.error), qPrintable(failText));
 }
+
+// ── 戳点标定 ──────────────────────────────────────────────────────────
+
+void TestCalibrationService::tcpErrorTextMapping()
+{
+    QVERIFY(CalibrationService::tcpErrorText(0).contains(QStringLiteral("成功")));
+    QVERIFY(CalibrationService::tcpErrorText(-2).contains(QStringLiteral("相机")));
+    QVERIFY(CalibrationService::tcpErrorText(-3).contains(QStringLiteral("机器人目标点")));
+    QVERIFY(CalibrationService::tcpErrorText(-4).contains(QStringLiteral("不一致")));
+    QVERIFY(CalibrationService::tcpErrorText(-999).contains(QStringLiteral("-999")));
+
+    // 同一个返回码，两张表的说法必须不一样（共用一张表就会误报）。
+    QVERIFY(CalibrationService::tcpErrorText(-2) != CalibrationService::errorText(-2));
+
+    const QString crashed =
+        CalibrationService::tcpErrorText(HandEyeSDKBridge::kSdkInternalError);
+    QVERIFY2(!crashed.contains(QStringLiteral("参数无效")), qPrintable(crashed));
+    QVERIFY(crashed.contains(QStringLiteral("SDK")) || crashed.contains(QStringLiteral("异常")));
+}
+
+void TestCalibrationService::normalizeXyzLineAcceptsSpacesAndCommas()
+{
+    QCOMPARE(CalibrationService::normalizeXyzLine(QStringLiteral("1 2 3")),
+             QStringLiteral("1,2,3"));
+    QCOMPARE(CalibrationService::normalizeXyzLine(QStringLiteral("1, 2, 3")),
+             QStringLiteral("1,2,3"));
+    // 6 个数值不是 3 值坐标；中文逗号也不是分隔符。
+    QVERIFY(CalibrationService::normalizeXyzLine(
+                QStringLiteral("1 2 3 4 5 6")).isEmpty());
+    QVERIFY(CalibrationService::normalizeXyzLine(
+                QStringLiteral("1，2，3")).isEmpty());
+    QVERIFY(CalibrationService::normalizeXyzLine(QString()).isEmpty());
+}
+
+void TestCalibrationService::tcpTouchValidatesColumnsBeforeSdk()
+{
+    CalibrationService::Params p;
+    p.calibType = CalibType::TcpTouch;
+    p.eyeInHand = true;
+
+    const std::vector<QString> cam { QStringLiteral("1 2 3"), QStringLiteral("4 5 6") };
+    const std::vector<QString> pose { QStringLiteral("1 2 3 4 5 6"), QStringLiteral("1 2 3 4 5 6") };
+    const std::vector<QString> tcp { QStringLiteral("7 8 9"), QStringLiteral("10 11 12") };
+
+    // 任何一条校验失败都在进 SDK 之前返回（所以这些用例不需要真机/DLL）。
+    auto err = [&](const std::vector<QString>& c, const std::vector<QString>& ps,
+                   const std::vector<QString>& t) -> QString {
+        const auto r = CalibrationService::calibrateTcpTouch(c, ps, t, p);
+        // 没拦住就会真的去调 DLL —— 用一句显眼的文案代替断言（lambda 里
+        // QVERIFY 的 return 在返回 QString 的 lambda 里不合法）。
+        if (r.ok)
+            return QStringLiteral("<校验没拦住，已经进 SDK 了>");
+        return r.error;
+    };
+
+    QVERIFY(err({}, pose, tcp).contains(QStringLiteral("相机目标点")));
+    QVERIFY(err(cam, pose, {}).contains(QStringLiteral("机器人目标点")));
+    QVERIFY(err(cam, pose, { QStringLiteral("7 8 9") })
+                .contains(QStringLiteral("不一致")));
+    QVERIFY(err(cam, { QStringLiteral("1 2 3 4 5 6") }, tcp)
+                .contains(QStringLiteral("拍照位姿数")));
+    QVERIFY(err({ QStringLiteral("1 2 3"), QStringLiteral("bad") }, pose, tcp)
+                .contains(QStringLiteral("第 2 组相机目标点")));
+    QVERIFY(err(cam, pose, { QStringLiteral("7 8 9"), QStringLiteral("bad") })
+                .contains(QStringLiteral("第 2 组机器人目标点")));
+    QVERIFY(err(cam, { QStringLiteral("1 2 3 4 5 6"), QStringLiteral("bad") }, tcp)
+                .contains(QStringLiteral("第 2 组机器人拍照位姿")));
+}
+
+void TestCalibrationService::tcpTouchRequiresPoseOnlyForEyeInHand()
+{
+    const std::vector<QString> cam { QStringLiteral("1 2 3") };
+    const std::vector<QString> tcp { QStringLiteral("7 8 9") };
+
+    // 眼在手上：没有拍照位姿就是缺列，要说出来。
+    CalibrationService::Params hand;
+    hand.calibType = CalibType::TcpTouch;
+    hand.eyeInHand = true;
+    const auto r1 = CalibrationService::calibrateTcpTouch(cam, {}, tcp, hand);
+    QVERIFY(!r1.ok);
+    QVERIFY2(r1.error.contains(QStringLiteral("机器人拍照位姿")), qPrintable(r1.error));
+
+    // 眼在手外：拍照位姿这一列本来就不该有，校验不能拿它拦人。
+    // 用一条坏掉的相机点位把流程停在逐行校验上（不碰 DLL），
+    // 此时报的错只能是相机点位，不该提到拍照位姿。
+    CalibrationService::Params fixed;
+    fixed.calibType = CalibType::TcpTouch;
+    fixed.eyeInHand = false;
+    const std::vector<QString> camBad { QStringLiteral("bad"), QStringLiteral("4 5 6") };
+    const std::vector<QString> tcp2 { QStringLiteral("7 8 9"), QStringLiteral("10 11 12") };
+    const auto r2 = CalibrationService::calibrateTcpTouch(camBad, {}, tcp2, fixed);
+    QVERIFY(!r2.ok);
+    QVERIFY2(!r2.error.contains(QStringLiteral("机器人拍照位姿")), qPrintable(r2.error));
+    QVERIFY2(r2.error.contains(QStringLiteral("第 1 组相机目标点")), qPrintable(r2.error));
+}
+
+void TestCalibrationService::calibrateDispatchesOnCalibType()
+{
+    // 戳点标定 + 空数据：入口必须走戳点那条路（报"相机目标点"），
+    // 而不是标定板那条（报"没有可用的标定数据"/"数据文件夹不存在"）。
+    CalibrationService::Params tcp;
+    tcp.calibType = CalibType::TcpTouch;
+    const auto r = CalibrationService::calibrate(
+        QStringLiteral("Z:/definitely/not/here"), {}, {}, {}, tcp);
+    QVERIFY(!r.ok);
+    QVERIFY2(!r.error.contains(QStringLiteral("数据文件夹不存在")), qPrintable(r.error));
+    QVERIFY2(r.error.contains(QStringLiteral("相机目标点")), qPrintable(r.error));
+
+    // 标定板：空位姿行 -> 标定板那条路的提示。
+    CalibrationService::Params marker;
+    marker.calibType = CalibType::Marker;
+    const auto m = CalibrationService::calibrate(
+        QStringLiteral("Z:/definitely/not/here"), {}, {}, {}, marker);
+    QVERIFY(!m.ok);
+    QVERIFY2(m.error.contains(QStringLiteral("标定数据")), qPrintable(m.error));
+}

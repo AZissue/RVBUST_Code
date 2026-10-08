@@ -671,9 +671,7 @@ void MainWindow::wireSignals()
             m_data->allRecords());
         syncBoardHistory();
         // Refresh pose guidance too (每保存/读入一帧刷新「当前 vs 最近已采」).
-        auto* poseCard = m_dataInput->card(QStringLiteral("robot_capture_pose"));
-        if (poseCard)
-            updatePoseGuide(poseCard->value());
+        updatePoseGuide();
     });
 
     // Log manager →「操作日志」面板（第 10 回合 P4）。
@@ -1087,35 +1085,48 @@ void MainWindow::onCalibrate()
     // never blocks the calibration (PROJECT.md "质量告警不拦截").
     refreshQualityReport();
 
-    std::vector<QString> poseLines;
+    // 三列原样带上（不跳过空行）：列与列的**下标必须对齐**，跳过空的会让
+    // 「相机目标点 / 拍照位姿 / 戳点」三列错位，比直接报"第 N 组缺失"更难查。
+    std::vector<QString> cameraLines, poseLines, tcpLines;
+    cameraLines.reserve(records.size());
     poseLines.reserve(records.size());
-    for (const auto& r : records)
+    tcpLines.reserve(records.size());
+    for (const auto& r : records) {
+        cameraLines.push_back(r.cameraTargetXyz);
         poseLines.push_back(r.robotCapturePose);
+        tcpLines.push_back(r.robotTargetXyz);
+    }
 
     CalibrationService::Params params;
+    params.calibType = m_calibType;   // ← 按标定方式分派（标定板 / 戳点）
     params.eyeInHand = (m_eyeHandMode == EyeHandMode::EyeInHand);
     params.markerType =
         (m_markerType == MarkerType::ConcentricCircle) ? 1 : 0;
 
     const QString folder = m_data->saveDir();
     setBusy(QStringLiteral("计算中..."), ActionButtons::BusyTarget::Calc);
-    m_calibWatcher->setFuture(QtConcurrent::run([folder, poseLines, params]() {
-        return CalibrationService::calibrateMarker(folder, poseLines, params);
-    }));
+    m_calibWatcher->setFuture(QtConcurrent::run(
+        [folder, cameraLines, poseLines, tcpLines, params]() {
+            return CalibrationService::calibrate(folder, cameraLines, poseLines,
+                                                 tcpLines, params);
+        }));
 }
 
 void MainWindow::onCalibrationSessionRequested()
 {
     const auto records = m_data->allRecords();
-    QStringList poseLines;
+    QStringList cameraLines, poseLines, tcpLines;
     for (const auto& r : records) {
-        if (!r.robotCapturePose.trimmed().isEmpty())
-            poseLines.push_back(r.robotCapturePose);
+        // 不跳过空行 —— 面板按当前标定方式自己判断哪几列必须有值。
+        cameraLines.push_back(r.cameraTargetXyz);
+        poseLines.push_back(r.robotCapturePose);
+        tcpLines.push_back(r.robotTargetXyz);
     }
-    // 没有记录时也要回一次（空 poseLines），让面板给出可读提示。
+    // 没有记录时也要回一次（三列都空），让面板给出可读提示。
     m_toolsPanel->useCurrentSession(
-        m_data->saveDir(), poseLines,
+        m_data->saveDir(), cameraLines, poseLines, tcpLines,
         m_eyeHandMode == EyeHandMode::EyeInHand,
+        m_calibType == CalibType::Marker,
         m_markerType == MarkerType::ConcentricCircle);
 }
 
@@ -1340,6 +1351,8 @@ void MainWindow::onRobotPoseReady(int kind, bool ok, const QStringList& fields,
         auto* card = m_dataInput->card(QStringLiteral("robot_target_xyz"));
         if (card)
             card->setValue(value);
+        // 眼在手外 + 戳点标定下，引导用的就是这张卡片（没有拍照位姿可读）。
+        updatePoseGuide();
         m_sidePanel->setTip(QStringLiteral("已读取机器人 TCP 点并填入卡片"), false);
         m_logger->info(QStringLiteral("机器人 TCP 点读取成功: %1").arg(value));
         return;
@@ -1352,10 +1365,10 @@ void MainWindow::onRobotPoseReady(int kind, bool ok, const QStringList& fields,
     if (kind == RobotReadAutoBeforeCapture) {
         // 与原自动路径一致：卡片存在时才刷新位姿引导，不提示、不记日志。
         if (card)
-            updatePoseGuide(value);
+            updatePoseGuide();
         return;
     }
-    updatePoseGuide(value);
+    updatePoseGuide();
     m_sidePanel->setTip(QStringLiteral("已读取机器人位姿并填入卡片"), false);
     m_logger->info(QStringLiteral("机器人位姿读取成功: %1").arg(value));
 }
@@ -1376,10 +1389,12 @@ void MainWindow::updateRobotReadBar()
 
 void MainWindow::onCardChanged(const QString& field, const QString& value)
 {
-    // Advisory pose guidance refreshes on the robot capture pose (current vs
-    // nearest collected).  Report-only; never blocks the edit.
-    if (field == QStringLiteral("robot_capture_pose"))
-        updatePoseGuide(value);
+    // Advisory pose guidance refreshes on whichever card is the current mode's
+    // data source (robot capture pose, or robot target point for
+    // 眼在手外 + 戳点).  Report-only; never blocks the edit.
+    if (field == QStringLiteral("robot_capture_pose")
+            || field == QStringLiteral("robot_target_xyz"))
+        updatePoseGuide();
 
     // Real-time format hint: calibration data must use ASCII numbers separated
     // by spaces / English commas.  Saving is blocked separately in
@@ -1417,63 +1432,109 @@ PoseGuide::Pose poseGuideFromText(const QString& text, bool& ok)
 }
 } // namespace
 
-void MainWindow::updatePoseGuide(const QString& poseText)
+void MainWindow::updatePoseGuide()
 {
+    // 「当前 vs 最近已采」用的是哪一列，跟质检同源：眼在手外 + 戳点标定不采
+    // 机器人拍照位姿，这时只有机器人目标点（3 值，无姿态）可比。
+    const DataQualityCheck::PoseSource source = DataQualityCheck::sourceFor(
+        m_eyeHandMode == EyeHandMode::EyeInHand, m_calibType == CalibType::Marker);
+    const bool hasOri = DataQualityCheck::sourceHasOrientation(source);
+    const QString what = DataQualityCheck::sourceName(source);
+
+    auto* card = m_dataInput->card(
+        source == DataQualityCheck::PoseSource::RobotTargetXyz
+            ? QStringLiteral("robot_target_xyz") : QStringLiteral("robot_capture_pose"));
+    const QString text = card ? card->value().trimmed() : QString();
+    if (text.isEmpty()) {
+        m_sidePanel->setPoseGuide(QStringLiteral("暂无%1参考，可自由采集").arg(what), false);
+        return;
+    }
+
     bool ok = false;
-    const PoseGuide::Pose current = poseGuideFromText(poseText, ok);
+    PoseGuide::Pose current;
+    if (hasOri)
+        current = poseGuideFromText(text, ok);
+    else
+        ok = DataQualityCheck::parseXyzText(text, current.xyz);
     if (!ok) {
         m_sidePanel->setPoseGuide(
-            QStringLiteral("机器人拍照位姿需为 6 个数值（x y z rx ry rz）"), false);
+            hasOri ? QStringLiteral("机器人拍照位姿需为 6 个数值（x y z rx ry rz）")
+                   : QStringLiteral("机器人目标点需为 3 个数值（x y z）"),
+            false);
         return;
     }
 
     std::vector<PoseGuide::Pose> collected;
     collected.reserve(static_cast<std::size_t>(m_data->count()));
     for (const auto& r : m_data->allRecords()) {
+        PoseGuide::Pose p;
         bool cok = false;
-        const PoseGuide::Pose cp = poseGuideFromText(r.robotCapturePose, cok);
-        if (cok) collected.push_back(cp);
+        if (hasOri)
+            p = poseGuideFromText(r.robotCapturePose, cok);
+        else
+            cok = DataQualityCheck::parseXyzText(r.robotTargetXyz, p.xyz);
+        if (cok) collected.push_back(p);
     }
 
     if (collected.empty()) {
         m_sidePanel->setPoseGuide(
-            QStringLiteral("暂无已采位姿参考，可自由采集"), false);
+            QStringLiteral("暂无已采%1参考，可自由采集").arg(what), false);
         return;
     }
 
-    const PoseGuide::Guide g = PoseGuide::guide(current, collected);
+    // 无姿态的源只按位置判定：角差阈值取 0，于是 PoseGuide::guide 的 tooClose
+    // 退化成纯位置判据（不会因为"姿态都是 0"而永远报过于接近）。
+    const PoseGuide::Guide g = PoseGuide::guide(
+        current, collected, PoseGuide::DEFAULT_MIN_POS_MM,
+        hasOri ? PoseGuide::DEFAULT_MIN_ANGLE_DEG : 0.0);
     if (g.tooClose) {
         m_sidePanel->setPoseGuide(
-            QStringLiteral("与第 %1 组位姿过于接近（间距 %2 mm / 角差 %3°），建议拉开位置或旋转角度")
-                .arg(g.refIndex + 1)
-                .arg(g.distanceMm, 0, 'f', 1)
-                .arg(g.angleDeg, 0, 'f', 1),
+            hasOri
+                ? QStringLiteral("与第 %1 组%2过于接近（间距 %3 mm / 角差 %4°），建议拉开位置或旋转角度")
+                      .arg(g.refIndex + 1).arg(what)
+                      .arg(g.distanceMm, 0, 'f', 1).arg(g.angleDeg, 0, 'f', 1)
+                : QStringLiteral("与第 %1 组%2过于接近（间距 %3 mm），建议拉开位置")
+                      .arg(g.refIndex + 1).arg(what).arg(g.distanceMm, 0, 'f', 1),
             true);
     } else {
         m_sidePanel->setPoseGuide(
-            QStringLiteral("最近第 %1 组：间距 %2 mm / 角差 %3°，分散度良好")
-                .arg(g.refIndex + 1)
-                .arg(g.distanceMm, 0, 'f', 1)
-                .arg(g.angleDeg, 0, 'f', 1),
+            hasOri
+                ? QStringLiteral("最近第 %1 组：间距 %2 mm / 角差 %3°，分散度良好")
+                      .arg(g.refIndex + 1)
+                      .arg(g.distanceMm, 0, 'f', 1).arg(g.angleDeg, 0, 'f', 1)
+                : QStringLiteral("最近第 %1 组：间距 %2 mm，分散度良好")
+                      .arg(g.refIndex + 1).arg(g.distanceMm, 0, 'f', 1),
             false);
     }
 }
 
 void MainWindow::refreshQualityReport()
 {
+    // 判定用哪一列由当前标定方式决定（见 DataQualityCheck::sourceFor）：
+    // 眼在手外 + 戳点标定没有机器人拍照位姿，必须改用机器人目标点，
+    // 否则所有检查都落在空集合上，会报出一份"逐项正常"的假报告。
+    const bool eyeInHand = (m_eyeHandMode == EyeHandMode::EyeInHand);
+    const bool isMarkerCalib = (m_calibType == CalibType::Marker);
+    const DataQualityCheck::PoseSource source =
+        DataQualityCheck::sourceFor(eyeInHand, isMarkerCalib);
+
     std::vector<DataQualityCheck::Record> records;
     for (const auto& r : m_data->allRecords()) {
-        records.push_back(DataQualityCheck::recordFromText(
-            r.robotCapturePose, r.cameraErrorPct, r.markerCount));
+        records.push_back(DataQualityCheck::makeRecord(
+            source, r.robotCapturePose, r.robotTargetXyz, r.cameraTargetXyz,
+            r.cameraErrorPct, r.markerCount));
     }
 
-    const DataQualityCheck::Report rep = DataQualityCheck::run(records);
+    DataQualityCheck::Params params;
+    params.source = source;
+    const DataQualityCheck::Report rep = DataQualityCheck::run(records, params);
 
     auto levelColor = [](DataQualityCheck::Level lvl) -> QString {
         switch (lvl) {
         case DataQualityCheck::Level::Pass: return QStringLiteral("#52C41A");
         case DataQualityCheck::Level::Warn: return QStringLiteral("#FAAD14");
         case DataQualityCheck::Level::Fail: return QStringLiteral("#F5222D");
+        case DataQualityCheck::Level::NotApplicable: return QStringLiteral("#8C8C8C");
         }
         return QStringLiteral("#8C8C8C");
     };
@@ -1482,6 +1543,7 @@ void MainWindow::refreshQualityReport()
         case DataQualityCheck::Level::Pass: return QStringLiteral("通过");
         case DataQualityCheck::Level::Warn: return QStringLiteral("提示");
         case DataQualityCheck::Level::Fail: return QStringLiteral("不足");
+        case DataQualityCheck::Level::NotApplicable: return QStringLiteral("不适用");
         }
         return QStringLiteral("—");
     };
@@ -1501,9 +1563,12 @@ void MainWindow::refreshQualityReport()
     };
 
     appendCheck(QStringLiteral("数量"), rep.count);
+    appendCheck(QStringLiteral("数据源"), rep.source);
     appendCheck(QStringLiteral("近重复"), rep.nearDup);
     appendCheck(QStringLiteral("离群"), rep.outlier);
+    appendCheck(QStringLiteral("相机目标点"), rep.cameraTarget);
     appendCheck(QStringLiteral("单帧误差"), rep.frameError);
+    appendCheck(QStringLiteral("标记点数"), rep.detection);
     appendCheck(QStringLiteral("分散度"), rep.spread);
 
     m_sidePanel->setQualityReport(html);

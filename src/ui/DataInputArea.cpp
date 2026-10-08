@@ -41,17 +41,20 @@ DataInputArea::DataInputArea(QWidget* parent)
     m_layout->addWidget(m_cardRobotTarget, 1);
 }
 
-void DataInputArea::updateVisibility(bool eyeInHand, bool markerType)
+// 参数名从 markerType 改成 isMarkerCalib：它问的是"哪种标定"（标定板 / 戳点），
+// 不是"哪种标定板"。以前这个歧义名字很容易被读成 MarkerType，而下面的判据
+// （DataQualityCheck::sourceFor）必须和它逐字一致。
+void DataInputArea::updateVisibility(bool eyeInHand, bool isMarkerCalib)
 {
     // Card 1: always visible
     m_cardCamTarget->show();
 
     // Card 2: hidden only in "eye-to-hand + tcp"
-    bool hidePose = !eyeInHand && !markerType;
+    bool hidePose = !eyeInHand && !isMarkerCalib;
     m_cardRobotPose->setVisible(!hidePose);
 
     // Card 3: visible only in TCP mode
-    m_cardRobotTarget->setVisible(!markerType);
+    m_cardRobotTarget->setVisible(!isMarkerCalib);
 
     // Height stays FIXED regardless of visible card count.
     // Cards expand/shrink within this locked space via layout stretch,

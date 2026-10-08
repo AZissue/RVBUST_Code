@@ -28,6 +28,7 @@
 #include "ui/MeasurementSnapshot.h"
 
 class MeasurePage;
+class QFormLayout;
 
 // Non-modal tools panel (v2.0).  Left: tool list.  Right: the selected tool.
 // Tools: Euclidean distance, coordinate transform (walk-point validation), and
@@ -101,10 +102,14 @@ signals:
     void calibrationSessionRequested();
 
 public slots:
-    // 主窗口回答：folder = 当前会话目录；poseLines = 每组数据的机器人位姿（顺序即采集顺序）；
-    // eyeInHand / concentric 与主窗口当前选择一致，两个下拉框要对齐过去。
-    void useCurrentSession(const QString& folder, const QStringList& poseLines,
-                           bool eyeInHand, bool concentric);
+    // 主窗口回答：folder = 当前会话目录；三列按采集顺序一一对应（相机目标点 /
+    // 机器人拍照位姿 / 机器人目标点），**不做过滤**，空行即"该列这一组没有值"。
+    // eyeInHand / marker / concentric 与主窗口当前选择一致，要对齐到下拉框。
+    void useCurrentSession(const QString& folder,
+                           const QStringList& cameraLines,
+                           const QStringList& poseLines,
+                           const QStringList& tcpLines,
+                           bool eyeInHand, bool marker, bool concentric);
     // 主 2D 视窗上的左键点击（离线取点）：填进像素输入框并立刻重算
     void onMainViewPixelClicked(int x, int y);
     // 主窗口的查询结果：ok=false 时 message 是可读中文原因
@@ -135,10 +140,18 @@ private:
     void updatePixelTo3DResult();
     void updateCalibrationResult();
     void onCalibrationFinished();
-    // 手眼标定页当前的参数（两个方法共用，行为与原来逐字一致）。
+    // 手眼标定页当前的参数（含标定方式；两个方法共用）。
     CalibrationService::Params calibParams() const;
-    // 发起一次标定（folder + 内存里的位姿行），结果走 onCalibrationFinished。
-    void runCalibration(const QString& folder, const std::vector<QString>& poseLines);
+    // 按标定方式 + 安装方式决定哪几行输入框要看得到：
+    //   标定板            → 位姿文件、标定板类型、位姿单位
+    //   戳点 + 眼在手上   → 位姿文件、相机点位文件、戳点文件、位姿单位
+    //   戳点 + 眼在手外   → 相机点位文件、戳点文件（没有机器人拍照位姿这一列）
+    void updateCalibrationModeVisibility();
+    // 发起一次标定（folder + 内存里的三列），结果走 onCalibrationFinished。
+    void runCalibration(const QString& folder,
+                        const std::vector<QString>& cameraLines,
+                        const std::vector<QString>& poseLines,
+                        const std::vector<QString>& tcpLines);
     void updatePoseInputHint();
     void updateTransformResult();
     void refreshPixelTo3DImages();
@@ -180,8 +193,12 @@ private:
     QString m_p2dResultValue;   // values only, for copy
 
     // Hand-eye calibration tool (offline folder)
+    QFormLayout* m_calibForm = nullptr;
     QLineEdit* m_calibDir = nullptr;
+    QComboBox* m_calibTypeCombo = nullptr;   // 标定板识别 / 戳点标定
     QLineEdit* m_calibPoseFile = nullptr;
+    QLineEdit* m_calibCameraFile = nullptr;  // 戳点标定：相机目标点
+    QLineEdit* m_calibTcpFile = nullptr;     // 戳点标定：机器人目标点（戳点）
     QComboBox* m_calibEyeCombo = nullptr;
     QComboBox* m_calibMarkerCombo = nullptr;
     QComboBox* m_calibPoseUnitCombo = nullptr;
@@ -193,9 +210,11 @@ private:
     QPushButton* m_calibCopyBtn = nullptr;
     QPushButton* m_calibSessionBtn = nullptr;
     QFutureWatcher<CalibrationService::Result>* m_calibWatcher = nullptr;
-    // 「用当前会话」的状态：非空时「计算」用内存里的位姿；编辑两个路径输入框即清掉。
-    QString m_sessionFolder;        // 会话目录（用当前会话时的文件夹）
-    std::vector<QString> m_sessionPoses;  // 会话位姿（顺序 = 采集顺序）
+    // 「用当前会话」的状态：非空时「计算」用内存里的数据；编辑路径输入框即清掉。
+    QString m_sessionFolder;              // 会话目录（用当前会话时的文件夹）
+    std::vector<QString> m_sessionPoses;  // 机器人拍照位姿（顺序 = 采集顺序）
+    std::vector<QString> m_sessionCamera; // 相机目标点（顺序 = 采集顺序）
+    std::vector<QString> m_sessionTcp;    // 机器人目标点（顺序 = 采集顺序）
     bool m_sessionActive = false;   // true = 当前处于「用当前会话」模式
 
     // Coordinate-transform tool inputs (text-paste based)

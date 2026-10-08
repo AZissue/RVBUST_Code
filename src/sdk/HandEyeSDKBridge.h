@@ -46,13 +46,16 @@ detectCaliboard3D(const std::string& imagePath,
                   int patternW, int patternH,
                   float circleStep);
 
-// ── Calibration wrappers (not called from this app, declared for completeness) ──
+// ── Calibration wrappers ──
+// 均按 SEH 捕获：DLL 崩溃返回 kSdkInternalError，与 SDK 自己的 -1..-7 分开。
 
 int handEyeCalibrationMarker(const std::string& folder,
                              const std::string& robotPoseFile,
                              const HandEyeParam& params,
                              HandEyeResult& result);
 
+// 戳点标定。robotPoseFile 传**空串**表示眼在手外（没有拍照位姿这一列），
+// 桥接层会把它翻成 SDK 要求的 nullptr。
 int handEyeCalibrationTcpTouch(const std::string& cameraXyzFile,
                                const std::string& robotPoseFile,
                                const std::string& tcpXyzFile,

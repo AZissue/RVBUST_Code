@@ -8,7 +8,8 @@ class DataInputArea : public QWidget {
 public:
     explicit DataInputArea(QWidget* parent = nullptr);
 
-    void updateVisibility(bool eyeInHand, bool markerType);
+    // isMarkerCalib = 标定板标定（true）/ 戳点标定（false）。
+    void updateVisibility(bool eyeInHand, bool isMarkerCalib);
     DataInputCard* card(const QString& id) const;
 
 private:
