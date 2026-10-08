@@ -305,13 +305,6 @@ protected:
             : QStringLiteral("退回 3D 外缘边界：%1").arg(fromStd(bc.message));
         if (!bc.reliable)
             ctx.confidenceNote += QStringLiteral("；覆盖或圆度不达标，已标「参考」");
-        // T-013/P1: the same rule for the outer edge — when a step / groove sits
-        // inside the rim, the tool takes the outermost material boundary and
-        // says what else it saw.
-        if (bc.ambiguous && bc.candidates.size() >= 2)
-            ctx.confidenceNote += QStringLiteral("；外缘内侧还有一道跃变 ⌀%1 mm，"
-                                                 "已取最外材料边界 ⌀%2 mm")
-                .arg(fmt4(bc.candidates.front())).arg(fmt4(bc.candidates.back()));
         ctx.confidenceNote += QStringLiteral("；") + QString::fromStdString(bc.debug);
     }
 };
@@ -394,12 +387,6 @@ protected:
             : QStringLiteral("退回 3D 边界：%1").arg(fromStd(bc.message));
         if (!bc.reliable)
             ctx.confidenceNote += QStringLiteral("；覆盖或圆度不达标，已标「参考」");
-        // T-013/P1：孔口内侧还有一道跃变（沉孔/倒角）时，报出的永远是外侧那道，
-        // 把内侧候选一并说出来，免得用户以为只有一个边界。
-        if (bc.ambiguous && bc.candidates.size() >= 2)
-            ctx.confidenceNote += QStringLiteral("；孔壁一侧还有一道跃变 ⌀%1 mm，"
-                                                 "已取孔口 ⌀%2 mm")
-                .arg(fmt4(bc.candidates.front())).arg(fmt4(bc.candidates.back()));
         ctx.confidenceNote += QStringLiteral("；") + QString::fromStdString(bc.debug);
         if (ctx.roiRects && !ctx.roiRects->isEmpty()) {
             const QRect rr = ctx.roiRects->value(0);

@@ -157,16 +157,6 @@ double medianOf(std::vector<double> v)
     return 0.5 * (lo + hi);
 }
 
-// Millimetres for a user-facing sentence: two decimals, no trailing noise.
-std::string mmText(double v)
-{
-    std::string s = std::to_string(std::round(v * 100.0) / 100.0);
-    const std::size_t dot = s.find('.');
-    if (dot != std::string::npos && dot + 3 <= s.size())
-        s = s.substr(0, dot + 3);
-    return s;
-}
-
 // Indices of the values within k * 1.4826 * MAD of the median.  When the MAD is
 // zero (noise-free or fewer than 2 values) everything is kept — rejecting on a
 // zero-width band would throw away every point of a perfect measurement.
@@ -1393,62 +1383,29 @@ double bilinear(const GrayImage& img, double u, double v)
     return (a * (1.0 - fx) + b * fx) * (1.0 - fy) + (c * (1.0 - fx) + d * fx) * fy;
 }
 
-// One radial intensity transition of a ray profile.
-struct EdgeTransition {
-    double r = 0.0;       // sub-pixel radius along the ray, px
-    double dir = 0.0;     // +1 dark→bright (material begins), -1 bright→dark
-    double before = 0.0;  // intensity just inside the transition
-    double after = 0.0;   // intensity just outside it
-};
-
-// Radial sub-pixel edge scan around (u0, v0) — T-013 / P1.
-//
-// The previous version took the *strongest* gradient, or, when the profile had
-// an interior intensity minimum, that minimum.  On a part whose edge carries a
-// second step / groove / counterbore just inside it — which is what the field
-// actually hands us — both of those silently measure the *inner* feature: the
-// ⌀9 counterbore is reported where the drawing says ⌀12 (−25 %), the Ø20 step
-// where the drawing says Ø26 (−23 %).  The number is self-consistent and the
-// roundness is clean, so nothing downstream can notice.
-//
-// So the scan now *enumerates* every transition of the profile (each located to
-// sub-pixel by the parabola through its gradient, with a 1 px non-maximum
-// suppression so one blurred step counts once) and then selects by walking
-// outward from the anchor through the **contiguous run** of transitions that
-// keeps moving in the material→void direction — for a hole the dark→bright
-// transitions, for a disc the bright→dark ones.  The run ends when the profile
-// returns to the void level (it has left the part, so the next bright region is
-// a *neighbour*, not this feature) or stops moving.  The outermost member of
-// that run is the material boundary; the inner members are handed back so the
-// caller can report them instead of pretending there was only one edge.
+// Radial sub-pixel edge scan around (u0, v0): for every ray, sample the
+// intensity outward over [r0-window, r0+window], take the *first* location
+// where |dI/dr| reaches half its peak (walking out of the material that is the
+// boundary), and refine it to the gradient's parabola vertex — the intensity
+// inflection point, i.e. the sub-pixel edge.
 void scanEdgeRays(const GrayImage& img, double u0, double v0, double r0,
-                  double wIn, double wOut, bool materialInside,
-                  std::vector<std::array<double, 2>>& out,
-                  std::vector<double>* innerAlts, int* multiRays)
+                  double window, std::vector<std::array<double, 2>>& out)
 {
     out.clear();
-    if (innerAlts)
-        innerAlts->clear();
-    if (multiRays)
-        *multiRays = 0;
-    if (!img.valid() || wIn <= 0.0 || wOut <= 0.0)
+    if (!img.valid() || window <= 0.0)
         return;
     const int rays = 360;
     const double step = 0.5;
-    const int m = std::max(9, static_cast<int>((wIn + wOut) / step) + 1);
+    const int m = std::max(7, static_cast<int>(2.0 * window / step) + 1);
     std::vector<double> prof(static_cast<std::size_t>(m));
     std::vector<double> grad(static_cast<std::size_t>(m), 0.0);
-    std::vector<EdgeTransition> cand;
-    std::vector<double> alts;
-    std::vector<double> side;
-    int multi = 0;
     const double twoPi = 2.0 * kPi;
     for (int k = 0; k < rays; ++k) {
         const double ang = twoPi * static_cast<double>(k) / rays;
         const double dx = std::cos(ang), dy = std::sin(ang);
         double lo = 1e300, hi = -1e300;
         for (int j = 0; j < m; ++j) {
-            const double r = r0 - wIn + static_cast<double>(j) * step;
+            const double r = r0 - window + static_cast<double>(j) * step;
             const double x = u0 + r * dx, y = v0 + r * dy;
             if (x < 0.0 || y < 0.0 || x > img.width - 1 || y > img.height - 1) {
                 prof[static_cast<std::size_t>(j)] =
@@ -1470,91 +1427,70 @@ void scanEdgeRays(const GrayImage& img, double u0, double v0, double r0,
         }
         grad[0] = 0.0;
         grad[static_cast<std::size_t>(m - 1)] = 0.0;
-        // Two floors, and they are not the same number: `gFloor` only has to
-        // beat the noise, while `aFloor` says how big a *step* has to be to be
-        // a boundary.  A counterbore floor is much dimmer than the top face
-        // (140 against 200 here), so its step is only a third of the profile's
-        // range — the old single 0.15·(hi−lo) gate never even saw it, which is
-        // how ⌀9 was reported for a ⌀12 opening.
-        const double gFloor = std::max(2.5, 0.05 * (hi - lo));
-        const double aFloor = std::max(5.0, 0.10 * (hi - lo));
-
-        // 1. enumerate every transition above the noise floor.
-        cand.clear();
-        for (int j = 2; j + 2 < m; ++j) {
-            const double g = grad[static_cast<std::size_t>(j)];
-            const double ga = std::fabs(grad[static_cast<std::size_t>(j - 1)]);
-            const double gb = std::fabs(grad[static_cast<std::size_t>(j + 1)]);
-            if (!std::isfinite(g) || std::fabs(g) < gFloor)
-                continue;
-            if (std::fabs(g) < ga || std::fabs(g) <= gb)
-                continue;                   // not a local maximum
-            if (std::fabs(g) < std::fabs(grad[static_cast<std::size_t>(j - 2)])
-                || std::fabs(g) <= std::fabs(grad[static_cast<std::size_t>(j + 2)]))
-                continue;                   // 1 px non-maximum suppression
-            const double g0 = grad[static_cast<std::size_t>(j - 1)];
-            const double g2 = grad[static_cast<std::size_t>(j + 1)];
-            const double den = g0 - 2.0 * g + g2;
-            double delta = (std::fabs(den) > 1e-12) ? 0.5 * (g0 - g2) / den : 0.0;
+        double peak = 0.0;
+        for (int j = 0; j < m; ++j)
+            peak = std::max(peak, std::fabs(grad[static_cast<std::size_t>(j)]));
+        if (peak < std::max(3.0, 0.15 * (hi - lo)))
+            continue;
+        // The edge we are after is where the *material* ends.  On the ⌀26 hub
+        // the material is followed by a dark groove (the step down to the base
+        // plate) and then more material, so the boundary is the interior
+        // intensity *minimum*: the strongest gradient alone sits a few px
+        // inside it (23.54 mm where the step is really at 172 px).  A hole, by
+        // contrast, is a single dark→bright ramp with no interior minimum, so
+        // there we fall back to the strongest intensity step (its inflection
+        // point).
+        int best = -1;
+        double bestG = 0.0;
+        for (int j = 1; j + 1 < m; ++j) {
+            if (std::isfinite(grad[static_cast<std::size_t>(j)])
+                && std::fabs(grad[static_cast<std::size_t>(j)]) > bestG) {
+                bestG = std::fabs(grad[static_cast<std::size_t>(j)]);
+                best = j;
+            }
+        }
+        const double p1 = prof[1];
+        const double pN = prof[static_cast<std::size_t>(m - 2)];
+        int dip = -1;
+        double dipV = 1e300;
+        if (std::isfinite(p1) && std::isfinite(pN)) {
+            const double endLevel = std::min(p1, pN);
+            for (int j = 2; j + 2 < m; ++j) {
+                const double pj = prof[static_cast<std::size_t>(j)];
+                if (!std::isfinite(pj))
+                    continue;
+                if (pj < prof[static_cast<std::size_t>(j - 1)]
+                    && pj <= prof[static_cast<std::size_t>(j + 1)]
+                    && pj <= endLevel - 0.35 * (hi - lo) && pj < dipV) {
+                    dipV = pj;
+                    dip = j;
+                }
+            }
+        }
+        if (dip > 0) {
+            const double q0 = prof[static_cast<std::size_t>(dip - 1)];
+            const double q1 = prof[static_cast<std::size_t>(dip)];
+            const double q2 = prof[static_cast<std::size_t>(dip + 1)];
+            const double den = q0 - 2.0 * q1 + q2;
+            double delta = (std::fabs(den) > 1e-12) ? 0.5 * (q0 - q2) / den : 0.0;
             if (delta < -1.0 || delta > 1.0)
                 delta = 0.0;
-            side.clear();
-            for (int t = std::max(0, j - 5); t <= j - 2; ++t)
-                if (std::isfinite(prof[static_cast<std::size_t>(t)]))
-                    side.push_back(prof[static_cast<std::size_t>(t)]);
-            if (side.empty())
-                continue;
-            EdgeTransition c;
-            c.before = medianOf(side);
-            side.clear();
-            for (int t = j + 2; t <= std::min(m - 1, j + 5); ++t)
-                if (std::isfinite(prof[static_cast<std::size_t>(t)]))
-                    side.push_back(prof[static_cast<std::size_t>(t)]);
-            if (side.empty())
-                continue;
-            c.after = medianOf(side);
-            c.r = r0 - wIn + (static_cast<double>(j) + delta) * step;
-            c.dir = (g > 0.0) ? 1.0 : -1.0;
-            if (std::fabs(c.after - c.before) >= aFloor)
-                cand.push_back(c);          // a step, not a wobble
-        }
-        if (cand.empty())
+            const double r = r0 - window + (static_cast<double>(dip) + delta) * step;
+            out.push_back({ u0 + r * dx, v0 + r * dy });
             continue;
-
-
-        // 2. walk outward through the contiguous run of material→void steps.
-        //    A step of the *other* direction is skipped, not a stop: a groove
-        //    dips into the part and comes back up, and the run has to survive
-        //    that.  A step that *starts* at the void level is the other thing —
-        //    the profile has been back down to background/air, so whatever
-        //    rises after it is a neighbouring feature, not this boundary.
-        //    The first member is exempt: a hole's boundary legitimately starts
-        //    at the void level (that is the hole).
-        const double hyst = 0.25 * (hi - lo);
-        std::vector<double> chain;
-        bool havePrev = false;
-        for (const EdgeTransition& c : cand) {
-            const bool dirOk = materialInside ? (c.dir < 0.0) : (c.dir > 0.0);
-            if (!dirOk)
-                continue;
-            if (havePrev && c.before <= lo + hyst)
-                break;                      // the part ended in between
-            chain.push_back(c.r);
-            havePrev = true;
         }
-        if (chain.empty())
-            continue;
-        const double r = chain.back();
+        if (best <= 0 || best >= m - 1)
+            continue;                       // edge runs off the window
+        const double g0 = grad[static_cast<std::size_t>(best - 1)];
+        const double g1 = grad[static_cast<std::size_t>(best)];
+        const double g2 = grad[static_cast<std::size_t>(best + 1)];
+        const double den = g0 - 2.0 * g1 + g2;
+        double delta = (std::fabs(den) > 1e-12) ? 0.5 * (g0 - g2) / den : 0.0;
+        if (delta < -1.0 || delta > 1.0)
+            delta = 0.0;
+        const double r = r0 - window + (static_cast<double>(best) + delta) * step;
         out.push_back({ u0 + r * dx, v0 + r * dy });
-        if (chain.size() > 1) {
-            ++multi;
-            alts.push_back(chain.front());
-        }
     }
-    if (multiRays)
-        *multiRays = multi;
-    if (innerAlts && !alts.empty())
-        *innerAlts = alts;
 }
 
 } // namespace
@@ -1699,14 +1635,11 @@ BoundaryCircle measureBoundaryCircle(
     if (haveGrid && haveImage)
         solveAffine(px, planeXY, map);
 
-    // The outer-edge branch is pure 3-D, so it runs even with no image at all:
-    // building the contour is what lets the no-image fallback below return a
-    // number instead of "找不到材料边界" (P3).
-    if (map.ok || (haveGrid && materialInside)) {
-        const double s = map.ok ? std::sqrt(std::fabs(map.det())) : 0.0;
+    if (map.ok) {
+        const double s = std::sqrt(std::fabs(map.det()));
         if (s > 0.0)
             bc.mmPerPx = s;
-        if (map.ok && !materialInside) {
+        if (!materialInside) {
             // Hole.  The centre must come from where the *material is absent*,
             // not from the material centroid: an operator drags the rectangle
             // around a hole, but "around" is not "centred on".  On the real ⌀6
@@ -1809,7 +1742,7 @@ BoundaryCircle measureBoundaryCircle(
                     r0px = rRim / s;
                 bc.debug += " holeFlood=none(" + std::to_string(hole.size()) + ")";
             }
-        } else if (haveGrid) {
+        } else {
             // Outer edge: grow the material region out of the ROI over the whole
             // grid (|plane deviation| <= band) and keep the component that holds
             // the ROI — the capability that did not exist before.
@@ -1901,7 +1834,7 @@ BoundaryCircle measureBoundaryCircle(
                     const Vec3 q = sub(p, c3);
                     cxy.push_back({ dot(q, u), dot(q, v) });
                 }
-                if (map.ok && !cxy.empty()) {
+                if (!cxy.empty()) {
                     std::vector<Vec3> flat;
                     flat.reserve(cxy.size());
                     for (const auto& q : cxy)
@@ -1918,7 +1851,7 @@ BoundaryCircle measureBoundaryCircle(
             }
             // Grow the affine map over the whole region for a better-conditioned
             // (and better-extrapolating) fit than the ROI-only version.
-            if (map.ok && !comp.empty()) {
+            if (!comp.empty()) {
                 std::vector<std::array<double, 2>> ruv;
                 std::vector<std::array<double, 2>> rxy;
                 const std::size_t stride = comp.size() > 40000 ? comp.size() / 40000 + 1 : 1;
@@ -1980,40 +1913,13 @@ BoundaryCircle measureBoundaryCircle(
 
     // 4. sub-pixel scan + iterated circle fit in the plane frame.
     Circle final;
-    double altInnerPx = 0.0;            // innermost rejected transition, px
-    int multiRays = 0;
     if (haveImage && map.ok && r0px > 2.0) {
-        const double wIn = materialInside ? 10.0 : 6.0;
-        // Reach outward far enough to cross a step / groove / counterbore that
-        // sits inside the rim — the 3-D anchor lands on that inner feature, so
-        // the boundary can be several mm further out (the ⌀9 counterbore inside
-        // a ⌀12 opening is 1.5 mm out; the Ø20 step inside a Ø26 boss is 3 mm).
-        // Proportional to the feature, floored and capped so the scan cannot
-        // wander into a neighbouring feature on a busy part.
-        double wOut = wIn;
-        if (bc.mmPerPx > 0.0) {
-            const double reachMm =
-                std::min(5.0, std::max(0.8, 0.6 * r0px * bc.mmPerPx));
-            wOut = std::max(wIn, reachMm / bc.mmPerPx);
-        }
+        const double window = materialInside ? 10.0 : 6.0;
         std::vector<std::array<double, 2>> edge;
-        std::vector<double> alt;
         for (int iter = 0; iter < 3; ++iter) {
-            int multi = 0;
-            alt.clear();
-            scanEdgeRays(img, u0, v0, r0px, wIn, wOut, materialInside, edge,
-                         &alt, &multi);
-            // Keep the *first* iteration's inner candidates: once the fit has
-            // walked the anchor out to the true boundary, the window no longer
-            // reaches back inside it, and the alternatives would look like
-            // there were none.
-            if (altInnerPx == 0.0 && !alt.empty()) {
-                altInnerPx = medianOf(alt);
-                multiRays = multi;
-            }
+            scanEdgeRays(img, u0, v0, r0px, window, edge);
             bc.debug += " | it" + std::to_string(iter) + " r0px=" + std::to_string(r0px)
-                + " edges=" + std::to_string(edge.size())
-                + " multi=" + std::to_string(multi);
+                + " edges=" + std::to_string(edge.size());
             if (edge.size() < 24)
                 break;
             std::vector<Vec3> flat;
@@ -2060,21 +1966,6 @@ BoundaryCircle measureBoundaryCircle(
         bc.valid = true;
         if (!bc.reliable)
             bc.message = "图像边缘样本不足或离散度过大，结果仅供参照";
-        // P1: the rays crossed a second transition inside the one that was used.
-        // The reported Ø is the outermost material boundary (the drawing's
-        // dimension); name the inner one instead of quietly discarding it —
-        // that inner edge is exactly what this tool used to report.
-        if (altInnerPx > 0.0 && bc.mmPerPx > 0.0 && multiRays * 2 >= 360) {
-            bc.candidates.push_back(2.0 * altInnerPx * bc.mmPerPx);
-            bc.candidates.push_back(bc.diameter);
-            std::sort(bc.candidates.begin(), bc.candidates.end());
-            bc.ambiguous = true;
-            if (!bc.message.empty())
-                bc.message += "；";
-            bc.message += "边缘内侧还有一道跃变 ⌀" + mmText(bc.candidates.front())
-                + " mm，已取外侧 ⌀" + mmText(bc.candidates.back())
-                + " mm（最外材料边界）";
-        }
         return bc;
     }
 
