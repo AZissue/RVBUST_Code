@@ -22,12 +22,18 @@
    | 眼在手上 | 戳点 | 必填（6 值） | 必填（3 值） | 必填 |
    | 眼在手外 | 戳点 | **没有这一列** | 必填（3 值） | 必填 |
 
-   四个落地处，判据必须逐字一致（都是 `!eyeInHand && !isMarkerCalib`）：
-   - `src/logic/CaptureFlow.cpp` → `validateSaveInputs()`（保存拦截）
-   - `src/ui/DataInputArea.cpp` → `updateVisibility()`（卡片显隐）
-   - `src/logic/DataQualityCheck.h` → `sourceFor()`（质检用哪一列判定）
-   - `src/ui/SidePanel.cpp` → `updateFilePreview()`（文件预览显隐）
-   有一条单测钉住 `sourceFor` 与卡片判据一致：`test_data_quality_check.cpp::sourceForFollowsCalibrationMode`。
+   **判据只有一处**：`models/CalibrationMode.h` 的
+   `needsCapturePose(eyeHand, calibType)`（以及 `needsRobotTarget(calibType)`）。
+   凡是"这一列要不要填 / 显示 / 读 / 参与质检"，都调它，别手写第六份。
+   目前的调用方：
+   - `logic/CaptureFlow.h` → `validateSaveInputs()`（保存拦截，`mode.needsCapturePose()`）
+   - `ui/DataInputArea.cpp` → `updateVisibility()`（卡片显隐）
+   - `ui/SidePanel.cpp` → `updateFilePreview()`（文件预览 tab 显隐）
+   - `logic/DataQualityCheck.h` → `sourceFor()`（质检用哪一列判定）
+   - `app/MainWindow.cpp` → `updateRobotReadBar()`（「拍照位姿」按钮）、`onCapture()`
+     （自动读位姿）、`onRobotPoseReady()`（兜底早退）
+   单测：`test_data_quality_check.cpp::sourceForFollowsCalibrationMode` —— 四种组合的
+   期望值**写死**在测试里，再断言各入口两两一致。
 3. **单帧误差 `cameraErrorPct` 只对黑底白圆标定板存在**。同心圆 / 戳点标定它是 `-1`，
    表示"不适用"，不是"0，很好"。任何读它的地方都要先判 `< 0`。
 
@@ -37,6 +43,7 @@
 
 ```
 src/main.cpp                  → QApplication + MainWindow
+src/AppInfo.h                 → 程序名 / 版本号的唯一出处（title()/summary()），界面别写死
 src/app/MainWindow.{h,cpp}    → 装配器/信号适配（~2100 行）。业务在 CaptureFlow，设置窗在 SettingsDialog
 src/logic/                    → 可测逻辑（纯函数优先，多数 header-only）
 src/ui/                       → 控件与视图（不做自动化测试；改动要出人工验证清单）
@@ -72,6 +79,7 @@ tests/                        → unit_tests（QtTest）+ measure_truth（已知
 | 坐标转换 / 走点验证 | `logic/TransformTools.h` |
 | 机器人四协议的读位姿 | `logic/RobotPose.*`、`URRealtimeReader.*`、`NrcJsonReader.*`、`EfortPoseReader.*`；分派在 `RobotWorker::readerFor()` |
 | 会话生命周期（开新一组、清空、切模式） | `MainWindow::resetSession()` 是唯一的开新会话点；入口只有三个：启动（`MainWindow.cpp` 构造末尾）、`onModeChanged()` 的 `typeChanged` 分支、顶栏「新建会话」→ `onNewSessionRequested()`。按钮 enabled = 有记录且非 busy，四处同步：`dataChanged` / `setBusy` / `setConnectBusy` / `clearBusy` |
+| 程序名 / 版本号 | `src/AppInfo.h`（别在页面里写死 —— 2026-10-08 就是因为三处硬编码，升 2.0 时界面还显示 V1.0） |
 | 界面配色/字号/按钮样式 | `ui/Theme.h`（别在页面里写死色值） |
 | 操作日志上屏规则 | `logic/LogPresentation.h::shouldShowInPanel()` 唯一判据；`LogManager` 只管落文件 |
 | 启动/连接/释放相机的顺序与兜底 | `logic/CameraManager.*` + `logic/CameraRelease.h`（`shutdown()` 幂等）；Windows 注销路径在 `MainWindow::nativeEvent()` |
