@@ -1,237 +1,358 @@
-# 手眼标定数据收集助手 (Hand-Eye Calibration Data Collection Assistant)
+# 手眼标定数据收集助手
 
-C++/Qt5 桌面应用，用于手眼标定数据采集。支持标记物标定和 TCP 戳点标定两种模式，输出与 HandEyeManager.exe 兼容的标定数据文件。
+面向 **RVC X1 / X2** 系列 3D 相机的 Windows 桌面工具（C++17 / Qt 5.14.2）。
+现场做一次手眼标定需要的东西都在这里：连相机 → 采 2D + 3D → 识别标定板 / 戳点 →
+存成 HandEyeManager 兼容的数据文件，外带测量、坐标转换、像素→3D、标定计算、
+机器人通信等辅助工具。以**绿色免安装包**交付现场。
 
-本项目从 Python/PyQt5 完整移植到 C++，消除 Python 中间层，直接调用 RVC X2 C++ SDK、HandEyeSDK C API 和 RVBUST Vis 引擎，同时获得编译期类型安全和更优性能。
+- 当前版本：**2.0**（版本号的唯一出处是 `src/AppInfo.h`，界面与标题都引用它）
+- 主程序：`build/src/Release/HandEyeCalibrationTool.exe`
+- 完整使用说明（含分章节的操作手册）：**程序内按 `F1`**，或点顶栏「帮助」
 
-## 目录架构
+> 本文是**入口文档**：讲清"怎么跑、界面长什么样、文件存在哪"。
+> 当前进度、已知问题、下一步计划分别在 `STATUS.md` / `PLAN.md` / `PROJECT.md`。
+
+---
+
+## 1. 快速开始
+
+```bat
+:: 运行（源码工作区）
+run.bat
+:: 或
+D:\MyCode\MyHandEyeTools\build\src\Release\HandEyeCalibrationTool.exe
+```
+
+```bash
+# 构建
+cmake --build "D:/MyCode/MyHandEyeTools/build" --config Release
+
+# 测试（两个目标：单元测试 + 已知真值测量比对）
+ctest --test-dir "D:/MyCode/MyHandEyeTools/build" -C Release --output-on-failure
+```
+
+**绿色版**（免装 VC++ / RVC / HandEyeSDK，全部 DLL 内置）：
+
+```powershell
+powershell -File pack_portable.ps1 -Version 2.0
+# 产出 dist\HandEyeCalibrationTool_v2.0\ 与同名 .zip，拷到目标机解压双击即用
+```
+
+---
+
+## 2. 功能总览
+
+| 板块 | 能做什么 |
+|---|---|
+| **采集** | 连相机 / 预览 / 拍照 / 识别 / 保存 / 撤销；自动识别结果可直接填卡片 |
+| **标定数据** | 按「安装方式 × 标定方法」收集对应数据列，导出与 HandEyeManager 兼容的文件；JSON 自动备份与恢复 |
+| **标定计算** | 主界面「计算」或工具页离线计算，输出 4×4 矩阵 + 总平均误差 + 逐组误差 |
+| **辅助工具** | 欧氏距离、像素→3D（在线/离线）、坐标转换、机器人通信 |
+| **测量** | 8 个方法：平面度 / 高度段差 / 面面距离夹角 / 圆环拟合 / 孔径(孔洞边界法) / 包围盒 / 截面轮廓 / 重复性 |
+| **机器人通信** | 4 种协议读 TCP 位姿：Modbus TCP、UR Realtime、博纳斯(纳博特) JSON/TCP、埃夫特(EfortSDK) |
+| **质量辅助** | 姿态引导（当前位姿 vs 最近已采）、数据质检（5 类，只报告不拦截）、标定板位姿 3D 可视化 |
+| **帮助** | 程序内完整使用说明（9 章），`F1` 随时打开 |
+
+---
+
+## 3. 界面地图
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ TopNavBar  [手眼标定数据收集助手 V2.0]  [已采集 0/15 组数据 ▓░░░░]  ● 未连接   │
+│                                          [连接] [新建会话] [设置] [帮助]        │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ ModeSelector  [工具]  手眼模式：[眼在手外|眼在手上]                             │
+│              标定方法：[标记物标定|戳点标定]                                    │
+│              标记物类型：[同心圆|黑底白圆]  规格：[4×11]  尺寸：[A9]   ← 按模式显隐 │
+├──────────────────────────────────────────────┬───────────────────────────────┤
+│ 左列（可拖动分隔条）                          │ 右侧面板                       │
+│ ┌─────────────────────┬────────────────────┐ │ ┌───────────────────────────┐ │
+│ │ Image2DView         │ VisSceneView       │ │ │ 操作日志      [运行质检]   │ │
+│ │ 「2D 实时图像」      │  （无标题栏）       │ │ │  [注意事项] 标定过程中…    │ │
+│ │ 缩放：适应 / 百分比  │  悬浮工具栏：       │ │ │  [提示] …                  │ │
+│ │ [图像][偏差图]       │  [复位][叠加历史]   │ │ │  [姿态引导] …              │ │
+│ │ [尺寸总图][截面轮廓] │  [偏差着色]        │ │ │  [数据质检] …              │ │
+│ │ [重复性趋势]        │                    │ │ ├───────────────────────────┤ │
+│ │ [清除 ROI]          │                    │ │ │ 文件预览                   │ │
+│ ├─────────────────────┴────────────────────┤ │ │ [相机目标点][机器人位姿]    │ │
+│ │ DataInputArea  固定高度，3 张卡片          │ │ │ [机器人TCP点][标定结果]     │ │
+│ │  [相机目标点坐标] [机器人拍照位姿]         │ │ │  （文本预览区）             │ │
+│ │  [机器人目标点坐标]                      │ │ │                            │ │
+│ ├──────────────────────────────────────────┤ │ │                            │ │
+│ │ ActionButtons  [预览][拍照][识别][保存]    │ │ │                            │ │
+│ │                [计算][撤销]               │ │ │                            │ │
+│ │   连接机器人后追加：[拍照位姿] [戳点位姿]  │ │ │                            │ │
+│ └──────────────────────────────────────────┘ │ └───────────────────────────┘ │
+└──────────────────────────────────────────────┴───────────────────────────────┘
+```
+
+几个界面要点：
+
+- **没有状态栏**。相机连接状态与采集进度在顶栏；瞬时反馈是顶栏下方的浮动提示（Toast），
+  历史反馈是右侧「操作日志」卡片。
+- **2D 与 3D 是左右并列**的（在左侧列里），不是上下堆叠。
+- 左右两列之间是**可拖动的分隔条**（默认约 3:1）。
+- 「文件预览」的 4 个 tab 按模式显隐；「机器人拍照位姿」卡片在**眼在手外 + 戳点**时隐藏。
+
+### 三个按钮的启用时机（现场最常问）
+
+| 按钮 | 什么时候可用 |
+|---|---|
+| 预览 | 相机已连接 |
+| 拍照 | 相机已连接 |
+| 识别 | 刚拍完一张（有图可识别） |
+| 保存 | **识别成功之后** |
+| 计算 | 已保存 ≥1 组数据 |
+| 撤销 | 已保存 ≥1 组数据 |
+| 拍照位姿 | 机器人已连接 **且** 本模式需要这一列（眼在手外+戳点为**无**） |
+| 戳点位姿 | 机器人已连接 **且** 标定方法为戳点 |
+
+### 模式 → 采集哪些数据列
+
+| 安装方式 | 标定方法 | 机器人拍照位姿 | 机器人目标点 | 相机目标点 |
+|---|---|---|---|---|
+| 眼在手上 | 标记物 | 必填 | 不采 | 必填 |
+| 眼在手外 | 标记物 | 必填 | 不采 | 必填 |
+| 眼在手上 | 戳点 | 必填 | 必填 | 必填 |
+| 眼在手外 | 戳点 | **没有这一列** | 必填 | 必填 |
+
+这条规则的唯一判据在 `src/models/CalibrationMode.h` 的 `needsCapturePose()` /
+`needsRobotTarget()`；界面显隐、保存校验、质检、文件预览、读位姿按钮都调它。
+
+---
+
+## 4. 一次典型标定流程
+
+1. 顶栏「连接」→ 在设备列表里选相机（显示名称 / 序列号 / 是否被占用）。
+2. 选模式：手眼模式 + 标定方法（+ 标记物类型与规格/尺寸）。
+3. 摆好标定板 → 「预览」对焦 →「拍照」。
+4. 「识别」：成功后「相机目标点坐标」自动填入；
+   此时若需要机器人位姿，点「拍照位姿」（或手动填「机器人拍照位姿」）。
+5. 「保存」：必填项缺失会拦下并说明原因；**质量告警只提示，不拦保存**。
+6. 移动机器人到不同位姿，重复 3–5，建议采集 **15–20 组**（顶栏进度条按 15 组显示）。
+   - 右侧「姿态引导」会显示"当前位姿 vs 最近已采"的差异与建议；
+   - 「运行质检」可随时检查数量/近重复/离群/分散度等 5 类问题。
+7. 「计算」：输出 4×4 矩阵 + 总平均误差 + 逐组误差，可复制。
+8. 数据同时落在会话目录里（见下节），可直接交给 HandEyeManager 流程。
+
+> 换一组标定：顶栏「新建会话」。**已采集的记录留在磁盘上不会删除**，
+> 界面换到新的时间戳目录。
+
+---
+
+## 5. 工具面板
+
+顶栏模式栏最左边的「工具」按钮打开。左侧列表共 13 项：
+
+| # | 工具 | 说明 |
+|---|---|---|
+| 1 | 欧氏距离 | 两点距离，单位可选 mm / cm / m |
+| 2 | 像素→3D | **在线**（相机实时，主 2D 视窗点击取点）或**离线**（加载含 png+ply 的会话文件夹，用主 2D 视窗取点）；离线对齐数据免内参，线扫需内参 |
+| 3 | 手眼标定 | 离线算：选会话文件夹 + 标定方式 + 安装方式，输出矩阵与逐组误差 |
+| 4 | 坐标转换 | 走点验证：标定矩阵 + 相机系点 → 机械臂位姿；**7 种姿态格式**（RPY/WPR/ZYX/两种四元数/旋转矩阵/轴角） |
+| 5 | 机器人通信 | 4 种协议连机器人读 TCP 位姿（见下） |
+| 6 | 平面度 | 测量方法，ROI A = 被测面 |
+| 7 | 高度段差 | 测量方法，ROI A = 基准面，ROI B = 被测面 |
+| 8 | 面面距离夹角 | 测量方法，ROI A = 面 A，ROI B = 面 B |
+| 9 | 圆环拟合 | 测量方法，ROI A = 环形材料（**实心件外缘目前不适用**，见 `reports/T-012/BASELINE.md`） |
+| 10 | 孔径(孔洞边界法) | 测量方法，ROI A = 孔 + 约 2 个点距的材料 |
+| 11 | 包围盒 | 测量方法，ROI A = 整个物体 |
+| 12 | 截面轮廓 | 测量方法，ROI A = 被测区域 |
+| 13 | 重复性 | 测量方法，**不需要 ROI**（用重复性序列统计） |
+
+**测量方法的通用操作**：先在主窗口「拍照」，再在工具页选方法 → 在 2D 视图上拖框选
+ROI（需要两个 ROI 的方法依次拖两次）→ 点「测量」。结果表 5 列（方法/数值/单位/点数/可信度），
+同时写进「操作日志」的 `[测量-说明]` / `[测量-结果]` 两行。
+「加入重复性」把当前读数并入序列；2D 视图还有偏差图 / 尺寸总图 / 截面轮廓 / 重复性趋势四个页签。
+
+**机器人通信页**：
+
+| 协议 | 端口（默认） | 读数单位 / 说明 |
+|---|---|---|
+| Modbus TCP | 502 | 格式可选 Float32 / Int32×系数 / Int16×系数，可填起始寄存器与站号 |
+| UR Realtime (30003) | 30003 | 机器人主动推流；姿态是**轴角(弧度)**，位置**米**（程序已换算成 mm） |
+| 博纳斯(纳博特) JSON/TCP | 6001 | 读 x y z rx ry rz（mm/度）；应答字段名未知时自动试常见名字并**把原始应答写进运行日志** |
+| 埃夫特（EfortSDK） | 由 SDK 决定（端口框隐藏） | 读基坐标下的 TCP 位姿 |
+
+连不上可真机时点「模拟连接成功」验证按钮显示与样式。
+**四种协议的真机约定仍有 4 项待实测**，见 `reports/机器人通信真机联测任务书.md`。
+
+---
+
+## 6. 输出文件与目录
+
+每次「新建会话」建一个时间戳目录（默认在设置里的保存路径下）：
+
+```
+<保存路径>/calibration_data_20261008_141412_254/
+├── 1.png                     # 每帧的 2D 图（序号即组号）
+├── 1.ply                     # 每帧的 3D 点云
+├── pose.txt                  # 标记物标定：机器人拍照位姿
+├── cameraCapturePointXyz.txt # 戳点标定：相机目标点
+├── tcp.txt                   # 戳点标定：机器人目标点
+└── cameraCaptureRobotPose.txt# 戳点标定 + 眼在手上：机器人拍照位姿
+```
+
+标定板模式写 `pose.txt`；戳点模式写相机点位 + 戳点文件，
+（眼在手上时多一份 `cameraCaptureRobotPose.txt`）——即"只写本模式真正采集的列"。
+
+**保存路径回退链**（绿色包换机时的关键）：设置里的目录不可用（不存在 / 不可写）时，
+自动退到 `<exe目录>/data`，再退到 `文档\HandEyeCalibData`，并把修正后的路径存回配置，
+启动时用浮动提示告知。
+
+**日志**（都在 exe 目录的 `logs\` 下，按日期分文件）：
+
+| 文件 | 内容 |
+|---|---|
+| `logs\runtime_<日期>.log` | 技术运行日志：连接 / 采集 / 识别 / 崩溃 / `[NRC]` 原始应答等 |
+| `logs\app_<日期>.log` | 操作日志：用户做了什么 |
+
+**备份**：会话记录自动写 JSON 备份（限流 1 次/秒），设置里可「从备份恢复」。
+
+---
+
+## 7. 快捷键
+
+| 快捷键 | 功能 |
+|---|---|
+| `Ctrl+S` | 保存当前数据 |
+| `Ctrl+Z` | 撤销上一次保存 |
+| `F5` | 刷新相机预览（已连接时） |
+| `F11` | 全屏切换 |
+| `F1` | 打开使用说明 |
+
+---
+
+## 8. 目录架构
 
 ```
 MyHandEyeTools/
-├── CMakeLists.txt                    # Root: Qt5 + RVC + HandEyeSDK + RVBUSTVis
-├── cmake/
-│   ├── FindRVC.cmake                 # Custom module for RVC X2 C++ SDK
-│   ├── FindRVBUSTVis.cmake           # Custom module for RVBUST Vis C++ lib (optional)
-│   └── FindHandEyeSDK.cmake          # Custom module for HandEyeSDK .lib
+├── CMakeLists.txt              # 根：Qt5 + RVC + HandEyeSDK + EfortSDK + RVBUSTVis(可选)
+├── cmake/                      # FindRVC / FindRVBUSTVis / FindHandEyeSDK 等自定义模块
 ├── src/
-│   ├── CMakeLists.txt                # 源码清单、链接依赖、post-build DLL 部署
-│   ├── main.cpp                      # 启动引导 + SEH 崩溃兜底 + 运行日志重定向
-│   ├── app/
-│   │   └── MainWindow.h / .cpp       # UI 装配 + 信号接线（业务在 CaptureFlow）
-│   ├── models/
-│   │   ├── CaptureRecord.h           # 头文件内联结构体
-│   │   └── CalibrationMode.h         # 枚举：EyeHandMode / CalibType / MarkerType
-│   ├── logic/
-│   │   ├── AppConfig.h / .cpp        # QSettings 封装（真实配置在 %APPDATA%\RVBUST\HandEyeTool.ini）
-│   │   ├── LogManager.h / .cpp       # 用户操作日志 → logs/app_<date>.log
-│   │   ├── RuntimeLog.h / .cpp       # 技术运行日志 → logs/runtime_<date>.log
-│   │   ├── CameraManager.h / .cpp    # RVC SDK：预览/采集/连接/自动重连
-│   │   ├── CaptureFlow.h / .cpp      # 拍照→识别→保存业务流（含检测缓存/质量阈值）
-│   │   ├── DetectionEngine.h / .cpp  # 同心圆/黑底白圆检测（RVC 原生→HandEyeSDK 回退）
-│   │   ├── PointCloudUtils.h / .cpp  # 点云过滤/颜色/投影纯函数（可单测）
-│   │   └── DataManager.h / .cpp      # 记录 CRUD + HandEyeManager 导出 + JSON 备份
-│   ├── sdk/
-│   │   └── HandEyeSDKBridge.h / .cpp # HandEyeSDK 直接链接 + 边界保护
-│   └── ui/
-│       ├── Theme.h / .cpp            # 颜色/字体/QSS
-│       ├── TopNavBar.h / .cpp        # 标题/进度/相机连接状态
-│       ├── ModeSelector.h / .cpp     # 手眼模式 + 标定方法 + 标记物类型
-│       ├── DeviceListDialog.h / .cpp # 相机选择对话框
-│       ├── SettingsDialog.h / .cpp   # 保存路径/相机参数/识别阈值/备份恢复
-│       ├── DataInputCard.h / .cpp    # 数据卡片（坐标输入）
-│       ├── DataInputArea.h / .cpp    # 卡片容器
-│       ├── ActionButtons.h / .cpp    # [预览][拍照][识别][保存][撤销]
-│       ├── SidePanel.h / .cpp        # 操作提示 + 文件预览
-│       ├── ToastOverlay.h / .cpp     # 浮动通知
-│       ├── Image2DView.h / .cpp      # 2D 可视化（画布缓存）
-│       └── VisSceneView.h / .cpp     # 3D 点云可视化 + 识别点选择填充
-├── third_party/
-│   ├── RVC/                          # RVC SDK 头/库/运行 DLL
-│   ├── HandEyeSDK/                   # HandEyeSDK 头/库/运行 DLL
-│   ├── Vis/                          # RVBUST Vis 头/库
-│   ├── OSG/                          # OSG 3.6.5 运行 DLL
-│   └── Qt5/                          # Qt 运行 DLL + 平台插件
-├── tests/                            # Qt Test 单测（unit_tests）
-│   └── data/                         # 检测回归样本（0.png/0.ply、4x11A9）
-├── data/                             # 标定数据默认保存目录（每会话一个子目录）
-├── logs/                             # 程序运行日志（runtime_/app_ 按日期分文件）
-├── config/
-│   └── settings.json                 # 模板（程序不读取；真实配置在 %APPDATA% INI）
-├── build/                            # CMake 构建输出（应用在 build/src/Release）
-├── build_old/                        # 旧机器构建备份（可随时找回旧版本）
-└── run.bat                           # Convenience launcher
+│   ├── main.cpp                # 启动引导 + SEH 崩溃兜底 + runtime 日志重定向
+│   ├── AppInfo.h               # 程序名 / 版本号的唯一出处（界面别写死）
+│   ├── app/MainWindow.{h,cpp}  # UI 装配 + 信号接线（业务在 CaptureFlow）
+│   ├── models/                 # CalibrationMode.h（枚举+needs* 判据）、CaptureRecord.h
+│   ├── logic/                  # 可测逻辑（多数 header-only）
+│   │   ├── CameraManager / CameraRelease       # RVC 连接、预览、采集、释放
+│   │   ├── CaptureFlow / AutoFlowPolicy        # 拍照→识别→保存 状态机与校验
+│   │   ├── DetectionEngine                     # 检测回退链（RVC 原生 → HandEyeSDK）
+│   │   ├── DataManager                         # 记录 CRUD + 导出 + JSON 备份/恢复
+│   │   ├── CalibrationService / BoardPoseFit   # 标定计算与结果排版 / 板位姿拟合
+│   │   ├── RobotPose / URRealtimeReader / NrcJsonReader / EfortPoseReader
+│   │   ├── DataQualityCheck / PoseGuide        # 质检 5 类 / 姿态引导
+│   │   ├── MeasureTools / MeasureMethods       # 测量内核 + 方法目录
+│   │   ├── PixelTo3DService / PixelTo3DTools   # 像素→3D（在线/离线共用）
+│   │   ├── TransformTools / ToolInputParser    # 坐标转换 / 工具页输入解析
+│   │   ├── HelpContent.h                       # 使用说明的正文（纯数据表）
+│   │   ├── LogManager / RuntimeLog / LogPresentation  # 双日志 + 上屏规则
+│   │   └── AppConfig / FrameBuffer / UiStallWatchdog / GeometryTools / PointCloudUtils
+│   ├── sdk/HandEyeSDKBridge.{h,cpp}   # 唯一直接调 HandEyeSDK 的地方（safeCall + SEH）
+│   └── ui/                     # 控件与视图（不做自动化测试，改动出人工验证清单）
+│       ├── TopNavBar / ModeSelector / ActionButtons / DataInputArea / DataInputCard
+│       ├── SidePanel / Image2DView / VisSceneView / ToastOverlay / Theme
+│       ├── ToolsPanel / MeasurePage / MeasurePages    # 工具面板与 8 个测量页
+│       ├── SettingsDialog / DeviceListDialog / HelpDialog
+│       └── ArrowComboBox / ViewOverlay
+├── tests/                      # Qt Test 单测（unit_tests）+ measure_truth 真值比对
+├── codex_testData/             # measure_truth 的合成数据（只入库 manifest/README）
+├── third_party/                # RVC / HandEyeSDK / EfortSDK / Vis / OSG / Qt5（运行库）
+├── packaging/README.txt        # 绿色版给现场看的说明
+├── pack_portable.ps1           # 绿色包打包脚本 → dist/
+├── dist/                       # 打包产出（不入库）
+├── build/                      # CMake 构建输出（应用在 build/src/Release）
+├── data/                       # 默认保存目录（每会话一个子目录）
+├── config/settings.json        # 模板（程序不读取；真实配置在 %APPDATA% INI）
+├── reports/                    # 分析报告、探针脚本、真机联测任务书
+└── run.bat                     # 启动脚本（首次会顺带部署 Qt 运行库）
 ```
 
-## 依赖
+---
+
+## 9. 依赖与构建
 
 | 依赖 | 版本 | 用途 |
-|------|------|------|
-| Qt5 | 5.14.2 | GUI 框架 (Widgets, Core, Gui) |
-| OpenCV | 4.7.0 | 图像处理 (core, imgproc, calib3d) |
-| RVC X2 SDK | C++ | 3D 相机预览与采集 |
-| HandEyeSDK | 3.5.0 | 标定计算 (C API, SEH 隔离) |
-| RVBUST Vis | (optional) | 3D 点云可视化引擎 (Phase 2: 直接 OSG 嵌入) |
-| Eigen3 | 3.4 | 线性代数 (header-only) |
+|---|---|---|
+| Qt5 | 5.14.2 (msvc2017_64) | GUI（Widgets / Core / Gui / Concurrent / **Network**） |
+| RVC SDK | — | 3D 相机预览、采集、原生检测 |
+| HandEyeSDK | — | 标定计算（C API，SEH 隔离） |
+| EfortSDK | — | 埃夫特机器人位姿 |
+| RVBUST Vis + OSG | Vis / OSG 3.6.5 | 3D 点云可视化（**可选**，`find_package(... QUIET)`） |
 | CMake | 3.20+ | 构建系统 |
-| MSVC | 2017 | 编译器 (C++17) |
+| Visual Studio | **2026** | 编译器（C++17，`/utf-8`） |
 
-## 构建
-
-```bash
-cd MyHandEyeTools
-mkdir build && cd build
-cmake .. -G "Visual Studio 15 2017 Win64"
-cmake --build . --config Release
-```
-
-构建完成后，`build/bin/` 目录会自动部署 RVC 和 HandEyeSDK 的 runtime DLL。
-
-## 运行
+> 项目**不再依赖 OpenCV / Eigen**（早期 README 写过，那两行已作废）。
+> Qt 用的虽是 `msvc2017_64` 官方包，但构建工具链是 VS 2026，二者兼容。
 
 ```bash
-cd build/bin
-.\HandEyeCalibrationTool.exe
+cmake --build "D:/MyCode/MyHandEyeTools/build" --config Release
 ```
 
-或直接运行 `run.bat`（如果配置了路径）。
+构建后自检：`$LASTEXITCODE` 为 0、exe 时间戳已刷新。
 
-## UI 布局
+### 测试
 
-```
-┌────────────────────────────────────────────────────────────────────┐
-│ TopNavBar          顶部导航栏 (fixH=48)                            │
-│   [标题 "手眼标定数据收集助手 V1.0"] [进度] [相机状态] [设置][帮助]  │
-├────────────────────────────────────────────────────────────────────┤
-│ ModeSelector       模式选择栏 (单行3组)                             │
-│   [手眼模式: 眼在手外|眼在手上] [标定方法: 标记物|戳点] [标记物类型]  │
-├──────────────────────────┬─────────────────────────────────────────┤
-│ 左侧面板                  │ 右侧面板 SidePanel (fixW=408)           │
-│ ┌──────────────────────┐ │ ┌─────────────────────────────────────┐ │
-│ │ Image2DView          │ │ │ TipsCard "当前操作提示" (70~140px)  │ │
-│ │ 标题(28px悬浮)        │ │ ├─────────────────────────────────────┤ │
-│ │ 2D图像 (缩放/拖拽)    │ │ │ NotesCard "标定注意事项" (可折叠)   │ │
-│ └──────────────────────┘ │ ├─────────────────────────────────────┤ │
-│ ┌──────────────────────┐ │ │ PreviewCard "文件预览" (弹性)       │ │
-│ │ VisSceneView         │ │ │ [相机目标点][机器人位姿][TCP点]     │ │
-│ │ 标题(28px悬浮)        │ │ │ 文本预览区                         │ │
-│ │ 3D渲染区              │ │ └─────────────────────────────────────┘ │
-│ │ 工具栏(28px悬浮)       │ │                                        │
-│ │ [复位][前视][俯视]     │ │                                        │
-│ │ [右视][地面][拾取]     │ │                                        │
-│ │ [菜单]                │ │                                        │
-│ └──────────────────────┘ │                                        │
-├──────────────────────────┤                                        │
-│ DataInputArea (fixH=140) │                                        │
-│  3 张 DataInputCard:     │                                        │
-│  [相机目标点坐标]        │                                        │
-│  [机器人拍照位姿]        │                                        │
-│  [机器人目标点坐标]      │                                        │
-├──────────────────────────┤                                        │
-│ ActionButtons (minH=56)  │                                        │
-│  [预览][拍照][识别][保存][撤销]                                     │
-└──────────────────────────┴─────────────────────────────────────────┘
+两个 ctest 目标，共 28 个测试类：
+
+```bash
+ctest --test-dir "D:/MyCode/MyHandEyeTools/build" -C Release --output-on-failure
 ```
 
-**关键设计决策：**
-- DataInputArea 固定高度 140px，永不变化。卡片通过 layout stretch 自适应，保证 2D/3D 可视化视图在模式切换时尺寸不变。
-- VisSceneView 的标题栏和工具栏为悬浮覆盖层（半透明背景），不占用 3D 渲染区域。
-- SidePanel 中 NotesCard 可折叠，TipsCard 弹性高度 (70~140px)，PreviewCard 使用剩余空间。
+| 目标 | 内容 |
+|---|---|
+| `unit_tests` | QtTest 单元测试（纯逻辑为主），每个类单独出一份报告 `build/unit_tests_report.<类名>.txt` |
+| `measurement_truth` | 已知真值测量比对：ROI 像素矩形 → 网格 → 测量算法，全部对照 `codex_testData/manifest.json` |
 
-## 组件索引
+> 测试 exe 是 **GUI 子系统，stdout 看不见**。要看失败详情用
+> `--output-on-failure`，或 `unit_tests.exe -o <文件>,txt`。
 
-| 组件 | 源文件 | 说明 |
-|------|--------|------|
-| MainWindow | app/MainWindow.h/.cpp | 总控制器，所有 signal/slot 连接 |
-| TopNavBar | ui/TopNavBar.h/.cpp | 标题、进度条、相机连接状态、设置/帮助按钮 |
-| ModeSelector | ui/ModeSelector.h/.cpp | 手眼模式 + 标定方法 + 标记物类型 (单行) |
-| Image2DView | ui/Image2DView.h/.cpp | 2D 实时图像，支持滚轮缩放和拖拽平移 |
-| VisSceneView | ui/VisSceneView.h/.cpp | 3D 点云可视化，悬浮标题栏+工具栏 |
-| DataInputArea | ui/DataInputArea.h/.cpp | 卡片容器，固定高度 140px |
-| DataInputCard | ui/DataInputCard.h/.cpp | 单个坐标输入卡片，自适应字体+居中 |
-| ActionButtons | ui/ActionButtons.h/.cpp | 操作按钮组 |
-| SidePanel | ui/SidePanel.h/.cpp | 操作提示、可折叠注意事项、文件预览 |
-| ToastOverlay | ui/ToastOverlay.h/.cpp | 浮动通知 |
-| Theme | ui/Theme.h/.cpp | 全局颜色/字体/QSS 工厂方法 |
+---
 
-## 命名约定（用于需求描述）
+## 10. 开发约定（细则见 `AGENTS.md`）
 
-| 你说 | 对应组件 | 源文件 |
-|------|---------|--------|
-| 顶部导航栏 / 顶栏 | TopNavBar | ui/TopNavBar.h/.cpp |
-| 模式选择栏 / 切换按钮 | ModeSelector | ui/ModeSelector.h/.cpp |
-| 2D视图 / 左图 / 图像区 | Image2DView | ui/Image2DView.h/.cpp |
-| 3D视图 / 点云区 | VisSceneView | ui/VisSceneView.h/.cpp |
-| 输入区 / 坐标卡片 | DataInputArea / DataInputCard | ui/DataInputArea.h/.cpp |
-| 底部按钮栏 / 操作栏 | ActionButtons | ui/ActionButtons.h/.cpp |
-| 右侧面板 / 信息面板 | SidePanel | ui/SidePanel.h/.cpp |
-| 悬浮提示 | ToastOverlay | ui/ToastOverlay.h/.cpp |
+- **纯函数先行**：可测逻辑放 `src/logic/`，UI 只是投影；新增纯逻辑必须注册进
+  `tests/CMakeLists.txt` + `test_main.cpp`，并先写单测再实现。
+- **UI 不做自动化测试**：界面改动由 AI 输出「操作步骤 + 预期结果」清单，人工执行。
+- **双工作区**：源码真源 = `AICode/handeye-tools`，运行/构建副本 = `D:\MyCode\MyHandEyeTools`。
+- **单位约定**：卡片与工具默认 **mm + 度**；FANUC WPR 按 RVC 导出实测顺序（绕 Z,Y,X）。
+- **不可修改的核心功能**见 `PROJECT.md` 第 3 节（识别回退链、质量告警不拦截、检测缓存、
+  3D 拾取异步化、保存路径回退、绿色版免安装、双日志等）。
+- **Vis/3D 同步命令**（`GetCameraPose` 等）绝不放 UI 线程；机器人阻塞调用只在
+  `RobotWorker` 线程上。
+- 程序名 / 版本号只在 `src/AppInfo.h` 改；界面配色/字号只在 `src/ui/Theme.h` 改。
 
-## 快捷键
+---
 
-| 快捷键 | 功能 |
-|--------|------|
-| `Ctrl+S` | 保存当前数据 |
-| `Ctrl+Z` | 撤销上一组数据 |
-| `F5` | 刷新相机预览 |
-| `F11` | 全屏切换 |
+## 11. 文档索引
 
-## 已完成优化
+| 文件 | 内容 |
+|---|---|
+| `AGENTS.md` | 项目规则与硬约束（每次会话自动加载） |
+| `STATUS.md` | 当前进度、交接块、已知问题、失败方案 |
+| `PLAN.md` | 阶段步骤、DoD、验证、依赖、回退方案 |
+| `PROJECT.md` | 目标、红线、约束、非目标、验收标准、ADR、变更记录 |
+| `reports/CODE-MAP.md` | 改代码的导航图："我要改 X，去哪" |
+| `reports/机器人通信真机联测任务书.md` | 机器人通信四项待实测的现场测试书 |
+| `reports/T-012/BASELINE.md` | 测量精度基线与判据变更记录 |
 
-- [x] Python → C++ 完整移植 (19 个 .h/.cpp pairs + main.cpp)
-- [x] CMake 构建系统 + 3 个自定义 Find*.cmake 模块
-- [x] 窗口默认 3/4 屏幕大小，居中，最小 1280×720
-- [x] 模式切换时 2D/3D 视图尺寸不变 (DataInputArea 固定 140px)
-- [x] DataInputCard 自适应字体 (std::clamp(height/3, 11, 14)) + 垂直居中
-- [x] VisSceneView 悬浮标题栏+工具栏（半透明覆盖层，不占用渲染空间）
-- [x] SidePanel: TipsCard 弹性高度 (70~140px), NotesCard 可折叠
-- [x] 模式选择器单行布局 (3组并列)
-- [x] 预览按钮从 TopNavBar 迁移到 ActionButtons
-- [x] LoadTest 按钮移除
-- [x] 模式切换取消恢复逻辑 (从 config 读取旧值)
-- [x] 后构建自动部署 RVC + HandEyeSDK runtime DLL
-- [x] SEH 崩溃隔离 (__try/__except 替代子进程)
-- [x] 编译期信号/槽类型检查 (Qt5 functor syntax)
-- [x] 忙碌状态防护 (操作期间禁用按钮)
-- [x] HandEyeSDK C API 直接 .lib 链接 (消除 ctypes)
-- [x] 窗口最小化时暂停相机预览
-- [x] 数据采集 JSON 自动备份 (限流 1次/秒)
+---
 
-## 待完成项
-
-### Phase 2 (OSG 深度集成)
-- [ ] VisSceneView 直接 OSG embedding (替代当前 HWND 方式)
-- [ ] OSG camera manipulator 定制: 右键缩放→平移
-
-### 功能增强
-- [ ] 戳点标定 TCP 触测自动记录
-- [ ] 多相机支持
-- [ ] 标定结果可视化 (精度热力图等)
-- [ ] 国际化 (English/中文切换)
-- [ ] 自动化测试套件
-
-## 需求描述模板
-
-当你需要描述 UI 修改需求时，可以按以下格式说明，帮助准确理解：
+## 12. 描述需求的小模板
 
 ```
-【组件】: 明确组件名（如 TopNavBar, SidePanel, DataInputCard 等，见上方命名约定）
+【组件】: 明确组件名（如 TopNavBar / SidePanel / ActionButtons，见 §3 界面地图）
 【位置】: 在窗口中的哪个区域
 【当前行为】: 现在是什么样的
 【期望行为】: 你希望改成什么样
-【触发条件】: 什么操作后生效 (切换模式/点击按钮/窗口缩放/始终)
+【触发条件】: 什么操作后生效（切换模式 / 点击按钮 / 窗口缩放 / 始终）
 ```
 
 示例：
-> 【组件】SidePanel 的 TipsCard
-> 【位置】右侧面板最上方
-> 【当前行为】最小高度 70px，字色灰色
-> 【期望行为】最小高度改为 50px，标题字色改为橙色
-> 【触发条件】始终
 
-## 开发说明
-
-- **检测优先级**: RVC 原生 API (ConcentricCircle) > OpenCV (findCirclesGrid) > HandEyeSDK
-- **坐标体系**: 应用层 mm，Vis 引擎 m，接口自动转换
-- **崩溃隔离**: HandEyeSDK 调用由 SEH `__try/__except` 保护，崩溃不传播到主进程
-- **备份策略**: 最近 10 份 JSON 备份于 `save_dir/backup/`，关闭时 force 写入
-- **信号连接**: 使用 Qt5 functor syntax `connect(sender, &Sender::signal, this, [this](args){...})`，编译期类型检查
+> 【组件】ActionButtons
+> 【位置】主界面底部按钮栏
+> 【当前行为】「计算」在保存 1 组数据后就可用
+> 【期望行为】改成保存满 6 组才可用
+> 【触发条件】保存/撤销后
