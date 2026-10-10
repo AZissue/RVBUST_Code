@@ -14,6 +14,8 @@ import os
 import copy
 from typing import Any, Dict, List, Optional, Tuple
 
+import numpy as np
+
 from core.utils import logger
 from core.point_cloud_processor import PointCloudProcessor
 from core.pcd_utils import merge_pointclouds
@@ -201,8 +203,16 @@ class CloudCompareWorkflow:
         self._selected_id: Optional[str] = None
         self._next_id = 1
 
-        # 后处理参数
+        # 后处理参数。
+        # ⚠️ P0-B：`src/core/point_cloud_processor.PointCloudProcessor` 自 commit
+        # `885063e` 起把 `enable_outlier_removal` 默认改成 True（为修主程序拼接输出
+        # 飞点）。本工作流的契约是「未启用任何算子 = 无操作」（D1，见 `apply_process`
+        # 的 `result is before` 短路）——若继承该默认值，用户在 UI 上一次「未启用
+        # 任何算子」的调用会静默剔点（实测 500→477），契约被破坏且 UI 无参数可见。
+        # 口径（@user 2026-10-10 拍板）：原型侧显式关闭以守住 D1，并由 UI 暴露该
+        # 参数让用户自己开；不动 `src/`。
         self.processor = PointCloudProcessor()
+        self.processor.enable_outlier_removal = False
 
         # 处理历史：item = {"action", "node_id", "before_pcd", "after_pcd"}
         self._history: List[Dict[str, Any]] = []
@@ -301,6 +311,84 @@ class CloudCompareWorkflow:
             self._state = "idle"
         return True
 
+    def create_node_from_mask(self, node_id: str, keep_mask: np.ndarray,
+                              name: str,
+                              action: str = "ROI 保留") -> Tuple[bool, str, Optional[str]]:
+        """按布尔掩码从源节点派生**新节点**（K4：ROI 保留 / 剔除）。
+
+        口径（@lead 2026-09-24 §10.15 裁定，遵 v1 `postprocess_workspace.py:502-509`）：
+          - 产出新节点，**源节点几何/属性一律不被改写**（与合并、重命名同哲学）。
+          - 操作**入历史**，且必须可撤销（entry kind="create"）。
+          - 新节点插在源节点**之后**，与用户"派生自谁"的心理模型一致。
+
+        Args:
+            node_id: 源点云节点 id。
+            keep_mask: 与源节点点数等长的 bool 数组，True = 保留。
+            name: 新节点名。
+            action: 历史条目显示名（"ROI 保留" / "ROI 剔除"）。
+
+        Returns:
+            (ok, msg, new_node_id)
+        """
+        node = self._nodes.get(node_id)
+        if node is None or node.node_type != CCNode.NODE_CLOUD:
+            return False, "源点云不存在", None
+        if node.pcd is None or len(node.pcd.points) == 0:
+            return False, "源点云为空", None
+        mask = np.asarray(keep_mask)
+        n_total = len(node.pcd.points)
+        if mask.shape != (n_total,):
+            return False, (f"掩码长度与点云不一致（掩码 {mask.shape} ≠ 点数 {n_total}），"
+                           f"拒绝派生以免静默错位"), None
+        if not mask.any():
+            return False, "选区为空：没有点可保留，未创建节点", None
+        try:
+            new_pcd = node.pcd.select_by_index(np.nonzero(mask)[0].tolist())
+        except Exception as e:
+            return False, f"派生点云失败: {e}", None
+        if len(new_pcd.points) == 0:
+            return False, "选区为空：没有点可保留，未创建节点", None
+
+        n_keep = int(mask.sum())
+        new_id = self.add_cloud(name, new_pcd)
+        # 挪到源节点之后（add_cloud 追加在末尾），再登记 create 型历史。
+        self._node_order.remove(new_id)
+        insert_at = self._node_order.index(node_id) + 1
+        self._node_order.insert(insert_at, new_id)
+        self._push_history(action, node_id, None, None, kind="create",
+                           created_id=new_id, position=insert_at,
+                           snapshot=self._nodes[new_id])
+        logger.info(f"{node.name} {action} -> 新节点 {name}"
+                    f"（{n_keep:,}/{n_total:,} 点），id={new_id}")
+        return True, (f"{action}：从 {node.name} 派生 {name}，"
+                      f"{n_keep:,}/{n_total:,} 点"), new_id
+
+    # ------------------------------------------------------------------
+    # 裁切（K4：AABB / 球 / OBB，就地改写 + 入历史）
+    # ------------------------------------------------------------------
+    def crop_cloud(self, node_id: str, mode: str, **params) -> Tuple[bool, str, Optional[Dict[str, int]]]:
+        """对节点做裁切（就地改写，进撤销历史）。
+
+        mode 与 `src/core/point_cloud_processor.py:48` 的 `crop_mode` 同口径：
+          - "aabb"   + ratio（0~1，保留 AABB 中心的该比例区域）
+          - "sphere" + radius（与点云同单位，中心=点云质心）
+          - "obb"    + ratio（0~1，保留 OBB 中心的该比例区域）
+        实现直接复用既有 `apply_process`（同一套 deepcopy 历史 + 同样的
+        `result is before` 空操作短路），不另开一套裁切实现。
+        """
+        if mode not in ("aabb", "sphere", "obb"):
+            return False, f"未知裁切模式: {mode}", None
+        overrides: Dict[str, Any] = {"crop_mode": mode}
+        if mode in ("aabb", "obb"):
+            if not (0.0 < params.get("ratio", 0.0) <= 1.0):
+                return False, "裁切比例必须在 (0, 1] 内", None
+            overrides["crop_ratio"] = float(params["ratio"])
+        else:
+            if params.get("radius", 0.0) <= 0:
+                return False, "球裁切半径必须 > 0", None
+            overrides["crop_radius"] = float(params["radius"])
+        return self.apply_process(node_id, **overrides)
+
     def rename_node(self, node_id: str, name: str) -> bool:
         """重命名节点（K2-D2/W12：树、workflow、属性面板三方同一份名字）。
 
@@ -338,17 +426,39 @@ class CloudCompareWorkflow:
 
     # ------------------------------------------------------------------
     # 处理历史（撤销/重做）
+    #
+    # 两种 entry（K4 扩展，@lead 2026-09-24 裁定）：
+    #   kind="process" —— 就地改写既有节点（pcd 前后快照），undo/redo 换回 pcd。
+    #   kind="create"  —— 产出**新节点**（ROI 保留/剔除），源节点不被改写。
+    #                     undo = 移除新节点 + 恢复选中；redo = 原位置重新插入。
+    # 之所以不能复用 process：其 entry 只有单节点 pcd 前后快照，表达不了
+    # "新增了一个节点"这件事，撤销会无处落脚（源节点本身没变）。
     # ------------------------------------------------------------------
-    def _push_history(self, action: str, node_id: str,
-                      before_pcd: Any, after_pcd: Any):
+    def _push_history(self, action: str, node_id: Optional[str],
+                      before_pcd: Any = None, after_pcd: Any = None,
+                      kind: str = "process",
+                      created_id: Optional[str] = None,
+                      position: Optional[int] = None,
+                      snapshot: Any = None):
         self._history = self._history[: self._history_index + 1]
         self._history.append({
             "action": action,
+            "kind": kind,
             "node_id": node_id,
             "before_pcd": before_pcd,
             "after_pcd": after_pcd,
+            "created_id": created_id,
+            "position": position,
+            # kind="create" 专用：被创建节点对象的引用，redo 时按原位置放回。
+            # 持引用而非深拷贝：该节点从建立到 undo 之间不被就地改写（ROI 产出
+            # 新节点后源节点与新节点都只读），与合并的结果节点同口径。
+            "snapshot": snapshot,
         })
         self._history_index = len(self._history) - 1
+
+    def history_depth(self) -> Tuple[int, int]:
+        """返回 (历史栈深, 当前指针)，供"导出/估计不得污染撤销栈"类断言做快照。"""
+        return len(self._history), self._history_index
 
     def can_undo(self) -> bool:
         return self._history_index >= 0
@@ -360,6 +470,14 @@ class CloudCompareWorkflow:
         if not self.can_undo():
             return False, "没有可撤销的操作"
         item = self._history[self._history_index]
+        if item["kind"] == "create":
+            ok, msg = self._undo_create(item)
+            if not ok:
+                return False, msg
+            self._history_index -= 1
+            logger.info(msg)
+            return True, msg
+
         node_id = item["node_id"]
         node = self._nodes.get(node_id)
         if node is None:
@@ -374,6 +492,14 @@ class CloudCompareWorkflow:
         if not self.can_redo():
             return False, "没有可重做的操作"
         item = self._history[self._history_index + 1]
+        if item["kind"] == "create":
+            ok, msg = self._redo_create(item)
+            if not ok:
+                return False, msg
+            self._history_index += 1
+            logger.info(msg)
+            return True, msg
+
         node_id = item["node_id"]
         node = self._nodes.get(node_id)
         if node is None:
@@ -383,6 +509,36 @@ class CloudCompareWorkflow:
         msg = f"重做 {item['action']} -> {node.name}"
         logger.info(msg)
         return True, msg
+
+    def _undo_create(self, item: Dict[str, Any]) -> Tuple[bool, str]:
+        """撤销"新增节点"：移除新节点并恢复选中（源节点几何/属性全程未被改写）。"""
+        created_id = item.get("created_id")
+        node = self._nodes.get(created_id)
+        if node is None:
+            # 新节点已被用户删除：不算失败，指针照常回退，如实说明。
+            return True, f"撤销 {item['action']}（新节点已不存在，仅回退历史指针）"
+        name = node.name
+        self.remove_node(created_id)
+        self._selected_id = item.get("node_id")
+        return True, f"撤销 {item['action']} -> 移除 {name}"
+
+    def _redo_create(self, item: Dict[str, Any]) -> Tuple[bool, str]:
+        """重做"新增节点"：把快照节点按原插入位置放回。"""
+        created_id = item.get("created_id")
+        if created_id in self._nodes:
+            return False, "重做失败：新节点已存在"
+        snapshot = item.get("snapshot")
+        if snapshot is None:
+            return False, "重做失败：缺少节点快照"
+        self._nodes[created_id] = snapshot
+        pos = item.get("position")
+        if pos is None or pos > len(self._node_order):
+            self._node_order.append(created_id)
+        else:
+            self._node_order.insert(pos, created_id)
+        self._selected_id = created_id
+        self._state = "loaded"
+        return True, f"重做 {item['action']} -> 恢复 {snapshot.name}"
 
     # ------------------------------------------------------------------
     # 后处理（复用 PointCloudProcessor）
@@ -394,6 +550,9 @@ class CloudCompareWorkflow:
 
         before = node.pcd
         proc = PointCloudProcessor()
+        # P0-B：必须显式覆盖，不能用 PointCloudProcessor() 的构造默认值
+        # （src 侧默认为 True，见 __init__ 注释）。
+        proc.enable_outlier_removal = False
         proc.voxel_size = self.processor.voxel_size
         proc.enable_voxel_downsample = self.processor.enable_voxel_downsample
         proc.crop_mode = self.processor.crop_mode

@@ -37,6 +37,106 @@ BG_DARK = (0.10, 0.10, 0.13, 1.0)
 BG_LIGHT = (0.90, 0.90, 0.92, 1.0)
 
 
+# =========================================================================
+# ROI 选区判据（K4 / W5a / W5b）
+#
+# 这两条是**纯函数**，不碰 GL、不碰控件状态，专为可测性拆出来：
+#   - `roi_project_indices`    纯投影口径：落在矩形内经 NDC 可见的点全选。
+#   - `roi_apply_depth_filter` 深度分支：对纯投影结果再按采样深度过滤。
+#
+# 为什么必须拆：offscreen 下 fbo=0，`glReadPixels` 读不到深度（`_read_depth_rect`
+# 恒返回 None）。若把"投影 + 深度"写在一个函数里，CI 就只能在"读不到深度 ⇒
+# 静默返回空"这条退化路径上测，永远测不到真正的比较分支（W5b 裁定：
+# `glReadPixels` **不得**作为 CI 判据，改为注入合成 depth_buf 直测）。
+# =========================================================================
+
+def roi_project_indices(mvp_matrix, points, rect, view_w: int, view_h: int):
+    """纯投影口径 ROI：返回落在 `rect` 内（含边界）且 NDC 可见的点索引。
+
+    Args:
+        mvp_matrix: 4×4 MVP 矩阵（numpy）。
+        points: (N,3) 点云坐标。
+        rect: QRect 选区（**屏幕坐标系，y 轴向下**，与 Qt 一致）。
+        view_w / view_h: 视口宽高（像素）。
+
+    Returns:
+        (indices, screen) —— indices 为命中的原始索引（递增，dtype=int64）；
+        screen 为 (N,3) 的 (sx, sy, sz)，闭包外调用方可复用于深度过滤。
+        入参非法时返回 (空数组, None)，**不抛异常**（调用方负责解释原因）。
+
+    边界归属口径（写进测试，避免边界点归属含糊）：
+        屏幕坐标用 `>= left & <= right`（闭区间，含四边）；深度用 `0.0 <= sz <= 1.0`
+        闭区间。`sx` 不做 ±0.5px 容差 —— 判据是"投影后落在矩形内"，容差留给调用方
+        在构造测试几何时避开边界（测试里显式留出 >1px 余量）。
+    """
+    pts = np.asarray(points, dtype=np.float64)
+    if pts.ndim != 2 or pts.shape[1] != 3 or len(pts) == 0:
+        return np.empty(0, dtype=np.int64), None
+    if mvp_matrix is None or rect is None:
+        return np.empty(0, dtype=np.int64), None
+    if rect.width() < 3 or rect.height() < 3:
+        return np.empty(0, dtype=np.int64), None
+    w = max(int(view_w), 1)
+    h = max(int(view_h), 1)
+
+    n = len(pts)
+    homo = np.concatenate([pts, np.ones((n, 1), dtype=np.float64)], axis=1)
+    clip = (np.asarray(mvp_matrix, dtype=np.float64) @ homo.T).T
+    wcol = np.where(clip[:, 3:] != 0, clip[:, 3:], 1.0)
+    ndc = clip[:, :3] / wcol
+    sx = (ndc[:, 0] + 1.0) * 0.5 * w
+    sy = (1.0 - ndc[:, 1]) * 0.5 * h
+    sz = (ndc[:, 2] + 1.0) * 0.5
+    screen = np.stack([sx, sy, sz], axis=1)
+
+    in_rect = ((sx >= rect.left()) & (sx <= rect.right()) &
+               (sy >= rect.top()) & (sy <= rect.bottom()) &
+               (sz >= 0.0) & (sz <= 1.0))
+    return np.nonzero(in_rect)[0].astype(np.int64), screen
+
+
+def roi_apply_depth_filter(indices, screen, rect, depth_buf, view_h: int,
+                           occl_tol_base: float = 0.005,
+                           occl_tol_scale: float = 0.01):
+    """深度分支（W5b 可注入直测）：对纯投影命中集再按采样深度做遮挡过滤。
+
+    采样规则沿用原实现：点的屏幕坐标 → 深度缓冲下标（y 轴翻转）→ 与点的 NDC
+    深度 `sz` 比较，差值小于 `tol = base + scale * sampled` 视为可见（未被遮挡）。
+
+    Args:
+        indices: `roi_project_indices` 返回的命中索引。
+        screen: `roi_project_indices` 返回的 (N,3) 屏幕坐标。
+        rect: 同一选区 QRect。
+        depth_buf: (buf_h, buf_w) 注入的合成深度缓冲（NaN/Inf 视为不可判 → 保留）。
+        view_h: 视口高。
+
+    Returns:
+        过滤后的索引数组（保持递增）。
+    """
+    indices = np.asarray(indices, dtype=np.int64)
+    if len(indices) == 0 or screen is None or depth_buf is None:
+        return indices
+    buf = np.asarray(depth_buf, dtype=np.float64)
+    if buf.ndim != 2 or buf.size == 0:
+        return indices
+    buf_h, buf_w = buf.shape
+
+    sx = screen[indices, 0]
+    sy = screen[indices, 1]
+    sz = screen[indices, 2]
+    ix = np.clip(np.round(sx).astype(np.int64), rect.left(), rect.right())
+    iy = np.clip(np.round(view_h - 1 - sy).astype(np.int64),
+                 view_h - 1 - rect.bottom(), view_h - 1 - rect.top())
+    bufx = np.clip(ix - rect.left(), 0, buf_w - 1)
+    bufy = np.clip(iy - (view_h - 1 - rect.bottom()), 0, buf_h - 1)
+    sampled = buf[bufy, bufx]
+    # 不可判的深度采样（NaN/Inf）按"可见"处理：宁可多选也不静默丢点（W9 精神）。
+    finite = np.isfinite(sampled)
+    tol = occl_tol_base + occl_tol_scale * np.where(finite, sampled, 0.0)
+    visible = (~finite) | (np.abs(sz - sampled) < tol)
+    return indices[visible]
+
+
 def _app_font(widget: QWidget, point_size: int) -> QFont:
     """自绘 overlay 文字取控件自身字体（GLOBAL_QSS 作用后的字族），只调字号。
 
@@ -233,6 +333,14 @@ class PointCloudViewerLOD(QOpenGLWidget):
         self._roi_rect = None
         self._roi_rubberband = None
         self._roi_selected_indices: Dict[str, np.ndarray] = {}
+        # W6（K4）：深度/遮挡判据改为**显式开关**，默认 True = 不做遮挡剔除
+        # （= 纯投影口径：落在矩形内的点全部选中）。设 False 才启用深度比较。
+        # 之所以默认 True：offscreen / 远程桌面 / 软件渲染下 fbo=0，深度缓冲读
+        # 不到，原实现据此静默返回空选区（W9 真缺陷）。默认不做遮挡剔除后，
+        # 这些环境下 ROI 依然可用且行为与"深度判据恒真"时代的可见结果一致。
+        self._include_occluded = True
+        # 最近一次 ROI 计算失败的原因（W9：必须可上报，禁静默）。None = 无错误。
+        self._roi_last_error: Optional[str] = None
 
         # 叠加层
         self._overlay_label = QLabel(self)
@@ -824,47 +932,66 @@ class PointCloudViewerLOD(QOpenGLWidget):
         return QRect(min(x1, x2), min(y1, y2), abs(x2 - x1), abs(y1 - y2))
 
     def _compute_roi_selection(self):
+        """ROI 选区计算（K4 重构：纯投影判据 + 可选深度过滤 + 失败可上报）。
+
+        W9：任何导致选不中点的原因都必须落到 `_roi_last_error` 且由调用方
+        `_log(warning)` 上报，**禁止静默返回空**。`roi_selection_error()` 供
+        workspace 取用。
+        """
         self._roi_selected_indices = {}
+        self._roi_last_error = None
         if self._roi_rect is None or self._roi_rect.width() < 3 or self._roi_rect.height() < 3:
             return
-        rect = self._roi_rect
-        depth_buf = self._read_depth_rect(rect)
-        if depth_buf is None:
+        if not self._has_gl or self._mvp_matrix is None:
+            self._roi_last_error = (
+                "3D 视图未就绪（无 OpenGL 上下文或 MVP 矩阵未建立），"
+                "ROI 选区无法计算；请先载入点云并等待首帧渲染")
             return
+        rect = self._roi_rect
         h = self.height()
+
+        # W6：默认 True = 不做遮挡剔除（纯投影口径）。仅当显式设 False 时才读深度。
+        depth_buf = None
+        if not self._include_occluded:
+            depth_buf, depth_err = self._read_depth_rect(rect)
+            if depth_buf is None:
+                # 明确降级：保留纯投影结果，但把原因上报（不是静默空选区）。
+                self._roi_last_error = (
+                    f"深度缓冲不可读（{depth_err}）；offscreen / 远程桌面 / 软件"
+                    f"渲染下 fbo=0 是已知情形，已按「不做遮挡剔除」返回全部投影命中点")
+
         for cloud_id, cloud in self._clouds.items():
             if not cloud.get("visible", True):
                 continue
             pts = cloud["points"]
             if len(pts) == 0:
                 continue
-            screen = self.world_to_screen(pts)
-            if screen is None:
+            indices, screen = roi_project_indices(
+                self._mvp_matrix, pts, rect, self.width(), h)
+            if indices.size == 0:
                 continue
-            sx, sy, sz = screen[:, 0], screen[:, 1], screen[:, 2]
-            in_rect = ((sx >= rect.left()) & (sx <= rect.right()) &
-                       (sy >= rect.top()) & (sy <= rect.bottom()) &
-                       (sz >= 0.0) & (sz <= 1.0))
-            if not in_rect.any():
-                continue
-            ix = np.clip(np.round(sx[in_rect]).astype(np.int32), rect.left(), rect.right())
-            iy = np.clip(np.round(h - 1 - sy[in_rect]).astype(np.int32),
-                         h - 1 - rect.bottom(), h - 1 - rect.top())
-            bufx = ix - rect.left()
-            bufy = iy - (h - 1 - rect.bottom())
-            buf_h, buf_w = depth_buf.shape
-            bufx = np.clip(bufx, 0, buf_w - 1)
-            bufy = np.clip(bufy, 0, buf_h - 1)
-            sampled = depth_buf[bufy, bufx]
-            tol = 0.005 + 0.01 * sampled
-            visible = np.abs(sz[in_rect] - sampled) < tol
-            idx_in_rect = np.nonzero(in_rect)[0]
-            selected = idx_in_rect[visible]
-            if len(selected) > 0:
-                self._roi_selected_indices[cloud_id] = selected
+            if depth_buf is not None:
+                indices = roi_apply_depth_filter(indices, screen, rect, depth_buf, h)
+            if indices.size > 0:
+                self._roi_selected_indices[cloud_id] = indices
         self._highlight_roi_selection()
 
+    def roi_selection_error(self) -> Optional[str]:
+        """最近一次 ROI 计算失败/降级的原因；None = 无问题（W9 上报入口）。"""
+        return self._roi_last_error
+
+    def set_include_occluded(self, include: bool):
+        """W6：深度/遮挡判据显式开关。True（默认）= 不做遮挡剔除。"""
+        self._include_occluded = bool(include)
+
     def _read_depth_rect(self, rect):
+        """读取矩形区域的深度缓冲。
+
+        W9：失败时**必须**把原因带出去（返回 (buf, err)）。旧实现裸
+        `except Exception: return None` + 调用方静默 return，导致 offscreen /
+        远程桌面 / 软件渲染场景下 ROI 选中 0 点而界面毫无提示 —— 这是真缺陷。
+        现返回二元组，调用方据此 `_log(warning)` 上报。
+        """
         try:
             from OpenGL import GL
             self.makeCurrent()
@@ -877,12 +1004,15 @@ class PointCloudViewerLOD(QOpenGLWidget):
             h = min(rect.height(), self.height() - y)
             if w <= 0 or h <= 0:
                 GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, prev_fbo)
-                return None
+                return None, f"选区尺寸无效（{w}×{h}）"
             buf = GL.glReadPixels(x, y, w, h, GL.GL_DEPTH_COMPONENT, GL.GL_FLOAT)
             GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, prev_fbo)
-            return np.asarray(buf, dtype=np.float32).reshape(h, w)
-        except Exception:
-            return None
+            arr = np.asarray(buf, dtype=np.float32).reshape(h, w)
+            if not np.isfinite(arr).any():
+                return None, "深度缓冲全为非有限值（GL 上下文可能已失效）"
+            return arr, None
+        except Exception as e:
+            return None, f"深度缓冲读取失败: {type(e).__name__}: {e}"
 
     def _highlight_roi_selection(self):
         for cloud_id, indices in self._roi_selected_indices.items():
@@ -900,7 +1030,7 @@ class PointCloudViewerLOD(QOpenGLWidget):
     def _set_rotation_center(self, pos):
         if not self._has_gl:
             return
-        depth = self._read_depth(pos.x(), pos.y())
+        depth, _err = self._read_depth(pos.x(), pos.y())
         if depth is None or depth >= 0.99999:
             return
         world_pos = self.screen_to_world(pos.x(), pos.y(), depth)
@@ -912,7 +1042,7 @@ class PointCloudViewerLOD(QOpenGLWidget):
         self.update()
 
     def _read_depth(self, x: int, y: int):
-        """读取 (x,y) 处深度缓冲值，失败返回 None。
+        """读取 (x,y) 处深度缓冲值，返回 (depth, err)；失败时 depth=None。
 
         QOpenGLWidget 渲染在自身 FBO 中，paintGL 之外绑定的是系统默认
         framebuffer，必须先绑定 defaultFramebufferObject() 才能读到真实深度。
@@ -926,9 +1056,9 @@ class PointCloudViewerLOD(QOpenGLWidget):
             py = max(0, min(self.height() - 1 - y, self.height() - 1))
             depth = GL.glReadPixels(px, py, 1, 1, GL.GL_DEPTH_COMPONENT, GL.GL_FLOAT)
             GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, prev_fbo)
-            return float(depth[0][0])
-        except Exception:
-            return None
+            return float(depth[0][0]), None
+        except Exception as e:
+            return None, f"深度读取失败: {type(e).__name__}: {e}"
 
     def screen_to_world(self, x: float, y: float, depth: float):
         if self._mvp_inv is None:

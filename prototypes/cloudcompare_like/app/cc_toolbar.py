@@ -77,13 +77,13 @@ class CCToolBar(QWidget):
         lo.addSpacing(15)
 
         # 编辑
-        btn_undo = QPushButton("撤销")
-        btn_undo.clicked.connect(self.undo_requested.emit)
-        lo.addWidget(btn_undo)
+        self._btn_undo = QPushButton("撤销")
+        self._btn_undo.clicked.connect(self.undo_requested.emit)
+        lo.addWidget(self._btn_undo)
 
-        btn_redo = QPushButton("重做")
-        btn_redo.clicked.connect(self.redo_requested.emit)
-        lo.addWidget(btn_redo)
+        self._btn_redo = QPushButton("重做")
+        self._btn_redo.clicked.connect(self.redo_requested.emit)
+        lo.addWidget(self._btn_redo)
 
         btn_del = QPushButton("删除")
         btn_del.clicked.connect(self.delete_requested.emit)
@@ -148,7 +148,18 @@ class CCToolBar(QWidget):
         self._btn_roi.setChecked(active)
 
     def set_undo_enabled(self, enabled: bool):
-        pass  # 可扩展：灰显按钮
+        """K4 落实现（K3 遗留①）：撤销栈为空时灰显，而非点了只落一条 warn。
+
+        调用方 `cc_workspace.set_state` 早已接好，此前是空实现 → 按钮恒 enabled。
+        """
+        self._btn_undo.setEnabled(bool(enabled))
 
     def set_redo_enabled(self, enabled: bool):
-        pass
+        """K4 落实现（K3 遗留①）：同上。"""
+        self._btn_redo.setEnabled(bool(enabled))
+
+    def is_undo_enabled(self) -> bool:
+        return self._btn_undo.isEnabled()
+
+    def is_redo_enabled(self) -> bool:
+        return self._btn_redo.isEnabled()

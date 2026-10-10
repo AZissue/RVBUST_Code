@@ -286,6 +286,9 @@ class CloudCompareWorkspace(QWidget):
         self._props.auto_tune_requested.connect(self._on_auto_tune)
         self._props.icp_requested.connect(self._on_icp)
         self._props.merge_requested.connect(self._on_merge)
+        self._props.apply_process_requested.connect(self._on_apply_process)
+        self._props.roi_keep_requested.connect(self._on_roi_keep)
+        self._props.roi_remove_requested.connect(self._on_roi_remove)
 
     # ------------------------------------------------------------------
     # 状态机
@@ -400,6 +403,22 @@ class CloudCompareWorkspace(QWidget):
         self.cloud_list_changed.emit()
         self.dirty_changed.emit(True)
 
+    def _select_ui_node(self, node_id: str):
+        """把 UI 选中态同步到指定节点（树 + 属性面板 + 包围盒）。
+
+        K4 新增节点（ROI 派生）后需要立刻选中新节点，故把 `_on_tree_selection`
+        的逻辑抽出来复用，避免两条路径漂移。
+        """
+        node = self._workflow.get_node(node_id)
+        if node is None or node.node_type != CCNode.NODE_CLOUD:
+            return
+        self._current_node_id = node_id
+        self._workflow.select(node_id)
+        self._db_tree.select_node(node_id)
+        self._update_properties()
+        self._update_bbox_highlight()
+        self._props.set_merge_state(len(self._db_tree.selected_cloud_ids()))
+
     # ------------------------------------------------------------------
     # DB 树事件
     # ------------------------------------------------------------------
@@ -486,6 +505,14 @@ class CloudCompareWorkspace(QWidget):
 
         scalar_names = list(node.scalar_fields.keys()) if node.scalar_fields else []
         self._props.set_node(node_id, node.name, n, bbox_str, center_str, scalar_names)
+        # K4/P0-B：把 workflow 里真实生效的后处理参数回填到面板
+        # （单一真相源 = workflow.processor，面板只做显示与编辑）。
+        proc = self._workflow.processor
+        self._props.set_process_params({
+            "enable_outlier_removal": proc.enable_outlier_removal,
+            "outlier_nb_neighbors": proc.outlier_nb_neighbors,
+            "outlier_std_ratio": proc.outlier_std_ratio,
+        })
         self._refresh_icp_targets()
 
     def _refresh_icp_targets(self):
@@ -676,6 +703,7 @@ class CloudCompareWorkspace(QWidget):
         self._props.set_icp_result(panel, warn=warn)
         self._log(log_text, "warn" if warn else "success")
         self.set_state("loaded")
+        self._refresh_undo_state()
 
     def _on_merge(self):
         """合并 DB 树多选的点云；树为唯一真值，选中集从树读（同构 v1 工作区）。"""
@@ -696,6 +724,7 @@ class CloudCompareWorkspace(QWidget):
                 self._update_properties()
                 self._refresh_icp_targets()  # 新节点进 ICP 目标下拉
         self.set_state("loaded")
+        self._refresh_undo_state()
 
     # ------------------------------------------------------------------
     # 撤销/重做
@@ -708,9 +737,11 @@ class CloudCompareWorkspace(QWidget):
         ok, msg = self._workflow.undo()
         self._log(msg, "info" if ok else "warn")
         if ok:
+            self._sync_tree_after_history()
             self._refresh_viewer()
             self._update_properties()
         self.set_state("loaded")
+        self._refresh_undo_state()
 
     def _on_redo(self):
         if self._state == "processing":
@@ -719,9 +750,42 @@ class CloudCompareWorkspace(QWidget):
         ok, msg = self._workflow.redo()
         self._log(msg, "info" if ok else "warn")
         if ok:
+            self._sync_tree_after_history()
             self._refresh_viewer()
             self._update_properties()
         self.set_state("loaded")
+        self._refresh_undo_state()
+
+    def _sync_tree_after_history(self):
+        """把 DB 树对齐到 workflow 当前节点集合（K4：「新增节点」型历史的撤销/重做）。
+
+        仅处理**树里多出/缺少**的顶层点云节点；`kind="process"` 型历史只改 pcd、
+        不动节点集合，走这里也是空操作。
+        """
+        wf_ids = {n.node_id for n in self._workflow.list_cloud_nodes()}
+        tree_ids = set(self._db_tree._node_items.keys())
+        # 撤销"新增节点"后：树里多出来的节点要移除
+        for nid in tree_ids - wf_ids:
+            self._db_tree.remove_node(nid)
+        # 重做"新增节点"后：树里缺少的节点要补回
+        for node in self._workflow.list_cloud_nodes():
+            if node.node_id not in tree_ids:
+                self._db_tree.add_cloud_node(node.node_id, node.name,
+                                              parent_id=node.parent_id,
+                                              color=node.color,
+                                              point_count=node.point_count)
+        self._refresh_icp_targets()
+        # 「新增节点」型历史的撤销会把 workflow 选中恢复到源节点；同步回 UI。
+        if self._current_node_id is None or self._workflow.get_node(self._current_node_id) is None:
+            wf_sel = self._workflow.selected_id()
+            if wf_sel and self._workflow.get_node(wf_sel) is not None:
+                node = self._workflow.get_node(wf_sel)
+                if node.node_type == CCNode.NODE_CLOUD:
+                    self._current_node_id = wf_sel
+                    self._db_tree.select_node(wf_sel)
+                    return
+            self._current_node_id = None
+            self._db_tree._tree.clearSelection()
 
     # ------------------------------------------------------------------
     # 导出（G-K3：端到端，触发后文件落地；取消/失败均不静默）
@@ -742,13 +806,27 @@ class CloudCompareWorkspace(QWidget):
         """G-K3 边界：写出失败明示报错（日志 + 对话框），禁吞异常。"""
         QMessageBox.warning(self, title, message)
 
+    @staticmethod
+    def _safe_export_default_name(node_name: str) -> str:
+        """导出默认文件名清洗（K3 遗留②）。
+
+        节点名允许任意字符串（K2 重命名不设限），实测 `a/b` → 默认名 `a/b.ply`、
+        `a\\b` → `a\\b.ply`：前者会被当成子目录，后者在 Windows 是非法字符。
+        清洗 = 把路径分隔符与 Windows 非法字符换成 `_`，再剥掉扩展名。
+        """
+        base = os.path.splitext(node_name)[0]
+        for ch in '\\/:*?"<>|':
+            base = base.replace(ch, "_")
+        base = base.strip().strip(".") or "cloud"
+        return f"{base}.ply"
+
     def _export_node(self, node_id: str):
         node = self._workflow.get_node(node_id)
         if node is None or node.node_type != CCNode.NODE_CLOUD:
             self._log("导出仅支持点云节点", "warn")
             return
         path, _ = QFileDialog.getSaveFileName(
-            self, "导出点云", f"{os.path.splitext(node.name)[0]}.ply",
+            self, "导出点云", self._safe_export_default_name(node.name),
             "PLY 文件 (*.ply);;PCD 文件 (*.pcd)")
         if not path:
             return  # 取消路径：无文件、无日志、无异常
@@ -781,10 +859,128 @@ class CloudCompareWorkspace(QWidget):
                 self._roi_timer.stop()
 
     def _check_roi(self):
+        """ROI 选区轮询（K4）：把命中数与降级原因同步到属性面板并落日志。
+
+        W9：原因必须上报 —— 旧实现只在 total>0 时打一条 info，GL 不可用导致
+        恒选 0 点时界面毫无提示。
+        """
         selection = self._viewer.get_roi_selection()
         total = sum(len(v) for v in selection.values())
-        if total > 0:
+        err = self._viewer.roi_selection_error()
+        self._props.set_roi_state(total, warn=err or "")
+        if err and err != getattr(self, "_roi_last_reported", None):
+            self._log(f"ROI 提示：{err}", "warn")
+            self._roi_last_reported = err
+        elif not err:
+            self._roi_last_reported = None
+        if total > 0 and total != getattr(self, "_roi_last_total", None):
             self._log(f"ROI 已选中 {total:,} 个点", "info")
+        self._roi_last_total = total
+
+    # ------------------------------------------------------------------
+    # K4：后处理参数（裁切 + 离群点）与 ROI 保留 / 剔除
+    # ------------------------------------------------------------------
+    def _on_apply_process(self, params: dict):
+        """属性面板「应用后处理」：参数落到 workflow.processor（唯一真相源）再执行。
+
+        关键：先把**全部**参数写进 processor，再走 `apply_process` 不带 overrides
+        —— 这样"界面上看到的参数"与"实际生效的参数"是同一份，不会出现
+        `apply_process(**overrides)` 局部覆盖导致的参数漂移。
+        """
+        node_id = self._current_node_id
+        if not node_id:
+            self._log("请先选择点云", "warn")
+            return
+        proc = self._workflow.processor
+        proc.enable_outlier_removal = bool(params.get("enable_outlier_removal", False))
+        proc.outlier_nb_neighbors = int(params.get("outlier_nb_neighbors", 20))
+        proc.outlier_std_ratio = float(params.get("outlier_std_ratio", 2.0))
+        proc.crop_mode = str(params.get("crop_mode", "none"))
+        proc.crop_ratio = float(params.get("crop_ratio", 0.6))
+        proc.crop_radius = float(params.get("crop_radius", 500.0))
+
+        # 参数合法性前置校验（给出可读原因，不落到 core 的通用报错）
+        if proc.crop_mode in ("aabb", "obb") and not (0.0 < proc.crop_ratio <= 1.0):
+            self._log("裁切比例必须在 (0, 1] 内", "warn")
+            return
+        if proc.crop_mode == "sphere" and proc.crop_radius <= 0:
+            self._log("球裁切半径必须 > 0", "warn")
+            return
+
+        ok, msg, _stats = self._workflow.apply_process(node_id)
+        self._log(msg, "success" if ok else "warn")
+        if ok:
+            node = self._workflow.get_node(node_id)
+            self._refresh_viewer()
+            self._update_properties()
+            self.dirty_changed.emit(True)
+            if node is not None:
+                self._log(f"{node.name} 现有 {len(node.pcd.points):,} 点", "info")
+        self._refresh_undo_state()
+
+    def _roi_mask_for(self, node_id: str):
+        """把 viewer 的 ROI 选区（node_id → 命中索引）转成源节点的 bool 掩码。"""
+        selection = self._viewer.get_roi_selection()
+        node = self._workflow.get_node(node_id)
+        if node is None or node.pcd is None:
+            return None, 0, "源点云不存在"
+        n = len(node.pcd.points)
+        idx = selection.get(node_id)
+        mask = np.zeros(n, dtype=bool)
+        if idx is None or len(idx) == 0:
+            return None, 0, "未框选任何点"
+        idx = np.asarray(idx, dtype=np.int64)
+        if idx.size and (idx.min() < 0 or idx.max() >= n):
+            return None, 0, (f"选区索引越界（max={int(idx.max())} ≥ 点数 {n}），"
+                             f"拒绝应用以免错位")
+        mask[idx] = True
+        return mask, int(mask.sum()), ""
+
+    def _on_roi_keep(self):
+        self._apply_roi(keep_inside=True)
+
+    def _on_roi_remove(self):
+        self._apply_roi(keep_inside=False)
+
+    def _apply_roi(self, keep_inside: bool):
+        """ROI 保留 / 剔除：产出**新节点**，源节点几何/属性不被改写（K4 口径）。"""
+        node_id = self._current_node_id
+        if not node_id:
+            self._log("请先选择点云", "warn")
+            return
+        mask, n_sel, err = self._roi_mask_for(node_id)
+        if mask is None:
+            self._log(f"ROI 未应用：{err}", "warn")
+            return
+        node = self._workflow.get_node(node_id)
+        base = os.path.splitext(node.name)[0]
+        action = "ROI 保留" if keep_inside else "ROI 剔除"
+        new_name = f"{base}_{'roi' if keep_inside else 'cut'}"
+        keep_mask = mask if keep_inside else ~mask
+        ok, msg, new_id = self._workflow.create_node_from_mask(
+            node_id, keep_mask, new_name, action=action)
+        if not ok:
+            self._log(msg, "warn")
+            return
+        new_node = self._workflow.get_node(new_id)
+        self._add_node_to_ui(new_node)
+        self._select_ui_node(new_id)
+        self._refresh_viewer()
+        self._update_properties()
+        self.dirty_changed.emit(True)
+        self._refresh_undo_state()
+        self._log(msg, "success")
+
+        # 选区里的点已被消费：清掉高亮，避免残留红点让人误以为选区还在。
+        self._viewer.clear_roi_selection()
+        self._props.set_roi_state(0)
+        self._roi_last_total = 0
+        self._log(f"选区 {n_sel:,} 点已应用，ROI 高亮已清除", "info")
+
+    def _refresh_undo_state(self):
+        """K4：撤销/重做按钮随历史栈实时灰显（历史上此前只在 set_state 里刷）。"""
+        self._toolbar.set_undo_enabled(self._workflow.can_undo())
+        self._toolbar.set_redo_enabled(self._workflow.can_redo())
 
     def _on_colorbar_toggled(self, on: bool):
         if on and self._current_node_id:

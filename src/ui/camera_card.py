@@ -65,10 +65,11 @@ def numpy_to_qpixmap(img: np.ndarray) -> Optional[QPixmap]:
 class AspectRatioLabel(QLabel):
     """保持固定宽高比的 QLabel，图像居中显示不被拉伸，支持编码圆标记叠加。
 
-    性能优化：
-      - 标记层缓存到与原始图像等尺寸的 QPixmap，resize 时只需缩放缓存层，
-        避免每次重绘都遍历所有标记；
-      - 无标记或图像为空时跳过 painter 创建。
+    标记在 paintEvent 中按显示坐标绘制（圆半径为屏幕像素，与图像缩放
+    无关）：原实现把圈预渲染到原图尺寸的缓存层，4px 半径在全分辨率
+    图像（2448×2048）缩到预览大小时亚像素化，肉眼不可见（2026-10-10
+    转台"识别圆心没有显示"的根因）。标记数量通常为几十个，逐帧绘制开销
+    可忽略。
     """
 
     def __init__(self, ratio=4.0 / 3.0, parent=None):
@@ -77,9 +78,8 @@ class AspectRatioLabel(QLabel):
         self.setAlignment(Qt.AlignCenter)
         self.setStyleSheet("background-color: #1A1A20; border: 1px solid #2A2A34;")
         self._pixmap: Optional[QPixmap] = None
-        self._markers: List[Dict] = []   # [{'x','y','code', 'valid_3d'}]
-        self._marker_radius = 4
-        self._overlay_pixmap: Optional[QPixmap] = None
+        self._markers: List[Dict] = []   # [{'x','y','code', 'valid_3d'}] 归一化坐标
+        self._marker_radius = 5          # 屏幕像素（显示空间，不随图像缩放变化）
         self._font = QFont("Consolas", 8)
         self._font.setBold(True)
 
@@ -90,59 +90,24 @@ class AspectRatioLabel(QLabel):
         （valid_3d=False，无 x_3d 字段）；蓝圈 = 标定板标记。
         """
         self._markers = markers or []
-        self._render_overlay()
         self.update()
 
     def clear_markers(self):
         self._markers = []
-        self._overlay_pixmap = None
         self.update()
 
     def setPixmap(self, pixmap):  # noqa: N802（保持 Qt 接口名）
         self._pixmap = pixmap
-        self._render_overlay()
         self.update()
 
     def clear_image(self):
         self._pixmap = None
         self._markers = []
-        self._overlay_pixmap = None
         self.update()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.update()
-
-    def _render_overlay(self):
-        """把标记预渲染到与原始图像等尺寸的透明缓存层。"""
-        if self._pixmap is None or self._pixmap.isNull() or not self._markers:
-            self._overlay_pixmap = None
-            return
-        pw, ph = self._pixmap.width(), self._pixmap.height()
-        overlay = QPixmap(pw, ph)
-        overlay.fill(Qt.transparent)
-        painter = QPainter(overlay)
-        painter.setRenderHint(QPainter.Antialiasing)
-        painter.setFont(self._font)
-        for m in self._markers:
-            dx = float(m['x']) * pw
-            dy = float(m['y']) * ph
-            marker_type = m.get('marker_type', 'coded')
-            if marker_type == 'board':
-                color = QColor(60, 160, 255)
-            else:
-                # 红 = 2D 检出但 3D 无有效深度；绿 = 3D 有效
-                has_3d = m.get('valid_3d', True)
-                color = QColor(0, 230, 80) if has_3d else QColor(255, 60, 60)
-            painter.setPen(QPen(color, 2))
-            painter.setBrush(Qt.NoBrush)
-            painter.drawEllipse(QPointF(dx, dy), self._marker_radius, self._marker_radius)
-            painter.setPen(QPen(color, 1))
-            painter.drawText(
-                QPointF(dx + self._marker_radius + 2, dy - self._marker_radius - 2),
-                str(m.get('code', '')))
-        painter.end()
-        self._overlay_pixmap = overlay
 
     def paintEvent(self, event):
         super().paintEvent(event)
@@ -160,8 +125,30 @@ class AspectRatioLabel(QLabel):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.SmoothPixmapTransform)
         painter.drawPixmap(x, y, sw, sh, self._pixmap)
-        if self._overlay_pixmap is not None and not self._overlay_pixmap.isNull():
-            painter.drawPixmap(x, y, sw, sh, self._overlay_pixmap)
+        # 标记按显示坐标绘制（半径/线宽为屏幕像素，任何缩放下都清晰）
+        if self._markers:
+            painter.setRenderHint(QPainter.Antialiasing)
+            painter.setFont(self._font)
+            r = self._marker_radius
+            for m in self._markers:
+                dx = x + float(m['x']) * sw
+                dy = y + float(m['y']) * sh
+                marker_type = m.get('marker_type', 'coded')
+                if marker_type == 'board':
+                    color = QColor(60, 160, 255)
+                else:
+                    # 红 = 2D 检出但 3D 无有效深度；绿 = 3D 有效
+                    has_3d = m.get('valid_3d', True)
+                    color = QColor(0, 230, 80) if has_3d else QColor(255, 60, 60)
+                painter.setPen(QPen(color, 2))
+                painter.setBrush(Qt.NoBrush)
+                painter.drawEllipse(QPointF(dx, dy), r, r)
+                painter.setPen(QPen(color, 1))
+                painter.drawText(
+                    QPointF(dx + r + 2, dy - r - 2),
+                    str(m.get('code', '')))
+        painter.end()
+
 
     def heightForWidth(self, width: int) -> int:
         return int(width / self._ratio)
