@@ -1189,5 +1189,201 @@ class TestShellOffscreen(unittest.TestCase):
         self.assertIn("载入失败", win._st_step.text())
 
 
+class TestSanitizeCloud(unittest.TestCase):
+    """sanitize_cloud 边界：全 NaN / 全 Inf / 混合 / 空云 / 行对应 / 不改原对象。"""
+
+    def _pcd(self, pts, colors=None, normals=None):
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(np.asarray(pts, dtype=np.float64))
+        if colors is not None:
+            pcd.colors = o3d.utility.Vector3dVector(np.asarray(colors, dtype=np.float64))
+        if normals is not None:
+            pcd.normals = o3d.utility.Vector3dVector(np.asarray(normals, dtype=np.float64))
+        return pcd
+
+    def test_mixed_nan_inf_rows_dropped_with_attributes(self):
+        from prototypes.cloudcompare_like.core.cc_workflow import sanitize_cloud
+        pts = np.arange(20, dtype=np.float64).reshape(10, 2) * 1.0
+        pts = np.hstack([pts, np.zeros((10, 1))])
+        colors = np.tile([0.1, 0.2, 0.3], (10, 1))
+        normals = np.tile([0.0, 0.0, 1.0], (10, 1))
+        pts[2] = np.nan                      # 点 NaN
+        pts[5, 0] = np.inf                   # 点 Inf
+        colors[7, 1] = np.inf                # 颜色 Inf（行整体剔除）
+        normals[9] = np.nan                  # 法线 NaN
+        pcd = self._pcd(pts, colors, normals)
+        before_ref = np.asarray(pcd.points).copy()
+
+        clean, dropped = sanitize_cloud(pcd)
+        self.assertEqual(dropped, 4)
+        self.assertEqual(len(clean.points), 6)
+        # 行对应：points / colors / normals 行数一致且保持原行序（保留 0,1,3,4,6,8 行）
+        self.assertEqual(len(clean.colors), 6)
+        self.assertEqual(len(clean.normals), 6)
+        self.assertTrue(np.allclose(np.asarray(clean.points)[:, 0],
+                                    [0.0, 2.0, 6.0, 8.0, 12.0, 16.0]))
+        # 原对象不被修改（含 NaN 行，equal_nan 口径）
+        self.assertTrue(np.array_equal(np.asarray(pcd.points), before_ref, equal_nan=True))
+
+    def test_all_nonfinite_rejected(self):
+        from prototypes.cloudcompare_like.core.cc_workflow import compute_normals
+        pts = np.full((50, 3), np.inf)
+        with self.assertRaises(ValueError):
+            compute_normals(self._pcd(pts))
+
+    def test_all_nan_and_clean_passthrough(self):
+        from prototypes.cloudcompare_like.core.cc_workflow import sanitize_cloud
+        nan_pcd = self._pcd(np.full((10, 3), np.nan))
+        clean, dropped = sanitize_cloud(nan_pcd)
+        self.assertEqual((len(clean.points), dropped), (0, 10))
+        # 干净云：返回原对象，0 剔除
+        ok_pcd = self._pcd(np.random.rand(100, 3))
+        same, dropped = sanitize_cloud(ok_pcd)
+        self.assertIs(same, ok_pcd)
+        self.assertEqual(dropped, 0)
+
+    def test_empty_cloud(self):
+        from prototypes.cloudcompare_like.core.cc_workflow import sanitize_cloud
+        pcd = o3d.geometry.PointCloud()
+        clean, dropped = sanitize_cloud(pcd)
+        self.assertEqual((len(clean.points), dropped), (0, 0))
+
+
+class TestEstimateNormalsRobustness(unittest.TestCase):
+    """含 Inf 的 50 万点云：回归「分钟级冻结」根因（基线 86.70/98.55 s）。
+
+    R2 判据口径（两份验证报告共同结论）：≤5 s 墙钟对机器状态 flaky（重负载
+    刚结束实测 5.02~11.27 s），故改为「正确性为主 + perf 宽松上限 ≤30 s」——
+    旧写法同夹具 86.7~212.9 s，宽松上限仍保有 >7× 判别力；事件循环存活性由
+    UI 用例 TestUiNormalsWorker.test_event_loop_alive_during_estimate 守护。
+    """
+
+    N = 500_000
+    INF_ROWS = N // 100
+
+    def setUp(self):
+        rng = np.random.default_rng(7)
+        pts = rng.normal(size=(self.N, 3)) * 100.0      # mm 量级
+        bad = rng.choice(self.N, size=self.INF_ROWS, replace=False)
+        pts[bad] = np.inf
+        self.pcd = o3d.geometry.PointCloud()
+        self.pcd.points = o3d.utility.Vector3dVector(pts)
+
+    def test_inf_cloud_estimates_within_5s(self):
+        # 名字保留（verify 变异脚本按名引用）；判据已按 R2 改为稳健口径，见类 docstring
+        wf = CloudCompareWorkflow()
+        nid = wf.add_cloud("inf_cloud", self.pcd)
+        ok, msg = wf.estimate_normals(nid)
+        self.assertTrue(ok, msg)
+        node = wf.get_node(nid)
+        self.assertTrue(node.pcd.has_normals())
+        # Inf 行整行剔除：5000 行 Inf → 剩 495000 点
+        self.assertEqual(len(node.pcd.points), self.N - self.INF_ROWS)
+        # AC3：剔除行数可见、法线全有限、行数一致（正确性判据，不随机器状态抖动）
+        self.assertIn("剔除非有限点", msg)
+        norms = np.asarray(node.pcd.normals)
+        self.assertTrue(np.isfinite(norms).all(), "法线必须全有限")
+        self.assertEqual(len(norms), len(node.pcd.points))
+        # AC1（perf 性质，非正确性）：宽松上限 ≤30 s。判别力证据：旧写法（不清洗/
+        # 写死 radius=10）在同夹具上 86.70/98.55 s、verify 复测 212.90 s ≫ 30 s，
+        # 本机常态 2~6 s（verify 14 次 2.74~7.50 s）；重负载刚结束的 11.27 s 亦 <30 s
+        import re
+        m = re.search(r"耗时 ([\d.]+) s", msg)
+        self.assertIsNotNone(m, "完成消息必须含耗时")
+        self.assertLessEqual(float(m.group(1)), 30.0)
+
+    def test_undo_restores_inf_cloud(self):
+        wf = CloudCompareWorkflow()
+        nid = wf.add_cloud("inf_cloud", self.pcd)
+        n_before = len(wf.get_node(nid).pcd.points)
+        ok, _ = wf.estimate_normals(nid)
+        self.assertTrue(ok)
+        self.assertLess(len(wf.get_node(nid).pcd.points), n_before)
+        ok, msg = wf.undo()
+        self.assertTrue(ok, msg)
+        # 撤销恢复的是清洗前原云（含 Inf 行），点数复原
+        self.assertEqual(len(wf.get_node(nid).pcd.points), n_before)
+
+    def test_adaptive_radius_scales_with_units(self):
+        """V4 开发侧口径：半径自适应随点云量级走（毫米级 mm 半径 / 米制 m 半径）。"""
+        from prototypes.cloudcompare_like.core.cc_workflow import compute_normals
+        rng = np.random.default_rng(11)
+        mm_pcd = o3d.geometry.PointCloud()
+        mm_pcd.points = o3d.utility.Vector3dVector(rng.normal(size=(3000, 3)) * 100.0)
+        _, info_mm = compute_normals(mm_pcd)
+        m_pcd = o3d.geometry.PointCloud()
+        m_pcd.points = o3d.utility.Vector3dVector(rng.normal(size=(3000, 3)) * 0.1)
+        _, info_m = compute_normals(m_pcd)
+        # 量级差 ~1000×（两云点距中位数之比），自适应半径必须跟着走
+        self.assertGreater(info_mm["radius"] / info_m["radius"], 100.0)
+
+
+class TestEstimateNormalsNanHeavy(unittest.TestCase):
+    """R5 补充夹具：NaN 占比 >50% 的合成云（对齐真实故障构成，1% Inf 之外的代表）。
+
+    用户真实故障云 cam0.ply 为 NaN 51.40% / Inf 0（verify 两轮独立数出），
+    故「1% Inf」夹具不能作为唯一代表；本夹具 60% NaN，秒级可跑。
+    """
+
+    N = 200_000
+    NAN_ROWS = int(N * 0.6)          # 120,000 行 NaN = 60%
+
+    def test_nan60_cloud_estimates_and_counts(self):
+        rng = np.random.default_rng(13)
+        pts = rng.normal(size=(self.N, 3)) * 100.0
+        pts[rng.choice(self.N, size=self.NAN_ROWS, replace=False)] = np.nan
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(pts)
+        wf = CloudCompareWorkflow()
+        nid = wf.add_cloud("nan60", pcd)
+        ok, msg = wf.estimate_normals(nid)
+        self.assertTrue(ok, msg)
+        node = wf.get_node(nid)
+        # NaN 行整行剔除：剩 40%
+        self.assertEqual(len(node.pcd.points), self.N - self.NAN_ROWS)
+        self.assertIn("剔除非有限点", msg)
+        norms = np.asarray(node.pcd.normals)
+        self.assertTrue(np.isfinite(norms).all(), "法线必须全有限")
+        self.assertEqual(len(norms), len(node.pcd.points))
+        # perf 宽松上限（同 R2 口径；本规模常态 ≪1 s）
+        import re
+        m = re.search(r"耗时 ([\d.]+) s", msg)
+        self.assertIsNotNone(m, "完成消息必须含耗时")
+        self.assertLessEqual(float(m.group(1)), 30.0)
+
+
+class TestEstimateNormalsRealCam0(unittest.TestCase):
+    """R5 真实故障云回归：offline_data/.../frame_0002/cam0.ply（NaN 51.40%）。
+
+    慢测（本机 ~15 s：载入 5,013,504 点 + 清洗 + 2,436,626 点估计）。
+    文件不在本机时跳过（回归入口保留）；verify 证据：旧写法 240/450 s 未完成，
+    修复后同步路径 ~4.4 s、UI 路径 wall=13.01 s。
+    """
+
+    CAM0 = os.path.join(_PROJECT_ROOT, "offline_data",
+                        "session_20260904_092807", "frame_0002", "cam0.ply")
+
+    @unittest.skipUnless(os.path.isfile(CAM0), f"真实 cam0.ply 不在本机: {CAM0}")
+    def test_real_nan51_cloud_loads_and_estimates(self):
+        wf = CloudCompareWorkflow()
+        ok, msg, nid = wf.load_from_file(self.CAM0)
+        self.assertTrue(ok, msg)
+        # verify 两轮核对过的真值：5,013,504 点，NaN 2,576,878 行（51.40%）
+        # → 清洗后 2,436,626 点
+        node = wf.get_node(nid)
+        self.assertEqual(len(node.pcd.points), 2_436_626)
+        self.assertIn("剔除 2576878 行", msg)
+        ok, msg = wf.estimate_normals(nid)
+        self.assertTrue(ok, msg)
+        norms = np.asarray(node.pcd.normals)
+        self.assertTrue(np.isfinite(norms).all(), "法线必须全有限")
+        self.assertEqual(len(norms), len(node.pcd.points))
+        # perf 宽松上限（verify 实测本机 4.42 s；真实故障「分钟级未完成」量级 ≫60 s）
+        import re
+        m = re.search(r"耗时 ([\d.]+) s", msg)
+        self.assertIsNotNone(m, "完成消息必须含耗时")
+        self.assertLessEqual(float(m.group(1)), 60.0)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -35,7 +35,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 
 from .frame_data import FrameData, _import_rvc
-from .utils import logger, safe_destroy
+from .utils import logger, safe_destroy, write_json_atomic
 
 if TYPE_CHECKING:
     from .camera_manager import CameraManager
@@ -121,9 +121,8 @@ class StationManager:
             "stations": list(self._stations.keys()),
         }
         try:
-            with open(os.path.join(self._session_dir, "meta.json"),
-                      'w', encoding='utf-8') as f:
-                json.dump(meta, f, ensure_ascii=False, indent=2)
+            write_json_atomic(os.path.join(self._session_dir, "meta.json"),
+                              meta, ensure_ascii=False, indent=2)
         except Exception as e:
             logger.error(f"站位会话 meta 写入失败: {e}")
 

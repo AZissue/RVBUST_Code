@@ -6,7 +6,7 @@
     def _on_heavy(self):
         self._show_loading("处理中...")
         self._worker = WorkerThread(self._heavy_impl)
-        self._worker.finished.connect(self._on_heavy_done)
+        self._worker.result_ready.connect(self._on_heavy_done)
         self._worker.start()
 
     def _on_heavy_done(self, result, error):
@@ -25,9 +25,16 @@ from PySide6.QtCore import QThread, Signal
 
 
 class WorkerThread(QThread):
-    """通用后台工作线程。"""
+    """通用后台工作线程。
 
-    finished = Signal(object, object)  # (result, error)
+    信号（注意区分基类遮蔽问题）：
+      result_ready(object, object) — 工作函数返回/抛异常时在 run() 内发射，
+                                     只表"工作做完"，此时线程可能仍在运行；
+      finished()                   — 基类 QThread.finished，线程真正退出后发射，
+                                     生命周期管理（引用池摘除/deleteLater）必须挂这个。
+    """
+
+    result_ready = Signal(object, object)  # (result, error)
 
     def __init__(self, func: Callable, *args, **kwargs):
         super().__init__()
@@ -38,9 +45,9 @@ class WorkerThread(QThread):
     def run(self):
         try:
             result = self._func(*self._args, **self._kwargs)
-            self.finished.emit(result, None)
+            self.result_ready.emit(result, None)
         except Exception as e:
-            self.finished.emit(None, e)
+            self.result_ready.emit(None, e)
 
 
 def run_in_background(parent, func: Callable, on_done: Callable,
@@ -50,6 +57,6 @@ def run_in_background(parent, func: Callable, on_done: Callable,
     on_done 签名: on_done(result, error)
     """
     worker = WorkerThread(func, *args, **kwargs)
-    worker.finished.connect(on_done)
+    worker.result_ready.connect(on_done)
     worker.start()
     return worker

@@ -25,6 +25,11 @@ QStackedWidget 已在那边，工作区若自带 QMainWindow 就是第二层嵌�
   - 后台任务 → 宿主注入 runner（与 BackendBridge._run_background 同签名），
     不再 import src/ui/worker_thread，本类不自建线程池（1.0.10）
 
+M2a-3（设计语言复刻，docs/原型UI一次性复刻方案与截图验收标准_20260923.md §5）：
+  - 色值全部走 `ui_v2.theme` token（本文件**禁硬编码色值**，U2/S5）；
+  - 左控制面板外包 `QScrollArea`（U9/S6：GLOBAL_QSS 生效后内容超窗高必裁）；
+  - 3D 区标签走 QSS `mutedLabel`，外边距/间距对齐 10 / 8px 基准。
+
 R6：位姿读取失败（首帧未 move_to）一律报错，**不静默跳过**。
 A9：判别下限声明写在控制面板与 README，禁止把"显示正常"当精度保证。
 
@@ -74,8 +79,9 @@ import transform_chain                   # noqa: E402  core/
 import validation                        # noqa: E402  core/（A3 戳点门禁 + 重合度快检）
 
 from PySide6.QtCore import Qt, Signal                    # noqa: E402
-from PySide6.QtWidgets import (QHBoxLayout, QLabel, QSplitter,  # noqa: E402
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel,  # noqa: E402
+                               QScrollArea, QSplitter, QVBoxLayout,
+                               QWidget)
 
 # 批 4.5：查看器改走 ui_v2 公共面板。原型对旧 `ui.*` 的直接依赖清零；
 # ui_v2/widgets/viewer_panel.py 自己包装 ui.viewer_3d，Phase 2 搬库时只改它一处。
@@ -93,6 +99,15 @@ try:
 except Exception as _e:      # src/core 缺失 → 合并导出 fail-closed（见 merged_pcd）
     print(f"[WARN] src/core 不可用（merge_pointclouds 缺失，合并导出将拒绝）: {_e}")
     merge_pointclouds = None
+
+# M2a-3：设计语言 token（唯一来源 ui_v2.theme）。缺 src 时**显形失败**：
+# 没有 token 就无法对齐主程序设计语言（禁止静默降级，同 3D 查看器口径）。
+try:
+    from ui_v2.theme import (SPACE, STATUS_ERR, STATUS_OK,  # noqa: E402
+                             STATUS_WARN, TEXT_MUTED)
+except Exception as _e:      # noqa: BLE001
+    print(f"[ERROR] ui_v2.theme 设计 token 引入失败（UI 无法对齐主程序）: {_e}")
+    raise
 
 from control_panel import ControlPanel       # noqa: E402  同目录
 
@@ -155,12 +170,23 @@ class RobotWorkspace(QWidget):
         self._background_runner = None   # 宿主注入（见 set_background_runner）
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(4, 4, 4, 4)
-        outer.setSpacing(4)
+        outer.setContentsMargins(10, 10, 10, 10)
+        outer.setSpacing(SPACE)
 
         split = QSplitter(Qt.Horizontal)
+
+        # ---- 左侧控制面板（可滚动，U9/S6）----
+        # 照 src/ui_v2/workspaces/turntable_workspace.py:146-163 范式：GLOBAL_QSS 生效后
+        # 面板内容高度 692→1083px，不做滚动区在 850 高的窗口里必裁 4 组业务区。
+        self._left_panel = QScrollArea()
+        self._left_panel.setWidgetResizable(True)
+        self._left_panel.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._left_panel.setFrameShape(QFrame.NoFrame)
+        self._left_panel.setMinimumWidth(330)
+        self._left_panel.setMaximumWidth(440)
         self.panel = ControlPanel()
-        split.addWidget(self.panel)
+        self._left_panel.setWidget(self.panel)
+        split.addWidget(self._left_panel)
         split.addWidget(self._build_viewer_area())
         split.setStretchFactor(0, 0)
         split.setStretchFactor(1, 1)
@@ -175,14 +201,19 @@ class RobotWorkspace(QWidget):
         self._log("无相机：点云用合成帧；无机器人：位姿用手动录入 / Mock 序列。")
         self._log("提示：单位、安装方式、位姿类型、欧拉顺序均无默认，必须显式选。")
         self._log("判别下限 ≈ 1.0 mm（A9）：显示正常不等于精度保证。")
+        # 启动即刷一次四态（@verify 2026-09-23 S4 实测命中）：否则面板停在构造默认
+        # 「状态：IDLE」+ STATUS_WARN 黄，与状态机 idle（应为 TEXT_MUTED 灰）不一致。
+        self._refresh_state()
 
     def _build_viewer_area(self) -> QWidget:
         holder = QWidget()
         v = QVBoxLayout(holder)
         v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(SPACE)
         bar = QHBoxLayout()
+        bar.setContentsMargins(SPACE, 0, SPACE, 0)     # 8px 基准：对齐 3D 区内边距
         self.lbl_scene = QLabel("未采集。相机系与基座系点云会同时叠加上屏（白色=相机系）。")
-        self.lbl_scene.setStyleSheet("color: #999;")
+        self.lbl_scene.setObjectName("mutedLabel")     # 色值/字号由 GLOBAL_QSS 提供
         bar.addWidget(self.lbl_scene, 1)
         v.addLayout(bar)
         if HAS_VIEWER:
@@ -254,7 +285,7 @@ class RobotWorkspace(QWidget):
         """状态机（A3）：IDLE → UNVERIFIED（矩阵已加载）→ VERIFIED / FAILED。"""
         p = self.panel
         if self.handeye is None:
-            p.set_state("IDLE（未加载手眼矩阵）", "#888888")
+            p.set_state("IDLE（未加载手眼矩阵）", TEXT_MUTED)
             p.set_tip_enabled(False)
             p.btn_export.setEnabled(False)
             p.set_save_ply_enabled(False)
@@ -268,14 +299,14 @@ class RobotWorkspace(QWidget):
         p.set_he_meta(self.handeye_meta_text())
         p.set_tip_enabled(True)
         if self.handeye.validated:
-            p.set_state("VERIFIED（戳点门禁通过，允许导出）", "#4caf50")
+            p.set_state("VERIFIED（戳点门禁通过，允许导出）", STATUS_OK)
             p.btn_export.setEnabled(True)
         elif self.tip_report is not None \
                 and self.tip_report.get("verdict") == "FAIL":
-            p.set_state("FAILED（戳点门禁未通过，矩阵不可用）", "#e05c5c")
+            p.set_state("FAILED（戳点门禁未通过，矩阵不可用）", STATUS_ERR)
             p.btn_export.setEnabled(False)
         else:
-            p.set_state("矩阵已加载 · UNVERIFIED（须通过戳点门禁才可导出）", "#ffb300")
+            p.set_state("矩阵已加载 · UNVERIFIED（须通过戳点门禁才可导出）", STATUS_WARN)
             p.btn_export.setEnabled(False)
         p.set_overlap_enabled(len(self.captured_frames) >= 2)
         # A4：合并 PLY 同属导出，同样吃 A3 门禁（VERIFIED 且 ≥1 帧）

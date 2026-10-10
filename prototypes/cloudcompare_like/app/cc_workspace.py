@@ -17,6 +17,7 @@ prototypes/robot_handeye_transform/app/host.py 口径，合入形态下由主程
 
 from __future__ import annotations
 
+import copy
 import os
 import sys
 from typing import List, Optional
@@ -49,6 +50,7 @@ from ui_v2.widgets.floating_log_panel import FloatingLogPanel
 from ..core.cc_workflow import CloudCompareWorkflow, CCNode
 from .cc_gl_viewer import PointCloudViewerLOD
 from .cc_db_tree import CloudDBTree
+from .cc_normals_worker import NormalsEstimationWorker
 from .cc_properties import PropertiesPanel
 from .cc_toolbar import CCToolBar
 
@@ -177,6 +179,10 @@ class CloudCompareWorkspace(QWidget):
         self._workflow = CloudCompareWorkflow()
         self._current_node_id: Optional[str] = None
         self._color_idx = 0
+        self._normals_worker: Optional[NormalsEstimationWorker] = None
+        # R4：估计启动时节点点云的对象身份；完成写回前比对，运算期间被
+        # 撤销/重做/删除换掉的节点不得被旧结果覆盖（防「撤销后复活」）。
+        self._normals_epoch_pcd = None
 
         self.setAcceptDrops(True)        # 拖拽载入点云（与「打开」同一 _load_files 路径）
 
@@ -517,14 +523,83 @@ class CloudCompareWorkspace(QWidget):
     # ------------------------------------------------------------------
     # 后处理操作
     # ------------------------------------------------------------------
-    def _on_estimate_normals(self):
+    def _on_estimate_normals(self, radius: float = 0.0, max_nn: int = 30):
         if not self._current_node_id:
             self._log("请先选择点云", "warn")
             return
+        # AC4：运算进行中重复点击直接忽略（按钮已禁用，这里是信号级兜底）
+        if self._normals_worker is not None:
+            self._log("法线估计进行中，请等待完成", "warn")
+            return
+        node = self._workflow.get_node(self._current_node_id)
+        if node is None or node.pcd is None:
+            self._log("请先选择点云", "warn")
+            return
+        # 底账在主线程深拷贝（50 万点 ~0.02 s），worker 只碰这份副本
+        before = copy.deepcopy(node.pcd)
+        radius_eff = radius if radius > 0 else None   # 0 = 自适应
+        self._normals_epoch_pcd = node.pcd
+        self._normals_worker = NormalsEstimationWorker(
+            self._current_node_id, before, radius_eff, max_nn, self)
+        self._normals_worker.finished_normals.connect(self._on_normals_finished)
         self.set_state("processing")
-        ok, msg = self._workflow.estimate_normals(self._current_node_id)
+        self._props.set_normals_busy(True)
+        self._log(f"开始估计法线: {node.name}（{len(before.points):,} 点）…", "info")
+        self._normals_worker.start()
+
+    def _on_normals_finished(self, ok: bool, msg: str, info: dict, result):
+        worker = self._normals_worker
+        self._normals_worker = None
+        epoch_pcd = self._normals_epoch_pcd
+        self._normals_epoch_pcd = None
+        self._props.set_normals_busy(False)
+        node_id = worker.node_id if worker is not None else None
+        # 运算期间节点可能已被删除/切换选择：按启动时记录的 node_id 写回
+        if ok and result is not None and node_id is not None:
+            node = self._workflow.get_node(node_id)
+            if node is not None and node.node_type == CCNode.NODE_CLOUD:
+                # R4：运算期间节点点云被撤销/重做等替换过（对象身份变了），
+                # 说明撤销历史已不含当前结果的前提，硬写回会把撤销过的状态
+                # 「复活」并压进历史。丢弃结果、保持现状（与删除路径同口径）。
+                if node.pcd is not epoch_pcd:
+                    ok = False
+                    msg = "法线估计完成，但点云在运算期间已被修改（撤销/重做），结果已丢弃"
+                else:
+                    self._workflow.commit_estimate_normals(node_id, worker.before_pcd,
+                                                           result, info)
+                    if node_id == self._current_node_id:
+                        self._refresh_viewer()
+                        self._update_properties()
+            else:
+                ok = False
+                msg = "法线估计完成，但目标点云已被删除，结果已丢弃"
         self._log(msg, "success" if ok else "error")
         self.set_state("loaded")
+
+    def _shutdown_normals_worker(self):
+        """退出收尾（R1）：先断信号防收尾期间重入 UI，再杀子进程并等线程结束。
+
+        QThread 仍在跑时对象被销毁 → Qt fail-fast 硬崩（0xC0000409，3/3 复现）；
+        abort() 后子进程随即返回，wait 通常亚秒级完成；超时再 terminate 兜底。
+        """
+        worker = self._normals_worker
+        if worker is None:
+            return
+        try:
+            worker.finished_normals.disconnect()
+        except (TypeError, RuntimeError):
+            pass
+        worker.abort()
+        if not worker.wait(2000):
+            worker.terminate()
+            worker.wait(2000)
+        self._normals_worker = None
+        self._normals_epoch_pcd = None
+
+    def closeEvent(self, event):
+        # 退出时终止估算子进程并等线程收尾，防孤儿 python.exe 与硬崩（R1/V8）
+        self._shutdown_normals_worker()
+        super().closeEvent(event)
 
     def _on_detect_plane(self):
         if not self._current_node_id:
@@ -626,6 +701,10 @@ class CloudCompareWorkspace(QWidget):
     # 撤销/重做
     # ------------------------------------------------------------------
     def _on_undo(self):
+        # R4：运算进行中历史随时会被完成回调改写，此刻撤销必产生不自洽状态
+        if self._state == "processing":
+            self._log("运算进行中，无法撤销", "warn")
+            return
         ok, msg = self._workflow.undo()
         self._log(msg, "info" if ok else "warn")
         if ok:
@@ -634,6 +713,9 @@ class CloudCompareWorkspace(QWidget):
         self.set_state("loaded")
 
     def _on_redo(self):
+        if self._state == "processing":
+            self._log("运算进行中，无法重做", "warn")
+            return
         ok, msg = self._workflow.redo()
         self._log(msg, "info" if ok else "warn")
         if ok:
@@ -943,6 +1025,12 @@ class CloudCompareWindow(QMainWindow):
             "4) 顶栏「日志」开关浮动日志面板")
 
     # ------------------------------------------------------------------ 事件
+    def closeEvent(self, event):
+        """真窗口退出路径的收尾（R1）：工作区是内嵌控件，其自身的
+        closeEvent 在窗口关闭时不会触发，必须在这里显式收尾。"""
+        self.workspace._shutdown_normals_worker()
+        super().closeEvent(event)
+
     def resizeEvent(self, event):
         """窗口尺寸变化时重定位浮动日志面板（S7：小窗也不许跑出窗外）。"""
         super().resizeEvent(event)

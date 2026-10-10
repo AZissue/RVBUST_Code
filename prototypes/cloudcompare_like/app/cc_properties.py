@@ -35,7 +35,8 @@ class PropertiesPanel(QWidget):
     colormap_changed = Signal(str)
     show_normals_changed = Signal(bool)
     auto_tune_requested = Signal()
-    estimate_normals_requested = Signal()
+    # 法线估计：参数 = (搜索半径 0=自适应, 最大邻居)
+    estimate_normals_requested = Signal(float, int)
     detect_plane_requested = Signal()
     euclidean_cluster_requested = Signal()
     # ICP 配准：源 = 当前选中点云；参数 = (目标 node_id, 估计方法, 最大对应距离 0=自动)
@@ -128,9 +129,29 @@ class PropertiesPanel(QWidget):
         process_group = QGroupBox("处理")
         proc_lo = QVBoxLayout(process_group)
 
-        btn_normals = QPushButton("估计法线")
-        btn_normals.clicked.connect(self.estimate_normals_requested.emit)
-        proc_lo.addWidget(btn_normals)
+        # --- 法线估计（半径 0 = 按点距自适应；运算中按钮禁用防连点） ---
+        row_radius = QHBoxLayout()
+        row_radius.addWidget(QLabel("法线半径:"))
+        self._spin_normals_radius = QDoubleSpinBox()
+        self._spin_normals_radius.setDecimals(4)
+        self._spin_normals_radius.setRange(0.0, 1e6)
+        self._spin_normals_radius.setValue(0.0)
+        self._spin_normals_radius.setSpecialValueText("自适应")
+        self._spin_normals_radius.setToolTip("0 = 按最近邻点距中位数×3 自动估计；单位与点云数据一致")
+        row_radius.addWidget(self._spin_normals_radius, 1)
+        proc_lo.addLayout(row_radius)
+
+        row_nn = QHBoxLayout()
+        row_nn.addWidget(QLabel("最大邻居:"))
+        self._spin_normals_nn = QSpinBox()
+        self._spin_normals_nn.setRange(1, 500)
+        self._spin_normals_nn.setValue(30)
+        row_nn.addWidget(self._spin_normals_nn, 1)
+        proc_lo.addLayout(row_nn)
+
+        self._btn_normals = QPushButton("估计法线")
+        self._btn_normals.clicked.connect(self._emit_estimate_normals)
+        proc_lo.addWidget(self._btn_normals)
 
         btn_plane = QPushButton("检测平面 (RANSAC)")
         btn_plane.clicked.connect(self.detect_plane_requested.emit)
@@ -228,6 +249,22 @@ class PropertiesPanel(QWidget):
     def _emit_icp_requested(self):
         self.icp_requested.emit(self.get_icp_target(), self.get_icp_method(),
                                 float(self._spin_icp_max_dist.value()))
+
+    def _emit_estimate_normals(self):
+        self.estimate_normals_requested.emit(self.get_normals_radius(),
+                                             self.get_normals_max_nn())
+
+    def get_normals_radius(self) -> float:
+        """搜索半径；0 = 自适应（按点距中位数×3）。"""
+        return float(self._spin_normals_radius.value())
+
+    def get_normals_max_nn(self) -> int:
+        return int(self._spin_normals_nn.value())
+
+    def set_normals_busy(self, busy: bool):
+        """运算中禁用入口按钮并改文案，防重复点击排队/并发写同一节点。"""
+        self._btn_normals.setEnabled(not busy)
+        self._btn_normals.setText("估计法线…" if busy else "估计法线")
 
     def set_icp_targets(self, items):
         """刷新可选目标点云；items = [(node_id, 显示名)]，选择项仍在列表里则保留。"""

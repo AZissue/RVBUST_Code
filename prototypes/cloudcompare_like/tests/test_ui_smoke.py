@@ -218,5 +218,217 @@ class TestUiSmokeExport(unittest.TestCase):
             self.assertFalse([f for f in os.listdir(d) if f == "x.ply"])
 
 
+@unittest.skipUnless(_HAS_APP, f"app 层不可导入: {_APP_IMPORT_ERR}")
+class TestUiNormalsWorker(unittest.TestCase):
+    """AC2/AC4：法线估计期间 Qt 事件循环存活 + 重复点击被忽略（含 1% Inf 的 50 万点云）。"""
+
+    N = 500_000
+    INF_ROWS = N // 100
+
+    def setUp(self):
+        self._app = QApplication.instance() or QApplication([])
+        self._ws = CloudCompareWorkspace()
+        self._logs: list[tuple[str, str]] = []
+        self._ws.log_message.connect(lambda m, lvl: self._logs.append((lvl, m)))
+
+    def _inject_inf_cloud(self) -> str:
+        rng = np.random.default_rng(7)
+        pts = rng.normal(size=(self.N, 3)) * 100.0
+        pts[rng.choice(self.N, size=self.INF_ROWS, replace=False)] = np.inf
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(pts)
+        nid = self._ws._workflow.add_cloud("inf_cloud", pcd)
+        self._ws._current_node_id = nid
+        return nid
+
+    def test_event_loop_alive_during_estimate(self):
+        from PySide6.QtCore import QTimer, QEventLoop
+        nid = self._inject_inf_cloud()
+
+        ticks = {"n": 0}
+        timer = QTimer(self._ws)
+        timer.setInterval(50)
+        timer.timeout.connect(lambda: ticks.__setitem__("n", ticks["n"] + 1))
+        timer.start()
+
+        self._ws._on_estimate_normals(0.0, 30)   # 0 = 自适应半径
+        worker = self._ws._normals_worker
+        self.assertIsNotNone(worker)
+        self.assertTrue(worker.isRunning())
+        self.assertFalse(self._ws._props._btn_normals.isEnabled(), "运算中按钮必须禁用")
+
+        # AC4：运算中重复点击不得起第二个 worker
+        self._ws._on_estimate_normals(0.0, 30)
+        self.assertIs(self._ws._normals_worker, worker)
+        self.assertTrue(any("进行中" in m for _, m in self._logs))
+
+        loop = QEventLoop(self._ws)
+        worker.finished_normals.connect(lambda *a: loop.quit())
+        QTimer.singleShot(30_000, loop.quit)     # 保险丝：30 s 必退
+        loop.exec()
+
+        self.assertIsNone(self._ws._normals_worker)
+        self.assertTrue(self._ws._props._btn_normals.isEnabled(), "完成后按钮必须恢复")
+        timer.stop()
+        # AC2：50 ms 定时器在运算窗口内必须触发 ≥20 次（旧主线程同步实现为 0 次）
+        self.assertGreaterEqual(ticks["n"], 20,
+                                f"事件循环疑似被堵死（仅触发 {ticks['n']} 次）")
+        # 完成口径：成功日志、剔除数可见、法线全有限、点数一致
+        self.assertTrue(any(lvl == "success" and "剔除非有限点" in m
+                            for lvl, m in self._logs))
+        node = self._ws._workflow.get_node(nid)
+        self.assertEqual(len(node.pcd.points), self.N - self.INF_ROWS)
+        self.assertTrue(np.isfinite(np.asarray(node.pcd.normals)).all())
+        # 撤销可用（历史已压栈）
+        self.assertTrue(self._ws._workflow.can_undo())
+
+    def test_subprocess_failure_recovers_ui(self):
+        """V7：子进程崩溃（非零退出）→ 错误日志、按钮恢复、状态回 loaded、不入历史。"""
+        from unittest import mock
+
+        from PySide6.QtCore import QEventLoop, QTimer
+        from prototypes.cloudcompare_like.app import cc_normals_worker as nw
+
+        nid = self._inject_inf_cloud()
+        fake = mock.Mock()
+        fake.communicate.return_value = ("", "simulated subprocess crash")
+        fake.returncode = 1
+        with mock.patch.object(nw.subprocess, "Popen", return_value=fake):
+            self._ws._on_estimate_normals(0.0, 30)
+            worker = self._ws._normals_worker
+            self.assertIsNotNone(worker)
+            loop = QEventLoop(self._ws)
+            worker.finished_normals.connect(lambda *a: loop.quit())
+            QTimer.singleShot(30_000, loop.quit)
+            loop.exec()
+
+        # UI 必须回到可用态（不能卡在「处理中」）
+        self.assertIsNone(self._ws._normals_worker)
+        self.assertTrue(self._ws._props._btn_normals.isEnabled(), "失败后按钮必须恢复")
+        self.assertEqual(self._ws.current_state(), "loaded", "失败后状态必须回 loaded")
+        self.assertTrue(any(lvl == "error" and "子进程" in m for lvl, m in self._logs),
+                        "子进程崩溃必须 error 日志明示")
+        # 失败不得污染撤销栈 / 不得改写节点
+        self.assertFalse(self._ws._workflow.can_undo())
+        self.assertEqual(len(self._ws._workflow.get_node(nid).pcd.points), self.N)
+
+    def test_undo_during_estimate_rejected_by_ui(self):
+        """R4-①：processing 状态下 UI 层撤销/重做必须被拒绝（状态与历史不动）。"""
+        nid = self._inject_inf_cloud()
+        self._ws._on_estimate_normals(0.0, 30)
+        self.assertIsNotNone(self._ws._normals_worker)
+        n_before = len(self._ws._workflow.get_node(nid).pcd.points)
+        self._ws._on_undo()
+        self._ws._on_redo()
+        self.assertEqual(self._ws.current_state(), "processing", "运算中状态不得被撤销改走")
+        self.assertEqual(len(self._ws._workflow.get_node(nid).pcd.points), n_before)
+        self.assertTrue(any("运算进行中" in m for _, m in self._logs))
+        # 收尾：等 worker 结束，避免泄漏到其它用例
+        from PySide6.QtCore import QEventLoop, QTimer
+        loop = QEventLoop(self._ws)
+        self._ws._normals_worker.finished_normals.connect(lambda *a: loop.quit())
+        QTimer.singleShot(30_000, loop.quit)
+        loop.exec()
+
+    def test_estimate_result_never_revives_undone_state(self):
+        """R4-②（verify probe_undo_race 同口径）：运算中直接 wf.undo() 绕过 UI 守卫后，
+        完成回调按节点点云对象身份比对，必须把结果丢弃，不得把已撤销状态写回。"""
+        from PySide6.QtCore import QEventLoop, QTimer
+        nid = self._inject_inf_cloud()
+        wf = self._ws._workflow
+        ok, msg, _ = wf.apply_process(nid)          # 先造一条历史（剔除 Inf 行）
+        self.assertTrue(ok, msg)
+        self.assertEqual(len(wf.get_node(nid).pcd.points), self.N - self.INF_ROWS)
+        self._ws._on_estimate_normals(0.0, 30)
+        worker = self._ws._normals_worker
+        self.assertIsNotNone(worker)
+        ok_u, _ = wf.undo()                         # 运算中撤销（绕过 UI 守卫）
+        self.assertTrue(ok_u)
+        self.assertEqual(len(wf.get_node(nid).pcd.points), self.N)
+
+        loop = QEventLoop(self._ws)
+        worker.finished_normals.connect(lambda *a: loop.quit())
+        QTimer.singleShot(30_000, loop.quit)
+        loop.exec()
+
+        node = wf.get_node(nid)
+        self.assertEqual(len(node.pcd.points), self.N, "已撤销状态不得被估计结果复活")
+        self.assertFalse(node.pcd.has_normals(), "被丢弃的结果不得写入法线")
+        self.assertFalse(wf.can_undo(), "丢弃结果不得压入撤销历史")
+        self.assertTrue(any("结果已丢弃" in m for _, m in self._logs))
+
+
+@unittest.skipUnless(_HAS_APP, f"app 层不可导入: {_APP_IMPORT_ERR}")
+class TestUiLoadSanitizeVisible(unittest.TestCase):
+    """R3：载入剔除行数必须可见于 UI 日志（信号级），不能只进轮转日志文件。
+
+    M7 变异（删载入清洗）在本组零命中 → 补此守护。
+    """
+
+    def setUp(self):
+        self._app = QApplication.instance() or QApplication([])
+        self._ws = CloudCompareWorkspace()
+        self._logs: list[tuple[str, str]] = []
+        self._ws.log_message.connect(lambda m, lvl: self._logs.append((lvl, m)))
+
+    def test_load_dropped_rows_visible_in_ui_log(self):
+        n, bad = 5000, 500
+        with tempfile.TemporaryDirectory() as d:
+            rng = np.random.default_rng(21)
+            pts = rng.normal(size=(n, 3))
+            pts[:bad] = np.inf
+            pcd = o3d.geometry.PointCloud()
+            pcd.points = o3d.utility.Vector3dVector(pts)
+            path = os.path.join(d, "inf.ply")
+            assert o3d.io.write_point_cloud(path, pcd)
+            self._ws._load_files([path])
+            node = self._ws._workflow.list_cloud_nodes()[-1]
+            self.assertEqual(len(node.pcd.points), n - bad)
+            self.assertTrue(any("剔除" in m and str(bad) in m for _, m in self._logs),
+                            "剔除行数必须出现在 UI 日志/状态栏（load_from_file 消息口径）")
+
+
+@unittest.skipUnless(_HAS_APP, f"app 层不可导入: {_APP_IMPORT_ERR}")
+class TestUiExitRace(unittest.TestCase):
+    """R1 守护：估算进行中 close()+销毁不得硬崩（修复前 0xC0000409，3/3）。
+
+    硬崩是解释器级退出码，同进程内测不到，必须子进程跑并精确取退出码。
+    """
+
+    def test_close_during_estimate_exits_cleanly(self):
+        import subprocess as sp
+        import sys
+        import textwrap
+        script = textwrap.dedent(r'''
+            import os, sys, time
+            os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+            ROOT = r"D:/RVC_SRC/Python/MultiCameraCalibration"
+            for p in (ROOT, os.path.join(ROOT, "src")):
+                sys.path.insert(0, p)
+            import numpy as np, open3d as o3d
+            from PySide6.QtWidgets import QApplication
+            from prototypes.cloudcompare_like.app.cc_workspace import CloudCompareWorkspace
+            app = QApplication([])
+            ws = CloudCompareWorkspace()
+            pts = np.random.default_rng(4).normal(size=(1_500_000, 3)) * 100.0
+            pcd = o3d.geometry.PointCloud()
+            pcd.points = o3d.utility.Vector3dVector(pts)
+            nid = ws._workflow.add_cloud("big", pcd)
+            ws._current_node_id = nid
+            ws._on_estimate_normals(0.0, 30)
+            time.sleep(0.6)                     # 等价 verify v_exit_race2.py 模式 B
+            ws.close()
+            del ws
+            app.processEvents()
+            print("SCRIPT_END_OK")
+        ''')
+        r = sp.run([sys.executable, "-c", script], capture_output=True, text=True,
+                   timeout=180)
+        self.assertEqual(r.returncode, 0,
+                         f"退出码={r.returncode:#x}（0xC0000409=线程存活时销毁）\n"
+                         f"stdout={r.stdout}\nstderr={r.stderr}")
+        self.assertIn("SCRIPT_END_OK", r.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -394,18 +394,20 @@ class TurntableProtoUI(QMainWindow):
             self.log("[ERROR] WorkerThread 不可用")
             return None
         worker = WorkerThread(func, *args, **kwargs)
-        worker.finished.connect(lambda res, err, w=worker: self._on_worker_finished(res, err, on_done, w))
+        worker.result_ready.connect(lambda res, err, w=worker: self._on_worker_finished(res, err, on_done, w))
+        worker.finished.connect(lambda w=worker: self._on_worker_exited(w))
         self._active_workers.append(worker)
         worker.start()
         return worker
 
+    def _on_worker_exited(self, worker):
+        """线程退出回调：从活动列表摘除并调度 Qt 回收。"""
+        if worker in self._active_workers:
+            self._active_workers.remove(worker)
+        worker.deleteLater()
+
     def _on_worker_finished(self, result, error, on_done, worker):
-        """后台线程完成回调：释放引用、隐藏 loading、转发结果。"""
-        try:
-            if worker in self._active_workers:
-                self._active_workers.remove(worker)
-        except Exception:
-            pass
+        """后台线程完成回调：隐藏 loading、转发结果（引用池摘除去 _on_worker_exited）。"""
         self._hide_loading()
         if error:
             self.log(f"[ERROR] {error}")

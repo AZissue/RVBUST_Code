@@ -127,6 +127,9 @@ class MainWindowShell(QMainWindow):
         self._ws_mobile.chain_stats_changed.connect(self._on_chain_stats)
         self._ws_mobile.dirty_changed.connect(self.set_dirty)
         self._ws_turntable.dirty_changed.connect(self.set_dirty)
+        # 转台工作区"保存会话"按钮 → 统一走 BackendBridge 的 B 类保存（1.0.10 池合并）
+        self._ws_turntable.save_session_requested.connect(
+            lambda: self.save_session_requested.emit())
 
         root.addWidget(self._stack, 1)
 
@@ -592,44 +595,62 @@ class MainWindowShell(QMainWindow):
         event.accept()
 
     def _wait_for_session_save(self, event):
-        """用局部事件循环等待会话保存完成，再 accept/ignore 关闭事件。"""
-        from PySide6.QtCore import QEventLoop, QTimer
+        """用局部事件循环等待会话保存完成，再 accept/ignore 关闭事件。
+
+        等待只此一处、无硬超时（E8：两套等待语义统一），三种出口：
+          保存完成 → accept；保存失败 → 询问是否仍要关闭；
+          用户点"放弃保存并关闭" → 把 B 类任务降级为可放弃（cleanup 不再等它），
+          由原子写兜底数据完整性，accept 后走 os._exit 安全网。
+        """
+        from PySide6.QtCore import QEventLoop, Qt
+        from PySide6.QtWidgets import QProgressDialog
 
         loop = QEventLoop(self)
-        finished = {"ok": False, "msg": ""}
+        finished = {"done": False, "ok": False, "msg": ""}
 
         def _on_finished(ok: bool, msg: str):
+            finished["done"] = True
             finished["ok"] = ok
             finished["msg"] = msg
             loop.quit()
 
         self.session_save_finished.connect(_on_finished)
 
-        # 超时保险：30 秒后强制退出等待
-        timer = QTimer(self)
-        timer.setSingleShot(True)
-        timer.timeout.connect(loop.quit)
-        timer.start(30000)
+        progress = QProgressDialog("正在保存会话...", "放弃保存并关闭", 0, 0, self)
+        progress.setWindowTitle("保存会话")
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.canceled.connect(loop.quit)
+        progress.show()
 
         loop.exec()
 
-        timer.stop()
         self.session_save_finished.disconnect(_on_finished)
+        progress.close()
 
-        if finished["ok"]:
+        if finished["done"] and finished["ok"]:
             self.log(f"关闭前已保存: {finished['msg']}", "success")
             event.accept()
+            return
+        if not finished["done"]:
+            # 用户明确放弃等待：降级 B 类任务，cleanup 按 A 类有界等待处理
+            if self._backend_bridge is not None:
+                abandoned = self._backend_bridge.abandon_must_finish_tasks()
+                if abandoned:
+                    self.log(f"已放弃等待保存完成: {'、'.join(abandoned)}"
+                             f"（数据由原子写兜底）", "warn")
+            event.accept()
+            return
+        # 保存失败（任务返回失败/异常），询问是否仍要关闭
+        ret = QMessageBox.warning(
+            self, "保存未完成",
+            f"会话保存失败：{finished['msg']}\n是否仍要关闭程序？",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No)
+        if ret == QMessageBox.Yes:
+            event.accept()
         else:
-            # 保存失败/超时，询问是否仍要关闭
-            ret = QMessageBox.warning(
-                self, "保存未完成",
-                f"会话保存可能未完成：{finished['msg']}\n是否仍要关闭程序？",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No)
-            if ret == QMessageBox.Yes:
-                event.accept()
-            else:
-                event.ignore()
+            event.ignore()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

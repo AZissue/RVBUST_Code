@@ -26,7 +26,7 @@ import numpy as np
 
 from .workflow_base import WorkflowBase
 from .frame_data import FrameData
-from .utils import logger
+from .utils import logger, write_point_cloud_atomic
 
 
 class FixedMultiCamWorkflow(WorkflowBase):
@@ -248,9 +248,10 @@ class FixedMultiCamWorkflow(WorkflowBase):
             return False, f"拼接失败: {msg}", None
 
         if save_path:
-            import open3d as o3d
-            o3d.io.write_point_cloud(save_path, merged)
-            msg += f"\n已保存: {save_path}"
+            if write_point_cloud_atomic(save_path, merged):
+                msg += f"\n已保存: {save_path}"
+            else:
+                return False, f"{msg}\n点云保存失败（详见日志）", None
         logger.info(f"拼接完成: {len(merged.points)} 点")
         return True, msg, merged
 

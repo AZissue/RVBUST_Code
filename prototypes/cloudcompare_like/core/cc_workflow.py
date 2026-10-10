@@ -19,6 +19,81 @@ from core.point_cloud_processor import PointCloudProcessor
 from core.pcd_utils import merge_pointclouds
 
 
+def sanitize_cloud(pcd: Any) -> Tuple[Any, int]:
+    """剔除非有限点（NaN/Inf），返回 (清洗后点云, 剔除行数)。
+
+    口径：points / colors / normals 任一属性含非有限值的行整体剔除，保证清洗后
+    各属性行数一致；原始对象不被修改（剔除数=0 时返回原对象，调用方不得改写）。
+    非有限点会让 open3d KDTree 半径搜索退化（实测 50 万点含 1% Inf：1.7 s → 88 s），
+    故 load 与法线估计两条路径都必须过这道防线。
+    """
+    import numpy as np
+    n = len(pcd.points)
+    mask = np.isfinite(np.asarray(pcd.points)).all(axis=1)
+    if pcd.has_colors():
+        mask &= np.isfinite(np.asarray(pcd.colors)).all(axis=1)
+    if pcd.has_normals():
+        mask &= np.isfinite(np.asarray(pcd.normals)).all(axis=1)
+    dropped = int(n - int(mask.sum()))
+    if dropped == 0:
+        return pcd, 0
+    return pcd.select_by_index(np.where(mask)[0]), dropped
+
+
+def _median_point_spacing(pcd: Any, sample: int = 500) -> float:
+    """最近邻点距中位数（半径自适应口径，同 icp_register 的 _avg_spacing）。"""
+    import numpy as np
+    import open3d as o3d
+    n = len(pcd.points)
+    if n < 10:
+        return 1.0
+    tree = o3d.geometry.KDTreeFlann(pcd)
+    rng = np.random.default_rng(42)
+    idx = rng.choice(n, size=min(sample, n), replace=False)
+    dists = []
+    for pi in idx:
+        _, _, d2 = tree.search_knn_vector_3d(pcd.points[int(pi)], 2)
+        if len(d2) > 1:
+            dists.append(float(np.sqrt(d2[1])))
+    return float(np.median(dists)) if dists else 1.0
+
+
+def compute_normals(pcd: Any, radius: Optional[float] = None,
+                    max_nn: int = 30) -> Tuple[Any, Dict[str, Any]]:
+    """清洗 + 法线估计，返回 (结果点云, 统计信息)。
+
+    重活（open3d KDTree 半径搜索）全部在本函数内，可在工作线程调用；
+    不含任何 workflow 状态/节点操作（写回与历史在调用方的主线程做）。
+    radius=None 时按「最近邻点距中位数 × 3」自适应（毫米级 ~mm 半径、
+    米制 ~cm 半径，避免写死 10.0 在米制云上退化为全连通）。
+    """
+    import time
+    import copy
+    import open3d as o3d
+    t0 = time.perf_counter()
+    n_in = len(pcd.points)
+    work, dropped = sanitize_cloud(pcd)
+    if dropped == 0:
+        # estimate_normals 就地改写：必须副本，否则调用方的撤销底账被污染
+        work = copy.deepcopy(pcd)
+    if len(work.points) == 0:
+        raise ValueError("点云全部为非有限点（NaN/Inf），无法估计法线")
+    if radius is None:
+        radius = max(_median_point_spacing(work) * 3.0, 1e-9)
+    work.estimate_normals(
+        o3d.geometry.KDTreeSearchParamHybrid(radius=radius, max_nn=max_nn))
+    elapsed = time.perf_counter() - t0
+    info = {
+        "points_in": n_in,
+        "dropped": dropped,
+        "points_out": len(work.points),
+        "radius": float(radius),
+        "max_nn": int(max_nn),
+        "elapsed": elapsed,
+    }
+    return work, info
+
+
 class ScalarField:
     """标量场：与点云节点关联的可视化数据。"""
 
@@ -358,22 +433,48 @@ class CloudCompareWorkflow:
     # 扩展后处理（法线、标量场）
     # ------------------------------------------------------------------
     def estimate_normals(self, node_id: str,
-                         radius: float = 10.0, max_nn: int = 30) -> Tuple[bool, str]:
-        """估计点云法线。"""
-        import open3d as o3d
+                         radius: Optional[float] = None, max_nn: int = 30) -> Tuple[bool, str]:
+        """估计点云法线（同步路径；UI 走 NormalsEstimationWorker + commit_estimate_normals）。
+
+        调用前先深拷贝原始点云作为撤销底账；计算本体（清洗 + open3d 估计）在
+        compute_normals 内完成，radius=None 时半径按点距中位数 ×3 自适应。
+        """
         node = self._nodes.get(node_id)
         if node is None or node.node_type != CCNode.NODE_CLOUD:
             return False, "点云不存在"
         before = copy.deepcopy(node.pcd)
         try:
-            node.pcd.estimate_normals(
-                o3d.geometry.KDTreeSearchParamHybrid(radius=radius, max_nn=max_nn))
-            self._push_history("法线估计", node_id, before, node.pcd)
-            logger.info(f"{node.name} 法线估计完成")
-            return True, "法线估计完成"
+            result, info = compute_normals(node.pcd, radius, max_nn)
         except Exception as e:
             logger.error(f"法线估计失败: {e}")
             return False, f"法线估计失败: {e}"
+        self.commit_estimate_normals(node_id, before, result, info)
+        return True, self._normals_msg(node.name, info)
+
+    def commit_estimate_normals(self, node_id: str, before_pcd: Any,
+                                after_pcd: Any, info: Optional[Dict[str, Any]] = None):
+        """法线估计的写回：替换节点点云并压撤销历史（必须在主线程调用）。
+
+        worker 线程只负责计算（compute_normals），节点与历史的写回统一走这里，
+        避免工作线程与主线程并发改同一节点。
+        """
+        node = self._nodes.get(node_id)
+        if node is None or node.node_type != CCNode.NODE_CLOUD:
+            raise ValueError("点云不存在")
+        node.pcd = after_pcd
+        self._push_history("法线估计", node_id, before_pcd, after_pcd)
+        logger.info(self._normals_msg(node.name, info or {}))
+
+    @staticmethod
+    def _normals_msg(name: str, info: Dict[str, Any]) -> str:
+        msg = f"{name} 法线估计完成: {info.get('points_out', '?')} 点"
+        if info.get("dropped"):
+            msg += f"（剔除非有限点 {info['dropped']} 行）"
+        if info.get("elapsed") is not None:
+            msg += f"，耗时 {info['elapsed']:.2f} s"
+        if info.get("radius") is not None:
+            msg += f"，半径={info['radius']:.4g}，max_nn={info.get('max_nn', '?')}"
+        return msg
 
     def compute_scalar(self, node_id: str, field: str, **kwargs) -> Tuple[bool, str]:
         """计算标量场并自动附加到节点。"""
@@ -562,14 +663,25 @@ class CloudCompareWorkflow:
             pcd = o3d.io.read_point_cloud(path)
             if len(pcd.points) == 0:
                 return False, "文件为空或无法解析", None
+            pcd, dropped = sanitize_cloud(pcd)
             name = os.path.basename(path)
             # 创建文件节点
             file_id = self.add_file_node(name)
             # 在文件节点下创建点云节点
             node_id = self.add_cloud(name, pcd, parent_id=file_id)
-            return True, f"已加载 {name} ({len(pcd.points)} 点)", node_id
+            if dropped:
+                self._log_load_dropped(name, dropped)
+            # R3：剔除行数必须随返回消息进 UI（日志面板/状态栏），不能只进日志文件
+            msg = f"已加载 {name} ({len(pcd.points)} 点)"
+            if dropped:
+                msg += f"，剔除 {dropped} 行非有限点（NaN/Inf）"
+            return True, msg, node_id
         except Exception as e:
             return False, f"加载失败: {e}", None
+
+    @staticmethod
+    def _log_load_dropped(name: str, dropped: int):
+        logger.warning(f"加载 {name} 时剔除 {dropped} 行非有限点（NaN/Inf）")
 
     def export_cloud(self, node_id: str, path: str) -> Tuple[bool, str]:
         import open3d as o3d

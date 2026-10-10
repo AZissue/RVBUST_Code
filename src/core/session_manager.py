@@ -25,7 +25,7 @@ import json
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Any
 
-from .utils import logger
+from .utils import logger, write_json_atomic
 
 
 class SessionManager:
@@ -176,8 +176,7 @@ class SessionManager:
     @staticmethod
     def _write_json(path: str, data: Dict) -> bool:
         try:
-            with open(path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
+            write_json_atomic(path, data, ensure_ascii=False, indent=2)
             return True
         except Exception as e:
             logger.error(f"写入 JSON 失败 {path}: {e}")

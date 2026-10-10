@@ -16,10 +16,8 @@ ui_v2.workspaces.turntable_workspace —— 转台 360° 拼接工作区。
 
 from __future__ import annotations
 
-import json
 import os
 import tempfile
-import time
 from typing import List, Optional
 
 import cv2
@@ -42,6 +40,7 @@ from ..widgets.device_table import DeviceInfo
 from ui.worker_thread import WorkerThread
 
 from core.camera_manager import CameraManager
+from core.utils import write_point_cloud_atomic
 from core.marker_detector import MarkerDetector, MARKER_TYPE_CODED_CIRCLE, MARKER_TYPE_ASYMMETRIC_GRID
 from core.frame_data import FrameData
 from core.turntable_calibrator import TurntableCalibrator, OnlineTurntableSession
@@ -84,10 +83,6 @@ def _pcd_from_frame(frame: Optional[FrameData]) -> Optional[o3d.geometry.PointCl
         return None
 
 
-def _markers_to_json(markers: List[dict]) -> dict:
-    return {"markers": markers, "count": len(markers)}
-
-
 class TurntableWorkspace(QWidget):
     """转台 360° 拼接工作区。"""
 
@@ -99,6 +94,9 @@ class TurntableWorkspace(QWidget):
 
     dirty_changed = Signal(bool)
     """工作区数据脏标记变化（例如拍摄/标定/拼接后应设为 True）。"""
+
+    save_session_requested = Signal()
+    """请求保存会话（转交主窗口统一走 BackendBridge 的 B 类保存路径）。"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -118,8 +116,11 @@ class TurntableWorkspace(QWidget):
         self.current_markers1: List[dict] = []
         self.merged: Optional[o3d.geometry.PointCloud] = None
 
-        # worker 引用池（防止 QThread 被 GC）
+        # worker 引用池（防止 QThread 被 GC）。
+        # 注意：主程序中由 BackendBridge 注入统一 runner（_run_worker 委托），
+        # 本池仅作独立使用/测试时的回退（1.0.10 池合并）。
         self._active_workers: List[WorkerThread] = []
+        self._background_runner = None
 
         # 2D/3D 采集互斥门控：防止用户同时触发多个相机操作
         self._busy = False
@@ -355,7 +356,8 @@ class TurntableWorkspace(QWidget):
         v.addWidget(self.btn_save)
 
         self.btn_save_session = QPushButton("保存会话")
-        self.btn_save_session.clicked.connect(self._on_save_session)
+        self.btn_save_session.clicked.connect(
+            lambda: self.save_session_requested.emit())
         self.btn_save_session.setEnabled(False)
         v.addWidget(self.btn_save_session)
 
@@ -487,20 +489,40 @@ class TurntableWorkspace(QWidget):
         self.preview_2d_label.setText("")
 
     # ------------------------------------------------------------------ Worker
+    def set_background_runner(self, runner):
+        """注入统一后台 runner（BackendBridge._run_background）。
+
+        注入后 _run_worker 全部委托，引用池/任务分级/cleanup 收口全工程只有一套；
+        未注入时（独立使用/测试）回退本地池。
+        """
+        self._background_runner = runner
+
     def _run_worker(self, func, on_done, *args, **kwargs):
-        """启动后台线程并保留引用。"""
+        """启动后台线程。有统一 runner 时委托（on_done 单参，异常转日志）。"""
+        if self._background_runner is not None:
+            def _adapted(result, error):
+                if error:
+                    self.log(f"[ERROR] 后台任务异常: {error}", "error")
+                on_done(result)
+            return self._background_runner(func, _adapted, *args, **kwargs)
+        # 回退：本地引用池（防止 QThread 被 GC）
         worker = WorkerThread(func, *args, **kwargs)
-        worker.finished.connect(lambda res, err, w=worker: self._on_worker_finished(res, err, on_done, w))
+        worker.result_ready.connect(lambda res, err, w=worker: self._on_worker_finished(res, err, on_done, w))
+        # 引用池摘除挂在基类 QThread.finished（线程真正退出后）
+        worker.finished.connect(lambda w=worker: self._on_worker_exited(w))
         self._active_workers.append(worker)
         worker.start()
         return worker
 
+    def _on_worker_exited(self, worker):
+        """线程退出回调：从活动列表摘除并调度 Qt 回收。"""
+        if worker in self._active_workers:
+            self._active_workers.remove(worker)
+        worker.deleteLater()
+
     def _on_worker_finished(self, result, error, on_done, worker):
-        try:
-            if worker in self._active_workers:
-                self._active_workers.remove(worker)
-        except Exception:
-            pass
+        # 注意：引用池摘除在 _on_worker_exited（基类 QThread.finished）中处理，
+        # 此处只做结果分发，避免线程仍在运行时丢引用。
         if error:
             self.log(f"[ERROR] {error}", "error")
             QMessageBox.warning(self, "执行失败", str(error))
@@ -897,49 +919,10 @@ class TurntableWorkspace(QWidget):
         path, _ = QFileDialog.getSaveFileName(
             self, "保存合并点云", "turntable_merged.ply", "PLY 文件 (*.ply)")
         if path:
-            o3d.io.write_point_cloud(path, self.merged)
-            self.log(f"已保存: {path}")
-
-    def _on_save_session(self):
-        if not self.session.get_all_frames():
-            return
-        base_dir = QFileDialog.getExistingDirectory(self, "选择会话保存目录")
-        if not base_dir:
-            return
-        session_dir = os.path.join(base_dir, f"turntable_session_{time.strftime('%Y%m%d_%H%M%S')}")
-        os.makedirs(session_dir, exist_ok=True)
-        self.session.session_dir = session_dir
-        self.log("保存会话中...")
-
-        def _save():
-            if self.session.frame0 is not None:
-                self.session.frame0.save(session_dir)
-                with open(os.path.join(session_dir, "markers_frame0.json"), "w", encoding="utf-8") as f:
-                    json.dump(_markers_to_json(self.session.markers0), f, ensure_ascii=False, indent=2)
-            if self.session.frame1 is not None:
-                self.session.frame1.save(session_dir)
-                with open(os.path.join(session_dir, "markers_frame1.json"), "w", encoding="utf-8") as f:
-                    json.dump(_markers_to_json(self.session.markers1), f, ensure_ascii=False, indent=2)
-            for i, frame in enumerate(self.session.sequence):
-                frame_dir = os.path.join(session_dir, f"frame_{i + 2:04d}")
-                os.makedirs(frame_dir, exist_ok=True)
-                frame.save(frame_dir)
-            if self.session.is_calibrated():
-                info = {
-                    "axis": self.session.calib.axis.tolist() if self.session.calib.axis is not None else None,
-                    "center": self.session.calib.center.tolist() if self.session.calib.center is not None else None,
-                    "angle_deg": float(np.degrees(self.session.calib.angle_rad)),
-                    "step_count": self.session.calib.step_count,
-                }
-                with open(os.path.join(session_dir, "calibration.json"), "w", encoding="utf-8") as f:
-                    json.dump(info, f, ensure_ascii=False, indent=2)
-            return session_dir
-
-        def _done(path):
-            self.log(f"会话已保存: {path}")
-            self.dirty_changed.emit(False)
-
-        self._run_worker(_save, _done)
+            if write_point_cloud_atomic(path, self.merged):
+                self.log(f"已保存: {path}")
+            else:
+                self.log(f"点云保存失败（详见日志）: {path}")
 
     def _on_viewer_maximize_toggled(self, maximized: bool):
         """3D 查看器最大化/恢复：隐藏/恢复左侧面板与 2D 预览区。"""

@@ -64,12 +64,16 @@ def test_full_360_stitch():
     synth = SyntheticTurntableData(angle_deg=angle_deg, noise_mm=0.3)
     pcds, markers = synth.generate_sequence(n_steps=11)  # 0~330°
 
-    # 生成序列应每帧都是独立对象，且角度递增导致质心不同
+    # 生成序列应每帧都是独立对象，且角度递增导致逐点位移显著。
+    # 判据必须是"逐点平均位移"而非"质心位移"：合成场景整体平移到转轴附近，
+    # 质心到轴垂距仅 ~0.16mm，绕轴旋转时质心几乎不动（i=1 时 <1mm），
+    # 但逐点位移有数十 mm——质心判据会把正确实现误判为原地修改。
+    p0 = np.asarray(pcds[0].points)
     for i in range(1, len(pcds)):
         assert pcds[i] is not pcds[0], f"第 {i} 帧与第 0 帧是同一对象（原地修改 bug）"
-        c0 = np.asarray(pcds[0].points).mean(axis=0)
-        ci = np.asarray(pcds[i].points).mean(axis=0)
-        assert np.linalg.norm(ci - c0) > 1.0, f"第 {i} 帧与第 0 帧质心重合"
+        pi = np.asarray(pcds[i].points)
+        mean_disp = np.linalg.norm(pi - p0, axis=1).mean()
+        assert mean_disp > 1.0, f"第 {i} 帧相对第 0 帧逐点平均位移过小: {mean_disp:.4f} mm"
 
     calib = TurntableCalibrator()
     ok, msg, info = calib.calibrate_from_markers(markers[0], markers[1])

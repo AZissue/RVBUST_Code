@@ -27,7 +27,7 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
-from .utils import logger
+from .utils import logger, write_json_atomic
 
 
 class CalibrationEngine:
@@ -514,8 +514,7 @@ class CalibrationEngine:
     def save_calibration(self, path: str) -> bool:
         """JSON 保存全部 pair 结果 + reference_id。"""
         try:
-            with open(path, 'w', encoding='utf-8') as f:
-                json.dump(self.to_dict(), f, indent=2, ensure_ascii=False)
+            write_json_atomic(path, self.to_dict(), indent=2, ensure_ascii=False)
             logger.info(f"标定结果已保存: {path}")
             return True
         except Exception as e:

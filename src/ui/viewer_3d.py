@@ -167,6 +167,62 @@ class AxesIndicatorWidget(QWidget):
         painter.drawEllipse(int(cx - 2), int(cy - 2), 4, 4)
 
 
+class ScaleBarWidget(QWidget):
+    """右下角比例尺叠加控件（子控件叠加方案）。
+
+    不用 paintGL 内的 QPainter：Core Profile 下 Qt GL 绘制引擎的
+    纹理 shader 无法编译，会产生 warning 甚至绘制失败。
+    """
+
+    BAR_PX = 100  # 比例尺像素长度
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(self.BAR_PX + 40, 34)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.setStyleSheet("background: transparent;")
+        self._extent = 0.0
+
+    def set_extent(self, extent: float):
+        """更新场景范围并刷新比例尺。"""
+        self._extent = extent
+        self.update()
+
+    def paintEvent(self, event):
+        if self._extent <= 0:
+            return
+        from PySide6.QtGui import QPainter, QPen, QColor, QFont
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        # 世界坐标基准长度，取整到 1/2/5 × 10^k
+        world_len = _nice_step(self._extent / 10.0)
+
+        x_start, x_end = 20, 20 + self.BAR_PX
+        y = self.height() - 12
+        painter.setPen(QPen(QColor(200, 200, 200), 2))
+        painter.drawLine(x_start, y, x_end, y)
+        painter.drawLine(x_start, y - 5, x_start, y + 5)
+        painter.drawLine(x_end, y - 5, x_end, y + 5)
+
+        font = QFont("Arial", 9)
+        painter.setFont(font)
+        text = self._format_scale(world_len)
+        text_width = painter.fontMetrics().horizontalAdvance(text)
+        painter.drawText(x_start + (self.BAR_PX - text_width) // 2, y - 8, text)
+        painter.end()
+
+    @staticmethod
+    def _format_scale(length: float) -> str:
+        """格式化比例尺文字。"""
+        if length >= 1000:
+            return f"{length / 1000:.1f} m"
+        elif length >= 1:
+            return f"{length:.0f} mm"
+        else:
+            return f"{length * 1000:.0f} μm"
+
+
 # =========================================================================
 # PointCloudViewer —— 基于 QOpenGLWidget + PyOpenGL
 # =========================================================================
@@ -261,6 +317,10 @@ class PointCloudViewer(QOpenGLWidget):
         self._axes_indicator = AxesIndicatorWidget(self)
         self._axes_indicator.move(10, self.height() - 74)
         self._axes_indicator.show()
+
+        # 右下角比例尺（子控件叠加，避免 paintGL 内 QPainter 的 shader 警告）
+        self._scale_bar = ScaleBarWidget(self)
+        self._scale_bar.show()
 
         self.setMinimumSize(400, 260)
 
@@ -771,6 +831,7 @@ class PointCloudViewer(QOpenGLWidget):
         self.camera.target = self.centroid.astype(np.float32)
         self.camera.distance = max(self._extent * 1.5, 1.0)
         self._bounds_dirty = True
+        self._scale_bar.set_extent(self._extent)
 
     def paintGL(self):
         if not self._has_gl:
@@ -864,57 +925,6 @@ class PointCloudViewer(QOpenGLWidget):
 
         GL.glUseProgram(0)
 
-        # 2D 叠加层：比例尺（QPainter 绘制）
-        self._draw_scale_bar()
-
-    def _draw_scale_bar(self):
-        """在右下角绘制比例尺（类似 CloudCompare）。"""
-        if self._extent <= 0:
-            return
-        from PySide6.QtGui import QPainter, QPen, QColor, QFont
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-
-        # 目标比例尺像素长度
-        target_px = 100
-        # 世界坐标中 100px 对应的长度（近似：根据当前缩放和视口）
-        # 简化：用点云 extent 的 1/10 作为比例尺基准
-        world_len = self._extent / 10.0
-        # 取整到 1/2/5 × 10^k
-        world_len = _nice_step(world_len)
-
-        # 比例尺位置（右下角）
-        margin = 20
-        y = self.height() - margin - 10
-        x_end = self.width() - margin
-        x_start = x_end - target_px
-
-        # 绘制比例尺线
-        painter.setPen(QPen(QColor(200, 200, 200), 2))
-        painter.drawLine(x_start, y, x_end, y)
-        # 端点刻度
-        painter.drawLine(x_start, y - 5, x_start, y + 5)
-        painter.drawLine(x_end, y - 5, x_end, y + 5)
-
-        # 绘制文字
-        font = QFont("Arial", 9)
-        painter.setFont(font)
-        text = self._format_scale(world_len)
-        text_width = painter.fontMetrics().horizontalAdvance(text)
-        painter.drawText(x_start + (target_px - text_width) // 2, y - 8, text)
-
-        painter.end()
-
-    @staticmethod
-    def _format_scale(length: float) -> str:
-        """格式化比例尺文字。"""
-        if length >= 1000:
-            return f"{length / 1000:.1f} m"
-        elif length >= 1:
-            return f"{length:.0f} mm"
-        else:
-            return f"{length * 1000:.0f} μm"
-
     def resizeGL(self, w: int, h: int):
         if self._has_gl:
             from OpenGL import GL
@@ -922,8 +932,10 @@ class PointCloudViewer(QOpenGLWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        # 保持坐标轴指示器在左下角
+        # 保持坐标轴指示器在左下角、比例尺在右下角
         self._axes_indicator.move(10, self.height() - 74)
+        self._scale_bar.move(self.width() - self._scale_bar.width() - 10,
+                             self.height() - self._scale_bar.height() - 10)
 
     # ------------------------------------------------------------------
     # 鼠标交互
@@ -958,32 +970,6 @@ class PointCloudViewer(QOpenGLWidget):
             self._compute_roi_selection()
             return
         self.camera.end_drag()
-
-    def screen_to_world(self, screen_pos):
-        """把屏幕坐标反投影到世界坐标（读取深度缓冲精确求交）。"""
-        if self._mvp_inv is None:
-            return None
-        # 读取深度缓冲获取点击位置深度
-        try:
-            from OpenGL import GL
-            self.makeCurrent()
-            x = int(screen_pos.x())
-            y = int(self.height() - screen_pos.y() - 1)
-            depth = GL.glReadPixels(x, y, 1, 1, GL.GL_DEPTH_COMPONENT, GL.GL_FLOAT)
-            z = float(depth[0][0])
-        except Exception:
-            z = 0.5  # 失败时取中点
-
-        # NDC 坐标
-        ndc_x = (2.0 * screen_pos.x()) / self.width() - 1.0
-        ndc_y = 1.0 - (2.0 * screen_pos.y()) / self.height()
-        ndc_z = 2.0 * z - 1.0  # 深度 [0,1] -> NDC [-1,1]
-        ndc = np.array([ndc_x, ndc_y, ndc_z, 1.0], dtype=np.float64)
-        world = self._mvp_inv @ ndc
-        if abs(world[3]) < 1e-12:
-            return None
-        world = world[:3] / world[3]
-        return world.astype(np.float32)
 
     def set_roi_mode(self, enabled: bool):
         """进入/退出 ROI 矩形框选模式。"""
@@ -1085,13 +1071,18 @@ class PointCloudViewer(QOpenGLWidget):
         try:
             from OpenGL import GL
             self.makeCurrent()
+            # QOpenGLWidget 渲染在自身 FBO 中，paintGL 之外需先绑定
+            prev_fbo = GL.glGetIntegerv(GL.GL_FRAMEBUFFER_BINDING)
+            GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, self.defaultFramebufferObject())
             x = max(0, rect.left())
             y = max(0, self.height() - rect.bottom() - 1)
             w = min(rect.width(), self.width() - x)
             h = min(rect.height(), self.height() - y)
             if w <= 0 or h <= 0:
+                GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, prev_fbo)
                 return None
             buf = GL.glReadPixels(x, y, w, h, GL.GL_DEPTH_COMPONENT, GL.GL_FLOAT)
+            GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, prev_fbo)
             return np.asarray(buf, dtype=np.float32).reshape(h, w)
         except Exception:
             return None
@@ -1127,14 +1118,21 @@ class PointCloudViewer(QOpenGLWidget):
         self.update()
 
     def _read_depth(self, x: int, y: int):
-        """读取 (x,y) 处深度缓冲值，失败返回 None。"""
+        """读取 (x,y) 处深度缓冲值，失败返回 None。
+
+        QOpenGLWidget 渲染在自身 FBO 中，paintGL 之外绑定的是系统默认
+        framebuffer，必须先绑定 defaultFramebufferObject() 才能读到真实深度。
+        """
         try:
             from OpenGL import GL
             self.makeCurrent()
+            prev_fbo = GL.glGetIntegerv(GL.GL_FRAMEBUFFER_BINDING)
+            GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, self.defaultFramebufferObject())
             px = max(0, min(x, self.width() - 1))
             # OpenGL 原点在左下角，y 需要翻转
             py = max(0, min(self.height() - 1 - y, self.height() - 1))
             depth = GL.glReadPixels(px, py, 1, 1, GL.GL_DEPTH_COMPONENT, GL.GL_FLOAT)
+            GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, prev_fbo)
             return float(depth[0][0])
         except Exception:
             return None
@@ -1299,9 +1297,8 @@ class _ArcBallCamera:
         target = np.asarray(target, dtype=np.float32)
         if keep_position:
             pos = self.position()  # 先保存当前位置
-            old_distance = self._distance
             self.target = target
-            # 重新计算旋转矩阵，使相机位置保持不变
+            # 重新计算旋转矩阵和距离，使相机位置保持不变
             diff = pos - self.target
             d = float(np.linalg.norm(diff))
             if d > 1e-9:
@@ -1317,7 +1314,8 @@ class _ArcBallCamera:
                 up = np.cross(right, forward)
                 # 旋转矩阵的列向量：right, up, -forward
                 self._rotation = np.column_stack([right, up, -forward])
-            self._distance = old_distance
+                # 距离更新为从新 target 到旧 position 的实际距离
+                self._distance = d
         else:
             self.target = target
 
@@ -1337,12 +1335,14 @@ class _ArcBallCamera:
         up_hint = np.asarray(up_hint, dtype=np.float32)
         # 相机看向 target，所以 forward 是从 camera 指向 target
         forward = -camera_pos_dir
-        # 构建旋转矩阵：right = up_hint × forward, up = forward × right
-        right = np.cross(up_hint, forward)
+        z_axis = -forward  # 相机 +Z（指向相机后方）
+        # 构建右手系旋转矩阵（行列式必须为 +1，否则后续正交化会翻转第三列）：
+        # right = forward × up_hint, up = z × right，保证 right × up = z
+        right = np.cross(forward, up_hint)
         right = right / max(np.linalg.norm(right), 1e-9)
-        up = np.cross(forward, right)
+        up = np.cross(z_axis, right)
         # 旋转矩阵的列向量：right, up, -forward（相机看向 -Z）
-        self._rotation = np.column_stack([right, up, -forward])
+        self._rotation = np.column_stack([right, up, z_axis])
         self.target = np.zeros(3, dtype=np.float32)
 
     def reset(self):

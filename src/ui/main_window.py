@@ -36,7 +36,7 @@ from core.point_cloud_processor import PointCloudProcessor
 from core.frame_data import FrameData
 from core.offline_session import OfflineSession
 from core.station_manager import StationManager
-from core.utils import logger
+from core.utils import logger, write_json_atomic, write_point_cloud_atomic
 
 from .camera_card import CameraPreviewCard
 from .viewer_3d import EmbeddedPointCloudViewer
@@ -649,13 +649,19 @@ class MainWindow(QMainWindow):
         self._workers.append(worker)
 
         def _done(result, error):
-            if worker in self._workers:
-                self._workers.remove(worker)
             on_done(result, error)
 
-        worker.finished.connect(_done)
+        worker.result_ready.connect(_done)
+        # 引用池摘除挂在基类 QThread.finished（线程真正退出后），不能挂在结果信号上
+        worker.finished.connect(lambda w=worker: self._on_worker_thread_finished(w))
         worker.start()
         return worker
+
+    def _on_worker_thread_finished(self, worker):
+        """线程退出回调：从引用池摘除并调度 Qt 回收。"""
+        if worker in self._workers:
+            self._workers.remove(worker)
+        worker.deleteLater()
 
     def _on_log_toggled(self, expanded: bool):
         """日志折叠时把垂直 Splitter 压到只剩标题栏（最小化到底部栏），
@@ -891,9 +897,12 @@ class MainWindow(QMainWindow):
             self._update_capture_enabled()
 
         from .worker_thread import WorkerThread
-        self._connect_worker = WorkerThread(_connect_all)
-        self._connect_worker.finished.connect(_on_connect_done)
-        self._connect_worker.start()
+        worker = WorkerThread(_connect_all)
+        worker.result_ready.connect(_on_connect_done)
+        # 引用池维护统一交给 _run_background 同款回调（基类 QThread.finished）
+        worker.finished.connect(lambda w=worker: self._on_worker_thread_finished(w))
+        self._workers.append(worker)
+        worker.start()
 
     def _next_camera_id(self) -> str:
         while True:
@@ -1621,8 +1630,7 @@ class MainWindow(QMainWindow):
             if not path:
                 return
             try:
-                import open3d as o3d
-                if o3d.io.write_point_cloud(path, merged):
+                if write_point_cloud_atomic(path, merged):
                     self.viewer_3d.set_pointcloud_merged(merged)
                     self._last_merged_pcd = merged
                     self.stitch_panel.set_result(len(merged.points), elapsed_ms, path)
@@ -2075,10 +2083,12 @@ class MainWindow(QMainWindow):
         # 保存到会话目录
         session_dir = self.mobile_chain_workflow.session_dir
         if session_dir:
-            import json
             report_path = os.path.join(session_dir, "error_report.json")
-            with open(report_path, 'w', encoding='utf-8') as f:
-                json.dump(report, f, ensure_ascii=False, indent=2)
+            try:
+                write_json_atomic(report_path, report, ensure_ascii=False, indent=2)
+            except Exception as e:
+                self._log(f"[ERROR] 会话保存失败: {e}")
+                return
             self._log(f"[SUCCESS] 会话已保存: {session_dir}")
         else:
             self._log("[WARN] 无会话目录，请先开始链式拼接")

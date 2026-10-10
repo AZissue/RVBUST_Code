@@ -35,7 +35,7 @@ import cv2
 import numpy as np
 
 from .frame_data import FrameData
-from .utils import logger
+from .utils import logger, write_json_atomic
 
 if TYPE_CHECKING:
     from .marker_detector import MarkerDetector
@@ -85,8 +85,8 @@ class OfflineSession:
         else:
             meta.setdefault("camera_ids", [])
         meta["frame_count"] = len(self._list_frame_dirs())
-        with open(os.path.join(self.session_dir, "meta.json"), 'w', encoding='utf-8') as f:
-            json.dump(meta, f, ensure_ascii=False, indent=2)
+        write_json_atomic(os.path.join(self.session_dir, "meta.json"),
+                          meta, ensure_ascii=False, indent=2)
 
     def set_meta(self, key: str, value):
         """合并写入会话级 meta.json 自定义键值（如标定结果）并立即落盘。"""
@@ -306,8 +306,7 @@ class OfflineSession:
                 meta["board_pattern"] = board_pattern_entry
                 meta["board_pattern_name"] = frame.board_pattern_name
                 meta["board_rms_mm"] = float(frame.board_rms_mm)
-            with open(meta_path, 'w', encoding='utf-8') as f:
-                json.dump(meta, f, ensure_ascii=False, indent=2)
+            write_json_atomic(meta_path, meta, ensure_ascii=False, indent=2)
         except Exception as e:
             logger.error(f"回写检测结果失败 {meta_path}: {e}")
 

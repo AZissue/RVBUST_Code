@@ -271,15 +271,21 @@ viewer.spin_point_size.setValue(1)
 assert gl._point_size == 1.0
 print("  点大小设置通过 (1~5 px)")
 
-# 视角预设
-viewer.set_view_preset("top")
-assert gl.camera.rotation_x == 89.0 and gl.camera.rotation_y == 0.0
-viewer.set_view_preset("front")
-assert gl.camera.rotation_x == 0.0 and gl.camera.rotation_y == 0.0
-viewer.set_view_preset("side")
-assert gl.camera.rotation_y == 90.0
-viewer.set_view_preset("iso")
-assert gl.camera.rotation_x == 30.0 and gl.camera.rotation_y == -45.0
+# 视角预设（矩阵相机：检查相机位置方向与旋转矩阵合法性，det 必须为 +1）
+def _check_preset(name, expect_dir):
+    viewer.set_view_preset(name)
+    pos = gl.camera.position()
+    d = np.linalg.norm(pos)
+    assert d > 0, f"{name}: 相机距离应大于 0"
+    assert np.allclose(pos / d, expect_dir, atol=1e-4), \
+        f"{name}: 相机方向 {np.round(pos / d, 3)} 应为 {expect_dir}"
+    det = float(np.linalg.det(gl.camera._rotation))
+    assert abs(det - 1.0) < 1e-5, f"{name}: 旋转矩阵 det={det} 应为 +1"
+
+_check_preset("top", [0, 0, 1])
+_check_preset("front", [0, -1, 0])
+_check_preset("side", [1, 0, 0])
+_check_preset("iso", np.array([1, -1, 1]) / np.sqrt(3))
 print("  视角预设（顶 / 前 / 侧 / 等轴）调用通过")
 
 # 坐标轴 / 网格开关（checkable 图标按钮，toggled → 渲染标志）

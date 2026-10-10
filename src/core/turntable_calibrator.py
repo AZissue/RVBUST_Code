@@ -456,28 +456,3 @@ class SyntheticTurntableData:
             markers_list.append(self.rotate_points(base_markers, i))
         return pcds, markers_list
 
-
-def test_synthetic():
-    """命令行快速验证。"""
-    print("=" * 60)
-    print("转台拼接合成数据验证")
-    print("=" * 60)
-    synth = SyntheticTurntableData(angle_deg=30.0, noise_mm=0.3)
-    pcds, markers = synth.generate_sequence(n_steps=11)  # 0~330°
-
-    calib = TurntableCalibrator()
-    ok, msg, info = calib.calibrate_from_markers(markers[0], markers[1])
-    print(msg)
-    print(f"真实角度: 30.00°, 估计角度: {info.get('angle_deg', 0):.2f}°")
-    print(f"真实轴:   {synth.axis.round(4)}")
-    print(f"估计轴:   {np.array(info.get('axis')).round(4)}")
-    print(f"真实中心: {synth.center.round(2)}")
-    print(f"估计中心: {np.array(info.get('center')).round(2)}")
-
-    merged, msg = calib.stitch_pointclouds(pcds, downsample_voxel=2.0)
-    print(msg)
-    return calib, merged
-
-
-if __name__ == "__main__":
-    test_synthetic()

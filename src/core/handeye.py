@@ -37,7 +37,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import cv2
 
-from .utils import logger
+from .utils import logger, write_json_atomic
 
 
 class HandEyeCalibrator:
@@ -258,8 +258,7 @@ class HandEyeCalibrator:
             data['T_base2cam'] = res['T_base2cam'].tolist()
         try:
             os.makedirs(os.path.dirname(os.path.abspath(path)) or '.', exist_ok=True)
-            with open(path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
+            write_json_atomic(path, data, ensure_ascii=False, indent=2)
             return True
         except Exception as e:
             logger.error(f"保存手眼结果失败: {e}")

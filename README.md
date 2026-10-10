@@ -60,6 +60,7 @@ python test_station.py             # 单相机多站位模式测试（offscreen 
 python test_chain_stitcher.py      # 链式拓扑与 N 路拼接测试
 python test_handeye.py             # 手眼标定求解测试（合成数据）
 python test_robot_stitch.py        # 机器人拼接工作流测试（mock 机器人）
+python test_turntable.py           # 转台标定器合成数据测试（转台 360° 拼接算法）
 python test_generate_coded_circle.py  # 编码圆标定板生成器测试
 python prototypes/offline_stitch/tests/test_offline_stitch.py  # 离线拼接测试
 ```

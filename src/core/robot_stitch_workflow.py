@@ -27,7 +27,7 @@ from .workflow_base import WorkflowBase
 from .robot_interface import RobotInterface
 from .frame_data import FrameData
 from .pcd_utils import merge_pointclouds
-from .utils import logger
+from .utils import logger, write_point_cloud_atomic
 
 
 class RobotStitchWorkflow(WorkflowBase):
@@ -188,8 +188,9 @@ class RobotStitchWorkflow(WorkflowBase):
         if self._merged_pcd is None:
             return False, "无合并点云可保存"
         try:
-            o3d.io.write_point_cloud(path, self._merged_pcd)
-            return True, f"已保存 {path}"
+            if write_point_cloud_atomic(path, self._merged_pcd):
+                return True, f"已保存 {path}"
+            return False, "点云保存失败（open3d 返回 False，详见日志）"
         except Exception as e:
             logger.error(f"保存合并点云失败: {e}")
             return False, f"保存失败: {e}"

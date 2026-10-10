@@ -10,6 +10,13 @@
     PASS → VERIFIED（导出可用）/ FAIL → 红字 FAILED。重合度快检是 warning 级，
     **不改变**状态（R2 轴向盲区，不能判可用）。
   - 只放核心参数，不堆控件。
+
+M2a-2（设计语言复刻，docs/原型UI一次性复刻方案与截图验收标准_20260923.md §5）：
+  - 色值全部走 `ui_v2.theme` token（本文件**禁硬编码色值**，U2/S5）；
+  - 主按钮 `objectName("primary")`；与主按钮同行的次级/可逆动作 `objectName("secondary")`；
+  - 10px 外边距 / 间距基准；4 个信息标签挂 `objectName("stateLabel")` —— **仅为 S4
+    像素采样可寻址，QSS 无对应规则、不改外观**（4 个 = lbl_he_meta / lbl_points /
+    lbl_export_gate / lbl_state）。
 """
 
 from __future__ import annotations
@@ -20,6 +27,8 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (QComboBox, QGroupBox, QHBoxLayout, QLabel,
                                QLineEdit, QPushButton, QSizePolicy,
                                QVBoxLayout, QWidget)
+
+from ui_v2.theme import STATUS_ERR, STATUS_OK, STATUS_WARN, TEXT_MUTED
 
 PLACEHOLDER = "请选择"
 LOG_ORDERS = ("ZYX", "ZXY", "YZX", "YXZ", "XZY", "XYZ",
@@ -63,8 +72,8 @@ class ControlPanel(QWidget):
         self.setMaximumWidth(420)
         self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         lo = QVBoxLayout(self)
-        lo.setContentsMargins(6, 6, 6, 6)
-        lo.setSpacing(6)
+        lo.setContentsMargins(10, 10, 10, 10)
+        lo.setSpacing(10)
         lo.addWidget(self._build_handeye_group())
         lo.addWidget(self._build_pose_group())
         lo.addWidget(self._build_capture_group())
@@ -93,6 +102,7 @@ class ControlPanel(QWidget):
         v.addLayout(row2)
 
         btn = QPushButton("从 JSON 加载")
+        btn.setObjectName("primary")
         btn.clicked.connect(self._emit_load_handeye)
         v.addWidget(btn)
 
@@ -100,6 +110,7 @@ class ControlPanel(QWidget):
         self.edit_he_manual.setPlaceholderText("或手填 16 个数（行优先，逗号/空格分隔）")
         v.addWidget(self.edit_he_manual)
         btn2 = QPushButton("手动录入手眼矩阵")
+        btn2.setObjectName("primary")
         btn2.clicked.connect(self._emit_manual_handeye)
         v.addWidget(btn2)
 
@@ -107,6 +118,7 @@ class ControlPanel(QWidget):
         # 但文件里 stamp validated，未 VERIFIED 的矩阵接手方须自行复核。
         row3 = QHBoxLayout()
         self.btn_export_he_file = QPushButton("导出矩阵文件")
+        self.btn_export_he_file.setObjectName("secondary")
         self.btn_export_he_file.setEnabled(False)      # 加载矩阵后才可用
         self.btn_export_he_file.setToolTip(
             "导出 v1 矩阵文件（含 unit / 欧拉口径 / 时间戳 / rms / sha256）。\n"
@@ -114,6 +126,7 @@ class ControlPanel(QWidget):
         self.btn_export_he_file.clicked.connect(self.sig_export_handeye_file.emit)
         row3.addWidget(self.btn_export_he_file)
         self.btn_import_he_file = QPushButton("导入矩阵文件")
+        self.btn_import_he_file.setObjectName("secondary")
         self.btn_import_he_file.setToolTip(
             "读 v1 矩阵文件（单位以文件为准；与界面选择冲突即拒）或 MCC 旧 JSON\n"
             "（旧格式无 unit 字段 → 界面单位必选）。")
@@ -123,12 +136,14 @@ class ControlPanel(QWidget):
 
         # 屏上显形（@lead v2 §10.4-①）：门禁留痕黄条 + 元数据行（未知值必须显示"未知"）
         self.lbl_export_gate = QLabel("")
+        self.lbl_export_gate.setObjectName("stateLabel")
         self.lbl_export_gate.setWordWrap(True)
         self.lbl_export_gate.setVisible(False)
         v.addWidget(self.lbl_export_gate)
         self.lbl_he_meta = QLabel("")
+        self.lbl_he_meta.setObjectName("stateLabel")
         self.lbl_he_meta.setWordWrap(True)
-        self.lbl_he_meta.setStyleSheet("color: #888888;")
+        self.lbl_he_meta.setStyleSheet(f"color: {TEXT_MUTED};")
         self.lbl_he_meta.setVisible(False)
         v.addWidget(self.lbl_he_meta)
         return g
@@ -197,9 +212,11 @@ class ControlPanel(QWidget):
         v.setSpacing(4)
         row = QHBoxLayout()
         self.btn_capture = QPushButton("拍一帧 → 变到基座系")
+        self.btn_capture.setObjectName("primary")
         self.btn_capture.clicked.connect(self.sig_capture.emit)
         row.addWidget(self.btn_capture, 1)
         btn_clear = QPushButton("清空")
+        btn_clear.setObjectName("secondary")
         btn_clear.clicked.connect(self.sig_clear.emit)
         row.addWidget(btn_clear)
         v.addLayout(row)
@@ -209,7 +226,8 @@ class ControlPanel(QWidget):
         v.addWidget(self.btn_save_ply)
         self.lbl_points = QLabel("无相机：使用合成点云（可复现，固定随机种子）")
         self.lbl_points.setWordWrap(True)
-        self.lbl_points.setStyleSheet("color: #888;")
+        self.lbl_points.setObjectName("stateLabel")
+        self.lbl_points.setStyleSheet(f"color: {TEXT_MUTED};")
         v.addWidget(self.lbl_points)
         return g
 
@@ -218,7 +236,8 @@ class ControlPanel(QWidget):
         v = QVBoxLayout(g)
         v.setSpacing(4)
         self.lbl_state = QLabel("状态：IDLE")
-        self.lbl_state.setStyleSheet("color: #ffb300;")
+        self.lbl_state.setObjectName("stateLabel")
+        self.lbl_state.setStyleSheet(f"color: {STATUS_WARN};")
         v.addWidget(self.lbl_state)
 
         self.edit_tip_xyz = QLineEdit()
@@ -231,6 +250,7 @@ class ControlPanel(QWidget):
             lambda: self.sig_tip_record.emit(self.edit_tip_xyz.text().strip()))
         v.addWidget(self.btn_tip_record)
         self.btn_tip_check = QPushButton("运行戳点门禁")
+        self.btn_tip_check.setObjectName("primary")
         self.btn_tip_check.setEnabled(False)
         self.btn_tip_check.clicked.connect(self.sig_tip_check.emit)
         v.addWidget(self.btn_tip_check)
@@ -241,6 +261,7 @@ class ControlPanel(QWidget):
         v.addWidget(self.btn_overlap)
 
         self.btn_export = QPushButton("保存会话（未 VERIFIED 置灰，A6）")
+        self.btn_export.setObjectName("primary")
         self.btn_export.setEnabled(False)
         self.btn_export.clicked.connect(self.sig_save_session.emit)
         v.addWidget(self.btn_export)
@@ -248,7 +269,7 @@ class ControlPanel(QWidget):
                       "验证通过不等于亚毫米保证。重合度快检存在轴向盲区"
                       "（δ∥旋转轴时恒为 0），不能判可用。")
         hint.setWordWrap(True)
-        hint.setStyleSheet("color: #e0a0a0;")
+        hint.setStyleSheet(f"color: {STATUS_ERR};")
         v.addWidget(hint)
         return g
 
@@ -289,7 +310,7 @@ class ControlPanel(QWidget):
         return self.parse_floats(self.edit_xyz.text()), \
             self.parse_floats(self.edit_rpy.text())
 
-    def set_state(self, text: str, color: str = "#ffb300"):
+    def set_state(self, text: str, color: str = STATUS_WARN):
         self.lbl_state.setText(f"状态：{text}")
         self.lbl_state.setStyleSheet(f"color: {color};")
 
@@ -315,12 +336,12 @@ class ControlPanel(QWidget):
         if validated:
             self.lbl_export_gate.setText(
                 "✔ 已 VERIFIED：导出的矩阵文件 verification.state=VERIFIED")
-            self.lbl_export_gate.setStyleSheet("color: #4caf50;")
+            self.lbl_export_gate.setStyleSheet(f"color: {STATUS_OK};")
         else:
             self.lbl_export_gate.setText(
                 "⚠ 未 VERIFIED：仍可导出矩阵文件，但文件里 "
                 "verification.state=UNVERIFIED，接手方须复核")
-            self.lbl_export_gate.setStyleSheet("color: #ffb300;")
+            self.lbl_export_gate.setStyleSheet(f"color: {STATUS_WARN};")
         self.lbl_export_gate.setVisible(True)
 
     def set_he_meta(self, text: str):
