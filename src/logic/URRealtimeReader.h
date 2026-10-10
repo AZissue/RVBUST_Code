@@ -15,16 +15,16 @@ class QTcpSocket;
 // Inside the body (offsets are from the start of the body, i.e. right after
 // the 4-byte length):
 //   timestamp          8 bytes (double)
-//   target_q           48 bytes (6 doubles)
-//   target_qd          ... (older UR versions have different fields ordering
-//                           historically, but the layout used here matches
-//                           the "actual_TCP_pose" position confirmed against
-//                           a real URSim capture: see logic/RobotPose.h)
-//   target_tcp_pose    48 bytes (6 doubles)
-//   actual_q           48 bytes (6 doubles)
-//   actual_tcp_pose    48 bytes (6 doubles)  <- this is what we read
+//   q_actual           48 bytes (6 doubles)   body   8
+//   qd_actual          48 bytes (6 doubles)   body  56
+//   I_actual           48 bytes (6 doubles)   body 104
+//   actual_TCP_pose    48 bytes (6 doubles)   body 152  <- this is what we read
+//   actual_TCP_speed   48 bytes (6 doubles)   body 200
 // actual_tcp_pose = (x, y, z, rx, ry, rz) with x/y/z in meters and rx/ry/rz
 // as an axis-angle rotation vector in radians (NOT static-XYZ euler degrees).
+// The other "5 target blocks first" layout circulating for this port would
+// put M_target at 200 and the pose at 440; the field reading of six exact
+// zeros at 200 (2026-10-10) rules it out -- see the constant in the .cpp.
 //
 // This adapter converts x/y/z to millimeters (matching the rest of the app's
 // unit convention) and passes rx/ry/rz through unchanged (radians, axis-angle)
@@ -63,12 +63,16 @@ public:
 
 private:
     void drain();                                         // parse what has arrived
-    bool parsePacket(const QByteArray& packet, Pose& out) const;
+    bool parsePacket(const QByteArray& packet, Pose& out);
 
     QTcpSocket* m_socket = nullptr;
     QByteArray m_buf;                // tail of a partially received packet
     Pose m_latest{};
     bool m_hasPose = false;
+    // The pose field read as six exact zeros: not a pose, and almost certainly
+    // the wrong byte offset (see parsePacket). Kept so readPose() can report
+    // that instead of the generic "waiting for data" timeout.
+    bool m_zeroPose = false;
     QElapsedTimer m_lastPacketAt;    // freshness of m_latest
     quint64 m_packetsConsumed = 0;
     quint64 m_badHeaders = 0;

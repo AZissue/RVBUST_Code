@@ -57,6 +57,20 @@ Get-ChildItem $SourceDir -File | Where-Object {
 Copy-Item -LiteralPath (Join-Path $SourceDir "platforms") -Destination $pkgDir -Recurse
 Copy-Item -LiteralPath (Join-Path $SourceDir "osgPlugins-3.6.5") -Destination $pkgDir -Recurse
 
+# 3b) Field diagnostic scripts (tools\*.ps1). They run on the robot PC and are
+# the only way to answer "what does this robot actually send" without a rebuild
+# -- the UR realtime/RTDE probe printed the packet that exposed the wrong byte
+# offset on 2026-10-10. ASCII folder name on purpose (see the note at the top).
+$toolsDir = Join-Path $PSScriptRoot "tools"
+if (Test-Path $toolsDir) {
+    $probes = Get-ChildItem $toolsDir -Filter *.ps1 -File
+    if ($probes.Count -gt 0) {
+        $probeDir = Join-Path $pkgDir "tools"
+        New-Item -ItemType Directory -Path $probeDir -Force | Out-Null
+        $probes | ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $probeDir }
+    }
+}
+
 $bat = @"
 @echo off
 setlocal

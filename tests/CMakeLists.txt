@@ -58,6 +58,8 @@ add_executable(unit_tests ${TEST_SOURCES}
     ${CMAKE_SOURCE_DIR}/src/logic/CalibrationService.cpp
     ${CMAKE_SOURCE_DIR}/src/logic/RobotPose.cpp
     ${CMAKE_SOURCE_DIR}/src/logic/URRealtimeReader.cpp
+    # UR RTDE（30004）适配器：握手 + 推流解析（MockRtdeServer 在 test_robot_pose.cpp）
+    ${CMAKE_SOURCE_DIR}/src/logic/URRtdeReader.cpp
     ${CMAKE_SOURCE_DIR}/src/logic/NrcJsonReader.cpp
     # NrcJsonReader logs every raw response through RuntimeLog.
     ${CMAKE_SOURCE_DIR}/src/logic/RuntimeLog.cpp

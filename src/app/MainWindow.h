@@ -13,6 +13,7 @@
 #include "logic/NrcJsonReader.h"
 #include "logic/RobotPose.h"
 #include "logic/URRealtimeReader.h"
+#include "logic/URRtdeReader.h"
 #include "logic/BoardPoseFit.h"
 #include "logic/FrameBuffer.h"
 #include "logic/UiStallWatchdog.h"
@@ -83,6 +84,7 @@ private:
     // must only ever be touched from this worker's thread.
     RobotPose::ModbusTcpReader   m_robotReader;
     RobotPose::URRealtimeReader  m_urReader;
+    RobotPose::URRtdeReader      m_rtdeReader;
     RobotPose::NrcJsonReader     m_nrcReader;
     EfortPoseReader::EfortReader m_eftReader;
     int  m_protocol    = 0;

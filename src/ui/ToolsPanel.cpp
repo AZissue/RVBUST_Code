@@ -1290,6 +1290,8 @@ void ToolsPanel::buildRobotCommPage(QStackedWidget* stack)
     m_robotProtocol->addItem(QStringLiteral("博纳斯(纳博特) JSON/TCP"));
     // 用户反馈 7：埃夫特走 EfortSDK（第四种协议，index 3 固定不变）。
     m_robotProtocol->addItem(QStringLiteral("埃夫特（EfortSDK）"));
+    // 2026-10-10：UR 的新口（RTDE, 30004）。追加在末尾，前面的 index 不动。
+    m_robotProtocol->addItem(QStringLiteral("UR RTDE (30004)"));
     m_robotProtocol->setStyleSheet(Theme::comboBoxStyle());
     protoRow->addWidget(m_robotProtocol, 1);
     m_robotStatus = new QLabel(QStringLiteral("未连接"), group);
@@ -1378,6 +1380,8 @@ void ToolsPanel::buildRobotCommPage(QStackedWidget* stack)
     hint->setText(QStringLiteral(
         "连接成功后，主界面会显示「拍照位姿」与「戳点位姿」按钮。"
         "UR Realtime 协议下机器人主动推流，读取到的姿态分量为轴角(弧度)而非欧拉角度数。"
+        "UR RTDE (30004) 是 UR 推荐的新接口（30003 已废弃），同样返回轴角(弧度)，"
+        "但字段按名称索取，不存在偏移错位问题；机器人同时只允许一个 RTDE 客户端。"
         "博纳斯(纳博特) JSON/TCP 协议读取当前 TCP 位姿（x y z rx ry rz，mm/度），"
         "应答字段名未知时会自动尝试常见字段并把原始应答写进运行日志。"
         "埃夫特走 EfortSDK，IP 必填（端口由 SDK 决定，本页端口输入框在埃夫特协议下隐藏），"
@@ -1395,8 +1399,12 @@ void ToolsPanel::buildRobotCommPage(QStackedWidget* stack)
         // 埃夫特（index 3）走 EfortSDK：地址串由 SDK 决定，端口不参与，
         // 所以把端口框收起来（留空），避免给用户一个"填了就有用"的错觉。
         m_robotPort->setVisible(index != 3);
-        // Default ports: Modbus TCP 502, UR realtime 30003, 博纳斯/纳博特 6001.
-        m_robotPort->setValue(index == 1 ? 30003 : (index == 2 ? 6001 : 502));
+        // Default ports: Modbus TCP 502, UR realtime 30003, 博纳斯/纳博特 6001,
+        // UR RTDE 30004.
+        m_robotPort->setValue(index == 1 ? 30003
+                             : index == 2 ? 6001
+                             : index == 4 ? 30004
+                                          : 502);
     };
     connect(m_robotProtocol, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, updateProtocolFields);

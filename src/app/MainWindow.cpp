@@ -1225,6 +1225,7 @@ RobotWorker::~RobotWorker() = default;
 RobotPose::Reader* RobotWorker::readerFor(int protocol)
 {
     switch (protocol) {
+    case 4:  return &m_rtdeReader;
     case 3:  return &m_eftReader;
     case 2:  return &m_nrcReader;
     case 1:  return &m_urReader;
@@ -1250,6 +1251,12 @@ void RobotWorker::connectRobot(const QString& host, quint16 port, int protocol,
         // configure — the adapter owns the framing and the JSON payload.
         m_nrcReader.setTimeoutMs(1500);
         label = QStringLiteral("%1:%2，博纳斯 JSON/TCP").arg(host).arg(port);
+    } else if (protocol == 4) {
+        // UR RTDE (30004): like the 30003 port there is no register
+        // format/scale to configure -- the adapter owns the handshake and the
+        // recipe. The timeout also bounds each handshake step.
+        m_rtdeReader.setTimeoutMs(1500);
+        label = QStringLiteral("%1:%2，UR RTDE").arg(host).arg(port);
     } else if (protocol == 1) {
         // UR Realtime interface: no register format/scale to configure.
         m_urReader.setTimeoutMs(1500);
@@ -1282,7 +1289,7 @@ void RobotWorker::connectRobot(const QString& host, quint16 port, int protocol,
 
 void RobotWorker::disconnectRobot()
 {
-    for (int p = 0; p <= 3; ++p)
+    for (int p = 0; p <= 4; ++p)
         readerFor(p)->disconnect();
     m_simulated = false;
 }
@@ -1291,7 +1298,7 @@ void RobotWorker::simulateConnect()
 {
     // "模拟连接成功" — no real Modbus socket; only sets the logical connected
     // state so the read buttons / cards can be exercised in the UI.
-    for (int p = 0; p <= 3; ++p)
+    for (int p = 0; p <= 4; ++p)
         readerFor(p)->disconnect();
     m_simulated = true;
 }

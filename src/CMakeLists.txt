@@ -16,6 +16,8 @@ set(SOURCES
     logic/CalibrationService.cpp
     logic/RobotPose.cpp
     logic/URRealtimeReader.cpp
+    # UR RTDE（端口 30004）：30003 已被 UR 废弃，这个口按变量名取 actual_TCP_pose
+    logic/URRtdeReader.cpp
     logic/NrcJsonReader.cpp
     # 埃夫特（EFORT）机器人通信适配器（用户反馈 7，第四种协议）
     logic/EfortPoseReader.cpp

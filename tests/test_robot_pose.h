@@ -13,5 +13,8 @@ private slots:
     void statusTextMapped();
     void urRealtimePose();
     void urRealtimeStreamsNewestPose();
+    void urRealtimeZeroPoseIsAnError();
     void urRealtimeStaleStreamTimesOut();
+    void urRtdeStreamsNewestPose();
+    void urRtdeUnavailablePoseIsRejected();
 };
