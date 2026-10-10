@@ -1,6 +1,7 @@
 #include "test_robot_pose.h"
 
 #include <QtTest>
+#include <QDataStream>
 #include <QThread>
 #include <atomic>
 #include <chrono>
@@ -199,6 +200,15 @@ public:
     // signature. The reader must call that an error, not a pose.
     bool startZeroPose() { m_zeroPose = true; return startCommon(0, -1); }
 
+    // Send one exact packet, byte for byte, then close. Used for packets
+    // captured from a real controller, where the bytes -- not this file's idea
+    // of the layout -- are the specification.
+    bool startSendingPacket(const QByteArray& packet)
+    {
+        m_rawPacket = packet;
+        return startCommon(0, -1);
+    }
+
     // intervalMs <= 0 means "one packet and close".
     bool startStreaming(int intervalMs = 2) { return startCommon(intervalMs, -1); }
 
@@ -271,35 +281,50 @@ private:
     }
 
     // One length-prefixed packet with the given actual_tcp_pose (meters) and
-    // the fixed body layout the reader expects.
+    // the body layout URRealtimeReader reads.
     static QByteArray buildPacket(double x, double y, double z, double rx)
     {
-        // Body layout must match URRealtimeReader::kPoseOffset (8 + 48*3):
-        // timestamp(8) + q_actual(48) + qd_actual(48) + I_actual(48) +
-        // actual_tcp_pose(48) + actual_tcp_speed(48)
+        // Body layout must match URRealtimeReader::kPoseOffset (8 + 48*9 =
+        // 440), UR's classic realtime field order:
+        //   timestamp, q_target, qd_target, qdd_target, I_target, M_target,
+        //   q_actual, qd_actual, I_actual, M_actual, actual_TCP_pose, ...
         //
-        // The fields around the pose carry *distinctive* values instead of
-        // zeros on purpose. The field bug this mock now guards (2026-10-10)
-        // was an offset exactly one 48-byte field too far, and a mock that
-        // zero-filled the neighbours could not tell the two apart -- a wrong
-        // offset would read (0,0,0,0,0,0) and a zero-filled test would agree.
-        // At rest the real controller does report exactly zeros for both
-        // qd_actual and actual_TCP_speed, so those two stay zero.
+        // Every field EXCEPT the pose carries a distinctive value (0.50 .. on
+        // through 4.5x) instead of zeros, on purpose. Both wrong offsets of
+        // 2026-10-10 (200, then 152) sat one and three fields short of the
+        // pose, and the mock of that day could not tell them apart: it built
+        // its packet from the same wrong constant, and it zero-filled the
+        // neighbours, so a misaligned read returned six zeros and the test
+        // agreed. The sentinels are all >= 0.5 m, so a misread is at least
+        // 500 mm and can never be confused with the expected 100/200/300 mm.
+        // qd_target/qdd_target/actual_TCP_speed stay zero because that is what
+        // a real controller reports for them at a standstill (measured).
         QByteArray body;
         pushBE(body, 12345.6789);                        // timestamp
-        for (int i = 0; i < 6; ++i) pushBE(body, 0.1 * i);  // q_actual
-        for (int i = 0; i < 6; ++i) pushBE(body, 0.0);   // qd_actual (rest)
-        for (int i = 0; i < 6; ++i) pushBE(body, 1.0 + i); // I_actual
-        // actual_tcp_pose: x,y,z in meters + rx,ry,rz axis-angle radians
+        for (int field = 0; field < 9; ++field) {        // q_target .. M_actual
+            for (int j = 0; j < 6; ++j)
+                pushBE(body, 0.5 * (field + 1) + 0.01 * j);
+        }
+        // actual_TCP_pose: x,y,z in meters + rx,ry,rz axis-angle radians
         pushBE(body, x);
         pushBE(body, y);
         pushBE(body, z);
         pushBE(body, rx);
         pushBE(body, 0.0);
         pushBE(body, 0.0);
-        // actual_tcp_speed -- sentinels: a read one field too far must not look
-        // like a pose (7.0 m would be 7000 mm).
-        for (int i = 0; i < 6; ++i) pushBE(body, 7.0 + i);
+        // actual_TCP_speed (488): zero at rest, as measured on a controller.
+        for (int i = 0; i < 6; ++i) pushBE(body, 0.0);
+        // actual_TCP_force (536): sentinel.
+        for (int i = 0; i < 6; ++i) pushBE(body, 1.21 + 0.01 * i);
+        // target_TCP_pose (584): the same pose 1 mm further along, like a
+        // controller chasing its target. A reader one field further than 440
+        // must not answer with this and call it the pose.
+        pushBE(body, x + 0.001);
+        pushBE(body, y);
+        pushBE(body, z);
+        pushBE(body, rx);
+        pushBE(body, 0.0);
+        pushBE(body, 0.0);
 
         QByteArray packet;
         const quint32 msgLen = static_cast<quint32>(body.size() + 4);
@@ -322,9 +347,11 @@ private:
                    reinterpret_cast<const char*>(&sndTimeout), sizeof(sndTimeout));
 
         if (m_intervalMs <= 0) {
-            const QByteArray packet = m_zeroPose
-                ? buildPacket(0.0, 0.0, 0.0, 0.0)
-                : buildPacket(0.1, 0.2, 0.3, 1.5707963267948966); // pi/2
+            const QByteArray packet = !m_rawPacket.isEmpty()
+                ? m_rawPacket
+                : (m_zeroPose
+                       ? buildPacket(0.0, 0.0, 0.0, 0.0)
+                       : buildPacket(0.1, 0.2, 0.3, 1.5707963267948966)); // pi/2
             const int sent =
                 ::send(c, packet.constData(), static_cast<int>(packet.size()), 0);
             if (sent > 0)
@@ -360,6 +387,7 @@ private:
     int m_intervalMs = 0;
     int m_maxPackets = -1;
     bool m_zeroPose = false;
+    QByteArray m_rawPacket;
     bool m_wsaUp = false;
     std::atomic<bool> m_running{false};
     std::atomic<int> m_sent{0};
@@ -455,6 +483,20 @@ private:
             out.push_back(static_cast<char>((raw >> shift) & 0xFF));
     }
 
+    // Read a big-endian double at `offset` (RTDE is network byte order), so the
+    // mock can check the request instead of trusting it.
+    static double readBE(const QByteArray& bytes, int offset)
+    {
+        if (bytes.size() < offset + 8)
+            return -1.0;
+        QDataStream ds(bytes);
+        ds.setByteOrder(QDataStream::BigEndian);
+        ds.skipRawData(offset);
+        double v = 0.0;
+        ds >> v;
+        return v;
+    }
+
     // Every RTDE packet: [uint16 BE size (includes this header)][uint8 type].
     static QByteArray wrap(quint8 type, const QByteArray& payload)
     {
@@ -537,10 +579,36 @@ private:
                 if (!sendAll(c, wrap(86, r)))
                     return false;
             } else if (type == 79) {                // SETUP_OUTPUTS
+                // Parse the request the way a UR controller does, instead of
+                // answering VECTOR6D unconditionally. That unconditional answer
+                // is why the first RTDE handshake shipped broken and passed its
+                // tests: protocol v2 puts a big-endian double output frequency
+                // first, then the variable names separated by COMMAS with no
+                // trailing separator (the packet length delimits the last
+                // name). A name padded with '\0' is simply a name the
+                // controller does not know -> NOT_FOUND. Measured on a live
+                // controller 2026-10-10: identical payload with '\0' ->
+                // NOT_FOUND, without -> VECTOR6D.
+                bool ok = body.size() >= 8;
+                if (ok) {
+                    const double freq = readBE(body, 0);
+                    ok = freq > 0.0 && freq <= 500.0;
+                }
+                if (ok) {
+                    QByteArray names = body.mid(8);
+                    if (names.isEmpty())
+                        ok = false;
+                    else {
+                        const QList<QByteArray> list = names.split(',');
+                        for (const QByteArray& n : list) {
+                            if (n != QByteArrayLiteral("actual_TCP_pose"))
+                                ok = false;
+                        }
+                    }
+                }
                 QByteArray r;
                 r.push_back(char(1));               // recipe id
-                r.append(m_poseUnavailable ? "NOT_FOUND" : "VECTOR6D");
-                r.push_back('\0');
+                r.append((m_poseUnavailable || !ok) ? "NOT_FOUND" : "VECTOR6D");
                 if (!sendAll(c, wrap(79, r)))
                     return false;
                 m_sent.store(0);
@@ -709,6 +777,68 @@ void TestRobotPose::urRealtimePose()
     QVERIFY(qAbs(pose.rpy[0] - 1.5707963267948966) < 1e-9);
     QCOMPARE(pose.rpy[1], 0.0);
     QCOMPARE(pose.rpy[2], 0.0);
+    reader.disconnect();
+    server.stop();
+}
+
+// A real 30003 packet, captured byte for byte from a live UR controller on
+// 2026-10-10 with the arm standing still and the pendant, feature set to base,
+// showing x=-208.71 mm y=-232.90 mm z=880.18 mm, rx=0.799 ry=1.697 rz=-1.697
+// rad.
+//
+// This is the fixture the two earlier attempts were missing. The mock packet
+// was built from the same offset constant as the reader, so it could only ever
+// confirm the mistake; real controller bytes cannot agree with a mistake. Body
+// 440 carries exactly the pendant's pose, while the blocks the earlier
+// constants pointed at -- 152 (I_target) and 200 (M_target) -- carry values no
+// pose can have, and 488 (actual_TCP_speed) is exactly zero because the arm is
+// standing still.
+static const char kCapturedUrRealtimePacket[] =
+    "AAAExECZHj987ZFovdt7AAAAAAC/5MiV43478L/0+Vyz6IJwv++ZIafyizA98mVMJYbPbj/l8jPjqrz/AAAAAAAA"
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPIrph3n3NPvACKN3+l9Y/T/uE/tYIShgv7ihbLP3MQQ/sJcGF6oorwAA"
+    "AAAAAAAAPMC0CfEAAADAPpWOmkifq0Aiqw1ruAnVv+ftrjx8lO8/4B31AvYXOgAAAAAAAAAAvdt7AAAAAAC/5MiV"
+    "43478L/0+Vyz6IJwv++ZIafyizA98mVMJYbPbj/l8jPjqrz/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    "AAAAAAAAAAAAAAAAAAAAAAAAPIrph3n3NPvACKN3+l9Y/T/uE/tYIShgv7ihbLP3MQQ/sJcGF6oorwAAAAAAAAAA"
+    "PIrph3n3NPvACKN3+l9Y/T/uE/tYIShgv7ihbLP3MQQ/sJcGF6oorwAAAAAAAAAAv8q3JSlIING/zc+qzdi5qD/s"
+    "Kmo319NnP+mPLLAmawY/+yjitycj5L/7KOK3DEwpAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAv8q3JSlI"
+    "ING/zc+qzdi5qD/sKmo319NnP+mPLLAmawY/+yjitycj5L/7KOK3DEwpAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAOYAAAAAAAEA5AAAAAAAAQDiAAAAAAABAOAAAAAAAAEA3"
+    "gAAAAAAAQDcAAAAAAAA/vQkX1rZam0AAAAAAAAAAQBwAAAAAAABAb6AAAAAAAEBvoAAAAAAAQG+gAAAAAABAb6AA"
+    "AAAAAEBvoAAAAAAAQG+gAAAAAAA/8AAAAAAAAEAPfhA4utR+QBVmD3rdeZxAGBiXviMhdT/5qAenrx13P/mhcS4Q"
+    "QWA/9JY8EG/BXcAeQ76H5ARWwBkKFSY9w2W+GefCmb8jbAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQEgAAAAAAABASAAAAAAAAD/u"
+    "2bBbBbBbAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/8AAA"
+    "AAAAAL/VqXU77KwQv7fO2Rab7To/2tmU402iAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/wAAAAAAAAQEiAAAAA"
+    "AABAQYAAAAAAAAAAAAAAAAAAQADMzMzMzM0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/dbaAWi1zAD91toBaLXMA"
+    "P3W2gFotcwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+
+// The parser against real controller bytes: this is the regression that pins
+// kPoseOffset to a machine instead of to a document.
+void TestRobotPose::urRealtimeReadsCapturedPacket()
+{
+    const QByteArray packet =
+        QByteArray::fromBase64(QByteArray(kCapturedUrRealtimePacket));
+    QCOMPARE(packet.size(), 1220);
+
+    MockURServer server;
+    QVERIFY(server.startSendingPacket(packet));
+    URRealtimeReader reader;
+    reader.setTimeoutMs(2000);
+    QVERIFY(reader.connect(QStringLiteral("127.0.0.1"), server.port()));
+
+    Pose pose;
+    QCOMPARE(reader.readPose(pose), Status::Ok);
+    // The pendant's numbers: meters -> millimeters.
+    QVERIFY(qAbs(pose.xyz[0] - (-208.71414676390157)) < 1e-6);
+    QVERIFY(qAbs(pose.xyz[1] - (-232.90000010588341)) < 1e-6);
+    QVERIFY(qAbs(pose.xyz[2] - 880.177601879592) < 1e-6);
+    // And the rotation vector in radians, passed through unchanged.
+    QVERIFY(qAbs(pose.rpy[0] - 0.79872736362753538) < 1e-9);
+    QVERIFY(qAbs(pose.rpy[1] - 1.6974818376931973) < 1e-9);
+    QVERIFY(qAbs(pose.rpy[2] - (-1.6974818373025846)) < 1e-9);
+
     reader.disconnect();
     server.stop();
 }

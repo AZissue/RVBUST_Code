@@ -14,17 +14,26 @@ class QTcpSocket;
 //   [int32 BE message length (includes these 4 bytes)] [message body]
 // Inside the body (offsets are from the start of the body, i.e. right after
 // the 4-byte length):
-//   timestamp          8 bytes (double)
-//   q_actual           48 bytes (6 doubles)   body   8
-//   qd_actual          48 bytes (6 doubles)   body  56
-//   I_actual           48 bytes (6 doubles)   body 104
-//   actual_TCP_pose    48 bytes (6 doubles)   body 152  <- this is what we read
-//   actual_TCP_speed   48 bytes (6 doubles)   body 200
+//   timestamp          8 bytes (double)       body   0
+//   q_target           48 bytes (6 doubles)   body   8
+//   qd_target          48 bytes (6 doubles)   body  56
+//   qdd_target         48 bytes (6 doubles)   body 104
+//   I_target           48 bytes (6 doubles)   body 152
+//   M_target           48 bytes (6 doubles)   body 200
+//   q_actual           48 bytes (6 doubles)   body 248
+//   qd_actual          48 bytes (6 doubles)   body 296
+//   I_actual           48 bytes (6 doubles)   body 344
+//   M_actual           48 bytes (6 doubles)   body 392
+//   actual_TCP_pose    48 bytes (6 doubles)   body 440  <- this is what we read
+//   actual_TCP_speed   48 bytes (6 doubles)   body 488
+//   actual_TCP_force   48 bytes (6 doubles)   body 536
+//   target_TCP_pose    48 bytes (6 doubles)   body 584
 // actual_tcp_pose = (x, y, z, rx, ry, rz) with x/y/z in meters and rx/ry/rz
 // as an axis-angle rotation vector in radians (NOT static-XYZ euler degrees).
-// The other "5 target blocks first" layout circulating for this port would
-// put M_target at 200 and the pose at 440; the field reading of six exact
-// zeros at 200 (2026-10-10) rules it out -- see the constant in the .cpp.
+// 440 was read off a live controller on 2026-10-10 (and is the offset UR's
+// older realtime documentation lists); it is pinned by a captured packet in
+// tests/test_robot_pose.cpp -- see the constant in the .cpp for why the two
+// earlier values (200, then 152) were wrong.
 //
 // This adapter converts x/y/z to millimeters (matching the rest of the app's
 // unit convention) and passes rx/ry/rz through unchanged (radians, axis-angle)
@@ -69,10 +78,11 @@ private:
     QByteArray m_buf;                // tail of a partially received packet
     Pose m_latest{};
     bool m_hasPose = false;
-    // The pose field read as six exact zeros: not a pose, and almost certainly
-    // the wrong byte offset (see parsePacket). Kept so readPose() can report
-    // that instead of the generic "waiting for data" timeout.
-    bool m_zeroPose = false;
+    // Packets arrived and parsed, but the pose field held values no TCP can
+    // have (six exact zeros, or a non-finite number): almost certainly the
+    // wrong byte offset (see parsePacket). Kept so readPose() can report that
+    // instead of the generic "waiting for data" timeout.
+    bool m_badPose = false;
     QElapsedTimer m_lastPacketAt;    // freshness of m_latest
     quint64 m_packetsConsumed = 0;
     quint64 m_badHeaders = 0;

@@ -28,10 +28,13 @@
 #
 # What to send back: the whole printed output.
 #
-# NOTE: a UR controller allows ONE RTDE output client at a time. If something
-# else on the network already holds it (another tool, a URCap, a running
-# program), step 2 will come back NOT_FOUND or the setup will be refused --
-# the script prints which.
+# NOTE: 'NOT_FOUND' at step 2 means the controller did not recognise the name
+# it was asked for. Two causes: something else on the network already holds the
+# single RTDE output recipe (another tool, a URCap, a running program), or the
+# name list itself is malformed -- an extra terminator turns
+# "actual_TCP_pose" into a name that does not exist. The payload below is the
+# one UR's own client sends; if it still answers NOT_FOUND, disconnect the
+# other client.
 
 param(
     [Parameter(Mandatory = $true)][string]$RobotIp,
@@ -123,10 +126,16 @@ if ($accepted -ne 1) {
 
 $freq = [BitConverter]::GetBytes([double]125.0)
 [Array]::Reverse($freq)                                  # -> big endian
+# Names are COMMA separated and the list has NO trailing separator: the packet
+# length delimits the last name. That is what UR's own client library sends
+# (control_package_setup_outputs.cpp: names joined with "," then pop_back()).
+# A trailing NUL is read as part of the name and the controller answers
+# NOT_FOUND -- measured on a live controller 2026-10-10, and the reason the
+# first version of this handshake failed to connect.
 $name = [System.Text.Encoding]::ASCII.GetBytes("actual_TCP_pose")
-$pay = New-Object byte[] (8 + $name.Length + 1)
+$pay = New-Object byte[] (8 + $name.Length)
 [Array]::Copy($freq, 0, $pay, 0, 8)
-[Array]::Copy($name, 0, $pay, 8, $name.Length)           # last byte stays 0 (NUL)
+[Array]::Copy($name, 0, $pay, 8, $name.Length)
 Send-Cmd -Stream $stream -Type 79 -Payload $pay
 $r = Read-Packet -Stream $stream
 $recipeId = if ($r.Body.Length -ge 1) { [int]$r.Body[0] } else { -1 }
@@ -137,8 +146,9 @@ if ($r.Body.Length -gt 1) {
 Write-Host ("SETUP_OUTPUTS('actual_TCP_pose') -> recipe id {0}, type '{1}'" -f $recipeId, $types)
 if ($types -notlike "VECTOR6D*") {
     throw ("the controller did not offer actual_TCP_pose as VECTOR6D " +
-           "(got '$types'). Another RTDE client probably holds the single " +
-           "output recipe -- disconnect it and retry.")
+           "(got '$types'). Either another RTDE client holds the single " +
+           "output recipe, or this controller does not know that name -- " +
+           "disconnect the other client and retry before concluding anything.")
 }
 
 # ------------------------------------------------------------ 3. start push

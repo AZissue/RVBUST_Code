@@ -5,6 +5,8 @@
 #include <QNetworkProxy>
 #include <QTcpSocket>
 
+#include <cmath>
+
 namespace RobotPose {
 
 namespace {
@@ -13,25 +15,29 @@ namespace {
 //
 // The 30003 body is: timestamp(8) then a run of 48-byte (6 x double) fields,
 // so every field sits at 8 + 48k -- NOT at 48k, the timestamp shifts the grid.
-// The field order is  q_actual, qd_actual, I_actual, actual_TCP_pose, ...
-// which puts the pose at k = 3:
+// The field order is UR's classic realtime layout:
 //
-//   8 + 48*1 =  56  q_actual        (joint angles)
-//   8 + 48*2 = 104  qd_actual       (joint velocities)
-//   8 + 48*3 = 152  actual_TCP_pose  <- what we want
-//   8 + 48*4 = 200  actual_TCP_speed
+//     8  q_target       104  qdd_target      248  q_actual       440  actual_TCP_pose  <- this
+//    56  qd_target      152  I_target        296  qd_actual      488  actual_TCP_speed
+//                       200  M_target        344  I_actual       536  actual_TCP_force
+//                                            392  M_actual       584  target_TCP_pose ...
 //
-// 2026-10-10 field report: the constant used to be 200 (= 8 + 48*4) and the
-// tool reported a TCP pose of (0, 0, 0, 0, 0, 0) while the pendant showed a
-// real base-frame pose. Six exact zeros cannot be a pose -- joint angles,
-// currents, torques and the pose are all non-zero at rest -- but they are
-// exactly what a *velocity* field reads at a standstill, and those same zeros
-// rule out the other published layout (five target blocks first, pose at 440),
-// where body 200 would be M_target: commanded torques holding the arm against
-// gravity are never zero. So the offset was one 48-byte field too far.
-// `tools/ur_realtime_probe.ps1` prints every field of a real packet next to
-// this constant's, to re-confirm it on the machine rather than on a document.
-constexpr int kPoseOffset = 8 + 48 * 3;   // 152
+// 2026-10-10: the two previous constants were both wrong -- 200 landed on
+// M_target and 152 (a deduction, never measured) on I_target. Read from the
+// robot, both blocks come back as six zeros while the pendant shows a real
+// base-frame pose: a controller that is not holding torque reports zeros in
+// those fields, which is why "all zeros" looked like a parse failure and why
+// the interval 152/200 could not be told apart from a velocity field.
+//
+// 440 was not deduced -- it was read off a live controller (URSim
+// 192.168.0.37): body 440 carries (-0.208714, -0.232900, 0.880178, 0.798727,
+// 1.697482, -1.697482), i.e. the pendant's -208.71, -232.90, 880.18 mm and
+// 0.799, 1.697, -1.697 rad, worst component difference 0.004. That packet is
+// embedded as a fixture in tests/test_robot_pose.cpp, so this constant is
+// pinned by real controller bytes rather than by a document.
+// `tools/ur_realtime_probe.ps1` prints the whole field table of a packet from
+// whatever robot is in front of you and names the block matching the pendant.
+constexpr int kPoseOffset = 8 + 48 * 9;   // 440
 constexpr int kPoseBytes  = 48;           // 6 doubles
 constexpr int kHeaderBytes = 4;
 constexpr quint32 kMaxPacket = 8192;
@@ -61,7 +67,7 @@ bool URRealtimeReader::connect(const QString& host, quint16 port)
     disconnect();
     m_buf.clear();
     m_hasPose = false;
-    m_zeroPose = false;
+    m_badPose = false;
     m_latest = Pose{};
     m_packetsConsumed = 0;
     m_badHeaders = 0;
@@ -100,7 +106,7 @@ void URRealtimeReader::disconnect()
     }
     m_buf.clear();
     m_hasPose = false;
-    m_zeroPose = false;
+    m_badPose = false;
     m_latest = Pose{};
     m_lastPacketAt.invalidate();
     m_packetsConsumed = 0;
@@ -169,6 +175,18 @@ bool URRealtimeReader::parsePacket(const QByteArray& packet, Pose& out)
     for (double& v : vals)
         ds >> v;
 
+    // A misaligned read does not fail, it returns numbers -- just not ones any
+    // TCP can have. Refuse non-finite values instead of writing them down.
+    for (double v : vals) {
+        if (!std::isfinite(v)) {
+            m_error = QStringLiteral(
+                "读到的位姿出现非有限值，字段偏移可能错位；"
+                "请用 tools/ur_realtime_probe.ps1 抓一个真实数据包核对");
+            m_badPose = true;
+            return false;
+        }
+    }
+
     // An all-zero block is never a real pose (a UR TCP cannot sit at the base
     // origin), but it is exactly what a velocity field reads at a standstill --
     // which is how the wrong-offset bug above showed up in the field: a
@@ -179,7 +197,7 @@ bool URRealtimeReader::parsePacket(const QByteArray& packet, Pose& out)
         m_error = QStringLiteral(
             "读到的位姿六个分量全为 0，不是真实位姿（很可能是字段偏移错位）；"
             "请用 tools/ur_realtime_probe.ps1 抓一个真实数据包核对");
-        m_zeroPose = true;
+        m_badPose = true;
         return false;
     }
 
@@ -228,7 +246,7 @@ Status URRealtimeReader::readPose(Pose& out)
             drain();
         }
         if (!m_hasPose) {
-            if (m_zeroPose) {
+            if (m_badPose) {
                 // Every packet parsed, but the pose field is all zeros: report
                 // the specific cause (m_error is already set by parsePacket)
                 // rather than the generic "no data" timeout.

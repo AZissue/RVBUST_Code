@@ -1,13 +1,14 @@
 # UR realtime (port 30003) packet probe -- run this on the PC that talks to the robot.
 #
-# Why this exists: on the real robot the tool reported a TCP pose of
-# (0, 0, 0, 0, 0, 0) while the pendant showed a real base-frame pose
-# (0, 193.74, 1000.96, 0, 2.224, 2.219). Six exact zeros are not a failed parse --
-# they are a *velocity* field (a real controller field that is zero whenever the
-# arm stands still) sitting one 48-byte block away from the pose. So the
-# hard-coded body offset in src/logic/URRealtimeReader.cpp is wrong, but the
-# right value must come from the robot, not from a document: capture a real
-# packet and read off which 48-byte block carries the pose.
+# Why this exists: the tool reported a TCP pose of (0, 0, 0, 0, 0, 0) while the
+# pendant showed a real base-frame pose (0, 193.74, 1000.96, 0, 2.224, 2.219).
+# Six exact zeros are not a failed parse and not an empty field -- a controller
+# that is not holding torque reports zeros in I_target/M_target, which is why
+# the wrong bodies looked plausible. The offset in
+# src/logic/URRealtimeReader.cpp (kPoseOffset, 8 + 48*9 = 440) came from
+# reading a real packet, not from a document, and this script is how that is
+# re-checked on any machine: it prints every 48-byte field and names the one
+# that matches the pendant.
 #
 # Usage (robot powered on, at whatever pose you like):
 #   powershell -ExecutionPolicy Bypass -File ur_realtime_probe.ps1 -RobotIp 192.168.1.10
@@ -117,10 +118,10 @@ Write-Host (Get-HexDump -Bytes $raw -Count 64)
 
 $cur = New-Object string[] 6
 for ($k = 0; $k -lt 6; $k++) {
-    $cur[$k] = "{0,14:F6}" -f (Get-BEDouble -Bytes $body -Offset (200 + $k * 8))
+    $cur[$k] = "{0,14:F6}" -f (Get-BEDouble -Bytes $body -Offset (440 + $k * 8))
 }
 Write-Host ""
-Write-Host ("body offset 200 (what URRealtimeReader.cpp reads today): {0}" -f ($cur -join " "))
+Write-Host ("body offset 440 (URRealtimeReader.cpp kPoseOffset = 8 + 48*9): {0}" -f ($cur -join " "))
 
 # ------------------------------------------------------------------ block table
 # The leading field is the 8-byte time, so every 6-double field sits at 8 + 48k.
@@ -160,6 +161,8 @@ if ($Expected) {
         }
     }
     Write-Host ("  -> best block at body offset {0}, worst component difference {1:F4}" -f $best.Offset, $best.Worst)
-    Write-Host "  -> the pose is the block where that difference is ~0. If it is not 200,"
-    Write-Host "     URRealtimeReader.cpp's constant is wrong; send this output back."
+    Write-Host "  -> the pose is the block where that difference is ~0. If it is not 440,"
+    Write-Host "     URRealtimeReader.cpp's constant is wrong on this robot; send this"
+    Write-Host "     output back (and note there are two pose blocks when the arm is"
+    Write-Host "     still: actual_TCP_pose and, 144 bytes later, target_TCP_pose)."
 }

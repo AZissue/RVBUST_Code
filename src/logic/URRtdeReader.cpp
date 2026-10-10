@@ -22,9 +22,9 @@ constexpr quint8 kDataPackage            = 85;
 constexpr int kHeaderBytes = 3;
 constexpr int kPoseBytes   = 48;   // VECTOR6D = 6 doubles
 
-// 125 Hz is the CB3 ceiling and the rate port 30003 runs at, so the RTDE path
-// is a drop-in replacement for the pose-reading cadence. The controller
-// divides: it sends at floor(125 / frequency).
+// 125 Hz is the CB3 ceiling for this port. Measured against a live controller
+// (2026-10-10) the delivered rate was ~108 Hz, the same order as the 30003
+// stream, so this is a drop-in replacement for the pose-reading cadence.
 constexpr double kFrequencyHz = 125.0;
 
 constexpr quint32 kMaxPacket = 8192;
@@ -201,9 +201,18 @@ bool URRtdeReader::handshake()
     // 2. Output recipe. Protocol v2 carries the frequency before the names; the
     //    controller answers with a recipe id and the type it assigned to each
     //    requested variable.
+    //
+    //    The names are separated by commas and the list carries NO trailing
+    //    separator -- the packet length delimits the last name. That is what
+    //    UR's own client library sends (control_package_setup_outputs.cpp:
+    //    `variables += (piece + ","); variables.pop_back();`). A trailing '\0'
+    //    is read as part of the name, and the controller answers NOT_FOUND,
+    //    which is exactly how the first RTDE attempt failed (measured against a
+    //    live controller on 2026-10-10: same payload with '\0' -> NOT_FOUND,
+    //    without -> VECTOR6D). With several names they would be comma-joined
+    //    here; one name needs no separator at all.
     QByteArray setup = beDouble(kFrequencyHz);
     setup.append(kPoseVariable);
-    setup.push_back('\0');
     if (!sendCommand(kSetupOutputs, setup))
         return false;
     if (!readResponse(kSetupOutputs, payload))

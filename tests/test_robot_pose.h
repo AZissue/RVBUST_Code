@@ -12,6 +12,7 @@ private slots:
     void notConnected();
     void statusTextMapped();
     void urRealtimePose();
+    void urRealtimeReadsCapturedPacket();
     void urRealtimeStreamsNewestPose();
     void urRealtimeZeroPoseIsAnError();
     void urRealtimeStaleStreamTimesOut();
