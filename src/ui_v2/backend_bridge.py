@@ -19,11 +19,12 @@ import os
 import json
 import subprocess
 import threading
+import time
 from typing import Dict, List, Optional, Set, Tuple
 
 import numpy as np
 
-from PySide6.QtCore import QObject, QTimer, Signal
+from PySide6.QtCore import QObject, QThread, QTimer, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QFileDialog, QMessageBox
 
@@ -36,7 +37,7 @@ from core.stitch_engine import StitchEngine
 from core.point_cloud_processor import PointCloudProcessor
 from core.offline_session import OfflineSession
 from core.frame_data import FrameData
-from core.utils import logger
+from core.utils import logger, write_json_atomic, write_point_cloud_atomic
 from ui.camera_card import numpy_to_qpixmap
 
 from .launcher_dialog import LauncherDialog
@@ -56,6 +57,54 @@ def _pairs_from_engine(engine) -> List[Dict]:
                 'level': 'ok' if res['rms_mm'] < 0.5 else 'warn' if res['rms_mm'] < 1.5 else 'fail',
             })
     return pairs
+
+
+class PreviewCaptureThread(QThread):
+    """实时取景专用采集线程。
+
+    设计动机（2026-10-09 堆损坏崩溃排查）：
+      旧实现用 UI 线程 QTimer 每 100ms 同步执行 Capture2D（SDK 单次 75ms+），
+      既冻结 UI，又让"采集→转 QPixmap→释放 SDK Image"的高频生命周期全部压在
+      UI 线程上；两次 0xc0000374 堆损坏崩溃（14:18 / 15:16）均发生在该流程
+      运行期间。改为独立线程后：
+      1. 采集/转换/释放的生命周期收敛到单一后台线程，UI 只做结果显示；
+      2. 帧率由线程自行定速（默认 5fps：取景瞄准足够，同时把 SDK Image
+         高频建/销的堆损坏暴露量减半；采集慢于目标帧率时不堆积、不追帧）；
+      3. SDK 调用仍走 rvc_sdk_lock，与 3D 拍摄/拼接/检测自动串行。
+
+    stop() 会等待在飞的采集完成（带超时），语义等价于旧定时器 stop：
+    暂停预览后立即 3D 拍摄不会与在飞 Capture2D 并发。
+    """
+
+    frame_ready = Signal(object)  # QPixmap（已在子线程转换完成）
+
+    def __init__(self, camera_manager, camera_id: str,
+                 interval_ms: int = 200, parent=None):
+        super().__init__(parent)
+        self._camera_manager = camera_manager
+        self._camera_id = camera_id
+        self._interval_ms = interval_ms
+        self._stop_flag = False
+
+    def run(self):
+        while not self._stop_flag:
+            t0 = time.perf_counter()
+            try:
+                frame = self._camera_manager.capture_2d_preview(self._camera_id)
+                if frame is not None and frame.image_np is not None:
+                    pixmap = numpy_to_qpixmap(frame.image_np)
+                    if pixmap is not None:
+                        self.frame_ready.emit(pixmap)
+            except Exception as e:
+                logger.warning(f"实时取景采集异常 ({self._camera_id}): {e}")
+            elapsed_ms = (time.perf_counter() - t0) * 1000.0
+            self.msleep(max(10, int(self._interval_ms - elapsed_ms)))
+
+    def stop(self):
+        """请求退出并等待在飞采集完成（最多 3s）。"""
+        self._stop_flag = True
+        if not self.wait(3000):
+            logger.warning("预览采集线程退出超时（在飞 SDK 采集超过 3s）")
 
 
 def _score_from_pairs(pairs: List[Dict]) -> int:
@@ -99,9 +148,9 @@ class BackendBridge(QObject):
         # 标记物检测器共享状态锁（set_marker_type / detect_3d 非线程安全）
         self._detect_lock = threading.Lock()
 
-        # 模式 B 实时取景定时器
-        self._preview_timer = QTimer(self)
-        self._preview_timer.timeout.connect(self._on_preview_tick)
+        # 模式 B 实时取景专用采集线程（生命周期收敛到单线程，见
+        # PreviewCaptureThread 类注释；stop() 才重建，避免句柄泄漏）
+        self._preview_thread: Optional[PreviewCaptureThread] = None
         self._preview_camera_id: Optional[str] = None
 
         # 模式 A 单相机卡片 2D 预览定时器
@@ -128,6 +177,8 @@ class BackendBridge(QObject):
         self._wire_multi_cam_workspace()
         self._wire_mobile_chain_workspace()
         self._wire_main_window()
+        # 1.0.10 池合并：给转台工作区注入统一 runner，全工程只留一个引用池
+        self.shell.workspace_turntable().set_background_runner(self._run_background)
 
     def _wire_launcher(self):
         """接线启动小窗。"""
@@ -520,6 +571,9 @@ class BackendBridge(QObject):
                 self.shell.log(msg, "success" if ok else "warn")
                 self._on_multi_reference_changed(reference_id)
                 self.shell.workspace_multi().set_state("connected")
+                # 崩溃兜底：上次标定成功时已自动落盘，相机组合未变则直接
+                # 恢复到扫描阶段，无需重新拍摄标定帧/计算外参
+                self._try_restore_autosaved_calibration(reference_id)
             elif mode == LauncherDialog.MODE_MOBILE_CHAIN:
                 # 模式 B：单相机移动拼接要求至少 1 台设备
                 if total_count < 1:
@@ -674,6 +728,81 @@ class BackendBridge(QObject):
             self.shell.log(f"检测完成: 共 {total} 个标记", "success")
         self._run_background(_work, _done)
 
+    # ------------------------------------------------------------------
+    # 标定结果自动保存 / 恢复（崩溃兜底）
+    # ------------------------------------------------------------------
+    _AUTOSAVE_CALIBRATION_PATH = os.path.join(
+        "offline_data", "autosave_calibration.json")
+
+    def _autosave_calibration(self):
+        """标定结果变更后自动落盘。
+
+        2026-10-09 崩溃复发（原生堆损坏）后发现：标定数据只在内存中，
+        崩溃后必须重新拍摄标定帧 + 计算外参。这里在标定成功 / 加载外参 /
+        加载会话后自动写一份轻量外参（仅矩阵 + 相机名，不含点云帧），
+        下次连接同一组相机时自动恢复到扫描阶段。文件格式与「保存外参」
+        一致（仅多 camera_names / saved_at 字段，load 时忽略），可直接
+        当作外参文件手动加载。
+        """
+        if not self.calibration_engine.pair_results:
+            return
+        try:
+            payload = self.calibration_engine.to_dict()
+            payload["camera_names"] = sorted(
+                self.camera_manager.get_connected_ids())
+            payload["saved_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            write_json_atomic(self._AUTOSAVE_CALIBRATION_PATH, payload,
+                              ensure_ascii=False, indent=2)
+            logger.info(
+                f"[自动保存] 标定结果已落盘: {self._AUTOSAVE_CALIBRATION_PATH}")
+        except Exception as e:
+            logger.warning(f"标定结果自动保存失败: {e}")
+
+    def _try_restore_autosaved_calibration(self, reference_id: str):
+        """连接相机后尝试恢复自动保存的标定结果，成功则直接进入扫描阶段。
+
+        恢复走 fixed_workflow.load_calibration（与手动「加载外参」同一条
+        已验证路径）：仅恢复矩阵，不需要标定帧即可进入扫描阶段。
+        """
+        if self.calibration_engine.pair_results:
+            return
+        path = self._AUTOSAVE_CALIBRATION_PATH
+        if not os.path.exists(path):
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+        except Exception as e:
+            self.shell.log(f"自动保存的标定结果读取失败: {e}", "warn")
+            return
+        if not payload.get("pairs"):
+            return
+        saved_names = sorted(payload.get("camera_names") or [])
+        current_names = sorted(self.camera_manager.get_connected_ids())
+        if saved_names and saved_names != current_names:
+            self.shell.log(
+                f"检测到自动保存的标定结果（{payload.get('saved_at')}），"
+                f"但相机组合已变化（{saved_names} → {current_names}），"
+                "为安全起见不自动恢复（可手动「加载外参」）", "warn")
+            return
+        ok, msg = self.fixed_workflow.load_calibration(path)
+        if not ok:
+            self.shell.log(f"自动保存的标定结果恢复失败: {msg}", "warn")
+            return
+        ok_scan, msg_scan = self.fixed_workflow.start_scanning()
+        if ok_scan:
+            ws = self.shell.workspace_multi()
+            ws.viewer().set_reference(self.fixed_workflow.reference_id)
+            ws.set_state("locked")
+            pairs = _pairs_from_engine(self.calibration_engine)
+            ws.on_calibrate_done(pairs, _score_from_pairs(pairs), True)
+            self.shell.log(
+                f"已自动恢复上次标定结果（{payload.get('saved_at')}），"
+                "可直接拍摄扫描帧并拼接", "success")
+        else:
+            self.shell.log(
+                f"标定结果已恢复但无法进入扫描阶段: {msg_scan}", "warn")
+
     def _on_multi_calibrate(self):
         """计算外参。"""
         self.shell.show_loading("正在计算外参...")
@@ -697,6 +826,7 @@ class BackendBridge(QObject):
                 if ok_scan:
                     ws.set_state("locked")
                     self.shell.log(f"标定完成: {msg} | {msg_scan}", "success")
+                    self._autosave_calibration()
                 else:
                     ws.set_state("calibrated")
                     self.shell.log(f"标定完成但无法进入扫描: {msg_scan}", "warn")
@@ -741,6 +871,7 @@ class BackendBridge(QObject):
             ws.set_state("locked")
             self.shell.set_dirty(True)
             self.shell.log(f"外参已加载并进入扫描阶段: {msg_scan}", "success")
+            self._autosave_calibration()
         else:
             ws.set_state("calibrated")
             self.shell.set_dirty(True)
@@ -779,12 +910,18 @@ class BackendBridge(QObject):
 
     def _on_multi_stitch_save(self):
         """拼接并保存。"""
+        # 暂停实时预览/卡片预览：拼接 worker 与预览采集共享 SDK 全局锁，
+        # 暂停可避免预览周期性地阻塞拼接（与批量扫描流程保持一致）
+        preview_cam = self._pause_2d_preview()
+        active_cards = self._pause_card_preview()
         self.shell.show_loading("正在拼接点云...")
         def _work():
             ok, msg, merged = self.fixed_workflow.stitch()
             return ok, msg, merged
         def _done(result, error):
             self.shell.hide_loading()
+            self._resume_2d_preview(preview_cam)
+            self._resume_card_preview(active_cards)
             if error:
                 self.shell.log(f"拼接异常: {error}", "error")
                 return
@@ -799,12 +936,14 @@ class BackendBridge(QObject):
                 path, _ = QFileDialog.getSaveFileName(
                     self.shell, "保存点云", "merged.ply", "PLY 文件 (*.ply)")
                 if path:
-                    import open3d as o3d
-                    o3d.io.write_point_cloud(path, merged)
-                    self.shell.log(f"点云已保存: {path}", "success")
+                    if write_point_cloud_atomic(path, merged):
+                        logger.info(f"[拼接保存点云] 已完成: {path}")
+                        self.shell.log(f"点云已保存: {path}", "success")
+                    else:
+                        self.shell.log(f"点云保存失败（详见日志）: {path}", "error")
             else:
                 self.shell.log(f"拼接失败: {msg}", "error")
-        self._run_background(_work, _done)
+        self._run_background(_work, _done, must_finish=True, name="拼接保存点云")
 
     def _on_multi_batch_scan(self, n: int):
         """批量拼接保存：连续拍摄 n 次扫描帧并拼接保存。"""
@@ -825,13 +964,15 @@ class BackendBridge(QObject):
                 ok, msg, merged = self.fixed_workflow.stitch()
                 if not ok or merged is None:
                     return False, f"第 {i+1}/{n} 次拼接失败: {msg}", saved_paths
-                import open3d as o3d
                 path = os.path.join(
                     os.path.abspath("offline_data"),
                     f"batch_scan_{i+1:03d}.ply")
                 os.makedirs(os.path.dirname(path), exist_ok=True)
-                o3d.io.write_point_cloud(path, merged)
+                if not write_point_cloud_atomic(path, merged):
+                    return False, f"第 {i+1}/{n} 次点云写盘失败（详见日志）", saved_paths
                 saved_paths.append(path)
+            # 1.0.12 终态日志写进 worker 内部
+            logger.info(f"[批量扫描保存] 已完成 {len(saved_paths)} 帧: offline_data")
             return True, f"批量扫描完成，共保存 {len(saved_paths)} 帧", saved_paths
 
         def _done(result, error):
@@ -848,7 +989,7 @@ class BackendBridge(QObject):
             if paths:
                 self.shell.log(f"保存路径: {paths[0]} 等", "info")
 
-        self._run_background(_work, _done)
+        self._run_background(_work, _done, must_finish=True, name="批量扫描保存")
 
     def _on_multi_reference_changed(self, camera_id: str):
         """参考相机变更。
@@ -1128,8 +1269,7 @@ class BackendBridge(QObject):
     def _on_mobile_preview_toggled(self, enabled: bool):
         """实时取景开关。"""
         if not enabled:
-            self._preview_timer.stop()
-            self.shell.workspace_mobile().live_view().set_frame(None)
+            self._stop_preview_thread()
             self.shell.log("已停止实时取景", "info")
             return
         # 找到已连接的物理相机（模式 B 只有一台）
@@ -1138,23 +1278,33 @@ class BackendBridge(QObject):
             self.shell.log("没有已连接相机，无法取景", "warn")
             self.shell.workspace_mobile()._btn_preview.setChecked(False)
             return
-        self._preview_camera_id = connected[0]
-        self._preview_timer.start(100)  # 10 fps
-        self.shell.log(f"开始实时取景: {self._preview_camera_id}", "info")
+        self._start_preview_thread(connected[0])
 
-    def _on_preview_tick(self):
-        """定时抓取 2D 预览帧并更新 LiveViewPanel。"""
-        if self._preview_camera_id is None:
+    def _start_preview_thread(self, camera_id: str):
+        """启动实时取景采集线程（已在运行则先停止旧线程）。"""
+        self._stop_preview_thread()
+        self._preview_camera_id = camera_id
+        # 取景瞄准不需要 10fps；5fps 把 SDK Image 高频建/销的暴露量减半，
+        # 这是当前堆损坏嫌疑循环的主要缓解手段（间隔可调回 100ms）
+        self._preview_thread = PreviewCaptureThread(
+            self.camera_manager, camera_id, interval_ms=200, parent=self)
+        self._preview_thread.frame_ready.connect(self._on_preview_frame)
+        self._preview_thread.start()
+        self.shell.log(f"开始实时取景: {camera_id}", "info")
+
+    def _stop_preview_thread(self):
+        """停止实时取景采集线程并清空画面。"""
+        if self._preview_thread is not None:
+            self._preview_thread.stop()  # 等待在飞采集完成（带超时）
+            self._preview_thread = None
+        self._preview_camera_id = None
+        self.shell.workspace_mobile().live_view().set_frame(None)
+
+    def _on_preview_frame(self, pixmap):
+        """预览帧到达（UI 线程）：仅做显示，采集/转换已在线程内完成。"""
+        if self._preview_thread is None:
             return
-        try:
-            frame = self.camera_manager.capture_2d_preview(self._preview_camera_id)
-            if frame is None or frame.image_np is None:
-                return
-            pixmap = numpy_to_qpixmap(frame.image_np)
-            if pixmap is not None:
-                self.shell.workspace_mobile().live_view().set_frame(pixmap)
-        except Exception as e:
-            logger.warning(f"实时取景异常 ({self._preview_camera_id}): {e}")
+        self.shell.workspace_mobile().live_view().set_frame(pixmap)
 
     def _pause_2d_preview(self) -> Optional[str]:
         """暂停持续 2D 预览，返回之前正在预览的 camera_id（如无则 None）。
@@ -1163,10 +1313,10 @@ class BackendBridge(QObject):
         M2600C 等三目相机的彩色 Extra 相机处于 2D 预览流时，直接调用 3D 拍摄
         会导致驱动状态冲突/崩溃。所有 3D 拍摄入口必须先调用本方法。
         """
-        if not self._preview_timer.isActive():
+        if self._preview_thread is None:
             return None
         camera_id = self._preview_camera_id
-        self._preview_timer.stop()
+        self._stop_preview_thread()
         # 同步 UI 按钮状态（避免用户以为预览仍在运行）
         ws = self.shell.workspace_mobile()
         if ws._btn_preview.isChecked():
@@ -1181,9 +1331,8 @@ class BackendBridge(QObject):
         connected = self.camera_manager.get_connected_ids()
         if camera_id not in connected:
             return
-        self._preview_camera_id = camera_id
-        self._preview_timer.start(100)
         ws = self.shell.workspace_mobile()
+        self._start_preview_thread(camera_id)
         if not ws._btn_preview.isChecked():
             ws._btn_preview.setChecked(True)
         logger.info(f"已恢复 2D 预览: {camera_id}")
@@ -1560,15 +1709,16 @@ class BackendBridge(QObject):
             merged = self.mobile_workflow.get_merged_pointcloud()
             ply_path = os.path.join(session_dir, "merged.ply")
             if merged is not None:
-                import open3d as o3d
-                o3d.io.write_point_cloud(ply_path, merged)
+                if not write_point_cloud_atomic(ply_path, merged):
+                    return False, f"点云写盘失败（详见日志）: {ply_path}", None
             else:
                 ply_path = None
 
             json_path = os.path.join(session_dir, "error_report.json")
-            with open(json_path, "w", encoding="utf-8") as f:
-                json.dump(report, f, ensure_ascii=False, indent=2)
+            write_json_atomic(json_path, report, ensure_ascii=False, indent=2)
 
+            # 1.0.12 终态日志写进 worker 内部
+            logger.info(f"[保存拼接数据] 已完成: {session_dir}")
             return True, f"会话已保存: {session_dir}", {
                 "session_dir": session_dir,
                 "ply_path": ply_path,
@@ -1587,7 +1737,7 @@ class BackendBridge(QObject):
                     self.shell.log(f"点云: {paths['ply_path']}", "info")
                 self.shell.log(f"报告: {paths['json_path']}", "info")
 
-        self._run_background(_work, _done)
+        self._run_background(_work, _done, must_finish=True, name="保存拼接数据")
 
     def _on_mobile_offline_load(self):
         """离线加载单相机站位会话目录并自动拼接。"""
@@ -1647,10 +1797,17 @@ class BackendBridge(QObject):
 
         def _work():
             if self._current_mode == LauncherDialog.MODE_MULTI_CAM:
-                return self._save_fixed_session()
-            if self._current_mode == LauncherDialog.MODE_TURNTABLE:
-                return self._save_turntable_session()
-            return self._save_mobile_session()
+                result = self._save_fixed_session()
+            elif self._current_mode == LauncherDialog.MODE_TURNTABLE:
+                result = self._save_turntable_session()
+            else:
+                result = self._save_mobile_session()
+            # 1.0.12 终态日志写进 worker 内部：os._exit 之后这是保存是否完成的唯一证据
+            if result[0]:
+                logger.info(f"[保存会话] 已完成: {result[1]}")
+            else:
+                logger.warning(f"[保存会话] 失败: {result[1]}")
+            return result
 
         def _done(result, error):
             self.shell.hide_loading()
@@ -1664,7 +1821,7 @@ class BackendBridge(QObject):
                 self.shell.set_dirty(False)
             self.shell.session_save_finished.emit(ok, msg)
 
-        self._run_background(_work, _done)
+        self._run_background(_work, _done, must_finish=True, name="保存会话")
 
     def _save_fixed_session(self) -> Tuple[bool, str]:
         """保存多相机模式会话（标定帧 + 扫描帧 + 标定结果）。"""
@@ -1727,8 +1884,7 @@ class BackendBridge(QObject):
 
         try:
             meta_path = os.path.join(offline.session_dir, "turntable_meta.json")
-            with open(meta_path, "w", encoding="utf-8") as f:
-                json.dump(meta, f, ensure_ascii=False, indent=2)
+            write_json_atomic(meta_path, meta, ensure_ascii=False, indent=2)
         except Exception as e:
             logger.warning(f"保存转台元数据失败: {e}")
 
@@ -1925,6 +2081,7 @@ class BackendBridge(QObject):
             score = _score_from_pairs(pairs)
             ws.viewer().set_reference(self.fixed_workflow.reference_id)
             ws.on_calibrate_done(pairs, score, quality_passed=True)
+            self._autosave_calibration()
             if scan_loaded:
                 ws.set_state("locked")
                 self.shell.log(
@@ -1950,29 +2107,87 @@ class BackendBridge(QObject):
     # ------------------------------------------------------------------
     # 工具方法
     # ------------------------------------------------------------------
-    def _run_background(self, work, on_done):
-        """后台执行 work()，完成后主线程回调 on_done(result, error)。"""
+    def _run_background(self, work, on_done, must_finish=False, name=None):
+        """后台执行 work()，完成后主线程回调 on_done(result, error)。
+
+        must_finish=True：B 类"必须完成"任务（会话保存/写盘/导出）。
+            关窗时 cleanup 对其**无超时等待**（数据完整性优先），
+            且禁止落入 pending→os._exit 名单（否则用户以为存好了实际丢数据）。
+        name：任务名，cleanup warning 的唯一现场指认；缺省从调用栈推断
+            （traceback.extract_stack()[-2] 取调用方方法名，零调用点改动）。
+        """
         from ui.worker_thread import WorkerThread
+        if name is None:
+            import traceback
+            name = traceback.extract_stack()[-2].name
         worker = WorkerThread(work)
+        worker._task_name = name
+        worker._must_finish = must_finish
         self._workers.append(worker)
 
         def _wrapped_done(result, error):
-            if worker in self._workers:
-                self._workers.remove(worker)
             on_done(result, error)
 
-        worker.finished.connect(_wrapped_done)
+        worker.result_ready.connect(_wrapped_done)
+        # 基类 QThread.finished：线程真正退出后才摘除引用并交 Qt 回收。
+        # 不能挂在 result_ready 上（run() 内发射、线程仍在运行），
+        # 也不能挂在已遮蔽的自定义信号上，否则运行中析构 → __fastfail。
+        worker.finished.connect(lambda w=worker: self._on_worker_thread_finished(w))
         worker.start()
 
+    def _on_worker_thread_finished(self, worker):
+        """线程退出回调：从引用池摘除并调度 Qt 回收。"""
+        if worker in self._workers:
+            self._workers.remove(worker)
+        worker.deleteLater()
+
     def cleanup(self):
-        """清理资源（关闭窗口时调用）。"""
-        # 停止实时取景
-        self._preview_timer.stop()
+        """清理资源（关闭窗口时调用）。幂等：aboutToQuit 与 main 尾部可能各调一次。
+
+        返回超时仍未结束的后台 worker 列表（正常情况为空列表）。
+        """
+        if getattr(self, "_cleaned", False):
+            return getattr(self, "_pending_workers", [])
+        self._cleaned = True
+        # 停止实时取景（线程 stop 会等待在飞采集完成，带超时）
+        if self._preview_thread is not None:
+            self._preview_thread.stop()
+            self._preview_thread = None
         self._card_preview_timer.stop()
         self._card_preview_active.clear()
-        # 等待所有后台任务结束，避免 QThread 运行期间被销毁
+        # 任务分级等待（E5：SDK 无法加超时，改为语义分级）：
+        #   B 类 must_finish：无超时等待，禁止进 pending→os._exit 名单（数据完整性优先）；
+        #   A 类：有界等待 3s，超时保留引用并记 warning（os._exit 安全网名单）。
+        # os._exit 之后 warning 是唯一现场，必须带任务名。
+        pending = []
         for worker in list(self._workers):
-            if worker.isRunning():
-                worker.wait(3000)
-        self._workers.clear()
+            if not worker.isRunning():
+                continue
+            task_name = getattr(worker, "_task_name", "?")
+            if getattr(worker, "_must_finish", False):
+                logger.info(f"[cleanup] 等待必须完成的任务结束: {task_name}")
+                worker.wait()
+                continue
+            if not worker.wait(3000):
+                pending.append(worker)
+                logger.warning(
+                    f"[cleanup] 后台任务超过 3 秒未结束，保留引用待其自然退出: {task_name} ({worker})")
+        self._workers[:] = pending
+        self._pending_workers = pending
         self.camera_manager.shutdown()
+        return pending
+
+    def abandon_must_finish_tasks(self):
+        """用户明确放弃等待：把运行中的 B 类任务降级为 A 类（cleanup 不再无超时等待）。
+
+        由 closeEvent 的"放弃保存并关闭"调用。数据完整性由原子写兜底。
+        返回被降级的任务名列表。
+        """
+        abandoned = []
+        for worker in list(self._workers):
+            if worker.isRunning() and getattr(worker, "_must_finish", False):
+                worker._must_finish = False
+                task_name = getattr(worker, "_task_name", "?")
+                abandoned.append(task_name)
+                logger.warning(f"[cleanup] 任务被用户放弃等待，降级为可放弃: {task_name}")
+        return abandoned

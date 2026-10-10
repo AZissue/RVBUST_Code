@@ -12,6 +12,19 @@ MultiCameraCalibration 入口。
 import os
 import sys
 
+# 原生层崩溃（如 SDK 堆损坏 0xc0000374）导致进程终止时，把全部线程的
+# Python 栈写入专用文件，为事后定位保留完整现场（控制台输出易丢失，
+# 因此始终写文件；stderr 可用时同时输出）。
+try:
+    import faulthandler
+    _faulthandler_file = open("faulthandler_crash.log", "a", buffering=1)
+    faulthandler.enable(_faulthandler_file)
+    if sys.stderr is not None:
+        faulthandler.enable()
+except Exception:
+    pass
+
+
 # 保证 src 包可导入（兼容开发环境与 PyInstaller 打包环境）
 if getattr(sys, 'frozen', False):
     # PyInstaller 打包后，src 已作为包被包含，无需额外添加路径
@@ -108,21 +121,28 @@ def main():
     launcher.connect_requested.connect(on_connect)
     launcher.auto_ip_requested.connect(on_auto_ip)
     bridge.connection_finished.connect(on_connection_finished)
+    # 事件循环退出前统一收口清理（此时事件循环仍可处理线程退出信号）
+    app.aboutToQuit.connect(bridge.cleanup)
 
     # 初始枚举设备
     on_refresh()
 
-    if launcher.exec() != QDialog.Accepted:
-        return 0
+    exit_code = 0
+    try:
+        if launcher.exec() != QDialog.Accepted:
+            return 0  # 取消小窗的早退路径：finally 仍会跑 cleanup
 
-    # 2. 工作区切换与小窗关闭已在 on_connection_finished 中完成
+        # 2. 工作区切换与小窗关闭已在 on_connection_finished 中完成
 
-    # 3. 运行
-    exit_code = app.exec()
-
-    # 4. 清理资源
-    bridge.cleanup()
-    return exit_code
+        # 3. 运行
+        exit_code = app.exec()
+        return exit_code
+    finally:
+        # 4. 清理资源。cleanup 幂等（aboutToQuit 可能已跑过）；
+        # pending 非空 = 有 A 类任务超时未结束：warning 已落盘，os._exit 直接
+        # 终止进程（不受 return 影响），避免 QThread 运行中析构 __fastfail。
+        if bridge.cleanup():
+            os._exit(exit_code)
 
 
 if __name__ == "__main__":

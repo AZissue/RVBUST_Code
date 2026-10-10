@@ -11,6 +11,62 @@
 
 ---
 
+## [Unreleased]
+
+### Added
+- 模式 A 标定结果自动保存/恢复（崩溃兜底）：标定成功 / 加载外参 / 加载会话
+  后自动把外参落盘到 `offline_data/autosave_calibration.json`（格式与
+  「保存外参」一致，仅多 camera_names/saved_at）；下次连接同一组相机时
+  自动恢复到扫描阶段，可直接拍摄扫描帧拼接，无需重新标定。相机组合变化
+  时不自动恢复（防错配），可手动「加载外参」。
+- `tools/enable_crash_dumps.ps1`：管理员运行后，python.exe 崩溃时 WER 在
+  `C:\CrashDumps` 保留完整转储，供栈级根因分析。
+
+### Changed
+- 实时取景默认帧率 10fps → 5fps：降低 SDK Image 高频建/销的堆损坏暴露量
+  （三次 0xc0000374 崩溃均发生在该高频回路运行期间；根因待转储定位）。
+  faulthandler 改为始终写 `faulthandler_crash.log`（控制台输出易丢失）。
+
+### Fixed
+- 修复保存拼接点云后软件崩溃（ntdll 堆损坏 0xc0000374，8 月以来复发 11 次）：
+  新增 `utils.rvc_sdk_lock` 进程级 SDK 互斥锁，所有 PyRVC 调用（采集 /
+  SaveWithImage 点云导出 / DetectCodedCircleMarker 检测）统一持锁串行。
+  崩溃机理：拼接 worker 的 `pointmap.SaveWithImage()` 与实时预览线程的
+  `Capture2D()` 并发调用 SDK（后者此前仅采集函数有锁），堆损坏在保存点云
+  时的大块内存分配处爆发。「拼接并保存」现在也会暂停实时预览（与批量
+  扫描流程一致）。
+  第二次复发（15:16，保存成功 3 分钟后、纯预览期崩溃）后进一步处置：
+  实时取景从 UI 线程 QTimer（每 100ms 同步阻塞 SDK 采集 75ms+）重构为
+  专用采集线程 PreviewCaptureThread——采集/QPixmap 转换/SDK Image 释放
+  的生命周期收敛到单一后台线程，UI 只做显示，stop() 等待在飞采集完成
+  后再允许 3D 拍摄；同时解决预览期间 UI 被冻结的问题。main.py 增加
+  faulthandler，下次原生崩溃自动落 Python 线程栈到 faulthandler_crash.log。
+  SDK 层根因仍待 prototypes/sync_capture_stress 实机定位。
+- 修复多相机 sync 并发采集污染深度数据的问题：两台 RVC-I540（X1, GigE）
+  在 sync-capture 线程并发 Capture() 时 cam1 深度被污染（标定帧 Z 范围
+  [307,344]mm 劣化为 [258.8,401.6]mm，扫描帧 47% 像素无效），串行拍摄
+  与 RVCManager 单拍均正常。`SingleCameraController` 新增全局采集锁，
+  跨相机串行化 Capture/GetImage/GetPointMap 临界区；sync 仅保留触发
+  并发，实际采集一台完成后再拍下一台。根因定位见
+  `prototypes/sync_capture_stress/`。
+- 修复部分 X1 相机 `info.sn` 为字符串 "None" 导致 SN 去重误报
+  （"设备 SN None 已被相机 cam0 连接"、误拦相机添加）：
+  SN 为 "None"/空串时视为无 SN，仅按设备索引去重。
+- 修复拼接输出点云噪点团多的问题：`PointCloudProcessor` 默认开启统计离群点
+  去除（nb=20, std=2.0，与 auto_tune 推荐口径一致）。ui_v2 后处理设置页尚未
+  实现（src/ui_v2/main_window.py:14），拼接输出此前使用全关默认的裸
+  processor，各机位飞点原样落盘。裁切/体素下采样仍默认关闭，显式设置
+  `enable_outlier_removal=False` 可恢复旧行为；旧 UI 路径始终把面板参数
+  全量写入 processor，不受影响。
+- 修复编码圆检测在部分相机全分辨率（如 RVC-I540 2448×2048）下
+  稳定返回 0 个标记的问题：`MarkerDetector.detect()` 现在按
+  1.0x → 0.75x → 0.5x 逐级降采样回退，首个非空结果胜出，
+  圆心坐标按 1/scale 反推回全分辨率像素系（实测反推偏差 <0.3px，
+  不影响配准精度）。根因是 SDK 检测器对标记像素尺度敏感
+  （全分辨率下 r0≈17px 超出其有效窗口），N/r1/r2 三个参数本身无误。
+
+---
+
 ## [1.6.1] - 2026-09-09
 
 ### Fixed

@@ -48,7 +48,11 @@ class PointCloudProcessor:
         self.crop_mode = "none"  # none | aabb | sphere | obb
         self.crop_ratio = 0.6
         self.crop_radius = 500.0  # mm
-        self.enable_outlier_removal = False
+        # 默认开启统计离群点去除（nb=20, std=2.0 为成熟默认值，与 auto_tune
+        # 推荐口径一致）。ui_v2 拼接输出直接使用裸默认 processor（后处理
+        # 设置页尚未实现），关闭离群点去除会让各机位飞点原样落盘。
+        # 裁切/体素下采样依赖场景与用途，保持默认关闭。
+        self.enable_outlier_removal = True
         self.outlier_nb_neighbors = 20
         self.outlier_std_ratio = 2.0
 

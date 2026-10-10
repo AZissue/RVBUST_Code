@@ -17,7 +17,7 @@ from typing import Dict, List, Optional, TYPE_CHECKING
 import numpy as np
 import cv2
 
-from .utils import logger
+from .utils import logger, rvc_sdk_lock
 from .calib_board_detector import CalibBoardDetector, DEFAULT_BOARD_SPECS
 
 if TYPE_CHECKING:
@@ -34,6 +34,11 @@ MARKER_TYPE_ASYMMETRIC_GRID = "asymmetric_grid"
 
 # 有效标记物类型集合
 SUPPORTED_MARKER_TYPES = (MARKER_TYPE_CODED_CIRCLE, MARKER_TYPE_ASYMMETRIC_GRID)
+
+# 编码圆检测尺度回退阶梯：SDK 检测器对标记像素尺度敏感，全分辨率下 r0 超过
+# 约 15px 时常返回 0（实测 2448×2048 现场图 1.0x 检出 0 个，0.75x 检出 4 个）；
+# 逐级降采样重试并将圆心按 1/scale 反推回全分辨率系（实测反推偏差 <0.3px）。
+_DETECT_FALLBACK_SCALES = (1.0, 0.75, 0.5)
 
 
 class MarkerDetector:
@@ -94,7 +99,11 @@ class MarkerDetector:
         return self._board_detector.board_specs
 
     def detect(self, image: np.ndarray) -> List[Dict]:
-        """2D 编码圆检测（仅编码圆模式下使用）。"""
+        """2D 编码圆检测（仅编码圆模式下使用）。
+
+        按 _DETECT_FALLBACK_SCALES 逐级尝试：1.0x 未检出时降采样重试，
+        返回首个非空结果，坐标统一换算回全分辨率像素系。
+        """
         if image is None:
             logger.warning("detect: 图像为 None")
             return []
@@ -103,19 +112,39 @@ class MarkerDetector:
             return []
         try:
             logger.info(f"detect 输入: shape={image.shape}, dtype={image.dtype}, min={image.min()}, max={image.max()}")
-            img = self._preprocess(image)
-            logger.info(f"detect 预处理后: shape={img.shape}, dtype={img.dtype}")
-            markers = RVC.DetectCodedCircleMarker(img, self._coded_marker_type)
-            logger.info(f"detect 结果: {len(markers)} 个编码圆")
-            return [
-                {
-                    'code': int(m.code),
-                    'x': float(m.x),
-                    'y': float(m.y),
-                    'center': (int(m.x), int(m.y))
-                }
-                for m in markers
-            ]
+            base = self._preprocess(image)
+            logger.info(f"detect 预处理后: shape={base.shape}, dtype={base.dtype}")
+
+            for scale in _DETECT_FALLBACK_SCALES:
+                if scale == 1.0:
+                    img = base
+                else:
+                    w = int(round(base.shape[1] * scale))
+                    h = int(round(base.shape[0] * scale))
+                    img = cv2.resize(base, (w, h), interpolation=cv2.INTER_AREA)
+                markers = None
+                # DetectCodedCircleMarker 是 PyRVC 调用：与采集/点云导出统一
+                # 走 SDK 全局锁（多尺度回退循环里每次调用都要持有）
+                with rvc_sdk_lock:
+                    markers = RVC.DetectCodedCircleMarker(img, self._coded_marker_type)
+                if markers:
+                    inv = 1.0 / scale
+                    if scale != 1.0:
+                        logger.info(f"检测尺度回退: {scale:.2f}x 命中 {len(markers)} 个编码圆"
+                                    f"（1.0x 未检出），圆心已按 {inv:.2f}x 反推")
+                    else:
+                        logger.info(f"detect 结果: {len(markers)} 个编码圆")
+                    return [
+                        {
+                            'code': int(m.code),
+                            'x': float(m.x) * inv,
+                            'y': float(m.y) * inv,
+                            'center': (int(m.x * inv), int(m.y * inv))
+                        }
+                        for m in markers
+                    ]
+            logger.info(f"detect 结果: 0 个编码圆（所有尺度 {_DETECT_FALLBACK_SCALES} 均未检出）")
+            return []
         except Exception as e:
             logger.error(f"detect 异常: {e}")
             import traceback

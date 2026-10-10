@@ -19,8 +19,12 @@ prototypes/
 │   ├── tests/
 │   │   └── test_synthetic.py
 │   └── README.md
+├── robot_handeye_transform/           # 手眼矩阵 + 机器人位姿 → 点云转基座系
+│   ├── core/                          # handeye_result / unit_guard / pose_source / transform_chain
+│   ├── app/                           # 复用主功能 UI 组件的控制面板（批 2 落地）
+│   ├── tests/
+│   └── README.md
 ├── marker_matching/                   # 标记点匹配（预留）
-├── handeye_calibration/               # 手眼标定（预留）
 └── ...
 ```
 
@@ -35,7 +39,9 @@ prototypes/
 
 | 子文件夹 | 功能 | 状态 |
 |---|---|---|
+| `sync_capture_stress/` | 多相机并发采集污染复现（双 X1 GigE 并发 Capture 深度污染定位，见 `README.md`） | 待实机复现验证 |
 | `turntable_360_stitch/` | 相机固定 + 转台旋转 → 角度标定 → 360° 点云拼接 | 开发中，已可实机测试 |
+| `robot_handeye_transform/` | 手眼标定矩阵 + 机器人位姿 → 点云实时转机器人基座系（不含标定求解） | 批 1 core 已落地（A1/A2/A7 测试全绿），方案见 `docs/机器人手眼变换原型方案_20260922.md` |
 
 ---
 

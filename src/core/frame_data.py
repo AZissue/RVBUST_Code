@@ -25,7 +25,7 @@ from typing import List, Dict, Optional, Tuple, TYPE_CHECKING
 import numpy as np
 import cv2
 
-from .utils import logger, safe_destroy
+from .utils import logger, safe_destroy, write_json_atomic, rvc_sdk_lock
 
 if TYPE_CHECKING:
     import PyRVC as RVC
@@ -160,11 +160,9 @@ class FrameData:
                     meta = {}
             meta["frame_id"] = self.frame_id
             meta.setdefault("cameras", {})[self.camera_name] = entry
-            with open(meta_path, 'w', encoding='utf-8') as f:
-                json.dump(meta, f, ensure_ascii=False, indent=2)
+            write_json_atomic(meta_path, meta, ensure_ascii=False, indent=2)
         else:
-            with open(meta_path, 'w', encoding='utf-8') as f:
-                json.dump(entry, f, ensure_ascii=False, indent=2)
+            write_json_atomic(meta_path, entry, ensure_ascii=False, indent=2)
 
         self.is_offline = True
         self.offline_dir = frame_dir
@@ -218,7 +216,10 @@ class FrameData:
             fd, tmp = tempfile.mkstemp(suffix=".ply")
             os.close(fd)
             try:
-                ret = self.pointmap.SaveWithImage(tmp, self.rvc_image, RVC.PointMapUnitEnum.Millimeter, True)
+                # SaveWithImage 是 PyRVC 调用：与采集/检测统一走 SDK 全局锁，
+                # 否则拼接 worker 与实时预览并发调用 SDK 会堆损坏崩溃
+                with rvc_sdk_lock:
+                    ret = self.pointmap.SaveWithImage(tmp, self.rvc_image, RVC.PointMapUnitEnum.Millimeter, True)
                 if ret:
                     import open3d as o3d
                     return o3d.io.read_point_cloud(tmp)

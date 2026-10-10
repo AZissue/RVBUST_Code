@@ -21,7 +21,7 @@ import threading
 
 import numpy as np
 
-from .utils import logger, safe_destroy
+from .utils import logger, safe_destroy, rvc_sdk_lock
 from .frame_data import FrameData
 
 try:
@@ -45,7 +45,12 @@ def _decode_network_bytes(b):
 # 单相机控制器（轻量封装，N 台直接实例化）
 # ---------------------------------------------------------------------------
 class SingleCameraController:
-    """单台 RVC 相机控制器。"""
+    """单台 RVC 相机控制器。
+
+    采集互斥：capture_2d/capture_3d 先取 utils.rvc_sdk_lock（跨相机/跨模块
+    串行化一切 PyRVC 调用），再取本机 _capture_lock（同机 2D/3D 串行）。
+    2026-10-09 实机故障记录见 utils.rvc_sdk_lock 注释。
+    """
 
     def __init__(self, name: str):
         self.name = name
@@ -194,7 +199,8 @@ class SingleCameraController:
         """
         if not self.is_connected or not self.camera:
             return None, "相机未连接"
-        with self._capture_lock:
+        # 先取 SDK 全局锁（跨相机/跨模块串行一切 PyRVC 调用），再取本机锁
+        with rvc_sdk_lock, self._capture_lock:
             try:
                 # 线扫相机在 3D 拍摄后 Capture2D 会阻塞，直接复用 3D 拍摄取图
                 if self.line_scan_detected and self.camera_type == "X1":
@@ -237,7 +243,8 @@ class SingleCameraController:
     def capture_3d(self, options=None) -> Tuple[Optional[np.ndarray], Optional['RVC.PointMap'], Optional['RVC.Image'], str]:
         if not self.is_connected or not self.camera:
             return None, None, None, "相机未连接"
-        with self._capture_lock:
+        # 先取 SDK 全局锁（跨相机/跨模块串行一切 PyRVC 调用），再取本机锁
+        with rvc_sdk_lock, self._capture_lock:
             try:
                 # 默认用无参 Capture()：直接按相机内部参数拍摄（SDK 推荐方式，
                 # 兼容 M 系列线扫模式）；仅当显式传入参数时才 Capture(opts)
@@ -402,14 +409,23 @@ class CameraManager:
                 return cid
         return None
 
+    @staticmethod
+    def _valid_sn(sn) -> bool:
+        """判断 SN 是否可用于去重。
+
+        实机发现部分 X1 相机的 info.sn 为字符串 "None"（而非 None），
+        两台这样的相机会被 SN 去重误判为同一台，必须视为无 SN。
+        """
+        return bool(sn) and str(sn) != "None"
+
     def find_by_sn(self, sn: str, exclude_id: str = None) -> Optional[str]:
         """按 SN 查找已连接的相机，返回 camera_id 或 None。"""
-        if not sn:
+        if not self._valid_sn(sn):
             return None
         for cid, cam in self._cameras.items():
             if cid == exclude_id:
                 continue
-            if cam.is_connected and cam.sn and cam.sn == sn:
+            if cam.is_connected and self._valid_sn(cam.sn) and cam.sn == sn:
                 return cid
         return None
 
@@ -637,6 +653,9 @@ class CameraManager:
 
         sync=True ：使用线程并发调用各相机的软触发，尽量缩小触发时间差；
                     真正的零时差需要硬件同步触发（RVC 外触发）。
+                    注意：2026-10-09 实机故障后，采集临界区由全局锁跨相机串行化
+                    （双 X1 GigE 并发采集会污染深度数据），sync 仅保留触发并发，
+                    实际采集一台完成后再拍下一台。
         sync=False：串行拍摄，一台拍完再拍下一台。
         """
         if camera_ids is None:
