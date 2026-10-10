@@ -363,11 +363,30 @@ class CalibBoardDetector:
                         pts.append(pt)
 
             if len(pts) < 4:
-                # 邻域存在无效点：退化为最近有效单点
+                # 邻域存在无效点：在圆心周围按递增半径搜索有效点取中位数。
+                # 旧实现只退化到最近单点，圆心附近深度成片无效时（如转台
+                # 场景标记平贴台面、斜视角拍摄）标记被整体丢弃（0/N）；
+                # 标记白纸在十余像素范围内近似共面，中位数足够稳健且
+                # 对飞点不敏感。半径上限 8px 不超过编码圆白色中心区。
                 cx_i, cy_i = int(round(cx)), int(round(cy))
-                idx_c = cy_i * w + cx_i
-                if 0 <= idx_c < len(points_3d) and np.isfinite(points_3d[idx_c]).all():
-                    centers_3d[i] = points_3d[idx_c]
+                best = None
+                for r in (0, 1, 2, 3, 5, 8):
+                    x_lo, x_hi = max(0, cx_i - r), min(w - 1, cx_i + r)
+                    y_lo, y_hi = max(0, cy_i - r), min(h - 1, cy_i + r)
+                    xs = np.arange(x_lo, x_hi + 1)
+                    ys = np.arange(y_lo, y_hi + 1)
+                    idx = (ys[:, None] * w + xs[None, :]).ravel()
+                    idx = idx[idx < len(points_3d)]
+                    patch = points_3d[idx]
+                    patch = patch[np.isfinite(patch).all(axis=1)]
+                    patch = patch[np.abs(patch).sum(axis=1) > 0.0]
+                    if len(patch) >= 3:
+                        best = np.median(patch, axis=0)
+                        break
+                    if len(patch) > 0 and best is None:
+                        best = patch.mean(axis=0)
+                if best is not None:
+                    centers_3d[i] = best
                 continue
 
             p00, p10, p01, p11 = pts[0], pts[1], pts[2], pts[3]
