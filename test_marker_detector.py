@@ -33,6 +33,7 @@ print("=" * 60)
 import cv2  # noqa: E402
 
 from core.marker_detector import MarkerDetector  # noqa: E402
+import core.marker_detector as marker_detector_mod  # noqa: E402
 
 try:
     import PyRVC as RVC
@@ -231,6 +232,63 @@ ms_valid = detector6.detect_3d(gray_3d, offline_ply_path=ply_path)
 check("默认调用仍过滤 3D 无效标记（只返回 1 个）",
       len(ms_valid) == 1 and ms_valid[0]['code'] == 29,
       f"实际 {[m['code'] for m in ms_valid]}")
+
+# ------------------------------------------------------------------
+# [6] 多尺度合并：1.0x 部分检出时低尺度补全（旧逻辑首个非空即返回，
+#     1.0x 检出 2 个就停，0.75x 能看到的其余标记被漏掉——转台实测 4 vs 2）
+# ------------------------------------------------------------------
+print("\n[6] detect() 多尺度合并（按 code 并集，高尺度坐标优先）")
+
+
+class _FakeType:
+    N = 8
+    r1_to_r0_ratio = 2.0
+    r2_to_r0_ratio = 3.0
+
+
+class _FakeMarker:
+    def __init__(self, code, x, y):
+        self.code = code
+        self.x = x
+        self.y = y
+
+
+class _FakeRVC:
+    """按图像宽度模拟不同尺度的检出：1.0x 部分检出，低尺度补全。"""
+    CodedCircleMarkerType = _FakeType
+
+    @staticmethod
+    def DetectCodedCircleMarker(img, mtype):
+        w = img.shape[1]
+        if w == 2448:                       # 1.0x：只检出 2 个
+            return [_FakeMarker(15, 100.0, 200.0), _FakeMarker(29, 300.0, 400.0)]
+        if w == 1836:                       # 0.75x：补出 45（29 重复）
+            return [_FakeMarker(29, 225.0, 300.0), _FakeMarker(45, 400.0, 500.0)]
+        if w == 1224:                       # 0.5x：补出 111
+            return [_FakeMarker(111, 500.0, 300.0)]
+        return []
+
+
+_real_rvc = marker_detector_mod.RVC
+marker_detector_mod.RVC = _FakeRVC
+try:
+    det_m = MarkerDetector()
+    ms_m = det_m.detect(np.zeros((2048, 2448, 3), dtype=np.uint8))
+finally:
+    marker_detector_mod.RVC = _real_rvc
+
+by_code_m = {m['code']: m for m in ms_m}
+check("合并后 4 个标记（15/29/45/111）", sorted(by_code_m) == [15, 29, 45, 111],
+      f"实际 {sorted(by_code_m)}")
+check("1.0x 坐标优先（code=15 保持 100,200）",
+      abs(by_code_m[15]['x'] - 100.0) < 1e-6 and abs(by_code_m[15]['y'] - 200.0) < 1e-6,
+      f"实际 ({by_code_m[15]['x']:.1f},{by_code_m[15]['y']:.1f})")
+check("0.75x 坐标已反推（code=45 → 533.3,666.7）",
+      abs(by_code_m[45]['x'] - 400 / 0.75) < 0.01 and abs(by_code_m[45]['y'] - 500 / 0.75) < 0.01,
+      f"实际 ({by_code_m[45]['x']:.1f},{by_code_m[45]['y']:.1f})")
+check("0.5x 坐标已反推（code=111 → 1000,600）",
+      abs(by_code_m[111]['x'] - 1000.0) < 0.01 and abs(by_code_m[111]['y'] - 600.0) < 0.01,
+      f"实际 ({by_code_m[111]['x']:.1f},{by_code_m[111]['y']:.1f})")
 
 print("\n" + "=" * 60)
 print(f"全部 {len(passed)} 项断言通过")

@@ -101,8 +101,11 @@ class MarkerDetector:
     def detect(self, image: np.ndarray) -> List[Dict]:
         """2D 编码圆检测（仅编码圆模式下使用）。
 
-        按 _DETECT_FALLBACK_SCALES 逐级尝试：1.0x 未检出时降采样重试，
-        返回首个非空结果，坐标统一换算回全分辨率像素系。
+        多尺度合并：按 _DETECT_FALLBACK_SCALES（1.0x → 0.75x → 0.5x）逐尺度
+        检测并按 code 取并集——1.0x 常因标记像素尺寸超出 SDK 有效窗口而
+        **部分检出**（实测同场景 1.0x=2 个、0.75x=4 个），旧逻辑"首个
+        非空即返回"会漏掉低尺度才能看到的标记。同一 code 以最先（最高
+        分辨率）命中的坐标为准，坐标统一换算回全分辨率像素系。
         """
         if image is None:
             logger.warning("detect: 图像为 None")
@@ -115,6 +118,8 @@ class MarkerDetector:
             base = self._preprocess(image)
             logger.info(f"detect 预处理后: shape={base.shape}, dtype={base.dtype}")
 
+            found: Dict[int, Dict] = {}
+            per_scale_hits = []
             for scale in _DETECT_FALLBACK_SCALES:
                 if scale == 1.0:
                     img = base
@@ -122,27 +127,28 @@ class MarkerDetector:
                     w = int(round(base.shape[1] * scale))
                     h = int(round(base.shape[0] * scale))
                     img = cv2.resize(base, (w, h), interpolation=cv2.INTER_AREA)
-                markers = None
                 # DetectCodedCircleMarker 是 PyRVC 调用：与采集/点云导出统一
-                # 走 SDK 全局锁（多尺度回退循环里每次调用都要持有）
+                # 走 SDK 全局锁（多尺度循环里每次调用都要持有）
                 with rvc_sdk_lock:
                     markers = RVC.DetectCodedCircleMarker(img, self._coded_marker_type)
-                if markers:
-                    inv = 1.0 / scale
-                    if scale != 1.0:
-                        logger.info(f"检测尺度回退: {scale:.2f}x 命中 {len(markers)} 个编码圆"
-                                    f"（1.0x 未检出），圆心已按 {inv:.2f}x 反推")
-                    else:
-                        logger.info(f"detect 结果: {len(markers)} 个编码圆")
-                    return [
-                        {
-                            'code': int(m.code),
+                n_new = 0
+                inv = 1.0 / scale
+                for m in markers:
+                    code = int(m.code)
+                    if code not in found:
+                        found[code] = {
+                            'code': code,
                             'x': float(m.x) * inv,
                             'y': float(m.y) * inv,
                             'center': (int(m.x * inv), int(m.y * inv))
                         }
-                        for m in markers
-                    ]
+                        n_new += 1
+                per_scale_hits.append(f"{scale:.2f}x={len(markers)}(新增{n_new})")
+
+            if found:
+                logger.info(f"detect 结果: 共 {len(found)} 个编码圆"
+                            f"（{'，'.join(per_scale_hits)}）")
+                return list(found.values())
             logger.info(f"detect 结果: 0 个编码圆（所有尺度 {_DETECT_FALLBACK_SCALES} 均未检出）")
             return []
         except Exception as e:
