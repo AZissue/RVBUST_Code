@@ -75,6 +75,7 @@ tests/                        → unit_tests（QtTest）+ measure_truth（已知
 | 一帧记录的字段 | `models/CaptureRecord.h`；落盘字段名在同文件 + `DataManager::loadBackup()`（键名 `marker_count` 等） |
 | 手眼标定计算（两个方法 + 返回码文案 + 结果排版） | `logic/CalibrationService.{h,cpp}`；入口是 `calibrate()`，按 `Params::calibType` 分派。想动"标定结果不够好"之前先读 `reports/阶段6-鲁棒标定方案讨论.md`（先量后改，且别放弃"助手=官方 SDK"这条已验证的一致性） |
 | SDK 崩溃/返回码的最底层包装 | `sdk/HandEyeSDKBridge.{h,cpp}`（`safeCall` + `kSdkInternalError`） |
+| **卡片里那 3 个旋转数怎么读**（欧拉/轴角/…）+ 角度单位 | 逻辑：`CalibrationService::toSdkPoseLine()`（欧拉 RPY 原样透传 `poseType=0`，其余 3 数格式转 16 数矩阵 `poseType=3`）+ `poseFormatName/Description()`；预设存取：`AppConfig::calibPoseFormat()/setCalibPoseFormat()`（工具页「应用」写、工具页与主界面「计算」都读）；界面：`ToolsPanel` 手眼标定页的「位姿格式」行 + 「试算各格式」。**卡片永远是 6 个数，格式只是"怎么读它"，别去改卡片**（见 `reports/阶段7-位姿格式预设与试算.md`） |
 | 质检（数量/近重复/离群/分散度/相机目标点/标记点数） | `logic/DataQualityCheck.h`（header-only 纯逻辑）；UI 侧只负责组装 `Record` 与渲染 HTML |
 | 「当前位姿 vs 最近已采」引导 | `logic/PoseGuide.h`（判定）+ `MainWindow::updatePoseGuide()`（选卡片、写文案） |
 | 测量算法（8 个方法） | `logic/MeasureTools.*`（kernel）+ `logic/MeasureMethods.h`（方法目录/ROI 需求）+ `ui/MeasurePages.cpp`（每页的 `compute()`）。**改之前先读 `reports/阶段10-圆环拟合与孔径-真值回归结论.md`**（实测：主因是边缘选择）与 `reports/阶段10-测量功能优化方案.md`（含"真值回归测的 kernel 与界面在跑的 kernel 已脱节"这个坑） |

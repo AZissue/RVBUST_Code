@@ -28,6 +28,7 @@
 #include "ui/MeasurementSnapshot.h"
 
 class MeasurePage;
+class AppConfig;
 class QFormLayout;
 
 // Non-modal tools panel (v2.0).  Left: tool list.  Right: the selected tool.
@@ -37,6 +38,10 @@ class ToolsPanel : public QDialog {
     Q_OBJECT
 public:
     explicit ToolsPanel(QWidget* parent = nullptr);
+
+    // 主窗口把自己的 AppConfig 借给本页（唯一写入者仍是主窗口持有的那一份实例，
+    // 避免两个 AppConfig 各存一份 m_data 互相覆盖）。必须在 show 前调用。
+    void setAppConfig(AppConfig* cfg);
 
     void setRobotStatus(const QString& text, bool ok);
     void setRobotConnected(bool connected);
@@ -145,11 +150,28 @@ private:
     void onCalibrationFinished();
     // 手眼标定页当前的参数（含标定方式；两个方法共用）。
     CalibrationService::Params calibParams() const;
+    // 凑齐一次标定要的三列数据：优先「用当前会话」的内存三列，否则按路径读文件。
+    // 失败时写 m_calibHint 并返回 false。顺序敏感 —— 路径输入框的 textChanged 会
+    // 清掉会话状态，所以这里必须先判会话、再碰输入框。
+    bool gatherCalibrationInput(QString& folder,
+                                std::vector<QString>& cameraLines,
+                                std::vector<QString>& poseLines,
+                                std::vector<QString>& tcpLines);
     // 按标定方式 + 安装方式决定哪几行输入框要看得到：
     //   标定板            → 位姿文件、标定板类型、位姿单位
     //   戳点 + 眼在手上   → 位姿文件、相机点位文件、戳点文件、位姿单位
     //   戳点 + 眼在手外   → 相机点位文件、戳点文件（没有机器人拍照位姿这一列）
     void updateCalibrationModeVisibility();
+    // 下拉框里当前选的格式 / 角度单位（索引与 CalibrationService 的 3 数格式表一一对应）。
+    TransformTools::RotationFormat currentCalibPoseFormat() const;
+    TransformTools::AngleUnit currentCalibAngleUnit() const;
+    // 刷新「位姿格式」下面那行说明：该格式是什么 + 是否已应用为全局预设。
+    void updateCalibFormatHint();
+    // 「应用」：写进 AppConfig 预设（主界面「计算」读它）。
+    void applyCalibPoseFormat();
+    // 「试算各格式」：当前三列数据把 4 种格式 x 度/弧度 各算一遍，按总平均误差排序。
+    void runTryAllPoseFormats();
+    void onTryAllFinished();
     // 发起一次标定（folder + 内存里的三列），结果走 onCalibrationFinished。
     void runCalibration(const QString& folder,
                         const std::vector<QString>& cameraLines,
@@ -206,6 +228,11 @@ private:
     QComboBox* m_calibMarkerCombo = nullptr;
     QComboBox* m_calibPoseUnitCombo = nullptr;
     QComboBox* m_calibAngleUnitCombo = nullptr;
+    QComboBox* m_calibFormatCombo = nullptr;   // 卡片里 3 个旋转数怎么读
+    QWidget* m_calibFormatRow = nullptr;       // 上面那行的容器（显隐用）
+    QLabel* m_calibFormatLabel = nullptr;      // 该格式的说明 + 是否已应用
+    QPushButton* m_calibApplyBtn = nullptr;    // 写进 AppConfig 预设（主界面也读它）
+    QPushButton* m_calibTryAllBtn = nullptr;   // 同数据试算各格式，列总平均误差
     QCheckBox* m_calibAutoRemove = nullptr;
     QTextEdit* m_calibResult = nullptr;
     QLabel* m_calibHint = nullptr;
@@ -213,6 +240,9 @@ private:
     QPushButton* m_calibCopyBtn = nullptr;
     QPushButton* m_calibSessionBtn = nullptr;
     QFutureWatcher<CalibrationService::Result>* m_calibWatcher = nullptr;
+    // 「试算各格式」用独立 watcher：8 次标定不能和普通计算共用一个 future。
+    QFutureWatcher<QString>* m_calibTryAllWatcher = nullptr;
+    AppConfig* m_config = nullptr;
     // 「用当前会话」的状态：非空时「计算」用内存里的数据；编辑路径输入框即清掉。
     QString m_sessionFolder;              // 会话目录（用当前会话时的文件夹）
     std::vector<QString> m_sessionPoses;  // 机器人拍照位姿（顺序 = 采集顺序）

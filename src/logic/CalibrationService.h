@@ -4,6 +4,7 @@
 #include <array>
 #include <vector>
 
+#include "logic/TransformTools.h"
 #include "models/CalibrationMode.h"
 
 // Hand-eye calibration computation backed by the RVC HandEyeSDK.
@@ -25,7 +26,11 @@ struct Params {
     bool eyeInHand = true;          // camera mounted on the robot flange
     int markerType = 1;             // 0 = asymmetric circle grid, 1 = concentric
     bool isPoseMm = true;           // pose position unit
-    bool isPoseDegree = true;       // pose angle unit
+    // 卡片里那 3 个旋转数是什么表示、什么单位。卡片本身永远是 6 个数
+    // （CaptureRecord::robotCapturePose = "x y z rx ry rz"），这两个字段只声明
+    // "该怎么读它"。默认值 = 改动前的行为（欧拉、度）。
+    TransformTools::RotationFormat poseFormat = TransformTools::RotationFormat::EulerRpy;
+    TransformTools::AngleUnit poseAngleUnit = TransformTools::AngleUnit::Degree;
     bool autoRemoveLargeError = true;
 };
 
@@ -47,6 +52,34 @@ QString normalizePoseLine(const QString& raw);
 
 // Normalize a 3-number line ("x y z") the same way.
 QString normalizeXyzLine(const QString& raw);
+
+// Turn one card pose line ("x y z rx ry rz") into the line the SDK wants, and
+// report the matching HandEyeParam::poseType through poseTypeOut.
+//
+//   * poseFormat == EulerRpy — the SDK's own euler convention (static XYZ,
+//     R = Rz*Ry*Rx) — is passed through byte-identically (same output as
+//     normalizePoseLine) with poseType = 0.  That is the path every robot
+//     used before this parameter existed, so existing (validated) results
+//     cannot change.
+//   * Any other format is converted with TransformTools into a row-major 4x4
+//     (16 numbers) with poseType = 3.  The SDK has no axis-angle slot, so
+//     everything lands on the matrix type; no new rotation math is needed.
+//
+// Only 3-value rotation formats are accepted: the card always carries exactly
+// 6 numbers, so quaternion (4) and 3x3 matrix (9) inputs cannot be expressed
+// here and yield an empty string.  Returns empty for malformed input too.
+QString toSdkPoseLine(const QString& raw, TransformTools::RotationFormat fmt,
+                      TransformTools::AngleUnit unit, int& poseTypeOut);
+
+// Format label / one-line description, shared by the coordinate-transform page
+// and the hand-eye calibration page so the wording cannot drift apart.
+QString poseFormatName(TransformTools::RotationFormat fmt);
+QString poseFormatDescription(TransformTools::RotationFormat fmt);
+
+// A totalMeanError above this is worth telling the user about: a correct pose
+// format measures ~0..1 on our data, while reading UR's axis-angle vector as
+// euler measures ~30.  Advisory only — never blocks (see PROJECT.md 3).
+constexpr double kPoseFormatSuspectError = 5.0;
 
 // SDK return code -> Chinese message (HandEyeCalibrationMarker code space).
 QString errorText(int retCode);

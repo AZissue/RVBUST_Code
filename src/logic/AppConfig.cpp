@@ -53,6 +53,13 @@ void AppConfig::load()
     if (!m_data.contains("caliboard_error_threshold")) {
         m_data["caliboard_error_threshold"] = 5.0;
     }
+    // 手眼标定位姿格式预设：0 = 欧拉 RPY、0 = 度（= 改动前的行为）。
+    if (!m_data.contains("calib_pose_format")) {
+        m_data["calib_pose_format"] = 0;
+    }
+    if (!m_data.contains("calib_pose_angle_unit")) {
+        m_data["calib_pose_angle_unit"] = 0;
+    }
     if (!m_data.contains("ui_stall_threshold_ms")) {
         m_data["ui_stall_threshold_ms"] = 500;
     }
@@ -119,6 +126,44 @@ void AppConfig::setLastMode(bool eyeInHand, bool markerType, bool concentric)
     m_data["eye_in_hand"] = eyeInHand;
     m_data["marker_type"] = markerType;
     m_data["marker_concentric"] = concentric;
+    save();
+}
+
+// 读回来的值可能是旧版本写的、也可能被手改坏：先卡在 RotationFormat 的 0..6 里
+// （越界调 rotationValueCount 会抛异常），再要求它是 3 个旋转数的格式 ——
+// 卡片固定 6 个数，四元数(4)与 3x3 矩阵(9)在标定里根本表达不了。
+namespace {
+bool usableAsCalibrationPoseFormat(int raw)
+{
+    if (raw < 0 || raw > static_cast<int>(TransformTools::RotationFormat::RotationVector))
+        return false;
+    return TransformTools::rotationValueCount(
+               static_cast<TransformTools::RotationFormat>(raw)) == 3;
+}
+} // namespace
+
+TransformTools::RotationFormat AppConfig::calibPoseFormat() const
+{
+    const int raw = m_data.value("calib_pose_format", 0).toInt();
+    if (!usableAsCalibrationPoseFormat(raw))
+        return TransformTools::RotationFormat::EulerRpy;
+    return static_cast<TransformTools::RotationFormat>(raw);
+}
+
+TransformTools::AngleUnit AppConfig::calibPoseAngleUnit() const
+{
+    // 0 = 度（默认，与改动前一致），1 = 弧度。
+    return m_data.value("calib_pose_angle_unit", 0).toInt() == 1
+        ? TransformTools::AngleUnit::Radian : TransformTools::AngleUnit::Degree;
+}
+
+void AppConfig::setCalibPoseFormat(TransformTools::RotationFormat fmt,
+                                   TransformTools::AngleUnit unit)
+{
+    const int raw = static_cast<int>(fmt);
+    m_data["calib_pose_format"] = usableAsCalibrationPoseFormat(raw) ? raw : 0;
+    m_data["calib_pose_angle_unit"] =
+        unit == TransformTools::AngleUnit::Radian ? 1 : 0;
     save();
 }
 

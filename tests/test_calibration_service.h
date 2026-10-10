@@ -25,4 +25,18 @@ private slots:
     // 入口必须按 calibType 分派 —— 用户报告的"第 1 组机器人拍照位姿格式无效"
     // 就是"戳点标定被送到了标定板接口"的症状。
     void calibrateDispatchesOnCalibType();
+
+    // ── 位姿格式（卡片里 3 个旋转数该怎么读）──
+    // 欧拉 RPY 必须与 normalizePoseLine 逐字节相同：既有机器人（FANUC 等）
+    // 走的就是这条路，改格式功能不能动到它们已核定的结果。
+    void eulerRpyStaysOnTheOldPoseTypeZeroPath();
+    // UR 的轴角旋转矢量：卡片 3 个数不能当欧拉读，必须转成 16 数矩阵（poseType=3）。
+    void rotationVectorBecomesMatrix16();
+    // 四种 3 数格式 x 度/弧度：输出的 3x3 必须等于 TransformTools 的同一转换。
+    void everyThreeValueFormatMatchesTransformTools();
+    // 卡片只有 6 个数：四元数(4)/9 数矩阵在这里无法表示，应拒绝而不是抛异常。
+    void formatsTheCardCannotCarryAreRejected();
+    void toSdkPoseLineRejectsBadInput();
+    // 格式名要给界面和日志用：7 个都得有、且互不相同。
+    void poseFormatNamesAreDistinctAndComplete();
 };

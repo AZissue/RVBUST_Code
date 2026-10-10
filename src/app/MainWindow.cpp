@@ -342,6 +342,9 @@ void MainWindow::buildUi()
 
     // Tools panel (v2.0): non-modal, created once and shown on demand.
     m_toolsPanel = new ToolsPanel(this);
+    // 把主窗口持有的那一份 AppConfig 借给工具页：位姿格式预设只有一个真源，
+    // 否则工具页「应用」写的和主界面「计算」读的会是两个不同的实例。
+    m_toolsPanel->setAppConfig(&m_config);
 }
 
 // ── Signal/Slot Wiring ────────────────────────────────────────────────
@@ -1162,6 +1165,14 @@ void MainWindow::onCalibrate()
     params.eyeInHand = (m_eyeHandMode == EyeHandMode::EyeInHand);
     params.markerType =
         (m_markerType == MarkerType::ConcentricCircle) ? 1 : 0;
+    // 位姿格式（卡片里那 3 个旋转数怎么读）来自工具页「应用」过的全局预设 ——
+    // 这里不显示，但日志留一行，出问题时能回溯本次用的是哪种。
+    params.poseFormat = m_config.calibPoseFormat();
+    params.poseAngleUnit = m_config.calibPoseAngleUnit();
+    m_logger->info(QStringLiteral("本次标定位姿格式：%1 · %2")
+        .arg(CalibrationService::poseFormatName(params.poseFormat),
+             params.poseAngleUnit == TransformTools::AngleUnit::Radian
+                 ? QStringLiteral("弧度") : QStringLiteral("度")));
 
     const QString folder = m_data->saveDir();
     setBusy(QStringLiteral("计算中..."), ActionButtons::BusyTarget::Calc);
@@ -1212,6 +1223,18 @@ void MainWindow::onCalibrationFinished()
     m_logger->success(
         QStringLiteral("标定完成：总平均误差 %1 mm，使用 %2 组数据")
             .arg(r.totalMeanError, 0, 'f', 3).arg(r.usedCount));
+
+    // 位姿格式选错只会算错、不会报错（实测：格式对 ≈0，轴角当欧拉 ≈30），
+    // 所以偏大时给一条只提示不拦截的线索（PROJECT.md §3：质量告警不拦截）。
+    if (r.totalMeanError > CalibrationService::kPoseFormatSuspectError) {
+        m_logger->warning(QStringLiteral(
+            "总平均误差 %1 偏大 —— 位姿格式可能选错（当前预设：%2 · %3）。"
+            "到工具页「手眼标定」可点「试算各格式」对照，选对后点「应用」。")
+            .arg(r.totalMeanError, 0, 'g', 4)
+            .arg(CalibrationService::poseFormatName(m_config.calibPoseFormat()),
+                 m_config.calibPoseAngleUnit() == TransformTools::AngleUnit::Radian
+                     ? QStringLiteral("弧度") : QStringLiteral("度")));
+    }
 }
 
 // ── RobotWorker：机器人通道整体住在这条线程上（T-009）──────────────

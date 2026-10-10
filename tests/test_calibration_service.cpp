@@ -2,8 +2,27 @@
 
 #include <QtTest>
 
+#include <QSet>
+#include <array>
+#include <cmath>
+
 #include "logic/CalibrationService.h"
+#include "logic/TransformTools.h"
 #include "sdk/HandEyeSDKBridge.h"
+
+namespace {
+
+// toSdkPoseLine 的输出是逗号分隔的数值行；这里拆回 double 好逐项比对。
+std::vector<double> splitNumbers(const QString& line)
+{
+    std::vector<double> out;
+    const QStringList parts = line.split(QLatin1Char(','), Qt::SkipEmptyParts);
+    for (const QString& p : parts)
+        out.push_back(p.toDouble());
+    return out;
+}
+
+} // namespace
 
 void TestCalibrationService::normalizePoseLineAcceptsSpacesAndCommas()
 {
@@ -190,6 +209,167 @@ void TestCalibrationService::tcpTouchRequiresPoseOnlyForEyeInHand()
     QVERIFY(!r2.ok);
     QVERIFY2(!r2.error.contains(QStringLiteral("机器人拍照位姿")), qPrintable(r2.error));
     QVERIFY2(r2.error.contains(QStringLiteral("第 1 组相机目标点")), qPrintable(r2.error));
+}
+
+// ── 位姿格式 ────────────────────────────────────────────────────────
+
+// 既有机器人（FANUC 等）走的是 poseType=0 + 6 数欧拉这条路。加"位姿格式"参数
+// 以后这条路必须一个字节都没变 —— 否则已核定的"助手 = 官方 SDK"一致性就断了。
+void TestCalibrationService::eulerRpyStaysOnTheOldPoseTypeZeroPath()
+{
+    const QString raw = QStringLiteral("690.20,-63.13,424.72,137.91,11.32,173.11");
+    const QString old = CalibrationService::normalizePoseLine(raw);
+
+    for (const auto unit : { TransformTools::AngleUnit::Degree,
+                             TransformTools::AngleUnit::Radian }) {
+        int poseType = -99;
+        const QString line = CalibrationService::toSdkPoseLine(
+            raw, TransformTools::RotationFormat::EulerRpy, unit, poseType);
+        QCOMPARE(poseType, 0);
+        QCOMPARE(line, old);          // 逐字节相同，不是"数值接近"
+    }
+}
+
+// UR 的 rx/ry/rz 是轴角旋转矢量（示教器数值：|v| = 2.53 rad = 145°），
+// 不是欧拉角。当欧拉读 SDK 会"成功但算错"，所以必须转成矩阵。
+void TestCalibrationService::rotationVectorBecomesMatrix16()
+{
+    const QString raw = QStringLiteral(
+        "-208.7141,-232.9,880.1776,0.798727,1.697482,-1.697482");
+    int poseType = -99;
+    const QString line = CalibrationService::toSdkPoseLine(
+        raw, TransformTools::RotationFormat::RotationVector,
+        TransformTools::AngleUnit::Radian, poseType);
+    QVERIFY2(!line.isEmpty(), qPrintable(line));
+    QCOMPARE(poseType, 3);
+
+    const auto v = splitNumbers(line);
+    QCOMPARE(static_cast<int>(v.size()), 16);
+
+    // 平移三个数原样落在第 4 列；最后一行是 0 0 0 1。
+    QVERIFY(std::abs(v[3] - (-208.7141)) < 1e-6);
+    QVERIFY(std::abs(v[7] - (-232.9)) < 1e-6);
+    QVERIFY(std::abs(v[11] - 880.1776) < 1e-6);
+    for (const int i : { 12, 13, 14 })
+        QVERIFY(std::abs(v[static_cast<std::size_t>(i)]) < 1e-12);
+    QVERIFY(std::abs(v[15] - 1.0) < 1e-12);
+
+    // 3x3 就是 TransformTools 的旋转矢量转换（行主序）。
+    const auto rot = TransformTools::rotationVectorToRot(
+        0.798727, 1.697482, -1.697482, TransformTools::AngleUnit::Radian);
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 3; ++c) {
+            const double got = v[static_cast<std::size_t>(r * 4 + c)];
+            const double want = rot[static_cast<std::size_t>(r * 3 + c)];
+            QVERIFY2(std::abs(got - want) < 1e-8,
+                     qPrintable(QStringLiteral("row %1 col %2: %3 vs %4")
+                                    .arg(r).arg(c).arg(got, 0, 'g', 12).arg(want, 0, 'g', 12)));
+        }
+    }
+    // 不是单位阵（空旋转会掩盖"没转"这类错误）。
+    QVERIFY(std::abs(v[0] - 1.0) > 1e-3 || std::abs(v[1]) > 1e-3);
+}
+
+// 欧拉 RPY 不在这里测：它走 poseType=0 原样透传，"SDK 怎么解释这 6 个数"
+// 不由我们决定（见 eulerRpyStaysOnTheOldPoseTypeZeroPath）。
+void TestCalibrationService::everyThreeValueFormatMatchesTransformTools()
+{
+    const QString raw = QStringLiteral("10 20 30 0.5 -0.25 0.125");
+    const std::array<TransformTools::RotationFormat, 3> formats {
+        TransformTools::RotationFormat::EulerWpr,
+        TransformTools::RotationFormat::EulerZyxIntrinsic,
+        TransformTools::RotationFormat::RotationVector,
+    };
+
+    for (const auto fmt : formats) {
+        for (const auto unit : { TransformTools::AngleUnit::Degree,
+                                 TransformTools::AngleUnit::Radian }) {
+            int poseType = -99;
+            const QString line = CalibrationService::toSdkPoseLine(raw, fmt, unit, poseType);
+            QVERIFY2(!line.isEmpty(), qPrintable(line));
+            QCOMPARE(poseType, 3);
+
+            const auto v = splitNumbers(line);
+            QCOMPARE(static_cast<int>(v.size()), 16);
+
+            const auto rot = TransformTools::rotationFromValues(
+                fmt, unit, { 0.5, -0.25, 0.125 });
+            for (int r = 0; r < 3; ++r) {
+                for (int c = 0; c < 3; ++c) {
+                    const double got = v[static_cast<std::size_t>(r * 4 + c)];
+                    const double want = rot[static_cast<std::size_t>(r * 3 + c)];
+                    QVERIFY2(std::abs(got - want) < 1e-8,
+                             qPrintable(QStringLiteral("fmt %1 unit %2 row %3 col %4")
+                                            .arg(static_cast<int>(fmt))
+                                            .arg(static_cast<int>(unit))
+                                            .arg(r).arg(c)));
+                }
+            }
+        }
+    }
+}
+
+// 卡片永远是 6 个数（CaptureRecord::robotCapturePose），四元数要 4 个旋转数、
+// 3x3 矩阵要 9 个 —— 在卡片里表达不了。必须干净地拒绝，不能抛异常穿到
+// QtConcurrent 的工作线程里去（那会直接崩进程）。
+void TestCalibrationService::formatsTheCardCannotCarryAreRejected()
+{
+    const QString raw = QStringLiteral("10 20 30 0.5 -0.25 0.125");
+    for (const auto fmt : { TransformTools::RotationFormat::QuatWxyz,
+                            TransformTools::RotationFormat::QuatXyzw,
+                            TransformTools::RotationFormat::RotationMatrix9 }) {
+        int poseType = -99;
+        const QString line = CalibrationService::toSdkPoseLine(
+            raw, fmt, TransformTools::AngleUnit::Degree, poseType);
+        QVERIFY2(line.isEmpty(), qPrintable(line));
+        QCOMPARE(poseType, -99);      // 没转换就不许改调用方的变量
+    }
+}
+
+void TestCalibrationService::toSdkPoseLineRejectsBadInput()
+{
+    int poseType = -99;
+    const auto fmt = TransformTools::RotationFormat::RotationVector;
+
+    QVERIFY(CalibrationService::toSdkPoseLine(
+                QStringLiteral("1,2,3,4,5"), fmt,
+                TransformTools::AngleUnit::Radian, poseType).isEmpty());
+    QVERIFY(CalibrationService::toSdkPoseLine(
+                QStringLiteral("1,2,3,4,5,abc"), fmt,
+                TransformTools::AngleUnit::Radian, poseType).isEmpty());
+    // 中文逗号按卡片校验的规矩就是非法输入。
+    QVERIFY(CalibrationService::toSdkPoseLine(
+                QStringLiteral("1，2，3，4，5，6"), fmt,
+                TransformTools::AngleUnit::Radian, poseType).isEmpty());
+    QVERIFY(CalibrationService::toSdkPoseLine(
+                QString(), fmt, TransformTools::AngleUnit::Radian, poseType).isEmpty());
+}
+
+void TestCalibrationService::poseFormatNamesAreDistinctAndComplete()
+{
+    const std::array<TransformTools::RotationFormat, 7> all {
+        TransformTools::RotationFormat::EulerRpy,
+        TransformTools::RotationFormat::EulerWpr,
+        TransformTools::RotationFormat::EulerZyxIntrinsic,
+        TransformTools::RotationFormat::QuatWxyz,
+        TransformTools::RotationFormat::QuatXyzw,
+        TransformTools::RotationFormat::RotationMatrix9,
+        TransformTools::RotationFormat::RotationVector,
+    };
+    QSet<QString> seen;
+    for (const auto fmt : all) {
+        const QString name = CalibrationService::poseFormatName(fmt);
+        QVERIFY2(!name.isEmpty(), "格式名不能为空");
+        QVERIFY2(!seen.contains(name), qPrintable(QStringLiteral("格式名重复：") + name));
+        seen.insert(name);
+        QVERIFY2(!CalibrationService::poseFormatDescription(fmt).isEmpty(),
+                 qPrintable(QStringLiteral("格式说明不能为空：") + name));
+    }
+    QCOMPARE(seen.size(), 7);
+    // UR 的轴角必须说清楚是"旋转矢量"，否则界面上没人认得出该选哪个。
+    QVERIFY(CalibrationService::poseFormatName(
+                TransformTools::RotationFormat::RotationVector)
+                .contains(QStringLiteral("旋转矢量")));
 }
 
 void TestCalibrationService::calibrateDispatchesOnCalibType()

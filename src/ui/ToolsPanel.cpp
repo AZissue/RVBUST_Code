@@ -1,6 +1,7 @@
 #include "ui/ToolsPanel.h"
 
 #include "logic/GeometryTools.h"
+#include "logic/AppConfig.h"
 #include "logic/CalibrationService.h"
 #include "logic/PixelTo3DService.h"
 #include "logic/PlyPointReader.h"
@@ -25,6 +26,7 @@
 #include <QImage>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMessageBox>
 #include <QPainter>
 #include <QPaintEvent>
 #include <QPolygon>
@@ -39,6 +41,17 @@
 #include <vector>
 
 namespace {
+
+// 手眼标定能用的位姿格式：卡片固定 6 个数（3 个平移 + 3 个旋转），所以只有
+// "3 个旋转数"的格式能进来 —— 四元数(4)与 3x3 矩阵(9)在卡片里表示不了。
+// 顺序 = 下拉框顺序。**注意索引不等于枚举值**（枚举里夹着四元数/矩阵），
+// 所以这里必须查表，不能像坐标转换页那样 static_cast。
+const std::array<TransformTools::RotationFormat, 4> kCalibPoseFormats {
+    TransformTools::RotationFormat::EulerRpy,
+    TransformTools::RotationFormat::EulerWpr,
+    TransformTools::RotationFormat::EulerZyxIntrinsic,
+    TransformTools::RotationFormat::RotationVector,
+};
 
 QLineEdit* makeTextInput(QWidget* parent)
 {
@@ -146,6 +159,77 @@ void ToolsPanel::buildUi()
     connect(m_calibWatcher,
             &QFutureWatcher<CalibrationService::Result>::finished,
             this, &ToolsPanel::onCalibrationFinished);
+    m_calibTryAllWatcher = new QFutureWatcher<QString>(this);
+    connect(m_calibTryAllWatcher, &QFutureWatcher<QString>::finished,
+            this, &ToolsPanel::onTryAllFinished);
+}
+
+void ToolsPanel::setAppConfig(AppConfig* cfg)
+{
+    m_config = cfg;
+    // 预设读进来之后把下拉框摆到预设那一项上，并显示"已应用"。
+    if (m_config && m_calibFormatCombo) {
+        const auto fmt = m_config->calibPoseFormat();
+        const int idx = static_cast<int>(
+            std::find(kCalibPoseFormats.begin(), kCalibPoseFormats.end(), fmt)
+            - kCalibPoseFormats.begin());
+        if (idx >= 0 && idx < static_cast<int>(kCalibPoseFormats.size()))
+            m_calibFormatCombo->setCurrentIndex(idx);
+        m_calibAngleUnitCombo->setCurrentIndex(
+            m_config->calibPoseAngleUnit() == TransformTools::AngleUnit::Radian ? 1 : 0);
+        updateCalibFormatHint();
+    }
+}
+
+TransformTools::RotationFormat ToolsPanel::currentCalibPoseFormat() const
+{
+    const int idx = m_calibFormatCombo ? m_calibFormatCombo->currentIndex() : 0;
+    if (idx < 0 || idx >= static_cast<int>(kCalibPoseFormats.size()))
+        return TransformTools::RotationFormat::EulerRpy;
+    return kCalibPoseFormats[static_cast<std::size_t>(idx)];
+}
+
+TransformTools::AngleUnit ToolsPanel::currentCalibAngleUnit() const
+{
+    return (m_calibAngleUnitCombo && m_calibAngleUnitCombo->currentIndex() == 1)
+        ? TransformTools::AngleUnit::Radian : TransformTools::AngleUnit::Degree;
+}
+
+void ToolsPanel::updateCalibFormatHint()
+{
+    if (!m_calibFormatLabel)
+        return;
+
+    const auto fmt = currentCalibPoseFormat();
+    const auto unit = currentCalibAngleUnit();
+    QString state;
+    if (!m_config) {
+        state = QStringLiteral("（未接上配置，本次设置不会保存）");
+    } else if (fmt == m_config->calibPoseFormat()
+               && unit == m_config->calibPoseAngleUnit()) {
+        state = QStringLiteral("已应用为全局预设：主界面「计算」也按此格式，重启后仍生效");
+    } else {
+        // 改了下拉框但没点「应用」：说清楚谁会跟着变、谁不会。
+        state = QStringLiteral("未应用 —— 主界面「计算」仍按「%1 · %2」；本页「计算」按上面选的")
+                    .arg(CalibrationService::poseFormatName(m_config->calibPoseFormat()),
+                         m_config->calibPoseAngleUnit() == TransformTools::AngleUnit::Radian
+                             ? QStringLiteral("弧度") : QStringLiteral("度"));
+    }
+    m_calibFormatLabel->setText(
+        CalibrationService::poseFormatDescription(fmt) + QStringLiteral("\n") + state);
+}
+
+void ToolsPanel::applyCalibPoseFormat()
+{
+    if (!m_config)
+        return;
+    m_config->setCalibPoseFormat(currentCalibPoseFormat(), currentCalibAngleUnit());
+    updateCalibFormatHint();
+    m_calibHint->clear();
+    emit logMessage(QStringLiteral("[标定] 位姿格式预设已应用：%1 · %2")
+                        .arg(CalibrationService::poseFormatName(currentCalibPoseFormat()),
+                             currentCalibAngleUnit() == TransformTools::AngleUnit::Radian
+                                 ? QStringLiteral("弧度") : QStringLiteral("度")));
 }
 
 void ToolsPanel::buildDistancePage(QStackedWidget* stack)
@@ -682,6 +766,34 @@ void ToolsPanel::buildCalibrationPage(QStackedWidget* stack)
     m_calibAngleUnitCombo->setStyleSheet(Theme::comboBoxStyle());
     form->addRow(QStringLiteral("位姿角度单位"), m_calibAngleUnitCombo);
 
+    // 位姿格式：卡片里那 3 个旋转数该怎么读。以前这里没有这一项，卡片的值被
+    // 无条件当欧拉角处理 —— UR 的轴角位姿因此会"算成功但算错"（残差 ≈30）。
+    auto* fmtRow = new QHBoxLayout();
+    fmtRow->setSpacing(8);
+    m_calibFormatCombo = new ArrowComboBox(group);
+    m_calibFormatCombo->setObjectName(QStringLiteral("calib_pose_format"));
+    for (const auto fmt : kCalibPoseFormats)
+        m_calibFormatCombo->addItem(CalibrationService::poseFormatName(fmt));
+    m_calibFormatCombo->setStyleSheet(Theme::comboBoxStyle());
+    fmtRow->addWidget(m_calibFormatCombo, 1);
+    m_calibApplyBtn = new QPushButton(QStringLiteral("应用"), group);
+    m_calibApplyBtn->setObjectName(QStringLiteral("calib_apply_format"));
+    m_calibApplyBtn->setStyleSheet(Theme::secondaryButtonStyle());
+    m_calibApplyBtn->setToolTip(QStringLiteral(
+        "把这个格式设为全局预设：主界面「计算」按它算，重启后仍生效"));
+    fmtRow->addWidget(m_calibApplyBtn);
+    // 包一层 QWidget：整行的按需显隐靠 labelForField(widget)，布局本身不认。
+    m_calibFormatRow = new QWidget(group);
+    m_calibFormatRow->setLayout(fmtRow);
+    form->addRow(QStringLiteral("位姿格式"), m_calibFormatRow);
+
+    m_calibFormatLabel = new QLabel(group);
+    m_calibFormatLabel->setObjectName(QStringLiteral("calib_format_note"));
+    m_calibFormatLabel->setStyleSheet(QStringLiteral(
+        "color: %1; font-size: %2px;").arg(Theme::TEXT_HINT).arg(Theme::FONT_HINT));
+    m_calibFormatLabel->setWordWrap(true);
+    form->addRow(QString(), m_calibFormatLabel);
+
     m_calibAutoRemove = new QCheckBox(
         QStringLiteral("自动剔除大误差数据（SDK 内置）"), group);
     m_calibAutoRemove->setChecked(true);
@@ -701,6 +813,14 @@ void ToolsPanel::buildCalibrationPage(QStackedWidget* stack)
     auto* btnRow = new QHBoxLayout();
     btnRow->setSpacing(8);
     btnRow->addStretch();
+    // 位姿格式选错不会报错、只会算错，所以给一个"把各格式都算一遍看误差"的出口。
+    // 这就是官方那个"自动推断欧拉顺序"的诚实版：不猜，把误差摆出来由人定。
+    m_calibTryAllBtn = new QPushButton(QStringLiteral("试算各格式"), group);
+    m_calibTryAllBtn->setObjectName(QStringLiteral("calib_try_all"));
+    m_calibTryAllBtn->setStyleSheet(Theme::secondaryButtonStyle());
+    m_calibTryAllBtn->setToolTip(QStringLiteral(
+        "同一份数据把 4 种位姿格式 x 度/弧度 各算一遍，按总平均误差排序"));
+    btnRow->addWidget(m_calibTryAllBtn);
     // 用户反馈 9：在线（当前会话）路径已知，一键算并把用的路径显示出来。
     m_calibSessionBtn = new QPushButton(QStringLiteral("用当前会话"), group);
     m_calibSessionBtn->setObjectName(QStringLiteral("calib_session_btn"));
@@ -742,6 +862,14 @@ void ToolsPanel::buildCalibrationPage(QStackedWidget* stack)
         if (!m_calibResult->toPlainText().isEmpty())
             QApplication::clipboard()->setText(m_calibResult->toPlainText());
     });
+    connect(m_calibApplyBtn, &QPushButton::clicked,
+            this, &ToolsPanel::applyCalibPoseFormat);
+    connect(m_calibTryAllBtn, &QPushButton::clicked,
+            this, &ToolsPanel::runTryAllPoseFormats);
+    for (QComboBox* combo : { m_calibFormatCombo, m_calibAngleUnitCombo })
+        connect(combo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                this, [this](int) { updateCalibFormatHint(); });
+    updateCalibFormatHint();
     for (QLineEdit* edit : { m_calibDir, m_calibPoseFile, m_calibCameraFile, m_calibTcpFile })
         connect(edit, &QLineEdit::textChanged, this, [this](const QString&) {
             m_calibHint->clear();
@@ -787,6 +915,12 @@ void ToolsPanel::updateCalibrationModeVisibility()
     rowVisible(m_calibMarkerCombo, !tcp);
     rowVisible(m_calibPoseUnitCombo, needPose);
     rowVisible(m_calibAngleUnitCombo, needPose);
+    // 位姿格式那两行跟"有没有拍照位姿这一列"同命；没有位姿数据时"试算各格式"
+    // 也没意义（按钮在共享按钮行里，隐藏不了，改成禁用）。
+    rowVisible(m_calibFormatRow, needPose);
+    rowVisible(m_calibFormatLabel, needPose);
+    if (m_calibTryAllBtn)
+        m_calibTryAllBtn->setEnabled(needPose);
 
     // 位姿文件的默认名随方式变（会话导出用哪份文件就填哪份），用户自己改过的不动。
     const QString cur = m_calibPoseFile->text().trimmed();
@@ -807,7 +941,10 @@ CalibrationService::Params ToolsPanel::calibParams() const
     params.eyeInHand = m_calibEyeCombo->currentIndex() == 1;
     params.markerType = m_calibMarkerCombo->currentIndex() == 0 ? 1 : 0;
     params.isPoseMm = m_calibPoseUnitCombo->currentIndex() == 0;
-    params.isPoseDegree = m_calibAngleUnitCombo->currentIndex() == 0;
+    // 本页「计算」按眼前选的那一项算（所见即所算）；「应用」只决定全局预设，
+    // 也就是主界面「计算」用什么。两者可以暂时不一致，提示行会写清楚。
+    params.poseFormat = currentCalibPoseFormat();
+    params.poseAngleUnit = currentCalibAngleUnit();
     params.autoRemoveLargeError = m_calibAutoRemove->isChecked();
     return params;
 }
@@ -923,17 +1060,22 @@ void ToolsPanel::clearSessionData()
     m_calibResult->clear();
 }
 
-void ToolsPanel::updateCalibrationResult()
+// 凑齐一次标定要的三列数据：优先「当前会话」的内存三列，否则按路径从磁盘读。
+// 失败时把中文原因写进 m_calibHint 并返回 false（调用方直接 return，不用再管提示）。
+bool ToolsPanel::gatherCalibrationInput(QString& folder,
+                                        std::vector<QString>& cameraLines,
+                                        std::vector<QString>& poseLines,
+                                        std::vector<QString>& tcpLines)
 {
-    if (m_calibWatcher->isRunning())
-        return;
     if (m_sessionActive) {
-        // 会话模式：「计算」重算当前会话（用内存里的三列，不是磁盘上的文件）。
-        m_calibHint->setText(QStringLiteral("当前会话：%1（%2 组数据）")
-            .arg(m_sessionFolder).arg(m_sessionCamera.size()));
-        runCalibration(m_sessionFolder, m_sessionCamera, m_sessionPoses, m_sessionTcp);
-        return;
+        // 会话模式：用内存里的三列（不是磁盘上的文件 —— 那边可能已被清理）。
+        folder = m_sessionFolder;
+        cameraLines = m_sessionCamera;
+        poseLines = m_sessionPoses;
+        tcpLines = m_sessionTcp;
+        return true;
     }
+
     m_calibHint->clear();
     auto fail = [this](const QString& message) {
         m_calibHint->setText(message);
@@ -942,7 +1084,7 @@ void ToolsPanel::updateCalibrationResult()
     const QString dir = m_calibDir->text().trimmed();
     if (dir.isEmpty()) {
         fail(QStringLiteral("请先选择数据文件夹"));
-        return;
+        return false;
     }
 
     const CalibrationService::Params params = calibParams();
@@ -975,18 +1117,34 @@ void ToolsPanel::updateCalibrationResult()
         return true;
     };
 
-    std::vector<QString> cameraLines, poseLines, tcpLines;
     if (tcp) {
         if (!readLines(m_calibCameraFile, QStringLiteral("相机点位文件"), cameraLines))
-            return;
+            return false;
         if (!readLines(m_calibTcpFile, QStringLiteral("戳点文件"), tcpLines))
-            return;
+            return false;
     }
     if (needPose
             && !readLines(m_calibPoseFile, QStringLiteral("位姿文件"), poseLines))
+        return false;
+
+    folder = dir;
+    return true;
+}
+
+void ToolsPanel::updateCalibrationResult()
+{
+    if (m_calibWatcher->isRunning() || m_calibTryAllWatcher->isRunning())
         return;
 
-    runCalibration(dir, cameraLines, poseLines, tcpLines);
+    QString folder;
+    std::vector<QString> cameraLines, poseLines, tcpLines;
+    if (!gatherCalibrationInput(folder, cameraLines, poseLines, tcpLines))
+        return;
+    if (m_sessionActive) {
+        m_calibHint->setText(QStringLiteral("当前会话：%1（%2 组数据）")
+            .arg(folder).arg(cameraLines.size()));
+    }
+    runCalibration(folder, cameraLines, poseLines, tcpLines);
 }
 
 void ToolsPanel::onCalibrationFinished()
@@ -1001,6 +1159,141 @@ void ToolsPanel::onCalibrationFinished()
     }
 
     m_calibResult->setPlainText(CalibrationService::formatResult(r));
+
+    // 位姿格式选错不会报错、只会算错（实测：格式对 ≈0，UR 的轴角当欧拉 ≈30），
+    // 所以给一条只提示、不拦截的线索（PROJECT.md §3：质量告警不得拦截）。
+    if (r.totalMeanError > CalibrationService::kPoseFormatSuspectError) {
+        m_calibHint->setText(QStringLiteral(
+            "总平均误差 %1 偏大 —— 位姿格式可能选错（当前：%2 · %3）。"
+            "可点「试算各格式」对照一下。")
+            .arg(r.totalMeanError, 0, 'g', 4)
+            .arg(CalibrationService::poseFormatName(currentCalibPoseFormat()),
+                 currentCalibAngleUnit() == TransformTools::AngleUnit::Radian
+                     ? QStringLiteral("弧度") : QStringLiteral("度")));
+    }
+}
+
+void ToolsPanel::runTryAllPoseFormats()
+{
+    if (m_calibWatcher->isRunning() || m_calibTryAllWatcher->isRunning())
+        return;
+
+    QString folder;
+    std::vector<QString> cameraLines, poseLines, tcpLines;
+    if (!gatherCalibrationInput(folder, cameraLines, poseLines, tcpLines))
+        return;
+
+    const CalibrationService::Params base = calibParams();
+    // 眼在手外的戳点标定根本不用机器人拍照位姿（SDK 收到的是空），
+    // 格式怎么选都不影响结果 —— 试算 8 遍只会得到 8 行一样的数，别误导。
+    if (base.calibType == CalibType::TcpTouch && !base.eyeInHand) {
+        m_calibHint->setText(QStringLiteral(
+            "眼在手外的戳点标定不使用机器人拍照位姿，位姿格式对结果没有影响"));
+        return;
+    }
+    if (poseLines.empty()) {
+        m_calibHint->setText(QStringLiteral(
+            "试算各格式需要机器人拍照位姿：当前没有这一列数据"));
+        return;
+    }
+
+    // 标定板模式每种组合都要重跑一遍识别（N 帧 × 8），现场可能几分钟。
+    if (base.calibType == CalibType::Marker) {
+        const auto answer = QMessageBox::question(
+            this, QStringLiteral("试算各格式"),
+            QStringLiteral(
+                "标定板模式下每一种组合都要把识别重跑一遍（共 8 次），"
+                "数据多时可能需要几分钟。期间界面仍可操作，但请勿关闭程序。\n\n"
+                "现在开始试算吗？"),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
+        if (answer != QMessageBox::Yes)
+            return;
+    }
+
+    const TransformTools::RotationFormat preset = m_config
+        ? m_config->calibPoseFormat() : base.poseFormat;
+    const TransformTools::AngleUnit presetUnit = m_config
+        ? m_config->calibPoseAngleUnit() : base.poseAngleUnit;
+
+    m_calibTryAllBtn->setEnabled(false);
+    m_calibTryAllBtn->setText(QStringLiteral("试算中..."));
+    m_calibHint->setText(QStringLiteral("正在试算 4 种格式 × 度/弧度 …（界面不卡）"));
+
+    m_calibTryAllWatcher->setFuture(QtConcurrent::run(
+        [folder, cameraLines, poseLines, tcpLines, base, preset, presetUnit]() {
+            struct Row {
+                TransformTools::RotationFormat fmt;
+                TransformTools::AngleUnit unit;
+                bool ok = false;
+                double mean = 0.0;
+                QString error;
+            };
+            std::vector<Row> rows;
+            rows.reserve(8);
+            for (const auto fmt : kCalibPoseFormats) {
+                for (const auto unit : { TransformTools::AngleUnit::Degree,
+                                         TransformTools::AngleUnit::Radian }) {
+                    CalibrationService::Params p = base;
+                    p.poseFormat = fmt;
+                    p.poseAngleUnit = unit;
+                    const CalibrationService::Result r = CalibrationService::calibrate(
+                        folder, cameraLines, poseLines, tcpLines, p);
+                    rows.push_back(Row{ fmt, unit, r.ok, r.totalMeanError, r.error });
+                }
+            }
+            // 升序排总平均误差，失败的一律沉底（误差值本身没有意义）。
+            std::stable_sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
+                if (a.ok != b.ok)
+                    return a.ok;
+                return a.mean < b.mean;
+            });
+
+            auto unitName = [](TransformTools::AngleUnit u) {
+                return u == TransformTools::AngleUnit::Radian
+                    ? QStringLiteral("弧度") : QStringLiteral("度");
+            };
+
+            QString out = QStringLiteral("── 试算各格式（同一份数据，共 %1 种组合）──\n")
+                              .arg(rows.size());
+            const Row* best = nullptr;
+            for (const Row& row : rows) {
+                if (!row.ok) {
+                    out += QStringLiteral("%1 · %2  失败：%3\n")
+                               .arg(CalibrationService::poseFormatName(row.fmt),
+                                    unitName(row.unit), row.error);
+                    continue;
+                }
+                if (!best)
+                    best = &row;
+                const bool isPreset = row.fmt == preset && row.unit == presetUnit;
+                out += QStringLiteral("%1 · %2  总平均误差 %3%4\n")
+                           .arg(CalibrationService::poseFormatName(row.fmt),
+                                unitName(row.unit),
+                                QString::number(row.mean, 'g', 4),
+                                isPreset ? QStringLiteral("  ←当前预设") : QString());
+            }
+            if (best) {
+                out += QStringLiteral(
+                    "\n误差最小的组合最贴近卡片的真实格式：%1 · %2。\n"
+                    "未自动改动任何设置 —— 确认后在工具页选好并点「应用」才会生效。")
+                    .arg(CalibrationService::poseFormatName(best->fmt),
+                         unitName(best->unit));
+            }
+            return out;
+        }));
+}
+
+void ToolsPanel::onTryAllFinished()
+{
+    m_calibTryAllBtn->setEnabled(true);
+    m_calibTryAllBtn->setText(QStringLiteral("试算各格式"));
+    m_calibHint->clear();
+    const QString report = m_calibTryAllWatcher->result();
+    // 追加而不是覆盖：用户可能正拿上一次的结果对矩阵。
+    QString text = m_calibResult->toPlainText();
+    if (!text.isEmpty())
+        text += QStringLiteral("\n\n");
+    m_calibResult->setPlainText(text + report);
 }
 
 void ToolsPanel::buildTransformPage(QStackedWidget* stack)

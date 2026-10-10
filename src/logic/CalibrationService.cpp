@@ -71,6 +71,89 @@ QString normalizeXyzLine(const QString& raw)
         .arg(r.values[2], 0, 'g', 10);
 }
 
+QString toSdkPoseLine(const QString& raw, TransformTools::RotationFormat fmt,
+                      TransformTools::AngleUnit unit, int& poseTypeOut)
+{
+    const auto r = ToolInputParser::parseNumberList(raw.toStdString(), 6);
+    if (r.status != ToolInputParser::ParseStatus::Ok)
+        return {};
+
+    if (fmt == TransformTools::RotationFormat::EulerRpy) {
+        poseTypeOut = 0;         // euler x y z rx ry rz — 与改动前逐字节一致
+        return normalizePoseLine(raw);
+    }
+
+    // 卡片只有 3 个旋转数，四元数(4)与 3x3 矩阵(9)在这里无法表示。
+    if (TransformTools::rotationValueCount(fmt) != 3)
+        return {};
+
+    const std::vector<double> rot{ r.values[3], r.values[4], r.values[5] };
+    const TransformTools::Mat4 m = TransformTools::poseToMat4(
+        r.values[0], r.values[1], r.values[2], fmt, unit, rot);
+
+    QString out;
+    for (int i = 0; i < 16; ++i) {
+        if (i)
+            out += QLatin1Char(',');
+        out += QString::number(m[static_cast<std::size_t>(i)], 'g', 10);
+    }
+    poseTypeOut = 3;             // matrix, row-major 16 values
+    return out;
+}
+
+QString poseFormatName(TransformTools::RotationFormat fmt)
+{
+    switch (fmt) {
+    case TransformTools::RotationFormat::EulerRpy:
+        return QStringLiteral("欧拉角 RPY（Static XYZ）");
+    case TransformTools::RotationFormat::EulerWpr:
+        return QStringLiteral("欧拉角 WPR（FANUC / KUKA ABC）");
+    case TransformTools::RotationFormat::EulerZyxIntrinsic:
+        return QStringLiteral("欧拉角 ZYX 内旋（Rx·Ry·Rz）");
+    case TransformTools::RotationFormat::QuatWxyz:
+        return QStringLiteral("四元数（w x y z）");
+    case TransformTools::RotationFormat::QuatXyzw:
+        return QStringLiteral("四元数（x y z w）");
+    case TransformTools::RotationFormat::RotationMatrix9:
+        return QStringLiteral("旋转矩阵（3×3，行主序）");
+    case TransformTools::RotationFormat::RotationVector:
+        return QStringLiteral("旋转矢量（轴角，UR 优傲）");
+    }
+    return QStringLiteral("未知格式");
+}
+
+QString poseFormatDescription(TransformTools::RotationFormat fmt)
+{
+    switch (fmt) {
+    case TransformTools::RotationFormat::EulerRpy:
+        return QStringLiteral(
+            "Static XYZ / RPY（外旋）：R = Rz·Ry·Rx，按 (rx, ry, rz) = (X, Y, Z) 直填；"
+            "Yaskawa 安川 RX/RY/RZ、珞石（官方 SDK 标 XYZ 欧拉角，单位弧度）、"
+            "FANUC 标准手册（W绕X、P绕Y、R绕Z）均按此直填");
+    case TransformTools::RotationFormat::EulerWpr:
+        return QStringLiteral(
+            "按 (W, P, R) 直填：R = Rz(W)·Ry(P)·Rx(R)，即角度顺序 = 绕 Z、Y、X；"
+            "KUKA ABC 同此顺序；RVC 官方软件导出的 FANUC 位姿文件实测适用");
+    case TransformTools::RotationFormat::EulerZyxIntrinsic:
+        return QStringLiteral(
+            "ZYX 内旋：R = Rx·Ry·Rz，按 (rx, ry, rz) = (X, Y, Z) 输入；"
+            "与 Static XYZ（Rz·Ry·Rx）一般不相等");
+    case TransformTools::RotationFormat::QuatWxyz:
+        return QStringLiteral(
+            "四元数顺序 w x y z（标量在前）；ABB（RAPID Q1..Q4）、"
+            "RVC HandEyeSDK poseType=1");
+    case TransformTools::RotationFormat::QuatXyzw:
+        return QStringLiteral(
+            "四元数顺序 x y z w（标量在后）；ROS、RVC HandEyeSDK poseType=2");
+    case TransformTools::RotationFormat::RotationMatrix9:
+        return QStringLiteral("3×3 旋转矩阵，行主序 9 个值");
+    case TransformTools::RotationFormat::RotationVector:
+        return QStringLiteral(
+            "旋转矢量（轴角）：方向 = 转轴，长度 = 转角；UR 优傲，长度单位随角度单位");
+    }
+    return {};
+}
+
 QString errorText(int retCode)
 {
     switch (retCode) {
@@ -165,6 +248,8 @@ Result calibrateMarker(const QString& folder,
     };
 
     QStringList poseOut;
+    // 与 toSdkPoseLine 的规则一致：欧拉 RPY 走 SDK 的 poseType=0 老路，其余格式转矩阵。
+    int poseType = params.poseFormat == TransformTools::RotationFormat::EulerRpy ? 0 : 3;
     for (int i = 0; i < static_cast<int>(poseLines.size()); ++i) {
         const QString name = QStringLiteral("%1").arg(i + 1, 4, 10, QLatin1Char('0'));
         const QString srcPng = QStringLiteral("%1/%2.png").arg(folder).arg(i + 1);
@@ -178,7 +263,8 @@ Result calibrateMarker(const QString& folder,
                             .arg(QFileInfo(srcPly).fileName());
             return out;
         }
-        const QString norm = normalizePoseLine(poseLines[static_cast<std::size_t>(i)]);
+        const QString norm = toSdkPoseLine(poseLines[static_cast<std::size_t>(i)],
+                                           params.poseFormat, params.poseAngleUnit, poseType);
         if (norm.isEmpty()) {
             cleanup();
             out.error = QStringLiteral("第 %1 组机器人拍照位姿格式无效（应为 6 个数值）")
@@ -197,11 +283,11 @@ Result calibrateMarker(const QString& folder,
     }
 
     HandEyeParam param{};
-    param.poseType = 0;   // euler x y z rx ry rz
+    param.poseType = poseType;         // 0 = euler x y z rx ry rz, 3 = 矩阵 16 数
     param.markerType = params.markerType;
     param.isPointCloudMm = true;       // our PLY files are mm
     param.isPoseMm = params.isPoseMm;
-    param.isPoseDegree = params.isPoseDegree;
+    param.isPoseDegree = params.poseAngleUnit == TransformTools::AngleUnit::Degree;
     param.isEyeInHand = params.eyeInHand;
     param.autoRemoveLargeErrorData = params.autoRemoveLargeError;
     for (int i = 0; i < 100; ++i)
@@ -270,6 +356,8 @@ Result calibrateTcpTouch(const std::vector<QString>& cameraLines,
     }
 
     QStringList camOut, tcpOut, poseOut;
+    // 眼在手外没有拍照位姿，poseType 对 SDK 无意义；仍按格式算出来保持一致。
+    int poseType = params.poseFormat == TransformTools::RotationFormat::EulerRpy ? 0 : 3;
     const int n = static_cast<int>(cameraLines.size());
     for (int i = 0; i < n; ++i) {
         const QString cam = normalizeXyzLine(cameraLines[static_cast<std::size_t>(i)]);
@@ -287,7 +375,9 @@ Result calibrateTcpTouch(const std::vector<QString>& cameraLines,
         tcpOut.push_back(tcp);
 
         if (params.eyeInHand) {
-            const QString pose = normalizePoseLine(poseLines[static_cast<std::size_t>(i)]);
+            const QString pose = toSdkPoseLine(poseLines[static_cast<std::size_t>(i)],
+                                               params.poseFormat, params.poseAngleUnit,
+                                               poseType);
             if (pose.isEmpty()) {
                 out.error = QStringLiteral("第 %1 组机器人拍照位姿格式无效（应为 6 个数值）")
                                 .arg(i + 1);
@@ -318,11 +408,11 @@ Result calibrateTcpTouch(const std::vector<QString>& cameraLines,
     }
 
     HandEyeParam param{};
-    param.poseType = 0;   // euler x y z rx ry rz
+    param.poseType = poseType;         // 0 = euler x y z rx ry rz, 3 = 矩阵 16 数
     param.markerType = params.markerType;   // 戳点标定忽略该参数
     param.isPointCloudMm = true;
     param.isPoseMm = params.isPoseMm;
-    param.isPoseDegree = params.isPoseDegree;
+    param.isPoseDegree = params.poseAngleUnit == TransformTools::AngleUnit::Degree;
     param.isEyeInHand = params.eyeInHand;
     param.autoRemoveLargeErrorData = params.autoRemoveLargeError;
     for (int i = 0; i < 100; ++i)
