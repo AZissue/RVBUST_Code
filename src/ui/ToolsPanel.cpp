@@ -1285,8 +1285,10 @@ void ToolsPanel::runTryAllPoseFormats()
 
 void ToolsPanel::onTryAllFinished()
 {
-    m_calibTryAllBtn->setEnabled(true);
+    // 恢复按钮状态要走同一处判据：眼在手外 + 戳点标定下这个按钮本该是禁用的，
+    // 无条件 setEnabled(true) 会把它放出来。
     m_calibTryAllBtn->setText(QStringLiteral("试算各格式"));
+    updateCalibrationModeVisibility();
     m_calibHint->clear();
     const QString report = m_calibTryAllWatcher->result();
     // 追加而不是覆盖：用户可能正拿上一次的结果对矩阵。
