@@ -126,19 +126,26 @@ class FixedMultiCamWorkflow(WorkflowBase):
         return True, f"标定帧 {frame.camera_name} 已添加"
 
     def detect_markers(self) -> Tuple[bool, str]:
-        """对所有标定帧检测标记。"""
+        """对所有标定帧检测标记。
+
+        include_invalid=True：全量结果（含 3D 无效标记）存 frame.markers_all
+        供 UI 红/绿圈显示；过滤后的有效标记存 frame.markers，标定消费不变。
+        """
         if self._state != self.STATE_CALIBRATING:
             return False, "当前不在标定阶段"
         if not self._frames_calib:
             return False, "无标定帧，请先拍摄"
         total = 0
         for cid, frame in self._frames_calib.items():
-            markers = self.marker_detector.detect_3d(
+            markers_all = self.marker_detector.detect_3d(
                 frame.image_np,
                 pointmap=frame.pointmap,
                 rvc_image=frame.rvc_image,
                 offline_ply_path=frame.offline_pointmap_path,
+                include_invalid=True,
             )
+            frame.markers_all = markers_all
+            markers = [m for m in markers_all if m.get('valid_3d', True)]
             frame.markers = markers
             # 标定板模式：缓存位姿与规格，供位姿法标定使用
             if self.marker_detector.is_board_mode():

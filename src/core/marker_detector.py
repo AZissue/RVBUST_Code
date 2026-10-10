@@ -181,7 +181,7 @@ class MarkerDetector:
             return cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
         return np.ascontiguousarray(image).copy()
 
-    def detect_3d(self, image_np: np.ndarray, pointmap: 'RVC.PointMap' = None, rvc_image: 'RVC.Image' = None, offline_ply_path: str = None) -> List[Dict]:
+    def detect_3d(self, image_np: np.ndarray, pointmap: 'RVC.PointMap' = None, rvc_image: 'RVC.Image' = None, offline_ply_path: str = None, include_invalid: bool = False) -> List[Dict]:
         """从 2D numpy 图像检测标记物并提取 3D 坐标。
 
         支持两种模式：
@@ -189,6 +189,12 @@ class MarkerDetector:
         - 离线模式：提供 offline_ply_path（PLY 文件路径）
 
         根据当前 marker_type 自动分发到编码圆检测或标定板检测。
+
+        Args:
+            include_invalid: 仅编码圆模式生效。True 时 3D 提取失败的标记
+                也保留在返回列表中（带 valid_3d=False、无 x_3d 字段），
+                供 UI 以红圈显示"2D 检出但 3D 无深度"；False（默认）丢弃
+                无效标记，行为与历史版本一致，标定/拼接路径应保持默认。
         """
         self.last_board_result = None
 
@@ -198,9 +204,10 @@ class MarkerDetector:
             return result.get('markers', [])
 
         # 编码圆模式（原有逻辑）
-        return self._detect_3d_coded_circle(image_np, pointmap, rvc_image, offline_ply_path)
+        return self._detect_3d_coded_circle(image_np, pointmap, rvc_image, offline_ply_path,
+                                            include_invalid=include_invalid)
 
-    def _detect_3d_coded_circle(self, image_np: np.ndarray, pointmap: 'RVC.PointMap' = None, rvc_image: 'RVC.Image' = None, offline_ply_path: str = None) -> List[Dict]:
+    def _detect_3d_coded_circle(self, image_np: np.ndarray, pointmap: 'RVC.PointMap' = None, rvc_image: 'RVC.Image' = None, offline_ply_path: str = None, include_invalid: bool = False) -> List[Dict]:
         """编码圆 2D+3D 检测（原 detect_3d 逻辑）。"""
         import tempfile
         ply_path = offline_ply_path
@@ -278,6 +285,16 @@ class MarkerDetector:
                         'x_3d': float(pt[0]),
                         'y_3d': float(pt[1]),
                         'z_3d': float(pt[2]),
+                        'valid_3d': True,
+                    })
+                elif include_invalid:
+                    # 保留 3D 无效标记（无 x_3d 字段）：UI 据此画红圈，
+                    # 提示"2D 检出但圆心附近无有效深度"
+                    markers_3d.append({
+                        'code': m['code'],
+                        'x_2d': m['x'],
+                        'y_2d': m['y'],
+                        'valid_3d': False,
                     })
                 else:
                     logger.warning(f"编码圆 code={m['code']} at ({m['x']:.1f},{m['y']:.1f}) 对应点无效")

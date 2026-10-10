@@ -84,7 +84,11 @@ class AspectRatioLabel(QLabel):
         self._font.setBold(True)
 
     def set_markers(self, markers: List[Dict]):
-        """markers: 编码圆列表，元素含 x/y（原图坐标）、code、可选 valid_3d。"""
+        """markers: 编码圆列表，元素含 x/y（归一化 0~1）、code、可选 valid_3d。
+
+        颜色语义：绿圈 = 3D 有效；红圈 = 2D 检出但 3D 无有效深度
+        （valid_3d=False，无 x_3d 字段）；蓝圈 = 标定板标记。
+        """
         self._markers = markers or []
         self._render_overlay()
         self.update()
@@ -127,8 +131,9 @@ class AspectRatioLabel(QLabel):
             if marker_type == 'board':
                 color = QColor(60, 160, 255)
             else:
+                # 红 = 2D 检出但 3D 无有效深度；绿 = 3D 有效
                 has_3d = m.get('valid_3d', True)
-                color = QColor(0, 230, 80) if has_3d else QColor(255, 200, 40)
+                color = QColor(0, 230, 80) if has_3d else QColor(255, 60, 60)
             painter.setPen(QPen(color, 2))
             painter.setBrush(Qt.NoBrush)
             painter.drawEllipse(QPointF(dx, dy), self._marker_radius, self._marker_radius)

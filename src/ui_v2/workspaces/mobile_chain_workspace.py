@@ -255,9 +255,9 @@ class MobileChainWorkspace(QWidget):
         self._live_view.clear_overlay()
 
     def on_detection_done(self, markers):
-        """自动检测完成：叠加绿框编码圆 + 共有标记蓝圈引导。
+        """自动检测完成：叠加红/绿圈 + code（绿=3D 有效，红=圆心无有效深度）。
 
-        参数：markers = [(x, y, code, shared), ...]（见 LiveViewPanel）
+        参数：markers = [(x, y, code, valid_3d), ...]（归一化坐标，见 LiveViewPanel）
         """
         self._live_view.set_detection_overlay(markers)
 

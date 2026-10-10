@@ -181,8 +181,10 @@ class CameraCard(QFrame):
 
         # AspectRatioLabel 期望归一化坐标 [0,1] 与 x/y/code/valid_3d 字段，
         # 而 frame.markers 中的编码圆只含 x_2d/y_2d，标定板含 x/y/x_2d/y_2d，
-        # 因此需要统一转换。
-        markers = markers if markers is not None else frame.markers
+        # 因此需要统一转换。markers 缺省优先取 frame.markers_all（含 3D
+        # 无效标记，红圈显示），无全量列表时回退过滤后的 frame.markers。
+        markers = (markers if markers is not None
+                   else (frame.markers_all or frame.markers))
         h, w = frame.image_np.shape[:2]
         is_board = frame.board_pattern_name is not None
         overlay = []

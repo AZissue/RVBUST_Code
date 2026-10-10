@@ -148,6 +148,90 @@ for code, (sx, sy) in small_result.items():
 check("0.75x 拟合中心 ×1/0.75 与 detect() 返回坐标一致", max_back_err < 1e-6,
       f"最大差异 {max_back_err:.2e}")
 
+# ------------------------------------------------------------------
+# [4] 3D 提取邻域回退：圆心附近深度成片无效时不再丢弃标记
+#     （转台场景标记平贴台面、斜视角下圆心 2×2 邻域全 NaN → 旧逻辑 0/3）
+# ------------------------------------------------------------------
+print("\n[4] _extract_centers_3d 邻域中位数回退")
+from core.calib_board_detector import CalibBoardDetector  # noqa: E402
+
+W, H = 100, 80
+pts3d = np.full((H * W, 3), np.nan)
+yy, xx = np.mgrid[0:H, 0:W]
+pts3d[:, 0] = xx.ravel() * 0.01          # 平滑平面 x
+pts3d[:, 1] = yy.ravel() * 0.01          # 平滑平面 y
+pts3d[:, 2] = 200.0                      # z = 200mm
+# 三个圆心位置打 5×5 NaN 洞（模拟斜视角下成片无效深度）
+centers = np.array([[50.2, 40.1], [20.5, 60.3], [80.4, 15.2]])
+for cx, cy in centers:
+    for dy in range(-2, 3):
+        for dx in range(-2, 3):
+            pts3d[(int(cy) + dy) * W + (int(cx) + dx)] = np.nan
+
+out = CalibBoardDetector._extract_centers_3d(centers, pts3d, (W, H))
+ok_all = np.isfinite(out).all(axis=1).all()
+check("圆心 2×2 邻域全 NaN 时仍提取到 3D", ok_all, f"输出={np.isfinite(out).all(axis=1)}")
+if ok_all:
+    err = np.abs(out - np.array([[50.2 * 0.01, 40.1 * 0.01, 200.0],
+                                 [20.5 * 0.01, 60.3 * 0.01, 200.0],
+                                 [80.4 * 0.01, 15.2 * 0.01, 200.0]])).max()
+    check("提取值接近真值（平面 z=200mm）", err < 0.05, f"最大偏差 {err:.4f}mm")
+
+# 全 NaN 场景仍返回 NaN（不造假数据）
+pts_all_nan = np.full((H * W, 3), np.nan)
+out_nan = CalibBoardDetector._extract_centers_3d(centers[:1], pts_all_nan, (W, H))
+check("全无效点云返回 NaN（不伪造）", not np.isfinite(out_nan).any())
+
+# ------------------------------------------------------------------
+# [5] detect_3d include_invalid：3D 无效标记保留并带 valid_3d 标志
+#     （红/绿圈显示的数据源；默认调用仍过滤，标定/拼接零影响）
+# ------------------------------------------------------------------
+print("\n[5] detect_3d(include_invalid=True) 保留 3D 无效标记")
+import open3d as o3d  # noqa: E402
+import tempfile  # noqa: E402
+
+TW, TH = 800, 600
+HOLE_MARKERS = [(15, (250, 300)), (29, (550, 300))]
+scene_3d = make_scene(r0_px=20.0, width=TW, height=TH, positions=HOLE_MARKERS)
+scene_3d = cv2.GaussianBlur(scene_3d, (3, 3), 0)
+gray_3d = cv2.cvtColor(scene_3d, cv2.COLOR_BGR2GRAY)
+
+# 合成点云：z=200mm 平面，code=15 圆心打 25×25 NaN 洞
+# （超过邻域回退半径 8px，确保该标记 3D 无效；code=29 处深度完好）
+tpts = np.zeros((TH * TW, 3), dtype=np.float64)
+tyy, txx = np.mgrid[0:TH, 0:TW]
+tpts[:, 0] = txx.ravel() * 0.01
+tpts[:, 1] = tyy.ravel() * 0.01
+tpts[:, 2] = 200.0
+for _code, (cx, cy) in HOLE_MARKERS[:1]:
+    for _dy in range(-12, 13):
+        for _dx in range(-12, 13):
+            tpts[(cy + _dy) * TW + (cx + _dx)] = np.nan
+tmp_pcd = o3d.geometry.PointCloud()
+tmp_pcd.points = o3d.utility.Vector3dVector(tpts)
+tmp_dir = tempfile.mkdtemp()
+ply_path = os.path.join(tmp_dir, "scene_3d.ply")
+o3d.io.write_point_cloud(ply_path, tmp_pcd)
+
+detector5 = MarkerDetector()
+ms_all = detector5.detect_3d(gray_3d, offline_ply_path=ply_path, include_invalid=True)
+check("include_invalid=True 返回 2 个标记（含 3D 无效）", len(ms_all) == 2,
+      f"实际 {len(ms_all)} 个")
+by_valid = {m['code']: m.get('valid_3d') for m in ms_all}
+check("valid_3d 标志正确（15=False, 29=True）",
+      by_valid.get(15) is False and by_valid.get(29) is True, f"实际 {by_valid}")
+m29 = next(m for m in ms_all if m['code'] == 29)
+check("有效标记含 3D 坐标（z≈200mm）",
+      abs(m29.get('z_3d', 0) - 200.0) < 1.0, f"z={m29.get('z_3d')}")
+m15 = next(m for m in ms_all if m['code'] == 15)
+check("无效标记不含 x_3d 字段", 'x_3d' not in m15)
+
+detector6 = MarkerDetector()
+ms_valid = detector6.detect_3d(gray_3d, offline_ply_path=ply_path)
+check("默认调用仍过滤 3D 无效标记（只返回 1 个）",
+      len(ms_valid) == 1 and ms_valid[0]['code'] == 29,
+      f"实际 {[m['code'] for m in ms_valid]}")
+
 print("\n" + "=" * 60)
 print(f"全部 {len(passed)} 项断言通过")
 print("=" * 60)

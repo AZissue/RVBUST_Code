@@ -11,9 +11,15 @@
 
 ---
 
-## [Unreleased]
+## [1.7.0] - 2026-10-10 14:03
 
 ### Added
+- 2D 预览叠加识别结果（红/绿圈 + code）：绿圈 = 3D 深度有效，红圈 = 2D
+  检出但圆心附近无有效深度。统一接入三处预览：转台工作区 2D 预览、
+  模式 B 实时取景（LiveViewPanel）、模式 A 相机卡片。数据通路：
+  `MarkerDetector.detect_3d(include_invalid=True)` 保留 3D 无效标记
+  （带 valid_3d=False），`FrameData.markers_all` 存全量（仅运行期，
+  不持久化），标定/拼接仍消费过滤后的 `markers`，行为不变。
 - 模式 A 标定结果自动保存/恢复（崩溃兜底）：标定成功 / 加载外参 / 加载会话
   后自动把外参落盘到 `offline_data/autosave_calibration.json`（格式与
   「保存外参」一致，仅多 camera_names/saved_at）；下次连接同一组相机时
@@ -28,6 +34,12 @@
   faulthandler 改为始终写 `faulthandler_crash.log`（控制台输出易丢失）。
 
 ### Fixed
+- 修复转台拼接"识别不到编码圆"：2D 检测实际成功（日志可见 code=15/29/5
+  均检出），但标记平贴台面、斜视角下圆心附近深度成片无效，3D 提取的
+  旧回退只取最近单点、无效即丢弃标记（实测 0/3）。`_extract_centers_3d`
+  改为按递增半径（0–8px）在圆心邻域搜索有效点取中位数，纸片十余像素
+  范围内近似共面，精度损失可忽略（实测偏差 0.005mm），标定板检测
+  路径同步受益。
 - 修复保存拼接点云后软件崩溃（ntdll 堆损坏 0xc0000374，8 月以来复发 11 次）：
   新增 `utils.rvc_sdk_lock` 进程级 SDK 互斥锁，所有 PyRVC 调用（采集 /
   SaveWithImage 点云导出 / DetectCodedCircleMarker 检测）统一持锁串行。

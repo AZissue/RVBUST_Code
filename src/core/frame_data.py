@@ -50,6 +50,10 @@ class FrameData:
     pointmap: Optional['RVC.PointMap'] = None
     rvc_image: Optional['RVC.Image'] = None
     markers: List[Dict] = field(default_factory=list)
+    # 含 3D 无效标记的全量检测列表（仅运行期，不随会话持久化）：
+    # 元素在 markers 基础上多 valid_3d=False 的条目（无 x_3d 字段），
+    # 供 UI 红/绿圈显示；标定/拼接只消费过滤后的 markers。
+    markers_all: Optional[List[Dict]] = None
     # 标定板模式缓存（位姿法外参标定用）
     board_pose: Optional[np.ndarray] = None        # 4×4 位姿 T_board_in_cam，单位 mm
     board_pattern: Optional[Tuple[int, int]] = None  # (cols, rows)

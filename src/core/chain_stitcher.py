@@ -100,15 +100,19 @@ class ChainStitcher:
             message: 结果描述（含评估详情）
             edge: 成功时返回新边，失败返回 None
         """
-        # 1. 检测标记
-        markers = self.marker_detector.detect_3d(
+        # 1. 检测标记（include_invalid=True：全量存 frame.markers_all 供 UI
+        #    红/绿圈显示；配准只用过滤后的 frame.markers）
+        markers_all = self.marker_detector.detect_3d(
             frame.image_np,
             pointmap=frame.pointmap,
             rvc_image=frame.rvc_image,
             offline_ply_path=frame.offline_pointmap_path,
+            include_invalid=True,
         )
+        markers = [m for m in markers_all if m.get('valid_3d', True)]
         if not markers:
             return False, "未检测到标记物，请调整机位或光照", None
+        frame.markers_all = markers_all
         frame.markers = markers
 
         station_id = frame.camera_name

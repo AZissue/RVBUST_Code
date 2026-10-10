@@ -193,13 +193,10 @@ class TurntableWorkspace(QWidget):
         )
         preview_lo.addWidget(preview_title)
 
-        self.preview_2d_label = QLabel("未启动预览")
-        self.preview_2d_label.setAlignment(Qt.AlignCenter)
-        self.preview_2d_label.setStyleSheet(
-            f"background-color: #0f0f12; color: {TEXT_MUTED}; "
-            "border: none; border-bottom-left-radius: 8px; border-bottom-right-radius: 8px;"
-        )
-        self.preview_2d_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        # 2D 预览：AspectRatioLabel 自带按比缩放绘制与标记叠加
+        #（绿圈=3D 有效 / 红圈=2D 检出但 3D 无深度），替换原裸 QLabel
+        from ui.camera_card import AspectRatioLabel
+        self.preview_2d_label = AspectRatioLabel(ratio=4.0 / 3.0)
         self.preview_2d_label.setMinimumSize(360, 270)
         preview_lo.addWidget(self.preview_2d_label, 1)
 
@@ -412,8 +409,7 @@ class TurntableWorkspace(QWidget):
         self.merged = None
         self.session.reset()
         self.viewer.clear_all()
-        self.preview_2d_label.setPixmap(QPixmap())
-        self.preview_2d_label.setText("未启动预览")
+        self.preview_2d_label.clear_image()
         self.set_state("idle" if not self._is_connected() else "connected")
 
     def _is_connected(self) -> bool:
@@ -475,18 +471,29 @@ class TurntableWorkspace(QWidget):
             import traceback
             self.log(traceback.format_exc(), "error")
 
-    def _display_2d(self, image_np: np.ndarray):
+    def _display_2d(self, image_np: np.ndarray, markers: Optional[list] = None):
+        """刷新 2D 预览；可选叠加识别结果（红/绿圈 + code）。
+
+        markers 为 detect_3d(include_invalid=True) 的原始输出（原图像素坐标 +
+        code + valid_3d）；缺省/None 时清空叠加，避免残留上一帧的圈。
+        AspectRatioLabel 内部完成等比缩放绘制，无需手动 scaled。
+        """
         pixmap = _np_to_qpixmap(image_np)
         if pixmap is None:
-            self.preview_2d_label.setText("2D 预览区（图像格式不支持）")
+            self.preview_2d_label.clear_image()
             return
-        label_size = self.preview_2d_label.size()
-        if pixmap.width() > label_size.width() or pixmap.height() > label_size.height():
-            scaled = pixmap.scaled(label_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self.preview_2d_label.setPixmap(pixmap)
+        if markers:
+            h, w = image_np.shape[:2]
+            overlay = [{
+                'x': float(m['x_2d']) / w if w > 0 else 0.0,
+                'y': float(m['y_2d']) / h if h > 0 else 0.0,
+                'code': m.get('code', '?'),
+                'valid_3d': bool(m.get('valid_3d', True)),
+            } for m in markers]
+            self.preview_2d_label.set_markers(overlay)
         else:
-            scaled = pixmap
-        self.preview_2d_label.setPixmap(scaled)
-        self.preview_2d_label.setText("")
+            self.preview_2d_label.clear_markers()
 
     # ------------------------------------------------------------------ Worker
     def set_background_runner(self, runner):
@@ -626,36 +633,45 @@ class TurntableWorkspace(QWidget):
             pcd = _pcd_from_frame(frame)
             if pcd is None:
                 raise RuntimeError("点云获取失败")
+            # include_invalid=True：3D 无效标记保留（UI 红圈提示），
+            # 标定仍使用下方过滤后的 markers_valid
             markers = self.marker_detector.detect_3d(
-                frame.image_np, frame.pointmap, frame.rvc_image
+                frame.image_np, frame.pointmap, frame.rvc_image,
+                include_invalid=True,
             ) if self.marker_detector else []
-            return frame, pcd, markers
+            markers_valid = [m for m in markers if m.get('valid_3d', True)]
+            return frame, pcd, markers, markers_valid
 
         def _done(result):
-            frame, pcd, markers = result
-            self.log(f"{label} 拍摄完成: {len(pcd.points)} 点, 检测到 {len(markers)} 个标记")
-            self._display_2d(frame.image_np)
+            frame, pcd, markers, markers_valid = result
+            n_valid = len(markers_valid)
+            self.log(f"{label} 拍摄完成: {len(pcd.points)} 点, "
+                     f"检测到 {len(markers)} 个标记（3D 有效 {n_valid} 个）")
+            # 2D 预览叠加红/绿圈（markers 为全量，含 3D 无效）
+            self._display_2d(frame.image_np, markers)
             if is_frame0:
                 self.current_frame0 = frame
-                self.current_markers0 = markers
-                self.session.set_frame0(frame, markers, pcd)
+                self.current_markers0 = markers_valid
+                self.session.set_frame0(frame, markers_valid, pcd)
                 self.viewer.set_pointcloud("frame0", pcd)
-                if len(markers) < 3:
+                if n_valid < 3:
                     QMessageBox.warning(
                         self, "标记点不足",
-                        f"frame0 仅检测到 {len(markers)} 个标记点，标定至少需要 3 个。\n"
-                        "请调整标记物位置、光照或曝光后重拍。"
+                        f"frame0 检出 {len(markers)} 个标记，但仅 {n_valid} 个 3D 有效"
+                        f"（红圈 = 圆心附近无有效深度，请调整标记角度/光照）。\n"
+                        "标定至少需要 3 个 3D 有效标记。"
                     )
             else:
                 self.current_frame1 = frame
-                self.current_markers1 = markers
-                self.session.set_frame1(frame, markers, pcd)
+                self.current_markers1 = markers_valid
+                self.session.set_frame1(frame, markers_valid, pcd)
                 self.viewer.set_pointcloud("frame1", pcd)
-                if len(markers) < 3:
+                if n_valid < 3:
                     QMessageBox.warning(
                         self, "标记点不足",
-                        f"frame1 仅检测到 {len(markers)} 个标记点，标定至少需要 3 个。\n"
-                        "请调整标记物位置、光照或曝光后重拍。"
+                        f"frame1 检出 {len(markers)} 个标记，但仅 {n_valid} 个 3D 有效"
+                        f"（红圈 = 圆心附近无有效深度，请调整标记角度/光照）。\n"
+                        "标定至少需要 3 个 3D 有效标记。"
                     )
             # 释放本次拍摄占用的 RVC 资源；已提取的 image_np / markers / pcd 仍保留
             self._release_frame_rvc(frame, pcd)
@@ -875,8 +891,7 @@ class TurntableWorkspace(QWidget):
         self.merged = None
         self.lbl_stitch.setText("未拼接")
         self.viewer.clear_all()
-        self.preview_2d_label.setPixmap(QPixmap())
-        self.preview_2d_label.setText("未启动预览")
+        self.preview_2d_label.clear_image()
         self.set_state("calibrated" if self.session.is_calibrated() else "connected")
         self.dirty_changed.emit(False)
         self.log("已清空拍摄数据，保留标定结果，可重新采集")

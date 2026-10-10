@@ -720,7 +720,7 @@ class BackendBridge(QObject):
                 grid.set_covis_status(cid, count > 0)
                 frame = self.fixed_workflow.frames_calib.get(cid)
                 if frame is not None:
-                    grid.set_frame(cid, frame, frame.markers)
+                    grid.set_frame(cid, frame)
             ws.on_detect_done(marker_counts)
             ws.set_state("detected")
             self.shell.set_dirty(True)
@@ -1234,26 +1234,32 @@ class BackendBridge(QObject):
         self.shell.show_loading(f"正在检测 {camera_id}...")
 
         def _work():
-            markers = self.marker_detector.detect_3d(
+            markers_all = self.marker_detector.detect_3d(
                 frame.image_np,
                 pointmap=frame.pointmap,
                 rvc_image=frame.rvc_image,
                 offline_ply_path=frame.offline_pointmap_path,
+                include_invalid=True,
             )
-            return markers
+            return markers_all
 
-        def _done(markers, error):
+        def _done(markers_all, error):
             self.shell.hide_loading()
             if error:
                 self.shell.log(f"检测失败 ({camera_id}): {error}", "error")
                 return
+            frame.markers_all = markers_all
+            markers = [m for m in markers_all if m.get('valid_3d', True)]
             frame.markers = markers
             count = len(markers)
             grid = ws.camera_grid()
-            grid.set_frame(camera_id, frame, markers)
+            grid.set_frame(camera_id, frame)
             grid.set_marker_count(camera_id, count)
             grid.set_covis_status(camera_id, count > 0)
-            self.shell.log(f"检测完成 ({camera_id}): {count} 个标记", "success")
+            n_invalid = len(markers_all) - count
+            suffix = f"，{n_invalid} 个 3D 无效（红圈）" if n_invalid else ""
+            self.shell.log(f"检测完成 ({camera_id}): {count} 个标记{suffix}",
+                           "success")
 
         self._run_background(_work, _done)
 
@@ -1350,15 +1356,15 @@ class BackendBridge(QObject):
             return
         ws = self.shell.workspace_mobile()
         ws.live_view().set_frame(pixmap)
-        # 标记叠加（归一化坐标）
+        # 标记叠加（归一化坐标；markers_all 含 3D 无效标记 → 红圈）
         h, w = frame.image_np.shape[:2]
         if h > 0 and w > 0:
             markers = [
                 (m.get('x_2d', m.get('x', 0)) / w,
                  m.get('y_2d', m.get('y', 0)) / h,
                  int(m.get('code', 0)),
-                 False)
-                for m in frame.markers
+                 bool(m.get('valid_3d', True)))
+                for m in (frame.markers_all or frame.markers)
             ]
             ws.live_view().set_detection_overlay(markers)
 
@@ -1376,15 +1382,15 @@ class BackendBridge(QObject):
         pixmap = numpy_to_qpixmap(frame.image_np)
         if pixmap is not None:
             ws.live_view().set_frame(pixmap)
-        # 标记叠加（归一化坐标）
+        # 标记叠加（归一化坐标；markers_all 含 3D 无效标记 → 红圈）
         h, w = frame.image_np.shape[:2]
         if h > 0 and w > 0:
             markers = [
                 (m.get('x_2d', m.get('x', 0)) / w,
                  m.get('y_2d', m.get('y', 0)) / h,
                  int(m.get('code', 0)),
-                 False)
-                for m in frame.markers
+                 bool(m.get('valid_3d', True)))
+                for m in (frame.markers_all or frame.markers)
             ]
             ws.live_view().set_detection_overlay(markers)
 
@@ -2068,7 +2074,7 @@ class BackendBridge(QObject):
                 card.set_controls_enabled(
                     self.camera_manager.is_connected(cid))
         for cid, frame in calib_latest.items():
-            ws.camera_grid().set_frame(cid, frame, frame.markers)
+            ws.camera_grid().set_frame(cid, frame)
             ws.camera_grid().set_frame_kind(cid, "标定帧")
             ws.camera_grid().set_marker_count(cid, len(frame.markers))
             ws.camera_grid().set_covis_status(cid, len(frame.markers) > 0)
