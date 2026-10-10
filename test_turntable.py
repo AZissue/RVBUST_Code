@@ -102,6 +102,47 @@ def test_stitch_360():
     print("  [PASS]")
 
 
+def test_icp_refine():
+    """[4] ICP 精修：标定带小误差（实测 3 对标记场景为数度/数十 mm）时，
+    精修后的帧间对齐显著优于纯标定变换。"""
+    from scipy.spatial import cKDTree
+    print("\n[4] ICP 精修校正标定残差")
+    synth = SyntheticTurntableData(angle_deg=90.0, noise_mm=0.2)
+    pcds, _ = synth.generate_sequence(n_steps=3)  # 4 帧：0/90/180/270°
+
+    # 故意给有小误差的标定：角度偏 +0.8°，中心偏 ~1.5mm
+    calib = TurntableCalibrator()
+    wrong_center = synth.center + np.array([0.5, 1.0, 1.0])
+    calib.set_calibration(synth.axis, wrong_center, angle_deg=90.8, step_count=3)
+
+    merged_plain, msg = calib.stitch_pointclouds(pcds, icp_refine=False)
+    assert merged_plain is not None, msg
+    merged_refined, msg_r = calib.stitch_pointclouds(pcds, icp_refine=True)
+    assert merged_refined is not None, msg_r
+    print(f"  {msg_r}")
+
+    n = len(pcds[0].points)
+
+    def frame_nn(merged, i, sample=40000):
+        """第 i 帧（变换后）到第 0 帧的最近邻平均距离（mm）。"""
+        pts = np.asarray(merged.points)
+        a = pts[i * n:(i + 1) * n]
+        b = pts[0:n]
+        rng = np.random.default_rng(0)
+        a = a[rng.choice(len(a), min(sample, len(a)), replace=False)]
+        b = b[rng.choice(len(b), min(sample, len(b)), replace=False)]
+        return float(cKDTree(b).query(a, k=1)[0].mean())
+
+    plain_d2, plain_d3 = frame_nn(merged_plain, 2), frame_nn(merged_plain, 3)
+    ref_d2, ref_d3 = frame_nn(merged_refined, 2), frame_nn(merged_refined, 3)
+    print(f"  帧2→帧0 NN: 纯标定 {plain_d2:.3f}mm / ICP 精修 {ref_d2:.3f}mm")
+    print(f"  帧3→帧0 NN: 纯标定 {plain_d3:.3f}mm / ICP 精修 {ref_d3:.3f}mm")
+    assert ref_d2 < plain_d2 * 0.5, f"帧2 精修无改善: {ref_d2:.3f} vs {plain_d2:.3f}"
+    assert ref_d2 < 0.6, f"帧2 精修后 NN 仍过大: {ref_d2:.3f}mm"
+    assert ref_d3 < plain_d3 * 0.5, f"帧3 精修无改善: {ref_d3:.3f} vs {plain_d3:.3f}"
+    print("  [PASS]")
+
+
 def main():
     print("=" * 60)
     print("转台标定器合成数据测试（src/core/turntable_calibrator.py）")
@@ -109,6 +150,7 @@ def main():
     test_rotation_accuracy()
     test_sequence_not_inplace()
     test_stitch_360()
+    test_icp_refine()
     print("\n" + "=" * 60)
     print("全部测试通过")
     print("=" * 60)

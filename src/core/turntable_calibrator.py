@@ -183,23 +183,46 @@ class TurntableCalibrator:
         self,
         pcds: List[o3d.geometry.PointCloud],
         downsample_voxel: Optional[float] = None,
+        icp_refine: bool = False,
+        icp_max_distance: float = 10.0,
     ) -> Tuple[Optional[o3d.geometry.PointCloud], str]:
         """按标定角度把多帧点云变换到参考系并合并。
 
         Args:
             pcds: 第 0, 1, 2, ... 帧点云（长度应 ≤ step_count+1）
             downsample_voxel: 合并后可选体素下采样（mm），None 表示不下采样
+            icp_refine: 对第 1 帧起逐帧做 ICP 精修（以标定变换为初值），
+                校正标定残差（如实测 3 对标记标定产生的数度级角度/数十
+                mm 平移误差）。台面平面提供大重叠区，ICP 可稳定收敛。
+            icp_max_distance: ICP 对应距离上限（mm），需大于预期残差
         """
         if not self.is_calibrated():
             return None, "转台尚未标定"
         if len(pcds) < 2:
             return None, "至少需要 2 帧点云"
 
+        ref = pcds[0]
+        ref_down = None
+        if icp_refine:
+            ref_down = ref.voxel_down_sample(2.0) if len(ref.points) > 200000 else ref
+
         merged = o3d.geometry.PointCloud()
+        n_refined = 0
         for i, pcd in enumerate(pcds):
             if pcd is None or len(pcd.points) == 0:
                 continue
             T = self.get_transform_for_step(i)
+            if icp_refine and i > 0 and ref_down is not None and len(ref_down.points) > 0:
+                src = pcd.voxel_down_sample(2.0) if len(pcd.points) > 200000 else pcd
+                try:
+                    res = o3d.pipelines.registration.registration_icp(
+                        src, ref_down, icp_max_distance, T,
+                        o3d.pipelines.registration.TransformationEstimationPointToPoint())
+                    if res.fitness > 0.3 and np.isfinite(res.transformation).all():
+                        T = res.transformation
+                        n_refined += 1
+                except Exception:
+                    logger.warning(f"第 {i} 帧 ICP 精修失败，使用标定变换", exc_info=True)
             pcd_t = o3d.geometry.PointCloud(pcd)
             pcd_t.transform(T)
             merged += pcd_t
@@ -209,6 +232,8 @@ class TurntableCalibrator:
 
         valid_pcds = [p for p in pcds if p is not None]
         msg = f"合并 {len(valid_pcds)} 帧，原始共 {sum(len(p.points) for p in valid_pcds)} 点，"
+        if icp_refine:
+            msg += f"ICP 精修 {n_refined} 帧，"
         if downsample_voxel is not None and downsample_voxel > 0:
             before = len(merged.points)
             merged = merged.voxel_down_sample(downsample_voxel)
@@ -364,10 +389,13 @@ class OnlineTurntableSession:
     def can_stitch(self) -> bool:
         return self.is_calibrated() and len(self.get_all_pcds()) >= 2
 
-    def stitch(self, downsample_voxel: Optional[float] = None) -> Tuple[Optional[o3d.geometry.PointCloud], str]:
+    def stitch(self, downsample_voxel: Optional[float] = None,
+                icp_refine: bool = False) -> Tuple[Optional[o3d.geometry.PointCloud], str]:
         if not self.can_stitch():
             return None, "尚未标定或帧数不足"
-        return self.calib.stitch_pointclouds(self.get_all_pcds(), downsample_voxel=downsample_voxel)
+        return self.calib.stitch_pointclouds(self.get_all_pcds(),
+                                             downsample_voxel=downsample_voxel,
+                                             icp_refine=icp_refine)
 
     def reset(self):
         """重置会话（保留 session_dir）。"""

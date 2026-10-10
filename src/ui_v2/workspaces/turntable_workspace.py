@@ -342,6 +342,12 @@ class TurntableWorkspace(QWidget):
         h.addWidget(self.spin_voxel)
         v.addLayout(h)
 
+        # ICP 精修：以标定变换为初值逐帧 ICP，校正标定残差
+        # （标记对数少时标定噪声可达数度/数十 mm，纯标定变换拼接会重影）
+        self.chk_icp_refine = QCheckBox("拼接时 ICP 精修（推荐，校正标定残差）")
+        self.chk_icp_refine.setChecked(True)
+        v.addWidget(self.chk_icp_refine)
+
         self.btn_stitch = QPushButton("拼接并显示")
         self.btn_stitch.clicked.connect(self._on_stitch)
         self.btn_stitch.setEnabled(False)
@@ -693,6 +699,16 @@ class TurntableWorkspace(QWidget):
             ok, msg, info = result
             self.log(f"在线标定: {msg}", "success" if ok else "error")
             if ok:
+                # 标记对数警示：3 对是 Kabsch 解轴/中心的下限，深度噪声会
+                # 直接变成拼接残差（实测 3 对场景帧间残差达 4.8°/30mm）
+                codes0 = {m.get('code') for m in (self.current_markers0 or [])}
+                codes1 = {m.get('code') for m in (self.current_markers1 or [])}
+                n_common = len(codes0 & codes1)
+                if n_common < 5:
+                    self.log(
+                        f"警告: 标定仅基于 {n_common} 对共有标记（<5 对），"
+                        "旋转轴/中心估计噪声较大，拼接时建议保持 ICP 精修开启",
+                        "warning")
                 self.lbl_online_calib.setText(
                     f"角度: {info['angle_deg']:.2f}°\n"
                     f"360° 步数: {info['step_count']}\n"
@@ -907,9 +923,10 @@ class TurntableWorkspace(QWidget):
     def _do_stitch(self, silent: bool = False):
         voxel = self.spin_voxel.value()
         voxel = voxel if voxel > 0 else None
+        icp_refine = self.chk_icp_refine.isChecked()
 
         def _stitch():
-            return self.session.stitch(downsample_voxel=voxel)
+            return self.session.stitch(downsample_voxel=voxel, icp_refine=icp_refine)
 
         def _done(result):
             merged, msg = result
