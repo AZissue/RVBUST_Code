@@ -185,21 +185,52 @@ class TurntableCalibrator:
         downsample_voxel: Optional[float] = None,
         icp_refine: bool = False,
         icp_max_distance: float = 10.0,
+        markers: Optional[List[List[Dict]]] = None,
+        marker_chain: bool = True,
     ) -> Tuple[Optional[o3d.geometry.PointCloud], str]:
         """按标定角度把多帧点云变换到参考系并合并。
 
         Args:
             pcds: 第 0, 1, 2, ... 帧点云（长度应 ≤ step_count+1）
             downsample_voxel: 合并后可选体素下采样（mm），None 表示不下采样
-            icp_refine: 对第 1 帧起逐帧做 ICP 精修（以标定变换为初值），
-                校正标定残差（如实测 3 对标记标定产生的数度级角度/数十
-                mm 平移误差）。台面平面提供大重叠区，ICP 可稳定收敛。
+            icp_refine: 对第 1 帧起逐帧做 ICP 精修（以各自变换为初值），
+                校正残余误差（如标定噪声产生的数度级角度/数十 mm 平移）。
             icp_max_distance: ICP 对应距离上限（mm），需大于预期残差
+            markers: 与 pcds 平行的逐帧标记列表（3D 有效过滤后）。
+                手工步进角度不均匀时（实测各步残差 -16°/0°/-10°），标定
+                变换按等角假设会系统性错位；marker_chain=True 时优先用
+                共有标记 Kabsch 逐帧链式配准（与模式 B 链式拼接同一思路），
+                无共有标记（大步进）的帧回退标定变换。
+            marker_chain: 是否启用标记链式配准（需 markers 非空）
         """
         if not self.is_calibrated():
             return None, "转台尚未标定"
         if len(pcds) < 2:
             return None, "至少需要 2 帧点云"
+
+        # 逐帧世界变换：标记链式（优先）/ 标定等角变换（兜底）
+        T_worlds = [np.eye(4, dtype=np.float64)]
+        chain_msgs = ["帧0=参考系"]
+        for i in range(1, len(pcds)):
+            T_world = None
+            if marker_chain and markers is not None and i < len(markers):
+                for j in range(i - 1, -1, -1):
+                    if j >= len(markers) or not markers[j] or not markers[i]:
+                        continue
+                    pts_j, pts_i, match_msg = match_markers_pair(markers[j], markers[i])
+                    if pts_j is None:
+                        continue
+                    R, t = kabsch_rigid_transform(pts_i, pts_j)
+                    T_ij = np.eye(4, dtype=np.float64)
+                    T_ij[:3, :3] = R
+                    T_ij[:3, 3] = t
+                    T_world = T_worlds[j] @ T_ij
+                    chain_msgs.append(f"帧{i}=标记链(与帧{j}共有{len(pts_j)}对)")
+                    break
+            if T_world is None:
+                T_world = self.get_transform_for_step(i)
+                chain_msgs.append(f"帧{i}=标定等角变换")
+            T_worlds.append(T_world)
 
         ref = pcds[0]
         ref_down = None
@@ -211,7 +242,7 @@ class TurntableCalibrator:
         for i, pcd in enumerate(pcds):
             if pcd is None or len(pcd.points) == 0:
                 continue
-            T = self.get_transform_for_step(i)
+            T = T_worlds[i]
             if icp_refine and i > 0 and ref_down is not None and len(ref_down.points) > 0:
                 src = pcd.voxel_down_sample(2.0) if len(pcd.points) > 200000 else pcd
                 try:
@@ -222,7 +253,7 @@ class TurntableCalibrator:
                         T = res.transformation
                         n_refined += 1
                 except Exception:
-                    logger.warning(f"第 {i} 帧 ICP 精修失败，使用标定变换", exc_info=True)
+                    logger.warning(f"第 {i} 帧 ICP 精修失败，使用初值变换", exc_info=True)
             pcd_t = o3d.geometry.PointCloud(pcd)
             pcd_t.transform(T)
             merged += pcd_t
@@ -231,7 +262,8 @@ class TurntableCalibrator:
             return None, "合并结果为空"
 
         valid_pcds = [p for p in pcds if p is not None]
-        msg = f"合并 {len(valid_pcds)} 帧，原始共 {sum(len(p.points) for p in valid_pcds)} 点，"
+        msg = (f"合并 {len(valid_pcds)} 帧，原始共 {sum(len(p.points) for p in valid_pcds)} 点，"
+               f"配准方式: {'; '.join(chain_msgs)}，")
         if icp_refine:
             msg += f"ICP 精修 {n_refined} 帧，"
         if downsample_voxel is not None and downsample_voxel > 0:
@@ -289,6 +321,7 @@ class OnlineTurntableSession:
         self.markers0: List[Dict] = []
         self.markers1: List[Dict] = []
         self.sequence: List[object] = []              # 后续帧 FrameData 列表
+        self.sequence_markers: List[List[Dict]] = []  # 与 sequence 平行的标记列表
         self.current_step: int = 0                    # 0=未开始采集；标定后表示已采集的序列帧数
         self.calib = TurntableCalibrator()
         self.calibrated: bool = False
@@ -326,6 +359,7 @@ class OnlineTurntableSession:
             self.frame0_pcd = None
             self.frame1_pcd = None
             self.sequence = []
+            self.sequence_markers = []
             self.sequence_pcds = []
             # current_step 表示已采集的序列帧数，标定完成后从 0 开始重新计数
             self.current_step = 0
@@ -351,6 +385,7 @@ class OnlineTurntableSession:
         self.frame0_pcd = None
         self.frame1_pcd = None
         self.sequence = []
+        self.sequence_markers = []
         self.sequence_pcds = []
         self.current_step = 0
 
@@ -361,10 +396,18 @@ class OnlineTurntableSession:
         """包含 frame0 在内，完成 360° 共需多少帧。"""
         return self.step_count() + 1 if self.is_calibrated() else 0
 
-    def add_sequence_frame(self, frame_data, pcd: o3d.geometry.PointCloud):
-        """添加步进采集帧。标定后 frame0/1 已清空，current_step 表示已采集帧数。"""
+    def add_sequence_frame(self, frame_data, pcd: o3d.geometry.PointCloud,
+                           markers: Optional[List[Dict]] = None):
+        """添加步进采集帧。标定后 frame0/1 已清空，current_step 表示已采集帧数。
+
+        Args:
+            markers: 该帧检测到的标记列表（3D 有效过滤后）。转台手工步进
+                角度不均匀时，拼接按共有标记链式配准（Kabsch），标定变换
+                仅作兜底——这是拼准的关键数据。
+        """
         self.sequence.append(frame_data)
         self.sequence_pcds.append(pcd)
+        self.sequence_markers.append(markers or [])
         self.current_step = len(self.sequence)
 
     def get_all_pcds(self) -> List[o3d.geometry.PointCloud]:
@@ -386,16 +429,30 @@ class OnlineTurntableSession:
         result.extend(self.sequence)
         return result
 
+    def get_all_markers(self) -> List[List[Dict]]:
+        """与 get_all_pcds() 平行的逐帧标记列表（标定帧在标定后已清空，
+        实际返回序列帧标记；无标记的帧为空列表）。"""
+        result: List[List[Dict]] = []
+        if self.frame0 is not None:
+            result.append(self.markers0)
+        if self.frame1 is not None:
+            result.append(self.markers1)
+        result.extend(self.sequence_markers)
+        return result
+
     def can_stitch(self) -> bool:
         return self.is_calibrated() and len(self.get_all_pcds()) >= 2
 
     def stitch(self, downsample_voxel: Optional[float] = None,
-                icp_refine: bool = False) -> Tuple[Optional[o3d.geometry.PointCloud], str]:
+                icp_refine: bool = False,
+                marker_chain: bool = True) -> Tuple[Optional[o3d.geometry.PointCloud], str]:
         if not self.can_stitch():
             return None, "尚未标定或帧数不足"
         return self.calib.stitch_pointclouds(self.get_all_pcds(),
                                              downsample_voxel=downsample_voxel,
-                                             icp_refine=icp_refine)
+                                             icp_refine=icp_refine,
+                                             markers=self.get_all_markers(),
+                                             marker_chain=marker_chain)
 
     def reset(self):
         """重置会话（保留 session_dir）。"""
@@ -404,6 +461,7 @@ class OnlineTurntableSession:
         self.markers0 = []
         self.markers1 = []
         self.sequence = []
+        self.sequence_markers = []
         self.sequence_pcds = []
         self.frame0_pcd = None
         self.frame1_pcd = None

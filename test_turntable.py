@@ -19,6 +19,7 @@ import sys
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
+import open3d as o3d  # noqa: E402
 
 from core.turntable_calibrator import (  # noqa: E402
     SyntheticTurntableData,
@@ -143,6 +144,64 @@ def test_icp_refine():
     print("  [PASS]")
 
 
+def test_marker_chain_irregular_steps():
+    """[5] 手工步进角度不均匀（2.ply 实测各步绕轴残差 -16°/0°/-10°）：
+    标定等角变换按固定角假设系统性错位；标记链式配准（相邻帧共有标记
+    Kabsch，与模式 B 同一思路）不受等角假设约束，应显著更准。"""
+    from scipy.spatial import cKDTree
+    from core.turntable_calibrator import transform_matrix
+    print("\n[5] 标记链式配准（不规则手工步进）")
+    np.random.seed(42)
+    synth = SyntheticTurntableData(angle_deg=90.0, noise_mm=0.0)
+    base_pcd = synth._generate_scene()
+    base_markers = synth.generate_markers()
+
+    # 手工不规则步进：实际累计转角 0 / 70 / 200 / 320（非等角）
+    actual_degs = [0.0, 70.0, 200.0, 320.0]
+    pcds, markers = [], []
+    for deg in actual_degs:
+        T = transform_matrix(synth.axis, np.radians(deg), synth.center)
+        p = o3d.geometry.PointCloud(base_pcd)
+        p.transform(T)
+        pts = np.asarray(p.points)
+        pts = pts + np.random.normal(0, 0.2, pts.shape)
+        p.points = o3d.utility.Vector3dVector(pts)
+        pcds.append(p)
+        homo = np.hstack([base_markers, np.ones((len(base_markers), 1))])
+        mk = (homo @ T.T)[:, :3]
+        markers.append([
+            {'code': k, 'x_3d': float(q[0]), 'y_3d': float(q[1]), 'z_3d': float(q[2])}
+            for k, q in enumerate(mk)])
+
+    # 错误的等角标定假设：80°/步（实际平均 ~107°）
+    calib = TurntableCalibrator()
+    calib.set_calibration(synth.axis, synth.center, angle_deg=80.0, step_count=4)
+
+    merged_plain, _ = calib.stitch_pointclouds(pcds, marker_chain=False)
+    merged_chain, msg = calib.stitch_pointclouds(pcds, markers=markers, marker_chain=True)
+    assert merged_plain is not None and merged_chain is not None
+    print(f"  {msg}")
+
+    n = len(pcds[0].points)
+
+    def frame_nn(merged, i, sample=8000):
+        pts = np.asarray(merged.points)
+        a = pts[i * n:(i + 1) * n]
+        b = pts[0:n]
+        rng = np.random.default_rng(0)
+        a = a[rng.choice(len(a), min(sample, len(a)), replace=False)]
+        return float(cKDTree(b).query(a, k=1)[0].mean())
+
+    plain_d = [frame_nn(merged_plain, i) for i in (1, 2, 3)]
+    chain_d = [frame_nn(merged_chain, i) for i in (1, 2, 3)]
+    for i in range(3):
+        print(f"  帧{i+1}→帧0 NN: 等角标定 {plain_d[i]:.3f}mm / 标记链式 {chain_d[i]:.3f}mm")
+        assert chain_d[i] < plain_d[i] * 0.5, \
+            f"帧{i+1} 链式配准无改善: {chain_d[i]:.3f} vs {plain_d[i]:.3f}"
+        assert chain_d[i] < 0.6, f"帧{i+1} 链式配准后 NN 仍过大: {chain_d[i]:.3f}mm"
+    print("  [PASS]")
+
+
 def main():
     print("=" * 60)
     print("转台标定器合成数据测试（src/core/turntable_calibrator.py）")
@@ -151,6 +210,7 @@ def main():
     test_sequence_not_inplace()
     test_stitch_360()
     test_icp_refine()
+    test_marker_chain_irregular_steps()
     print("\n" + "=" * 60)
     print("全部测试通过")
     print("=" * 60)

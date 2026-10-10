@@ -819,18 +819,31 @@ class TurntableWorkspace(QWidget):
             pcd = _pcd_from_frame(frame)
             if pcd is None:
                 raise RuntimeError("点云获取失败")
-            return frame, pcd
+            # 检测标记（3D 有效过滤后存入会话，供拼接时标记链式配准；
+            # 手工步进角度不均匀时这是拼准的关键）
+            markers = []
+            markers_all = []
+            if self.marker_detector is not None:
+                markers_all = self.marker_detector.detect_3d(
+                    frame.image_np, frame.pointmap, frame.rvc_image,
+                    include_invalid=True)
+                markers = [m for m in markers_all if m.get('valid_3d', True)]
+                frame.markers_all = markers_all
+                frame.markers = markers
+            return frame, pcd, markers, markers_all
 
         def _done(result):
-            frame, pcd = result
-            self.session.add_sequence_frame(frame, pcd)
+            frame, pcd, markers, markers_all = result
+            self.session.add_sequence_frame(frame, pcd, markers=markers)
             step_idx = self.session.current_step
             total = self.session.total_steps_needed()
+            n_valid = len(markers)
+            extra = f"，检出 {len(markers_all)} 个标记（3D 有效 {n_valid}）" if self.marker_detector else ""
             self.log(
-                f"第 {step_idx} 步采集完成: {len(pcd.points)} 点 "
+                f"第 {step_idx} 步采集完成: {len(pcd.points)} 点{extra} "
                 f"(current_step={self.session.current_step}, 序列 {len(self.session.sequence)}/{total})"
             )
-            self._display_2d(frame.image_np)
+            self._display_2d(frame.image_np, markers_all)
             self.viewer.set_pointcloud(f"step_{step_idx}", pcd)
             # 释放本次拍摄占用的 RVC 资源，避免连续采集阻塞
             self._release_frame_rvc(frame, pcd)
