@@ -12,4 +12,6 @@ private slots:
     void notConnected();
     void statusTextMapped();
     void urRealtimePose();
+    void urRealtimeStreamsNewestPose();
+    void urRealtimeStaleStreamTimesOut();
 };
