@@ -16,4 +16,5 @@ private slots:
     void titleCarriesNameAndVersion();
     void summaryStartsWithTitle();
     void versionIsNotEmptyAndUniqueLooking();
+    void runtimeLogHeaderCarriesTheCurrentVersion();
 };

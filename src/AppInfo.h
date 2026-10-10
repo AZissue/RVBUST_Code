@@ -29,4 +29,15 @@ inline QString summary()
         + QStringLiteral(" —— 面向 RVC X1/X2 相机的手眼标定数据采集工具");
 }
 
+// runtime 日志的第一行（main.cpp 打开日志后立刻写）。
+// 现场回传的日志就靠这一行认出"这是哪一版" —— 排障最怕认错包。
+// 曾经这里硬编码 "v1.0.0"，于是 2.0 的包在日志里仍自称 1.0.0
+// （2026-10-10 收到的那份 test2.1 现场日志正是如此）。
+// 保持 ASCII：日志经常被当纯文本回传，中文程序名在这里只会添乱。
+inline QString runtimeLogHeader()
+{
+    return QStringLiteral("=== HandEyeCalibrationTool v") + version()
+        + QStringLiteral(" runtime start ===");
+}
+
 } // namespace AppInfo

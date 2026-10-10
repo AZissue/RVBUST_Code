@@ -6,6 +6,7 @@
 #undef ERROR
 #endif
 
+#include "AppInfo.h"
 #include "app/MainWindow.h"
 #include "logic/CameraManager.h"
 #include "ui/Theme.h"
@@ -184,7 +185,7 @@ int main(int argc, char* argv[])
     QApplication app(argc, argv);
 
     openEarlyLog();
-    earlyLog("=== HandEyeCalibrationTool v1.0.0 runtime start ===\n");
+    earlyLog("%s\n", AppInfo::runtimeLogHeader().toLocal8Bit().constData());
     earlyLog("exe: %s\n",
              QDir::toNativeSeparators(QCoreApplication::applicationDirPath())
                  .toLocal8Bit().constData());
@@ -206,7 +207,7 @@ int main(int argc, char* argv[])
 
     app.setStyleSheet(Theme::globalStylesheet());
     app.setApplicationName(QStringLiteral("HandEyeCalibrationTool"));
-    app.setApplicationVersion(QStringLiteral("1.0.0"));
+    app.setApplicationVersion(AppInfo::version());
     app.setOrganizationName(QStringLiteral("RVBUST"));
 
     SetUnhandledExceptionFilter(sehExceptionFilter);
