@@ -261,11 +261,28 @@ class TurntableCalibrator:
         if len(merged.points) == 0:
             return None, "合并结果为空"
 
+        # 无效点/飞点过滤：实机导出曾把整帧 NaN 无效像素与飞点原样写入
+        # PLY（文件点数恰为 帧数×全像素数）。与拼接链路（StitchEngine）
+        # 对齐：先剔 NaN/Inf/全零点，再统计去飞点。
+        from .point_cloud_processor import PointCloudProcessor
+        before_filter = len(merged.points)
+        merged, n_invalid = PointCloudProcessor._filter_valid(merged)
+        n_outlier = 0
+        if len(merged.points) >= 100:
+            try:
+                merged, _ = merged.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.0)
+                n_outlier = before_filter - n_invalid - len(merged.points)
+            except Exception:
+                logger.warning("统计去飞点失败，仅剔除无效点", exc_info=True)
+        n_removed = before_filter - len(merged.points)
+
         valid_pcds = [p for p in pcds if p is not None]
         msg = (f"合并 {len(valid_pcds)} 帧，原始共 {sum(len(p.points) for p in valid_pcds)} 点，"
                f"配准方式: {'; '.join(chain_msgs)}，")
         if icp_refine:
             msg += f"ICP 精修 {n_refined} 帧，"
+        if n_removed > 0:
+            msg += f"剔除无效/飞点 {n_removed}（无效 {n_invalid}，离群 {max(n_outlier, 0)}），"
         if downsample_voxel is not None and downsample_voxel > 0:
             before = len(merged.points)
             merged = merged.voxel_down_sample(downsample_voxel)

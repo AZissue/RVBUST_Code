@@ -202,6 +202,42 @@ def test_marker_chain_irregular_steps():
     print("  [PASS]")
 
 
+def test_stitch_filters_invalid():
+    """[6] 拼接输出不得包含 NaN 无效点（实机 I5140 导出 25M 点含 NaN 行：
+    25,067,520 = 5×5,013,504 恰好整帧，证明 turntable 路径未做无效点过滤）。"""
+    print("\n[6] 拼接输出无效点过滤")
+    synth = SyntheticTurntableData(angle_deg=90.0, noise_mm=0.2)
+    pcds, markers_np = synth.generate_sequence(n_steps=2)
+    markers = [
+        [{'code': k, 'x_3d': float(q[0]), 'y_3d': float(q[1]), 'z_3d': float(q[2])}
+         for k, q in enumerate(mk)]
+        for mk in markers_np
+    ]
+    # 每帧注入 1% NaN 点 + 少量远飞点（模拟实机无效像素/飞点）
+    rng = np.random.default_rng(7)
+    for p in pcds:
+        pts = np.asarray(p.points)
+        n_nan = max(1, len(pts) // 100)
+        idx = rng.choice(len(pts), n_nan, replace=False)
+        pts[idx] = np.nan
+        idx2 = rng.choice(len(pts), 30, replace=False)
+        pts[idx2] += np.array([0, 0, 80.0])   # 台面上方 80mm 飞点
+        p.points = o3d.utility.Vector3dVector(pts)
+
+    calib = TurntableCalibrator()
+    calib.set_calibration(synth.axis, synth.center, angle_deg=90.0, step_count=2)
+    merged, msg = calib.stitch_pointclouds(pcds, markers=markers)
+    assert merged is not None, msg
+    out = np.asarray(merged.points)
+    assert np.isfinite(out).all(), f"输出仍含非有限点: {np.count_nonzero(~np.isfinite(out).all(axis=1))}"
+    plane_d = np.abs(out @ np.array([0, 0, 1.0]) - np.median(out[:, 2]))
+    n_flying = int((plane_d > 60).sum())
+    assert n_flying == 0, f"输出仍含远飞点: {n_flying}"
+    print(f"  {msg}")
+    print(f"  输出 {len(out):,} 点，全部有限、无远飞点")
+    print("  [PASS]")
+
+
 def main():
     print("=" * 60)
     print("转台标定器合成数据测试（src/core/turntable_calibrator.py）")
@@ -211,6 +247,7 @@ def main():
     test_stitch_360()
     test_icp_refine()
     test_marker_chain_irregular_steps()
+    test_stitch_filters_invalid()
     print("\n" + "=" * 60)
     print("全部测试通过")
     print("=" * 60)
