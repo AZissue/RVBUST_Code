@@ -141,6 +141,8 @@
 | 2026-10-10 | **手眼标定的位姿格式是"全局预设"**：工具页选一次 + 点「应用」，工具页离线计算与主界面「计算」都按它算（重启后仍生效） | ①每个计算入口各自选（面板级）②按机器人协议自动带默认格式 | 用户 2026-10-10 确认。格式选错**不报错只算偏**（实测轴角当欧拉：SDK 返回成功、`totalMeanError ≈ 30`），是静默错误；面板级会出现"两个入口算出两个结果"而界面看不出来。自动带默认需要维护"协议→格式"表，且与协议本身无关（UR 也可能有人按欧拉导出），不做 |
 | 2026-10-10 | **非欧拉格式统一转 16 数矩阵、`poseType = 3`；欧拉 RPY 保持 `poseType = 0` 原样透传** | 所有格式统一转矩阵 | SDK 只有 euler / 四元数 wxyz / xyzw / 16 数矩阵，**没有轴角槽位**；复用 `TransformTools::poseToMat4` 即可，无需新写旋转数学。欧拉单独原样透传是因为 `TransformTools::EulerRpy` 是否逐位等于 SDK `poseType=0` **未证实**（探针给过矛盾信号）—— 绕开它，已核定的 FANUC 结果（`PROJECT.md §6`「助手 = 官方 SDK 一致」）就不可能被这次改动影响 |
 | 2026-10-10 | 格式预设**不写进卡片、不写进会话备份 JSON** | 随会话记忆格式 | 用户明确不做；卡片格式是红线（固定 6 个数）。格式属于"怎么看数据"的读数设置，不是采集数据本身 |
+| 2026-10-13 | **机器人位姿读取一律 fail-closed**：六个分量全 0、或出现 NaN/Inf，都判 `ProtocolError`；判据只在 `RobotPose.h` 的 `checkPoseSanity()` 一处 | 各 reader 自己判 / 全部放行 | UR 现场已被这条坑过（全 0 静默写进卡片 → 标定偏掉且不报错），而同一个缺陷在 Modbus / 博纳斯 / 埃夫特三个 reader 上**一直都在**（审计确认）。规则放共用层是为了以后加协议不会再各写一份、也不会漏 |
+| 2026-10-13 | **任何"主动停止预览"必须在界面上自述**（画面浮层 + 操作日志） | 保持静默 | 「无操作暂停预览」是设计行为（把相机让给别的工具），但它静默时与"程序卡死"在画面上完全同形 —— 现场报的「预览停在某一帧一会又好了」就源于此。可观测性优于少一行提示 |
 
 ## 8. 变更记录
 
@@ -157,3 +159,4 @@
 | 2026-10-08 | 更正上一行的两处：①「与官方 SDK 同数据结果一致」**已做**（用户同数据集同 SDK 对拍一致），不是"无意义"；②阶段 7 的「批量走点验证（VC/VR/VT）」用户明确**不做**。另新增 `reports/阶段10-测量功能优化方案.md` 与 `reports/阶段6-鲁棒标定方案讨论.md` | `PLAN.md`、`PROJECT.md`、`STATUS.md`、`reports/` | AI/用户核定 |
 | 2026-10-08 | **新增已知真值回归 `tests/circle_truth.cpp`**（ctest 名 `circle_truth`）：针孔相机+倾斜平面生成已知半径的点云与合成图，可调模糊/噪声/倾角/离轴/镜头畸变/孔口倒角/台阶沉孔。**实测把阶段 10 的"误差较大"复现并定位到"边缘选择"一条**（多跃变工件停在靠里那一道，−7.7%~−25%，且照报 `reliable=yes`；离轴 25 mm+畸变 k1=0.15 仅 0.11%），据此把原方案 L1/L3/L4 **降级**、L2 **升级为主因**；另确认"无图像时圆环拟合无读数"缺陷 | `tests/circle_truth.cpp`、`tests/CMakeLists.txt`、`reports/阶段10-圆环拟合与孔径-真值回归结论.md`、`reports/阶段10-测量功能优化方案.md`、`PLAN.md`、`PROJECT.md`、`STATUS.md`、`reports/CODE-MAP.md` | AI |
 | 2026-10-10 | 手眼标定新增**位姿格式预设**（工具页「应用」→ 全局生效，含「试算各格式」对照表与残差提示）；`CalibrationService::Params` 以 `poseFormat`/`poseAngleUnit` 取代 `isPoseDegree` | `CalibrationService.*`、`AppConfig.*`、`ToolsPanel.*`、`MainWindow.cpp`、`HelpContent.h`、`tests/test_calibration_service.*`、`reports/阶段7-位姿格式预设与试算.md` | AI/用户确认 |
+| 2026-10-13 | 预览「停在某一帧一会又好了」定位为**无操作暂停无提示** + **3D 视窗（Vis 的 alien HWND）操作不算操作**；修：画面浮层「预览已暂停」+ 光标 1 Hz 轮询 + `[PREV] slow round`/`frame gap` 埋点。同时给 Modbus/NRC/埃夫特三个 reader 补上全 0/非有限值判据 | `Image2DView.*`、`MainWindow.*`、`CameraManager.*`、`RobotPose.*`、`NrcJsonReader.cpp`、`EfortPoseReader.cpp`、`tests/test_robot_pose.*`、`tests/test_nrc_json_reader.*`、`reports/阶段13-预览卡顿与机器人读取侧同一类问题.md` | AI/用户确认 |

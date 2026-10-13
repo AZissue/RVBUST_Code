@@ -1,9 +1,51 @@
 # STATUS.md — 进度状态（每次会话结束必须更新）
 
-> 最后更新：2026-10-10（之十三：手眼标定位姿格式全局预设 + 试算各格式）
+> 最后更新：2026-10-13（之十四：预览「停在某一帧」排查 + 机器人读取侧同类缺陷）
 > 只保留「当前快照」，不积累历史；旧条目删除即可，git 历史里仍可追溯。
 
 ## ⏭ 交接块（新会话先读这里）
+
+- **2026-10-13（之十四：预览「停在某一帧一会又好了」= 自己按无操作暂停了＋3D 视窗操作不算操作；顺手修掉三个机器人 reader 的静默全 0）**
+  - **现象（用户提出，别的测试机上发现）**：预览开着、**时间够久**就会卡一下，**停在某一帧
+    一会又正常**。环境：I2120（SN `I1GM112B652`）+ VM 里的 UR（`192.168.0.37`）。
+    **本轮只本地验证，未打包**（用户明确：他说打包再打包）。
+  - **主因：`AppConfig::idle_pause_preview_sec`（默认 60 s）的无操作暂停。** 三个特征
+    全中——时长触发、画面留在最后一帧、任何输入即自动恢复；而且**它此前在界面上没有任何
+    表示**（按钮还写着「停止预览」），现场与"程序卡死"完全同形。**这是设计行为，缺陷只是
+    它没说自己停了。**
+  - **帮凶：3D 视窗的操作不算"有操作"。** `VisSceneView.cpp:379` 的
+    `SetParent(d->visHwnd, viewport->winId())` —— Vis 的 OSG 子窗口是**本机(alien) HWND**，
+    鼠标消息按定义不进 Qt 事件过滤器 → 在 3D 里转点云/缩放满 60 s 仍判无操作。
+    （**推翻了本轮自己的一个错误假设**：以为 Windows 上 hover 的 MouseMove 不投递。
+    读 Qt 5.14.2 源码证明是投递的 —— `qwindowsmousehandler.cpp` 只在"无按键且位置未变"时
+    丢弃，`qapplication.cpp::pickMouseReceiver` 只在 `MouseMove && buttons` 时返回 0。
+    真盲区只有 alien HWND 那一块。）
+  - **改动**：①`Image2DView::setPreviewPausedHint()` —— 画面正中毛玻璃浮层
+    「预览已暂停（无操作 N 秒）／移动鼠标或按任意键继续」，恢复/断开/拍照/关功能四处撤掉；
+    ②`MainWindow` 新增 1 Hz `QCursor::pos()` 轮询 + `armIdleDetection(bool)` 统一装卸
+    （替掉原来散在 4 处的 stop/removeEventFilter）；③`CameraManager` 补上**原本完全缺失**
+    的相机侧埋点：`[PREV] slow round`（单轮 ≥500 ms）与 `[PREV] frame gap`（两帧间隔 ≥1 s），
+    阈值在文件顶部一处常量，`start/stopPreview` 归零以免把故意的停止误报成卡顿。
+  - **现场 20 秒判别法**：画面停住时**先别动鼠标**，看 runtime 日志末几行 ——
+    `[CAM] preview paused after N s idle`＝我们自己暂停的；`[WATCHDOG] UI stall`＝UI 线程被占；
+    `[DEV] … acquired device after N ms`＝在等设备锁；`[PREV] slow round`＝相机/SDK 自己慢；
+    `[PREV] frame gap`＝压根没投帧。**这五条互斥，别再猜。**
+  - **机器人读取侧同类问题（用户要求："看下其他机器人会不会有 UR 上发现过的问题"）**：
+    UR 现场踩过的两类静默错误 —— **全 0 位姿被当 Ok**、**NaN/Inf 被当 Ok** —— 审计结果：
+    **两个 UR reader 早已拒绝**，而 **Modbus / 博纳斯(NRC) / 埃夫特 三个都会静默接受**
+    （埃夫特仅 NaN 由 `normalizePose` 挡住）。已把 UR 那条规则提到共用层：
+    `RobotPose.h` 新增 `PoseSanity` + `checkPoseSanity()` + `poseSanityText()`，
+    三个 reader 接上。**NRC 侧特别保住一条不变量**：某个候选字段全 0 时**继续试下一个字段**，
+    不掩盖真正的位姿字段；失败路径**不改调用方现有的 `out`**。
+    **两个 UR reader 一行未动**（它们是基准）。
+  - **故意没改（缺真机证据，按规矩不动）**：Modbus 的 MBAP 事务/协议/长度/unit id 校验、
+    NRC 的候选字段"猜名字"（可能命中 6 元素关节角数组）、NRC/埃夫特的单位与 schema、
+    埃夫特缺 keepalive/超时。详见报告第 4.1 节。
+  - **验收**：`unit_tests` **332 通过 / 0 失败**（+5 条：Modbus 全 0/NaN、判据直测、
+    NRC 全 0、NRC 非有限值），`ctest` **3/3 绿**，`circle_truth` 输出未变；
+    **主 exe 已链接**（关掉运行中的工具后重跑构建，时间戳已核对）。
+    **只本地提交，未推送。**
+  - **细节**：`reports/阶段13-预览卡顿与机器人读取侧同一类问题.md`（含现场复测清单 7 条）。
 
 - **2026-10-10（之十三：手眼标定位姿格式 = 全局预设 + 「试算各格式」—— 插件式防静默错算）**
   - **现象（用户提出）**：采集完直接点「计算」，程序把卡片里那 3 个旋转数**无条件当欧拉角**
