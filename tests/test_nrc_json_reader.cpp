@@ -330,6 +330,49 @@ void TestNrcJsonReader::parsesPoseInsideTopLevelArray()
     QVERIFY(error.isEmpty());
 }
 
+void TestNrcJsonReader::zeroPoseIsRejected()
+{
+    // 六个分量全为 0 不是一个位姿：候选字段里命中了非笛卡尔的那一个（比如
+    // jointPos 的关节角）就长这样。失败时 out 必须原样不动 —— 上一次读到的
+    // 好位姿不能被一次"成功解析"的全 0 覆盖掉。
+    Pose pose;
+    pose.xyz = {1.0, 2.0, 3.0};
+    pose.rpy = {4.0, 5.0, 6.0};
+    QString error;
+    QCOMPARE(NrcJsonReader::parsePoseJson("[0,0,0,0,0,0]", pose, &error),
+             Status::ProtocolError);
+    QVERIFY2(error.contains(QStringLiteral("全为 0")), qPrintable(error));
+    QCOMPARE(pose.xyz[0], 1.0);
+    QCOMPARE(pose.rpy[2], 6.0);
+
+    // 同一条规则走完整链路（socket -> readFrame -> parsePoseJson）。
+    const MockRun run = runMock(MockNrcServer::Mode::ReplyPoseOnly,
+                                "{\"posValue\":[0,0,0,0,0,0]}");
+    QCOMPARE(run.status, Status::ProtocolError);
+    QVERIFY2(run.error.contains(QStringLiteral("全为 0")), qPrintable(run.error));
+}
+
+void TestNrcJsonReader::nonFinitePoseIsRejected()
+{
+    // JSON 没有 NaN 字面量，但 arrayToPose 接受数值字符串，而 Qt 的 toDouble
+    // 认得 "nan"/"inf" —— NaN 因此能真的进到位姿里，这是"解析成功 ≠ 读到真实
+    // 位姿"的第二种形状（UR 侧实测过 3.55e37 这种垃圾值）。
+    // 兜底：即便某版 Qt 不认这些串，数组也会被判成"前 6 个元素不是数值"，
+    // 两条路都以 ProtocolError 收场 —— 所以这里断言的是结果，不是具体文案。
+    Pose pose;
+    pose.xyz = {1.0, 2.0, 3.0};
+    QString error;
+    QCOMPARE(NrcJsonReader::parsePoseJson("[\"nan\",1,2,3,4,5]", pose, &error),
+             Status::ProtocolError);
+    QVERIFY(!error.isEmpty());
+    QCOMPARE(pose.xyz[0], 1.0);
+
+    const MockRun run = runMock(MockNrcServer::Mode::ReplyPoseOnly,
+                                "{\"posValue\":[0,0,\"nan\",0,0,0]}");
+    QCOMPARE(run.status, Status::ProtocolError);
+    QVERIFY(!run.error.isEmpty());
+}
+
 void TestNrcJsonReader::timeoutIsRetryable()
 {
     MockNrcServer silent;

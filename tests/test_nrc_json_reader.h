@@ -22,6 +22,10 @@ private slots:
     void parsesRealPosMcs();
     void parsesNestedData();
     void parsesPoseInsideTopLevelArray();
+    // 解析出 6 个数 ≠ 读到真实位姿（第 13 回合，见 RobotPose.h 的
+    // checkPoseSanity）：全 0 / 非有限值必须报错，且不改调用方的 out。
+    void zeroPoseIsRejected();
+    void nonFinitePoseIsRejected();
 
     // Failure paths: readable error, no crash, state stays usable.
     void timeoutIsRetryable();

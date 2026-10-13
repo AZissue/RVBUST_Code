@@ -153,6 +153,16 @@ Status ModbusTcpReader::readPose(Pose& out)
     const Status p = parseRegisters(data, vals);
     if (p != Status::Ok)
         return p;
+    // 解出了 6 个数不等于读到了真实位姿：全 0 与 NaN/Inf 都是"地址/格式不对"
+    // 的典型形状（见 RobotPose.h 的 checkPoseSanity）。宁可报错，也不要把
+    // (0,0,0,0,0,0) 当成位姿写进卡片 —— 那是静默错误。
+    const PoseSanity sn = checkPoseSanity(vals);
+    if (sn != PoseSanity::Ok) {
+        m_error = poseSanityText(sn)
+            + QStringLiteral("（Modbus 起始地址 %1，请核对机器人的寄存器表）")
+                  .arg(m_cfg.startAddress);
+        return Status::ProtocolError;
+    }
     out.xyz = { vals[0], vals[1], vals[2] };
     out.rpy = { vals[3], vals[4], vals[5] };
     m_error.clear();

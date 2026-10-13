@@ -8,6 +8,9 @@ private slots:
     void modbusFloat32();
     void modbusInt32Scaled();
     void modbusInt16Scaled();
+    void modbusAllZeroPoseIsAnError();
+    void modbusNotANumberIsAnError();
+    void poseSanityPredicate();
     void modbusTimeout();
     void notConnected();
     void statusTextMapped();

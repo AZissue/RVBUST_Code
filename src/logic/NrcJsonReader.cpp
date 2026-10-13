@@ -141,6 +141,27 @@ bool arrayToPose(const QJsonArray& arr, Pose& out)
     return true;
 }
 
+// arrayToPose + 健全性：解析出 6 个数**不等于**读到真实位姿 —— 全 0 / NaN 是
+// "字段选错了"的形状（见 RobotPose.h 的 checkPoseSanity）。这里返回 false 后
+// 调用方会继续试下一个候选字段，所以"某个字段全是 0"不会掩盖真正的位姿字段；
+// 理由只在第一次失败时记进 why，不覆盖已有理由。
+bool poseFromArray(const QJsonArray& arr, Pose& out, QString* why)
+{
+    Pose candidate;
+    if (!arrayToPose(arr, candidate))
+        return false;
+    const std::array<double, 6> v{candidate.xyz[0], candidate.xyz[1], candidate.xyz[2],
+                                  candidate.rpy[0], candidate.rpy[1], candidate.rpy[2]};
+    const PoseSanity sn = checkPoseSanity(v);
+    if (sn == PoseSanity::Ok) {
+        out = candidate;   // 全部通过才写 out，失败路径不动它
+        return true;
+    }
+    if (why && why->isEmpty())
+        *why = poseSanityText(sn);
+    return false;
+}
+
 // `depth` is the number of additional nesting levels to search.
 bool findPoseArray(const QJsonObject& obj, int depth, Pose& out, QString* why)
 {
@@ -149,7 +170,7 @@ bool findPoseArray(const QJsonObject& obj, int depth, Pose& out, QString* why)
         const QJsonValue val = obj.value(QLatin1String(key));
         if (!val.isArray())
             continue;
-        if (arrayToPose(val.toArray(), out))
+        if (poseFromArray(val.toArray(), out, why))
             return true;
         if (why && why->isEmpty()) {
             const int n = val.toArray().size();
@@ -165,7 +186,7 @@ bool findPoseArray(const QJsonObject& obj, int depth, Pose& out, QString* why)
     // {"data":{...}} / {"result":{...}}.  The real schema is unconfirmed, so a
     // correct-looking array beats a hard failure.
     for (auto it = obj.begin(); it != obj.end(); ++it) {
-        if (it.value().isArray() && arrayToPose(it.value().toArray(), out))
+        if (it.value().isArray() && poseFromArray(it.value().toArray(), out, why))
             return true;
         if (depth > 0 && it.value().isObject()
             && findPoseArray(it.value().toObject(), depth - 1, out, why)) {
@@ -235,14 +256,17 @@ Status NrcJsonReader::parsePoseJson(const QByteArray& json, Pose& out, QString* 
 
     QString why;
     if (doc.isArray()) {
-        if (arrayToPose(doc.array(), out)) {
+        if (poseFromArray(doc.array(), out, &why)) {
             if (error)
                 error->clear();
             return Status::Ok;
         }
-        why = doc.array().size() < 6
-            ? QStringLiteral("应答数组只有 %1 个数值，需要至少 6 个").arg(doc.array().size())
-            : QStringLiteral("应答数组的前 6 个元素不是数值");
+        if (why.isEmpty()) {
+            why = doc.array().size() < 6
+                ? QStringLiteral("应答数组只有 %1 个数值，需要至少 6 个")
+                      .arg(doc.array().size())
+                : QStringLiteral("应答数组的前 6 个元素不是数值");
+        }
     } else if (doc.isObject()) {
         if (findPoseArray(doc.object(), 1, out, &why)) {
             if (error)

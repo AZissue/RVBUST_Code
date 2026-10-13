@@ -6,6 +6,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstring>
+#include <limits>
 #include <thread>
 #include <winsock2.h>
 
@@ -26,15 +27,30 @@ public:
     MockModbusServer() = default;
     ~MockModbusServer() { stop(); }
 
+    // What the register block holds.  AllZero / NotANumber are the two shapes
+    // that look like a reply but are not a pose (see RobotPose.h
+    // checkPoseSanity); the reader must refuse them instead of returning them.
+    enum class ReplyMode { Normal, AllZero, NotANumber };
+
     bool start(RegisterFormat fmt)
     {
-        return startCommon(fmt, false);
+        return startCommon(fmt, false, ReplyMode::Normal);
+    }
+
+    bool startZeroPose()
+    {
+        return startCommon(RegisterFormat::Float32, false, ReplyMode::AllZero);
+    }
+
+    bool startNotANumber()
+    {
+        return startCommon(RegisterFormat::Float32, false, ReplyMode::NotANumber);
     }
 
     // Accept connections but never reply -> the client must time out.
     bool startSilent()
     {
-        return startCommon(RegisterFormat::Float32, true);
+        return startCommon(RegisterFormat::Float32, true, ReplyMode::Normal);
     }
 
     quint16 port() const { return m_port; }
@@ -51,10 +67,12 @@ public:
     }
 
 private:
-    bool startCommon(RegisterFormat fmt, bool silent)
+    bool startCommon(RegisterFormat fmt, bool silent,
+                     ReplyMode mode = ReplyMode::Normal)
     {
         m_format = fmt;
         m_silent = silent;
+        m_mode = mode;
         WSADATA wsa;
         if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
             return false;
@@ -145,7 +163,13 @@ private:
                 payload.push_back(static_cast<char>(vals[i] & 0xFF));
             }
         } else {
-            const float vals[6] = { 100.0f, 200.0f, 300.0f, 10.0f, 20.0f, 30.0f };
+            const float normal[6] = { 100.0f, 200.0f, 300.0f, 10.0f, 20.0f, 30.0f };
+            const float zeros[6]  = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
+            const float notANumber[6] = { std::numeric_limits<float>::quiet_NaN(),
+                                          200.0f, 300.0f, 10.0f, 20.0f, 30.0f };
+            const float* vals = m_mode == ReplyMode::AllZero ? zeros
+                              : m_mode == ReplyMode::NotANumber ? notANumber
+                              : normal;
             for (int i = 0; i < 6 && i < qty; ++i) {
                 quint32 raw = 0;
                 std::memcpy(&raw, &vals[i], sizeof(raw));
@@ -170,6 +194,7 @@ private:
     SOCKET m_listen = INVALID_SOCKET;
     quint16 m_port = 0;
     RegisterFormat m_format = RegisterFormat::Float32;
+    ReplyMode m_mode = ReplyMode::Normal;
     bool m_silent = false;
     std::thread m_thread;
 };
@@ -729,6 +754,63 @@ void TestRobotPose::modbusInt16Scaled()
     QCOMPARE(pose.xyz[0], 100.0);
     QCOMPARE(pose.xyz[2], 300.0);
     server.stop();
+}
+
+// 全 0 的寄存器块不是位姿：以前这里返回 Ok，把 (0,0,0,0,0,0) 静默写进卡片，
+// 标定结果会整体偏掉 —— 与 UR 侧那条"读取成功但结果是错的"是同一类问题。
+void TestRobotPose::modbusAllZeroPoseIsAnError()
+{
+    MockModbusServer server;
+    QVERIFY(server.startZeroPose());
+    ModbusTcpReader reader;
+    ModbusConfig cfg;
+    cfg.startAddress = 100;
+    cfg.timeoutMs = 2000;
+    reader.setConfig(cfg);
+    QVERIFY(reader.connect(QStringLiteral("127.0.0.1"), server.port()));
+    Pose pose;
+    QCOMPARE(reader.readPose(pose), Status::ProtocolError);
+    QVERIFY2(reader.lastError().contains(QStringLiteral("全为 0")),
+             qPrintable(reader.lastError()));
+    // 报错时不能写出半个位姿（Pose 依旧是调用方给的全 0 初值）。
+    QCOMPARE(pose.xyz[0], 0.0);
+    server.stop();
+}
+
+// NaN 同理：解析"成功"（IEEE 位模式完整）但不是数。
+void TestRobotPose::modbusNotANumberIsAnError()
+{
+    MockModbusServer server;
+    QVERIFY(server.startNotANumber());
+    ModbusTcpReader reader;
+    ModbusConfig cfg;
+    cfg.timeoutMs = 2000;
+    reader.setConfig(cfg);
+    QVERIFY(reader.connect(QStringLiteral("127.0.0.1"), server.port()));
+    Pose pose;
+    QCOMPARE(reader.readPose(pose), Status::ProtocolError);
+    QVERIFY2(reader.lastError().contains(QStringLiteral("非有限值")),
+             qPrintable(reader.lastError()));
+    server.stop();
+}
+
+// 判据本身（三个 reader 共用一处，见 RobotPose.h checkPoseSanity）。
+void TestRobotPose::poseSanityPredicate()
+{
+    using RobotPose::PoseSanity;
+    const std::array<double, 6> ok { 1.0, 0.0, 0.0, 0.0, 0.0, 0.0 };
+    QCOMPARE(RobotPose::checkPoseSanity(ok), PoseSanity::Ok);
+    const std::array<double, 6> zero { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 };
+    QCOMPARE(RobotPose::checkPoseSanity(zero), PoseSanity::AllZero);
+    const std::array<double, 6> nan {
+        std::numeric_limits<double>::quiet_NaN(), 1.0, 2.0, 3.0, 4.0, 5.0 };
+    QCOMPARE(RobotPose::checkPoseSanity(nan), PoseSanity::NotFinite);
+    const std::array<double, 6> inf {
+        1.0, 2.0, 3.0, std::numeric_limits<double>::infinity(), 0.0, 0.0 };
+    QCOMPARE(RobotPose::checkPoseSanity(inf), PoseSanity::NotFinite);
+    QVERIFY(RobotPose::poseSanityText(PoseSanity::AllZero).contains(QStringLiteral("全为 0")));
+    QVERIFY(RobotPose::poseSanityText(PoseSanity::NotFinite).contains(QStringLiteral("非有限值")));
+    QVERIFY(RobotPose::poseSanityText(PoseSanity::Ok).isEmpty());
 }
 
 void TestRobotPose::modbusTimeout()

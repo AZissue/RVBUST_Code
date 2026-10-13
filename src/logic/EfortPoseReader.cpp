@@ -230,6 +230,18 @@ RobotPose::Status EfortReader::readPose(RobotPose::Pose& out)
     }
 
     const double raw[6] = { pos.x, pos.y, pos.z, pos.a, pos.b, pos.c };
+    // 六个分量全为 0（以及 NaN/Inf）不是位姿：SDK 调用成功、结构体填满 0，
+    // 恰恰是"没读到 / 读错对象"的样子。UR 侧早就是这么拒的（见 RobotPose.h
+    // 的 checkPoseSanity），这里补上同一条规则，别再让全 0 静默进卡片。
+    const RobotPose::PoseSanity sn = RobotPose::checkPoseSanity(
+        { raw[0], raw[1], raw[2], raw[3], raw[4], raw[5] });
+    if (sn != RobotPose::PoseSanity::Ok) {
+        m_error = QStringLiteral("埃夫特：%1（x %2 y %3 z %4 a %5 b %6 c %7）")
+                      .arg(RobotPose::poseSanityText(sn))
+                      .arg(pos.x).arg(pos.y).arg(pos.z)
+                      .arg(pos.a).arg(pos.b).arg(pos.c);
+        return RobotPose::Status::ProtocolError;
+    }
     // 单位按 SDK 结构体字段的通常约定当作 mm / 度传入；真实单位未经真机确认，
     // 见 EfortPoseReader.h 与 008 交回说明里的「欧拉角约定」一节。
     if (!normalizePose(raw, true, true, out)) {
