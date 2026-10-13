@@ -187,6 +187,11 @@ private:
         QImage left;
         QImage right;      // stereo X2 only
         bool abandoned = false;   // round dropped to hand the device to a capture
+        // Wall time the round spent inside the worker (device lock wait + SDK
+        // Capture2D/GetImage + pixel conversion), measured by the caller.  Only
+        // used by the preview-stall diagnostic: a round this slow is what the
+        // field sees as "the picture froze on one frame".
+        qint64 roundMs = 0;
     };
     PreviewFrames capturePreviewFrameX1();
     PreviewFrames capturePreviewFrameX2();
@@ -248,6 +253,10 @@ private:
     QTimer* m_reconnectTimer = nullptr;
     QTimer* m_healthTimer = nullptr;
     int m_previewFps = 20;
+    // Preview-stall diagnostic (第 13 回合): wall time of the last frame that
+    // reached the UI thread.  UI thread only.  Reset whenever the stream is
+    // (re)started so a deliberate stop/start is not reported as a stall.
+    qint64 m_lastPreviewFrameMs = 0;
     bool m_isConnected = false;
     bool m_previewPaused = false;
     bool m_shuttingDown = false;

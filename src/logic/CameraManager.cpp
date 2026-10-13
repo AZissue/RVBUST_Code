@@ -51,6 +51,19 @@ static void logMemoryTrace(const char* tag, std::size_t payloadBytes)
     }
 }
 
+// ── 预览卡顿（"停在某一帧一会"）的诊断阈值 ──
+//
+// 症状有五种互不相同的成因，每种都留下**各自独立**的线索，所以卡住时先看 runtime
+// 日志里哪一行出现，而不是猜：
+//   [WATCHDOG] UI stall …            → UI 线程被别的活占住（含 [UI] Image2DView::render）
+//   [DEV] preview-x1 acquired …      → 预览在等设备锁（让位给拍照 / 总线扫描）
+//   [PREV] slow round …             → 相机 / SDK 这一次调用本身就慢（本文件）
+//   [PREV] frame gap …              → 两帧之间隔了很久：是不是根本没在跑（本文件）
+//   [CAM] preview paused after …     → 是我们自己按"无操作"暂停的，不是卡
+// 正常一帧 30~60 ms，所以 500 ms 的轮次与 1 s 的帧间隔都只可能是异常。
+static constexpr qint64 kPreviewSlowRoundMs = 500;
+static constexpr qint64 kPreviewLongGapMs   = 1000;
+
 // GigE "In Use" flag — the hard evidence for "上一次没释放干净 / 被别的程序占着",
 // which is what decides whether a connect retry can help (任务 3.3).
 static bool deviceInUse(RVC::Device& dev, const RVC::DeviceInfo& info)
@@ -961,6 +974,7 @@ void CameraManager::startPreview()
 {
     if (!m_isConnected) return;
     m_previewPaused = false;
+    m_lastPreviewFrameMs = 0;   // no gap diagnostic across a deliberate restart
     // The timer is only a fallback kick for failed frames; successful frames
     // self-schedule the next capture in the completion handler.
     m_previewTimer->start(100);
@@ -969,6 +983,7 @@ void CameraManager::startPreview()
 void CameraManager::stopPreview()
 {
     m_previewTimer->stop();
+    m_lastPreviewFrameMs = 0;
     ++m_previewGen;  // discard any in-flight frame from the previous session
 }
 
@@ -1017,10 +1032,13 @@ void CameraManager::onPreviewTick()
             return;
 
         PreviewFrames frames;
+        QElapsedTimer round;
+        round.start();
         if (m_impl->isX1())
             frames = capturePreviewFrameX1();
         else if (m_impl->isX2())
             frames = capturePreviewFrameX2();
+        frames.roundMs = round.elapsed();
 
         QMetaObject::invokeMethod(this, [this, gen, frames]() {
             if (gen != m_previewGen) {
@@ -1034,7 +1052,35 @@ void CameraManager::onPreviewTick()
                 // self-schedule (the capture has already stopped preview).
                 return;
             }
+            if (frames.roundMs >= kPreviewSlowRoundMs) {
+                // A round this slow is not the normal "camera is a bit busy":
+                // it is the field symptom "画面停在某一帧".  Whether the time
+                // went into the device lock or into the SDK call is in the
+                // [DEV] line right above this one.
+                RuntimeLog::log("[PREV] slow round %lld ms (timer=%d "
+                                "failures=%d gen=%d)",
+                                static_cast<long long>(frames.roundMs),
+                                m_previewTimer->isActive() ? 1 : 0,
+                                m_previewFailures.load(), gen);
+            }
             if (!frames.left.isNull()) {
+                const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+                const qint64 gapMs = m_lastPreviewFrameMs > 0
+                                         ? nowMs - m_lastPreviewFrameMs : 0;
+                if (gapMs >= kPreviewLongGapMs) {
+                    // No frame for a long time: either nobody was asking (our
+                    // own idle pause / a capture holding the device — look for
+                    // the matching [CAM]/[FLOW] line) or the camera stopped
+                    // answering (then the [PREV] slow round above is the one
+                    // that matters).
+                    RuntimeLog::log("[PREV] frame gap %lld ms (timer=%d "
+                                    "paused=%d failures=%d gen=%d)",
+                                    static_cast<long long>(gapMs),
+                                    m_previewTimer->isActive() ? 1 : 0,
+                                    m_previewPaused ? 1 : 0,
+                                    m_previewFailures.load(), gen);
+                }
+                m_lastPreviewFrameMs = nowMs;
                 emit previewFrameReady(frames.left);
                 m_previewFailures = 0;
             } else if (++m_previewFailures >= 20) {

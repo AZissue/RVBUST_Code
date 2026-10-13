@@ -283,6 +283,14 @@ private:
     int  m_idlePauseSec = 60;
     QTimer* m_idleTimer = nullptr;
     bool m_idlePreviewPaused = false;
+    // 第 13 回合: 光靠 Qt 事件判"无操作"会漏掉整片 3D 视窗 —— 那个 OSG 子窗口是
+    // Vis 自己建的 **本机(alien) HWND**，它的鼠标消息按定义不进 Qt 的事件过滤器，
+    // 所以"在 3D 视窗里转点云、滚轮缩放"整整一分钟都算无操作，预览会被按设计暂停，
+    // 现场看起来就是"预览停在某一帧"。这里用光标位置补上这一段：只要光标动过就算
+    // 有操作（顺带也覆盖了别的 widget 不产生 MouseMove 的情况）。
+    QTimer* m_activityPoll = nullptr;
+    QPoint  m_lastCursorPos;
+    void armIdleDetection(bool on);
 
     // Stage 4: online 2D-pixel -> 3D point
     int m_pickSphereHandle = -1;               // 3D highlight sphere

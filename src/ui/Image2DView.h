@@ -60,6 +60,12 @@ public:
     void clearFrozenImage();
     bool frozen() const { return m_frozen; }
 
+    // 「预览已暂停（无操作 N 秒）」提示（第 13 回合）。
+    // 无操作暂停是**故意**的（把相机让给别的工具），但它此前在界面上与"程序卡死"
+    // 完全无法区分——现场反馈的"预览停在某一帧一会又好了"就是它。暂停时把状态
+    // 明说在画面上，恢复时立刻撤掉。
+    void setPreviewPausedHint(bool paused, int idleSec);
+
 signals:
     // Left-click on the image; coordinates are image pixels (0-based).
     void pixelClicked(int x, int y);
@@ -85,6 +91,8 @@ private:
     void render();
     void buildPageBar();
     void updatePageBarGeometry();
+    // 把「预览已暂停」提示摆到画面正中（浮层，不进布局）。
+    void updatePausedHintGeometry();
     // 浮层「毛玻璃」底的模糊源（T-001 判据 3）。2D 画面是本进程画的 pixmap
     // （m_cachedVisible），抓得到，所以这里给的是真模糊；返回 w 在视窗里的矩形
     // 所对应的模糊副本（w 完全在画面外时返回空图）。
@@ -106,6 +114,7 @@ private:
     QLabel* m_imageLabel;
     QLabel* m_titleLabel;
     QLabel* m_zoomLabel;
+    QLabel* m_pausedHint = nullptr;   // 「预览已暂停」提示（默认隐藏）
     // 需要铺模糊底的浮层控件（标题/缩放标签 + 工具栏按钮）。
     QVector<QWidget*> m_glassWidgets;
 

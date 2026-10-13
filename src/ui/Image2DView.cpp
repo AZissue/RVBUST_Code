@@ -135,6 +135,22 @@ Image2DView::Image2DView(QWidget* parent)
     m_zoomLabel = zoomLabel;
     m_glassWidgets.push_back(zoomLabel);
 
+    // 「预览已暂停」提示（第 13 回合）。无操作暂停是刻意设计（把相机让给别的
+    // 工具），但在此之前它与"程序卡死"在画面上长得一模一样：现场报的"预览停在
+    // 某一帧一会又好了"就是它。所以暂停必须自己说出来，而不是让人猜。
+    // 用同一套浮层组件（模糊底 + 白字），保持两个视窗的观感一致。
+    auto* pausedHint = new GlassLabel(this);
+    pausedHint->setText(QStringLiteral("预览已暂停"));
+    pausedHint->setGlassSource(glassSource);
+    pausedHint->setStyleSheet(Theme::viewOverlayLabelStyle()
+                              + QStringLiteral("QLabel { font-weight: 600; "
+                                               "padding: 8px 16px; }"));
+    pausedHint->setAlignment(Qt::AlignCenter);
+    pausedHint->setAttribute(Qt::WA_TransparentForMouseEvents);
+    pausedHint->hide();
+    m_pausedHint = pausedHint;
+    m_glassWidgets.push_back(pausedHint);
+
     // Zoom-drag uses a fast (nearest-neighbor) scale; a short debounce timer
     // then re-renders the final frame with smooth scaling.
     m_smoothTimer = new QTimer(this);
@@ -225,6 +241,7 @@ void Image2DView::clear()
     m_cameraImage = QImage();
     m_canvasDirty = true;
     m_imageLabel->clear();
+    setPreviewPausedHint(false, 0);
 }
 
 // ── Offline freeze ─────────────────────────────────────────────────────
@@ -272,6 +289,40 @@ void Image2DView::clearFrozenImage()
     m_canvasDirty = true;
     m_imageLabel->clear();
     render();
+}
+
+// ── 「预览已暂停」提示（第 13 回合）─────────────────────────────────────
+//
+// 只在"无操作暂停预览"生效期间显示：画面停住是因为我们按设计停掉了取流，不是
+// 相机断了、也不是界面卡死。恢复（任何输入）时立刻撤掉。
+void Image2DView::setPreviewPausedHint(bool paused, int idleSec)
+{
+    if (!m_pausedHint)
+        return;
+    if (!paused) {
+        if (m_pausedHint->isVisible())
+            m_pausedHint->hide();
+        return;
+    }
+    m_pausedHint->setText(idleSec > 0
+        ? QStringLiteral("预览已暂停（无操作 %1 秒）\n移动鼠标或按任意键继续")
+              .arg(idleSec)
+        : QStringLiteral("预览已暂停\n移动鼠标或按任意键继续"));
+    updatePausedHintGeometry();
+    m_pausedHint->show();
+    m_pausedHint->raise();
+    // 暂停期间没有新帧，没有任何别的东西会重画它 —— 第一次上屏要自己触发。
+    m_pausedHint->update();
+}
+
+void Image2DView::updatePausedHintGeometry()
+{
+    if (!m_pausedHint)
+        return;
+    m_pausedHint->adjustSize();
+    const int x = std::max(0, (width() - m_pausedHint->width()) / 2);
+    const int y = std::max(0, (height() - m_pausedHint->height()) / 2);
+    m_pausedHint->move(x, y);
 }
 
 // ── Display pages (inside this widget, no extra window) ───────────────
@@ -1257,6 +1308,10 @@ void Image2DView::resizeEvent(QResizeEvent* event)
         m_zoomLabel->raise();
     }
     updatePageBarGeometry();
+    if (m_pausedHint && m_pausedHint->isVisible()) {
+        updatePausedHintGeometry();
+        m_pausedHint->raise();
+    }
 
     if (m_autoFit) {
         fitZoom();

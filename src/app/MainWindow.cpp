@@ -50,6 +50,7 @@
 #include <QDateTime>
 #include <QFileInfo>
 #include <QTimer>
+#include <QCursor>
 #include <QThread>
 #include <QtConcurrent>
 #include <vector>
@@ -140,12 +141,19 @@ MainWindow::MainWindow(QWidget* parent)
     m_idleTimer = new QTimer(this);
     m_idleTimer->setSingleShot(true);
     connect(m_idleTimer, &QTimer::timeout, this, &MainWindow::onIdleTimeout);
-    if (m_idlePauseSec > 0) {
-        // Watch application-wide input so "连续 N 秒无操作" means the whole app,
-        // not just this window's widgets.
-        qApp->installEventFilter(this);
-        m_idleTimer->start(m_idlePauseSec * 1000);
-    }
+    // 第 13 回合: 光标位置轮询。1 Hz 一次 QCursor::pos() 是极低的开销，换来的是
+    // "无操作"判定不再依赖事件是否进得来 Qt（3D 视窗那段 alien HWND 进不来）。
+    m_activityPoll = new QTimer(this);
+    m_activityPoll->setTimerType(Qt::CoarseTimer);
+    m_activityPoll->setInterval(1000);
+    connect(m_activityPoll, &QTimer::timeout, this, [this]() {
+        const QPoint p = QCursor::pos();
+        if (p != m_lastCursorPos) {
+            m_lastCursorPos = p;
+            onUserActivity();
+        }
+    });
+    armIdleDetection(m_idlePauseSec > 0);
 
     // 任务 3.1: belt-and-braces release for exit paths that do not go through
     // closeEvent.  shutdown() is idempotent, so when closeEvent already ran this
@@ -240,8 +248,7 @@ MainWindow::~MainWindow()
     // call is the same either way because shutdown() is idempotent — on the
     // normal path it is a logged no-op, which is also the evidence that a
     // second teardown does not repeat Close/Destroy.
-    if (m_idleTimer)
-        m_idleTimer->stop();
+    armIdleDetection(false);
     if (m_camera) {
         m_camera->stopPreview();
         m_camera->shutdown();
@@ -419,6 +426,9 @@ void MainWindow::wireSignals()
         m_actionButtons->setCaptureEnabled(false);
         m_actionButtons->setPreviewActive(false);
         m_actionButtons->setPreviewEnabled(false);
+        // 断开是另一回事，不能继续挂着"无操作暂停"的提示。
+        if (m_view2d) m_view2d->setPreviewPausedHint(false, 0);
+        m_idlePreviewPaused = false;
         m_logger->info(QStringLiteral("相机已断开"));
     });
 
@@ -988,6 +998,7 @@ void MainWindow::onCapture()
     if (m_camera->isPreviewing()) {
         m_camera->stopPreview();
         m_actionButtons->setPreviewActive(false);
+        if (m_view2d) m_view2d->setPreviewPausedHint(false, 0);
     }
     m_view3d->hideImage();
     m_flow->beginCapture();
@@ -1979,12 +1990,32 @@ void MainWindow::onDetectionFinished(bool ok)
     });
 }
 
+void MainWindow::armIdleDetection(bool on)
+{
+    if (on) {
+        // Watch application-wide input so "连续 N 秒无操作" means the whole app,
+        // not just this window's widgets.
+        qApp->installEventFilter(this);
+        if (m_lastCursorPos.isNull())
+            m_lastCursorPos = QCursor::pos();
+        if (m_activityPoll && !m_activityPoll->isActive())
+            m_activityPoll->start();
+        if (m_idleTimer && !m_idleTimer->isActive())
+            m_idleTimer->start(m_idlePauseSec * 1000);
+    } else {
+        qApp->removeEventFilter(this);
+        if (m_activityPoll) m_activityPoll->stop();
+        if (m_idleTimer)    m_idleTimer->stop();
+    }
+}
+
 void MainWindow::onUserActivity()
 {
     // Anything the user does resumes the preview we paused, and re-arms the
     // idle timer.  Nothing is resumed that we did not pause ourselves.
     if (m_idlePreviewPaused) {
         m_idlePreviewPaused = false;
+        if (m_view2d) m_view2d->setPreviewPausedHint(false, 0);
         if (m_camera && m_camera->isConnected()) {
             m_camera->resumePreview();
             RuntimeLog::log("[CAM] preview resumed (user activity)");
@@ -2002,6 +2033,15 @@ void MainWindow::onIdleTimeout()
     m_idlePreviewPaused = true;
     RuntimeLog::log("[CAM] preview paused after %d s idle "
                     "(frees the device for other tools)", m_idlePauseSec);
+    // 暂停以后画面就停住了。不写清楚，界面上和"程序卡死"没有区别 —— 现场报的
+    // 「预览停在某一帧一会又好了」就是这一句造成的。画面上说一次，操作日志里
+    // 也留一行（app_*.log），恢复时由 onUserActivity() 撤掉提示。
+    if (m_view2d)
+        m_view2d->setPreviewPausedHint(true, m_idlePauseSec);
+    if (m_logger)
+        m_logger->info(QStringLiteral(
+            "预览已暂停（无操作 %1 秒，相机让给其他工具）；移动鼠标或按任意键恢复")
+            .arg(m_idlePauseSec));
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)
@@ -2087,13 +2127,12 @@ void MainWindow::showSettingsDialog()
     m_camera->setHealthCheckInterval(dlg.healthCheckIntervalSec() * 1000);
 
     m_idlePauseSec = dlg.idlePausePreviewSec();
-    if (m_idlePauseSec > 0) {
-        m_idleTimer->start(m_idlePauseSec * 1000);
-    } else {
-        m_idleTimer->stop();
+    armIdleDetection(m_idlePauseSec > 0);
+    if (m_idlePauseSec <= 0) {
         // Switching the feature off must not leave the preview paused by it.
         if (m_idlePreviewPaused && m_camera->isConnected()) {
             m_idlePreviewPaused = false;
+            if (m_view2d) m_view2d->setPreviewPausedHint(false, 0);
             m_camera->resumePreview();
         }
     }
@@ -2226,8 +2265,7 @@ bool MainWindow::nativeEvent(const QByteArray& eventType, void* message, long* r
             RuntimeLog::log("[CAM] WM_QUERYENDSESSION (lParam=0x%llx): releasing camera",
                             static_cast<unsigned long long>(msg->lParam));
             if (m_camera) {
-                if (m_idleTimer)
-                    m_idleTimer->stop();
+                armIdleDetection(false);
                 m_camera->stopPreview();
                 m_camera->shutdown(kSessionEndWaitMs);
                 const auto r = m_camera->lastRelease();
@@ -2261,10 +2299,9 @@ void MainWindow::closeEvent(QCloseEvent* event)
     m_data->saveBackup(true);
 
     // The idle pause must not fire (and resumePreview must not run) while the
-    // camera is being torn down.
-    if (m_idleTimer)
-        m_idleTimer->stop();
-    qApp->removeEventFilter(this);
+    // camera is being torn down.  This also stops the cursor poll and removes
+    // the app-wide event filter.
+    armIdleDetection(false);
 
     // T-009: the robot channel is torn down here too (while the event loop still
     // runs), so an in-flight blocking robot call finishes/discards before the
