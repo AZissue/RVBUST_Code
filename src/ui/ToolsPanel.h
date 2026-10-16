@@ -270,6 +270,8 @@ private:
     // Robot communication tool (Modbus TCP / UR Realtime)
     QComboBox* m_robotProtocol = nullptr;
     QLineEdit* m_robotHost = nullptr;
+    // 埃夫特专用：输入里带了 ":端口" 时显示一行说明（平时隐藏）。
+    QLabel* m_robotHostNote = nullptr;
     QSpinBox* m_robotPort = nullptr;
     QWidget* m_modbusFieldsWidget = nullptr;   // Modbus-only rows (hidden for UR)
     QSpinBox* m_robotStartAddr = nullptr;

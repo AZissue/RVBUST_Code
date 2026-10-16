@@ -84,6 +84,8 @@ tests/                        → unit_tests（QtTest）+ measure_truth（已知
 | 像素→3D | `logic/PixelTo3DService.{h,cpp}`（共享服务）、`logic/PixelTo3DTools.h`（纯换算） |
 | 坐标转换 / 走点验证 | `logic/TransformTools.h` |
 | 机器人四协议的读位姿 | `logic/RobotPose.*`、`URRealtimeReader.*`、`NrcJsonReader.*`、`EfortPoseReader.*`；分派在 `RobotWorker::readerFor()`。**位姿健全性判据（全 0 / NaN/Inf → `ProtocolError`）只有一处**：`RobotPose.h::checkPoseSanity()`，四个 reader 都必须过它 |
+| **埃夫特的地址/端口** | **只填 IP，没有端口**（端口在 SDK 里写死 8100，`EftSdk.dll` 连 `setServerPort` 都不导入）。`EfortPoseReader.h::splitAddress()` 负责把用户粘进来的 `"IP:端口"` 切掉（`":"` 会让 SDK 的 `str2IpAddr` 把整串解析成另一个 IP）；UI 侧截断+提示在 `ToolsPanel.cpp` 的埃夫特分支 |
+| **埃夫特缺 `log4cpp.conf`** | SDK 建连前先读 exe 目录下的 `log4cpp.conf`，缺文件直接抛异常（现场看着像"连不上机器人"）。判据是 `EfortPoseReader.h::logConfigPresent()`，文案 `logConfigMissingText()`；**打包侧**由 `pack_portable.ps1` 的 `mustShip` 清单兜底（缺件即打包失败）。见 `reports/阶段14-…md` |
 | 机器人通信的**真机假设**（字节序/偏移/字段名/单位） | 四项待证实项的判据与操作步骤：`reports/机器人通信真机联测任务书.md`；只读探针 `reports/tools/probe_modbus_pose.py`、`reports/tools/probe_ur_offset.py`（都有 `--selftest`）。**拿到现场证据前别凭猜改那四个 reader** |
 | 会话生命周期（开新一组、清空、切模式） | `MainWindow::resetSession()` 是唯一的开新会话点；入口只有三个：启动（`MainWindow.cpp` 构造末尾）、`onModeChanged()` 的 `typeChanged` 分支、顶栏「新建会话」→ `onNewSessionRequested()`。按钮 enabled = 有记录且非 busy，四处同步：`dataChanged` / `setBusy` / `setConnectBusy` / `clearBusy` |
 | 键盘快捷键 | `MainWindow::registerShortcuts()`：Ctrl+S 保存 / Ctrl+Z 撤销 / F5 刷新预览 / F11 全屏 / F1 使用说明（`QKeySequence::HelpContents`） |

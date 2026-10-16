@@ -3,6 +3,7 @@
 #include "logic/GeometryTools.h"
 #include "logic/AppConfig.h"
 #include "logic/CalibrationService.h"
+#include "logic/EfortPoseReader.h"   // splitAddress：埃夫特地址只留 IP
 #include "logic/PixelTo3DService.h"
 #include "logic/PlyPointReader.h"
 #include "logic/ToolInputParser.h"
@@ -1610,6 +1611,16 @@ void ToolsPanel::buildRobotCommPage(QStackedWidget* stack)
     hostRow->addWidget(m_robotPort);
     form->addRow(QStringLiteral("IP / 端口"), hostRow);
 
+    // 埃夫特专用的一行提示：只在"输入里带了 :端口"时出现（平时隐藏）。
+    // 客户给的地址常常写成 "192.168.0.1:8003"，直接把整串喂给 SDK 会连到另一个 IP。
+    m_robotHostNote = new QLabel(group);
+    m_robotHostNote->setWordWrap(true);
+    m_robotHostNote->setStyleSheet(QStringLiteral(
+        "color: %1; font-size: %2px;")
+        .arg(Theme::WARNING).arg(Theme::FONT_HINT));
+    m_robotHostNote->setVisible(false);
+    form->addRow(QString(), m_robotHostNote);
+
     // Modbus-only fields, grouped so they can be hidden together for UR.
     m_modbusFieldsWidget = new QWidget(group);
     auto* modbusLayout = new QFormLayout(m_modbusFieldsWidget);
@@ -1679,7 +1690,11 @@ void ToolsPanel::buildRobotCommPage(QStackedWidget* stack)
         "但字段按名称索取，不存在偏移错位问题；机器人同时只允许一个 RTDE 客户端。"
         "博纳斯(纳博特) JSON/TCP 协议读取当前 TCP 位姿（x y z rx ry rz，mm/度），"
         "应答字段名未知时会自动尝试常见字段并把原始应答写进运行日志。"
-        "埃夫特走 EfortSDK，IP 必填（端口由 SDK 决定，本页端口输入框在埃夫特协议下隐藏），"
+        "埃夫特走 EfortSDK，IP 必填、端口不填：厂商 SDK 的端口在库里写死 8100"
+        "（厂商手册把 8000/8100 这段留作示教器/SDK 内部服务），本页端口输入框在该协议下隐藏；"
+        "客户自己开的用户 socket（例如 8003）不用于这条链路。"
+        "若把「IP:端口」整串粘进来，程序会只取 IP 并把端口部分标注出来"
+        "（整串交给 SDK 会被它解析成另一个 IP，且不报错）。"
         "读取基坐标下的 TCP 位姿。"
         "无真机时可点击「模拟连接成功」验证按钮显示与样式。"));
     form->addRow(QString(), hint);
@@ -1700,6 +1715,11 @@ void ToolsPanel::buildRobotCommPage(QStackedWidget* stack)
                              : index == 2 ? 6001
                              : index == 4 ? 30004
                                           : 502);
+        // 端口提示只对埃夫特有意义，切走协议就撤掉（IP 框里的文字不动）。
+        if (m_robotHostNote) {
+            m_robotHostNote->clear();
+            m_robotHostNote->setVisible(false);
+        }
     };
     connect(m_robotProtocol, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, updateProtocolFields);
@@ -1718,8 +1738,28 @@ void ToolsPanel::buildRobotCommPage(QStackedWidget* stack)
             const quint16 port = (protocol == 3)
                 ? 0
                 : static_cast<quint16>(m_robotPort->value());
+            QString host = m_robotHost->text().trimmed();
+            if (protocol == 3) {
+                // 埃夫特 SDK 只收 IP（控制器一侧固定 8100，见 EfortPoseReader.h）。
+                // 客户给的 "192.168.0.1:8003" 整串直接喂进去，SDK 会解析成
+                // 192.171.44.131 而不报错 —— 就地截断、写回输入框，并说清为什么。
+                const EfortPoseReader::AddressSplit split =
+                    EfortPoseReader::splitAddress(host);
+                host = split.ip;
+                if (split.portSuffix.isEmpty()) {
+                    m_robotHostNote->clear();
+                    m_robotHostNote->setVisible(false);
+                } else {
+                    m_robotHost->setText(split.ip);
+                    m_robotHostNote->setText(QStringLiteral(
+                        "已忽略输入里的“:%1”：埃夫特端口由 SDK 固定（控制器内部服务 8100），"
+                        "只填 IP 即可，本连接不使用客户自定义的 socket 端口。")
+                        .arg(split.portSuffix));
+                    m_robotHostNote->setVisible(true);
+                }
+            }
             emit robotConnectRequested(
-                m_robotHost->text().trimmed(),
+                host,
                 port,
                 protocol,
                 m_robotFormat->currentIndex(), scale,

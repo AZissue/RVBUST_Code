@@ -53,9 +53,48 @@ Get-ChildItem $SourceDir -File | Where-Object {
     Copy-Item -LiteralPath $_.FullName -Destination $pkgDir
 }
 
+# 2b) Vendor runtime DATA files (not DLLs) -- the step above only matches the exe
+# and *.dll, which is exactly how log4cpp.conf went missing from the test2.4 drop
+# the customer received. EftSdk.dll calls
+# log4cpp::PropertyConfigurator::configure("log4cpp.conf") before it opens any
+# socket, and the overload it uses THROWS when the file is absent; the field then
+# sees "connect failed" and goes hunting for a network/port problem while the real
+# cause is an incomplete package. log4cpp.conf names NTEventLogAppender.dll, so
+# both ship together (the DLL already comes along via step 2).
+$vendorDataFiles = @("log4cpp.conf")
+foreach ($f in $vendorDataFiles) {
+    $src = Join-Path $SourceDir $f
+    if (-not (Test-Path -LiteralPath $src)) {
+        Write-Error "Vendor runtime file missing from the build output: $src (run the Release build first)"
+    }
+    Copy-Item -LiteralPath $src -Destination $pkgDir -Force
+}
+
 # 3) Qt platform plugin + OSG plugins (must sit next to the exe)
 Copy-Item -LiteralPath (Join-Path $SourceDir "platforms") -Destination $pkgDir -Recurse
 Copy-Item -LiteralPath (Join-Path $SourceDir "osgPlugins-3.6.5") -Destination $pkgDir -Recurse
+
+# 3a) Refuse to ship an incomplete package. Everything here has bitten us or would
+# be a silent field failure: a missing exe/DLL is an obvious crash, but a missing
+# log4cpp.conf reads as "the robot won't connect" (see 2b), and a missing
+# platforms\qwindows.dll reads as "the tool won't start at all".
+$mustShip = @(
+    "HandEyeCalibrationTool.exe",
+    "log4cpp.conf",             # EftSdk.dll throws without it (2b)
+    "EftSdk.dll",
+    "log4cpp.dll",
+    "NTEventLogAppender.dll",   # referenced by log4cpp.conf
+    "rlibcpp-bcc.dll",
+    "rlibcpp-tool.dll",
+    "HandEyeSDK.dll",
+    "Qt5Core.dll",
+    "Qt5Widgets.dll",
+    "platforms\qwindows.dll"
+)
+$missing = @($mustShip | Where-Object { -not (Test-Path -LiteralPath (Join-Path $pkgDir $_)) })
+if ($missing.Count -gt 0) {
+    Write-Error ("Package incomplete -- missing: " + ($missing -join ", ") + " (source: $SourceDir)")
+}
 
 # 3b) Field diagnostic scripts (tools\*.ps1). They run on the robot PC and are
 # the only way to answer "what does this robot actually send" without a rebuild

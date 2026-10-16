@@ -338,6 +338,14 @@
 - **机器人位姿读取 fail-closed 统一**：全 0 / NaN/Inf 判 `ProtocolError`，
   判据收在 `RobotPose.h::checkPoseSanity()`；Modbus / 博纳斯 NRC / 埃夫特三个 reader 接上
   （UR 两个早就有，未动）。*(2026-10-13)*
+- **埃夫特只有 IP、没有端口**：`ToolsPanel` 埃夫特协议下的端口框本来就是隐藏的（SDK 的
+  `ConnectRobot` 只有地址串，端口在库里写死 8100），本轮补上"输入里带了 `:端口` 就地
+  截断并写回 + 一行黄字说明"，`EfortPoseReader::connect()` 也**不再拼 `host:port`**
+  —— 拼出来的串会被 SDK 的 `str2IpAddr` 悄悄解析成另一个 IP。*(2026-10-16)*
+- **绿色包完整性**：`pack_portable.ps1` 除了 exe + `*.dll` 还显式拷厂商运行时**数据**文件
+  （`log4cpp.conf`），并在打包末尾对 `mustShip` 清单做断件断言 —— 缺件**直接打包失败**。
+  起因：test2.4 漏了这个文件，而 `EftSdk.dll` 在开 socket 前读它、缺文件即抛异常，
+  现场表现成"埃夫特连不上机器人"。*(2026-10-16)*
 
 ## 阶段依赖关系表
 

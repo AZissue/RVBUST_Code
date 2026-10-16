@@ -17,4 +17,8 @@ private slots:
     void nullInputIsRejected();
     void sdkCodesMapToRobotPoseStatus();
     void errorTextIsReadableAndCarriesTheCode();
+    // 地址里的 ":端口" 必须被切掉（SDK 会把整串解析成另一个 IP，且不报错）。
+    void addressSuffixIsSplitOffTheIp();
+    // 缺 log4cpp.conf 时要给一句自解释的中文，而不是 SDK 的异常原文。
+    void missingLogConfigIsDetectableAndExplained();
 };

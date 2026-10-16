@@ -1,9 +1,50 @@
 # STATUS.md — 进度状态（每次会话结束必须更新）
 
-> 最后更新：2026-10-13（之十四：预览「停在某一帧」排查 + 机器人读取侧同类缺陷）
+> 最后更新：2026-10-16（之十五：埃夫特连不上的根因 = 绿色包缺 log4cpp.conf；8003 不是我们的端口）
 > 只保留「当前快照」，不积累历史；旧条目删除即可，git 历史里仍可追溯。
 
 ## ⏭ 交接块（新会话先读这里）
+
+- **2026-10-16（之十五：test2.4 现场「埃夫特连不上」—— 绿色包缺 `log4cpp.conf`；客户说的 8003 不是这条链路的端口）**
+  - **现象（用户提出）**：把 **test2.4 绿色包**交给客户测埃夫特机器人，**连不上**；
+    客户给的连线是 `192.168.0.1` + **端口 8003**（客户不确认是 8003 还是 80003），
+    并问"界面为什么没有端口输入"。客户提供了 SDK（`D:\MyCode\EfortSDK`）。
+    **本轮只本地验证，未打包**（用户明确：他说打包再打包）。
+  - **根因：test2.4 的包里没有 `log4cpp.conf`。** `EftSdk.dll` 的 `EftLogger`
+    在**打开任何 socket 之前**先 `PropertyConfigurator::configure("log4cpp.conf")`，
+    用的是**找不到文件就抛**的那个重载 → `ConnectRobot` 第 0 步抛
+    `File log4cpp.conf does not exist`。**本地永远复现不出来**：CMake 一直按规矩把它部署到
+    exe 旁边（`src/CMakeLists.txt`），**只有 `pack_portable.ps1` 的拷贝过滤器只挑
+    exe + `*.dll`，非 DLL 的运行时文件一律进不了包**。这条与 `.pair/ledger.md` 的
+    008/009/010 是同一根链：010 把文件部署到了构建机旁，**打包脚本没跟上**。
+  - **8003 / 8100 归属（用户要求查清并作出正确选择）**：反汇编 `EftSdk.dll` +
+    `rlibcpp-bcc.dll` —— `TcpIpConnection` 构造时 `serverPort = 0x1FA4`（**8100**）且在对象
+    `+0x2A8`，`doStart` 就用它建 TCP 端点，`FindRRobot`/`scanPort` 也用 8100；
+    `EftSdk.dll` **连 `setServerPort` 都不导入**。**8003 / 80003 / 8000 在库里一个都不存在**
+    （唯一落在端口区间的立即数就是 1FA4h）。厂商手册的端口表把 8000/8100 标为
+    示教器/SDK 内部服务（该 PDF 域名被安全策略拦住，只有检索摘要，但库里的证据独立且一致）。
+    **结论：8100 是 SDK 自己的端口；8003 几乎肯定是客户在示教器上自开的用户 socket
+    （埃夫特允许自配 5 client / 3 server），与本连接无关。正确选择 = 只填 IP。**
+  - **另一个坑（顺手修掉）**：把 `"192.168.0.1:8003"` 整串交给 SDK 会**悄悄连到另一个 IP**——
+    `str2IpAddr`（RVA 0x61770）遇到 `:` 不报错，把它当数字的一部分吃进去，
+    整串算出来是 **192.171.44.131**。**旧代码正好会拼 `host:port`**，等于自己造了个坑。
+  - **改动（1、2、3 全做）**：①`pack_portable.ps1` 新增 2b（显式拷 `log4cpp.conf`）与
+    3a（**mustShip 清单断言**：exe/`log4cpp.conf`/EftSdk/log4cpp/NTEventLogAppender/
+    rlibcpp-bcc/rlibcpp-tool/HandEyeSDK/Qt5Core/Qt5Widgets/`platforms\qwindows.dll`，
+    缺件即 `Write-Error` 退出 —— **把"静默不完整"变成"打包失败"**）；
+    ②`EfortPoseReader` 新增三个纯函数 `splitAddress()` / `logConfigPresent()` /
+    `logConfigMissingText()`，`connect()` **删掉拼 `:port` 的逻辑**（端口参数 `Q_UNUSED`）、
+    只把 IP 交给 SDK、进 SDK 前先查 `log4cpp.conf` 并给人话（不再让厂商异常当"连接失败"）；
+    ③`ToolsPanel` IP 行下新增一行黄字提示：粘进来带端口的地址**就地截断并写回输入框**，
+    静态提示补写端口归属。
+  - **验收**：`unit_tests` **334 通过 / 0 失败**（+2 条：地址切分 8 种输入、缺配置判定与文案），
+    `ctest` **3/3 绿**，`circle_truth` 输出未变；主 exe 已链接（时间戳 17:23:44）。
+    打包脚本**未执行**（用户未说打包）：做了 PowerShell AST 语法解析 + 把 `mustShip` 断言
+    抽出来对两个假包目录**实测**（完整包→空、删 conf→报 conf、再删 platforms→报两件）。
+    **只本地提交，未推送。**
+  - **细节**：`reports/阶段14-埃夫特连不上-缺log4cpp与端口归属.md`（含现场复测清单 8 条）。
+  - **仍未证实**：埃夫特的单位与欧拉约定（`normalizePose(raw, true, true)` = mm + 度）
+    需真机一次读数；8003 的确切用途只能由客户说明。
 
 - **2026-10-13（之十四：预览「停在某一帧一会又好了」= 自己按无操作暂停了＋3D 视窗操作不算操作；顺手修掉三个机器人 reader 的静默全 0）**
   - **现象（用户提出，别的测试机上发现）**：预览开着、**时间够久**就会卡一下，**停在某一帧

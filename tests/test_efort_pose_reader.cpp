@@ -2,6 +2,10 @@
 
 #include <QtTest>
 
+#include <QDir>
+#include <QFile>
+#include <QTemporaryDir>
+
 #include <cmath>
 #include <limits>
 
@@ -86,6 +90,7 @@ void TestEfortPoseReader::sdkCodesMapToRobotPoseStatus()
 }
 
 void TestEfortPoseReader::errorTextIsReadableAndCarriesTheCode()
+
 {
     const QString ok = EfortPoseReader::sdkErrorText(ERROR_OK);
     QVERIFY(!ok.isEmpty());
@@ -94,4 +99,64 @@ void TestEfortPoseReader::errorTextIsReadableAndCarriesTheCode()
     QVERIFY2(bad.contains(QString::number(ERROR_CONNECT_FAILED)), qPrintable(bad));
     QVERIFY2(RobotPose::statusText(RobotPose::Status::NotConnected) != bad,
              "错误文案应当把 SDK 码一起交代清楚");
+}
+
+void TestEfortPoseReader::addressSuffixIsSplitOffTheIp()
+{
+    // 客户给的地址就是写着端口的：只把 IP 交给 SDK。
+    // （整串喂给 SDK 的 str2IpAddr，"192.168.0.1:8003" 会变成 192.171.44.131。）
+    const EfortPoseReader::AddressSplit withPort =
+        EfortPoseReader::splitAddress(QStringLiteral("192.168.0.1:8003"));
+    QCOMPARE(withPort.ip, QStringLiteral("192.168.0.1"));
+    QCOMPARE(withPort.portSuffix, QStringLiteral("8003"));
+
+    // 客户把 8003 写成 80003 也一样对待（本链路不用这两个数）。
+    const EfortPoseReader::AddressSplit fiveDigit =
+        EfortPoseReader::splitAddress(QStringLiteral("192.168.0.1:80003"));
+    QCOMPARE(fiveDigit.ip, QStringLiteral("192.168.0.1"));
+    QCOMPARE(fiveDigit.portSuffix, QStringLiteral("80003"));
+
+    // 只有 IP：原样透传，portSuffix 为空（UI 据此决定要不要提示）。
+    const EfortPoseReader::AddressSplit bare =
+        EfortPoseReader::splitAddress(QStringLiteral("  192.168.0.37  "));
+    QCOMPARE(bare.ip, QStringLiteral("192.168.0.37"));
+    QVERIFY(bare.portSuffix.isEmpty());
+
+    // 冒号在开头 / 结尾 / 多个：都不许把 IP 弄丢。
+    QCOMPARE(EfortPoseReader::splitAddress(QStringLiteral(":8003")).ip, QString());
+    QCOMPARE(EfortPoseReader::splitAddress(QStringLiteral("192.168.0.1:")).ip,
+             QStringLiteral("192.168.0.1"));
+    QCOMPARE(EfortPoseReader::splitAddress(QStringLiteral("192.168.0.1:8003:9")).ip,
+             QStringLiteral("192.168.0.1"));
+
+    // 空输入：ip 为空（connect() 靠这个报"IP 不能为空"）。
+    QVERIFY(EfortPoseReader::splitAddress(QString()).ip.isEmpty());
+    QVERIFY(EfortPoseReader::splitAddress(QStringLiteral("   ")).ip.isEmpty());
+}
+
+void TestEfortPoseReader::missingLogConfigIsDetectableAndExplained()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    // 目录里没有文件 → 判为缺失（test2.4 绿色包就是这个状态）。
+    QVERIFY(!EfortPoseReader::logConfigPresent(dir.path()));
+
+    // 建出文件 → 判为存在（能走到真正连机器那一步）。
+    QFile conf(dir.path() + QStringLiteral("/log4cpp.conf"));
+    QVERIFY(conf.open(QIODevice::WriteOnly));
+    conf.write("log4j.rootCategory=DEBUG\n");
+    conf.close();
+    QVERIFY(EfortPoseReader::logConfigPresent(dir.path()));
+
+    // 空目录串不做"当前目录"猜测：宁可报缺失，也不要在别处悄悄读了。
+    QVERIFY(!EfortPoseReader::logConfigPresent(QString()));
+
+    // 文案要自己说得清：点名文件、给出期望路径、并说明这不是网络问题。
+    const QString text = EfortPoseReader::logConfigMissingText(dir.path());
+    QVERIFY2(text.contains(QStringLiteral("log4cpp.conf")), qPrintable(text));
+    QVERIFY2(text.contains(dir.path()) || text.contains(QDir::toNativeSeparators(dir.path())),
+             qPrintable(text));
+    QVERIFY2(text.contains(QStringLiteral("连接")) || text.contains(QStringLiteral("网络")),
+             qPrintable(text));
 }

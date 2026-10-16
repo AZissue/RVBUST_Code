@@ -127,6 +127,37 @@ QString sdkErrorText(int code)
     return QStringLiteral("%1（SDK 返回码 %2）").arg(mapped).arg(code);
 }
 
+AddressSplit splitAddress(const QString& raw)
+{
+    AddressSplit out;
+    const QString trimmed = raw.trimmed();
+    const int colon = trimmed.indexOf(QLatin1Char(':'));
+    if (colon < 0) {
+        out.ip = trimmed;
+        return out;
+    }
+    out.ip = trimmed.left(colon).trimmed();
+    out.portSuffix = trimmed.mid(colon + 1).trimmed();
+    return out;
+}
+
+bool logConfigPresent(const QString& dir)
+{
+    if (dir.isEmpty())
+        return false;
+    return QDir(dir).exists(QStringLiteral("log4cpp.conf"));
+}
+
+QString logConfigMissingText(const QString& dir)
+{
+    return QStringLiteral(
+               "埃夫特：缺少 SDK 配置文件 log4cpp.conf（应在 %1）。"
+               "厂商 SDK 在连接前必须先读它（按当前工作目录找），缺文件时直接抛异常，"
+               "与网络/端口无关 —— 这是部署包不完整，不是连不上机器人。"
+               "把 SDK 的 log4cpp.conf 放到 exe 旁边即可。")
+        .arg(QDir::toNativeSeparators(dir));
+}
+
 EfortReader::~EfortReader()
 {
     disconnect();
@@ -134,18 +165,33 @@ EfortReader::~EfortReader()
 
 bool EfortReader::connect(const QString& host, quint16 port)
 {
+    Q_UNUSED(port);   // 埃夫特的端口在 SDK 里写死（8100），传进来的值一律忽略
     disconnect();
     m_error.clear();
 
-    const QString trimmed = host.trimmed();
-    if (trimmed.isEmpty()) {
+    // 只把 IP 交给 SDK：带 ":端口" 的整串会被 SDK 的地址解析拼成另一个 IP
+    // （"192.168.0.1:8003" → 192.171.44.131，实测），且不报错。
+    const AddressSplit split = splitAddress(host);
+    const QString address = split.ip;
+    if (address.isEmpty()) {
         m_error = QStringLiteral("埃夫特：IP 地址不能为空");
         return false;
     }
 
-    QString address = trimmed;
-    if (!address.contains(QLatin1Char(':')) && port != 0)
-        address += QLatin1Char(':') + QString::number(port);
+    // 缺配置时先给一句人话。SDK 自己抛的是 "File log4cpp.conf does not exist"，
+    // 现场（test2.4）看到的是"连接失败"，会把排查方向带偏到网络/端口上。
+    const QString exeDir = QCoreApplication::applicationDirPath();
+    if (!logConfigPresent(exeDir)) {
+        m_error = logConfigMissingText(exeDir);
+        return false;
+    }
+
+    // 用户把 "IP:端口" 整串填进来时，在失败文案里说清端口被忽略了，
+    // 免得现场以为是"端口填错"。成功路径不需要（连接本身不看端口）。
+    const QString portNote = split.portSuffix.isEmpty()
+        ? QString()
+        : QStringLiteral("（输入里的“:%1”已忽略：埃夫特端口由 SDK 固定，只填 IP 即可）")
+              .arg(split.portSuffix);
 
     unsigned int devId = 0;
     int ret = ERROR_OK;
@@ -162,16 +208,16 @@ bool EfortReader::connect(const QString& host, quint16 port)
     if (!thrown.isEmpty()) {
         m_devId = 0;
         m_connected = false;
-        m_error = QStringLiteral("埃夫特：连接 %1 失败（SDK 抛出异常：%2）")
-                      .arg(address, thrown);
+        m_error = QStringLiteral("埃夫特：连接 %1 失败（SDK 抛出异常：%2）%3")
+                      .arg(address, thrown, portNote);
         return false;
     }
 
     if (ret != ERROR_OK) {
         m_devId = 0;
         m_connected = false;
-        m_error = QStringLiteral("埃夫特连接失败：%1（地址 %2）")
-                      .arg(sdkErrorText(ret), address);
+        m_error = QStringLiteral("埃夫特连接失败：%1（地址 %2）%3")
+                      .arg(sdkErrorText(ret), address, portNote);
         return false;
     }
 
