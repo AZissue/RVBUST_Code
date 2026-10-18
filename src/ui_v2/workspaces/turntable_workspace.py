@@ -35,9 +35,10 @@ from PySide6.QtWidgets import (
 
 from ..theme import BG_CARD, STATUS_ERR, STATUS_OK, TEXT_MUTED, TEXT_SECONDARY
 from .. import icons as ui_icons
+from ..components import UiComponents
 from ..widgets import ViewerPanel
 from ..widgets.device_table import DeviceInfo
-from ui.worker_thread import WorkerThread
+from ui_common.worker_thread import WorkerThread
 
 from core.camera_manager import CameraManager
 from core.utils import write_point_cloud_atomic
@@ -98,8 +99,9 @@ class TurntableWorkspace(QWidget):
     save_session_requested = Signal()
     """请求保存会话（转交主窗口统一走 BackendBridge 的 B 类保存路径）。"""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, components=None):
         super().__init__(parent)
+        self._components = components or UiComponents()
         self._state = "idle"
         self._devices: List[DeviceInfo] = []
 
@@ -195,14 +197,13 @@ class TurntableWorkspace(QWidget):
 
         # 2D 预览：AspectRatioLabel 自带按比缩放绘制与标记叠加
         #（绿圈=3D 有效 / 红圈=2D 检出但 3D 无深度），替换原裸 QLabel
-        from ui.camera_card import AspectRatioLabel
-        self.preview_2d_label = AspectRatioLabel(ratio=4.0 / 3.0)
+        self.preview_2d_label = self._components.create_preview(ratio=4.0 / 3.0)
         self.preview_2d_label.setMinimumSize(360, 270)
         preview_lo.addWidget(self.preview_2d_label, 1)
 
         self._right_split.addWidget(self._preview_panel)
 
-        self.viewer = ViewerPanel("3D 转台拼接预览")
+        self.viewer = self._components.create_viewer("3D 转台拼接预览")
         self.viewer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.viewer.setMinimumSize(360, 270)
         self.viewer.maximize_toggled.connect(self._on_viewer_maximize_toggled)

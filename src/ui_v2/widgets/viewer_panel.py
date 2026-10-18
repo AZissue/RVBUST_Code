@@ -2,18 +2,19 @@
 """
 ui_v2.widgets.viewer_panel —— 3D 拼接预览面板。
 
-直接包装 ``src/ui/viewer_3d.py`` 的 ``EmbeddedPointCloudViewer``，
+直接包装 ``src/ui_common/point_cloud_viewer.py`` 的 ``EmbeddedPointCloudViewer``，
 保持 ui_v2 的公共接口不变，工作区无需感知底层实现。
 """
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Optional, TYPE_CHECKING
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QFrame, QVBoxLayout
 
-from ui.viewer_3d import EmbeddedPointCloudViewer
+if TYPE_CHECKING:
+    from ..contracts import PointCloudView
 
 
 class ViewerPanel(QFrame):
@@ -29,7 +30,7 @@ class ViewerPanel(QFrame):
     maximize_toggled = Signal(bool)
     """3D 查看器最大化/恢复信号（True=最大化，False=恢复）。"""
 
-    def __init__(self, title: str = "3D 拼接预览", parent=None):
+    def __init__(self, title: str = "3D 拼接预览", parent=None, *, renderer_factory=None):
         super().__init__(parent)
         self._title = title
 
@@ -37,13 +38,20 @@ class ViewerPanel(QFrame):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        self._viewer = EmbeddedPointCloudViewer(self)
+        if renderer_factory is None:
+            from ui_common.point_cloud_viewer import EmbeddedPointCloudViewer
+            renderer_factory = EmbeddedPointCloudViewer
+        factory = renderer_factory
+        self._viewer = factory(parent=self)
+        from ..contracts import PointCloudView
+        if not isinstance(self._viewer, PointCloudView):
+            raise TypeError("Renderer must implement ui_v2.contracts.PointCloudView")
         self._viewer.status_changed.connect(self.viewer_message.emit)
         self._viewer.collapse_toggled.connect(self.collapse_toggled.emit)
         self._viewer.maximize_toggled.connect(self.maximize_toggled.emit)
         root.addWidget(self._viewer, 1)
 
-    def viewer(self) -> EmbeddedPointCloudViewer:
+    def viewer(self) -> PointCloudView:
         """返回底层 3D 查看器实例（高级操作使用）。"""
         return self._viewer
 

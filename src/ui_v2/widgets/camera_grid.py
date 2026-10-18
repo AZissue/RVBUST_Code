@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from core.frame_data import FrameData
-from ui.camera_card import AspectRatioLabel, numpy_to_qpixmap
+from ui_common.image_preview import AspectRatioLabel, numpy_to_qpixmap
 
 from ..theme import (
     ACCENT, ACCENT_DIM, BG_CARD, BG_PANEL, BORDER, BORDER_HOVER,
@@ -54,7 +54,7 @@ class CameraCard(QFrame):
     capture_requested = Signal(str)
     detect_requested = Signal(str)
 
-    def __init__(self, camera_id: str, title: Optional[str] = None, parent=None):
+    def __init__(self, camera_id: str, title: Optional[str] = None, parent=None, *, preview_factory=None):
         super().__init__(parent)
         self.camera_id = camera_id
         self._current_frame: Optional[FrameData] = None
@@ -86,7 +86,7 @@ class CameraCard(QFrame):
         lo.addLayout(title_row)
 
         # 缩略图占位（4:3，宽度随卡片水平铺满，保持比例）
-        self._thumb = AspectRatioLabel(ratio=4.0 / 3.0)
+        self._thumb = (preview_factory or AspectRatioLabel)(ratio=4.0 / 3.0)
         self._thumb.setMinimumSize(260, 180)
         self._thumb.setSizePolicy(
             QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -290,8 +290,9 @@ class CameraGrid(QScrollArea):
     H_SPACING = 8
     V_SPACING = 8
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, preview_factory=None):
         super().__init__(parent)
+        self._preview_factory = preview_factory
         self._cards: Dict[str, CameraCard] = {}
         self._titles: Dict[str, str] = {}
         self._last_cols: Optional[int] = None
@@ -319,7 +320,7 @@ class CameraGrid(QScrollArea):
         self._titles = dict(titles or {})
 
         for cid in camera_ids:
-            card = CameraCard(cid, title=self._titles.get(cid, cid))
+            card = CameraCard(cid, title=self._titles.get(cid, cid), preview_factory=self._preview_factory)
             card.clicked.connect(self.card_clicked)
             self._cards[cid] = card
         self._last_cols = None

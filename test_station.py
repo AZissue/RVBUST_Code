@@ -7,12 +7,11 @@ MultiCameraCalibration 单相机多站位模式测试（Phase 5，offscreen + �
       帧存盘文件存在、get_frames 返回 3 个离线帧
   [2] 站位帧持久性：模拟物理相机连续拍 3 次（每次新的 RVC 数据），
       确认站位 1 的帧仍可从磁盘加载且内容不被后续拍摄覆盖
-  [3] UI：站位模式添加 1 台物理相机 → 拍 3 个站位 →
-      网格 4 个卡片（1 物理固定第一位 + 3 站位）
-  [4] 端到端：3 站位合成编码圆 → 检测 → 标定（station_1 为 ref，2 对 pair）
-      → 拼接 → 对齐误差 < 2mm
-  [5] 删除站位：删 station_2 后标定结果 / 卡片 / 帧正确更新
-  [6] 新会话：清空后 station_count == 0，站位卡片清空
+  [3] UIv2：站位时间线映射与删除后索引刷新
+  [4] 删除站位：帧与磁盘目录同步清理
+  [5] 新会话：清空站位、重置 UIv2、保留旧会话目录
+
+链式标定与拼接数值回归见 test_chain_stitcher.py / test_workflows.py。
 """
 import os
 import sys
@@ -37,11 +36,11 @@ app = QApplication.instance() or QApplication(sys.argv)
 import cv2
 import open3d as o3d
 
-from ui.main_window import MainWindow, STYLESHEET
+from ui_v2.workspaces.mobile_chain_workspace import MobileChainWorkspace
 from core.frame_data import FrameData
 from core.station_manager import StationManager
 
-app.setStyleSheet(STYLESHEET)
+
 
 
 # ------------------------------------------------------------------
@@ -202,196 +201,21 @@ print("  3 次连续拍摄后，站位 1 的 PNG/PLY 均完好且内容与原始
 print("  [OK] 站位帧持久性通过")
 
 # ------------------------------------------------------------------
-# [3] UI：站位模式 1 台物理相机 + 3 站位 → 网格 4 卡片
-# ------------------------------------------------------------------
-print("\n[3] UI：站位模式添加 1 台物理相机 → 拍 3 个站位")
-window = MainWindow()
-window.left_tabs.setCurrentIndex(1)  # 切到「单相机站位」Tab
-window._on_station_connect(0)        # 无真实设备：连接失败但物理卡片照常生成
-assert MainWindow.PHYSICAL_ID in window.cards, "物理相机卡片未生成"
-assert "当前相机" in window.cards[MainWindow.PHYSICAL_ID].lbl_title.text()
-
-# mock 物理相机拍摄（替换站位管理器内部的相机管理器）
-mock2 = MockCameraManager()
-for i in range(3):
-    mock2.push(make_station_frame(i + 1, station_pts[i], tmp_dir, seed=100 + i))
-window.station_manager._cam_mgr = mock2
-window.station_manager._base_dir = os.path.join(tmp_dir, "stations_ui")
-
-for _ in range(3):
-    window._on_capture_station()
-assert window.station_manager.station_count() == 3
-assert len(window.cards) == 4, f"应有 4 个卡片（1 物理 + 3 站位），实际 {len(window.cards)}"
-assert window.grid_layout.count() == 4, f"网格应有 4 个卡片，实际 {window.grid_layout.count()}"
-# 物理相机卡片固定网格第一位
-first_card = window.grid_layout.itemAt(0).widget()
-assert first_card.camera_id == MainWindow.PHYSICAL_ID, \
-    f"网格第一位应为物理相机卡片: {first_card.camera_id}"
-# 站位卡片标题与按钮状态
-for i, sid in enumerate(["station_1", "station_2", "station_3"]):
-    card = window.cards[sid]
-    assert f"站位 {i + 1}" in card.lbl_title.text(), f"站位卡片标题异常: {card.lbl_title.text()}"
-    assert card.btn_capture.isHidden(), "站位卡片不应有拍摄按钮"
-    assert card.preview._pixmap is not None and not card.preview._pixmap.isNull(), \
-        f"站位卡片 {sid} 预览未更新"
-# 标定面板拿到站位 ID 集合，默认参考 station_1
-combo_items = [window.calibration_panel.combo_ref.itemText(i)
-               for i in range(window.calibration_panel.combo_ref.count())]
-assert combo_items == ["station_1", "station_2", "station_3"], \
-    f"标定面板相机列表异常: {combo_items}"
-assert window.calibration_panel.get_reference() == "station_1"
-# 站位面板列表显示
-assert window.station_panel.list_stations.count() == 3
-assert "站位 1 - " in window.station_panel.list_stations.item(0).text()
-print(f"  网格 4 卡片: {list(window.cards.keys())}（物理卡片在第一位）")
-print(f"  标定面板参考下拉: {combo_items}，默认参考 station_1")
-print("  [OK] UI 站位模式通过")
-
-# ------------------------------------------------------------------
-# [4] 端到端：3 站位合成编码圆 → 检测 → 标定 → 拼接（对齐 < 2mm）
-# ------------------------------------------------------------------
-print("\n[4] 端到端：3 站位检测 → 标定 → 拼接")
-STATION_IDS = ["station_1", "station_2", "station_3"]
-REF_ID = "station_1"
-N_MARKERS = 8
-N_OBJ_PTS = 200
-MARKER_NOISE_MM = 0.3
-
-# 各非参考站位 station→station_1 真值外参
-T_TRUE = {
-    "station_2": np.vstack([np.hstack([rotz(15), np.array([[100.0], [50.0], [20.0]])]),
-                            [0, 0, 0, 1]]),
-    "station_3": np.vstack([np.hstack([rotz(-12), np.array([[-80.0], [60.0], [30.0]])]),
-                            [0, 0, 0, 1]]),
-}
-# 标定板编码圆（station_1 坐标系真值，所有站位共视同一块板）
-np.random.seed(7)
-board_ref = np.random.rand(N_MARKERS, 3) * 200 + np.array([50, 50, 300])
-# 静态物体点云（station_1 坐标系真值）
-obj_ref = np.random.rand(N_OBJ_PTS, 3) * 150 + np.array([-60, -60, 250])
-
-markers_truth = {}
-for sid in STATION_IDS:
-    if sid == REF_ID:
-        pts = board_ref + np.random.randn(N_MARKERS, 3) * MARKER_NOISE_MM
-    else:
-        pts = world_to_cam(board_ref, T_TRUE[sid]) \
-            + np.random.randn(N_MARKERS, 3) * MARKER_NOISE_MM
-    markers_truth[sid] = make_markers(pts)
-
-window2 = MainWindow()
-window2.left_tabs.setCurrentIndex(1)
-window2._on_station_connect(0)
-mock3 = MockCameraManager()
-for i, sid in enumerate(STATION_IDS):
-    if sid == REF_ID:
-        obj_cam = obj_ref
-    else:
-        obj_cam = world_to_cam(obj_ref, T_TRUE[sid])
-    mock3.push(make_station_frame(i + 1, obj_cam, tmp_dir, seed=200 + i))
-window2.station_manager._cam_mgr = mock3
-window2.station_manager._base_dir = os.path.join(tmp_dir, "stations_e2e")
-for _ in range(3):
-    window2._on_capture_station()
-assert window2.station_manager.station_count() == 3
-
-# 注入 FakeDetector（按站位帧落盘后的 PLY 路径查表）
-table = {}
-for sid, frame in window2.station_manager.get_frames().items():
-    table[os.path.normpath(frame.offline_pointmap_path)] = markers_truth[sid]
-window2.marker_detector = FakeDetector(table)
-window2._on_detect_markers()
-wait_workers(window2)  # 标记检测已改后台执行
-for sid in STATION_IDS:
-    assert len(window2.frames[sid].markers) == N_MARKERS, \
-        f"{sid} 标记数异常: {len(window2.frames[sid].markers)}"
-# 检测叠加已画到站位卡片
-assert len(window2.cards["station_1"].preview._markers) == N_MARKERS
-print(f"  3 个站位各检测到 {N_MARKERS} 个编码圆（叠加已上卡）")
-
-# 标定（station_1 为 ref，2 对 pair）
-assert window2.calibration_panel.get_reference() == REF_ID
-window2.calibration_panel._on_calibrate_all()
-wait_workers(window2)  # 标定已改后台执行，等待结果回填面板
-engine = window2.calibration_engine
-assert len(engine.pair_results) == 2, f"应有 2 对标定结果: {list(engine.pair_results.keys())}"
-for sid in ("station_2", "station_3"):
-    res = engine.pair_results[(REF_ID, sid)]
-    assert res.get('success'), f"{sid} 标定失败: {res.get('message')}"
-    R_err = np.linalg.norm(res['T'][:3, :3] - T_TRUE[sid][:3, :3], ord='fro')
-    t_err = np.linalg.norm(res['T'][:3, 3] - T_TRUE[sid][:3, 3])
-    print(f"  {sid}→{REF_ID}: RMS {res['rms_mm']:.4f} mm | "
-          f"旋转误差 {R_err:.6f} | 平移误差 {t_err:.4f} mm")
-    assert R_err < 0.05, f"{sid} 旋转误差过大: {R_err}"
-    assert t_err < 2.0, f"{sid} 平移误差过大: {t_err}"
-assert window2.calibration_panel.table_pairs.rowCount() == 2
-
-# 拼接
-window2._on_stitch()
-wait_workers(window2)  # 拼接已改后台执行
-merged = window2.viewer_3d._pcd_merged
-assert merged is not None, "3D 查看器应收到拼接点云"
-assert len(merged.points) == 3 * N_OBJ_PTS, \
-    f"合并点数应为 {3 * N_OBJ_PTS}，实际 {len(merged.points)}"
-# 对齐误差验证
-for sid in ("station_2", "station_3"):
-    T_est = engine.get_transform(sid, REF_ID)
-    obj_cam = world_to_cam(obj_ref, T_TRUE[sid])
-    obj_h = np.hstack([obj_cam, np.ones((N_OBJ_PTS, 1))])
-    obj_in_ref = (T_est @ obj_h.T).T[:, :3]
-    align_err = np.linalg.norm(obj_in_ref - obj_ref, axis=1).mean()
-    print(f"  {sid} 点云对齐误差: {align_err:.4f} mm")
-    assert align_err < 2.0, f"{sid} 对齐误差过大: {align_err}"
-print(f"  合并点云: {len(merged.points):,} 点（3 站位 × {N_OBJ_PTS} 点）")
-print("  [OK] 端到端标定拼接通过（对齐误差 < 2mm）")
-
-# ------------------------------------------------------------------
-# [5] 删除站位：删 station_2 后标定结果正确更新
-# ------------------------------------------------------------------
-print("\n[5] 删除站位 station_2")
-s2_dir = window2.station_manager.get_frame("station_2").offline_dir
-window2._on_remove_station("station_2")
-assert window2.station_manager.station_count() == 2
-assert window2.station_manager.get_station_ids() == ["station_1", "station_3"]
-assert "station_2" not in window2.frames, "站位 2 帧未移除"
-assert "station_2" not in window2.cards, "站位 2 卡片未移除"
-assert not os.path.exists(s2_dir), "站位 2 磁盘目录未清理"
-# 涉及 station_2 的标定结果已清理，station_3 的结果保留
-assert (REF_ID, "station_2") not in engine.pair_results, "站位 2 标定结果未清理"
-assert (REF_ID, "station_3") in engine.pair_results, "站位 3 标定结果应保留"
-assert window2.calibration_panel.table_pairs.rowCount() == 1, \
-    f"结果表应剩 1 行，实际 {window2.calibration_panel.table_pairs.rowCount()}"
-assert window2.grid_layout.count() == 3, "网格应剩 3 个卡片（1 物理 + 2 站位）"
-print("  标定结果仅剩 station_3→station_1，卡片 / 帧 / 磁盘目录均已清理")
-print("  [OK] 删除站位通过")
-
-# ------------------------------------------------------------------
-# [6] 新会话：清空后 station_count == 0
-# ------------------------------------------------------------------
-print("\n[6] 新会话")
-old_session = window2.station_manager.session_dir
-window2._on_new_station_session()
-assert window2.station_manager.station_count() == 0, "新会话后站位应清空"
-assert window2.station_manager.get_station_ids() == []
-new_session = window2.station_manager.session_dir
-assert new_session and new_session != old_session and os.path.isdir(new_session), \
-    "新会话目录未创建"
-# 站位卡片清空，物理相机卡片保留
-assert list(window2.cards.keys()) == [MainWindow.PHYSICAL_ID], \
-    f"应只剩物理相机卡片: {list(window2.cards.keys())}"
-assert not any(sid.startswith("station_") for sid in window2.frames), "站位帧应清空"
-assert window2.station_panel.list_stations.count() == 0
-# 旧会话目录归档保留（不删历史数据），但其中站位目录已被清空操作移除
-assert os.path.isdir(old_session), "旧会话目录应归档保留"
-print(f"  新会话目录: {new_session}")
-print(f"  站位清空，物理相机卡片保留，旧会话归档: {old_session}")
-print("  [OK] 新会话通过")
-
-# ------------------------------------------------------------------
-# 收尾
-# ------------------------------------------------------------------
-shutil.rmtree(tmp_dir, ignore_errors=True)
-
-print("\n" + "=" * 60)
-print("全部站位模式测试通过 [ALL OK]")
-print("=" * 60)
+view = MobileChainWorkspace()
+view.set_stations([{'station_id': sid} for sid in ids])
+assert [view.get_station_id(i) for i in range(1, 4)] == ids
+assert mgr.remove_station('station_2')
+assert mgr.get_frame('station_2') is None
+assert not os.path.exists(os.path.join(session_dir, 'station_2'))
+view.set_stations([{'station_id': sid} for sid in mgr.get_station_ids()])
+assert view.get_station_id(2) == 'station_3'
+old_session = mgr.session_dir
+new_session = mgr.new_session()
+assert new_session != old_session and os.path.isdir(old_session)
+assert mgr.station_count() == 0
+view.reset_session()
+assert view.get_station_id(1) is None
+view.deleteLater()
+app.processEvents()
+shutil.rmtree(tmp_dir)
+print('Station persistence, UIv2 mapping, deletion and session reset: ALL OK')

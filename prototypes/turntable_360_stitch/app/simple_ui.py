@@ -52,8 +52,8 @@ try:
     from core.camera_manager import CameraManager
     from core.marker_detector import MarkerDetector, MARKER_TYPE_CODED_CIRCLE, MARKER_TYPE_ASYMMETRIC_GRID
     from core.frame_data import FrameData
-    from ui.worker_thread import WorkerThread
-    from ui.viewer_3d import EmbeddedPointCloudViewer
+    from ui_common.worker_thread import WorkerThread
+    from ui_common.point_cloud_viewer import EmbeddedPointCloudViewer
     HAS_VIEWER = True
 except Exception as e:
     print(f"项目模块引入失败: {e}")

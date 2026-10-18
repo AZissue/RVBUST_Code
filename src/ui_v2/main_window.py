@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ui_v2.main_window —— 主窗口框架（空壳）。
+ui_v2.main_window —— 主窗口框架（可替换工作区）。
 
 双窗口模型的主窗口侧：
   - 顶部功能栏：设备管理 / 保存会话 / 打开会话 / 参数调试 / 日志 / 帮助；
@@ -31,6 +31,8 @@ from . import icons as ui_icons
 from .widgets import FloatingLogPanel, LoadingOverlay
 from .widgets.device_table import DeviceInfo
 from .workspaces import MobileChainWorkspace, MultiCamWorkspace, TurntableWorkspace
+from .components import UiComponents
+from .composition import WorkspaceFactories
 
 if False:
     # 仅类型提示，避免循环导入
@@ -38,7 +40,7 @@ if False:
 
 
 class MainWindowShell(QMainWindow):
-    """拼接主窗口（空壳）。
+    """拼接主窗口（装配根注入工作区）。
 
     信号（接口预留，全部由后端/主控连接）：
         device_manager_reopened(str, list)  从设备管理小窗确认新模式+设备
@@ -62,8 +64,12 @@ class MainWindowShell(QMainWindow):
     param_debug_requested = Signal()
     """参数调试：断开当前相机并打开 RVC 官方调试工具 RVCManager。"""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, components=None, workspace_factories=None,
+                 launcher_factory=None):
         super().__init__(parent)
+        self._components = components or UiComponents()
+        self._workspace_factories = workspace_factories or WorkspaceFactories()
+        self._launcher_factory = launcher_factory or LauncherDialog
         self.setWindowTitle("RVC 拼接工作站")
 
         # 根据当前屏幕可用区域设置初始窗口大小，避免在小分辨率屏幕上显示不全
@@ -113,9 +119,9 @@ class MainWindowShell(QMainWindow):
 
         # ===== 中央三工作区 =====
         self._stack = QStackedWidget()
-        self._ws_multi = MultiCamWorkspace()
-        self._ws_mobile = MobileChainWorkspace()
-        self._ws_turntable = TurntableWorkspace()
+        self._ws_multi = self._workspace_factories.multi(parent=self._stack, components=self._components)
+        self._ws_mobile = self._workspace_factories.mobile(parent=self._stack, components=self._components)
+        self._ws_turntable = self._workspace_factories.turntable(parent=self._stack, components=self._components)
         self._stack.addWidget(self._ws_multi)
         self._stack.addWidget(self._ws_mobile)
         self._stack.addWidget(self._ws_turntable)
@@ -347,7 +353,7 @@ class MainWindowShell(QMainWindow):
         if self._dirty and not self._confirm_discard():
             return
 
-        dialog = LauncherDialog(self)
+        dialog = self._launcher_factory(parent=self)
 
         # 如有 backend_bridge，先真实枚举设备，再恢复当前勾选状态
         if self._backend_bridge is not None:

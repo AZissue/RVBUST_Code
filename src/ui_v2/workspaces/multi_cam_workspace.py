@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ui_v2.workspaces.multi_cam_workspace —— 模式 A：多相机工作区（空壳）。
+ui_v2.workspaces.multi_cam_workspace —— 模式 A：多相机工作区。
 
 固定多相机外参标定流程，三栏布局：
   - 顶部：步骤条（连接相机→拍摄标定→检测标记→计算外参→扫描拼接→保存）；
@@ -39,6 +39,7 @@ from ..theme import (
     TEXT_MUTED, TEXT_PRIMARY, TEXT_SECONDARY,
 )
 from .. import icons as ui_icons
+from ..components import UiComponents
 from ..widgets import CameraGrid, StepBar, ViewerPanel
 from ..widgets.device_table import DeviceInfo
 
@@ -161,8 +162,9 @@ class MultiCamWorkspace(QWidget):
     log_message = Signal(str, str)
     """工作区日志（message, level）。"""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, components=None):
         super().__init__(parent)
+        self._components = components or UiComponents()
         self._state = "idle"
         self._devices: List[DeviceInfo] = []
         self._quality_passed = False
@@ -234,9 +236,9 @@ class MultiCamWorkspace(QWidget):
         # ---- 中央：相机网格 + 3D 预览（垂直 splitter，参考旧版 MainWindow） ----
         # cam 卡片固定大小，网格用滚动区承载；3D 在下方，可折叠到底部
         self._center_split = QSplitter(Qt.Vertical)
-        self._camera_grid = CameraGrid()
+        self._camera_grid = CameraGrid(preview_factory=self._components.create_preview)
         self._center_split.addWidget(self._camera_grid)
-        self._viewer = ViewerPanel("3D 拼接预览")
+        self._viewer = self._components.create_viewer("3D 拼接预览")
         self._viewer.viewer_message.connect(
             lambda m: self.log_message.emit(m, "info"))
         self._viewer.collapse_toggled.connect(self._on_viewer_collapse_toggled)

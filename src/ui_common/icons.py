@@ -24,6 +24,8 @@ import re
 import sys
 from pathlib import Path
 
+from .symbols import custom_pixmap
+
 from PySide6.QtCore import QSize
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
@@ -50,7 +52,7 @@ def icons_dir() -> Path:
         if internal.is_dir():
             return internal
         return base / "assets" / "icons"
-    # 开发环境：从 src/ui/icons.py 上溯两级到项目根
+    # 开发环境：从 src/ui_common/icons.py 上溯两级到项目根
     return Path(__file__).resolve().parents[2] / "assets" / "icons"
 
 
@@ -66,6 +68,8 @@ def _find_icon_file(name: str) -> Path | None:
 
 def has_icon(name: str) -> bool:
     """该图标文件是否存在（结果缓存，reload_icons() 后重查）。"""
+    if custom_pixmap(name) is not None:
+        return True
     if name not in _has_cache:
         _has_cache[name] = _find_icon_file(name) is not None
     return _has_cache[name]
@@ -73,6 +77,9 @@ def has_icon(name: str) -> bool:
 
 def get_icon(name: str) -> QIcon:
     """加载 assets/icons/{name}.png（或 .svg）返回 QIcon；文件不存在返回空 QIcon()。"""
+    custom = custom_pixmap(name)
+    if custom is not None:
+        return QIcon(custom)
     if name not in _icon_cache:
         path = _find_icon_file(name)
         icon = QIcon(str(path)) if path is not None else QIcon()

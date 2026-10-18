@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ui_v2.workspaces.mobile_chain_workspace —— 模式 B：单相机工作区（空壳）。
+ui_v2.workspaces.mobile_chain_workspace —— 模式 B：单相机工作区。
 
 移动链式拼接流程，布局：左机位时间线 + 中央上下分栏（实时取景 / 3D 预览）
 + 底部评估卡片与操作按钮区。
@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 
 from ..theme import STATUS_ERR, STATUS_OK, STATUS_WARN, TEXT_MUTED, TEXT_SECONDARY
 from .. import icons as ui_icons
+from ..components import UiComponents
 from ..widgets import (
     EvaluationCard, LiveViewPanel, StationNodeData, StationTimeline, ViewerPanel,
 )
@@ -39,7 +40,7 @@ from ..widgets.device_table import DeviceInfo
 
 
 class MobileChainWorkspace(QWidget):
-    """模式 B 工作区（UI 空壳 + 操作门控）。"""
+    """模式 B 工作区（展示 + 操作门控）。"""
 
     STATES = ("idle", "connected", "capturing", "evaluating", "chaining")
 
@@ -83,8 +84,9 @@ class MobileChainWorkspace(QWidget):
     dirty_changed = Signal(bool)
     """是否有未保存的拍摄数据（≥1 个机位时变为 True）。"""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, components=None):
         super().__init__(parent)
+        self._components = components or UiComponents()
         self._state = "idle"
         self._devices: List[DeviceInfo] = []
         self._station_count = 0
@@ -111,14 +113,14 @@ class MobileChainWorkspace(QWidget):
 
         # ---- 中央：左实时取景 / 右 3D 预览（水平布局，便于边拍边看） ----
         self._center_split = QSplitter(Qt.Horizontal)
-        self._live_view = LiveViewPanel()
+        self._live_view = LiveViewPanel(preview_factory=self._components.create_preview)
         self._live_view.setMinimumWidth(420)
         self._live_view.setSizePolicy(
             QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._live_view.mode_toggled.connect(self.auto_mode_changed)
         self._center_split.addWidget(self._live_view)
 
-        self._viewer = ViewerPanel("实时 3D 拼接预览（按机位分色）")
+        self._viewer = self._components.create_viewer("实时 3D 拼接预览（按机位分色）")
         self._viewer.setMinimumWidth(420)
         self._viewer.setSizePolicy(
             QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -237,6 +239,14 @@ class MobileChainWorkspace(QWidget):
         return self._viewer
 
     # ------------------------------------------------------------ 内部
+    def is_preview_enabled(self) -> bool:
+        """Presentation state exposed without revealing the button implementation."""
+        return self._btn_preview.isChecked()
+
+    def set_preview_enabled(self, enabled: bool):
+        """Synchronize preview and emit the same intent as a user toggle."""
+        self._btn_preview.setChecked(enabled)
+
     def _on_preview_toggled(self, checked: bool):
         self._btn_preview.setText("停止取景" if checked else "开始取景")
         self.preview_toggled.emit(checked)

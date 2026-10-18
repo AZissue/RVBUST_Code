@@ -33,7 +33,7 @@ else:
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
 
 
-def main():
+def main(*, composition=None):
     from version import get_version
 
     try:
@@ -50,15 +50,17 @@ def main():
     app.setApplicationName("MultiCameraCalibration")
 
     # 使用 ui_v2 主题
-    from ui_v2 import GLOBAL_QSS, LauncherDialog, MainWindowShell
+    from ui_v2 import LauncherDialog
+    from ui_v2.composition import UiComposition
     from ui_v2.backend_bridge import BackendBridge
-    app.setStyleSheet(GLOBAL_QSS)
+    composition = composition or UiComposition()
+    composition.configure(app)
 
     # 1. 显示启动小窗
-    launcher = LauncherDialog()
+    launcher = composition.create_launcher()
 
     # 创建主窗口（但不显示）
-    main_window = MainWindowShell()
+    main_window = composition.create_shell()
     bridge = BackendBridge(main_window)
     bridge.wire_all()
     main_window.set_backend_bridge(bridge)
@@ -75,7 +77,7 @@ def main():
         """
         launcher.show_connection_overlay("正在连接相机...")
         ordered = BackendBridge.get_ordered_devices(devices)
-        bridge._on_device_manager_reopened(mode, ordered, show_loading=False)
+        bridge.connect_devices(mode, ordered, show_loading=False)
 
     def on_connection_finished(success: bool, message: str):
         """相机连接完成：先渲染主窗口，再让小窗淡出关闭。"""

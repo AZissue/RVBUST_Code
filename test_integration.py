@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 #!/usr/bin/env python3
 """
-MultiCameraCalibration 端到端集成测试（offscreen + 合成数据）
+MultiCameraCalibration 离线核心集成测试（合成数据，无相机）
 
 覆盖完整离线工作流：
-  [1]  模拟 3 相机连接（无真实设备，卡片照常生成）
+  [1]  创建三相机离线会话
   [2]  模拟拍摄 5 对帧（3 台相机 × 合成编码圆 3D 标记 + 合成 PLY 点云）
   [3]  保存到离线会话（目录结构 + 会话 meta.json 校验）
   [4]  重新加载会话
@@ -36,11 +36,12 @@ app = QApplication.instance() or QApplication(sys.argv)
 
 import open3d as o3d
 
-from ui.main_window import MainWindow, STYLESHEET
+from core.offline_session import OfflineSession
+from core.stitch_engine import StitchEngine
 from core.frame_data import FrameData
 from core.calibration_engine import CalibrationEngine
 
-app.setStyleSheet(STYLESHEET)
+
 
 
 # ------------------------------------------------------------------
@@ -157,17 +158,9 @@ tmp_dir = tempfile.mkdtemp(prefix="mcc_integration_")
 # ------------------------------------------------------------------
 # [1] 模拟 3 相机连接
 # ------------------------------------------------------------------
-print("\n[1] 模拟 3 相机连接")
-window = MainWindow()
-window._on_add_cameras([0, 1, 2])  # 无真实设备：连接失败但卡片照常生成
-assert list(window.cards.keys()) == CAM_IDS, f"相机卡片异常: {list(window.cards.keys())}"
-assert not window.capture_panel.btn_save_frame.isEnabled(), "拍摄前保存帧按钮应禁用"
-print(f"  相机 ID: {CAM_IDS}（无真实设备，卡片已生成）")
-print("  [OK] 3 相机模拟连接通过")
-
-# ------------------------------------------------------------------
-# [2] + [3] 模拟拍摄 5 对帧并逐拍保存到离线会话
-# ------------------------------------------------------------------
+print("\n[1] 创建三相机离线会话")
+session = OfflineSession()
+session.create_new(tmp_dir)
 print(f"\n[2] 模拟拍摄 {N_CAPTURES} 对帧（3 相机 × 合成图像 + PLY 点云）")
 for i in range(N_CAPTURES):
     fid = i + 1
@@ -183,14 +176,13 @@ for i in range(N_CAPTURES):
                           image_np=make_synthetic_image(seed=fid * 10 + int(cid[-1])),
                           is_offline=True,
                           offline_pointmap_path=ply_path)
-        window._store_frame(cid, frame)
+        session.add_frame(cid, frame)
     # 每拍完一组立即保存到会话（模拟真实工作流）
-    window._on_save_frame_to_session()
-assert window.capture_panel.btn_save_frame.isEnabled(), "拍摄后保存帧按钮应启用"
+    session.save_all()
 print(f"  {N_CAPTURES} 拍 × {len(CAM_IDS)} 相机已拍摄并保存")
 
 print("\n[3] 校验离线会话目录结构")
-session_dir = window.offline_session.session_dir
+session_dir = session.session_dir
 assert session_dir and os.path.isdir(session_dir), "会话目录未创建"
 print(f"  会话目录: {session_dir}")
 for fid in range(1, N_CAPTURES + 1):
@@ -216,12 +208,12 @@ print("  [OK] 会话保存通过（frame_XXXX/{cam}.png+{cam}.ply+meta.json）")
 # ------------------------------------------------------------------
 print("\n[4] 重新加载会话")
 # 保存前未做检测 → meta 中 markers 为空，验证加载后也为空
-assert window._load_session_from(session_dir), "会话加载失败"
-loaded = window.offline_session.frames
+session = OfflineSession()
+session.load_session(session_dir)
+loaded = session.frames
 assert set(loaded.keys()) == set(CAM_IDS)
 assert all(len(v) == N_CAPTURES for v in loaded.values()), "每台相机应有 5 帧"
 assert all(f.markers == [] for v in loaded.values() for f in v), "加载的帧应无标记（未检测）"
-assert set(window.frames.keys()) == set(CAM_IDS), "主窗口当前帧应同步为会话最新帧"
 print(f"  加载: {len(loaded)} 台相机 × {N_CAPTURES} 帧, 标记为空（待检测）")
 print("  [OK] 会话加载通过")
 
@@ -233,9 +225,7 @@ table = {}
 for cid, frames in loaded.items():
     for f in frames:
         table[os.path.normpath(f.offline_pointmap_path)] = markers_truth[(f.frame_id, cid)]
-window.marker_detector = FakeDetector(table)
-window._on_batch_detect()
-wait_workers(window)  # 批量检测已改后台执行
+session.detect_all(FakeDetector(table))  # 批量检测已改后台执行
 for cid, frames in loaded.items():
     for f in frames:
         assert len(f.markers) == N_MARKERS, \
@@ -251,10 +241,10 @@ print("  [OK] 批量检测通过（结果已回写帧 meta.json）")
 # [6] 批量标定（多帧平均）
 # ------------------------------------------------------------------
 print("\n[6] 批量标定会话（多帧平均）")
-assert window.calibration_panel.get_reference() == REF_ID
-window._on_batch_calibrate()
-wait_workers(window)  # 批量标定已改后台执行
-engine = window.calibration_engine
+engine = CalibrationEngine()
+results = session.calibrate_multi(engine, REF_ID)
+assert all(result["success"] for result in results.values())  # 批量标定已改后台执行
+
 assert len(engine.pair_results) == 2, f"应有 2 对标定结果: {list(engine.pair_results.keys())}"
 for cid in ("cam1", "cam2"):
     res = engine.pair_results[(REF_ID, cid)]
@@ -273,16 +263,14 @@ for cid in ("cam1", "cam2"):
           f"RMS {res['rms_mm']:.4f} mm | 旋转误差 {R_err:.6f} | 平移误差 {t_err:.4f} mm")
     assert R_err < 0.05, f"{cid} 旋转误差过大: {R_err}"
     assert t_err < 2.0, f"{cid} 平移误差过大: {t_err}"
-assert window.calibration_panel.table_pairs.rowCount() == 2, "标定面板应显示 2 行结果"
 print("  [OK] 批量标定通过（多帧平均精度满足要求）")
 
 # ------------------------------------------------------------------
 # [7] 批量拼接
 # ------------------------------------------------------------------
 print("\n[7] 批量拼接会话")
-window._on_stitch_session()
-wait_workers(window)  # 批量拼接已改后台执行
-merged = window.viewer_3d._pcd_merged
+merged, message = session.stitch_all(StitchEngine(), engine, REF_ID)  # 批量拼接已改后台执行
+
 assert merged is not None, "3D 查看器应收到批量拼接点云"
 expect_pts = N_CAPTURES * len(CAM_IDS) * N_OBJ_PTS
 assert len(merged.points) == expect_pts, \

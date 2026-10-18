@@ -38,10 +38,12 @@ from core.point_cloud_processor import PointCloudProcessor
 from core.offline_session import OfflineSession
 from core.frame_data import FrameData
 from core.utils import logger, write_json_atomic, write_point_cloud_atomic
-from ui.camera_card import numpy_to_qpixmap
+from ui_common.image_preview import numpy_to_qpixmap
 
 from .launcher_dialog import LauncherDialog
 from .main_window import MainWindowShell
+from .bindings import (MULTI_ACTIONS, MOBILE_ACTIONS, SHELL_ACTIONS,
+                       connect_actions, validate_actions)
 from .widgets.device_table import DeviceInfo
 
 
@@ -173,12 +175,18 @@ class BackendBridge(QObject):
     # ------------------------------------------------------------------
     def wire_all(self):
         """连接所有信号到后端。"""
+        if getattr(self, "_wired", False):
+            return
+        validate_actions(self.shell.workspace_multi(), self, MULTI_ACTIONS)
+        validate_actions(self.shell.workspace_mobile(), self, MOBILE_ACTIONS)
+        validate_actions(self.shell, self, SHELL_ACTIONS)
         self._wire_launcher()
         self._wire_multi_cam_workspace()
         self._wire_mobile_chain_workspace()
         self._wire_main_window()
         # 1.0.10 池合并：给转台工作区注入统一 runner，全工程只留一个引用池
         self.shell.workspace_turntable().set_background_runner(self._run_background)
+        self._wired = True
 
     def _wire_launcher(self):
         """接线启动小窗。"""
@@ -187,40 +195,17 @@ class BackendBridge(QObject):
         self.shell.device_manager_reopened.connect(self._on_device_manager_reopened)
 
     def _wire_multi_cam_workspace(self):
-        """接线模式 A（多相机外参标定）。"""
-        ws = self.shell.workspace_multi()
-        ws.capture_requested.connect(self._on_multi_capture)
-        ws.detect_requested.connect(self._on_multi_detect)
-        ws.calibrate_requested.connect(self._on_multi_calibrate)
-        ws.save_extrinsics_requested.connect(self._on_multi_save_extrinsics)
-        ws.load_extrinsics_requested.connect(self._on_multi_load_extrinsics)
-        ws.capture_scan_requested.connect(self._on_multi_capture_scan)
-        ws.stitch_save_requested.connect(self._on_multi_stitch_save)
-        ws.batch_scan_requested.connect(self._on_multi_batch_scan)
-        ws.reference_changed.connect(self._on_multi_reference_changed)
-        ws.step_back_requested.connect(self._on_multi_step_back)
-        ws.card_preview_toggled.connect(self._on_card_preview_toggled)
-        ws.card_capture_requested.connect(self._on_card_capture)
-        ws.card_detect_requested.connect(self._on_card_detect)
+        connect_actions(self.shell.workspace_multi(), self, MULTI_ACTIONS)
 
     def _wire_mobile_chain_workspace(self):
-        """接线模式 B（单相机移动链式）。"""
-        ws = self.shell.workspace_mobile()
-        ws.capture_station_requested.connect(self._on_mobile_capture_station)
-        ws.preview_toggled.connect(self._on_mobile_preview_toggled)
-        ws.undo_requested.connect(self._on_mobile_undo)
-        ws.recapture_requested.connect(self._on_mobile_recapture)
-        ws.delete_station_requested.connect(self._on_mobile_delete_station)
-        ws.optimize_requested.connect(self._on_mobile_optimize)
-        ws.save_requested.connect(self._on_mobile_save)
-        ws.offline_load_requested.connect(self._on_mobile_offline_load)
-        ws.station_selected.connect(self._on_mobile_station_selected)
+        connect_actions(self.shell.workspace_mobile(), self, MOBILE_ACTIONS)
 
     def _wire_main_window(self):
-        """接线主窗口。"""
-        self.shell.save_session_requested.connect(self._on_save_session)
-        self.shell.open_session_requested.connect(self._on_open_session)
-        self.shell.param_debug_requested.connect(self._on_param_debug)
+        connect_actions(self.shell, self, SHELL_ACTIONS)
+
+    def connect_devices(self, mode, devices, *, show_loading=True):
+        """Public startup/reconnection command, independent of launcher layout."""
+        return self._on_device_manager_reopened(mode, devices, show_loading=show_loading)
 
     # ------------------------------------------------------------------
     # 参数调试：打开官方 RVCManager
@@ -1282,7 +1267,7 @@ class BackendBridge(QObject):
         connected = self.camera_manager.get_connected_ids()
         if not connected:
             self.shell.log("没有已连接相机，无法取景", "warn")
-            self.shell.workspace_mobile()._btn_preview.setChecked(False)
+            self.shell.workspace_mobile().set_preview_enabled(False)
             return
         self._start_preview_thread(connected[0])
 
@@ -1325,8 +1310,8 @@ class BackendBridge(QObject):
         self._stop_preview_thread()
         # 同步 UI 按钮状态（避免用户以为预览仍在运行）
         ws = self.shell.workspace_mobile()
-        if ws._btn_preview.isChecked():
-            ws._btn_preview.setChecked(False)
+        if ws.is_preview_enabled():
+            ws.set_preview_enabled(False)
         logger.info(f"已暂停 2D 预览（准备 3D 拍摄）: {camera_id}")
         return camera_id
 
@@ -1339,8 +1324,8 @@ class BackendBridge(QObject):
             return
         ws = self.shell.workspace_mobile()
         self._start_preview_thread(camera_id)
-        if not ws._btn_preview.isChecked():
-            ws._btn_preview.setChecked(True)
+        if not ws.is_preview_enabled():
+            ws.set_preview_enabled(True)
         logger.info(f"已恢复 2D 预览: {camera_id}")
 
     def _update_mobile_live_view(self, station_id: str):
@@ -2122,7 +2107,7 @@ class BackendBridge(QObject):
         name：任务名，cleanup warning 的唯一现场指认；缺省从调用栈推断
             （traceback.extract_stack()[-2] 取调用方方法名，零调用点改动）。
         """
-        from ui.worker_thread import WorkerThread
+        from ui_common.worker_thread import WorkerThread
         if name is None:
             import traceback
             name = traceback.extract_stack()[-2].name

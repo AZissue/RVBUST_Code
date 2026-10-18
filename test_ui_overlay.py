@@ -14,7 +14,7 @@ test_ui_overlay.py —— AspectRatioLabel 标记叠加绘制回归测试（离�
   [2] 绿圈（valid_3d=True）在期望位置可见
   [3] clear_markers 后圈消失
 
-无 PySide6 环境：跳过。Qt teardown 退出码 127 属已知噪音。
+无 PySide6 环境：跳过。结果须结合进程退出码，不能豁免非零退出。
 """
 import os
 import sys
@@ -33,7 +33,7 @@ except ImportError:
     print("\n[!] 未安装 PySide6，跳过")
     sys.exit(0)
 
-from ui.camera_card import AspectRatioLabel  # noqa: E402
+from ui_common.image_preview import AspectRatioLabel  # noqa: E402
 
 _app = QApplication.instance() or QApplication([])
 

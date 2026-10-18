@@ -33,8 +33,8 @@ from PySide6.QtWidgets import QApplication, QMainWindow  # noqa: E402
 
 import open3d as o3d  # noqa: E402
 
-from ui.viewer_3d import EmbeddedPointCloudViewer  # noqa: E402
-from ui.vtk_viewer import VTKPointCloudView  # noqa: E402
+from ui_common.point_cloud_viewer import EmbeddedPointCloudViewer  # noqa: E402
+from ui_common.vtk_viewer import VTKPointCloudView  # noqa: E402
 
 REAL_CLOUD = ROOT / "offline_data" / "session_20260909_173447" / "frame_0017" / "cam0.ply"
 MERGED_CLOUD = ROOT / "叶片拼接.ply"

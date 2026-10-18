@@ -9,7 +9,7 @@ ui_v2.widgets.live_view_panel —— 模式 B 实时取景面板。
   2. 与上一机位的共有标记 → 底部引导文字提示；
   3. 上一机位标记在当前视野中的位置 → 半透明蓝圈引导提示（待实现）。
 
-画布复用 ui.camera_card.AspectRatioLabel（按比缩放绘制 + 标记预渲染层）。
+画布复用 ui_common.image_preview.AspectRatioLabel（按比缩放绘制 + 标记预渲染层）。
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from ..theme import (
     ACCENT, BG_PANEL, BORDER, STATUS_OK, TEXT_MUTED, TEXT_SECONDARY,
 )
 from .. import icons as ui_icons
-from ui.camera_card import AspectRatioLabel
+from ui_common.image_preview import AspectRatioLabel
 
 # 一个标记的叠加描述：(x, y, code, valid_3d)
 #   x, y      归一化坐标 0~1（相对画面）
@@ -45,7 +45,7 @@ class LiveViewPanel(QFrame):
 
     mode_toggled = Signal(bool)  # True=自动
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, preview_factory=None):
         super().__init__(parent)
         self._auto_mode = True
         self._current_pixmap: Optional[QPixmap] = None
@@ -86,7 +86,7 @@ class LiveViewPanel(QFrame):
         root.addLayout(bar)
 
         # ---- 画面区：AspectRatioLabel 自带按比缩放绘制与标记叠加 ----
-        self._canvas = AspectRatioLabel(ratio=4.0 / 3.0)
+        self._canvas = (preview_factory or AspectRatioLabel)(ratio=4.0 / 3.0)
         root.addWidget(self._canvas, 1)
 
         # ---- 底部提示条：共有标记引导 ----

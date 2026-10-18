@@ -48,6 +48,7 @@ from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from core.utils import logger
 
 from .icons import get_icon, has_icon, icon_text, apply_icon
+from .appearance import ViewerAppearance
 
 # N 路点云调色板（参考相机固定白色，其余按添加顺序循环）
 COLOR_REFERENCE = (0.95, 0.95, 0.95)   # 白色：参考相机
@@ -1383,8 +1384,9 @@ class EmbeddedPointCloudViewer(QWidget):
     COLOR_HEIGHT = "height"        # 按高度着色（jet）
     COLOR_GRAY = "gray"            # 灰度
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, appearance=None):
         super().__init__(parent)
+        self._appearance = appearance or ViewerAppearance()
         self._pcds: Dict[str, object] = {}     # camera_id → open3d 点云
         self._pcd_merged = None
         self._camera_order: List[str] = []     # 颜色分配顺序
@@ -1415,7 +1417,9 @@ class EmbeddedPointCloudViewer(QWidget):
 
         # OpenGL 渲染容器（叠加信息层在 GL 内部绘制，原底部状态行已移除）
         self.viewer_container = QWidget()
-        self.viewer_container.setStyleSheet("background-color: #1a1a1a; border: 1px solid #3a3a3a;")
+        self.viewer_container.setStyleSheet(
+            f"background-color: {self._appearance.canvas_background}; "
+            f"border: 1px solid {self._appearance.border};")
         self.viewer_container.setMinimumSize(320, 200)
         self.viewer_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         lo.addWidget(self.viewer_container, 1)
@@ -1424,16 +1428,17 @@ class EmbeddedPointCloudViewer(QWidget):
         """顶部紧凑工具栏（~32px，深色主题）。"""
         bar = QWidget()
         bar.setFixedHeight(34)
+        style = self._appearance
         bar.setStyleSheet(
-            "QWidget { background-color: #252525; border: 1px solid #3a3a3a; }"
+            f"QWidget {{ background-color: {style.toolbar_background}; border: 1px solid {style.border}; }}"
             "QToolButton, QPushButton { background: transparent; border: none; "
-            "color: #cccccc; font-size: 10pt; padding: 2px 5px; min-height: 20px; }"
+            f"color: {style.text}; font-size: 10pt; padding: 2px 5px; min-height: 20px; }}"
             "QToolButton { icon-size: 16px; }"
-            "QToolButton:hover, QPushButton:hover { color: #ffffff; background: #3a3a3a; "
+            f"QToolButton:hover, QPushButton:hover {{ color: #ffffff; background: {style.hover_background}; "
             "border-radius: 3px; }"
-            "QToolButton:checked, QPushButton:checked { color: #2979FF; background: #1E3A5F; "
+            f"QToolButton:checked, QPushButton:checked {{ color: {style.accent}; background: {style.selection_background}; "
             "border-radius: 3px; }"
-            "QLabel { color: #888888; font-size: 10pt; background: transparent; border: none; }"
+            f"QLabel {{ color: {style.muted}; font-size: 10pt; background: transparent; border: none; }}"
             "QComboBox, QSpinBox { font-size: 10pt; min-height: 22px; }"
         )
         tb = QHBoxLayout(bar)

@@ -2,12 +2,12 @@
 """
 ui_v2.widgets.step_bar —— 横向向导步骤条（模式 A 骨架控件）。
 
-对应现有 ``src/ui/widgets/wizard_step_bar.py`` 的重设计版：
+正式 UIv2 横向步骤组件：
   - 状态机驱动：pending / current / done / disabled 四态；
   - 当前步骤高亮（RVC 红），已完成可点击回退；
   - 步骤状态应由工作流结果驱动，UI 仅呈现（见 set_current / set_step_enabled）。
 
-正式接入时可整体替换回 WizardStepBar，接口已对齐：
+公开接口：
   set_current(int) / set_step_done(int, bool) / step_clicked(int)。
 """
 

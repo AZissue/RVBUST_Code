@@ -2,7 +2,7 @@
 """
 ui_v2.widgets.loading_overlay —— 加载遮罩（重设计版）。
 
-与现有 ``src/ui/loading_overlay.py`` 接口对齐：
+公开接口：
   show_message(str) / hide_overlay()
 
 视觉差异：边框改用 RVC 品牌红，面板色跟随新主题。
