@@ -6,15 +6,16 @@
 
 ## 运行
 
-在 MCC 根目录执行：
-
-也可直接双击本目录 `run.cmd` 启动。
+Python 3.10+ 开发环境中，在 MCC 根目录执行：
 
 ```powershell
-& 'D:/Program Files/Anaconda/envs/rvc/python.exe' prototypes/industrial_scan_ui/run.py
+python -m pip install -r prototypes/industrial_scan_ui/requirements.txt
+python prototypes/industrial_scan_ui/run.py
 ```
 
-依赖使用现有 rvc 环境：PySide6、NumPy、Open3D。预览采用 Qt 软件绘制，不要求 OpenGL；首次文件导入/导出会加载 Open3D。
+也可在已配置 Python 的开发环境双击 `run.cmd`。客户使用打包后的 EXE，不依赖开发机 Python/Conda 或绝对路径；打包与兼容性说明见 [RENDERING.md](RENDERING.md)。
+
+正常桌面环境使用 Qt＋标准 OpenGL 3.3 GPU 渲染；首次点云文件导入/导出会加载 Open3D。无可用 OpenGL 时明确降级为兼容软件预览。
 
 ## 可操作内容
 
@@ -22,7 +23,8 @@
 - 模拟扫描可开始、暂停、继续与完成；采样间距改变生成密度，演示时长改变进度速度。所有扫描点云均为合成数据，不执行真实采集、配准或精度检验。
 - 项目树控制图层选择与显隐。背景移除对选定图层保留 `Z > 阈值` 的点；删除和裁切支持最多十步撤销。
 - 导入 PLY/PCD/XYZ/PTS；必须先选择源单位。m 转为内部 mm，导出始终为 mm。
-- 导出完整可见点云到 PLY，视区最多采样显示 18,000 点。预览采样不会改变导出数据；软件预览不提供严格的深度缓冲、点拾取或大点云性能承诺。
+- 导出完整可见点云到 PLY；GPU 按帧增量缓存，默认静止最多 500 万点、拖动 50 万点，停止约 220 ms 后恢复。细节档为 1000 万/100 万点，流畅档为 100 万/10 万点；均为全场景预算。采样不改变原始帧与导出数据。
+- 兼容软件预览静止 18,000 点、拖动 3,000 点；状态栏显示实际后端及原始/显示点数。未实现点拾取，不保证所有客户硬件的固定帧率。
 - 点大小、原始/高度/统一颜色、网格、坐标轴、等轴测/顶/正/右视图和视区截图可用。
 - 顶部 A/B/C 场景下拉仅切换演示标签，共用模拟流程，不是正式业务模式接入。
 - 新建/关闭时提示未导出修改；当前不实现项目会话保存与恢复。点云导出不等于完整项目保存。
@@ -38,8 +40,9 @@
 ```powershell
 $env:QT_QPA_PLATFORM='offscreen'
 $env:PYTHONIOENCODING='utf-8'
-& 'D:/Program Files/Anaconda/envs/rvc/python.exe' prototypes/industrial_scan_ui/tests/test_prototype.py
-& 'D:/Program Files/Anaconda/envs/rvc/python.exe' prototypes/industrial_scan_ui/run.py --screenshot 'D:/RVC_SRC/.verify_reports/industrial_scan_ui.png'
+python prototypes/industrial_scan_ui/tests/test_prototype.py
+python prototypes/industrial_scan_ui/tests/test_render_cache.py
+python prototypes/industrial_scan_ui/run.py --screenshot preview.png
 ```
 
-通过线：unittest 全通过且退出码 0；截图生成且人工查看布局。测试覆盖模拟状态机、按钮接线、暂停门禁、显隐/裁切/撤销/删除、单位转换和真实文件往返、预览采样预算、鼠标操作、后台线程回收与注入 runner。
+通过线：unittest 全通过且退出码 0；截图生成且人工查看布局。原生 GPU 测试命令与客户验收范围见 [RENDERING.md](RENDERING.md)，结果见 [VALIDATION.md](VALIDATION.md)。

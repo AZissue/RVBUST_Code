@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
 from ui_common.symbols import icon
 from ui_common.worker_thread import WorkerThread
 from ..core.session import ScanSession, demo_cloud, crop_background, read_cloud, write_cloud
-from .canvas import CloudCanvas
+from .viewer_factory import create_canvas
 
 
 STYLE = '''
@@ -60,7 +60,7 @@ class ScanWorkbench(QWidget):
     dirty_changed = Signal(bool)
     save_session_requested = Signal()
 
-    def __init__(self, parent=None, *, load_demo=True):
+    def __init__(self, parent=None, *, load_demo=True, renderer='auto'):
         super().__init__(parent)
         # Qt's offscreen Windows plugin may enumerate zero system fonts.
         # Register the installed font in memory, without copying a font asset.
@@ -82,15 +82,18 @@ class ScanWorkbench(QWidget):
         self._undo = []
         self._dirty = False
         self._rebuilding = False
+        self._retired_canvases = []
         self._timer = QTimer(self)
         self._timer.setInterval(120)
         self._timer.timeout.connect(self._tick)
+        self._renderer = renderer
         self._build()
         if load_demo:
             self.session.layers.append(demo_cloud())
             self.session.sequence = 1
         self._refresh(fit=True)
         self.log('原型就绪：当前为合成演示点云，未连接真实相机。')
+        QTimer.singleShot(800, self._check_renderer)
 
     def _build(self):
         root = QVBoxLayout(self)
@@ -211,6 +214,12 @@ class ScanWorkbench(QWidget):
         self.color_mode.addItems(['原始颜色', '高度着色', '统一颜色'])
         self.color_mode.currentTextChanged.connect(self._display_changed)
         edit_form.addRow('点云颜色', self.color_mode)
+        self.render_quality = QComboBox()
+        self.render_quality.addItems(['流畅', '均衡', '细节'])
+        self.render_quality.setCurrentText('均衡')
+        self.render_quality.setToolTip('GPU 静止 / 拖动预算：100万/10万、500万/50万、1000万/100万；兼容预览仅1.8万/3000点。')
+        self.render_quality.currentTextChanged.connect(lambda name: self.canvas.set_policy(name))
+        edit_form.addRow('显示质量', self.render_quality)
         self.point_size = QSpinBox()
         self.point_size.setRange(1, 5)
         self.point_size.setValue(2)
@@ -250,7 +259,11 @@ class ScanWorkbench(QWidget):
             button.clicked.connect(lambda checked=False, value=name: self.canvas.set_view(value))
             tools.addWidget(button)
         view_layout.addLayout(tools)
-        self.canvas = CloudCanvas()
+        self.canvas = create_canvas(renderer=self._renderer)
+        self.canvas.status_changed.connect(self._render_status)
+        if hasattr(self.canvas, 'render_failed'):
+            self.canvas.render_failed.connect(self._renderer_failed)
+        self._view_layout = view_layout
         view_layout.addWidget(self.canvas, 1)
         details = QWidget()
         details_layout = QHBoxLayout(details)
@@ -385,7 +398,36 @@ class ScanWorkbench(QWidget):
         self.state_label.setText('文件处理中…' if self._busy else states[self.session.state])
         self.progress.setValue(self.session.progress)
         self.progress_text.setText(f'{self.session.progress}%')
-        self.status.setText(f'OFFLINE / 未连接相机   |   {self.canvas.total_points:,} 可见点   |   内部与导出单位 mm   |   {"已修改" if self._dirty else "演示就绪"}')
+        self._render_status()
+
+    def _render_status(self):
+        if not hasattr(self, 'status'):
+            return
+        self.render_quality.setEnabled(hasattr(self.canvas, 'render_failed'))
+        self.status.setText(f'原始 {self.canvas.total_points:,} 点 / 显示 {self.canvas.displayed_points:,} 点   |   {self.canvas.backend_name}   |   内部/导出 mm   |   未连接相机')
+
+    def _check_renderer(self):
+        if hasattr(self.canvas, 'isValid') and self.isVisible() and not self.canvas.isValid():
+            self._renderer_failed('未能创建 OpenGL 上下文，已切换兼容软件预览。')
+
+    def _renderer_failed(self, message):
+        if not hasattr(self.canvas, 'render_failed'):
+            return
+        old = self.canvas
+        old._pending = None
+        old._closed = True
+        old._restore.stop()
+        old.hide()
+        self._retired_canvases.append(old)
+        self.canvas = create_canvas(renderer='software')
+        self._view_layout.replaceWidget(old, self.canvas)
+        self.canvas.status_changed.connect(self._render_status)
+        self.canvas.set_layers(self.session.layers, fit=True)
+        self._display_changed()
+        self.canvas.show()
+        self.log(message + ' 兼容模式仅用于预览，非大点云 GPU 渲染。', 'error')
+        self.log_toggle.setChecked(True)
+        self._render_status()
 
     def _visibility_changed(self, item, column):
         if self._rebuilding:
@@ -426,7 +468,7 @@ class ScanWorkbench(QWidget):
             self._timer.stop()
             self._changed()
             self.log(f'{layer.name} 完成：{len(layer.points):,} 个合成点。')
-            self._refresh(fit=True, select=len(self.session.layers) - 1)
+            self._refresh(fit=len(self.session.layers) == 1, select=len(self.session.layers) - 1)
         else:
             self._refresh_controls()
 
@@ -526,7 +568,7 @@ class ScanWorkbench(QWidget):
             self.session.layers.append(layer)
             self._changed()
             self.log(f'导入 {layer.name}：{len(layer.points):,} 点，源单位 {unit}，内部 mm。')
-            self._refresh(fit=True, select=len(self.session.layers) - 1)
+            self._refresh(fit=len(self.session.layers) == 1, select=len(self.session.layers) - 1)
         self._run(lambda: read_cloud(path, unit), done)
 
     def import_dialog(self):
@@ -557,11 +599,12 @@ class ScanWorkbench(QWidget):
             '参考视频的顶部功能带、项目树、参数面板与大视区布局。\n\n'
             '可用：导入/导出点云、图层显隐、旋转缩放、正交视图、Z 裁切与撤销、模拟扫描。\n'
             '模拟扫描只生成合成点云，不连接相机、不控制机器人、不执行标定。\n'
-            '内部和导出单位均为 mm。预览最多 18,000 点，导出保留完整可见数据。\n'
+            'GPU 按帧缓存：静止高细节、拖动低密度，停止后恢复。显示降采样不影响原始数据与导出。\n'
+            'OpenGL 不可用时明确降级为 18,000 点兼容预览，拖动 3,000 点。内部和导出单位均为 mm。\n'
             '本原型尚未接入正式 A/B/C 工作流，也不提供性能或精度验收结果。')
 
     def closeEvent(self, event):
-        if self._busy:
+        if self._busy or self.canvas.is_busy or any(canvas.is_busy for canvas in self._retired_canvases):
             self.log('文件任务仍在运行，请等待完成后关闭。', 'warn')
             event.ignore()
             return
@@ -569,4 +612,7 @@ class ScanWorkbench(QWidget):
             event.ignore()
             return
         self._timer.stop()
+        self.canvas.shutdown()
+        for canvas in self._retired_canvases:
+            canvas.shutdown()
         event.accept()

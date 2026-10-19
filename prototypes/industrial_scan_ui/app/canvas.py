@@ -1,12 +1,13 @@
 """Software point preview: bounded sampling, works without an OpenGL context."""
 import numpy as np
-from PySide6.QtCore import Qt, QPointF, Signal
+from PySide6.QtCore import Qt, QPointF, Signal, QTimer
 from PySide6.QtGui import QColor, QPainter, QPen, QPolygonF, QLinearGradient
 from PySide6.QtWidgets import QWidget
 
 
 class CloudCanvas(QWidget):
     view_changed = Signal()
+    status_changed = Signal()
     MAX_PREVIEW = 18000
 
     def __init__(self, parent=None):
@@ -27,17 +28,53 @@ class CloudCanvas(QWidget):
         self._colors = np.empty((0, 3))
         self.total_points = 0
         self._last = None
+        self._layers = []
+        self._moving = False
+        self.backend_name = '兼容软件预览（不具备 GPU 大点云能力）'
+        self._restore = QTimer(self)
+        self._restore.setSingleShot(True)
+        self._restore.timeout.connect(self._end_interaction)
+
+    @property
+    def is_busy(self):
+        return False
+
+    @property
+    def displayed_points(self):
+        return len(self._points)
+
+    def set_policy(self, name):
+        # Explicit compatibility path, never claims the GPU point budget.
+        pass
+
+    def shutdown(self):
+        self._restore.stop()
+
+    def _begin_interaction(self):
+        if not self._moving:
+            self._moving = True
+            self.set_layers(self._layers)
+        self._restore.start(220)
+
+    def _end_interaction(self):
+        if self._last is not None:
+            self._restore.start(220)
+            return
+        self._moving = False
+        self.set_layers(self._layers)
 
     def set_layers(self, layers, fit=False):
+        self._layers = list(layers)
+        budget = min(self.MAX_PREVIEW, 3000) if self._moving else self.MAX_PREVIEW
         visible = [layer for layer in layers if layer.visible]
         self.total_points = sum(len(layer.points) for layer in visible)
         points, colors = [], []
         # One global sample budget independent of the number of imported layers.
         cumulative = 0
         for layer in visible:
-            begin = cumulative * self.MAX_PREVIEW // max(1, self.total_points)
+            begin = cumulative * budget // max(1, self.total_points)
             cumulative += len(layer.points)
-            end = cumulative * self.MAX_PREVIEW // max(1, self.total_points)
+            end = cumulative * budget // max(1, self.total_points)
             count = min(len(layer.points), end - begin)
             if not count:
                 continue
@@ -50,6 +87,7 @@ class CloudCanvas(QWidget):
         if fit:
             self.fit_view()
         self.update()
+        self.status_changed.emit()
 
     def fit_view(self):
         if len(self._points):
@@ -136,6 +174,7 @@ class CloudCanvas(QWidget):
             self.set_view('顶视')
             return
         self._last = event.position()
+        self._begin_interaction()
         self.setCursor(Qt.ClosedHandCursor)
 
     def mouseMoveEvent(self, event):
@@ -153,10 +192,12 @@ class CloudCanvas(QWidget):
     def mouseReleaseEvent(self, event):
         self._last = None
         self.setCursor(Qt.OpenHandCursor)
+        self._restore.start(220)
 
     def wheelEvent(self, event):
         self.zoom = float(np.clip(self.zoom * 1.12 ** (event.angleDelta().y() / 120), .1, 25))
         self.update()
+        self._begin_interaction()
 
     def mouseDoubleClickEvent(self, event):
         self.fit_view()

@@ -137,6 +137,19 @@ class PrototypeTests(unittest.TestCase):
         self.assertEqual(self.win.canvas.total_points, len(layer.points) * 8)
         self.assertGreater(self.win.canvas.total_points, len(self.win.canvas._points))
 
+    def test_compatibility_interaction_lod_restores_without_editing_source(self):
+        canvas = self.win.canvas
+        original = self.win.session.layers[0].points.copy()
+        full = canvas.displayed_points
+        QTest.mousePress(canvas, Qt.LeftButton, pos=QPoint(200, 200))
+        self.assertLessEqual(canvas.displayed_points, 3000)
+        QTest.mouseRelease(canvas, Qt.LeftButton, pos=QPoint(200, 200))
+        QTest.qWait(260)
+        self.assertEqual(canvas.displayed_points, full)
+        np.testing.assert_array_equal(self.win.session.layers[0].points, original)
+        self.assertIn('兼容', canvas.backend_name)
+        self.assertFalse(self.win.render_quality.isEnabled())
+
     def test_display_controls_and_mouse_navigation(self):
         self.win.grid_toggle.setChecked(False)
         self.win.axes_toggle.setChecked(False)
