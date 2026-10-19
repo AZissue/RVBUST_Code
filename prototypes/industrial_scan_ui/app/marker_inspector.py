@@ -37,9 +37,9 @@ class MarkerImage(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.fillRect(self.rect(), QColor('#151c22'))
+        painter.fillRect(self.rect(), QColor('#1c1c1c'))
         if self.image.isNull():
-            painter.setPen(QColor('#98a9b7'))
+            painter.setPen(QColor('#aaaaaa'))
             painter.drawText(self.rect(), Qt.AlignCenter, '未关联当前帧2D图像')
             return
         scale = min(self.width()/self.image.width(), self.height()/self.image.height())
@@ -101,7 +101,7 @@ class MarkerInspector(QFrame):
         self.world_overlay = WorldMarkerOverlay(viewport)
         self.display = MarkerDisplay((), frozenset(), frozenset(), False)
         self.setObjectName('markerInspector')
-        self.setStyleSheet('QFrame#markerInspector {background:#1c252d;border:1px solid #43525f;border-radius:6px;}')
+        self.setStyleSheet('QFrame#markerInspector {background:#242424;border:1px solid #505050;border-radius:6px;}')
         self.setFixedWidth(340)
         root = QVBoxLayout(self)
         root.setContentsMargins(10, 8, 10, 8)

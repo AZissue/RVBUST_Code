@@ -53,21 +53,71 @@ class StudioTests(unittest.TestCase):
         with self.assertRaises(ValueError):registry.get('missing')
         dialog=FunctionLauncher(registry)
         self.assertEqual(len(dialog.cards),4)
-        self.assertEqual(dialog.camera_count.minimum(),2)
-        dialog.select_function('turntable')
-        self.assertEqual(dialog.camera_count.value(),1)
-        self.assertFalse(dialog.camera_count.isEnabled())
+        self.assertFalse(dialog.enter_button.isEnabled())
+        dialog.show();self.app.processEvents()
+        geometries={key: card.geometry() for key,card in dialog.cards.items()}
+        for key in dialog.cards:
+            dialog.select_function(key);self.app.processEvents()
+            self.assertEqual(geometries,{k:c.geometry() for k,c in dialog.cards.items()})
         dialog.select_function('multi_cam')
-        self.assertTrue(dialog.camera_count.isEnabled())
-        dialog.camera_count.setValue(6)
-        dialog.enter_button.click()
+        dialog.preview_button.click()
+        self.assertEqual(dialog.result_count,2)
         self.assertEqual(dialog.result(),QDialog.Accepted)
         dialog.select_function('future')
-        self.assertEqual(dialog.camera_count.value(),0)
+        self.assertTrue(dialog.enter_button.isEnabled())
         self.assertIn('无需相机',dialog.rule.text())
         workspace=registry.create('future',renderer='software',load_demo=False)
         self.assertEqual(workspace.camera_count,0)
         self.close_window(workspace)
+        dialog.deleteLater()
+
+    def test_device_rules_async_connection_and_failure(self):
+        from ui_v2.widgets.device_table import DeviceInfo
+        class FakeService:
+            connected=[]
+            fail=False
+            def enumerate(self):
+                return [DeviceInfo(model='TEST',serial=str(i),backend_ref=i) for i in range(3)]
+            def connect(self, selected):
+                if self.fail:raise RuntimeError('fixture failure')
+                self.connected=list(selected);return self.connected
+            def close(self):self.connected=[]
+            def capture_previews(self):
+                from types import SimpleNamespace
+                frame=SimpleNamespace(image_np=np.zeros((48,64),dtype=np.uint8),
+                                      markers_all=[],markers=[],board_pattern_name=None)
+                return {'cam1':frame,'cam2':None}
+        service=FakeService()
+        dialog=FunctionLauncher(default_registry(),service=service)
+        def wait():
+            deadline=time.monotonic()+5
+            while dialog._worker is not None:
+                self.app.processEvents();time.sleep(.005)
+                self.assertLess(time.monotonic(),deadline)
+        dialog.refresh_button.click();wait()
+        checks=dialog.device_table._check_widgets
+        checks[0].setChecked(True)
+        self.assertFalse(dialog.enter_button.isEnabled())
+        checks[1].setChecked(True)
+        self.assertTrue(dialog.enter_button.isEnabled())
+        service.fail=True;dialog.enter_button.click();wait()
+        self.assertNotEqual(dialog.result(),QDialog.Accepted)
+        self.assertIn('fixture failure',dialog.message.text())
+        service.fail=False;dialog.enter_button.click();wait()
+        self.assertEqual(dialog.result_count,2)
+        shell=StudioWindow(default_registry(),'multi_cam',camera_count=2,service=service,
+                           devices=dialog.connected_devices,renderer='software',load_demo=False)
+        self.assertEqual(shell.workspace.camera_grid.camera_ids(),['cam1','cam2'])
+        self.assertIn('0',shell.workspace.camera_grid._titles['cam1'])
+        shell.capture_previews();self.wait_job(shell.workspace)
+        self.assertIsNotNone(shell.workspace.camera_grid.card('cam1').current_frame())
+        self.assertIsNone(shell.workspace.camera_grid.card('cam2').current_frame())
+        self.close_window(shell)
+        dialog.select_function('turntable')
+        checks=dialog.device_table._check_widgets
+        checks[0].setChecked(True);checks[2].setChecked(True)
+        self.assertEqual([d.serial for d in dialog.device_table.checked_devices()],['2'])
+        self.assertTrue(dialog.enter_button.isEnabled())
         dialog.deleteLater()
 
     def test_switch_modes_cancel_busy_and_factory_failure_preserve_current(self):

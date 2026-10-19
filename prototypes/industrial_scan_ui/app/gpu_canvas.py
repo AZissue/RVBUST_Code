@@ -220,7 +220,7 @@ class GpuCloudCanvas(NavigationMixin, QOpenGLWidget):
             gl.glEnable(gl.GL_DEPTH_TEST)
             gl.glEnable(gl.GL_PROGRAM_POINT_SIZE)
             gl.glDepthMask(gl.GL_TRUE)
-            gl.glClearColor(.27, .30, .33, 1.)
+            gl.glClearColor(.29, .29, .29, 1.)
             gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
             gl.glBindVertexArray(self._vao)
             self._upload()
@@ -251,7 +251,7 @@ class GpuCloudCanvas(NavigationMixin, QOpenGLWidget):
         painter.drawText(18, self.height() - 18, '左键轨迹球旋转 · 右键/中键平移 · 滚轮缩放 · 双击设旋转中心 · F/Z 适配')
         if self._last is not None:
             x, y = self._pivot_pixel()
-            painter.setPen(QPen(QColor('#c5e793'), 1))
+            painter.setPen(QPen(QColor('#cccccc'), 1))
             painter.drawEllipse(int(x)-7, int(y)-7, 14, 14)
         if self.axes:
             for text, color, origin, end in self.axis_endpoints():

@@ -112,8 +112,8 @@ class CloudCanvas(NavigationMixin, QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         gradient = QLinearGradient(0, 0, 0, self.height())
-        gradient.setColorAt(0, QColor('#727980'))
-        gradient.setColorAt(1, QColor('#454d55'))
+        gradient.setColorAt(0, QColor('#777777'))
+        gradient.setColorAt(1, QColor('#494949'))
         painter.fillRect(self.rect(), gradient)
         if self.grid:
             step = 10 ** np.floor(np.log10(self.extent / 12))

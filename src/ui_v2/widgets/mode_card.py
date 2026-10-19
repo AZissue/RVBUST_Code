@@ -55,6 +55,7 @@ class ModeCard(QFrame):
         lo.addWidget(self._dot)
 
         self.setCursor(Qt.PointingHandCursor)
+        self.setMinimumHeight(100)
         self.setChecked(False)
 
     def is_checked(self) -> bool:
@@ -67,14 +68,16 @@ class ModeCard(QFrame):
         self._icon.setPixmap(ui_icons.pixmap(self._icon_name, icon_color, 28))
         if checked:
             self.setStyleSheet(
-                f"ModeCard {{ background-color: {BG_CARD};"
+                f"ModeCard {{ background-color: #382d2d;"
                 f" border: 2px solid {ACCENT}; border-radius: 8px; }}")
             self._dot.setStyleSheet(f"color: {ACCENT}; font-size: 14px;")
         else:
             self.setStyleSheet(
-                f"ModeCard {{ background-color: {BG_CARD};"
-                f" border: none; border-radius: 8px; }}")
+                f"ModeCard {{ background-color: #333333;"
+                f" border: 2px solid transparent; border-radius: 8px; }}")
             self._dot.setStyleSheet("color: transparent; font-size: 14px;")
+        for label in (self._icon, self._title, self._desc, self._dot):
+            label.setStyleSheet(label.styleSheet() + " background: transparent; border: none;")
 
     def mousePressEvent(self, event):
         self.clicked.emit()

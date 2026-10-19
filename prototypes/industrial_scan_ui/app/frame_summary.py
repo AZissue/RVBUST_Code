@@ -52,4 +52,4 @@ class FrameQualityCard(QFrame):
         if reference is not None:
             prefix += f'参考帧 {reference} · '
         self.suggestion.setText(prefix+message)
-        self.setStyleSheet(f'QFrame#frameQuality {{background:#29323b;border-left:3px solid {color};}}')
+        self.setStyleSheet(f'QFrame#frameQuality {{background:#303030;border-left:3px solid {color};}}')

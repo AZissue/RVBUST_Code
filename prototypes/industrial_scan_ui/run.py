@@ -47,13 +47,16 @@ def main():
         QTimer.singleShot(300, save_launcher)
         return app.exec()
     key, count = args.mode, args.camera_count
+    service, devices = None, []
     if key is None and args.screenshot is None:
         dialog = FunctionLauncher(registry)
         if dialog.exec() != QDialog.Accepted:
             return 0
-        key, count = dialog.selected_key, dialog.camera_count.value()
+        key, count = dialog.selected_key, dialog.result_count
+        service, devices = dialog.service, dialog.connected_devices
     try:
-        win = StudioWindow(registry, key or 'mobile_chain', camera_count=count, renderer=args.renderer)
+        win = StudioWindow(registry, key or 'mobile_chain', camera_count=count, renderer=args.renderer,
+                           service=service, devices=devices)
     except ValueError as exc:
         parser.error(str(exc))
     win.show()
