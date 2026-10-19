@@ -83,7 +83,7 @@ QString toSdkPoseLine(const QString& raw, RobotDataFormats::Id fmt,
         return normalizePoseLine(raw);
     }
 
-    // 卡片只有 3 个旋转数，四元数(4)与 3x3 矩阵(9)在这里无法表示。
+    // 卡片只有 3 个旋转数：四元数(4)、3x3 矩阵(9)、4x4 矩阵(16)都无法表示。
     if (!RobotDataFormats::cardUsable(fmt))
         return {};
 
@@ -97,8 +97,18 @@ QString toSdkPoseLine(const QString& raw, RobotDataFormats::Id fmt,
             out += QLatin1Char(',');
         out += QString::number(m[static_cast<std::size_t>(i)], 'g', 10);
     }
-    poseTypeOut = 3;             // matrix, row-major 16 values
+    poseTypeOut = sdkPoseType(fmt);   // 3 = row-major 16 values
     return out;
+}
+
+int sdkPoseType(RobotDataFormats::Id fmt)
+{
+    // 标定数据来自卡片（固定 6 个数），所以只有 3 个旋转数的约定能走到 SDK。
+    // sXYZ 是 SDK 自己的欧拉约定，直接透传；其余约定由本工具先转成 4x4 矩阵。
+    // 四元数 / 3x3 / 4x4 约定在卡片上表达不了，返回 -1（不会发送）。
+    if (!RobotDataFormats::cardUsable(fmt))
+        return -1;
+    return fmt == RobotDataFormats::Id::EulerSxyz ? 0 : 3;
 }
 
 QString poseFormatName(RobotDataFormats::Id fmt)

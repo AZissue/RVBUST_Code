@@ -278,6 +278,21 @@ void ToolsPanel::updateCalibFormatHint()
                          m_config->calibPoseAngleUnit() == TransformTools::AngleUnit::Radian
                              ? QStringLiteral("弧度") : QStringLiteral("度"));
     }
+    // 本页下拉框选的是「卡片那 3 个旋转数怎么读」，不是 SDK 的 poseType。
+    // 写清楚交给 SDK 的到底是哪一种，避免和官方 UI 的 4 项列表对不上号。
+    const int sdkType = CalibrationService::sdkPoseType(fmt);
+    QString sdkNote;
+    if (sdkType == 0) {
+        sdkNote = QStringLiteral(
+            "交给 HandEyeSDK：欧拉角（poseType=0）—— 原样透传，SDK 自己按 sXYZ 读");
+    } else if (sdkType == 3) {
+        sdkNote = QStringLiteral(
+            "交给 HandEyeSDK：4×4 姿态变换矩阵（poseType=3）—— "
+            "本工具已把该欧拉约定转成矩阵");
+    } else {
+        sdkNote = QStringLiteral(
+            "该格式需要更多旋转值，卡片装不下，标定不会把它交给 HandEyeSDK");
+    }
     // 卡片固定 6 个数（位置 + 3 个旋转值）是红线，所以本页下拉框只列 3 旋转数的
     // 欧拉类约定；四元数（4 个数）与 4×4 姿态变换矩阵（16 个数）放在「坐标转换」
     // 页。两个页面的选项不同是有意的，这里写明原因，免得看着像功能缺失。
@@ -285,6 +300,7 @@ void ToolsPanel::updateCalibFormatHint()
         "卡片固定 6 个数，所以本页只列 3 个旋转数的约定；"
         "四元数与 4×4 姿态变换矩阵请到「坐标转换」页使用。");
     m_calibFormatLabel->setText(CalibrationService::poseFormatDescription(fmt)
+                                + QStringLiteral("\n") + sdkNote
                                 + QStringLiteral("\n") + state
                                 + QStringLiteral("\n") + cardNote);
 }

@@ -67,10 +67,19 @@ QString normalizeXyzLine(const QString& raw);
 //     everything lands on the matrix type.
 //
 // Only 3-value rotation formats are accepted: the card always carries exactly
-// 6 numbers, so quaternion (4) and 3x3 matrix (9) inputs cannot be expressed
-// here and yield an empty string.  Returns empty for malformed input too.
+// 6 numbers, so quaternion (4), 3x3 matrix (9) and 4x4 matrix (16) inputs
+// cannot be expressed here and yield an empty string.  Returns empty for
+// malformed input too.
 QString toSdkPoseLine(const QString& raw, RobotDataFormats::Id fmt,
                       TransformTools::AngleUnit unit, int& poseTypeOut);
+
+// What HandEyeParam::poseType the calibration path sends for this format:
+//   0 = euler (only sXYZ: the SDK's own convention, passed through as-is),
+//   3 = row-major 4x4 matrix (every other 3-value euler/axis-angle convention
+//       is converted by us first),
+//  -1 = the card cannot carry it, so it never reaches the SDK.
+// Kept next to toSdkPoseLine so the UI hint and the actual call cannot drift.
+int sdkPoseType(RobotDataFormats::Id fmt);
 
 // Format label / three-line hint, shared by the coordinate-transform page and
 // the hand-eye calibration page so the wording cannot drift apart.

@@ -310,6 +310,41 @@ void TestCalibrationService::everyThreeValueFormatMatchesCatalog()
     }
 }
 
+// 界面提示行与实际的 SDK 调用必须说同一件事。标定页下拉框选的是“卡片这 3 个
+// 旋转数怎么读”，不是 SDK 的 poseType：sXYZ 正好等于 SDK 的欧拉（0），其它 3 数
+// 约定由本工具转成 4x4 矩阵（3）；四元数/矩阵约定卡片装不下，返回 -1。
+void TestCalibrationService::sdkPoseTypeMatchesTheCalibrationPath()
+{
+    QCOMPARE(CalibrationService::sdkPoseType(RobotDataFormats::Id::EulerSxyz), 0);
+    QCOMPARE(CalibrationService::sdkPoseType(RobotDataFormats::Id::EulerRzyx), 3);
+    QCOMPARE(CalibrationService::sdkPoseType(RobotDataFormats::Id::RotationVector), 3);
+    QCOMPARE(CalibrationService::sdkPoseType(RobotDataFormats::Id::EulerSxyx), 3);
+
+    for (const auto fmt : { RobotDataFormats::Id::QuatWxyz,
+                            RobotDataFormats::Id::QuatXyzw,
+                            RobotDataFormats::Id::Matrix3x3Row,
+                            RobotDataFormats::Id::Matrix3x3Col,
+                            RobotDataFormats::Id::Matrix4x4Row }) {
+        QCOMPARE(CalibrationService::sdkPoseType(fmt), -1);
+    }
+
+    // 每个能进卡片的约定，toSdkPoseLine 报出来的 poseType 都要和提示行一致。
+    const QString raw = QStringLiteral("10 20 30 0.5 -0.25 0.125");
+    for (const auto tier : { RobotDataFormats::Tier::Common,
+                             RobotDataFormats::Tier::Advanced }) {
+        for (const auto fmt : RobotDataFormats::ids(tier)) {
+            if (!RobotDataFormats::cardUsable(fmt))
+                continue;
+            int poseType = -99;
+            const QString line = CalibrationService::toSdkPoseLine(
+                raw, fmt, TransformTools::AngleUnit::Degree, poseType);
+            QVERIFY2(!line.isEmpty(), qPrintable(QStringLiteral("fmt %1")
+                                                     .arg(static_cast<int>(fmt))));
+            QCOMPARE(poseType, CalibrationService::sdkPoseType(fmt));
+        }
+    }
+}
+
 // 卡片永远是 6 个数（CaptureRecord::robotCapturePose），四元数要 4 个旋转数、
 // 3x3 矩阵要 9 个、4x4 姿态矩阵要 16 个 —— 在卡片里表达不了。必须干净地拒绝，
 // 不能抛异常穿到 QtConcurrent 的工作线程里去（那会直接崩进程）。

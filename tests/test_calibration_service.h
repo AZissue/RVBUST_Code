@@ -34,6 +34,9 @@ private slots:
     void rotationVectorBecomesMatrix16();
     // 四种 3 数格式 x 度/弧度：输出的 3x3 必须等于 RobotDataFormats 的同一转换。
     void everyThreeValueFormatMatchesCatalog();
+    // 界面提示要说清楚交给 SDK 的 poseType：sXYZ=0、其它 3 数约定=3、
+    // 卡片装不下的格式=-1（不会发送）。
+    void sdkPoseTypeMatchesTheCalibrationPath();
     // 卡片只有 6 个数：四元数(4)/9 数矩阵在这里无法表示，应拒绝而不是抛异常。
     void formatsTheCardCannotCarryAreRejected();
     void toSdkPoseLineRejectsBadInput();
