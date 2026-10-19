@@ -145,6 +145,8 @@ class MainWindowShell(QMainWindow):
 
         # ===== 浮动日志面板（叠加层，默认隐藏，「日志」按钮 toggle） =====
         self._log_panel = FloatingLogPanel(self)
+        from core.utils import logger
+        self._log_panel.attach_logger(logger)
         self._log_panel.closed.connect(self._on_log_panel_closed)
         self._log_panel.hide()
 
@@ -491,9 +493,13 @@ class MainWindowShell(QMainWindow):
     def log(self, message: str, level: str = "info"):
         """统一日志入口（状态栏双通道提示）。
 
-        # TODO(BACKEND): 对接 core.utils.logger
+        UI 信息同时写入轮转文件；底层 logger 经 Qt 队列转入日志面板。
         """
         self._log_panel.append(message, level)
+        import logging
+        from core.utils import logger
+        logger.log({'error': logging.ERROR, 'warn': logging.WARNING}.get(level, logging.INFO),
+                   message, extra={'activity_owned': True})
         self._st_hint.setText(message)
 
     def show_loading(self, text: str = "处理中..."):
@@ -597,7 +603,10 @@ class MainWindowShell(QMainWindow):
                 self.save_session_requested.emit()
                 # 同步等待保存完成，避免异步保存被主线程退出中断导致文件半写
                 self._wait_for_session_save(event)
+                if event.isAccepted():
+                    self._log_panel.detach_loggers()
                 return
+        self._log_panel.detach_loggers()
         event.accept()
 
     def _wait_for_session_save(self, event):

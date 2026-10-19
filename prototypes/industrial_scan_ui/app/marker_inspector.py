@@ -156,7 +156,15 @@ class MarkerInspector(QFrame):
 
     def _position(self):
         self.setFixedWidth(max(230, min(340, self.viewport.width()-24)))
-        self.image_view.setFixedHeight(110 if self.viewport.height() < 420 else 175)
+        compact = self.viewport.height() < 420
+        self.image_view.setFixedHeight(90 if compact else 175)
+        self.ids.setVisible(not compact)
+        self.pair_label.setVisible(not compact)
+        self.world_counts.setVisible(not compact)
+        self.body.layout().invalidate()
+        self.body.layout().activate()
+        self.layout().invalidate()
+        self.layout().activate()
         self.adjustSize()
         self.move(max(8, self.viewport.width()-self.width()-12), 12)
         self.world_overlay.setGeometry(self.viewport.rect())

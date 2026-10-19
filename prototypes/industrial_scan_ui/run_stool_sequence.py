@@ -45,10 +45,18 @@ class SequenceDemo:
         self.layers=[]
         for r in self.records:
             z=np.load(self.cache/f"frame_{r['frame']}.npz")
-            self.layers.append(CloudLayer(f"扫描帧 {r['frame']:02d}",z['points'],z['colors'],source=f"离线实测 {r['frame']}.ply · 原始有效 {r['original_points']:,} 点 · 采样预览"))
+            ratio = len(r['used_codes'])/len(r['shared']) if r.get('used_codes') is not None and r['shared'] else None
+            registration = dict(reference_id=r['reference'], is_reference=r['reference'] is None,
+                shared_markers=len(r['shared']) if r['reference'] is not None else None,
+                inlier_ratio=ratio, rms_mm=r['rms'] if r['reference'] is not None else None,
+                accepted=True if r['reference'] is not None else None,
+                suggestion='已接受的离线配准结果' if r['reference'] is not None else '首帧用作拼接基准')
+            self.layers.append(CloudLayer(f"扫描帧 {r['frame']:02d}",z['points'],z['colors'],source=f"离线实测 {r['frame']}.ply · 原始有效 {r['original_points']:,} 点 · 采样预览",
+                registration=registration,source_points=r['original_points']))
         self.win=ScanWorkbench(load_demo=False,renderer='gpu');self.win.resize(1920,1080)
         self.win.setWindowTitle('MCC · 凳子逐帧拼接与编码圆识别 · 临时演示')
         self.win.grid_toggle.setChecked(False);self.win.show()
+        self.win.set_connection_status('离线回放 · 未连接相机')
         self.c=self.win.canvas;self.overlay=MarkerOverlay(self.c)
         self.index=-1
         allpts=np.concatenate([l.points[::20] for l in self.layers]);lo,hi=np.quantile(allpts,[.005,.995],axis=0)
@@ -91,6 +99,7 @@ class SequenceDemo:
         self.win.progress.setValue(round((index+1)/8*100));self.win.progress_text.setText(f'{index+1} / 8 帧')
         self.win.state_label.setText('离线逐帧拼接')
         self.win.scan_button.setText('重新播放逐帧拼接')
+        self.win._render_status()
         self.c._notify_view_changed();self.overlay.update()
         self.win.marker_inspector.raise_()
     def replay(self):
@@ -121,6 +130,8 @@ def main():
             assert display.green_count+display.red_count+display.yellow_count==len(display.rows)
             assert demo.c._failure is None
             assert len(demo.c._marker_points)==34
+            assert demo.win.quality_card.title.text().endswith('基准帧' if stage==0 else '配准成功')
+            assert '原始' in demo.win.status.text() and '载入' in demo.win.status.text()
             if stage:assert display.red_count>=3
             else:assert display.green_count==34 and display.red_count==0
         demo.set_time(0);assert len(demo.win.session.layers)==1

@@ -116,7 +116,7 @@ def main():
 
     # 主窗口日志/遮罩/状态栏
     win.log("冒烟测试日志", "info")
-    check("日志面板写入", "冒烟测试日志" in win._log_panel._text.toPlainText())
+    check("日志面板写入", "冒烟测试日志" in win._log_panel.toPlainText())
     win.show_loading("测试")
     win.hide_loading()
 

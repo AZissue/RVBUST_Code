@@ -12,6 +12,8 @@ class CloudLayer:
     visible: bool = True
     source: str = '演示合成数据'
     observation: dict | None = None
+    registration: dict | None = None
+    source_points: int | None = None
 
     def __post_init__(self):
         pts = np.asarray(self.points, dtype=np.float64)
@@ -92,7 +94,8 @@ def crop_background(layer, minimum_z):
         raise ValueError('裁切将删除全部点，请降低 Z 阈值')
     return CloudLayer(layer.name, layer.points[keep],
                       None if layer.colors is None else layer.colors[keep],
-                      layer.visible, layer.source, layer.observation)
+                      layer.visible, layer.source, layer.observation,
+                      layer.registration, layer.source_points)
 
 
 def read_cloud(path, unit='mm'):

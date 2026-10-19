@@ -1,8 +1,10 @@
 """Reference-inspired scan workbench. No camera initialization or business changes."""
 from pathlib import Path
 import os
-from PySide6.QtCore import Qt, QTimer, Signal, QSize
-from PySide6.QtGui import QFont, QFontDatabase
+import math
+import logging
+from PySide6.QtCore import Qt, QTimer, Signal, QSize, QSignalBlocker
+from PySide6.QtGui import QFont, QFontDatabase, QColor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QToolButton,
     QSplitter, QTreeWidget, QTreeWidgetItem, QGroupBox, QFormLayout,
@@ -11,9 +13,12 @@ from PySide6.QtWidgets import (
 )
 from ui_common.symbols import icon
 from ui_common.worker_thread import WorkerThread
+from ui_common.activity_log import ActivityLogPanel
+from core.utils import logger
 from ..core.session import ScanSession, demo_cloud, crop_background, read_cloud, write_cloud
 from .viewer_factory import create_canvas
 from .marker_inspector import MarkerInspector
+from .frame_summary import FrameQualityCard, registration_state, STATES
 
 
 STYLE = '''
@@ -60,6 +65,7 @@ class ScanWorkbench(QWidget):
     log_message = Signal(str, str)
     dirty_changed = Signal(bool)
     save_session_requested = Signal()
+    recapture_requested = Signal(int)
 
     def __init__(self, parent=None, *, load_demo=True, renderer='auto'):
         super().__init__(parent)
@@ -76,6 +82,9 @@ class ScanWorkbench(QWidget):
         self.setStyleSheet(STYLE)
         self.session = ScanSession()
         self._devices = []
+        self._connection_text = "未连接相机"
+        self._latest_message = "就绪"
+        self._task_label = ""
         self._background_runner = None
         self._worker = None
         self._busy = False
@@ -93,7 +102,7 @@ class ScanWorkbench(QWidget):
             self.session.layers.append(demo_cloud())
             self.session.sequence = 1
         self._refresh(fit=True)
-        self.log('原型就绪：当前为合成演示点云，未连接真实相机。')
+        self.log('原型就绪：未连接真实相机。' + ('已载入合成演示点云。' if load_demo else '等待离线数据。'))
         QTimer.singleShot(800, self._check_renderer)
 
     def _build(self):
@@ -167,7 +176,8 @@ class ScanWorkbench(QWidget):
         tree_title.addWidget(self.layer_count)
         side.addLayout(tree_title)
         self.tree = QTreeWidget()
-        self.tree.setHeaderLabels(['扫描项目', '点数'])
+        self.tree.setHeaderLabels(['扫描帧 / 配准状态', '点数'])
+        self.tree.setToolTip('选择帧联动2D图像与质量卡；勾选控制3D显隐')
         self.tree.header().setStretchLastSection(False)
         self.tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
         self.tree.header().setSectionResizeMode(1, QHeaderView.ResizeToContents)
@@ -177,6 +187,14 @@ class ScanWorkbench(QWidget):
         self.tree.itemChanged.connect(self._visibility_changed)
         self.tree.currentItemChanged.connect(lambda *_: self._refresh_details())
         side.addWidget(self.tree, 1)
+        frame_actions = QHBoxLayout()
+        self.recapture_button = QPushButton('重拍当前帧')
+        self.recapture_button.clicked.connect(self._request_recapture)
+        self.undo_frame_button = QPushButton('撤销末帧')
+        self.undo_frame_button.clicked.connect(self.undo_last_frame)
+        frame_actions.addWidget(self.recapture_button)
+        frame_actions.addWidget(self.undo_frame_button)
+        side.addLayout(frame_actions)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -277,6 +295,8 @@ class ScanWorkbench(QWidget):
         self.reset_button.clicked.connect(self._fit)
         details_layout.addWidget(self.reset_button)
         view_layout.addWidget(details)
+        self.quality_card = FrameQualityCard()
+        view_layout.addWidget(self.quality_card)
         split.addWidget(view)
         split.setSizes([290, 1150])
         root.addWidget(split, 1)
@@ -299,17 +319,115 @@ class ScanWorkbench(QWidget):
         scan_layout.addWidget(self.scan_button)
         self.log_toggle = QPushButton('运行日志')
         self.log_toggle.setCheckable(True)
-        self.log_toggle.toggled.connect(lambda on: self.logs.setVisible(on))
+        self.log_toggle.toggled.connect(self._toggle_logs)
         scan_layout.addWidget(self.log_toggle)
         root.addWidget(scan_strip)
-        self.logs = QPlainTextEdit()
-        self.logs.setReadOnly(True)
-        self.logs.setMaximumBlockCount(200)
-        self.logs.setFixedHeight(100)
+        self.logs = ActivityLogPanel(self)
+        self.logs.attach_logger(logger)
+        self.logs.closed.connect(lambda: self.log_toggle.setChecked(False))
         self.logs.hide()
-        root.addWidget(self.logs)
-        self.status = QLabel('离线演示  |  单位 mm  |  未连接相机', objectName='status')
+        self.status = QLabel(objectName='status')
+        self.status.setWordWrap(True)
         root.addWidget(self.status)
+        self.latest_status = QLabel('就绪', objectName='status')
+        self.latest_status.setMaximumHeight(28)
+        root.addWidget(self.latest_status)
+
+    def _position_logs(self):
+        width = min(420 if self.height() < 900 else 600, max(340, self.width()-32))
+        self.logs.setFixedWidth(width)
+        if not self.logs._collapsed:
+            self.logs.resize(width, min(300, max(180, self.height()//3)))
+        # Below the 2D inspector whenever there is sufficient room.
+        self.logs.move(16 if self.height() < 900 else max(8, self.width()-width-16),
+                       max(150, self.height()-self.logs.height()-115))
+
+    def _toggle_logs(self, visible):
+        if visible:
+            self._position_logs()
+            self.logs._render()
+            self.logs.show()
+            self.logs.raise_()
+        else:
+            self.logs.hide()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, 'logs') and self.logs.isVisible():
+            self._position_logs()
+
+    def set_connection_status(self, text):
+        """Actual connection state must be supplied by a controller, never inferred."""
+        self._connection_text = str(text)
+        self._render_status()
+
+    def _request_recapture(self):
+        index = self._selected_index()
+        if index is not None:
+            self.recapture_requested.emit(index)
+            self.log('已请求重拍当前帧，等待采集控制器处理。', frame=self._frame_id(index), task='重拍')
+
+    def set_recapture_available(self, available):
+        self._recapture_available = bool(available)
+        self._refresh_controls()
+
+    def undo_last_frame(self):
+        if self._busy or self.session.state in ('scanning', 'paused') or not self.session.layers:
+            return
+        self._snapshot()
+        layer = self.session.layers.pop()
+        self._changed()
+        self.log('已撤销末帧：'+layer.name, task='帧管理')
+        self._refresh(select=max(0, len(self.session.layers)-1))
+
+    def _frame_id(self, index=None):
+        index = self._selected_index() if index is None else index
+        if index is None or index >= len(self.session.layers):
+            return ''
+        layer = self.session.layers[index]
+        return str((layer.observation or {}).get('frame_id', layer.name))
+
+    def set_frame_registration(self, *, layer_index=None, reference_id=None,
+                               shared_markers=None, inlier_ratio=None, rms_mm=None,
+                               accepted=None, level=None, suggestion='', is_reference=False):
+        index = self._selected_index() if layer_index is None else layer_index
+        if index is None or not 0 <= index < len(self.session.layers):
+            raise ValueError('请先选择帧')
+        if shared_markers is not None and (not isinstance(shared_markers, int) or shared_markers < 0):
+            raise ValueError('共有圆数量必须为非负整数')
+        for value, name in [(inlier_ratio, '内点率'), (rms_mm, '误差')]:
+            if value is not None and (not math.isfinite(value) or value < 0):
+                raise ValueError(name+'必须为非负有限值')
+        if inlier_ratio is not None and inlier_ratio > 1:
+            raise ValueError('内点率范围为0~1')
+        if accepted not in (True, False, None):
+            raise ValueError('accepted 需为 true / false / null')
+        layer = self.session.layers[index]
+        if layer.observation is not None and accepted is not None:
+            layer.observation['registration_accepted'] = accepted
+        layer.registration = dict(reference_id=reference_id, shared_markers=shared_markers,
+            inlier_ratio=inlier_ratio, rms_mm=rms_mm, accepted=accepted, level=level,
+            suggestion=suggestion, is_reference=is_reference)
+        self._update_frame_item(index)
+        self._refresh_details()
+
+    def _update_frame_item(self, index):
+        blocker = QSignalBlocker(self.tree)
+        root = self.tree.topLevelItem(0)
+        if root is None or index >= root.childCount():
+            return
+        layer = self.session.layers[index]
+        item = root.child(index)
+        state = registration_state(layer)
+        color, title = STATES[state]
+        item.setText(0, f'{layer.name} · {title}')
+        item.setForeground(0, QColor(color))
+        result = layer.registration or {}
+        summary = ['状态：'+title, '数据：'+layer.source]
+        for key, label in [('reference_id','参考帧'),('shared_markers','共有圆'),('inlier_ratio','内点率'),('rms_mm','误差(mm)')]:
+            if result.get(key) is not None:
+                summary.append(f'{label}：{result[key]}')
+        item.setToolTip(0, '\n'.join(summary))
 
     def set_frame_observation(self, frame_id, image, markers, *, layer_index=None,
                               reference_id=None, reference_markers=None, used_codes=None,
@@ -325,6 +443,16 @@ class ScanWorkbench(QWidget):
             reference_markers=reference_markers, used_codes=used_codes,
             rejected_codes=rejected_codes, registration_accepted=registration_accepted)
         self._show_frame_observation()
+        result = self.session.layers[index].registration
+        if registration_accepted is not None:
+            if result is None:
+                result = dict(reference_id=reference_id, accepted=registration_accepted)
+                self.session.layers[index].registration = result
+            elif not result.get('is_reference'):
+                result['accepted'] = registration_accepted
+        self._update_frame_item(index)
+        if index == self._selected_index():
+            self.quality_card.set_layer(self.session.layers[index])
 
     def _show_frame_observation(self):
         index = self._selected_index()
@@ -362,6 +490,8 @@ class ScanWorkbench(QWidget):
                 str(image_path), data['markers'], reference_id=data.get('reference_id', data.get('reference')),
                 reference_markers=data.get('reference_markers'), used_codes=data.get('used_codes'),
                 rejected_codes=data.get('rejected_codes', []), registration_accepted=data.get('registration_accepted'))
+            if isinstance(data.get('registration'), dict):
+                self.set_frame_registration(**data['registration'])
             self.log('已关联当前图层的2D图像与编码圆结果：' + path)
         except (ValueError, KeyError, TypeError, OSError) as exc:
             QMessageBox.warning(self, '检测结果载入失败', str(exc))
@@ -386,8 +516,13 @@ class ScanWorkbench(QWidget):
     def current_state(self):
         return self.session.state
 
-    def log(self, text, level='info'):
-        self.logs.appendPlainText(text)
+    def log(self, text, level='info', *, frame='', task=''):
+        self.logs.append(text, level, frame or self._frame_id(), task or self._task_label)
+        logger.log({'error': logging.ERROR, 'warn': logging.WARNING}.get(level, logging.INFO),
+                   text, extra={'activity_owned': True})
+        self._latest_message = str(text)
+        self.latest_status.setText(self._latest_message[:180])
+        self.latest_status.setToolTip(self._latest_message)
         self.log_message.emit(text, level)
 
     def _changed(self):
@@ -407,6 +542,7 @@ class ScanWorkbench(QWidget):
         for i, layer in enumerate(self.session.layers):
             item = QTreeWidgetItem(root, [layer.name, f'{len(layer.points):,}'])
             item.setData(0, Qt.UserRole, i)
+            self._update_frame_item(i)
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
             item.setCheckState(0, Qt.Checked if layer.visible else Qt.Unchecked)
             item.setIcon(0, icon('layers', '#b8d983'))
@@ -430,12 +566,16 @@ class ScanWorkbench(QWidget):
             self.details.setText(f'{layer.name}  /  {len(layer.points):,} 点  /  {layer.source}')
             self.details.setToolTip(layer.source)
         self._show_frame_observation()
+        self.quality_card.set_layer(self.session.layers[idx] if idx is not None and idx < len(self.session.layers) else None)
         self._refresh_controls()
 
     def _refresh_controls(self):
         active = self.session.state in ('scanning', 'paused')
         available = not active and not self._busy
         selected = self._selected_index() is not None
+        self.recapture_button.setEnabled(available and selected and getattr(self, '_recapture_available', False))
+        self.recapture_button.setToolTip('重拍当前帧' if getattr(self, '_recapture_available', False) else '当前为离线原型，未接入采集控制器')
+        self.undo_frame_button.setEnabled(available and bool(self.session.layers))
         for name in ('new', 'import', 'crop', 'delete', 'undo', 'export'):
             self._actions[name].setEnabled(available)
         self._actions['crop'].setEnabled(available and selected)
@@ -454,15 +594,20 @@ class ScanWorkbench(QWidget):
         states = {'ready': '待机 · 离线演示', 'scanning': '正在模拟扫描', 'paused': '扫描已暂停',
                   'captured': '模拟采集完成', 'finished': '会话已完成'}
         self.state_label.setText('文件处理中…' if self._busy else states[self.session.state])
+        self.progress.setRange(0, 0 if self._busy else 100)
         self.progress.setValue(self.session.progress)
-        self.progress_text.setText(f'{self.session.progress}%')
+        self.progress_text.setText('处理中' if self._busy else f'{self.session.progress}%')
         self._render_status()
 
     def _render_status(self):
         if not hasattr(self, 'status'):
             return
         self.render_quality.setEnabled(hasattr(self.canvas, 'render_failed'))
-        self.status.setText(f'原始 {self.canvas.total_points:,} 点 / 显示 {self.canvas.displayed_points:,} 点   |   {self.canvas.backend_name}   |   内部/导出 mm   |   未连接相机')
+        original = sum(layer.source_points if layer.source_points is not None else len(layer.points)
+                       for layer in self.session.layers if layer.visible)
+        task = self._task_label or self.state_label.text()
+        phase = '准备显示缓存' if self.canvas.is_busy else ('交互降采样' if self.canvas._moving else '静止细节')
+        self.status.setText(f'{self._connection_text}  |  {task}  |  原始 {original:,} / 载入 {self.canvas.total_points:,} / 显示 {self.canvas.displayed_points:,} 点  |  {phase}  |  {self.canvas.backend_name}  |  mm')
 
     def _check_renderer(self):
         if hasattr(self.canvas, 'isValid') and self.isVisible() and not self.canvas.isValid():
@@ -586,10 +731,11 @@ class ScanWorkbench(QWidget):
         self._refresh(fit=True)
         self.log('已创建空白原型项目。')
 
-    def _run(self, func, done):
+    def _run(self, func, done, task='文件处理'):
         if self._busy:
             return
         self._busy = True
+        self._task_label = task
         self._completion = done
         self._refresh_controls()
         if self._background_runner is not None:
@@ -619,6 +765,7 @@ class ScanWorkbench(QWidget):
             self._worker.deleteLater()
             self._worker = None
         self._busy = False
+        self._task_label = ''
         self._completion = None
         self._refresh_controls()
 
@@ -629,7 +776,7 @@ class ScanWorkbench(QWidget):
             self._changed()
             self.log(f'导入 {layer.name}：{len(layer.points):,} 点，源单位 {unit}，内部 mm。')
             self._refresh(fit=len(self.session.layers) == 1, select=len(self.session.layers) - 1)
-        self._run(lambda: read_cloud(path, unit), done)
+        self._run(lambda: read_cloud(path, unit), done, task='导入点云')
 
     def import_dialog(self):
         path, _ = QFileDialog.getOpenFileName(self, '导入点云（请先确认左侧源单位）', '', '点云 (*.ply *.pcd *.xyz *.pts)')
@@ -639,7 +786,7 @@ class ScanWorkbench(QWidget):
     def export_file(self, path):
         layers = list(self.session.layers)
         self._run(lambda: write_cloud(path, layers),
-                  lambda count: self.log(f'已导出 {count:,} 点（mm）：{path}'))
+                  lambda count: self.log(f'已导出 {count:,} 点（mm）：{path}'), task='导出点云')
 
     def export_dialog(self):
         path, _ = QFileDialog.getSaveFileName(self, '导出全部可见点云（mm；演示数据仍为合成数据）', 'scan_preview_mm.ply', 'PLY (*.ply)')
@@ -673,6 +820,7 @@ class ScanWorkbench(QWidget):
             event.ignore()
             return
         self._timer.stop()
+        self.logs.detach_loggers()
         self.canvas.shutdown()
         for canvas in self._retired_canvases:
             canvas.shutdown()
