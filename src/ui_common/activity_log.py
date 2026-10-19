@@ -34,13 +34,14 @@ class ActivityLogPanel(QFrame):
     COLORS = dict(info='#d6dce3', success='#80d69b', warn='#f1c86a', error='#ff7c82')
     LABELS = dict(info='信息', success='成功', warn='警告', error='错误')
 
-    def __init__(self, parent=None, *, max_records=2000):
+    def __init__(self, parent=None, *, max_records=2000, docked=False):
         super().__init__(parent)
         self.setObjectName('activityLog')
         self.setStyleSheet('QFrame#activityLog {background:#232b34;border:1px solid #475360;border-radius:5px;} QLabel {background:transparent;}')
         self.records = deque(maxlen=max_records)
         self._rendered_rows = []
         self._collapsed = False
+        self._docked = docked
         self._normal_height = 320
         self._drag_pos = None
         self._bindings = []
@@ -63,7 +64,7 @@ class ActivityLogPanel(QFrame):
             button.setFixedSize(26, 25)
             button.setStyleSheet('QPushButton {padding:0px;}')
             header.addWidget(button)
-        self._btn_collapse.setToolTip('折叠 / 展开日志')
+        self._btn_collapse.setToolTip('收起日志' if docked else '折叠 / 展开日志')
         self._btn_close.setToolTip('关闭日志')
         self._btn_collapse.clicked.connect(self._toggle_collapse)
         self._btn_close.clicked.connect(self.closed.emit)
@@ -87,6 +88,8 @@ class ActivityLogPanel(QFrame):
         body.addLayout(filters)
         self._text = QPlainTextEdit()
         self._text.setReadOnly(True)
+        if docked:
+            self._text.setMinimumHeight(30)
         self._text.setMaximumBlockCount(max_records)
         body.addWidget(self._text, 1)
         footer = QHBoxLayout()
@@ -197,6 +200,9 @@ class ActivityLogPanel(QFrame):
         self._render()
 
     def _toggle_collapse(self):
+        if self._docked:
+            self.closed.emit()
+            return
         self._collapsed = not self._collapsed
         if self._collapsed:
             self._normal_height = self.height()
@@ -211,11 +217,15 @@ class ActivityLogPanel(QFrame):
         self._btn_collapse.setText('+' if self._collapsed else '−')
 
     def _on_title_press(self, event):
+        if self._docked:
+            return
         if event.button() == Qt.LeftButton:
             self._drag_pos = event.globalPosition().toPoint()-self.pos()
             event.accept()
 
     def _on_title_move(self, event):
+        if self._docked:
+            return
         if self._drag_pos is not None and event.buttons() & Qt.LeftButton:
             point = event.globalPosition().toPoint()-self._drag_pos
             parent = self.parentWidget()

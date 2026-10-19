@@ -286,6 +286,7 @@ class ScanWorkbench(QWidget):
         view_layout.addWidget(self.canvas, 1)
         self.marker_inspector = MarkerInspector(self.canvas, self.load_frame_results)
         details = QWidget()
+        self.details_bar = details
         details_layout = QHBoxLayout(details)
         details_layout.setContentsMargins(16, 8, 16, 8)
         self.details = QLabel('选择项目树图层查看数据来源', objectName='muted')
@@ -299,7 +300,14 @@ class ScanWorkbench(QWidget):
         view_layout.addWidget(self.quality_card)
         split.addWidget(view)
         split.setSizes([290, 1150])
-        root.addWidget(split, 1)
+        self.content_splitter = QSplitter(Qt.Vertical)
+        self.content_splitter.setChildrenCollapsible(False)
+        self.content_splitter.setHandleWidth(6)
+        self.content_splitter.addWidget(split)
+        self.content_splitter.setStretchFactor(0, 1)
+        self.content_splitter.splitterMoved.connect(self._log_splitter_moved)
+        self._log_height = 200
+        root.addWidget(self.content_splitter, 1)
 
         scan_strip = QWidget()
         scan_layout = QHBoxLayout(scan_strip)
@@ -322,7 +330,10 @@ class ScanWorkbench(QWidget):
         self.log_toggle.toggled.connect(self._toggle_logs)
         scan_layout.addWidget(self.log_toggle)
         root.addWidget(scan_strip)
-        self.logs = ActivityLogPanel(self)
+        self.logs = ActivityLogPanel(docked=True)
+        self.logs.setMinimumHeight(140)
+        self.content_splitter.addWidget(self.logs)
+        self.content_splitter.setStretchFactor(1, 0)
         self.logs.attach_logger(logger)
         self.logs.closed.connect(lambda: self.log_toggle.setChecked(False))
         self.logs.hide()
@@ -333,28 +344,33 @@ class ScanWorkbench(QWidget):
         self.latest_status.setMaximumHeight(28)
         root.addWidget(self.latest_status)
 
-    def _position_logs(self):
-        width = min(420 if self.height() < 900 else 600, max(340, self.width()-32))
-        self.logs.setFixedWidth(width)
-        if not self.logs._collapsed:
-            self.logs.resize(width, min(300, max(180, self.height()//3)))
-        # Below the 2D inspector whenever there is sufficient room.
-        self.logs.move(16 if self.height() < 900 else max(8, self.width()-width-16),
-                       max(150, self.height()-self.logs.height()-115))
+    def _log_splitter_moved(self, *_):
+        if self.logs.isVisible():
+            self._log_height = self.content_splitter.sizes()[1]
 
     def _toggle_logs(self, visible):
+        self.latest_status.setVisible(not visible)
+        self.details_bar.setVisible(not (visible and self.height() < 800))
         if visible:
-            self._position_logs()
+            # Permit a compact viewport while the console is open on small screens.
+            self.canvas.setMinimumHeight(140)
+            self.tree.setMinimumHeight(80)
             self.logs._render()
             self.logs.show()
-            self.logs.raise_()
+            total = self.content_splitter.height()-self.content_splitter.handleWidth()
+            height = min(self._log_height, max(140, total//2))
+            self.content_splitter.setSizes([max(1, total-height), height])
         else:
+            if self.logs.isVisible():
+                self._log_height = self.content_splitter.sizes()[1]
             self.logs.hide()
+            self.canvas.setMinimumHeight(300)
+            self.tree.setMinimumHeight(130)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        if hasattr(self, 'logs') and self.logs.isVisible():
-            self._position_logs()
+        if hasattr(self, 'logs'):
+            self.details_bar.setVisible(not (self.log_toggle.isChecked() and self.height() < 800))
 
     def set_connection_status(self, text):
         """Actual connection state must be supplied by a controller, never inferred."""
@@ -623,6 +639,8 @@ class ScanWorkbench(QWidget):
         old.hide()
         self._retired_canvases.append(old)
         self.canvas = create_canvas(renderer='software')
+        if self.log_toggle.isChecked():
+            self.canvas.setMinimumHeight(140)
         self._view_layout.replaceWidget(old, self.canvas)
         self.canvas.status_changed.connect(self._render_status)
         self.canvas.set_layers(self.session.layers, fit=True)

@@ -157,7 +157,8 @@ class MarkerInspector(QFrame):
     def _position(self):
         self.setFixedWidth(max(230, min(340, self.viewport.width()-24)))
         compact = self.viewport.height() < 420
-        self.image_view.setFixedHeight(90 if compact else 175)
+        self.image_view.setFixedHeight(max(24, min(90, self.viewport.height()-135)) if compact else 175)
+        self.counts.setVisible(self.viewport.height() >= 200)
         self.ids.setVisible(not compact)
         self.pair_label.setVisible(not compact)
         self.world_counts.setVisible(not compact)

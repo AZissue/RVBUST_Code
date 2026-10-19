@@ -45,6 +45,21 @@ def main():
     gpu.repaint()
     assert gpu.uploads == uploads and gpu._marker_buffer == marker_buffer
     assert len(win.marker_inspector.world_overlay.points) == 1
+    # Dock resize changes viewport dimensions, never the scene/camera buffers.
+    rotation = gpu.rotation.matrix.copy()
+    center, pan, zoom = gpu.center.copy(), gpu.pan.copy(), gpu.zoom
+    win.log_toggle.setChecked(True)
+    app.processEvents()
+    win.content_splitter.setSizes([450, 200])
+    app.processEvents()
+    win.log_toggle.setChecked(False)
+    app.processEvents()
+    gpu.repaint()
+    assert gpu.uploads == uploads and gpu._failure is None
+    np.testing.assert_array_equal(gpu.rotation.matrix, rotation)
+    np.testing.assert_array_equal(gpu.center, center)
+    np.testing.assert_array_equal(gpu.pan, pan)
+    assert gpu.zoom == zoom
     win.session.layers = []
     win._refresh()
     wait_for(lambda: not gpu.is_busy)
