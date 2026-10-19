@@ -278,8 +278,15 @@ void ToolsPanel::updateCalibFormatHint()
                          m_config->calibPoseAngleUnit() == TransformTools::AngleUnit::Radian
                              ? QStringLiteral("弧度") : QStringLiteral("度"));
     }
-    m_calibFormatLabel->setText(
-        CalibrationService::poseFormatDescription(fmt) + QStringLiteral("\n") + state);
+    // 卡片固定 6 个数（位置 + 3 个旋转值）是红线，所以本页下拉框只列 3 旋转数的
+    // 欧拉类约定；四元数（4 个数）与 4×4 姿态变换矩阵（16 个数）放在「坐标转换」
+    // 页。两个页面的选项不同是有意的，这里写明原因，免得看着像功能缺失。
+    const QString cardNote = QStringLiteral(
+        "卡片固定 6 个数，所以本页只列 3 个旋转数的约定；"
+        "四元数与 4×4 姿态变换矩阵请到「坐标转换」页使用。");
+    m_calibFormatLabel->setText(CalibrationService::poseFormatDescription(fmt)
+                                + QStringLiteral("\n") + state
+                                + QStringLiteral("\n") + cardNote);
 }
 
 void ToolsPanel::applyCalibPoseFormat()
@@ -881,14 +888,8 @@ void ToolsPanel::buildCalibrationPage(QStackedWidget* stack)
     auto* btnRow = new QHBoxLayout();
     btnRow->setSpacing(8);
     btnRow->addStretch();
-    // 位姿格式选错不会报错、只会算错，所以给一个"把各格式都算一遍看误差"的出口。
-    // 这就是官方那个"自动推断欧拉顺序"的诚实版：不猜，把误差摆出来由人定。
-    m_calibTryAllBtn = new QPushButton(QStringLiteral("试算各格式"), group);
-    m_calibTryAllBtn->setObjectName(QStringLiteral("calib_try_all"));
-    m_calibTryAllBtn->setStyleSheet(Theme::secondaryButtonStyle());
-    m_calibTryAllBtn->setToolTip(QStringLiteral(
-        "同一份数据把 5 种常见位姿格式 x 度/弧度 各算一遍，按总平均误差排序"));
-    btnRow->addWidget(m_calibTryAllBtn);
+    // 「试算各格式」已迁到「机器人数据格式推算」页的方式 ③（用户 2026-10-19 要求），
+    // 本页只保留计算与当前会话。
     // 用户反馈 9：在线（当前会话）路径已知，一键算并把用的路径显示出来。
     m_calibSessionBtn = new QPushButton(QStringLiteral("用当前会话"), group);
     m_calibSessionBtn->setObjectName(QStringLiteral("calib_session_btn"));
@@ -932,8 +933,6 @@ void ToolsPanel::buildCalibrationPage(QStackedWidget* stack)
     });
     connect(m_calibApplyBtn, &QPushButton::clicked,
             this, &ToolsPanel::applyCalibPoseFormat);
-    connect(m_calibTryAllBtn, &QPushButton::clicked,
-            this, &ToolsPanel::runTryAllPoseFormats);
     connect(m_calibAdvancedCheck, &QCheckBox::toggled, this, [this](bool on) {
         const Id current = currentCalibPoseFormat();
         rebuildFormatCombo(m_calibFormatCombo, on, true, current);
@@ -988,13 +987,10 @@ void ToolsPanel::updateCalibrationModeVisibility()
     rowVisible(m_calibMarkerCombo, !tcp);
     rowVisible(m_calibPoseUnitCombo, needPose);
     rowVisible(m_calibAngleUnitCombo, needPose);
-    // 位姿格式那两行跟"有没有拍照位姿这一列"同命；没有位姿数据时"试算各格式"
-    // 也没意义（按钮在共享按钮行里，隐藏不了，改成禁用）。
+    // 位姿格式那两行跟"有没有拍照位姿这一列"同命。
     rowVisible(m_calibFormatRow, needPose);
     rowVisible(m_calibAdvancedCheck, needPose);
     rowVisible(m_calibFormatLabel, needPose);
-    if (m_calibTryAllBtn)
-        m_calibTryAllBtn->setEnabled(needPose);
 
     // 位姿文件的默认名随方式变（会话导出用哪份文件就填哪份），用户自己改过的不动。
     const QString cur = m_calibPoseFile->text().trimmed();
@@ -1047,6 +1043,10 @@ void ToolsPanel::useCurrentSession(const QString& folder,
     if (m_calibWatcher->isRunning())
         return;
 
+    // 推算页点「用当前会话」时，载入后直接跑试算；标定页点来时仍走普通计算。
+    const bool forTryAll = m_sessionForTryAll;
+    m_sessionForTryAll = false;
+
     // 先写路径/方式再置状态：setText / setCurrentIndex 都会触发信号，
     // 那几个槽会清掉会话状态。
     m_calibDir->setText(folder);
@@ -1062,6 +1062,7 @@ void ToolsPanel::useCurrentSession(const QString& folder,
         m_sessionPoses.clear();
         m_sessionCamera.clear();
         m_sessionTcp.clear();
+        updateInferenceDataLabel();
     };
     // 返回第一个空行的组号（1 基），没有空行返回 0。
     auto firstEmpty = [](const QStringList& lines) {
@@ -1070,10 +1071,19 @@ void ToolsPanel::useCurrentSession(const QString& folder,
                 return i + 1;
         return 0;
     };
+    // 从推算页发起时，标定页的提示行看不见 —— 同一条原因也要写到推算页。
+    auto reportFailure = [this, forTryAll](const QString& message) {
+        m_calibHint->setText(message);
+        if (forTryAll && m_inferHint) {
+            m_inferHint->setStyleSheet(QStringLiteral("color: %1; font-size: %2px;")
+                                           .arg(Theme::ERROR).arg(Theme::FONT_HINT));
+            m_inferHint->setText(message);
+        }
+    };
 
     if (folder.trimmed().isEmpty()) {
         clearSession();
-        m_calibHint->setText(QStringLiteral(
+        reportFailure(QStringLiteral(
             "当前会话还没有保存目录（请先保存一组标定数据）"));
         return;
     }
@@ -1085,19 +1095,19 @@ void ToolsPanel::useCurrentSession(const QString& folder,
         if (cameraLines.isEmpty() || cameraLines.size() != tcpLines.size()
                 || firstEmpty(cameraLines) > 0 || firstEmpty(tcpLines) > 0) {
             clearSession();
-            m_calibHint->setText(QStringLiteral(
+            reportFailure(QStringLiteral(
                 "戳点标定需要每组的相机目标点与机器人目标点（当前会话这两列有缺失）"));
             return;
         }
         if (eyeInHand && (poseLines.size() != cameraLines.size() || firstEmpty(poseLines) > 0)) {
             clearSession();
-            m_calibHint->setText(QStringLiteral(
+            reportFailure(QStringLiteral(
                 "眼在手上戳点标定还需要每组的机器人拍照位姿（当前会话有缺失）"));
             return;
         }
     } else if (poseLines.isEmpty() || firstEmpty(poseLines) > 0) {
         clearSession();
-        m_calibHint->setText(QStringLiteral(
+        reportFailure(QStringLiteral(
             "当前会话还没有可用的机器人拍照位姿（请先拍照并填写机器人位姿）"));
         return;
     }
@@ -1117,7 +1127,11 @@ void ToolsPanel::useCurrentSession(const QString& folder,
     m_sessionTcp = copyIn(tcpLines);
     m_calibHint->setText(QStringLiteral("当前会话：%1（%2 组数据）")
         .arg(folder).arg(cameraLines.size()));
-    runCalibration(m_sessionFolder, m_sessionCamera, m_sessionPoses, m_sessionTcp);
+    updateInferenceDataLabel();
+    if (forTryAll)
+        runTryAllPoseFormats();
+    else
+        runCalibration(m_sessionFolder, m_sessionCamera, m_sessionPoses, m_sessionTcp);
 }
 
 // 主窗口换了会话（启动建第一组，或用户点了「新建会话」）。
@@ -1132,6 +1146,7 @@ void ToolsPanel::clearSessionData()
     m_sessionTcp.clear();
     m_calibHint->clear();
     m_calibResult->clear();
+    updateInferenceDataLabel();   // 推算页「方式 ③」的数据来源行跟着清掉
 }
 
 // 凑齐一次标定要的三列数据：优先「当前会话」的内存三列，否则按路径从磁盘读。
@@ -1139,7 +1154,8 @@ void ToolsPanel::clearSessionData()
 bool ToolsPanel::gatherCalibrationInput(QString& folder,
                                         std::vector<QString>& cameraLines,
                                         std::vector<QString>& poseLines,
-                                        std::vector<QString>& tcpLines)
+                                        std::vector<QString>& tcpLines,
+                                        QString* errorOut)
 {
     if (m_sessionActive) {
         // 会话模式：用内存里的三列（不是磁盘上的文件 —— 那边可能已被清理）。
@@ -1151,8 +1167,10 @@ bool ToolsPanel::gatherCalibrationInput(QString& folder,
     }
 
     m_calibHint->clear();
-    auto fail = [this](const QString& message) {
+    auto fail = [this, errorOut](const QString& message) {
         m_calibHint->setText(message);
+        if (errorOut)
+            *errorOut = message;
     };
 
     const QString dir = m_calibDir->text().trimmed();
@@ -1239,7 +1257,7 @@ void ToolsPanel::onCalibrationFinished()
     if (r.totalMeanError > CalibrationService::kPoseFormatSuspectError) {
         m_calibHint->setText(QStringLiteral(
             "总平均误差 %1 偏大 —— 位姿格式可能选错（当前：%2 · %3）。"
-            "可点「试算各格式」对照一下。")
+            "可到「机器人数据格式推算」页的方式 ③ 对照一下。")
             .arg(r.totalMeanError, 0, 'g', 4)
             .arg(CalibrationService::poseFormatName(currentCalibPoseFormat()),
                  currentCalibAngleUnit() == TransformTools::AngleUnit::Radian
@@ -1254,19 +1272,31 @@ void ToolsPanel::runTryAllPoseFormats()
 
     QString folder;
     std::vector<QString> cameraLines, poseLines, tcpLines;
-    if (!gatherCalibrationInput(folder, cameraLines, poseLines, tcpLines))
+    QString inputError;
+    if (!gatherCalibrationInput(folder, cameraLines, poseLines, tcpLines,
+                                &inputError)) {
+        if (m_inferHint) {
+            m_inferHint->setStyleSheet(QStringLiteral("color: %1; font-size: %2px;")
+                                           .arg(Theme::ERROR).arg(Theme::FONT_HINT));
+            m_inferHint->setText(inputError);
+        }
         return;
+    }
 
     const CalibrationService::Params base = calibParams();
     // 眼在手外的戳点标定根本不用机器人拍照位姿（SDK 收到的是空），
-    // 格式怎么选都不影响结果 —— 试算 8 遍只会得到 8 行一样的数，别误导。
+    // 格式怎么选都不影响结果 —— 试算 10 遍只会得到 10 行一样的数，别误导。
     if (base.calibType == CalibType::TcpTouch && !base.eyeInHand) {
-        m_calibHint->setText(QStringLiteral(
+        m_inferHint->setStyleSheet(QStringLiteral("color: %1; font-size: %2px;")
+                                       .arg(Theme::ERROR).arg(Theme::FONT_HINT));
+        m_inferHint->setText(QStringLiteral(
             "眼在手外的戳点标定不使用机器人拍照位姿，位姿格式对结果没有影响"));
         return;
     }
     if (poseLines.empty()) {
-        m_calibHint->setText(QStringLiteral(
+        m_inferHint->setStyleSheet(QStringLiteral("color: %1; font-size: %2px;")
+                                       .arg(Theme::ERROR).arg(Theme::FONT_HINT));
+        m_inferHint->setText(QStringLiteral(
             "试算各格式需要机器人拍照位姿：当前没有这一列数据"));
         return;
     }
@@ -1290,9 +1320,11 @@ void ToolsPanel::runTryAllPoseFormats()
     const TransformTools::AngleUnit presetUnit = m_config
         ? m_config->calibPoseAngleUnit() : base.poseAngleUnit;
 
-    m_calibTryAllBtn->setEnabled(false);
-    m_calibTryAllBtn->setText(QStringLiteral("试算中..."));
-    m_calibHint->setText(QStringLiteral("正在试算 %1 种组合 …（界面不卡）")
+    m_inferTryAllBtn->setEnabled(false);
+    m_inferTryAllBtn->setText(QStringLiteral("试算中..."));
+    m_inferHint->setStyleSheet(QStringLiteral("color: %1; font-size: %2px;")
+                                   .arg(Theme::TEXT_HINT).arg(Theme::FONT_HINT));
+    m_inferHint->setText(QStringLiteral("正在试算 %1 种组合 …（界面不卡）")
                              .arg(combinationCount));
 
     m_calibTryAllWatcher->setFuture(QtConcurrent::run(
@@ -1361,17 +1393,12 @@ void ToolsPanel::runTryAllPoseFormats()
 
 void ToolsPanel::onTryAllFinished()
 {
-    // 恢复按钮状态要走同一处判据：眼在手外 + 戳点标定下这个按钮本该是禁用的，
-    // 无条件 setEnabled(true) 会把它放出来。
-    m_calibTryAllBtn->setText(QStringLiteral("试算各格式"));
-    updateCalibrationModeVisibility();
-    m_calibHint->clear();
-    const QString report = m_calibTryAllWatcher->result();
-    // 追加而不是覆盖：用户可能正拿上一次的结果对矩阵。
-    QString text = m_calibResult->toPlainText();
-    if (!text.isEmpty())
-        text += QStringLiteral("\n\n");
-    m_calibResult->setPlainText(text + report);
+    m_inferTryAllBtn->setText(QStringLiteral("试算各格式"));
+    m_inferTryAllBtn->setEnabled(true);
+    m_inferHint->clear();
+    // 结果写在推算页自己的结果框里（标定页已不再有这个入口）。
+    m_inferResult->setPlainText(m_calibTryAllWatcher->result());
+    updateInferenceDataLabel();
 }
 
 void ToolsPanel::buildTransformPage(QStackedWidget* stack)
@@ -1553,6 +1580,10 @@ void ToolsPanel::updatePoseInputHint()
             ? QStringLiteral("px, py, pz, 旋转矩阵 9 个值（列主序）")
             : QStringLiteral("px, py, pz, 旋转矩阵 9 个值（行主序）");
         break;
+    case RobotDataFormats::Kind::Matrix4x4:
+        placeholder = QStringLiteral(
+            "16 个数值，行主序 4×4（位置取第 4 列，不再另填 px/py/pz）");
+        break;
     }
     m_poseInput->setPlaceholderText(placeholder);
 
@@ -1606,8 +1637,12 @@ void ToolsPanel::updateTransformResult()
         const auto unit = m_angleUnitCombo->currentIndex() == 0
                               ? TransformTools::AngleUnit::Degree
                               : TransformTools::AngleUnit::Radian;
-        const size_t poseCount = 3 + static_cast<size_t>(
-            RobotDataFormats::valueCount(fmt));
+        // 4×4 姿态变换矩阵本身就是一整行位姿（16 个数）；其余格式是
+        // “px py pz + 旋转值”。硬凑成 19 个数只会让用户多填一遍位置。
+        const bool matrix4 = fmt == RobotDataFormats::Id::Matrix4x4Row;
+        const size_t poseCount = matrix4
+            ? 16
+            : 3 + static_cast<size_t>(RobotDataFormats::valueCount(fmt));
         ToolInputParser::ParseResult pose = ToolInputParser::parseNumberList(
             m_poseInput->text().toStdString(), poseCount);
         if (pose.status != ToolInputParser::ParseStatus::Ok) {
@@ -1618,12 +1653,23 @@ void ToolsPanel::updateTransformResult()
         const auto poseUnit = m_poseUnitCombo->currentIndex() == 0
                                   ? TransformTools::LengthUnit::Millimeter
                                   : TransformTools::LengthUnit::Meter;
-        const double px = TransformTools::toMillimeters(pose.values[0], poseUnit);
-        const double py = TransformTools::toMillimeters(pose.values[1], poseUnit);
-        const double pz = TransformTools::toMillimeters(pose.values[2], poseUnit);
-        std::vector<double> rotVals(pose.values.begin() + 3, pose.values.end());
-        const TransformTools::Mat4 baseToTcp = RobotDataFormats::poseToMat4(
-            px, py, pz, fmt, unit, rotVals);
+        TransformTools::Mat4 baseToTcp{};
+        if (matrix4) {
+            std::vector<double> values(pose.values.begin(), pose.values.end());
+            baseToTcp = RobotDataFormats::poseToMat4(
+                0, 0, 0, fmt, unit, values);
+            // 位置在第 4 列（0 基下标 3/7/11），按「位姿位置单位」换算。
+            baseToTcp[3] = TransformTools::toMillimeters(baseToTcp[3], poseUnit);
+            baseToTcp[7] = TransformTools::toMillimeters(baseToTcp[7], poseUnit);
+            baseToTcp[11] = TransformTools::toMillimeters(baseToTcp[11], poseUnit);
+        } else {
+            const double px = TransformTools::toMillimeters(pose.values[0], poseUnit);
+            const double py = TransformTools::toMillimeters(pose.values[1], poseUnit);
+            const double pz = TransformTools::toMillimeters(pose.values[2], poseUnit);
+            std::vector<double> rotVals(pose.values.begin() + 3, pose.values.end());
+            baseToTcp = RobotDataFormats::poseToMat4(
+                px, py, pz, fmt, unit, rotVals);
+        }
         TransformTools::eyeInHandPoint(camMat, baseToTcp, cx, cy, cz, bx, by, bz);
     }
 
@@ -1708,6 +1754,52 @@ void ToolsPanel::buildFormatInferencePage(QStackedWidget* stack)
     grid->setColumnStretch(3, 1);
     form->addRow(expGroup);
 
+    // 方式 ③：原本在手眼标定页的「试算各格式」整体迁到这里（用户 2026-10-19）。
+    // 数据与标定方式仍沿用「手眼标定」页，避免同一份设置维护两遍。
+    auto* residual = new QGroupBox(
+        QStringLiteral("用已有标定数据按残差排序"), group);
+    m_inferResidualGroup = residual;
+    auto* residualLayout = new QVBoxLayout(residual);
+    auto* residualNote = new QLabel(QStringLiteral(
+        "使用「手眼标定」页当前的标定方式、安装方式与数据来源。"
+        "本页把 5 种常见约定 × 度/弧度各算一遍，按 SDK 总平均误差从低到高列出。"
+        "只给参考，不会自动改任何设置。"), residual);
+    residualNote->setWordWrap(true);
+    residualNote->setStyleSheet(QStringLiteral("color: %1; font-size: %2px;")
+                                    .arg(Theme::TEXT_HINT).arg(Theme::FONT_HINT));
+    residualLayout->addWidget(residualNote);
+
+    m_inferDataLabel = new QLabel(residual);
+    m_inferDataLabel->setStyleSheet(QStringLiteral("color: %1; font-size: %2px;")
+                                        .arg(Theme::TEXT_BODY).arg(Theme::FONT_HINT));
+    m_inferDataLabel->setWordWrap(true);
+    residualLayout->addWidget(m_inferDataLabel);
+
+    auto* residualButtons = new QHBoxLayout();
+    residualButtons->setSpacing(8);
+    m_inferSessionBtn = new QPushButton(QStringLiteral("用当前会话"), residual);
+    m_inferSessionBtn->setStyleSheet(Theme::secondaryButtonStyle());
+    m_inferSessionBtn->setToolTip(QStringLiteral(
+        "载入当前会话的数据，载入后直接开始试算"));
+    residualButtons->addWidget(m_inferSessionBtn);
+    m_inferDirBtn = new QPushButton(QStringLiteral("选择数据文件夹"), residual);
+    m_inferDirBtn->setStyleSheet(Theme::secondaryButtonStyle());
+    residualButtons->addWidget(m_inferDirBtn);
+    m_inferCalibBtn = new QPushButton(QStringLiteral("去手眼标定页"), residual);
+    m_inferCalibBtn->setStyleSheet(Theme::secondaryButtonStyle());
+    m_inferCalibBtn->setToolTip(QStringLiteral(
+        "标定方式、安装方式与文件名都在那一页设置"));
+    residualButtons->addWidget(m_inferCalibBtn);
+    m_inferTryAllBtn = new QPushButton(QStringLiteral("试算各格式"), residual);
+    m_inferTryAllBtn->setStyleSheet(Theme::primaryButtonStyle());
+    m_inferTryAllBtn->setToolTip(QStringLiteral(
+        "同一份数据把 5 种常见位姿格式 x 度/弧度 各算一遍，按总平均误差排序"));
+    residualButtons->addWidget(m_inferTryAllBtn);
+    residualButtons->addStretch();
+    residualLayout->addLayout(residualButtons);
+    residual->setVisible(false);
+    form->addRow(residual);
+
     auto* btnRow = new QHBoxLayout();
     btnRow->setSpacing(8);
     m_inferRunBtn = new QPushButton(QStringLiteral("推算"), group);
@@ -1719,10 +1811,6 @@ void ToolsPanel::buildFormatInferencePage(QStackedWidget* stack)
     m_inferApplyBtn->setToolTip(QStringLiteral(
         "把唯一判定的格式写进 AppConfig：手眼标定页与主界面「计算」都按它读卡片"));
     btnRow->addWidget(m_inferApplyBtn);
-    m_inferCalibBtn = new QPushButton(
-        QStringLiteral("去手眼标定页「试算各格式」"), group);
-    m_inferCalibBtn->setStyleSheet(Theme::secondaryButtonStyle());
-    btnRow->addWidget(m_inferCalibBtn);
     btnRow->addStretch();
     form->addRow(QString(), btnRow);
 
@@ -1756,23 +1844,45 @@ void ToolsPanel::buildFormatInferencePage(QStackedWidget* stack)
         if (m_toolList)
             m_toolList->setCurrentRow(2);
     });
+    connect(m_inferSessionBtn, &QPushButton::clicked, this, [this]() {
+        // 复用标定页的会话入口；标志位让载入完成后直接跑试算。
+        m_sessionForTryAll = true;
+        emit calibrationSessionRequested();
+    });
+    connect(m_inferDirBtn, &QPushButton::clicked, this, [this]() {
+        // 文件夹与标定页共用同一个输入框：只在这里换路径，标定页也立刻看到。
+        const QString start = m_calibDir ? m_calibDir->text().trimmed() : QString();
+        const QString dir = QFileDialog::getExistingDirectory(
+            this, QStringLiteral("选择标定数据文件夹"), start);
+        if (dir.isEmpty())
+            return;
+        if (m_calibDir)
+            m_calibDir->setText(QDir::toNativeSeparators(dir));
+        updateInferenceDataLabel();
+    });
+    connect(m_inferTryAllBtn, &QPushButton::clicked,
+            this, &ToolsPanel::runTryAllPoseFormats);
     connect(m_inferMethodCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [this](int index) {
                 const bool experiment = index != 2;
-                m_inferExperiments->setEnabled(experiment);
+                m_inferExperiments->setVisible(experiment);
                 m_inferUnitCombo->setEnabled(experiment);
                 m_inferRunBtn->setEnabled(experiment);
+                if (m_inferResidualGroup)
+                    m_inferResidualGroup->setVisible(!experiment);
                 m_inferHint->clear();
                 m_inferBestValid = false;
                 m_inferApplyBtn->setEnabled(false);
                 if (!experiment) {
+                    updateInferenceDataLabel();
                     m_inferResult->setPlainText(QStringLiteral(
                         "方式 ③：用已经采好的手眼标定数据，把常见格式各算一遍，"
                         "按 SDK 的总平均误差排序。\n\n"
-                        "点下面的「去手眼标定页」→ 载入会话或填好文件夹 → 点「试算各格式」。"
-                        "误差最小的那一行就是最贴近卡片的格式。\n\n"
-                        "注意：标定页的试算覆盖 5 种常见约定（sXYZ / rZYX / rZYZ / rXYZ / 轴角）；"
-                        "若是这 5 种以外的约定，请用方式 ①② 的点动实验 —— 它能判全部 24 种。"));
+                        "先选数据来源（「用当前会话」或「选择数据文件夹」），"
+                        "再点「试算各格式」。误差最小的那一行就是最贴近卡片的格式。\n\n"
+                        "试算覆盖 5 种常见约定（sXYZ / rZYX / rZYZ / rXYZ / 轴角）× 度/弧度；"
+                        "若是这 5 种以外的约定，请用方式 ①② 的点动实验 —— 它能判全部 24 种。\n\n"
+                        "标定方式、安装方式与文件名都在「手眼标定」页设置，这里共用。"));
                 }
             });
     for (int i = 0; i < 3; ++i) {
@@ -1791,7 +1901,7 @@ void ToolsPanel::updateFormatInference()
 {
     const int method = m_inferMethodCombo ? m_inferMethodCombo->currentIndex() : 0;
     if (method == 2)
-        return;   // 方式 ③ 由标定页执行，本页只给入口
+        return;   // 方式 ③ 由本页的「试算各格式」执行，不走点动推断
 
     m_inferBestValid = false;
     m_inferApplyBtn->setEnabled(false);
@@ -1922,6 +2032,25 @@ void ToolsPanel::updateFormatInference()
         setHint(QStringLiteral("判定唯一，可以点「应用为全局预设」。"), Theme::SUCCESS);
     else
         setHint(QString(), Theme::TEXT_HINT);
+}
+
+void ToolsPanel::updateInferenceDataLabel()
+{
+    if (!m_inferDataLabel)
+        return;
+    if (m_sessionActive) {
+        m_inferDataLabel->setText(QStringLiteral("数据来源：当前会话（%1）")
+                                      .arg(m_sessionFolder));
+        return;
+    }
+    const QString dir = m_calibDir ? m_calibDir->text().trimmed() : QString();
+    if (!dir.isEmpty()) {
+        m_inferDataLabel->setText(QStringLiteral("数据来源：标定页的文件夹（%1）")
+                                      .arg(QDir::toNativeSeparators(dir)));
+        return;
+    }
+    m_inferDataLabel->setText(QStringLiteral(
+        "数据来源：尚未选择。点「用当前会话」，或用「选择数据文件夹」指定标定数据目录。"));
 }
 
 void ToolsPanel::applyInferredFormat()

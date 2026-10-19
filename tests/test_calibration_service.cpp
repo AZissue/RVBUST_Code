@@ -311,14 +311,15 @@ void TestCalibrationService::everyThreeValueFormatMatchesCatalog()
 }
 
 // 卡片永远是 6 个数（CaptureRecord::robotCapturePose），四元数要 4 个旋转数、
-// 3x3 矩阵要 9 个 —— 在卡片里表达不了。必须干净地拒绝，不能抛异常穿到
-// QtConcurrent 的工作线程里去（那会直接崩进程）。
+// 3x3 矩阵要 9 个、4x4 姿态矩阵要 16 个 —— 在卡片里表达不了。必须干净地拒绝，
+// 不能抛异常穿到 QtConcurrent 的工作线程里去（那会直接崩进程）。
 void TestCalibrationService::formatsTheCardCannotCarryAreRejected()
 {
     const QString raw = QStringLiteral("10 20 30 0.5 -0.25 0.125");
     for (const auto fmt : { RobotDataFormats::Id::QuatWxyz,
                             RobotDataFormats::Id::QuatXyzw,
-                            RobotDataFormats::Id::Matrix3x3Row }) {
+                            RobotDataFormats::Id::Matrix3x3Row,
+                            RobotDataFormats::Id::Matrix4x4Row }) {
         int poseType = -99;
         const QString line = CalibrationService::toSdkPoseLine(
             raw, fmt, TransformTools::AngleUnit::Degree, poseType);

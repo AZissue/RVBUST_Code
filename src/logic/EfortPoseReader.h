@@ -17,7 +17,7 @@
 // 这个纯函数可以在没有 SDK 的编译单元里被单测直接调用。
 namespace EfortPoseReader {
 
-// SDK 读到的 6 个原始值 → 项目约定（位置 mm、姿态度、静态 XYZ，R = Rz*Ry*Rx）。
+// SDK 读到的 6 个原始值 → 项目约定（位置 mm、姿态度、外旋 XYZ，R = Rz*Ry*Rx）。
 // rawIsMillimeter / rawIsDegree 说明原始单位；输出永远归一化成 mm + 度。
 // 任一坐标非有限值 → 返回 false 且不改 out。
 bool normalizePose(const double raw[6], bool rawIsMillimeter, bool rawIsDegree,

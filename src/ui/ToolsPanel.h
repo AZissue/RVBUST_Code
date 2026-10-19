@@ -154,10 +154,13 @@ private:
     // 凑齐一次标定要的三列数据：优先「用当前会话」的内存三列，否则按路径读文件。
     // 失败时写 m_calibHint 并返回 false。顺序敏感 —— 路径输入框的 textChanged 会
     // 清掉会话状态，所以这里必须先判会话、再碰输入框。
+    // errorOut（可选）：失败原因原样返回，供推算页在自己的提示行显示；
+    // 标定页仍然写 m_calibHint，两处不各写一份文案。
     bool gatherCalibrationInput(QString& folder,
                                 std::vector<QString>& cameraLines,
                                 std::vector<QString>& poseLines,
-                                std::vector<QString>& tcpLines);
+                                std::vector<QString>& tcpLines,
+                                QString* errorOut = nullptr);
     // 按标定方式 + 安装方式决定哪几行输入框要看得到：
     //   标定板            → 位姿文件、标定板类型、位姿单位
     //   戳点 + 眼在手上   → 位姿文件、相机点位文件、戳点文件、位姿单位
@@ -175,6 +178,8 @@ private:
     void onTryAllFinished();
     // 机器人数据格式推算：把 1~3 组点动前后位姿喂给 RobotDataFormats 的推断器。
     void updateFormatInference();
+    // 方式 ③ 的数据来源提示（当前会话 / 标定页文件夹 / 尚未选择）。
+    void updateInferenceDataLabel();
     // 推算结果唯一时，把它写成全局预设（标定页/主界面计算都按它）。
     void applyInferredFormat();
     // 发起一次标定（folder + 内存里的三列），结果走 onCalibrationFinished。
@@ -238,7 +243,6 @@ private:
     QWidget* m_calibFormatRow = nullptr;       // 上面那行的容器（显隐用）
     QLabel* m_calibFormatLabel = nullptr;      // 该格式的说明 + 是否已应用
     QPushButton* m_calibApplyBtn = nullptr;    // 写进 AppConfig 预设（主界面也读它）
-    QPushButton* m_calibTryAllBtn = nullptr;   // 同数据试算各格式，列总平均误差
     QCheckBox* m_calibAutoRemove = nullptr;
     QTextEdit* m_calibResult = nullptr;
     QLabel* m_calibHint = nullptr;
@@ -246,7 +250,8 @@ private:
     QPushButton* m_calibCopyBtn = nullptr;
     QPushButton* m_calibSessionBtn = nullptr;
     QFutureWatcher<CalibrationService::Result>* m_calibWatcher = nullptr;
-    // 「试算各格式」用独立 watcher：8 次标定不能和普通计算共用一个 future。
+    // 「试算各格式」用独立 watcher：多次标定不能和普通计算共用一个 future。
+    // 现在由「机器人数据格式推算」页触发（数据仍取自本页/当前会话）。
     QFutureWatcher<QString>* m_calibTryAllWatcher = nullptr;
     AppConfig* m_config = nullptr;
     // 「用当前会话」的状态：非空时「计算」用内存里的数据；编辑路径输入框即清掉。
@@ -278,15 +283,23 @@ private:
     QWidget* m_inferPage = nullptr;
     QComboBox* m_inferMethodCombo = nullptr;  // ① 基坐标点动 / ② 工具坐标点动 / ③ 标定残差
     QComboBox* m_inferUnitCombo = nullptr;
-    QWidget* m_inferExperiments = nullptr;    // 方式 ③ 时整组禁用
+    QWidget* m_inferExperiments = nullptr;    // 方式 ①② 显示，③ 隐藏
     std::array<QComboBox*, 3> m_inferAxis {}; // 这一组实际绕哪根轴点的
     std::array<QLineEdit*, 3> m_inferBefore {};
     std::array<QLineEdit*, 3> m_inferAfter {};
+    // 方式 ③：把「试算各格式」从标定页迁到这里，数据仍沿用标定页的设置/来源。
+    QWidget* m_inferResidualGroup = nullptr;
+    QLabel* m_inferDataLabel = nullptr;
+    QPushButton* m_inferSessionBtn = nullptr;
+    QPushButton* m_inferDirBtn = nullptr;
+    QPushButton* m_inferCalibBtn = nullptr;
+    QPushButton* m_inferTryAllBtn = nullptr;
+    // 「用当前会话」是从推算页点的：载入后直接跑试算，不再白跑一次普通标定。
+    bool m_sessionForTryAll = false;
     QLabel* m_inferHint = nullptr;
     QTextEdit* m_inferResult = nullptr;
     QPushButton* m_inferRunBtn = nullptr;
     QPushButton* m_inferApplyBtn = nullptr;
-    QPushButton* m_inferCalibBtn = nullptr;
     // 唯一判定时记住它，供「应用为全局预设」；否则保持无效。
     RobotDataFormats::Id m_inferBest = RobotDataFormats::Id::EulerSxyz;
     bool m_inferBestValid = false;

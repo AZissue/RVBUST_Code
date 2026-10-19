@@ -224,6 +224,11 @@ Rot3 buildRotationUnchecked(Id id, TransformTools::AngleUnit unit,
         return Rot3{ v[0], v[1], v[2],
                      v[3], v[4], v[5],
                      v[6], v[7], v[8] };
+    case Kind::Matrix4x4:
+        // 取 4×4 齐次矩阵左上角的 3×3（行主序）。
+        return Rot3{ v[0], v[1], v[2],
+                     v[4], v[5], v[6],
+                     v[8], v[9], v[10] };
     }
     return identity();
 }
@@ -292,14 +297,18 @@ Entry makeSimple(Id id, const char* key, Kind kind, int valueCount,
 Entry makeEntry(Id id)
 {
     switch (id) {
-    case Id::EulerSxyz:
-        return makeEuler(id, "sxyz", Axis::X, Axis::Y, Axis::Z, false,
-                         Tier::Common, QStringLiteral("欧拉角 sXYZ（静态 XYZ / RPY）"),
-                         QStringLiteral(
-                             "FANUC 示教器 W/P/R（W 绕 X、P 绕 Y、R 绕 Z）、"
-                             "Yaskawa 安川 RX/RY/RZ、Denso、TM、Dobot、AUBO、HANS、"
-                             "JAKA、MELFA、ROKAE 珞石、SIASUN 新松、ELITE、STEP、"
-                             "HYUNDAI、FLEXIV、DELTA、TOPSTAR、CGXI"));
+    case Id::EulerSxyz: {
+        Entry e = makeEuler(id, "sxyz", Axis::X, Axis::Y, Axis::Z, false,
+                            Tier::Common, QStringLiteral("欧拉角 sXYZ（外旋 XYZ）"),
+                            QStringLiteral(
+                                "FANUC 示教器 W/P/R（W 绕 X、P 绕 Y、R 绕 Z）、"
+                                "Yaskawa 安川 RX/RY/RZ、Denso、TM、Dobot、AUBO、HANS、"
+                                "JAKA、MELFA、ROKAE 珞石、SIASUN 新松、ELITE、STEP、"
+                                "HYUNDAI、FLEXIV、DELTA、TOPSTAR、CGXI"));
+        // 名字里只留几何含义；RPY 这个叫法放到原理行，别丢掉现场最常用的别名。
+        e.principle += QStringLiteral("；业界也常叫 RPY（Roll-Pitch-Yaw）");
+        return e;
+    }
     case Id::EulerRzyx:
         return makeEuler(id, "rzyx", Axis::Z, Axis::Y, Axis::X, true,
                          Tier::Common, QStringLiteral("欧拉角 rZYX（内旋 ZYX）"),
@@ -318,25 +327,25 @@ Entry makeEntry(Id id)
                          QStringLiteral("Stäubli、Turin、ADT"));
     case Id::EulerSzyx:
         return makeEuler(id, "szyx", Axis::Z, Axis::Y, Axis::X, false,
-                         Tier::Common, QStringLiteral("欧拉角 sZYX（静态 ZYX）"),
+                         Tier::Common, QStringLiteral("欧拉角 sZYX（外旋 ZYX）"),
                          QStringLiteral(
                              "无主流品牌默认使用；与 rXYZ 互为倒序写法，"
                              "个别控制器 / 二次开发协议里会出现"));
     case Id::EulerSxzy:
         return makeEuler(id, "sxzy", Axis::X, Axis::Z, Axis::Y, false,
-                         Tier::Common, QStringLiteral("欧拉角 sXZY（静态 XZY）"),
+                         Tier::Common, QStringLiteral("欧拉角 sXZY（外旋 XZY）"),
                          QStringLiteral("无主流品牌默认使用（少见组合）"));
     case Id::EulerSyxz:
         return makeEuler(id, "syxz", Axis::Y, Axis::X, Axis::Z, false,
-                         Tier::Common, QStringLiteral("欧拉角 sYXZ（静态 YXZ）"),
+                         Tier::Common, QStringLiteral("欧拉角 sYXZ（外旋 YXZ）"),
                          QStringLiteral("无主流品牌默认使用（少见组合）"));
     case Id::EulerSyzx:
         return makeEuler(id, "syzx", Axis::Y, Axis::Z, Axis::X, false,
-                         Tier::Common, QStringLiteral("欧拉角 sYZX（静态 YZX）"),
+                         Tier::Common, QStringLiteral("欧拉角 sYZX（外旋 YZX）"),
                          QStringLiteral("无主流品牌默认使用（少见组合）"));
     case Id::EulerSzxy:
         return makeEuler(id, "szxy", Axis::Z, Axis::X, Axis::Y, false,
-                         Tier::Common, QStringLiteral("欧拉角 sZXY（静态 ZXY）"),
+                         Tier::Common, QStringLiteral("欧拉角 sZXY（外旋 ZXY）"),
                          QStringLiteral("无主流品牌默认使用（少见组合）"));
     case Id::EulerRxzy:
         return makeEuler(id, "rxzy", Axis::X, Axis::Z, Axis::Y, true,
@@ -393,6 +402,17 @@ Entry makeEntry(Id id)
             QStringLiteral("OpenGL / Eigen 列主序、部分视觉库"),
             QStringLiteral("直接给出 3×3 旋转矩阵 R 的 9 个元素，按列优先存放"),
             QStringLiteral("9 个数依次是第 1 列、第 2 列、第 3 列"));
+    case Id::Matrix4x4Row:
+        return makeSimple(
+            id, "matrix4_row", Kind::Matrix4x4, 16, false,
+            QStringLiteral("4×4 姿态变换矩阵（行主序）"),
+            QStringLiteral("RVC HandEyeSDK poseType=3、多数机器人 / 视觉 SDK 的位姿输出"),
+            QStringLiteral(
+                "16 个数是一个 4×4 齐次变换矩阵 T（行主序）："
+                "旋转 = 左上 3×3，位置 = 第 4 列的前 3 个数"),
+            QStringLiteral(
+                "16 个数依次是第 1~4 行；位置取第 4 列（第 4、8、12 个数），"
+                "旋转取左上角 3×3"));
     case Id::EulerRxyx:
         return makeEuler(id, "rxyx", Axis::X, Axis::Y, Axis::X, true,
                          Tier::Advanced, QStringLiteral("欧拉角 rXYX（内旋 XYX）"),
@@ -415,27 +435,27 @@ Entry makeEntry(Id id)
                          QStringLiteral("无主流品牌默认使用（首尾同轴，少见）"));
     case Id::EulerSxyx:
         return makeEuler(id, "sxyx", Axis::X, Axis::Y, Axis::X, false,
-                         Tier::Advanced, QStringLiteral("欧拉角 sXYX（静态 XYX）"),
+                         Tier::Advanced, QStringLiteral("欧拉角 sXYX（外旋 XYX）"),
                          QStringLiteral("无主流品牌默认使用（首尾同轴，少见）"));
     case Id::EulerSxzx:
         return makeEuler(id, "sxzx", Axis::X, Axis::Z, Axis::X, false,
-                         Tier::Advanced, QStringLiteral("欧拉角 sXZX（静态 XZX）"),
+                         Tier::Advanced, QStringLiteral("欧拉角 sXZX（外旋 XZX）"),
                          QStringLiteral("无主流品牌默认使用（首尾同轴，少见）"));
     case Id::EulerSyxy:
         return makeEuler(id, "syxy", Axis::Y, Axis::X, Axis::Y, false,
-                         Tier::Advanced, QStringLiteral("欧拉角 sYXY（静态 YXY）"),
+                         Tier::Advanced, QStringLiteral("欧拉角 sYXY（外旋 YXY）"),
                          QStringLiteral("无主流品牌默认使用（首尾同轴，少见）"));
     case Id::EulerSyzy:
         return makeEuler(id, "syzy", Axis::Y, Axis::Z, Axis::Y, false,
-                         Tier::Advanced, QStringLiteral("欧拉角 sYZY（静态 YZY）"),
+                         Tier::Advanced, QStringLiteral("欧拉角 sYZY（外旋 YZY）"),
                          QStringLiteral("无主流品牌默认使用（首尾同轴，少见）"));
     case Id::EulerSzxz:
         return makeEuler(id, "szxz", Axis::Z, Axis::X, Axis::Z, false,
-                         Tier::Advanced, QStringLiteral("欧拉角 sZXZ（静态 ZXZ）"),
+                         Tier::Advanced, QStringLiteral("欧拉角 sZXZ（外旋 ZXZ）"),
                          QStringLiteral("无主流品牌默认使用（首尾同轴，少见）"));
     case Id::EulerSzyz:
         return makeEuler(id, "szyz", Axis::Z, Axis::Y, Axis::Z, false,
-                         Tier::Advanced, QStringLiteral("欧拉角 sZYZ（静态 ZYZ）"),
+                         Tier::Advanced, QStringLiteral("欧拉角 sZYZ（外旋 ZYZ）"),
                          QStringLiteral("无主流品牌默认使用（首尾同轴，少见）"));
     }
     return Entry{};
@@ -452,7 +472,7 @@ const std::vector<Id>& commonIdsStorage()
         Id::EulerRxzy,      Id::EulerRyxz,      Id::EulerRyzx,
         Id::EulerRzxy,
         Id::RotationVector, Id::QuatWxyz,       Id::QuatXyzw,
-        Id::Matrix3x3Row,   Id::Matrix3x3Col,
+        Id::Matrix4x4Row,   Id::Matrix3x3Row,   Id::Matrix3x3Col,
     };
     return v;
 }
@@ -630,6 +650,16 @@ TransformTools::Mat4 poseToMat4(double px, double py, double pz, Id id,
                                 TransformTools::AngleUnit unit,
                                 const std::vector<double>& rotValues)
 {
+    if (id == Id::Matrix4x4Row) {
+        // 4×4 本身已经含位置：原样返回，px/py/pz 不参与。
+        if (rotValues.size() != 16)
+            throw std::invalid_argument(
+                "RobotDataFormats: 4x4 matrix needs 16 values");
+        TransformTools::Mat4 m{};
+        for (std::size_t i = 0; i < m.size(); ++i)
+            m[i] = rotValues[i];
+        return m;
+    }
     return TransformTools::makeMat4(buildRotation(id, unit, rotValues),
                                     px, py, pz);
 }

@@ -53,10 +53,11 @@ enum class Id : int {
     EulerSyzy = 26,
     EulerSzxz = 27,
     EulerSzyz = 28,
+    Matrix4x4Row = 29,  // 4×4 姿态变换矩阵（16 数，行主序）= HandEyeSDK poseType=3
 };
 
 enum class Axis { X, Y, Z };
-enum class Kind { Euler, RotationVector, Quaternion, Matrix3x3 };
+enum class Kind { Euler, RotationVector, Quaternion, Matrix3x3, Matrix4x4 };
 enum class Tier { Common, Advanced };
 
 struct Entry {
@@ -81,7 +82,7 @@ struct Entry {
 const std::vector<Entry>& entries();
 
 // 某一档（常用 / 高级）里的显示顺序。常用档 = 12 种三轴互异 + rZYZ
-// + 旋转矢量 + 两种四元数 + 两种 3×3 矩阵。
+// + 旋转矢量 + 两种四元数 + 4×4 姿态变换矩阵 + 两种 3×3 旋转矩阵。
 std::vector<Id> ids(Tier tier);
 
 // 查找。isValidId 接受任何合法整数，越界返回 false。
@@ -105,6 +106,8 @@ TransformTools::Rot3 buildRotation(Id id, TransformTools::AngleUnit unit,
                                    const std::vector<double>& values);
 
 // 4×4 齐次矩阵（行主序）：位置 + 旋转值。
+// Matrix4x4Row 例外：rotValues 本身就是 16 个矩阵元素，直接返回它，
+// px/py/pz 不参与（位置在第 4 列里，调用方负责单位换算）。
 TransformTools::Mat4 poseToMat4(double px, double py, double pz, Id id,
                                 TransformTools::AngleUnit unit,
                                 const std::vector<double>& rotValues);

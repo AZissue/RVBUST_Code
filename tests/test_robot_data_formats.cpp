@@ -166,11 +166,12 @@ void TestRobotDataFormats::idIntegersKeepThePersistedLegacyValues()
     QCOMPARE(static_cast<int>(Id::QuatXyzw), 4);
     QCOMPARE(static_cast<int>(Id::Matrix3x3Row), 5);     // 旧 RotationMatrix9
     QCOMPARE(static_cast<int>(Id::RotationVector), 6);
+    QCOMPARE(static_cast<int>(Id::Matrix4x4Row), 29);    // 只能追加
 }
 
 void TestRobotDataFormats::catalogHasAll24EulerConventions()
 {
-    QCOMPARE(RobotDataFormats::entries().size(), static_cast<std::size_t>(29));
+    QCOMPARE(RobotDataFormats::entries().size(), static_cast<std::size_t>(30));
     QCOMPARE(eulerIds().size(), static_cast<std::size_t>(24));
 
     // 12 种三轴互异 + 12 种首尾同轴。
@@ -185,10 +186,10 @@ void TestRobotDataFormats::catalogHasAll24EulerConventions()
     QCOMPARE(distinct, 12);
     QCOMPARE(proper, 12);
 
-    // 常用档 18 项、高级档 11 项，合起来刚好是全目录（没有漏项/重项）。
-    QCOMPARE(RobotDataFormats::ids(Tier::Common).size(), static_cast<std::size_t>(18));
+    // 常用档 19 项、高级档 11 项，合起来刚好是全目录（没有漏项/重项）。
+    QCOMPARE(RobotDataFormats::ids(Tier::Common).size(), static_cast<std::size_t>(19));
     QCOMPARE(RobotDataFormats::ids(Tier::Advanced).size(), static_cast<std::size_t>(11));
-    QCOMPARE(allIds().size(), static_cast<std::size_t>(29));
+    QCOMPARE(allIds().size(), static_cast<std::size_t>(30));
 }
 
 void TestRobotDataFormats::displayNamesAreUniqueAndNonEmpty()
@@ -201,7 +202,7 @@ void TestRobotDataFormats::displayNamesAreUniqueAndNonEmpty()
                  qPrintable(QStringLiteral("格式名重复：") + name));
         seen.insert(name);
     }
-    QCOMPARE(seen.size(), 29);
+    QCOMPARE(seen.size(), 30);
 }
 
 void TestRobotDataFormats::hintsCarryBrandsPrincipleAndReading()
@@ -256,6 +257,7 @@ void TestRobotDataFormats::cardUsableOnlyForThreeValueFormats()
     QVERIFY(RobotDataFormats::cardUsable(Id::EulerSxyz));
     QVERIFY(!RobotDataFormats::cardUsable(Id::QuatWxyz));
     QVERIFY(!RobotDataFormats::cardUsable(Id::Matrix3x3Row));
+    QVERIFY(!RobotDataFormats::cardUsable(Id::Matrix4x4Row));
 }
 
 // ── 旋转数学 ─────────────────────────────────────────────────────────
@@ -368,6 +370,15 @@ void TestRobotDataFormats::quaternionOrdersAndMatrixOrders()
     const Rot3 vecRad = RobotDataFormats::buildRotation(
         Id::RotationVector, AngleUnit::Radian, { 0, 0, kPi / 2.0 });
     QVERIFY(rotNear(vecDeg, vecRad));
+
+    // 4×4 姿态变换矩阵：旋转取左上 3×3，平移在最后一列，不参与旋转。
+    const Rot3 m4 = RobotDataFormats::buildRotation(
+        Id::Matrix4x4Row, AngleUnit::Radian,
+        { 0, 0, 1, 11,
+          0, 1, 0, 22,
+         -1, 0, 0, 33,
+          0, 0, 0, 1 });
+    QVERIFY(rotNear(m4, Rot3{ 0, 0, 1, 0, 1, 0, -1, 0, 0 }));
 }
 
 void TestRobotDataFormats::buildRotationRejectsWrongCount()
@@ -382,6 +393,11 @@ void TestRobotDataFormats::buildRotationRejectsWrongCount()
         RobotDataFormats::buildRotation(Id::Matrix3x3Row, AngleUnit::Degree,
                                         { 1, 2, 3, 4, 5, 6, 7, 8 }),
         std::invalid_argument);
+    QVERIFY_EXCEPTION_THROWN(
+        RobotDataFormats::buildRotation(Id::Matrix4x4Row, AngleUnit::Degree,
+                                        { 1, 2, 3, 4, 5, 6, 7, 8,
+                                          9, 10, 11, 12, 13, 14, 15 }),
+        std::invalid_argument);
 }
 
 void TestRobotDataFormats::poseToMat4KeepsTranslation()
@@ -393,6 +409,19 @@ void TestRobotDataFormats::poseToMat4KeepsTranslation()
     QVERIFY(std::abs(x - 1.0) < 1e-12);
     QVERIFY(std::abs(y - 2.0) < 1e-12);
     QVERIFY(std::abs(z - 4.0) < 1e-12);
+
+    // 4×4 本身含位置：px/py/pz 不参与，原样返回输入的 16 个数。
+    const std::vector<double> sixteen {
+        1, 0, 0, 7,
+        0, 1, 0, 8,
+        0, 0, 1, 9,
+        0, 0, 0, 1 };
+    const TransformTools::Mat4 m4 = RobotDataFormats::poseToMat4(
+        100, 200, 300, Id::Matrix4x4Row, AngleUnit::Degree, sixteen);
+    TransformTools::transformPoint(m4, 0, 0, 0, x, y, z);
+    QVERIFY(std::abs(x - 7.0) < 1e-12);
+    QVERIFY(std::abs(y - 8.0) < 1e-12);
+    QVERIFY(std::abs(z - 9.0) < 1e-12);
 }
 
 // ── 点动实验推算 ─────────────────────────────────────────────────────

@@ -57,7 +57,7 @@ QString normalizeXyzLine(const QString& raw);
 // Turn one card pose line ("x y z rx ry rz") into the line the SDK wants, and
 // report the matching HandEyeParam::poseType through poseTypeOut.
 //
-//   * poseFormat == EulerSxyz (静态 XYZ / RPY, R = Rz*Ry*Rx) — the SDK's own
+//   * poseFormat == EulerSxyz (外旋 XYZ / RPY, R = Rz*Ry*Rx) — the SDK's own
 //     euler convention — is passed through byte-identically (same output as
 //     normalizePoseLine) with poseType = 0.  That is the path every robot
 //     used before this parameter existed, so existing (validated) results
