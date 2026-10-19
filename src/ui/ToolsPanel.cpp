@@ -778,6 +778,47 @@ void ToolsPanel::updatePixelTo3DResult()
     fail(QString::fromStdString(PixelTo3DService::statusText(q.status)));
 }
 
+void ToolsPanel::chooseCalibrationFile(QLineEdit* edit, const QString& title)
+{
+    if (!edit)
+        return;
+
+    // 起始位置：优先当前数据文件夹，其次输入框里那个文件所在的目录。
+    const QString raw = edit->text().trimmed();
+    const QString dirText = m_calibDir ? m_calibDir->text().trimmed() : QString();
+    QString startDir = dirText;
+    QString startFile;
+    if (!raw.isEmpty()) {
+        const QString abs = QFileInfo(raw).isAbsolute()
+            ? raw : QDir(dirText).filePath(raw);
+        const QFileInfo fi(abs);
+        if (fi.absoluteDir().exists()) {
+            startDir = fi.absolutePath();
+            startFile = fi.fileName();
+        }
+    }
+    if (startDir.isEmpty() || !QDir(startDir).exists())
+        startDir = QDir::homePath();
+
+    const QString chosen = QFileDialog::getOpenFileName(
+        this, title, QDir(startDir).filePath(startFile),
+        QStringLiteral("文本文件 (*.txt);;所有文件 (*.*)"));
+    if (chosen.isEmpty())
+        return;
+
+    const QFileInfo fi(chosen);
+    // 文件就在当前数据文件夹里 → 只写文件名（会话目录是相对的）；
+    // 选了别的目录 → 连数据文件夹一起改，否则「计算」还是去老目录找。
+    if (m_calibDir && !dirText.isEmpty()
+        && QDir(dirText).absolutePath() == fi.absolutePath()) {
+        edit->setText(fi.fileName());
+        return;
+    }
+    if (m_calibDir)
+        m_calibDir->setText(fi.absolutePath());
+    edit->setText(fi.fileName());
+}
+
 void ToolsPanel::buildCalibrationPage(QStackedWidget* stack)
 {
     auto* page = new QWidget(stack);
@@ -810,23 +851,40 @@ void ToolsPanel::buildCalibrationPage(QStackedWidget* stack)
     m_calibTypeCombo->setStyleSheet(Theme::comboBoxStyle());
     form->addRow(QStringLiteral("标定方式"), m_calibTypeCombo);
 
-    m_calibPoseFile = makeTextInput(group);
-    m_calibPoseFile->setObjectName(QStringLiteral("calib_pose_file"));
-    m_calibPoseFile->setText(QStringLiteral("pose.txt"));
-    form->addRow(QStringLiteral("位姿文件"), m_calibPoseFile);
+    // 文件行 = 输入框 + 「浏览」：以前只能手写文件名，现场没人记得住
+    // cameraCapturePointXyz.txt 这种名字（用户 2026-10-19 反馈）。
+    auto addFileRow = [this, form, group](const QString& label, const QString& objName,
+                                          const QString& defName, QLineEdit*& edit,
+                                          QWidget*& rowWidget, const QString& title) {
+        edit = makeTextInput(group);
+        edit->setObjectName(objName);
+        edit->setText(defName);
+        auto* row = new QHBoxLayout();
+        row->setSpacing(8);
+        row->addWidget(edit, 1);
+        auto* browse = new QPushButton(QStringLiteral("浏览"), group);
+        browse->setStyleSheet(Theme::secondaryButtonStyle());
+        row->addWidget(browse);
+        rowWidget = new QWidget(group);
+        rowWidget->setLayout(row);
+        form->addRow(label, rowWidget);
+        connect(browse, &QPushButton::clicked, this,
+                [this, edit, title]() { chooseCalibrationFile(edit, title); });
+    };
+
+    addFileRow(QStringLiteral("位姿文件"), QStringLiteral("calib_pose_file"),
+               QStringLiteral("pose.txt"), m_calibPoseFile, m_calibPoseFileRow,
+               QStringLiteral("选择机器人位姿文件"));
 
     // 标定板 / 戳点两个方法的数据列不同（见 HandEye.h）：
     //   标定板 = 数据文件夹里的 1.png/1.ply + pose.txt
     //   戳点   = cameraCapturePointXyz.txt + tcp.txt (+ cameraCaptureRobotPose.txt 仅眼在手上)
-    m_calibCameraFile = makeTextInput(group);
-    m_calibCameraFile->setObjectName(QStringLiteral("calib_camera_file"));
-    m_calibCameraFile->setText(QStringLiteral("cameraCapturePointXyz.txt"));
-    form->addRow(QStringLiteral("相机点位文件"), m_calibCameraFile);
-
-    m_calibTcpFile = makeTextInput(group);
-    m_calibTcpFile->setObjectName(QStringLiteral("calib_tcp_file"));
-    m_calibTcpFile->setText(QStringLiteral("tcp.txt"));
-    form->addRow(QStringLiteral("戳点文件"), m_calibTcpFile);
+    addFileRow(QStringLiteral("相机点位文件"), QStringLiteral("calib_camera_file"),
+               QStringLiteral("cameraCapturePointXyz.txt"), m_calibCameraFile,
+               m_calibCameraFileRow, QStringLiteral("选择相机点位文件"));
+    addFileRow(QStringLiteral("戳点文件"), QStringLiteral("calib_tcp_file"),
+               QStringLiteral("tcp.txt"), m_calibTcpFile, m_calibTcpFileRow,
+               QStringLiteral("选择戳点文件"));
 
     m_calibEyeCombo = new ArrowComboBox(group);
     m_calibEyeCombo->addItem(QStringLiteral("眼在手外（相机固定）"));
@@ -873,7 +931,7 @@ void ToolsPanel::buildCalibrationPage(QStackedWidget* stack)
     m_calibFormatRow->setLayout(fmtRow);
     form->addRow(QStringLiteral("机器人数据格式"), m_calibFormatRow);
 
-    // 首尾同轴的 11 种默认不显示；勾上才进下拉框（保持当前选中项）。
+    // 首尾同轴的 12 种默认不显示；勾上才进下拉框（保持当前选中项）。
     m_calibAdvancedCheck = new QCheckBox(
         QStringLiteral("显示高级格式（首尾同轴，如 ZYZ / XYX）"), group);
     form->addRow(QString(), m_calibAdvancedCheck);
@@ -997,9 +1055,10 @@ void ToolsPanel::updateCalibrationModeVisibility()
         field->setVisible(on);
     };
 
-    rowVisible(m_calibPoseFile, needPose);
-    rowVisible(m_calibCameraFile, tcp);
-    rowVisible(m_calibTcpFile, tcp);
+    // 隐藏整行（输入框 + 「浏览」按钮），而不是只藏输入框。
+    rowVisible(m_calibPoseFileRow, needPose);
+    rowVisible(m_calibCameraFileRow, tcp);
+    rowVisible(m_calibTcpFileRow, tcp);
     rowVisible(m_calibMarkerCombo, !tcp);
     rowVisible(m_calibPoseUnitCombo, needPose);
     rowVisible(m_calibAngleUnitCombo, needPose);
@@ -1017,6 +1076,9 @@ void ToolsPanel::updateCalibrationModeVisibility()
         if (cur != want)
             m_calibPoseFile->setText(want);
     }
+
+    // 推算页有一份自己的输入组（方法 ③ 用），显隐规则与这里一致。
+    updateInferenceInputVisibility();
 }
 
 CalibrationService::Params ToolsPanel::calibParams() const
@@ -1729,7 +1791,12 @@ void ToolsPanel::buildFormatInferencePage(QStackedWidget* stack)
     m_inferUnitCombo->addItem(QStringLiteral("度"));
     m_inferUnitCombo->addItem(QStringLiteral("弧度"));
     m_inferUnitCombo->setStyleSheet(Theme::comboBoxStyle());
-    form->addRow(QStringLiteral("角度单位"), m_inferUnitCombo);
+    // 包一层控件：方式 ③ 时整行（标签 + 下拉框）一起隐藏，而不是灰着占位。
+    m_inferUnitRow = new QWidget(group);
+    auto* unitRowLayout = new QHBoxLayout(m_inferUnitRow);
+    unitRowLayout->setContentsMargins(0, 0, 0, 0);
+    unitRowLayout->addWidget(m_inferUnitCombo);
+    form->addRow(QStringLiteral("角度单位"), m_inferUnitRow);
 
     auto* expGroup = new QGroupBox(
         QStringLiteral("点动实验（每行贴 3 个旋转数，或整行 6 个位姿数 —— 只取后 3 个）"),
@@ -1771,21 +1838,100 @@ void ToolsPanel::buildFormatInferencePage(QStackedWidget* stack)
     form->addRow(expGroup);
 
     // 方式 ③：原本在手眼标定页的「试算各格式」整体迁到这里（用户 2026-10-19）。
-    // 数据与标定方式仍沿用「手眼标定」页，避免同一份设置维护两遍。
+    // 数据来源原先必须去「手眼标定」页设置 —— 用户反馈那样得来回切页；本页
+    // 现在有一份与那一页双向同步的输入组：在哪一页改都行，两边始终一致。
     auto* residual = new QGroupBox(
         QStringLiteral("用已有标定数据按残差排序"), group);
     m_inferResidualGroup = residual;
     auto* residualLayout = new QVBoxLayout(residual);
     auto* residualNote = new QLabel(QStringLiteral(
-        "使用「手眼标定」页当前的标定方式、安装方式与数据来源。"
-        "本页把 5 种常见约定 × 度/弧度各算一遍，按 SDK 总平均误差从低到高列出。"
+        "把 5 种常见约定 × 度/弧度各算一遍，按 SDK 总平均误差从低到高列出。"
         "只给参考，不会自动改任何设置。"), residual);
     residualNote->setWordWrap(true);
     residualNote->setStyleSheet(QStringLiteral("color: %1; font-size: %2px;")
                                     .arg(Theme::TEXT_HINT).arg(Theme::FONT_HINT));
     residualLayout->addWidget(residualNote);
 
+    auto* dataGroup = new QGroupBox(
+        QStringLiteral("标定数据（与「手眼标定」页同步）"), residual);
+    m_inferDataGroup = dataGroup;
+    auto* dataForm = new QFormLayout(dataGroup);
+    dataForm->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    m_inferDataForm = dataForm;
+
+    // 数据文件夹（与标定页同一格值的镜像）
+    auto* inferDirRow = new QHBoxLayout();
+    inferDirRow->setSpacing(8);
+    m_inferDirEdit = makeTextInput(dataGroup);
+    m_inferDirEdit->setObjectName(QStringLiteral("format_infer_dir"));
+    m_inferDirEdit->setPlaceholderText(QStringLiteral("选择会话文件夹"));
+    inferDirRow->addWidget(m_inferDirEdit, 1);
+    auto* inferDirBrowse = new QPushButton(QStringLiteral("浏览"), dataGroup);
+    inferDirBrowse->setStyleSheet(Theme::secondaryButtonStyle());
+    inferDirRow->addWidget(inferDirBrowse);
+    dataForm->addRow(QStringLiteral("数据文件夹"), inferDirRow);
+
+    auto addInferFileRow = [this, dataForm, dataGroup](const QString& label,
+                                                       const QString& objName,
+                                                       QLineEdit*& edit,
+                                                       QWidget*& rowWidget,
+                                                       const QString& title) {
+        edit = makeTextInput(dataGroup);
+        edit->setObjectName(objName);
+        auto* row = new QHBoxLayout();
+        row->setSpacing(8);
+        row->addWidget(edit, 1);
+        auto* browse = new QPushButton(QStringLiteral("浏览"), dataGroup);
+        browse->setStyleSheet(Theme::secondaryButtonStyle());
+        row->addWidget(browse);
+        rowWidget = new QWidget(dataGroup);
+        rowWidget->setLayout(row);
+        dataForm->addRow(label, rowWidget);
+        connect(browse, &QPushButton::clicked, this,
+                [this, edit, title]() { chooseCalibrationFile(edit, title); });
+    };
+    addInferFileRow(QStringLiteral("位姿文件"), QStringLiteral("format_infer_pose_file"),
+                    m_inferPoseFileEdit, m_inferPoseFileRow,
+                    QStringLiteral("选择机器人位姿文件"));
+    addInferFileRow(QStringLiteral("相机点位文件"), QStringLiteral("format_infer_camera_file"),
+                    m_inferCameraFileEdit, m_inferCameraFileRow,
+                    QStringLiteral("选择相机点位文件"));
+    addInferFileRow(QStringLiteral("戳点文件"), QStringLiteral("format_infer_tcp_file"),
+                    m_inferTcpFileEdit, m_inferTcpFileRow,
+                    QStringLiteral("选择戳点文件"));
+
+    m_inferCalibTypeCombo = new ArrowComboBox(dataGroup);
+    m_inferCalibTypeCombo->addItem(QStringLiteral("标定板识别（同心圆 / 黑白圆）"));
+    m_inferCalibTypeCombo->addItem(QStringLiteral("戳点标定（TCP touch）"));
+    m_inferCalibTypeCombo->setStyleSheet(Theme::comboBoxStyle());
+    dataForm->addRow(QStringLiteral("标定方式"), m_inferCalibTypeCombo);
+
+    m_inferEyeCombo = new ArrowComboBox(dataGroup);
+    m_inferEyeCombo->addItem(QStringLiteral("眼在手外（相机固定）"));
+    m_inferEyeCombo->addItem(QStringLiteral("眼在手上（相机装在末端）"));
+    m_inferEyeCombo->setStyleSheet(Theme::comboBoxStyle());
+    dataForm->addRow(QStringLiteral("安装方式"), m_inferEyeCombo);
+
+    m_inferMarkerCombo = new ArrowComboBox(dataGroup);
+    m_inferMarkerCombo->addItem(QStringLiteral("同心圆"));
+    m_inferMarkerCombo->addItem(QStringLiteral("黑白圆（标定板）"));
+    m_inferMarkerCombo->setStyleSheet(Theme::comboBoxStyle());
+    dataForm->addRow(QStringLiteral("标定板类型"), m_inferMarkerCombo);
+
+    m_inferPoseUnitCombo = new ArrowComboBox(dataGroup);
+    m_inferPoseUnitCombo->addItem(QStringLiteral("mm"));
+    m_inferPoseUnitCombo->addItem(QStringLiteral("m"));
+    m_inferPoseUnitCombo->setStyleSheet(Theme::comboBoxStyle());
+    dataForm->addRow(QStringLiteral("位姿位置单位"), m_inferPoseUnitCombo);
+
+    m_inferAutoRemoveCheck = new QCheckBox(
+        QStringLiteral("自动剔除大误差数据（SDK 内置）"), dataGroup);
+    dataForm->addRow(QString(), m_inferAutoRemoveCheck);
+
+    residualLayout->addWidget(dataGroup);
+
     m_inferDataLabel = new QLabel(residual);
+    m_inferDataLabel->setObjectName(QStringLiteral("format_infer_data_note"));
     m_inferDataLabel->setStyleSheet(QStringLiteral("color: %1; font-size: %2px;")
                                         .arg(Theme::TEXT_BODY).arg(Theme::FONT_HINT));
     m_inferDataLabel->setWordWrap(true);
@@ -1798,14 +1944,6 @@ void ToolsPanel::buildFormatInferencePage(QStackedWidget* stack)
     m_inferSessionBtn->setToolTip(QStringLiteral(
         "载入当前会话的数据，载入后直接开始试算"));
     residualButtons->addWidget(m_inferSessionBtn);
-    m_inferDirBtn = new QPushButton(QStringLiteral("选择数据文件夹"), residual);
-    m_inferDirBtn->setStyleSheet(Theme::secondaryButtonStyle());
-    residualButtons->addWidget(m_inferDirBtn);
-    m_inferCalibBtn = new QPushButton(QStringLiteral("去手眼标定页"), residual);
-    m_inferCalibBtn->setStyleSheet(Theme::secondaryButtonStyle());
-    m_inferCalibBtn->setToolTip(QStringLiteral(
-        "标定方式、安装方式与文件名都在那一页设置"));
-    residualButtons->addWidget(m_inferCalibBtn);
     m_inferTryAllBtn = new QPushButton(QStringLiteral("试算各格式"), residual);
     m_inferTryAllBtn->setStyleSheet(Theme::primaryButtonStyle());
     m_inferTryAllBtn->setToolTip(QStringLiteral(
@@ -1828,7 +1966,10 @@ void ToolsPanel::buildFormatInferencePage(QStackedWidget* stack)
         "把唯一判定的格式写进 AppConfig：手眼标定页与主界面「计算」都按它读卡片"));
     btnRow->addWidget(m_inferApplyBtn);
     btnRow->addStretch();
-    form->addRow(QString(), btnRow);
+    // 包一层控件：方法 ③ 用不到「推算 / 应用」，整行隐藏（用户 2026-10-19 反馈）。
+    m_inferActionRow = new QWidget(group);
+    m_inferActionRow->setLayout(btnRow);
+    form->addRow(QString(), m_inferActionRow);
 
     m_inferHint = new QLabel(group);
     m_inferHint->setStyleSheet(QStringLiteral("color: %1; font-size: %2px;")
@@ -1855,34 +1996,100 @@ void ToolsPanel::buildFormatInferencePage(QStackedWidget* stack)
             this, &ToolsPanel::updateFormatInference);
     connect(m_inferApplyBtn, &QPushButton::clicked,
             this, &ToolsPanel::applyInferredFormat);
-    connect(m_inferCalibBtn, &QPushButton::clicked, this, [this]() {
-        // 手眼标定页在左侧列表的第 3 项（0 基）：直接切过去，不用用户找。
-        if (m_toolList)
-            m_toolList->setCurrentRow(2);
-    });
     connect(m_inferSessionBtn, &QPushButton::clicked, this, [this]() {
         // 复用标定页的会话入口；标志位让载入完成后直接跑试算。
         m_sessionForTryAll = true;
         emit calibrationSessionRequested();
     });
-    connect(m_inferDirBtn, &QPushButton::clicked, this, [this]() {
-        // 文件夹与标定页共用同一个输入框：只在这里换路径，标定页也立刻看到。
+    connect(inferDirBrowse, &QPushButton::clicked, this, [this]() {
         const QString start = m_calibDir ? m_calibDir->text().trimmed() : QString();
         const QString dir = QFileDialog::getExistingDirectory(
             this, QStringLiteral("选择标定数据文件夹"), start);
-        if (dir.isEmpty())
-            return;
-        if (m_calibDir)
-            m_calibDir->setText(QDir::toNativeSeparators(dir));
-        updateInferenceDataLabel();
+        if (!dir.isEmpty())
+            m_inferDirEdit->setText(QDir::toNativeSeparators(dir));
     });
     connect(m_inferTryAllBtn, &QPushButton::clicked,
             this, &ToolsPanel::runTryAllPoseFormats);
+
+    // ── 与手眼标定页双向同步 ─────────────────────────────────────────
+    // 两页各有一份控件，但只有一份值：改任何一边，另一边立刻跟着走。
+    // 相等就跳过，避免 setText → textChanged → setText 的无限往返。
+    auto linkEdit = [this](QLineEdit* a, QLineEdit* b) {
+        QObject::connect(a, &QLineEdit::textChanged, b, [b](const QString& t) {
+            if (b->text() != t)
+                b->setText(t);
+        });
+        QObject::connect(b, &QLineEdit::textChanged, a, [a](const QString& t) {
+            if (a->text() != t)
+                a->setText(t);
+        });
+    };
+    auto linkCombo = [this](QComboBox* a, QComboBox* b) {
+        const auto sync = [this](QComboBox* from, QComboBox* to) {
+            QObject::connect(from, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                             to, [to](int i) {
+                                 if (to->currentIndex() != i)
+                                     to->setCurrentIndex(i);
+                             });
+        };
+        sync(a, b);
+        sync(b, a);
+    };
+
+    // 先把标定页的当前值抄过来，再连双向线 —— 否则初始状态会缺一部分。
+    m_inferDirEdit->setText(m_calibDir->text());
+    m_inferPoseFileEdit->setText(m_calibPoseFile->text());
+    m_inferCameraFileEdit->setText(m_calibCameraFile->text());
+    m_inferTcpFileEdit->setText(m_calibTcpFile->text());
+    m_inferCalibTypeCombo->setCurrentIndex(m_calibTypeCombo->currentIndex());
+    m_inferEyeCombo->setCurrentIndex(m_calibEyeCombo->currentIndex());
+    m_inferMarkerCombo->setCurrentIndex(m_calibMarkerCombo->currentIndex());
+    m_inferPoseUnitCombo->setCurrentIndex(m_calibPoseUnitCombo->currentIndex());
+    m_inferAutoRemoveCheck->setChecked(m_calibAutoRemove->isChecked());
+
+    linkEdit(m_inferDirEdit, m_calibDir);
+    linkEdit(m_inferPoseFileEdit, m_calibPoseFile);
+    linkEdit(m_inferCameraFileEdit, m_calibCameraFile);
+    linkEdit(m_inferTcpFileEdit, m_calibTcpFile);
+    linkCombo(m_inferCalibTypeCombo, m_calibTypeCombo);
+    linkCombo(m_inferEyeCombo, m_calibEyeCombo);
+    linkCombo(m_inferMarkerCombo, m_calibMarkerCombo);
+    linkCombo(m_inferPoseUnitCombo, m_calibPoseUnitCombo);
+    QObject::connect(m_inferAutoRemoveCheck, &QCheckBox::toggled,
+                     m_calibAutoRemove, &QCheckBox::setChecked);
+    QObject::connect(m_calibAutoRemove, &QCheckBox::toggled,
+                     m_inferAutoRemoveCheck, &QCheckBox::setChecked);
+
+    // 改本页的标定方式/安装方式 → 本页行显隐；同步接线会顺带更新标定页。
+    for (QComboBox* combo : { m_inferCalibTypeCombo, m_inferEyeCombo })
+        QObject::connect(combo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                         this, [this](int) {
+                             m_inferHint->clear();
+                             m_inferBestValid = false;
+                             m_inferApplyBtn->setEnabled(false);
+                             updateInferenceInputVisibility();
+                             updateInferenceDataLabel();
+                         });
+    // 其余输入变了：清提示并刷新数据来源说明（此时同步线已把标定页改好）。
+    for (QLineEdit* edit : { m_inferDirEdit, m_inferPoseFileEdit,
+                             m_inferCameraFileEdit, m_inferTcpFileEdit }) {
+        QObject::connect(edit, &QLineEdit::textChanged, this, [this](const QString&) {
+            m_inferHint->clear();
+            updateInferenceDataLabel();
+        });
+    }
+    updateInferenceInputVisibility();
+
     connect(m_inferMethodCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [this](int index) {
                 const bool experiment = index != 2;
                 m_inferExperiments->setVisible(experiment);
-                m_inferUnitCombo->setEnabled(experiment);
+                // 方法 ③ 不看角度单位，也不显示「推算 / 应用」：整行藏掉，
+                // 而不是留个灰按钮让人猜为什么点不动（用户 2026-10-19 反馈）。
+                if (m_inferUnitRow)
+                    m_inferUnitRow->setVisible(experiment);
+                if (m_inferActionRow)
+                    m_inferActionRow->setVisible(experiment);
                 m_inferRunBtn->setEnabled(experiment);
                 if (m_inferResidualGroup)
                     m_inferResidualGroup->setVisible(!experiment);
@@ -1894,11 +2101,11 @@ void ToolsPanel::buildFormatInferencePage(QStackedWidget* stack)
                     m_inferResult->setPlainText(QStringLiteral(
                         "方式 ③：用已经采好的手眼标定数据，把常见格式各算一遍，"
                         "按 SDK 的总平均误差排序。\n\n"
-                        "先选数据来源（「用当前会话」或「选择数据文件夹」），"
+                        "先选数据来源（「用当前会话」或在上面的输入组里选文件夹与文件），"
                         "再点「试算各格式」。误差最小的那一行就是最贴近卡片的格式。\n\n"
                         "试算覆盖 5 种常见约定（sXYZ / rZYX / rZYZ / rXYZ / 轴角）× 度/弧度；"
                         "若是这 5 种以外的约定，请用方式 ①② 的点动实验 —— 它能判全部 24 种。\n\n"
-                        "标定方式、安装方式与文件名都在「手眼标定」页设置，这里共用。"));
+                        "这里的标定数据与「手眼标定」页是同一份设置，在哪一页改都一样。"));
                 }
             });
     for (int i = 0; i < 3; ++i) {
@@ -2050,6 +2257,31 @@ void ToolsPanel::updateFormatInference()
         setHint(QString(), Theme::TEXT_HINT);
 }
 
+void ToolsPanel::updateInferenceInputVisibility()
+{
+    if (!m_inferDataForm || !m_inferCalibTypeCombo || !m_inferEyeCombo)
+        return;
+
+    const bool tcp = m_inferCalibTypeCombo->currentIndex() == 1;
+    const bool eyeInHand = m_inferEyeCombo->currentIndex() == 1;
+    // 与 updateCalibrationModeVisibility 同一套判据（见 DataInputArea 卡片）。
+    const bool needPose = !tcp || eyeInHand;
+
+    auto rowVisible = [this](QWidget* field, bool on) {
+        if (!field)
+            return;
+        if (QWidget* label = m_inferDataForm->labelForField(field))
+            label->setVisible(on);
+        field->setVisible(on);
+    };
+
+    rowVisible(m_inferPoseFileRow, needPose);
+    rowVisible(m_inferCameraFileRow, tcp);
+    rowVisible(m_inferTcpFileRow, tcp);
+    rowVisible(m_inferMarkerCombo, !tcp);
+    rowVisible(m_inferPoseUnitCombo, needPose);
+}
+
 void ToolsPanel::updateInferenceDataLabel()
 {
     if (!m_inferDataLabel)
@@ -2061,12 +2293,12 @@ void ToolsPanel::updateInferenceDataLabel()
     }
     const QString dir = m_calibDir ? m_calibDir->text().trimmed() : QString();
     if (!dir.isEmpty()) {
-        m_inferDataLabel->setText(QStringLiteral("数据来源：标定页的文件夹（%1）")
+        m_inferDataLabel->setText(QStringLiteral("数据来源：文件夹（%1）")
                                       .arg(QDir::toNativeSeparators(dir)));
         return;
     }
     m_inferDataLabel->setText(QStringLiteral(
-        "数据来源：尚未选择。点「用当前会话」，或用「选择数据文件夹」指定标定数据目录。"));
+        "数据来源：尚未选择。点「用当前会话」，或用上方「数据文件夹」指定标定数据目录。"));
 }
 
 void ToolsPanel::applyInferredFormat()

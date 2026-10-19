@@ -186,9 +186,10 @@ void TestRobotDataFormats::catalogHasAll24EulerConventions()
     QCOMPARE(distinct, 12);
     QCOMPARE(proper, 12);
 
-    // 常用档 19 项、高级档 11 项，合起来刚好是全目录（没有漏项/重项）。
-    QCOMPARE(RobotDataFormats::ids(Tier::Common).size(), static_cast<std::size_t>(19));
-    QCOMPARE(RobotDataFormats::ids(Tier::Advanced).size(), static_cast<std::size_t>(11));
+    // 常用档 18 项、高级档 12 项，合起来刚好是全目录（没有漏项/重项）。
+    // 高级档 = 全部首尾同轴约定，勾选框写的就是这个意思。
+    QCOMPARE(RobotDataFormats::ids(Tier::Common).size(), static_cast<std::size_t>(18));
+    QCOMPARE(RobotDataFormats::ids(Tier::Advanced).size(), static_cast<std::size_t>(12));
     QCOMPARE(allIds().size(), static_cast<std::size_t>(30));
 }
 
@@ -226,8 +227,10 @@ void TestRobotDataFormats::hintsCarryBrandsPrincipleAndReading()
 
 void TestRobotDataFormats::advancedTierIsTheRemainingProperEulerSet()
 {
-    // 用户勾“高级”才看到的 11 项，全部是首尾同轴；常用档里只留 rZYZ
-    // 这一种（Kawasaki / Doosan / Comau 在用的常见约定）。
+    // 用户勾“高级”才看到的 12 项，全部是首尾同轴；常用档里一个都不留。
+    // （rZYZ 虽然常见，但既然勾选框写的是“首尾同轴”，它也必须收进高级档，
+    //  否则用户会以为勾选没生效 —— 2026-10-19 反馈。）
+    QCOMPARE(static_cast<int>(RobotDataFormats::ids(Tier::Advanced).size()), 12);
     for (const Id id : RobotDataFormats::ids(Tier::Advanced)) {
         const auto& e = RobotDataFormats::entry(id);
         QVERIFY2(e.kind == Kind::Euler,
@@ -235,7 +238,7 @@ void TestRobotDataFormats::advancedTierIsTheRemainingProperEulerSet()
         QVERIFY2(e.first == e.third,
                  qPrintable(RobotDataFormats::displayName(id)));
     }
-    QVERIFY(RobotDataFormats::tier(Id::EulerRzyz) == Tier::Common);
+    QVERIFY(RobotDataFormats::tier(Id::EulerRzyz) == Tier::Advanced);
 
     int properInCommon = 0;
     for (const Id id : RobotDataFormats::ids(Tier::Common)) {
@@ -243,7 +246,7 @@ void TestRobotDataFormats::advancedTierIsTheRemainingProperEulerSet()
         if (e.kind == Kind::Euler && e.first == e.third)
             ++properInCommon;
     }
-    QCOMPARE(properInCommon, 1);
+    QCOMPARE(properInCommon, 0);
 }
 
 void TestRobotDataFormats::cardUsableOnlyForThreeValueFormats()

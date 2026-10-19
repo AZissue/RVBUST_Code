@@ -318,7 +318,7 @@ Entry makeEntry(Id id)
                              "RVC 官方软件导出的 FANUC 位姿（本项目实测）"));
     case Id::EulerRzyz:
         return makeEuler(id, "rzyz", Axis::Z, Axis::Y, Axis::Z, true,
-                         Tier::Common, QStringLiteral("欧拉角 rZYZ（内旋 ZYZ）"),
+                         Tier::Advanced, QStringLiteral("欧拉角 rZYZ（内旋 ZYZ）"),
                          QStringLiteral(
                              "Kawasaki OAT、Doosan A/B/C、Comau、QJAR 钱江"));
     case Id::EulerRxyz:
@@ -463,10 +463,11 @@ Entry makeEntry(Id id)
 
 const std::vector<Id>& commonIdsStorage()
 {
-    // 常用档的显示顺序 = 常见程度：
-    //   4 种主流约定 → rZYZ（也常见）→ 其余三轴互异 → 其它表示法。
+    // 常用档只放三轴互异的 12 种 + 其它表示法；首尾同轴（proper Euler）
+    // 一律收进高级档 —— 勾选框写的是「首尾同轴」，常用档里再夹一个 rZYZ
+    // 会让人以为高级设置没生效（用户 2026-10-19 反馈）。
     static const std::vector<Id> v {
-        Id::EulerSxyz,      Id::EulerRzyx,      Id::EulerRzyz,
+        Id::EulerSxyz,      Id::EulerRzyx,
         Id::EulerRxyz,      Id::EulerSzyx,      Id::EulerSxzy,
         Id::EulerSyxz,      Id::EulerSyzx,      Id::EulerSzxy,
         Id::EulerRxzy,      Id::EulerRyxz,      Id::EulerRyzx,
@@ -479,8 +480,10 @@ const std::vector<Id>& commonIdsStorage()
 
 const std::vector<Id>& advancedIdsStorage()
 {
-    // 首尾同轴的其余 11 种：先把偶见的 ZXZ / ZYZ 外旋排在前面。
+    // 全部 12 种首尾同轴约定。rZYZ（Kawasaki/Doosan 等）最常见，排最前；
+    // 其余按「偶见 ZXZ 外旋 → 内旋 → 外旋」的常见度排。
     static const std::vector<Id> v {
+        Id::EulerRzyz,
         Id::EulerRzxz, Id::EulerSzyz, Id::EulerSzxz,
         Id::EulerRxyx, Id::EulerRxzx, Id::EulerRyxy, Id::EulerRyzy,
         Id::EulerSxyx, Id::EulerSxzx, Id::EulerSyxy, Id::EulerSyzy,

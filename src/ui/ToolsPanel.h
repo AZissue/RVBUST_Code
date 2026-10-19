@@ -30,6 +30,7 @@
 class MeasurePage;
 class AppConfig;
 class QFormLayout;
+class QGroupBox;
 
 // Non-modal tools panel (v2.0).  Left: tool list.  Right: the selected tool.
 // Tools: Euclidean distance, coordinate transform (walk-point validation), and
@@ -234,12 +235,18 @@ private:
     QLineEdit* m_calibPoseFile = nullptr;
     QLineEdit* m_calibCameraFile = nullptr;  // 戳点标定：相机目标点
     QLineEdit* m_calibTcpFile = nullptr;     // 戳点标定：机器人目标点（戳点）
+    // 文件行的容器（行内是输入框 + 「浏览」按钮）；按下标方式显隐整行。
+    QWidget* m_calibPoseFileRow = nullptr;
+    QWidget* m_calibCameraFileRow = nullptr;
+    QWidget* m_calibTcpFileRow = nullptr;
+    // 在数据文件夹里挑一个 txt，写回文件名；文件在别的目录时连同文件夹一起改。
+    void chooseCalibrationFile(QLineEdit* edit, const QString& title);
     QComboBox* m_calibEyeCombo = nullptr;
     QComboBox* m_calibMarkerCombo = nullptr;
     QComboBox* m_calibPoseUnitCombo = nullptr;
     QComboBox* m_calibAngleUnitCombo = nullptr;
     QComboBox* m_calibFormatCombo = nullptr;   // 卡片里 3 个旋转数怎么读
-    QCheckBox* m_calibAdvancedCheck = nullptr; // 显示首尾同轴的 11 种
+    QCheckBox* m_calibAdvancedCheck = nullptr; // 显示首尾同轴的 12 种
     QWidget* m_calibFormatRow = nullptr;       // 上面那行的容器（显隐用）
     QLabel* m_calibFormatLabel = nullptr;      // 该格式的说明 + 是否已应用
     QPushButton* m_calibApplyBtn = nullptr;    // 写进 AppConfig 预设（主界面也读它）
@@ -283,6 +290,7 @@ private:
     QWidget* m_inferPage = nullptr;
     QComboBox* m_inferMethodCombo = nullptr;  // ① 基坐标点动 / ② 工具坐标点动 / ③ 标定残差
     QComboBox* m_inferUnitCombo = nullptr;
+    QWidget* m_inferUnitRow = nullptr;        // 方式 ③ 不看角度单位，整行藏起来
     QWidget* m_inferExperiments = nullptr;    // 方式 ①② 显示，③ 隐藏
     std::array<QComboBox*, 3> m_inferAxis {}; // 这一组实际绕哪根轴点的
     std::array<QLineEdit*, 3> m_inferBefore {};
@@ -291,9 +299,27 @@ private:
     QWidget* m_inferResidualGroup = nullptr;
     QLabel* m_inferDataLabel = nullptr;
     QPushButton* m_inferSessionBtn = nullptr;
-    QPushButton* m_inferDirBtn = nullptr;
-    QPushButton* m_inferCalibBtn = nullptr;
     QPushButton* m_inferTryAllBtn = nullptr;
+    // 方式 ③ 的输入组：与手眼标定页同一批控件值（双向同步），在这里就能选文件、
+    // 跑试算，不必来回切页。真正的计算仍走 gatherCalibrationInput/runTryAll。
+    QFormLayout* m_inferDataForm = nullptr;
+    QGroupBox* m_inferDataGroup = nullptr;
+    QLineEdit* m_inferDirEdit = nullptr;
+    QLineEdit* m_inferPoseFileEdit = nullptr;
+    QLineEdit* m_inferCameraFileEdit = nullptr;
+    QLineEdit* m_inferTcpFileEdit = nullptr;
+    QWidget* m_inferPoseFileRow = nullptr;
+    QWidget* m_inferCameraFileRow = nullptr;
+    QWidget* m_inferTcpFileRow = nullptr;
+    QComboBox* m_inferCalibTypeCombo = nullptr;
+    QComboBox* m_inferEyeCombo = nullptr;
+    QComboBox* m_inferMarkerCombo = nullptr;
+    QComboBox* m_inferPoseUnitCombo = nullptr;
+    QCheckBox* m_inferAutoRemoveCheck = nullptr;
+    // 推算页「推算 / 应用为全局预设」那一行：方法 ①② 显示，③ 隐藏。
+    QWidget* m_inferActionRow = nullptr;
+    // 按推算页自己的标定方式/安装方式显隐输入行（与标定页同一套规则）。
+    void updateInferenceInputVisibility();
     // 「用当前会话」是从推算页点的：载入后直接跑试算，不再白跑一次普通标定。
     bool m_sessionForTryAll = false;
     QLabel* m_inferHint = nullptr;
