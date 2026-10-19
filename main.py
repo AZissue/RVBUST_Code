@@ -110,12 +110,13 @@ def main(*, composition=None):
         """自动配置 IP（后台执行，防止 UI 卡住）。"""
         launcher.set_auto_ip_busy(True)
 
-        def on_finished(_results, _error):
+        def on_finished(results, error):
             if not launcher.isVisible():
                 return
             launcher.set_auto_ip_busy(False)
             # IP 可能已变化，刷新列表
             launcher.set_devices(bridge.enumerate_devices())
+            launcher.report_auto_ip_result(results, error)
 
         bridge.auto_configure_network(devices, on_finished=on_finished)
 

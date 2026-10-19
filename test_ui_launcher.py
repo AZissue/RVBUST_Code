@@ -3,6 +3,7 @@ import os
 import sys
 from pathlib import Path
 import unittest
+import threading
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 sys.path.insert(0, str(Path(__file__).parent/'src'))
@@ -105,6 +106,69 @@ class LauncherTests(unittest.TestCase):
         dlg._search_edit.clear()
         self.assertFalse(dlg._table.isRowHidden(0))
         self.assertNotIn('core.camera_manager', sys.modules)
+
+    def test_test_devices_auto_ip_warns_without_calling_backend(self):
+        dlg = self.dialog
+        dlg.set_devices([])
+        dlg._on_add_test_devices()
+        auto_ip = QSignalSpy(dlg.auto_ip_requested)
+        for choose in (False, True):
+            dlg._table._check_widgets[0].setChecked(choose)
+            dlg._btn_auto_ip.click()
+            self.app.processEvents()
+            self.assertEqual(auto_ip.count(), 0)
+            self.assertEqual(dlg.log_summary.level, 'warn')
+            self.assertIn('测试设备不支持', dlg.log_summary.full_text)
+            self.assertFalse(dlg._is_busy())
+
+    def test_background_log_and_summary_lifetime(self):
+        from core.utils import logger
+        dlg = self.dialog
+        dlg.show(); self.app.processEvents()
+        summary = dlg.log_summary
+        worker = threading.Thread(target=lambda: logger.warning('未找到 GigE 设备'))
+        worker.start(); worker.join()
+        self.app.processEvents()
+        self.assertEqual(summary.level, 'warn')
+        self.assertIn('未找到 GigE 设备', summary.full_text)
+        logger.info('success metadata', extra={'activity_owned':True, 'ui_level':'success'})
+        self.app.processEvents()
+        self.assertEqual(summary.level, 'success')
+        dlg.reject()
+        before = summary.full_text
+        logger.warning('after close')
+        self.app.processEvents()
+        self.assertEqual(summary.full_text, before)
+        dlg.show(); self.app.processEvents()
+        logger.error('reopened')
+        self.app.processEvents()
+        self.assertEqual(summary.level, 'error')
+        self.assertIn('reopened', summary.full_text)
+
+    def test_auto_ip_outcomes_and_older_queued_logs(self):
+        from core.utils import logger
+        dlg = self.dialog
+        logger.info('older queued operation')
+        dlg.report_auto_ip_result([(-1,False,'未找到 GigE 设备')])
+        self.app.processEvents()
+        self.assertEqual(dlg.log_summary.level, 'warn')
+        self.assertIn('未找到 GigE', dlg.log_summary.full_text)
+        dlg.report_auto_ip_result([], RuntimeError('network failure'))
+        self.assertEqual(dlg.log_summary.level, 'error')
+        dlg.report_auto_ip_result([])
+        self.assertEqual(dlg.log_summary.level, 'warn')
+        dlg.report_auto_ip_result([(0,True,'OK'),(1,False,'失败原因')])
+        self.assertIn('1 台成功', dlg.log_summary.full_text)
+        self.assertIn('失败原因', dlg.log_summary.full_text)
+        self.assertEqual(dlg.log_summary.level, 'warn')
+        dlg.report_auto_ip_result([(0,True,'OK')])
+        self.assertEqual(dlg.log_summary.level, 'success')
+        long_text = '<b>plain text</b> ' + '长消息' * 300 + '\n下一行'
+        dlg.log_summary.append(long_text, 'warn')
+        dlg.show(); self.app.processEvents()
+        self.assertNotIn('\n', dlg.log_summary.message.text())
+        self.assertIn('plain text', dlg.log_summary.toolTip())
+        self.assertLess(len(dlg.log_summary.message.text()), len(dlg.log_summary.full_text))
 
 
 if __name__ == '__main__':

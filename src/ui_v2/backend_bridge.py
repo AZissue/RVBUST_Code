@@ -438,6 +438,12 @@ class BackendBridge(QObject):
         """
         indices = [d.backend_ref for d in devices
                    if isinstance(d.backend_ref, int)]
+        if devices and not indices:
+            message = '测试设备不支持自动配置 IP；请接入真实 GigE 相机并刷新设备列表。'
+            self.shell.log(message, 'warn')
+            if on_finished is not None:
+                on_finished([(-1, False, message)], None)
+            return
         target_desc = f"选中 {len(indices)} 台" if indices else "所有 GigE"
         self.shell.log(f"开始对 {target_desc} 设备进行自动 IP 配置...", "info")
 

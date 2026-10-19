@@ -374,11 +374,12 @@ class MainWindowShell(QMainWindow):
             if self._backend_bridge is not None:
                 dialog.set_auto_ip_busy(True)
 
-                def on_finished(_results, _error):
+                def on_finished(results, error):
                     if not dialog.isVisible():
                         return
                     dialog.set_auto_ip_busy(False)
                     dialog.set_devices(self._backend_bridge.enumerate_devices())
+                    dialog.report_auto_ip_result(results, error)
 
                 self._backend_bridge.auto_configure_network(
                     devices, on_finished=on_finished)
@@ -499,7 +500,7 @@ class MainWindowShell(QMainWindow):
         import logging
         from core.utils import logger
         logger.log({'error': logging.ERROR, 'warn': logging.WARNING}.get(level, logging.INFO),
-                   message, extra={'activity_owned': True})
+                   message, extra={'activity_owned': True, 'ui_level': level})
         self._st_hint.setText(message)
 
     def show_loading(self, text: str = "处理中..."):

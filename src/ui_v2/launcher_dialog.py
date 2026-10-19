@@ -19,6 +19,8 @@ from .theme import (
 )
 from . import icons as ui_icons
 from .widgets import DeviceInfo, DeviceTable, ModeCard
+from ui_common.log_summary import LogSummary
+from core.utils import logger
 
 
 class LauncherDialog(QDialog):
@@ -57,6 +59,8 @@ class LauncherDialog(QDialog):
 
         self._mode = self.MODE_MULTI_CAM
         self._setup_ui()
+        self.log_summary.attach_logger(logger)
+        self.finished.connect(lambda *_: self.log_summary.detach_loggers())
         self._refresh_connect_state()
         self._center_on_screen()
 
@@ -166,6 +170,8 @@ class LauncherDialog(QDialog):
         self._btn_connect.clicked.connect(self._on_connect)
         bottom.addWidget(self._btn_connect)
         root.addLayout(bottom)
+        self.log_summary = LogSummary(self)
+        root.addWidget(self.log_summary)
         self._set_mode(self._mode)
         self._connection_overlay = self._build_connection_overlay()
         self._fade_animation = QPropertyAnimation(self, b"windowOpacity")
@@ -329,7 +335,32 @@ class LauncherDialog(QDialog):
 
         # TODO(BACKEND): 接自动网络配置逻辑；执行中由主窗口显示加载遮罩
         """
-        self.auto_ip_requested.emit(self._table.checked_devices())
+        selected = self._table.checked_devices()
+        candidates = selected or self._table.devices()
+        if candidates and not any(isinstance(d.backend_ref, int) for d in candidates):
+            logger.warning('测试设备不支持自动配置 IP；请接入真实 GigE 相机并刷新设备列表。')
+            return
+        self.auto_ip_requested.emit(selected)
+
+    def report_auto_ip_result(self, results, error=None):
+        """Render completion after enumeration so failures remain visible."""
+        if error:
+            self.log_summary.append(f'自动配置 IP 失败：{error}', 'error')
+            return
+        results = list(results or [])
+        failures = [str(message) for _, ok, message in results if not ok]
+        if not results:
+            self.log_summary.append('未找到可配置的 GigE 相机，请检查设备连接后刷新。', 'warn')
+        elif failures:
+            succeeded = sum(bool(ok) for _, ok, _ in results)
+            prefix = f'自动配置 IP：{succeeded} 台成功，{len(failures)} 项未完成。'
+            self.log_summary.append(prefix + '；'.join(failures), 'warn')
+        else:
+            self.log_summary.append(f'自动配置 IP 完成：{len(results)} 台成功。', 'success')
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.log_summary.attach_logger(logger)
 
     def _on_connect(self):
         """连接设备：校验已在 _refresh_connect_state 完成，这里只发信号。
