@@ -57,7 +57,7 @@ tests/                        → unit_tests（QtTest）+ measure_truth（已知
 - `RobotWorker`（`MainWindow.h` 里定义）—— 机器人四协议 reader **整体住在 `m_robotThread` 上**（T-009）。
   任何新的机器人阻塞调用都必须加进它，不许在 UI 线程直调（防整机挂死）。
 - `ToolsPanel`（`src/ui/ToolsPanel.*`）——「工具」面板：像素→3D、手眼标定、坐标转换、
-  机器人通信、8 个测量方法页（`MeasurePage` 基类 + `MeasurePages.cpp`）。
+  机器人数据格式推算、机器人通信、8 个测量方法页（`MeasurePage` 基类 + `MeasurePages.cpp`）。
 - `HelpDialog`（`src/ui/HelpDialog.*` + `src/logic/HelpContent.h`）—— 使用说明窗。
   非模态、首次打开才创建。改说明文字只需动 `HelpContent.h`；改控件才动 `HelpDialog`。
 - `CaptureFlow`（`src/logic/CaptureFlow.*`）—— 拍照→识别→保存→撤销的状态机与校验。
@@ -75,14 +75,16 @@ tests/                        → unit_tests（QtTest）+ measure_truth（已知
 | 一帧记录的字段 | `models/CaptureRecord.h`；落盘字段名在同文件 + `DataManager::loadBackup()`（键名 `marker_count` 等） |
 | 手眼标定计算（两个方法 + 返回码文案 + 结果排版） | `logic/CalibrationService.{h,cpp}`；入口是 `calibrate()`，按 `Params::calibType` 分派。想动"标定结果不够好"之前先读 `reports/阶段6-鲁棒标定方案讨论.md`（先量后改，且别放弃"助手=官方 SDK"这条已验证的一致性） |
 | SDK 崩溃/返回码的最底层包装 | `sdk/HandEyeSDKBridge.{h,cpp}`（`safeCall` + `kSdkInternalError`） |
-| **卡片里那 3 个旋转数怎么读**（欧拉/轴角/…）+ 角度单位 | 逻辑：`CalibrationService::toSdkPoseLine()`（欧拉 RPY 原样透传 `poseType=0`，其余 3 数格式转 16 数矩阵 `poseType=3`）+ `poseFormatName/Description()`；预设存取：`AppConfig::calibPoseFormat()/setCalibPoseFormat()`（工具页「应用」写、工具页与主界面「计算」都读）；界面：`ToolsPanel` 手眼标定页的「位姿格式」行 + 「试算各格式」。**卡片永远是 6 个数，格式只是"怎么读它"，别去改卡片**（见 `reports/阶段7-位姿格式预设与试算.md`） |
+| **卡片里那 3 个旋转数怎么读**（欧拉/轴角/…）+ 角度单位 | 逻辑：**唯一目录是 `logic/RobotDataFormats.*`**（29 项；`Id` 0..6 是持久化值，只能追加）；`CalibrationService::toSdkPoseLine()`（欧拉 sXYZ 原样透传 `poseType=0`，其余 3 数格式转 16 数矩阵 `poseType=3`）；预设存取：`AppConfig::calibPoseFormat()/setCalibPoseFormat()`（工具页「应用」写、工具页与主界面「计算」都读）；界面：`ToolsPanel` 手眼标定页的「机器人数据格式」行 + 「试算各格式」。**卡片永远是 6 个数，格式只是"怎么读它"，别去改卡片**（见 `reports/阶段7-位姿格式预设与试算.md`、`reports/阶段15-机器人数据格式目录与推算.md`） |
+| **新增/修改机器人数据格式、品牌提示、24 种欧拉约定** | `logic/RobotDataFormats.cpp` 的 `commonIdsStorage()`（常用 18 项，按常见度）与 `advancedIdsStorage()`（首尾同轴 11 项）、`makeEntry()`（名称/品牌/原理/读法）、`extractIntrinsic()`（通用逆解：轴置换 + 奇置换取负 + 前向验证）。两个页面与标定计算**都从这里取**，别在 UI 里另写一份 |
+| **推算用户机器人是哪种欧拉约定** | `RobotDataFormats::inferEulerConventions()` + 界面 `ToolsPanel::updateFormatInference()`。判据：基轴 `D=R2·R1ᵀ`、工具轴 `D=R1ᵀ·R2`，必须绕 `PosePair::jogAxis`（≤2°），转角 5°~175°。**`jogAxis` 不能省**：只看轴对齐时分不开 sXYZ/sYZX/sZXY；单轴实验对 sXYZ/sYXZ 有本质歧义（界面提示再补一组不同轴） |
 | 质检（数量/近重复/离群/分散度/相机目标点/标记点数） | `logic/DataQualityCheck.h`（header-only 纯逻辑）；UI 侧只负责组装 `Record` 与渲染 HTML |
 | 「当前位姿 vs 最近已采」引导 | `logic/PoseGuide.h`（判定）+ `MainWindow::updatePoseGuide()`（选卡片、写文案） |
 | 测量算法（8 个方法） | `logic/MeasureTools.*`（kernel）+ `logic/MeasureMethods.h`（方法目录/ROI 需求）+ `ui/MeasurePages.cpp`（每页的 `compute()`）。**改之前先读 `reports/阶段10-圆环拟合与孔径-真值回归结论.md`**（实测：主因是边缘选择）与 `reports/阶段10-测量功能优化方案.md`（含"真值回归测的 kernel 与界面在跑的 kernel 已脱节"这个坑） |
 | 圆环拟合 / 孔径 的**实测判据** | `tests/circle_truth.cpp`（已知真值点云+合成图，ctest 名 `circle_truth`）。改这两个工具前先跑它；`isKnownDefect()` 名单里的 8 个场景就是当前已确认的缺陷，修好会自动打印 `*** FIXED ***` |
 | 测量精度的真机判据（T-012） | `reports/T-012/accuracy_probe.py`（判据）+ `reports/T-012/BASELINE.md`（基线与改判理由）。**界面在跑的是 `measureBoundaryCircle`，而 `measurement_truth` 测的是 `holeBoundary`** —— 别把 ctest 全绿当成精度达标 |
 | 像素→3D | `logic/PixelTo3DService.{h,cpp}`（共享服务）、`logic/PixelTo3DTools.h`（纯换算） |
-| 坐标转换 / 走点验证 | `logic/TransformTools.h` |
+| 坐标转换 / 走点验证 | `logic/TransformTools.h`（4×4 / 走点 / 单位换算）；旋转格式与数学在 `logic/RobotDataFormats.*` |
 | 机器人四协议的读位姿 | `logic/RobotPose.*`、`URRealtimeReader.*`、`NrcJsonReader.*`、`EfortPoseReader.*`；分派在 `RobotWorker::readerFor()`。**位姿健全性判据（全 0 / NaN/Inf → `ProtocolError`）只有一处**：`RobotPose.h::checkPoseSanity()`，四个 reader 都必须过它 |
 | **埃夫特的地址/端口** | **只填 IP，没有端口**（端口在 SDK 里写死 8100，`EftSdk.dll` 连 `setServerPort` 都不导入）。`EfortPoseReader.h::splitAddress()` 负责把用户粘进来的 `"IP:端口"` 切掉（`":"` 会让 SDK 的 `str2IpAddr` 把整串解析成另一个 IP）；UI 侧截断+提示在 `ToolsPanel.cpp` 的埃夫特分支 |
 | **埃夫特缺 `log4cpp.conf`** | SDK 建连前先读 exe 目录下的 `log4cpp.conf`，缺文件直接抛异常（现场看着像"连不上机器人"）。判据是 `EfortPoseReader.h::logConfigPresent()`，文案 `logConfigMissingText()`；**打包侧**由 `pack_portable.ps1` 的 `mustShip` 清单兜底（缺件即打包失败）。见 `reports/阶段14-…md` |

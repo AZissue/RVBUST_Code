@@ -4,6 +4,7 @@
 #include <QVariantMap>
 #include <QString>
 
+#include "logic/RobotDataFormats.h"
 #include "logic/TransformTools.h"
 
 class AppConfig {
@@ -26,9 +27,9 @@ public:
     // 手眼标定的位姿格式预设：卡片里那 3 个旋转数该怎么读、什么角度单位。
     // 工具页设一次，工具页离线计算与主界面「计算」都读它（见 CalibrationService）。
     // 默认 = 改动前的行为（欧拉 RPY + 度）。读的时候会挡住卡片表示不了的格式。
-    TransformTools::RotationFormat calibPoseFormat() const;
+    RobotDataFormats::Id calibPoseFormat() const;
     TransformTools::AngleUnit calibPoseAngleUnit() const;
-    void setCalibPoseFormat(TransformTools::RotationFormat fmt,
+    void setCalibPoseFormat(RobotDataFormats::Id fmt,
                             TransformTools::AngleUnit unit);
 
     // Window geometry

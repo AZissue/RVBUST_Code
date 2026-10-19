@@ -71,24 +71,24 @@ QString normalizeXyzLine(const QString& raw)
         .arg(r.values[2], 0, 'g', 10);
 }
 
-QString toSdkPoseLine(const QString& raw, TransformTools::RotationFormat fmt,
+QString toSdkPoseLine(const QString& raw, RobotDataFormats::Id fmt,
                       TransformTools::AngleUnit unit, int& poseTypeOut)
 {
     const auto r = ToolInputParser::parseNumberList(raw.toStdString(), 6);
     if (r.status != ToolInputParser::ParseStatus::Ok)
         return {};
 
-    if (fmt == TransformTools::RotationFormat::EulerRpy) {
+    if (fmt == RobotDataFormats::Id::EulerSxyz) {
         poseTypeOut = 0;         // euler x y z rx ry rz — 与改动前逐字节一致
         return normalizePoseLine(raw);
     }
 
     // 卡片只有 3 个旋转数，四元数(4)与 3x3 矩阵(9)在这里无法表示。
-    if (TransformTools::rotationValueCount(fmt) != 3)
+    if (!RobotDataFormats::cardUsable(fmt))
         return {};
 
     const std::vector<double> rot{ r.values[3], r.values[4], r.values[5] };
-    const TransformTools::Mat4 m = TransformTools::poseToMat4(
+    const TransformTools::Mat4 m = RobotDataFormats::poseToMat4(
         r.values[0], r.values[1], r.values[2], fmt, unit, rot);
 
     QString out;
@@ -101,57 +101,15 @@ QString toSdkPoseLine(const QString& raw, TransformTools::RotationFormat fmt,
     return out;
 }
 
-QString poseFormatName(TransformTools::RotationFormat fmt)
+QString poseFormatName(RobotDataFormats::Id fmt)
 {
-    switch (fmt) {
-    case TransformTools::RotationFormat::EulerRpy:
-        return QStringLiteral("欧拉角 RPY（Static XYZ）");
-    case TransformTools::RotationFormat::EulerWpr:
-        return QStringLiteral("欧拉角 WPR（FANUC / KUKA ABC）");
-    case TransformTools::RotationFormat::EulerZyxIntrinsic:
-        return QStringLiteral("欧拉角 ZYX 内旋（Rx·Ry·Rz）");
-    case TransformTools::RotationFormat::QuatWxyz:
-        return QStringLiteral("四元数（w x y z）");
-    case TransformTools::RotationFormat::QuatXyzw:
-        return QStringLiteral("四元数（x y z w）");
-    case TransformTools::RotationFormat::RotationMatrix9:
-        return QStringLiteral("旋转矩阵（3×3，行主序）");
-    case TransformTools::RotationFormat::RotationVector:
-        return QStringLiteral("旋转矢量（轴角，UR 优傲）");
-    }
-    return QStringLiteral("未知格式");
+    return RobotDataFormats::displayName(fmt);
 }
 
-QString poseFormatDescription(TransformTools::RotationFormat fmt)
+QString poseFormatDescription(RobotDataFormats::Id fmt)
 {
-    switch (fmt) {
-    case TransformTools::RotationFormat::EulerRpy:
-        return QStringLiteral(
-            "Static XYZ / RPY（外旋）：R = Rz·Ry·Rx，按 (rx, ry, rz) = (X, Y, Z) 直填；"
-            "Yaskawa 安川 RX/RY/RZ、珞石（官方 SDK 标 XYZ 欧拉角，单位弧度）、"
-            "FANUC 标准手册（W绕X、P绕Y、R绕Z）均按此直填");
-    case TransformTools::RotationFormat::EulerWpr:
-        return QStringLiteral(
-            "按 (W, P, R) 直填：R = Rz(W)·Ry(P)·Rx(R)，即角度顺序 = 绕 Z、Y、X；"
-            "KUKA ABC 同此顺序；RVC 官方软件导出的 FANUC 位姿文件实测适用");
-    case TransformTools::RotationFormat::EulerZyxIntrinsic:
-        return QStringLiteral(
-            "ZYX 内旋：R = Rx·Ry·Rz，按 (rx, ry, rz) = (X, Y, Z) 输入；"
-            "与 Static XYZ（Rz·Ry·Rx）一般不相等");
-    case TransformTools::RotationFormat::QuatWxyz:
-        return QStringLiteral(
-            "四元数顺序 w x y z（标量在前）；ABB（RAPID Q1..Q4）、"
-            "RVC HandEyeSDK poseType=1");
-    case TransformTools::RotationFormat::QuatXyzw:
-        return QStringLiteral(
-            "四元数顺序 x y z w（标量在后）；ROS、RVC HandEyeSDK poseType=2");
-    case TransformTools::RotationFormat::RotationMatrix9:
-        return QStringLiteral("3×3 旋转矩阵，行主序 9 个值");
-    case TransformTools::RotationFormat::RotationVector:
-        return QStringLiteral(
-            "旋转矢量（轴角）：方向 = 转轴，长度 = 转角；UR 优傲，长度单位随角度单位");
-    }
-    return {};
+    // 统一成三行：常见机器人 / 原理 / 读法。目录是唯一出处。
+    return RobotDataFormats::hint(fmt);
 }
 
 QString errorText(int retCode)
@@ -249,7 +207,7 @@ Result calibrateMarker(const QString& folder,
 
     QStringList poseOut;
     // 与 toSdkPoseLine 的规则一致：欧拉 RPY 走 SDK 的 poseType=0 老路，其余格式转矩阵。
-    int poseType = params.poseFormat == TransformTools::RotationFormat::EulerRpy ? 0 : 3;
+    int poseType = params.poseFormat == RobotDataFormats::Id::EulerSxyz ? 0 : 3;
     for (int i = 0; i < static_cast<int>(poseLines.size()); ++i) {
         const QString name = QStringLiteral("%1").arg(i + 1, 4, 10, QLatin1Char('0'));
         const QString srcPng = QStringLiteral("%1/%2.png").arg(folder).arg(i + 1);
@@ -357,7 +315,7 @@ Result calibrateTcpTouch(const std::vector<QString>& cameraLines,
 
     QStringList camOut, tcpOut, poseOut;
     // 眼在手外没有拍照位姿，poseType 对 SDK 无意义；仍按格式算出来保持一致。
-    int poseType = params.poseFormat == TransformTools::RotationFormat::EulerRpy ? 0 : 3;
+    int poseType = params.poseFormat == RobotDataFormats::Id::EulerSxyz ? 0 : 3;
     const int n = static_cast<int>(cameraLines.size());
     for (int i = 0; i < n; ++i) {
         const QString cam = normalizeXyzLine(cameraLines[static_cast<std::size_t>(i)]);

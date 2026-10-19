@@ -14,6 +14,9 @@ set(SOURCES
     logic/UiStallWatchdog.cpp
     logic/PointCloudUtils.cpp
     logic/CalibrationService.cpp
+    # 机器人数据格式目录（29 项：24 种欧拉约定 + 轴角 / 四元数 / 3x3）
+    # + 通用欧拉逆解 + 点动实验推算。坐标转换页、标定页、推算页共用这一份。
+    logic/RobotDataFormats.cpp
     logic/RobotPose.cpp
     logic/URRealtimeReader.cpp
     # UR RTDE（端口 30004）：30003 已被 UR 废弃，这个口按变量名取 actual_TCP_pose

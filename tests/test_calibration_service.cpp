@@ -7,6 +7,7 @@
 #include <cmath>
 
 #include "logic/CalibrationService.h"
+#include "logic/RobotDataFormats.h"
 #include "logic/TransformTools.h"
 #include "sdk/HandEyeSDKBridge.h"
 
@@ -224,7 +225,7 @@ void TestCalibrationService::eulerRpyStaysOnTheOldPoseTypeZeroPath()
                              TransformTools::AngleUnit::Radian }) {
         int poseType = -99;
         const QString line = CalibrationService::toSdkPoseLine(
-            raw, TransformTools::RotationFormat::EulerRpy, unit, poseType);
+            raw, RobotDataFormats::Id::EulerSxyz, unit, poseType);
         QCOMPARE(poseType, 0);
         QCOMPARE(line, old);          // 逐字节相同，不是"数值接近"
     }
@@ -238,7 +239,7 @@ void TestCalibrationService::rotationVectorBecomesMatrix16()
         "-208.7141,-232.9,880.1776,0.798727,1.697482,-1.697482");
     int poseType = -99;
     const QString line = CalibrationService::toSdkPoseLine(
-        raw, TransformTools::RotationFormat::RotationVector,
+        raw, RobotDataFormats::Id::RotationVector,
         TransformTools::AngleUnit::Radian, poseType);
     QVERIFY2(!line.isEmpty(), qPrintable(line));
     QCOMPARE(poseType, 3);
@@ -272,13 +273,13 @@ void TestCalibrationService::rotationVectorBecomesMatrix16()
 
 // 欧拉 RPY 不在这里测：它走 poseType=0 原样透传，"SDK 怎么解释这 6 个数"
 // 不由我们决定（见 eulerRpyStaysOnTheOldPoseTypeZeroPath）。
-void TestCalibrationService::everyThreeValueFormatMatchesTransformTools()
+void TestCalibrationService::everyThreeValueFormatMatchesCatalog()
 {
     const QString raw = QStringLiteral("10 20 30 0.5 -0.25 0.125");
-    const std::array<TransformTools::RotationFormat, 3> formats {
-        TransformTools::RotationFormat::EulerWpr,
-        TransformTools::RotationFormat::EulerZyxIntrinsic,
-        TransformTools::RotationFormat::RotationVector,
+    const std::array<RobotDataFormats::Id, 3> formats {
+        RobotDataFormats::Id::EulerRzyx,
+        RobotDataFormats::Id::EulerRxyz,
+        RobotDataFormats::Id::RotationVector,
     };
 
     for (const auto fmt : formats) {
@@ -292,7 +293,7 @@ void TestCalibrationService::everyThreeValueFormatMatchesTransformTools()
             const auto v = splitNumbers(line);
             QCOMPARE(static_cast<int>(v.size()), 16);
 
-            const auto rot = TransformTools::rotationFromValues(
+            const auto rot = RobotDataFormats::buildRotation(
                 fmt, unit, { 0.5, -0.25, 0.125 });
             for (int r = 0; r < 3; ++r) {
                 for (int c = 0; c < 3; ++c) {
@@ -315,9 +316,9 @@ void TestCalibrationService::everyThreeValueFormatMatchesTransformTools()
 void TestCalibrationService::formatsTheCardCannotCarryAreRejected()
 {
     const QString raw = QStringLiteral("10 20 30 0.5 -0.25 0.125");
-    for (const auto fmt : { TransformTools::RotationFormat::QuatWxyz,
-                            TransformTools::RotationFormat::QuatXyzw,
-                            TransformTools::RotationFormat::RotationMatrix9 }) {
+    for (const auto fmt : { RobotDataFormats::Id::QuatWxyz,
+                            RobotDataFormats::Id::QuatXyzw,
+                            RobotDataFormats::Id::Matrix3x3Row }) {
         int poseType = -99;
         const QString line = CalibrationService::toSdkPoseLine(
             raw, fmt, TransformTools::AngleUnit::Degree, poseType);
@@ -329,7 +330,7 @@ void TestCalibrationService::formatsTheCardCannotCarryAreRejected()
 void TestCalibrationService::toSdkPoseLineRejectsBadInput()
 {
     int poseType = -99;
-    const auto fmt = TransformTools::RotationFormat::RotationVector;
+    const auto fmt = RobotDataFormats::Id::RotationVector;
 
     QVERIFY(CalibrationService::toSdkPoseLine(
                 QStringLiteral("1,2,3,4,5"), fmt,
@@ -347,14 +348,14 @@ void TestCalibrationService::toSdkPoseLineRejectsBadInput()
 
 void TestCalibrationService::poseFormatNamesAreDistinctAndComplete()
 {
-    const std::array<TransformTools::RotationFormat, 7> all {
-        TransformTools::RotationFormat::EulerRpy,
-        TransformTools::RotationFormat::EulerWpr,
-        TransformTools::RotationFormat::EulerZyxIntrinsic,
-        TransformTools::RotationFormat::QuatWxyz,
-        TransformTools::RotationFormat::QuatXyzw,
-        TransformTools::RotationFormat::RotationMatrix9,
-        TransformTools::RotationFormat::RotationVector,
+    const std::array<RobotDataFormats::Id, 7> all {
+        RobotDataFormats::Id::EulerSxyz,
+        RobotDataFormats::Id::EulerRzyx,
+        RobotDataFormats::Id::EulerRxyz,
+        RobotDataFormats::Id::QuatWxyz,
+        RobotDataFormats::Id::QuatXyzw,
+        RobotDataFormats::Id::Matrix3x3Row,
+        RobotDataFormats::Id::RotationVector,
     };
     QSet<QString> seen;
     for (const auto fmt : all) {
@@ -368,7 +369,7 @@ void TestCalibrationService::poseFormatNamesAreDistinctAndComplete()
     QCOMPARE(seen.size(), 7);
     // UR 的轴角必须说清楚是"旋转矢量"，否则界面上没人认得出该选哪个。
     QVERIFY(CalibrationService::poseFormatName(
-                TransformTools::RotationFormat::RotationVector)
+                RobotDataFormats::Id::RotationVector)
                 .contains(QStringLiteral("旋转矢量")));
 }
 

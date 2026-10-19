@@ -4,7 +4,6 @@
 
 #include <QtTest>
 #include <cmath>
-#include <stdexcept>
 #include <vector>
 
 using namespace TransformTools;
@@ -101,43 +100,18 @@ void TestTransformTools::eulerRpyKnownAngles()
     QVERIFY(rot3Near(ry90, { 0, 0, 1,
                              0, 1, 0,
                              -1, 0, 0 }));
-    // ZYX intrinsic: Rz(90) maps +X -> +Y, +Y -> -X
-    const Rot3 rz90 = eulerZyxIntrinsic(0, 0, kPi / 2.0);
+    // yaw = c: Rz(90) maps +X -> +Y, +Y -> -X
+    const Rot3 rz90 = eulerRpy(0, 0, kPi / 2.0);
     QVERIFY(rot3Near(rz90, { 0, -1, 0,
                              1, 0, 0,
                              0, 0, 1 }));
-}
-
-void TestTransformTools::eulerWprKnownAngles()
-{
-    // FANUC XYZ-WPR: values order (W, P, R), R = Rz(W) * Ry(P) * Rx(R).
-    // W = rotation about Z: 90 deg maps +X -> +Y
-    const Rot3 rz90 = rotationFromValues(RotationFormat::EulerWpr,
-                                         AngleUnit::Degree, { 90, 0, 0 });
-    QVERIFY(rot3Near(rz90, { 0, -1, 0,
-                             1, 0, 0,
-                             0, 0, 1 }));
-    // P = rotation about Y: 90 deg maps +X -> -Z
-    const Rot3 ry90 = rotationFromValues(RotationFormat::EulerWpr,
-                                         AngleUnit::Degree, { 0, 90, 0 });
-    QVERIFY(rot3Near(ry90, { 0, 0, 1,
-                             0, 1, 0,
-                             -1, 0, 0 }));
-    // R = rotation about X: 90 deg maps +Y -> +Z
-    const Rot3 rx90 = rotationFromValues(RotationFormat::EulerWpr,
-                                         AngleUnit::Degree, { 0, 0, 90 });
-    QVERIFY(rot3Near(rx90, { 1, 0, 0,
-                             0, 0, -1,
-                             0, 1, 0 }));
 }
 
 void TestTransformTools::eulerRpyDegreeMatchesRadian()
 {
-    const Rot3 deg = rotationFromValues(RotationFormat::EulerRpy,
-                                        AngleUnit::Degree, { 30, 60, 45 });
-    const Rot3 rad = rotationFromValues(RotationFormat::EulerRpy,
-                                        AngleUnit::Radian,
-                                        { 30 * kPi / 180.0, 60 * kPi / 180.0, 45 * kPi / 180.0 });
+    const Rot3 deg = eulerRpy(kPi / 6.0, kPi / 3.0, kPi / 4.0);
+    const Rot3 rad = eulerRpy(30.0 * kPi / 180.0, 60.0 * kPi / 180.0,
+                              45.0 * kPi / 180.0);
     QVERIFY(rot3Near(deg, rad));
 }
 
@@ -189,67 +163,6 @@ void TestTransformTools::rotationOrthonormal()
                      - r[1] * (r[3] * r[8] - r[5] * r[6])
                      + r[2] * (r[3] * r[7] - r[4] * r[6]);
     QVERIFY(near(det, 1.0, 1e-8));
-}
-
-void TestTransformTools::rotationFromValuesQuaternionOrders()
-{
-    // Same components, different declared order -> same rotation matrix.
-    const Rot3 wxyz = rotationFromValues(RotationFormat::QuatWxyz,
-                                         AngleUnit::Radian, { 0.5, 0.5, 0.5, 0.5 });
-    const Rot3 xyzw = rotationFromValues(RotationFormat::QuatXyzw,
-                                         AngleUnit::Radian, { 0.5, 0.5, 0.5, 0.5 });
-    QVERIFY(rot3Near(wxyz, quatToRot(0.5, 0.5, 0.5, 0.5)));
-    QVERIFY(rot3Near(wxyz, xyzw));
-}
-
-void TestTransformTools::rotationFromValuesMatrixPassthrough()
-{
-    const Rot3 m = rotationFromValues(RotationFormat::RotationMatrix9,
-                                      AngleUnit::Radian,
-                                      { 0, 0, 1,
-                                        0, 1, 0,
-                                        -1, 0, 0 });
-    QVERIFY(rot3Near(m, { 0, 0, 1,
-                          0, 1, 0,
-                          -1, 0, 0 }));
-}
-
-void TestTransformTools::rotationFromValuesRejectsWrongCount()
-{
-    QVERIFY_EXCEPTION_THROWN(
-        rotationFromValues(RotationFormat::EulerRpy, AngleUnit::Degree, { 1, 2 }),
-        std::invalid_argument);
-    QVERIFY_EXCEPTION_THROWN(
-        rotationFromValues(RotationFormat::QuatWxyz, AngleUnit::Degree, { 1, 2, 3 }),
-        std::invalid_argument);
-    QVERIFY_EXCEPTION_THROWN(
-        rotationFromValues(RotationFormat::RotationMatrix9, AngleUnit::Degree,
-                           { 1, 2, 3, 4, 5, 6, 7, 8 }),
-        std::invalid_argument);
-    QVERIFY_EXCEPTION_THROWN(
-        rotationFromValues(RotationFormat::RotationVector, AngleUnit::Degree, { 1, 2, 3, 4 }),
-        std::invalid_argument);
-}
-
-void TestTransformTools::rotationValueCounts()
-{
-    QCOMPARE(rotationValueCount(RotationFormat::EulerRpy), 3);
-    QCOMPARE(rotationValueCount(RotationFormat::EulerWpr), 3);
-    QCOMPARE(rotationValueCount(RotationFormat::EulerZyxIntrinsic), 3);
-    QCOMPARE(rotationValueCount(RotationFormat::QuatWxyz), 4);
-    QCOMPARE(rotationValueCount(RotationFormat::QuatXyzw), 4);
-    QCOMPARE(rotationValueCount(RotationFormat::RotationMatrix9), 9);
-    QCOMPARE(rotationValueCount(RotationFormat::RotationVector), 3);
-}
-
-void TestTransformTools::poseToMat4TranslationAndRotation()
-{
-    // 90 deg Rx + translation (1,2,3): y-axis point maps to (1, 2, 4).
-    const Mat4 pose = poseToMat4(1, 2, 3, RotationFormat::EulerRpy,
-                                 AngleUnit::Degree, { 90, 0, 0 });
-    double x = 0, y = 0, z = 0;
-    transformPoint(pose, 0, 1, 0, x, y, z);
-    QVERIFY(near(x, 1) && near(y, 2) && near(z, 4));
 }
 
 void TestTransformTools::eyeToHandPoint()

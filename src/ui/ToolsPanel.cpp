@@ -6,6 +6,7 @@
 #include "logic/EfortPoseReader.h"   // splitAddress：埃夫特地址只留 IP
 #include "logic/PixelTo3DService.h"
 #include "logic/PlyPointReader.h"
+#include "logic/RobotDataFormats.h"
 #include "logic/ToolInputParser.h"
 #include "logic/TransformTools.h"
 #include "logic/MeasureMethods.h"
@@ -21,6 +22,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
+#include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>   // QTableWidget's header API (incomplete type in QtWidgets)
@@ -32,6 +34,7 @@
 #include <QPaintEvent>
 #include <QPolygon>
 #include <QScrollArea>
+#include <QSignalBlocker>
 #include <QTextEdit>
 #include <QVBoxLayout>
 #include <QtConcurrent>
@@ -39,20 +42,78 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <string>
 #include <vector>
 
 namespace {
 
-// 手眼标定能用的位姿格式：卡片固定 6 个数（3 个平移 + 3 个旋转），所以只有
-// "3 个旋转数"的格式能进来 —— 四元数(4)与 3x3 矩阵(9)在卡片里表示不了。
-// 顺序 = 下拉框顺序。**注意索引不等于枚举值**（枚举里夹着四元数/矩阵），
-// 所以这里必须查表，不能像坐标转换页那样 static_cast。
-const std::array<TransformTools::RotationFormat, 4> kCalibPoseFormats {
-    TransformTools::RotationFormat::EulerRpy,
-    TransformTools::RotationFormat::EulerWpr,
-    TransformTools::RotationFormat::EulerZyxIntrinsic,
-    TransformTools::RotationFormat::RotationVector,
+using RobotDataFormats::Id;
+
+// 下拉框里的 Id 列表 —— 唯一出处是 RobotDataFormats::ids()。
+// 索引与 Id 不相等（常用档里夹着四元数/矩阵），所以一律把 Id 存进 itemData，
+// 不许 static_cast(currentIndex())。
+std::vector<Id> formatIdsForCombo(bool advanced, bool cardOnly)
+{
+    std::vector<Id> out;
+    for (const Id id : RobotDataFormats::ids(RobotDataFormats::Tier::Common))
+        if (!cardOnly || RobotDataFormats::cardUsable(id))
+            out.push_back(id);
+    if (advanced)
+        for (const Id id : RobotDataFormats::ids(RobotDataFormats::Tier::Advanced))
+            if (!cardOnly || RobotDataFormats::cardUsable(id))
+                out.push_back(id);
+    return out;
+}
+
+// 重建下拉框，尽量保持当前选中的 Id（勾选「高级」时列表变长，不能跳回第一项）。
+void rebuildFormatCombo(QComboBox* combo, bool advanced, bool cardOnly,
+                        Id selected)
+{
+    if (!combo)
+        return;
+    const QSignalBlocker blocker(combo);
+    combo->clear();
+    int selectedIndex = -1;
+    for (const Id id : formatIdsForCombo(advanced, cardOnly)) {
+        combo->addItem(RobotDataFormats::displayName(id), static_cast<int>(id));
+        if (id == selected)
+            selectedIndex = combo->count() - 1;
+    }
+    combo->setCurrentIndex(selectedIndex >= 0 ? selectedIndex : 0);
+}
+
+Id comboFormat(const QComboBox* combo, Id fallback = Id::EulerSxyz)
+{
+    if (!combo || combo->currentIndex() < 0)
+        return fallback;
+    const int raw = combo->currentData().toInt();
+    return RobotDataFormats::isValidId(raw) ? static_cast<Id>(raw) : fallback;
+}
+
+// 「试算各格式」的候选集：现场真正会遇到的几种。全 24 种 × 单位会让
+// 标定板模式重跑几十遍识别，那是「数据格式推算」页转动实验要解决的事，
+// 不该塞进这个按钮。顺序 = 先常见约定，再轴角。
+const std::vector<Id> kTryAllPoseFormats {
+    Id::EulerSxyz, Id::EulerRzyx, Id::EulerRzyz, Id::EulerRxyz,
+    Id::RotationVector,
 };
+
+// 推算页的输入：允许只贴 3 个旋转数，也允许贴整行 6 个数（只取后 3 个）。
+bool parseRotationTriple(const QString& text, std::array<double, 3>& out)
+{
+    const std::string raw = text.toStdString();
+    auto r = ToolInputParser::parseNumberList(raw, 3);
+    if (r.status == ToolInputParser::ParseStatus::Ok) {
+        out = { r.values[0], r.values[1], r.values[2] };
+        return true;
+    }
+    r = ToolInputParser::parseNumberList(raw, 6);
+    if (r.status == ToolInputParser::ParseStatus::Ok) {
+        out = { r.values[3], r.values[4], r.values[5] };
+        return true;
+    }
+    return false;
+}
 
 QLineEdit* makeTextInput(QWidget* parent)
 {
@@ -127,6 +188,7 @@ void ToolsPanel::buildUi()
     m_toolList->addItem(QStringLiteral("像素→3D"));
     m_toolList->addItem(QStringLiteral("手眼标定"));
     m_toolList->addItem(QStringLiteral("坐标转换"));
+    m_toolList->addItem(QStringLiteral("机器人数据格式推算"));
     m_toolList->addItem(QStringLiteral("机器人通信"));
     // 测量方法不再是一个"测量页 + 方法下拉框"，而是下面 buildMeasurePages()
     // 加进来的 8 个独立列表项（P3）。
@@ -145,6 +207,7 @@ void ToolsPanel::buildUi()
     buildPixelTo3DPage(m_stack);
     buildCalibrationPage(m_stack);
     buildTransformPage(m_stack);
+    buildFormatInferencePage(m_stack);
     buildRobotCommPage(m_stack);
     buildMeasurePages(m_stack);
     layout->addWidget(m_stack, 1);
@@ -171,23 +234,22 @@ void ToolsPanel::setAppConfig(AppConfig* cfg)
     // 预设读进来之后把下拉框摆到预设那一项上，并显示"已应用"。
     if (m_config && m_calibFormatCombo) {
         const auto fmt = m_config->calibPoseFormat();
-        const int idx = static_cast<int>(
-            std::find(kCalibPoseFormats.begin(), kCalibPoseFormats.end(), fmt)
-            - kCalibPoseFormats.begin());
-        if (idx >= 0 && idx < static_cast<int>(kCalibPoseFormats.size()))
-            m_calibFormatCombo->setCurrentIndex(idx);
+        // 预设可能落在常用档（绝大多数）或高级档；两档都展开后再定位。
+        rebuildFormatCombo(m_calibFormatCombo,
+                           RobotDataFormats::tier(fmt) == RobotDataFormats::Tier::Advanced,
+                           true, fmt);
+        if (m_calibAdvancedCheck)
+            m_calibAdvancedCheck->setChecked(
+                RobotDataFormats::tier(fmt) == RobotDataFormats::Tier::Advanced);
         m_calibAngleUnitCombo->setCurrentIndex(
             m_config->calibPoseAngleUnit() == TransformTools::AngleUnit::Radian ? 1 : 0);
         updateCalibFormatHint();
     }
 }
 
-TransformTools::RotationFormat ToolsPanel::currentCalibPoseFormat() const
+RobotDataFormats::Id ToolsPanel::currentCalibPoseFormat() const
 {
-    const int idx = m_calibFormatCombo ? m_calibFormatCombo->currentIndex() : 0;
-    if (idx < 0 || idx >= static_cast<int>(kCalibPoseFormats.size()))
-        return TransformTools::RotationFormat::EulerRpy;
-    return kCalibPoseFormats[static_cast<std::size_t>(idx)];
+    return comboFormat(m_calibFormatCombo, RobotDataFormats::Id::EulerSxyz);
 }
 
 TransformTools::AngleUnit ToolsPanel::currentCalibAngleUnit() const
@@ -773,8 +835,8 @@ void ToolsPanel::buildCalibrationPage(QStackedWidget* stack)
     fmtRow->setSpacing(8);
     m_calibFormatCombo = new ArrowComboBox(group);
     m_calibFormatCombo->setObjectName(QStringLiteral("calib_pose_format"));
-    for (const auto fmt : kCalibPoseFormats)
-        m_calibFormatCombo->addItem(CalibrationService::poseFormatName(fmt));
+    // 卡片只有 3 个旋转数：这里只列 RobotDataFormats 里 cardUsable 的格式。
+    rebuildFormatCombo(m_calibFormatCombo, false, true, Id::EulerSxyz);
     m_calibFormatCombo->setStyleSheet(Theme::comboBoxStyle());
     fmtRow->addWidget(m_calibFormatCombo, 1);
     m_calibApplyBtn = new QPushButton(QStringLiteral("应用"), group);
@@ -786,7 +848,12 @@ void ToolsPanel::buildCalibrationPage(QStackedWidget* stack)
     // 包一层 QWidget：整行的按需显隐靠 labelForField(widget)，布局本身不认。
     m_calibFormatRow = new QWidget(group);
     m_calibFormatRow->setLayout(fmtRow);
-    form->addRow(QStringLiteral("位姿格式"), m_calibFormatRow);
+    form->addRow(QStringLiteral("机器人数据格式"), m_calibFormatRow);
+
+    // 首尾同轴的 11 种默认不显示；勾上才进下拉框（保持当前选中项）。
+    m_calibAdvancedCheck = new QCheckBox(
+        QStringLiteral("显示高级格式（首尾同轴，如 ZYZ / XYX）"), group);
+    form->addRow(QString(), m_calibAdvancedCheck);
 
     m_calibFormatLabel = new QLabel(group);
     m_calibFormatLabel->setObjectName(QStringLiteral("calib_format_note"));
@@ -820,7 +887,7 @@ void ToolsPanel::buildCalibrationPage(QStackedWidget* stack)
     m_calibTryAllBtn->setObjectName(QStringLiteral("calib_try_all"));
     m_calibTryAllBtn->setStyleSheet(Theme::secondaryButtonStyle());
     m_calibTryAllBtn->setToolTip(QStringLiteral(
-        "同一份数据把 4 种位姿格式 x 度/弧度 各算一遍，按总平均误差排序"));
+        "同一份数据把 5 种常见位姿格式 x 度/弧度 各算一遍，按总平均误差排序"));
     btnRow->addWidget(m_calibTryAllBtn);
     // 用户反馈 9：在线（当前会话）路径已知，一键算并把用的路径显示出来。
     m_calibSessionBtn = new QPushButton(QStringLiteral("用当前会话"), group);
@@ -867,6 +934,11 @@ void ToolsPanel::buildCalibrationPage(QStackedWidget* stack)
             this, &ToolsPanel::applyCalibPoseFormat);
     connect(m_calibTryAllBtn, &QPushButton::clicked,
             this, &ToolsPanel::runTryAllPoseFormats);
+    connect(m_calibAdvancedCheck, &QCheckBox::toggled, this, [this](bool on) {
+        const Id current = currentCalibPoseFormat();
+        rebuildFormatCombo(m_calibFormatCombo, on, true, current);
+        updateCalibFormatHint();
+    });
     for (QComboBox* combo : { m_calibFormatCombo, m_calibAngleUnitCombo })
         connect(combo, QOverload<int>::of(&QComboBox::currentIndexChanged),
                 this, [this](int) { updateCalibFormatHint(); });
@@ -919,6 +991,7 @@ void ToolsPanel::updateCalibrationModeVisibility()
     // 位姿格式那两行跟"有没有拍照位姿这一列"同命；没有位姿数据时"试算各格式"
     // 也没意义（按钮在共享按钮行里，隐藏不了，改成禁用）。
     rowVisible(m_calibFormatRow, needPose);
+    rowVisible(m_calibAdvancedCheck, needPose);
     rowVisible(m_calibFormatLabel, needPose);
     if (m_calibTryAllBtn)
         m_calibTryAllBtn->setEnabled(needPose);
@@ -1198,40 +1271,42 @@ void ToolsPanel::runTryAllPoseFormats()
         return;
     }
 
-    // 标定板模式每种组合都要重跑一遍识别（N 帧 × 8），现场可能几分钟。
+    const int combinationCount = static_cast<int>(kTryAllPoseFormats.size()) * 2;
+    // 标定板模式每种组合都要重跑一遍识别（N 帧 × 组合数），现场可能几分钟。
     if (base.calibType == CalibType::Marker) {
         const auto answer = QMessageBox::question(
             this, QStringLiteral("试算各格式"),
             QStringLiteral(
-                "标定板模式下每一种组合都要把识别重跑一遍（共 8 次），"
+                "标定板模式下每一种组合都要把识别重跑一遍（共 %1 次），"
                 "数据多时可能需要几分钟。期间界面仍可操作，但请勿关闭程序。\n\n"
-                "现在开始试算吗？"),
+                "现在开始试算吗？").arg(combinationCount),
             QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
         if (answer != QMessageBox::Yes)
             return;
     }
 
-    const TransformTools::RotationFormat preset = m_config
+    const RobotDataFormats::Id preset = m_config
         ? m_config->calibPoseFormat() : base.poseFormat;
     const TransformTools::AngleUnit presetUnit = m_config
         ? m_config->calibPoseAngleUnit() : base.poseAngleUnit;
 
     m_calibTryAllBtn->setEnabled(false);
     m_calibTryAllBtn->setText(QStringLiteral("试算中..."));
-    m_calibHint->setText(QStringLiteral("正在试算 4 种格式 × 度/弧度 …（界面不卡）"));
+    m_calibHint->setText(QStringLiteral("正在试算 %1 种组合 …（界面不卡）")
+                             .arg(combinationCount));
 
     m_calibTryAllWatcher->setFuture(QtConcurrent::run(
         [folder, cameraLines, poseLines, tcpLines, base, preset, presetUnit]() {
             struct Row {
-                TransformTools::RotationFormat fmt;
+                RobotDataFormats::Id fmt;
                 TransformTools::AngleUnit unit;
                 bool ok = false;
                 double mean = 0.0;
                 QString error;
             };
             std::vector<Row> rows;
-            rows.reserve(8);
-            for (const auto fmt : kCalibPoseFormats) {
+            rows.reserve(static_cast<std::size_t>(kTryAllPoseFormats.size()) * 2);
+            for (const auto fmt : kTryAllPoseFormats) {
                 for (const auto unit : { TransformTools::AngleUnit::Degree,
                                          TransformTools::AngleUnit::Radian }) {
                     CalibrationService::Params p = base;
@@ -1352,15 +1427,14 @@ void ToolsPanel::buildTransformPage(QStackedWidget* stack)
     poseForm->addRow(QStringLiteral("位置 + 旋转"), m_poseInput);
 
     m_poseFormatCombo = new ArrowComboBox(m_poseGroup);
-    m_poseFormatCombo->addItem(QStringLiteral("欧拉角 RPY（Static XYZ，Yaskawa 安川）"));
-    m_poseFormatCombo->addItem(QStringLiteral("欧拉角 WPR（FANUC / KUKA ABC）"));
-    m_poseFormatCombo->addItem(QStringLiteral("欧拉角 ZYX 内旋（Rx·Ry·Rz）"));
-    m_poseFormatCombo->addItem(QStringLiteral("四元数（w x y z，ABB / HandEyeSDK 1）"));
-    m_poseFormatCombo->addItem(QStringLiteral("四元数（x y z w，ROS / HandEyeSDK 2）"));
-    m_poseFormatCombo->addItem(QStringLiteral("旋转矩阵（3×3，行主序）"));
-    m_poseFormatCombo->addItem(QStringLiteral("旋转矢量（轴角，UR 优傲）"));
+    m_poseFormatCombo->setObjectName(QStringLiteral("pose_format_combo"));
+    rebuildFormatCombo(m_poseFormatCombo, false, false, Id::EulerSxyz);
     m_poseFormatCombo->setStyleSheet(Theme::comboBoxStyle());
-    poseForm->addRow(QStringLiteral("姿态格式"), m_poseFormatCombo);
+    poseForm->addRow(QStringLiteral("机器人数据格式"), m_poseFormatCombo);
+
+    m_advancedFormatsCheck = new QCheckBox(
+        QStringLiteral("显示高级格式（首尾同轴，如 ZYZ / XYX）"), m_poseGroup);
+    poseForm->addRow(QString(), m_advancedFormatsCheck);
 
     m_angleUnitCombo = new ArrowComboBox(m_poseGroup);
     m_angleUnitCombo->addItem(QStringLiteral("度"));
@@ -1431,6 +1505,11 @@ void ToolsPanel::buildTransformPage(QStackedWidget* stack)
             this, [this](int) { updatePoseInputHint(); });
     connect(m_angleUnitCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [this](int) { updatePoseInputHint(); });
+    connect(m_advancedFormatsCheck, &QCheckBox::toggled, this, [this](bool on) {
+        const RobotDataFormats::Id current = comboFormat(m_poseFormatCombo);
+        rebuildFormatCombo(m_poseFormatCombo, on, false, current);
+        updatePoseInputHint();
+    });
     connect(m_transformCalcBtn, &QPushButton::clicked,
             this, &ToolsPanel::updateTransformResult);
     connect(m_transformCopyBtn, &QPushButton::clicked, this, [this]() {
@@ -1448,57 +1527,44 @@ void ToolsPanel::buildTransformPage(QStackedWidget* stack)
 
 void ToolsPanel::updatePoseInputHint()
 {
-    const auto fmt = static_cast<TransformTools::RotationFormat>(
-        m_poseFormatCombo->currentIndex());
+    const RobotDataFormats::Id fmt = comboFormat(m_poseFormatCombo);
+    const RobotDataFormats::Entry& e = RobotDataFormats::entry(fmt);
     const QString unit = m_angleUnitCombo->currentIndex() == 0
                              ? QStringLiteral("度")
                              : QStringLiteral("弧度");
 
     QString placeholder;
-    QString desc;
-    switch (fmt) {
-    case TransformTools::RotationFormat::EulerRpy:
-        placeholder = QStringLiteral("px, py, pz, rx, ry, rz（欧拉角 RPY，%1）").arg(unit);
-        desc = QStringLiteral(
-            "Static XYZ / RPY（外旋）：R = Rz·Ry·Rx，按 (rx, ry, rz) = (X, Y, Z) 直填；"
-            "Yaskawa 安川 RX/RY/RZ、珞石（官方 SDK 标 XYZ 欧拉角，单位弧度）、"
-            "FANUC 标准手册（W绕X、P绕Y、R绕Z）均按此直填");
+    switch (e.kind) {
+    case RobotDataFormats::Kind::Euler:
+        placeholder = e.usesAngleUnit
+            ? QStringLiteral("px, py, pz, 3 个旋转数（%1，%2）").arg(e.name, unit)
+            : QStringLiteral("px, py, pz, 3 个旋转数（%1）").arg(e.name);
         break;
-    case TransformTools::RotationFormat::EulerWpr:
-        placeholder = QStringLiteral("px, py, pz, w, p, r（FANUC WPR，%1）").arg(unit);
-        desc = QStringLiteral(
-            "按 (W, P, R) 直填：R = Rz(W)·Ry(P)·Rx(R)，即角度顺序 = 绕 Z、Y、X；"
-            "KUKA ABC 同此顺序；RVC 官方软件导出的 FANUC 位姿文件实测适用");
-        break;
-    case TransformTools::RotationFormat::EulerZyxIntrinsic:
-        placeholder = QStringLiteral("px, py, pz, rx, ry, rz（欧拉角 ZYX 内旋，%1）").arg(unit);
-        desc = QStringLiteral(
-            "ZYX 内旋：R = Rx·Ry·Rz，按 (rx, ry, rz) = (X, Y, Z) 输入；"
-            "与 Static XYZ（Rz·Ry·Rx）一般不相等");
-        break;
-    case TransformTools::RotationFormat::QuatWxyz:
-        placeholder = QStringLiteral("px, py, pz, w, x, y, z（四元数 w x y z）");
-        desc = QStringLiteral(
-            "四元数顺序 w x y z（标量在前）；ABB（RAPID Q1..Q4）、"
-            "RVC HandEyeSDK poseType=1");
-        break;
-    case TransformTools::RotationFormat::QuatXyzw:
-        placeholder = QStringLiteral("px, py, pz, x, y, z, w（四元数 x y z w）");
-        desc = QStringLiteral(
-            "四元数顺序 x y z w（标量在后）；ROS、RVC HandEyeSDK poseType=2");
-        break;
-    case TransformTools::RotationFormat::RotationMatrix9:
-        placeholder = QStringLiteral("px, py, pz, 旋转矩阵 9 个值（行主序）");
-        desc = QStringLiteral("3×3 旋转矩阵，行主序 9 个值");
-        break;
-    case TransformTools::RotationFormat::RotationVector:
+    case RobotDataFormats::Kind::RotationVector:
         placeholder = QStringLiteral("px, py, pz, rx, ry, rz（旋转矢量，%1）").arg(unit);
-        desc = QStringLiteral(
-            "旋转矢量（轴角）：方向 = 转轴，长度 = 转角；UR 优傲，长度单位随角度单位");
+        break;
+    case RobotDataFormats::Kind::Quaternion:
+        placeholder = fmt == RobotDataFormats::Id::QuatWxyz
+            ? QStringLiteral("px, py, pz, w, x, y, z（四元数 w x y z）")
+            : QStringLiteral("px, py, pz, x, y, z, w（四元数 x y z w）");
+        break;
+    case RobotDataFormats::Kind::Matrix3x3:
+        placeholder = fmt == RobotDataFormats::Id::Matrix3x3Col
+            ? QStringLiteral("px, py, pz, 旋转矩阵 9 个值（列主序）")
+            : QStringLiteral("px, py, pz, 旋转矩阵 9 个值（行主序）");
         break;
     }
     m_poseInput->setPlaceholderText(placeholder);
+
+    // 统一三行提示：常见机器人 / 原理 / 读法（唯一出处 = RobotDataFormats）。
+    QString desc = RobotDataFormats::hint(fmt);
+    if (!e.usesAngleUnit)
+        desc += QStringLiteral("\n角度单位：该格式不涉及角度单位（上方下拉框已禁用）");
     m_rotDescLabel->setText(desc);
+
+    // 四元数 / 旋转矩阵与“度/弧度”无关，禁用比留着更容易懂。
+    if (m_angleUnitCombo)
+        m_angleUnitCombo->setEnabled(e.usesAngleUnit);
 }
 
 void ToolsPanel::updateTransformResult()
@@ -1536,13 +1602,12 @@ void ToolsPanel::updateTransformResult()
     if (m_mountCombo->currentIndex() == 0) {
         TransformTools::eyeToHandPoint(camMat, cx, cy, cz, bx, by, bz);
     } else {
-        const auto fmt = static_cast<TransformTools::RotationFormat>(
-            m_poseFormatCombo->currentIndex());
+        const RobotDataFormats::Id fmt = comboFormat(m_poseFormatCombo);
         const auto unit = m_angleUnitCombo->currentIndex() == 0
                               ? TransformTools::AngleUnit::Degree
                               : TransformTools::AngleUnit::Radian;
         const size_t poseCount = 3 + static_cast<size_t>(
-            TransformTools::rotationValueCount(fmt));
+            RobotDataFormats::valueCount(fmt));
         ToolInputParser::ParseResult pose = ToolInputParser::parseNumberList(
             m_poseInput->text().toStdString(), poseCount);
         if (pose.status != ToolInputParser::ParseStatus::Ok) {
@@ -1557,7 +1622,7 @@ void ToolsPanel::updateTransformResult()
         const double py = TransformTools::toMillimeters(pose.values[1], poseUnit);
         const double pz = TransformTools::toMillimeters(pose.values[2], poseUnit);
         std::vector<double> rotVals(pose.values.begin() + 3, pose.values.end());
-        const TransformTools::Mat4 baseToTcp = TransformTools::poseToMat4(
+        const TransformTools::Mat4 baseToTcp = RobotDataFormats::poseToMat4(
             px, py, pz, fmt, unit, rotVals);
         TransformTools::eyeInHandPoint(camMat, baseToTcp, cx, cy, cz, bx, by, bz);
     }
@@ -1566,6 +1631,326 @@ void ToolsPanel::updateTransformResult()
     m_transformValues = QStringLiteral("%1, %2, %3")
         .arg(bx, 0, 'f', 3).arg(by, 0, 'f', 3).arg(bz, 0, 'f', 3);
     m_transformResult->setText(m_transformValues);
+}
+
+void ToolsPanel::buildFormatInferencePage(QStackedWidget* stack)
+{
+    auto* page = new QWidget(stack);
+    auto* pageLayout = new QVBoxLayout(page);
+
+    auto* group = new QGroupBox(QStringLiteral("机器人数据格式推算"), page);
+    auto* form = new QFormLayout(group);
+    form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    m_inferPage = page;
+
+    auto* intro = new QLabel(QStringLiteral(
+        "目的：只确认示教器上那 3 个旋转数属于 24 种欧拉约定中的哪一种。"
+        "角度单位、四元数顺序不在这里推断 —— 这些一般示教器或手册会直接写明。\n"
+        "推荐做法：让机器人停在一个三轴都不为 0 的普通姿态，只绕基坐标的一根轴转 15°~60°，"
+        "记下转动前后各一组数，并在「点动轴」里选你实际点的那根轴；"
+        "最好再做一组绕另一根基轴的点动。\n"
+        "实验 2、3 可留空：只做一组也能出结果，若出现多个候选，再补一组绕不同轴的点动。"), group);
+    intro->setWordWrap(true);
+    intro->setStyleSheet(QStringLiteral("color: %1; font-size: %2px;")
+        .arg(Theme::TEXT_HINT).arg(Theme::FONT_HINT));
+    form->addRow(intro);
+
+    m_inferMethodCombo = new ArrowComboBox(group);
+    m_inferMethodCombo->setObjectName(QStringLiteral("format_infer_method"));
+    m_inferMethodCombo->addItem(QStringLiteral("① 绕基坐标轴点动实验（推荐）"));
+    m_inferMethodCombo->addItem(QStringLiteral("② 绕工具坐标轴点动实验"));
+    m_inferMethodCombo->addItem(QStringLiteral("③ 用已有标定数据按残差排序"));
+    m_inferMethodCombo->setStyleSheet(Theme::comboBoxStyle());
+    form->addRow(QStringLiteral("确认方式"), m_inferMethodCombo);
+
+    m_inferUnitCombo = new ArrowComboBox(group);
+    m_inferUnitCombo->addItem(QStringLiteral("度"));
+    m_inferUnitCombo->addItem(QStringLiteral("弧度"));
+    m_inferUnitCombo->setStyleSheet(Theme::comboBoxStyle());
+    form->addRow(QStringLiteral("角度单位"), m_inferUnitCombo);
+
+    auto* expGroup = new QGroupBox(
+        QStringLiteral("点动实验（每行贴 3 个旋转数，或整行 6 个位姿数 —— 只取后 3 个）"),
+        group);
+    m_inferExperiments = expGroup;
+    auto* grid = new QGridLayout(expGroup);
+    grid->setHorizontalSpacing(8);
+    auto* axisHeader = new QLabel(QStringLiteral("点动轴"), expGroup);
+    auto* beforeHeader = new QLabel(QStringLiteral("转动前"), expGroup);
+    auto* afterHeader = new QLabel(QStringLiteral("转动后"), expGroup);
+    grid->addWidget(axisHeader, 0, 1);
+    grid->addWidget(beforeHeader, 0, 2);
+    grid->addWidget(afterHeader, 0, 3);
+    // 前两行默认绕不同轴：只转同一根轴分不开轴顺序循环换名的那几种约定。
+    const std::array<int, 3> defaultAxis { 0, 2, 1 };   // X, Z, Y
+    for (int i = 0; i < 3; ++i) {
+        auto* label = new QLabel(QStringLiteral("实验 %1").arg(i + 1), expGroup);
+        auto* axis = new ArrowComboBox(expGroup);
+        axis->setObjectName(QStringLiteral("format_infer_axis_%1").arg(i + 1));
+        axis->addItem(QStringLiteral("X 轴"));
+        axis->addItem(QStringLiteral("Y 轴"));
+        axis->addItem(QStringLiteral("Z 轴"));
+        axis->setCurrentIndex(defaultAxis[static_cast<std::size_t>(i)]);
+        axis->setStyleSheet(Theme::comboBoxStyle());
+        m_inferAxis[static_cast<std::size_t>(i)] = axis;
+        m_inferBefore[static_cast<std::size_t>(i)] = makeTextInput(expGroup);
+        m_inferAfter[static_cast<std::size_t>(i)] = makeTextInput(expGroup);
+        m_inferBefore[static_cast<std::size_t>(i)]->setPlaceholderText(
+            QStringLiteral("例如 12.3 -45.6 78.9"));
+        m_inferAfter[static_cast<std::size_t>(i)]->setPlaceholderText(
+            QStringLiteral("只填一组的可留空"));
+        grid->addWidget(label, i + 1, 0);
+        grid->addWidget(axis, i + 1, 1);
+        grid->addWidget(m_inferBefore[static_cast<std::size_t>(i)], i + 1, 2);
+        grid->addWidget(m_inferAfter[static_cast<std::size_t>(i)], i + 1, 3);
+    }
+    grid->setColumnStretch(2, 1);
+    grid->setColumnStretch(3, 1);
+    form->addRow(expGroup);
+
+    auto* btnRow = new QHBoxLayout();
+    btnRow->setSpacing(8);
+    m_inferRunBtn = new QPushButton(QStringLiteral("推算"), group);
+    m_inferRunBtn->setStyleSheet(Theme::primaryButtonStyle());
+    btnRow->addWidget(m_inferRunBtn);
+    m_inferApplyBtn = new QPushButton(QStringLiteral("应用为全局预设"), group);
+    m_inferApplyBtn->setStyleSheet(Theme::secondaryButtonStyle());
+    m_inferApplyBtn->setEnabled(false);
+    m_inferApplyBtn->setToolTip(QStringLiteral(
+        "把唯一判定的格式写进 AppConfig：手眼标定页与主界面「计算」都按它读卡片"));
+    btnRow->addWidget(m_inferApplyBtn);
+    m_inferCalibBtn = new QPushButton(
+        QStringLiteral("去手眼标定页「试算各格式」"), group);
+    m_inferCalibBtn->setStyleSheet(Theme::secondaryButtonStyle());
+    btnRow->addWidget(m_inferCalibBtn);
+    btnRow->addStretch();
+    form->addRow(QString(), btnRow);
+
+    m_inferHint = new QLabel(group);
+    m_inferHint->setStyleSheet(QStringLiteral("color: %1; font-size: %2px;")
+        .arg(Theme::ERROR).arg(Theme::FONT_HINT));
+    m_inferHint->setWordWrap(true);
+    form->addRow(QString(), m_inferHint);
+
+    m_inferResult = new QTextEdit(group);
+    m_inferResult->setObjectName(QStringLiteral("format_infer_result"));
+    m_inferResult->setReadOnly(true);
+    m_inferResult->setMinimumHeight(220);
+    m_inferResult->setStyleSheet(QStringLiteral(
+        "background: %1; border: 1px solid %2; border-radius: 4px; "
+        "font-size: %3px; color: %4; font-family: Consolas, monospace;")
+        .arg(Theme::BG_CARD).arg(Theme::BORDER_DEFAULT)
+        .arg(Theme::FONT_HINT).arg(Theme::TEXT_HINT));
+    form->addRow(QStringLiteral("结果"), m_inferResult);
+
+    pageLayout->addWidget(group);
+    pageLayout->addStretch();
+    stack->addWidget(wrapScrollable(page, stack));
+
+    connect(m_inferRunBtn, &QPushButton::clicked,
+            this, &ToolsPanel::updateFormatInference);
+    connect(m_inferApplyBtn, &QPushButton::clicked,
+            this, &ToolsPanel::applyInferredFormat);
+    connect(m_inferCalibBtn, &QPushButton::clicked, this, [this]() {
+        // 手眼标定页在左侧列表的第 3 项（0 基）：直接切过去，不用用户找。
+        if (m_toolList)
+            m_toolList->setCurrentRow(2);
+    });
+    connect(m_inferMethodCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int index) {
+                const bool experiment = index != 2;
+                m_inferExperiments->setEnabled(experiment);
+                m_inferUnitCombo->setEnabled(experiment);
+                m_inferRunBtn->setEnabled(experiment);
+                m_inferHint->clear();
+                m_inferBestValid = false;
+                m_inferApplyBtn->setEnabled(false);
+                if (!experiment) {
+                    m_inferResult->setPlainText(QStringLiteral(
+                        "方式 ③：用已经采好的手眼标定数据，把常见格式各算一遍，"
+                        "按 SDK 的总平均误差排序。\n\n"
+                        "点下面的「去手眼标定页」→ 载入会话或填好文件夹 → 点「试算各格式」。"
+                        "误差最小的那一行就是最贴近卡片的格式。\n\n"
+                        "注意：标定页的试算覆盖 5 种常见约定（sXYZ / rZYX / rZYZ / rXYZ / 轴角）；"
+                        "若是这 5 种以外的约定，请用方式 ①② 的点动实验 —— 它能判全部 24 种。"));
+                }
+            });
+    for (int i = 0; i < 3; ++i) {
+        for (QLineEdit* edit : { m_inferBefore[static_cast<std::size_t>(i)],
+                                 m_inferAfter[static_cast<std::size_t>(i)] }) {
+            connect(edit, &QLineEdit::textChanged, this, [this](const QString&) {
+                m_inferHint->clear();
+                m_inferBestValid = false;
+                m_inferApplyBtn->setEnabled(false);
+            });
+        }
+    }
+}
+
+void ToolsPanel::updateFormatInference()
+{
+    const int method = m_inferMethodCombo ? m_inferMethodCombo->currentIndex() : 0;
+    if (method == 2)
+        return;   // 方式 ③ 由标定页执行，本页只给入口
+
+    m_inferBestValid = false;
+    m_inferApplyBtn->setEnabled(false);
+
+    // 同一个标签既报错也报成功：颜色跟着结论走，别让成功也红着。
+    auto setHint = [this](const QString& text, const char* color) {
+        m_inferHint->setStyleSheet(QStringLiteral("color: %1; font-size: %2px;")
+                                       .arg(color).arg(Theme::FONT_HINT));
+        m_inferHint->setText(text);
+    };
+
+    const auto unit = m_inferUnitCombo->currentIndex() == 0
+                          ? TransformTools::AngleUnit::Degree
+                          : TransformTools::AngleUnit::Radian;
+    const auto frame = method == 0 ? RobotDataFormats::JogFrame::Base
+                                   : RobotDataFormats::JogFrame::Tool;
+    const QString frameName = method == 0 ? QStringLiteral("基坐标")
+                                          : QStringLiteral("工具坐标");
+
+    std::vector<RobotDataFormats::PosePair> pairs;
+    QStringList jogAxes;
+    QStringList errors;
+    const std::array<RobotDataFormats::Axis, 3> axes {
+        RobotDataFormats::Axis::X, RobotDataFormats::Axis::Y,
+        RobotDataFormats::Axis::Z };
+    for (int i = 0; i < 3; ++i) {
+        const QString before = m_inferBefore[static_cast<std::size_t>(i)]->text().trimmed();
+        const QString after = m_inferAfter[static_cast<std::size_t>(i)]->text().trimmed();
+        if (before.isEmpty() && after.isEmpty())
+            continue;
+        if (before.isEmpty() || after.isEmpty()) {
+            errors << QStringLiteral("实验 %1 只填了一半").arg(i + 1);
+            continue;
+        }
+        RobotDataFormats::PosePair pair;
+        if (!parseRotationTriple(before, pair.before)) {
+            errors << QStringLiteral("实验 %1 转动前：要 3 或 6 个数").arg(i + 1);
+            continue;
+        }
+        if (!parseRotationTriple(after, pair.after)) {
+            errors << QStringLiteral("实验 %1 转动后：要 3 或 6 个数").arg(i + 1);
+            continue;
+        }
+        const int axisIndex = m_inferAxis[static_cast<std::size_t>(i)]
+            ? m_inferAxis[static_cast<std::size_t>(i)]->currentIndex() : 0;
+        pair.jogAxis = axes[static_cast<std::size_t>(
+            axisIndex >= 0 && axisIndex < 3 ? axisIndex : 0)];
+        jogAxes << QStringLiteral("XYZ").mid(axisIndex, 1);
+        pairs.push_back(pair);
+    }
+
+    if (!errors.isEmpty()) {
+        setHint(errors.join(QStringLiteral("；")), Theme::ERROR);
+        return;
+    }
+    if (pairs.empty()) {
+        setHint(QStringLiteral("至少填一组完整的实验：转动前 + 转动后。"),
+                Theme::ERROR);
+        return;
+    }
+
+    const std::vector<RobotDataFormats::Candidate> ranked =
+        RobotDataFormats::inferEulerConventions(pairs, unit, frame);
+
+    std::vector<RobotDataFormats::Candidate> matched;
+    std::vector<RobotDataFormats::Candidate> missed;
+    for (const auto& c : ranked)
+        (c.axisAligned ? matched : missed).push_back(c);
+
+    QString out = QStringLiteral("── 推算结果（%1点动，%2 组实验，点动轴 %3）──\n")
+                      .arg(frameName)
+                      .arg(pairs.size())
+                      .arg(jogAxes.join(QStringLiteral(" / ")));
+
+    auto name = [](RobotDataFormats::Id id) {
+        return RobotDataFormats::displayName(id);
+    };
+
+    if (matched.size() == 1) {
+        m_inferBest = matched.front().id;
+        m_inferBestValid = true;
+        m_inferBestUnit = unit;
+        out += QStringLiteral("✔ 唯一匹配：%1\n   %2\n")
+                   .arg(name(m_inferBest), matched.front().detail);
+        out += QStringLiteral(
+            "\n判定依据：按这个约定读那 3 个数时，两次姿态的相对旋转正好绕基轴/工具轴，"
+            "\"转了几度、绕哪根轴\"都能对上。\n");
+        if (!missed.empty()) {
+            out += QStringLiteral("\n其它候选（最近的一行也偏差很大）：\n");
+            const int n = std::min<int>(3, static_cast<int>(missed.size()));
+            for (int i = 0; i < n; ++i) {
+                const auto& c = missed[static_cast<std::size_t>(i)];
+                out += QStringLiteral("  ✘ %1 — %2\n").arg(name(c.id), c.detail);
+            }
+        }
+    } else if (matched.empty()) {
+        out += QStringLiteral(
+            "✘ 24 种欧拉约定里没有一种能让相对旋转落在基轴/工具轴上。\n\n"
+            "按顺序检查：\n"
+            "  1. 角度单位选对了吗（度 / 弧度）？\n"
+            "  2. 点动方式选对了吗（基坐标 / 工具坐标）？\n"
+            "  3. 两次读数之间，机器人确实只绕一根轴转了吗？\n"
+            "  4. 转角是否在 5°~175° 之间？太小或接近 180° 都不稳定。\n"
+            "  5. 起始姿态是否过于特殊（某个角接近 0 或中间角接近 ±90°）？"
+            "换一个三轴都不为 0 的普通姿态重做。\n");
+        const int n = std::min<int>(5, static_cast<int>(missed.size()));
+        if (n > 0) {
+            out += QStringLiteral("\n最接近的候选（供参考）：\n");
+            for (int i = 0; i < n; ++i) {
+                const auto& c = missed[static_cast<std::size_t>(i)];
+                out += QStringLiteral("  %1 — %2\n").arg(name(c.id), c.detail);
+            }
+        }
+    } else {
+        out += QStringLiteral("⚠ 有 %1 种约定都通过了判据，还不能唯一确定：\n")
+                   .arg(matched.size());
+        for (const auto& c : matched)
+            out += QStringLiteral("  ✔ %1 — %2\n").arg(name(c.id), c.detail);
+        out += QStringLiteral(
+            "\n再做一组点动：绕另一根基轴（这次绕 X，下次就绕 Z），"
+            "转角仍取 15°~60°，起始姿态让三轴都不为 0。\n"
+            "两个方向的实验合在一起一般只剩一种候选。");
+    }
+
+    m_inferResult->setPlainText(out);
+    m_inferApplyBtn->setEnabled(m_inferBestValid);
+    if (m_inferBestValid)
+        setHint(QStringLiteral("判定唯一，可以点「应用为全局预设」。"), Theme::SUCCESS);
+    else
+        setHint(QString(), Theme::TEXT_HINT);
+}
+
+void ToolsPanel::applyInferredFormat()
+{
+    if (!m_inferBestValid || !m_config)
+        return;
+
+    m_config->setCalibPoseFormat(m_inferBest, m_inferBestUnit);
+
+    // 标定页的下拉框跟着走（它读的是同一份 AppConfig）。
+    if (m_calibFormatCombo) {
+        const bool advanced =
+            RobotDataFormats::tier(m_inferBest) == RobotDataFormats::Tier::Advanced;
+        if (m_calibAdvancedCheck)
+            m_calibAdvancedCheck->setChecked(advanced);
+        rebuildFormatCombo(m_calibFormatCombo, advanced, true, m_inferBest);
+        m_calibAngleUnitCombo->setCurrentIndex(
+            m_inferBestUnit == TransformTools::AngleUnit::Radian ? 1 : 0);
+        updateCalibFormatHint();
+    }
+
+    const QString unitName = m_inferBestUnit == TransformTools::AngleUnit::Radian
+                                 ? QStringLiteral("弧度") : QStringLiteral("度");
+    m_inferHint->setStyleSheet(QStringLiteral("color: %1; font-size: %2px;")
+                                   .arg(Theme::SUCCESS).arg(Theme::FONT_HINT));
+    m_inferHint->setText(QStringLiteral("已应用：%1 · %2。标定页与主界面「计算」都按它读卡片。")
+                             .arg(RobotDataFormats::displayName(m_inferBest), unitName));
+    emit logMessage(QStringLiteral("[数据格式] 推算结果已应用为全局预设：%1 · %2")
+                        .arg(RobotDataFormats::displayName(m_inferBest), unitName));
 }
 
 void ToolsPanel::buildRobotCommPage(QStackedWidget* stack)

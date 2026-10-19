@@ -135,6 +135,7 @@ private:
     void buildPixelTo3DPage(QStackedWidget* stack);
     void buildCalibrationPage(QStackedWidget* stack);
     void buildTransformPage(QStackedWidget* stack);
+    void buildFormatInferencePage(QStackedWidget* stack);
     void buildRobotCommPage(QStackedWidget* stack);
     // 8 个方法页（顺序 = MeasureTools::methodSpecs()），共用 MeasurePage 基类。
     void buildMeasurePages(QStackedWidget* stack);
@@ -162,16 +163,20 @@ private:
     //   戳点 + 眼在手上   → 位姿文件、相机点位文件、戳点文件、位姿单位
     //   戳点 + 眼在手外   → 相机点位文件、戳点文件（没有机器人拍照位姿这一列）
     void updateCalibrationModeVisibility();
-    // 下拉框里当前选的格式 / 角度单位（索引与 CalibrationService 的 3 数格式表一一对应）。
-    TransformTools::RotationFormat currentCalibPoseFormat() const;
+    // 下拉框里当前选的格式 / 角度单位（Id 存在 itemData 里，不靠索引）。
+    RobotDataFormats::Id currentCalibPoseFormat() const;
     TransformTools::AngleUnit currentCalibAngleUnit() const;
     // 刷新「位姿格式」下面那行说明：该格式是什么 + 是否已应用为全局预设。
     void updateCalibFormatHint();
     // 「应用」：写进 AppConfig 预设（主界面「计算」读它）。
     void applyCalibPoseFormat();
-    // 「试算各格式」：当前三列数据把 4 种格式 x 度/弧度 各算一遍，按总平均误差排序。
+    // 「试算各格式」：当前三列数据把 5 种常见格式 x 度/弧度 各算一遍，按总平均误差排序。
     void runTryAllPoseFormats();
     void onTryAllFinished();
+    // 机器人数据格式推算：把 1~3 组点动前后位姿喂给 RobotDataFormats 的推断器。
+    void updateFormatInference();
+    // 推算结果唯一时，把它写成全局预设（标定页/主界面计算都按它）。
+    void applyInferredFormat();
     // 发起一次标定（folder + 内存里的三列），结果走 onCalibrationFinished。
     void runCalibration(const QString& folder,
                         const std::vector<QString>& cameraLines,
@@ -229,6 +234,7 @@ private:
     QComboBox* m_calibPoseUnitCombo = nullptr;
     QComboBox* m_calibAngleUnitCombo = nullptr;
     QComboBox* m_calibFormatCombo = nullptr;   // 卡片里 3 个旋转数怎么读
+    QCheckBox* m_calibAdvancedCheck = nullptr; // 显示首尾同轴的 11 种
     QWidget* m_calibFormatRow = nullptr;       // 上面那行的容器（显隐用）
     QLabel* m_calibFormatLabel = nullptr;      // 该格式的说明 + 是否已应用
     QPushButton* m_calibApplyBtn = nullptr;    // 写进 AppConfig 预设（主界面也读它）
@@ -259,6 +265,7 @@ private:
     QLineEdit* m_poseInput = nullptr;
     QComboBox* m_poseUnitCombo = nullptr;
     QComboBox* m_poseFormatCombo = nullptr;
+    QCheckBox* m_advancedFormatsCheck = nullptr;  // 显示首尾同轴的高级格式
     QComboBox* m_angleUnitCombo = nullptr;
     QLabel* m_rotDescLabel = nullptr;
     QLabel* m_transformHint = nullptr;
@@ -266,6 +273,24 @@ private:
     QPushButton* m_transformCalcBtn = nullptr;
     QPushButton* m_transformCopyBtn = nullptr;
     QString m_transformValues;  // last computed base coords (values only)
+
+    // 机器人数据格式推算页
+    QWidget* m_inferPage = nullptr;
+    QComboBox* m_inferMethodCombo = nullptr;  // ① 基坐标点动 / ② 工具坐标点动 / ③ 标定残差
+    QComboBox* m_inferUnitCombo = nullptr;
+    QWidget* m_inferExperiments = nullptr;    // 方式 ③ 时整组禁用
+    std::array<QComboBox*, 3> m_inferAxis {}; // 这一组实际绕哪根轴点的
+    std::array<QLineEdit*, 3> m_inferBefore {};
+    std::array<QLineEdit*, 3> m_inferAfter {};
+    QLabel* m_inferHint = nullptr;
+    QTextEdit* m_inferResult = nullptr;
+    QPushButton* m_inferRunBtn = nullptr;
+    QPushButton* m_inferApplyBtn = nullptr;
+    QPushButton* m_inferCalibBtn = nullptr;
+    // 唯一判定时记住它，供「应用为全局预设」；否则保持无效。
+    RobotDataFormats::Id m_inferBest = RobotDataFormats::Id::EulerSxyz;
+    bool m_inferBestValid = false;
+    TransformTools::AngleUnit m_inferBestUnit = TransformTools::AngleUnit::Degree;
 
     // Robot communication tool (Modbus TCP / UR Realtime)
     QComboBox* m_robotProtocol = nullptr;

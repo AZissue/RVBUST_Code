@@ -129,25 +129,23 @@ void AppConfig::setLastMode(bool eyeInHand, bool markerType, bool concentric)
     save();
 }
 
-// 读回来的值可能是旧版本写的、也可能被手改坏：先卡在 RotationFormat 的 0..6 里
-// （越界调 rotationValueCount 会抛异常），再要求它是 3 个旋转数的格式 ——
-// 卡片固定 6 个数，四元数(4)与 3x3 矩阵(9)在标定里根本表达不了。
+// 读回来的值可能是旧版本写的、也可能被手改坏：必须是目录里存在的 Id，
+// 且是 3 个旋转数的格式 —— 卡片固定 6 个数，四元数(4)与 3x3 矩阵(9)
+// 在标定里根本表达不了。旧版本的 0..6 全部仍是合法 Id（0/1/2/6 可用）。
 namespace {
 bool usableAsCalibrationPoseFormat(int raw)
 {
-    if (raw < 0 || raw > static_cast<int>(TransformTools::RotationFormat::RotationVector))
-        return false;
-    return TransformTools::rotationValueCount(
-               static_cast<TransformTools::RotationFormat>(raw)) == 3;
+    const RobotDataFormats::Entry* e = RobotDataFormats::findEntry(raw);
+    return e != nullptr && e->cardUsable;
 }
 } // namespace
 
-TransformTools::RotationFormat AppConfig::calibPoseFormat() const
+RobotDataFormats::Id AppConfig::calibPoseFormat() const
 {
     const int raw = m_data.value("calib_pose_format", 0).toInt();
     if (!usableAsCalibrationPoseFormat(raw))
-        return TransformTools::RotationFormat::EulerRpy;
-    return static_cast<TransformTools::RotationFormat>(raw);
+        return RobotDataFormats::Id::EulerSxyz;
+    return static_cast<RobotDataFormats::Id>(raw);
 }
 
 TransformTools::AngleUnit AppConfig::calibPoseAngleUnit() const
@@ -157,7 +155,7 @@ TransformTools::AngleUnit AppConfig::calibPoseAngleUnit() const
         ? TransformTools::AngleUnit::Radian : TransformTools::AngleUnit::Degree;
 }
 
-void AppConfig::setCalibPoseFormat(TransformTools::RotationFormat fmt,
+void AppConfig::setCalibPoseFormat(RobotDataFormats::Id fmt,
                                    TransformTools::AngleUnit unit)
 {
     const int raw = static_cast<int>(fmt);

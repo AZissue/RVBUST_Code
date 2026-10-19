@@ -2,47 +2,19 @@
 
 #include <array>
 #include <cmath>
-#include <stdexcept>
-#include <vector>
 
 // Pure 4x4 homogeneous-transform helpers for the coordinate-transform /
 // robot walk-point validation tool.  No SDK/Qt dependency, unit-tested.
 namespace TransformTools {
 
-enum class RotationFormat {
-    EulerRpy,            // Static XYZ (RPY): R = Rz(g)*Ry(b)*Rx(a); KUKA ABC / FANUC WPR compatible
-    EulerWpr,            // FANUC XYZ-WPR: values order (W, P, R), R = Rz(W)*Ry(P)*Rx(R)
-    EulerZyxIntrinsic,   // R = Rx(a)*Ry(b)*Rz(g)
-    QuatWxyz,            // rotation values order: w, x, y, z
-    QuatXyzw,            // rotation values order: x, y, z, w
-    RotationMatrix9,     // 9 values, row-major 3x3
-    RotationVector       // axis-angle: vector length = angle (UR style)
-};
-
+// 位姿旋转格式的目录与全部换算已移到 logic/RobotDataFormats.{h,cpp}。
+// 这里只留下与“格式”无关的通用几何原语（以及 Vis 显示用的四元数构造）。
 enum class AngleUnit { Degree, Radian };
 enum class Mounting { EyeToHand, EyeInHand };
 enum class LengthUnit { Millimeter, Meter };
 
 using Mat4 = std::array<double, 16>; // row-major 4x4 (r00 r01 r02 tx ...)
 using Rot3 = std::array<double, 9>;  // row-major 3x3
-
-// Number of raw rotation values a format consumes (3 / 4 / 9).
-inline int rotationValueCount(RotationFormat fmt)
-{
-    switch (fmt) {
-    case RotationFormat::EulerRpy:
-    case RotationFormat::EulerWpr:
-    case RotationFormat::EulerZyxIntrinsic:
-    case RotationFormat::RotationVector:
-        return 3;
-    case RotationFormat::QuatWxyz:
-    case RotationFormat::QuatXyzw:
-        return 4;
-    case RotationFormat::RotationMatrix9:
-        return 9;
-    }
-    throw std::invalid_argument("TransformTools: unknown rotation format");
-}
 
 inline Mat4 mul4(const Mat4& a, const Mat4& b)
 {
@@ -85,6 +57,7 @@ inline double toMillimeters(double v, LengthUnit unit)
 }
 
 // R = Rz(g) * Ry(b) * Rx(a)  (Static XYZ / RPY).  Angles in radians.
+// 目录里对应 RobotDataFormats::Id::EulerSxyz；PoseGuide 的引导判据用它。
 inline Rot3 eulerRpy(double a, double b, double g)
 {
     const double ca = std::cos(a), sa = std::sin(a);
@@ -97,20 +70,8 @@ inline Rot3 eulerRpy(double a, double b, double g)
     };
 }
 
-// R = Rx(a) * Ry(b) * Rz(g)  (ZYX intrinsic).  Angles in radians.
-inline Rot3 eulerZyxIntrinsic(double a, double b, double g)
-{
-    const double ca = std::cos(a), sa = std::sin(a);
-    const double cb = std::cos(b), sb = std::sin(b);
-    const double cg = std::cos(g), sg = std::sin(g);
-    return {
-        cb * cg, -cb * sg, sb,
-        ca * sg + sa * sb * cg, ca * cg - sa * sb * sg, -sa * cb,
-        sa * sg - ca * sb * cg, sa * cg + ca * sb * sg, ca * cb
-    };
-}
-
 // Unit-quaternion -> rotation matrix.  Degenerate quaternion -> identity.
+// Shared by RobotDataFormats (quaternion entries) and the Vis scene display.
 inline Rot3 quatToRot(double qx, double qy, double qz, double qw)
 {
     const double norm = std::sqrt(qx * qx + qy * qy + qz * qz + qw * qw);
@@ -138,44 +99,6 @@ inline Rot3 rotationVectorToRot(double rx, double ry, double rz, AngleUnit unit)
         uy * ux * v + uz * s,  uy * uy * v + c,      uy * uz * v - ux * s,
         uz * ux * v - uy * s,  uz * uy * v + ux * s, uz * uz * v + c
     };
-}
-
-// Build a 3x3 rotation from raw format values.
-// Throws std::invalid_argument if the value count does not match the format.
-inline Rot3 rotationFromValues(RotationFormat fmt, AngleUnit unit,
-                               const std::vector<double>& v)
-{
-    if (static_cast<int>(v.size()) != rotationValueCount(fmt))
-        throw std::invalid_argument("TransformTools: rotation value count mismatch");
-    switch (fmt) {
-    case RotationFormat::EulerRpy:
-        return eulerRpy(toRadians(v[0], unit), toRadians(v[1], unit),
-                        toRadians(v[2], unit));
-    case RotationFormat::EulerWpr:
-        // FANUC XYZ-WPR: W about Z, P about Y, R about X.
-        return eulerRpy(toRadians(v[2], unit), toRadians(v[1], unit),
-                        toRadians(v[0], unit));
-    case RotationFormat::EulerZyxIntrinsic:
-        return eulerZyxIntrinsic(toRadians(v[0], unit), toRadians(v[1], unit),
-                                 toRadians(v[2], unit));
-    case RotationFormat::QuatWxyz:
-        return quatToRot(v[1], v[2], v[3], v[0]);
-    case RotationFormat::QuatXyzw:
-        return quatToRot(v[0], v[1], v[2], v[3]);
-    case RotationFormat::RotationMatrix9:
-        return Rot3{ v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8] };
-    case RotationFormat::RotationVector:
-        return rotationVectorToRot(v[0], v[1], v[2], unit);
-    }
-    throw std::invalid_argument("TransformTools: unknown rotation format");
-}
-
-// Build the 4x4 pose matrix from position + raw rotation values.
-inline Mat4 poseToMat4(double px, double py, double pz,
-                       RotationFormat fmt, AngleUnit unit,
-                       const std::vector<double>& rotValues)
-{
-    return makeMat4(rotationFromValues(fmt, unit, rotValues), px, py, pz);
 }
 
 // Eye-to-hand: p_base = T_cam->base * p_cam

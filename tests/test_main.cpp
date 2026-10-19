@@ -11,6 +11,7 @@
 #include "test_capture_flow_validation.h"
 #include "test_data_manager.h"
 #include "test_transform_tools.h"
+#include "test_robot_data_formats.h"
 #include "test_tool_input_parser.h"
 #include "test_pixel_to_3d.h"
 #include "test_calibration_service.h"
@@ -111,6 +112,10 @@ int main(int argc, char** argv)
     {
         TestTransformTools t5;
         status |= runClass(&t5, argc, argv, "transform_tools");
+    }
+    {
+        TestRobotDataFormats t5b;
+        status |= runClass(&t5b, argc, argv, "robot_data_formats");
     }
     {
         TestToolInputParser t6;

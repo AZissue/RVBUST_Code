@@ -32,8 +32,8 @@ private slots:
     void eulerRpyStaysOnTheOldPoseTypeZeroPath();
     // UR 的轴角旋转矢量：卡片 3 个数不能当欧拉读，必须转成 16 数矩阵（poseType=3）。
     void rotationVectorBecomesMatrix16();
-    // 四种 3 数格式 x 度/弧度：输出的 3x3 必须等于 TransformTools 的同一转换。
-    void everyThreeValueFormatMatchesTransformTools();
+    // 四种 3 数格式 x 度/弧度：输出的 3x3 必须等于 RobotDataFormats 的同一转换。
+    void everyThreeValueFormatMatchesCatalog();
     // 卡片只有 6 个数：四元数(4)/9 数矩阵在这里无法表示，应拒绝而不是抛异常。
     void formatsTheCardCannotCarryAreRejected();
     void toSdkPoseLineRejectsBadInput();

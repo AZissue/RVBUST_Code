@@ -8,6 +8,8 @@ set(TEST_SOURCES
     test_capture_flow_validation.cpp
     test_data_manager.cpp
     test_transform_tools.cpp
+    # 机器人数据格式目录 + 24 种欧拉约定的正/逆解 + 点动实验推算。
+    test_robot_data_formats.cpp
     test_tool_input_parser.cpp
     test_pixel_to_3d.cpp
     test_calibration_service.cpp
@@ -56,6 +58,8 @@ add_executable(unit_tests ${TEST_SOURCES}
     ${CMAKE_SOURCE_DIR}/src/sdk/HandEyeSDKBridge.cpp
     ${CMAKE_SOURCE_DIR}/src/logic/DataManager.cpp
     ${CMAKE_SOURCE_DIR}/src/logic/CalibrationService.cpp
+    # RobotDataFormats 被 CalibrationService 引用；纯 Qt，无 SDK。
+    ${CMAKE_SOURCE_DIR}/src/logic/RobotDataFormats.cpp
     ${CMAKE_SOURCE_DIR}/src/logic/RobotPose.cpp
     ${CMAKE_SOURCE_DIR}/src/logic/URRealtimeReader.cpp
     # UR RTDE（30004）适配器：握手 + 推流解析（MockRtdeServer 在 test_robot_pose.cpp）
