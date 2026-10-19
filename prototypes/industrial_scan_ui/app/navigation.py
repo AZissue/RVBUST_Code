@@ -12,6 +12,11 @@ class NavigationMixin:
         self._navigation_enabled = True
         self.setFocusPolicy(Qt.StrongFocus)
 
+    def _notify_view_changed(self):
+        self.update()
+        if hasattr(self, 'view_changed'):
+            self.view_changed.emit()
+
     def _pivot_pixel(self):
         return self.width()/2+self.pan[0], self.height()/2+self.pan[1]
 
@@ -22,11 +27,11 @@ class NavigationMixin:
         scale = min(self.width(), self.height())*1.65/self.extent*self.zoom
         self.pan += [shift[0]*scale, -shift[1]*scale]
         self.center = point.copy()
-        self.update()
+        self._notify_view_changed()
 
     def set_view(self, name):
         self.rotation.set_view(name)
-        self.update()
+        self._notify_view_changed()
 
     def mousePressEvent(self, event):
         if event.button() not in (Qt.LeftButton, Qt.RightButton, Qt.MiddleButton):

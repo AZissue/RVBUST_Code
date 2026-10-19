@@ -19,11 +19,13 @@ uniform mat4 mvp;
 uniform vec3 offset;
 uniform float pointSize;
 uniform int colorMode;
+uniform int markerMode;
 uniform vec2 heightRange;
 out vec4 pointColor;
 void main() {
     vec3 p = position + offset;
     gl_Position = mvp * vec4(p, 1.0);
+    if (markerMode == 1) gl_Position.z -= 0.00003 * gl_Position.w;
     gl_PointSize = pointSize;
     float h = clamp((p.z-heightRange.x)/max(heightRange.y-heightRange.x,0.00001),0.0,1.0);
     pointColor = colorMode==1 ? vec4(.25+.65*h,.7+.2*h,.95-.65*h,1) :
@@ -31,14 +33,22 @@ void main() {
 }'''
 FRAGMENT_SHADER = '''#version 330 core
 in vec4 pointColor;
+uniform int markerMode;
 out vec4 fragColor;
-void main() { fragColor = pointColor; }
+void main() {
+    if (markerMode == 1) {
+        float r = length(gl_PointCoord - vec2(0.5));
+        if (r > 0.5 || r < 0.30) discard;
+    }
+    fragColor = pointColor;
+}
 '''
 
 
 class GpuCloudCanvas(NavigationMixin, QOpenGLWidget):
     render_failed = Signal(str)
     status_changed = Signal()
+    view_changed = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -76,6 +86,9 @@ class GpuCloudCanvas(NavigationMixin, QOpenGLWidget):
         self._buffers = {}
         self._program = None
         self._grid_buffer = None
+        self._marker_buffer = None
+        self._marker_points = []
+        self._markers_dirty = True
         self.uploads = 0
         self._restore = QTimer(self)
         self._restore.setSingleShot(True)
@@ -147,7 +160,7 @@ class GpuCloudCanvas(NavigationMixin, QOpenGLWidget):
                                            compileShader(FRAGMENT_SHADER, GL.GL_FRAGMENT_SHADER))
             self._vao = GL.glGenVertexArrays(1)
             self._uniforms = {name: GL.glGetUniformLocation(self._program, name) for name in
-                              ('mvp', 'offset', 'pointSize', 'colorMode', 'heightRange')}
+                              ('mvp', 'offset', 'pointSize', 'colorMode', 'heightRange', 'markerMode')}
             GL.glEnable(GL.GL_DEPTH_TEST)
             GL.glEnable(GL.GL_PROGRAM_POINT_SIZE)
             self.context().aboutToBeDestroyed.connect(self.cleanup)
@@ -212,6 +225,7 @@ class GpuCloudCanvas(NavigationMixin, QOpenGLWidget):
             gl.glBindVertexArray(self._vao)
             self._upload()
             gl.glUseProgram(self._program)
+            gl.glUniform1i(self._uniforms['markerMode'], 0)
             gl.glUniformMatrix4fv(self._uniforms['mvp'], 1, False, np.asarray(self._matrix().data(), dtype=np.float32))
             gl.glUniform1f(self._uniforms['pointSize'], self.point_size * self.devicePixelRatioF())
             mode = {'原始颜色': 0, '高度着色': 1, '统一颜色': 2}[self.color_mode]
@@ -223,6 +237,7 @@ class GpuCloudCanvas(NavigationMixin, QOpenGLWidget):
                     self._bind(self._buffers[frame.key][0])
                     gl.glUniform3f(self._uniforms['offset'], *(frame.origin - self.center).astype(float))
                     gl.glDrawArrays(gl.GL_POINTS, 0, count)
+            self._draw_markers()
             if self.grid:
                 self._draw_grid()
             gl.glBindVertexArray(0)
@@ -244,6 +259,39 @@ class GpuCloudCanvas(NavigationMixin, QOpenGLWidget):
                 painter.drawLine(int(origin[0]), int(origin[1]), int(end[0]), int(end[1]))
                 painter.drawText(int(end[0])+3, int(end[1])-3, text)
         painter.end()
+
+    def set_marker_annotations(self, points):
+        self._marker_points = list(points)
+        self._markers_dirty = True
+        self.update()
+
+    def _draw_markers(self):
+        if not self._marker_points:
+            return
+        from ..core.render_cache import PACK_DTYPE
+        gl = self.gl
+        if self._markers_dirty:
+            xyz = np.asarray([item[1][0] for item in self._marker_points], dtype=float)
+            self._marker_origin = xyz.mean(axis=0)
+            packed = np.empty(len(xyz), dtype=PACK_DTYPE)
+            packed['position'] = xyz-self._marker_origin
+            packed['color'] = [QColor(item[1][1]).getRgb() for item in self._marker_points]
+            if self._marker_buffer is None:
+                self._marker_buffer = gl.glGenBuffers(1)
+            gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self._marker_buffer)
+            gl.glBufferData(gl.GL_ARRAY_BUFFER, packed.nbytes, packed, gl.GL_STATIC_DRAW)
+            self._markers_dirty = False
+        self._bind(self._marker_buffer)
+        gl.glUniform3f(self._uniforms['offset'], *(self._marker_origin-self.center).astype(float))
+        gl.glUniform1i(self._uniforms['colorMode'], 0)
+        gl.glUniform1i(self._uniforms['markerMode'], 1)
+        gl.glUniform1f(self._uniforms['pointSize'], 11*self.devicePixelRatioF())
+        gl.glDepthFunc(gl.GL_LEQUAL)
+        gl.glDepthMask(gl.GL_FALSE)
+        gl.glDrawArrays(gl.GL_POINTS, 0, len(self._marker_points))
+        gl.glDepthMask(gl.GL_TRUE)
+        gl.glDepthFunc(gl.GL_LESS)
+        gl.glUniform1i(self._uniforms['markerMode'], 0)
 
     def _draw_grid(self):
         from ..core.render_cache import PACK_DTYPE
@@ -304,13 +352,13 @@ class GpuCloudCanvas(NavigationMixin, QOpenGLWidget):
             self.extent = max(float(np.linalg.norm(high-low)), 10.)
         self.zoom = 1.
         self.pan[:] = 0
-        self.update()
+        self._notify_view_changed()
 
     def _begin_interaction(self):
         changed = not self._moving
         self._moving = True
         self._restore.start(self.policy.restore_ms)
-        self.update()
+        self._notify_view_changed()
         if changed:
             self.status_changed.emit()
 
@@ -330,6 +378,10 @@ class GpuCloudCanvas(NavigationMixin, QOpenGLWidget):
         for buffer, _ in self._buffers.values():
             gl.glDeleteBuffers(1, [buffer])
         self._buffers.clear()
+        if self._marker_buffer is not None:
+            gl.glDeleteBuffers(1, [self._marker_buffer])
+            self._marker_buffer = None
+            self._markers_dirty = True
         if self._grid_buffer is not None:
             gl.glDeleteBuffers(1, [self._grid_buffer])
             self._grid_buffer = None

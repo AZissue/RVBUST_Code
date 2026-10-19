@@ -13,6 +13,7 @@ from ui_common.symbols import icon
 from ui_common.worker_thread import WorkerThread
 from ..core.session import ScanSession, demo_cloud, crop_background, read_cloud, write_cloud
 from .viewer_factory import create_canvas
+from .marker_inspector import MarkerInspector
 
 
 STYLE = '''
@@ -265,6 +266,7 @@ class ScanWorkbench(QWidget):
             self.canvas.render_failed.connect(self._renderer_failed)
         self._view_layout = view_layout
         view_layout.addWidget(self.canvas, 1)
+        self.marker_inspector = MarkerInspector(self.canvas, self.load_frame_results)
         details = QWidget()
         details_layout = QHBoxLayout(details)
         details_layout.setContentsMargins(16, 8, 16, 8)
@@ -308,6 +310,61 @@ class ScanWorkbench(QWidget):
         root.addWidget(self.logs)
         self.status = QLabel('离线演示  |  单位 mm  |  未连接相机', objectName='status')
         root.addWidget(self.status)
+
+    def set_frame_observation(self, frame_id, image, markers, *, layer_index=None,
+                              reference_id=None, reference_markers=None, used_codes=None,
+                              rejected_codes=(), registration_accepted=None):
+        index = self._selected_index() if layer_index is None else layer_index
+        if index is None or not 0 <= index < len(self.session.layers):
+            raise ValueError('请先选择对应的点云图层')
+        markers = list(markers)
+        if not all(isinstance(marker, dict) for marker in markers):
+            raise ValueError('markers 必须是检测结果对象列表')
+        self.session.layers[index].observation = dict(
+            frame_id=frame_id, image=image, markers=list(markers), reference_id=reference_id,
+            reference_markers=reference_markers, used_codes=used_codes,
+            rejected_codes=rejected_codes, registration_accepted=registration_accepted)
+        self._show_frame_observation()
+
+    def _show_frame_observation(self):
+        index = self._selected_index()
+        observation = self.session.layers[index].observation if index is not None and index < len(self.session.layers) else None
+        if observation is None:
+            self.marker_inspector.set_frame(None, [])
+            return
+        data = dict(observation)
+        previous = [layer.observation for layer in self.session.layers[:index] if layer.observation]
+        if data.get('reference_markers') is None and data.get('reference_id') is not None:
+            reference = next((item for item in reversed(previous) if item['frame_id'] == data['reference_id']), None)
+            data['reference_markers'] = reference['markers'] if reference else None
+        self.marker_inspector.set_frame(**data,
+            history=[layer.observation['markers'] for layer in self.session.layers[:index] if layer.visible and layer.observation],
+            current_visible=self.session.layers[index].visible)
+
+    def load_frame_results(self):
+        import json
+        path, _ = QFileDialog.getOpenFileName(self, '载入当前帧检测结果', '', '检测结果 (*.json)')
+        if not path:
+            return
+        try:
+            data = json.loads(Path(path).read_text(encoding='utf-8'))
+            image_path = data.get('image')
+            if image_path:
+                image_path = Path(path).parent / image_path
+            else:
+                image_path, _ = QFileDialog.getOpenFileName(self, '选择当前帧2D图像', '', '图像 (*.png *.jpg *.jpeg *.bmp *.tif *.tiff)')
+                if not image_path:
+                    return
+            from .marker_inspector import load_image
+            if load_image(image_path).isNull():
+                raise ValueError('无法读取2D图像')
+            self.set_frame_observation(data.get('frame_id', data.get('frame', Path(path).stem)),
+                str(image_path), data['markers'], reference_id=data.get('reference_id', data.get('reference')),
+                reference_markers=data.get('reference_markers'), used_codes=data.get('used_codes'),
+                rejected_codes=data.get('rejected_codes', []), registration_accepted=data.get('registration_accepted'))
+            self.log('已关联当前图层的2D图像与编码圆结果：' + path)
+        except (ValueError, KeyError, TypeError, OSError) as exc:
+            QMessageBox.warning(self, '检测结果载入失败', str(exc))
 
     def set_devices(self, devices):
         self._devices = list(devices)
@@ -372,6 +429,7 @@ class ScanWorkbench(QWidget):
             layer = self.session.layers[idx]
             self.details.setText(f'{layer.name}  /  {len(layer.points):,} 点  /  {layer.source}')
             self.details.setToolTip(layer.source)
+        self._show_frame_observation()
         self._refresh_controls()
 
     def _refresh_controls(self):
@@ -425,6 +483,7 @@ class ScanWorkbench(QWidget):
         self.canvas.set_layers(self.session.layers, fit=True)
         self._display_changed()
         self.canvas.show()
+        self.marker_inspector.bind_viewport(self.canvas)
         self.log(message + ' 兼容模式仅用于预览，非大点云 GPU 渲染。', 'error')
         self.log_toggle.setChecked(True)
         self._render_status()
@@ -437,6 +496,7 @@ class ScanWorkbench(QWidget):
             self.session.layers[idx].visible = item.checkState(0) == Qt.Checked
             self._changed()
             self.canvas.set_layers(self.session.layers)
+            self._show_frame_observation()
             self._refresh_controls()
 
     def _display_changed(self, *_):

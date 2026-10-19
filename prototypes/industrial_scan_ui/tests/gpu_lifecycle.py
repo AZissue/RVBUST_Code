@@ -34,18 +34,33 @@ def main():
     gpu.repaint()
     app.processEvents()
     assert len(gpu._buffers) == 1
+    win.set_frame_observation(1, None, [dict(code=7,x_2d=10,y_2d=10,
+        x_3d=.5,y_3d=.5,z_3d=.5,valid_3d=True,world=[.5,.5,.5])])
+    gpu.repaint()
+    app.processEvents()
+    assert gpu._marker_buffer is not None, 'marker VBO was not uploaded'
+    uploads = gpu.uploads
+    marker_buffer = gpu._marker_buffer
+    gpu.set_view('顶视')
+    gpu.repaint()
+    assert gpu.uploads == uploads and gpu._marker_buffer == marker_buffer
+    assert len(win.marker_inspector.world_overlay.points) == 1
     win.session.layers = []
     win._refresh()
     wait_for(lambda: not gpu.is_busy)
     gpu.repaint()
     app.processEvents()
     assert not gpu._buffers, 'deleted frame retained GPU allocation'
+    assert not gpu._marker_points, 'deleted frame retained marker annotations'
     # Deliberately exercise the visible downgrade path; not an actual driver failure.
     gpu._fail('验收测试主动触发渲染失败')
     wait_for(lambda: isinstance(win.canvas, CloudCanvas))
     assert '兼容' in win.status.text()
     assert win.log_toggle.isChecked()
     assert not win.render_quality.isEnabled()
+    assert win.marker_inspector.viewport is win.canvas
+    assert win.marker_inspector.parent() is win.canvas
+    assert win.marker_inspector.world_overlay.viewport is win.canvas
     win._dirty = False
     win.close()
     assert not win.isVisible()

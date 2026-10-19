@@ -57,6 +57,7 @@ class CloudCanvas(NavigationMixin, QWidget):
             self._moving = True
             self.set_layers(self._layers)
         self._restore.start(220)
+        self._notify_view_changed()
 
     def _end_interaction(self):
         if self._last is not None:
@@ -98,7 +99,7 @@ class CloudCanvas(NavigationMixin, QWidget):
             self.extent = max(float(np.linalg.norm(high - low)), 10.)
         self.zoom = 1.0
         self.pan[:] = 0
-        self.update()
+        self._notify_view_changed()
 
     def project(self, points):
         rotated = (np.asarray(points) - self.center) @ self.rotation.matrix.T
