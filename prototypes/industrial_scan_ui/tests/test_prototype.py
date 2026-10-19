@@ -161,15 +161,15 @@ class PrototypeTests(unittest.TestCase):
         self.assertEqual(canvas.point_size, 4)
         self.assertEqual(canvas.color_mode, '高度着色')
         canvas.resize(800, 500)
-        before = canvas.yaw
+        before = canvas.rotation.matrix.copy()
         QTest.mousePress(canvas, Qt.LeftButton, pos=QPoint(200, 200))
         move = QMouseEvent(QMouseEvent.MouseMove, QPointF(240, 220), QPointF(240, 220),
                            Qt.NoButton, Qt.LeftButton, Qt.NoModifier)
         QApplication.sendEvent(canvas, move)
         QTest.mouseRelease(canvas, Qt.LeftButton, pos=QPoint(240, 220))
-        self.assertNotEqual(canvas.yaw, before)
+        self.assertFalse(np.allclose(canvas.rotation.matrix, before))
         canvas.set_view('顶视')
-        self.assertEqual(canvas.pitch, 0)
+        np.testing.assert_allclose(canvas.rotation.matrix, np.eye(3))
         # Exercise all paint branches with a headless image.
         self.assertFalse(canvas.grab().isNull())
 

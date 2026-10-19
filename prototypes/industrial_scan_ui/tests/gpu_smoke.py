@@ -71,7 +71,8 @@ def main():
                     wait_for(lambda: not canvas._moving)
                 samples = []
                 for _ in range(12):
-                    canvas.yaw += 2
+                    canvas.rotation.drag((640., 360.), (646., 362.),
+                                         canvas.width(), canvas.height(), canvas._pivot_pixel())
                     canvas.makeCurrent()
                     t0 = time.perf_counter()
                     # Bind widget FBO; render completion is synchronized for the test only.

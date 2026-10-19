@@ -3,9 +3,10 @@ import numpy as np
 from PySide6.QtCore import Qt, QPointF, Signal, QTimer
 from PySide6.QtGui import QColor, QPainter, QPen, QPolygonF, QLinearGradient
 from PySide6.QtWidgets import QWidget
+from .navigation import NavigationMixin
 
 
-class CloudCanvas(QWidget):
+class CloudCanvas(NavigationMixin, QWidget):
     view_changed = Signal()
     status_changed = Signal()
     MAX_PREVIEW = 18000
@@ -16,7 +17,7 @@ class CloudCanvas(QWidget):
         self.setMouseTracking(True)
         self.setCursor(Qt.OpenHandCursor)
         self.setFocusPolicy(Qt.StrongFocus)
-        self.yaw, self.pitch, self.zoom = -28., 57., 1.
+        self.zoom = 1.
         self.pan = np.zeros(2)
         self.center = np.zeros(3)
         self.extent = 340.
@@ -34,6 +35,7 @@ class CloudCanvas(QWidget):
         self._restore = QTimer(self)
         self._restore.setSingleShot(True)
         self._restore.timeout.connect(self._end_interaction)
+        self._init_navigation()
 
     @property
     def is_busy(self):
@@ -48,7 +50,7 @@ class CloudCanvas(QWidget):
         pass
 
     def shutdown(self):
-        self._restore.stop()
+        self._stop_navigation()
 
     def _begin_interaction(self):
         if not self._moving:
@@ -98,21 +100,11 @@ class CloudCanvas(QWidget):
         self.pan[:] = 0
         self.update()
 
-    def set_view(self, name):
-        self.yaw, self.pitch = {'等轴测': (-28, 57), '顶视': (0, 0),
-                               '正视': (0, 90), '右视': (90, 90)}[name]
-        self.update()
-
     def project(self, points):
-        yaw, pitch = np.radians([self.yaw, self.pitch])
-        rz = np.array([[np.cos(yaw), -np.sin(yaw), 0],
-                       [np.sin(yaw), np.cos(yaw), 0], [0, 0, 1]])
-        rx = np.array([[1, 0, 0], [0, np.cos(pitch), -np.sin(pitch)],
-                       [0, np.sin(pitch), np.cos(pitch)]])
-        rotated = (np.asarray(points) - self.center) @ (rx @ rz).T
+        rotated = (np.asarray(points) - self.center) @ self.rotation.matrix.T
         scale = min(self.width(), self.height()) * 1.65 / self.extent * self.zoom
         xy = rotated[:, :2] * [scale, -scale]
-        xy += [self.width() / 2 + self.pan[0], self.height() / 2 + self.pan[1] + 18]
+        xy += [self.width() / 2 + self.pan[0], self.height() / 2 + self.pan[1]]
         return xy, rotated[:, 2]
 
     def paintEvent(self, event):
@@ -155,49 +147,20 @@ class CloudCanvas(QWidget):
         painter.drawText(22, 31, '3D VIEW / 正交投影预览')
         painter.setPen(QColor('#c9d0d5'))
         painter.drawText(22, 53, f'{self.total_points:,} 点  ·  预览 {len(self._points):,} 点  ·  mm')
-        painter.drawText(22, self.height() - 20, '左键旋转   ·   右键 / Shift 平移   ·   滚轮缩放   ·   双击适配')
-        painter.setPen(QPen(QColor('#aab5bf'), 1))
-        painter.setBrush(QColor('#59636d'))
-        painter.drawRoundedRect(self.width() - 78, 24, 52, 48, 6, 6)
-        painter.setPen(QColor('#e4e9ed'))
-        painter.drawText(self.width() - 78, 24, 52, 48, Qt.AlignCenter, 'TOP')
+        painter.drawText(22, self.height() - 20, '左键轨迹球旋转 · 右键/中键平移 · 滚轮缩放 · 双击设旋转中心 · F/Z 适配')
         if self.axes:
-            origin = QPointF(45, self.height() - 65)
-            for label, color, delta in [('X', '#f18484', (31, 9)), ('Y', '#b4dc79', (-17, 17)), ('Z', '#84c4ff', (0, -34))]:
-                end = origin + QPointF(*delta)
+            for label, color, origin_xy, end_xy in self.axis_endpoints():
+                origin, end = QPointF(*origin_xy), QPointF(*end_xy)
                 painter.setPen(QPen(QColor(color), 2))
                 painter.drawLine(origin, end)
                 painter.drawText(end + QPointF(3, -3), label)
 
-    def mousePressEvent(self, event):
-        if event.position().x() > self.width() - 90 and event.position().y() < 82:
-            self.set_view('顶视')
-            return
-        self._last = event.position()
-        self._begin_interaction()
-        self.setCursor(Qt.ClosedHandCursor)
-
-    def mouseMoveEvent(self, event):
-        if self._last is None:
-            return
-        delta = event.position() - self._last
-        if event.buttons() & Qt.RightButton or event.modifiers() & Qt.ShiftModifier:
-            self.pan += [delta.x(), delta.y()]
-        elif event.buttons() & Qt.LeftButton:
-            self.yaw += delta.x() * .45
-            self.pitch = np.clip(self.pitch + delta.y() * .45, -170, 170)
-        self._last = event.position()
-        self.update()
-
-    def mouseReleaseEvent(self, event):
-        self._last = None
-        self.setCursor(Qt.OpenHandCursor)
-        self._restore.start(220)
-
-    def wheelEvent(self, event):
-        self.zoom = float(np.clip(self.zoom * 1.12 ** (event.angleDelta().y() / 120), .1, 25))
-        self.update()
-        self._begin_interaction()
-
-    def mouseDoubleClickEvent(self, event):
-        self.fit_view()
+    def pick_pivot(self, position):
+        if not len(self._points):
+            return None
+        xy, depth = self.project(self._points)
+        distance = np.linalg.norm(xy-[position.x(), position.y()], axis=1)
+        candidates = np.flatnonzero(distance <= max(3., self.point_size))
+        if not len(candidates):
+            return None
+        return self._points[candidates[np.argmax(depth[candidates])]].copy()

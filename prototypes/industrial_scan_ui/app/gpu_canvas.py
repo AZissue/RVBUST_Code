@@ -10,6 +10,7 @@ from PySide6.QtGui import QSurfaceFormat, QMatrix4x4, QPainter, QColor, QPen
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from ui_common.worker_thread import WorkerThread
 from ..core.render_cache import FrameRenderCache, sources_from_layers, POLICIES
+from .navigation import NavigationMixin
 
 VERTEX_SHADER = '''#version 330 core
 layout(location=0) in vec3 position;
@@ -35,7 +36,7 @@ void main() { fragColor = pointColor; }
 '''
 
 
-class GpuCloudCanvas(QOpenGLWidget):
+class GpuCloudCanvas(NavigationMixin, QOpenGLWidget):
     render_failed = Signal(str)
     status_changed = Signal()
 
@@ -49,7 +50,7 @@ class GpuCloudCanvas(QOpenGLWidget):
         self.setFormat(fmt)
         self.setMinimumSize(360, 300)
         self.setCursor(Qt.OpenHandCursor)
-        self.yaw, self.pitch, self.zoom = -28., 57., 1.
+        self.zoom = 1.
         self.pan = np.zeros(2)
         self.center = np.zeros(3)
         self.extent = 340.
@@ -79,6 +80,7 @@ class GpuCloudCanvas(QOpenGLWidget):
         self._restore = QTimer(self)
         self._restore.setSingleShot(True)
         self._restore.timeout.connect(self._end_interaction)
+        self._init_navigation()
 
     @property
     def is_busy(self):
@@ -191,8 +193,9 @@ class GpuCloudCanvas(QOpenGLWidget):
                      -self.height() / scale / 2, self.height() / scale / 2,
                      -self.extent * 4, self.extent * 4)
         matrix.translate(float(self.pan[0] / scale), float(-self.pan[1] / scale), 0)
-        matrix.rotate(float(self.pitch), 1, 0, 0)
-        matrix.rotate(float(self.yaw), 0, 0, 1)
+        rotation = np.eye(4)
+        rotation[:3, :3] = self.rotation.matrix
+        matrix *= QMatrix4x4(*rotation.ravel().tolist())
         return matrix
 
     def paintGL(self):
@@ -203,6 +206,7 @@ class GpuCloudCanvas(QOpenGLWidget):
             gl.glViewport(0, 0, int(self.width()*self.devicePixelRatioF()), int(self.height()*self.devicePixelRatioF()))
             gl.glEnable(gl.GL_DEPTH_TEST)
             gl.glEnable(gl.GL_PROGRAM_POINT_SIZE)
+            gl.glDepthMask(gl.GL_TRUE)
             gl.glClearColor(.27, .30, .33, 1.)
             gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
             gl.glBindVertexArray(self._vao)
@@ -229,14 +233,16 @@ class GpuCloudCanvas(QOpenGLWidget):
         painter.setPen(QColor('#dce4eb'))
         painter.drawText(18, 28, f'{self.displayed_points:,} / {self.total_points:,} 点 · {"交互降采样" if self._moving else "静止细节"} · {self.policy_name}')
         painter.drawText(18, 48, '正在后台准备显示缓存…' if self.is_busy else self.backend_name)
-        painter.drawText(18, self.height() - 18, '左键旋转 · 右键 / Shift 平移 · 滚轮缩放 · 停止后恢复细节')
+        painter.drawText(18, self.height() - 18, '左键轨迹球旋转 · 右键/中键平移 · 滚轮缩放 · 双击设旋转中心 · F/Z 适配')
+        if self._last is not None:
+            x, y = self._pivot_pixel()
+            painter.setPen(QPen(QColor('#c5e793'), 1))
+            painter.drawEllipse(int(x)-7, int(y)-7, 14, 14)
         if self.axes:
-            for text, color, x, y in [('X', '#f18484', 72, self.height()-56),
-                                      ('Y', '#b4dc79', 25, self.height()-49),
-                                      ('Z', '#84c4ff', 44, self.height()-96)]:
+            for text, color, origin, end in self.axis_endpoints():
                 painter.setPen(QPen(QColor(color), 2))
-                painter.drawLine(44, self.height()-65, x, y)
-                painter.drawText(x, y, text)
+                painter.drawLine(int(origin[0]), int(origin[1]), int(end[0]), int(end[1]))
+                painter.drawText(int(end[0])+3, int(end[1])-3, text)
         painter.end()
 
     def _draw_grid(self):
@@ -263,7 +269,33 @@ class GpuCloudCanvas(QOpenGLWidget):
         self._bind(self._grid_buffer)
         gl.glUniform3f(self._uniforms['offset'], 0, 0, 0)
         gl.glUniform1i(self._uniforms['colorMode'], 0)
+        gl.glDepthMask(gl.GL_FALSE)  # Background grid is not a pickable point.
         gl.glDrawArrays(gl.GL_LINES, 0, self._grid_count)
+        gl.glDepthMask(gl.GL_TRUE)
+
+    def pick_pivot(self, position):
+        if not self._ready or not self.scene or not self.scene.frames:
+            return None
+        # A single depth read on double-click; never scans millions of CPU points.
+        self.makeCurrent()
+        gl = self.gl
+        try:
+            gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.defaultFramebufferObject())
+            ratio = self.devicePixelRatioF()
+            x = int(position.x()*ratio)
+            y = int((self.height()-position.y())*ratio)-1
+            if not 0 <= x < int(self.width()*ratio) or not 0 <= y < int(self.height()*ratio):
+                return None
+            depth = float(np.asarray(gl.glReadPixels(x, y, 1, 1, gl.GL_DEPTH_COMPONENT, gl.GL_FLOAT)).ravel()[0])
+            if depth >= 1.:
+                return None
+            ndc = np.array([2*(x+.5)/(self.width()*ratio)-1,
+                            2*(y+.5)/(self.height()*ratio)-1, 2*depth-1, 1.])
+            matrix = np.asarray(self._matrix().data()).reshape(4, 4, order='F')
+            hit = np.linalg.solve(matrix, ndc)
+            return self.center+hit[:3]/hit[3]
+        finally:
+            self.doneCurrent()
 
     def fit_view(self):
         if self.scene is not None and self.scene.bounds is not None:
@@ -274,15 +306,13 @@ class GpuCloudCanvas(QOpenGLWidget):
         self.pan[:] = 0
         self.update()
 
-    def set_view(self, name):
-        self.yaw, self.pitch = {'等轴测': (-28, 57), '顶视': (0, 0), '正视': (0, 90), '右视': (90, 90)}[name]
-        self.update()
-
     def _begin_interaction(self):
+        changed = not self._moving
         self._moving = True
         self._restore.start(self.policy.restore_ms)
         self.update()
-        self.status_changed.emit()
+        if changed:
+            self.status_changed.emit()
 
     def _end_interaction(self):
         if self._last is not None:
@@ -291,35 +321,6 @@ class GpuCloudCanvas(QOpenGLWidget):
         self._moving = False
         self.update()
         self.status_changed.emit()
-
-    def mousePressEvent(self, event):
-        self._last = event.position()
-        self._begin_interaction()
-        self.setCursor(Qt.ClosedHandCursor)
-
-    def mouseMoveEvent(self, event):
-        if self._last is None:
-            return
-        delta = event.position() - self._last
-        if event.buttons() & Qt.RightButton or event.modifiers() & Qt.ShiftModifier:
-            self.pan += [delta.x(), delta.y()]
-        elif event.buttons() & Qt.LeftButton:
-            self.yaw += delta.x() * .45
-            self.pitch = float(np.clip(self.pitch + delta.y() * .45, -170, 170))
-        self._last = event.position()
-        self._begin_interaction()
-
-    def mouseReleaseEvent(self, event):
-        self._last = None
-        self.setCursor(Qt.OpenHandCursor)
-        self._restore.start(self.policy.restore_ms)
-
-    def wheelEvent(self, event):
-        self.zoom = float(np.clip(self.zoom * 1.12 ** (event.angleDelta().y()/120), .1, 25))
-        self._begin_interaction()
-
-    def mouseDoubleClickEvent(self, event):
-        self.fit_view()
 
     def cleanup(self):
         if not self._ready:
@@ -341,5 +342,5 @@ class GpuCloudCanvas(QOpenGLWidget):
     def shutdown(self):
         self._closed = True
         self._pending = None
-        self._restore.stop()
+        self._stop_navigation()
         self.cleanup()
