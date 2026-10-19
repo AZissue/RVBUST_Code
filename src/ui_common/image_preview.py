@@ -119,6 +119,9 @@ class AspectRatioLabel(QLabel):
                     # 红 = 2D 检出但 3D 无有效深度；绿 = 3D 有效
                     has_3d = m.get('valid_3d', True)
                     color = QColor(self._appearance.valid_color if has_3d else self._appearance.invalid_color)
+                explicit_color = m.get('display_color')
+                if isinstance(explicit_color, str) and QColor(explicit_color).isValid():
+                    color = QColor(explicit_color)
                 painter.setPen(QPen(color, 2))
                 painter.setBrush(Qt.NoBrush)
                 painter.drawEllipse(QPointF(dx, dy), r, r)

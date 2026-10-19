@@ -170,6 +170,22 @@ class CameraCard(QFrame):
             return
         self._thumb.setPixmap(pixmap)
 
+    def set_marker_overlay(self, markers: list):
+        """Display an explicit normalized overlay supplied by a controller."""
+        self._thumb.set_markers(markers)
+
+    def set_compact_preview(self):
+        """Read-only overview cards for displaying multiple images together."""
+        self.setMinimumSize(200, 170)
+        self._thumb.setMinimumSize(180, 70)
+        for button in (self._btn_preview, self._btn_capture, self._btn_detect):
+            button.hide()
+
+    def set_calibration_status(self, text: str, success: bool):
+        self._covis_badge.setText(text)
+        color = STATUS_OK if success else STATUS_ERR
+        self._covis_badge.setStyleSheet(f'color:{color};font-size:12px;font-weight:600;')
+
     def set_frame(self, frame: Optional[FrameData], markers: Optional[list] = None):
         """由 FrameData 更新缩略图与标记叠加，并保留当前帧供检测使用。"""
         self._current_frame = frame

@@ -66,6 +66,7 @@ class ScanWorkbench(QWidget):
     dirty_changed = Signal(bool)
     save_session_requested = Signal()
     recapture_requested = Signal(int)
+    function_selection_requested = Signal()
 
     def __init__(self, parent=None, *, load_demo=True, renderer='auto'):
         super().__init__(parent)
@@ -120,6 +121,10 @@ class ScanWorkbench(QWidget):
         self.mode.setToolTip('仅切换原型视图标签；不接入 A/B/C 真实算法或相机。')
         self.mode.currentTextChanged.connect(lambda text: self.log(f'切换场景标签：{text}；仍使用同一模拟流程。'))
         menu.addWidget(self.mode)
+        self.function_button = QPushButton('选择功能')
+        self.function_button.clicked.connect(self.function_selection_requested.emit)
+        self.function_button.hide()  # The studio host installs the actual selector.
+        menu.addWidget(self.function_button)
         menu.addStretch()
         menu.addWidget(QLabel('OFFLINE PROTOTYPE', objectName='badge'))
         help_btn = QPushButton('原型说明')
@@ -157,6 +162,8 @@ class ScanWorkbench(QWidget):
                 self._actions[key] = button
             col.addLayout(row)
             caption = QLabel(title, alignment=Qt.AlignCenter, objectName='section')
+            if title == '模拟采集':
+                self.acquisition_caption = caption
             col.addWidget(caption)
             ribbon_layout.addWidget(box)
         ribbon_layout.addStretch()
@@ -200,6 +207,7 @@ class ScanWorkbench(QWidget):
         scroll.setWidgetResizable(True)
         params = QWidget()
         form_col = QVBoxLayout(params)
+        self.parameter_layout = form_col
         form_col.setContentsMargins(0, 0, 0, 0)
         device_group = QGroupBox('01  设备与场景')
         device_form = QFormLayout(device_group)
@@ -212,6 +220,7 @@ class ScanWorkbench(QWidget):
         device_form.addRow('导入源单位', self.units)
         form_col.addWidget(device_group)
         scan_group = QGroupBox('02  模拟扫描参数')
+        self.simulation_group = scan_group
         scan_form = QFormLayout(scan_group)
         self.spacing = QDoubleSpinBox()
         self.spacing.setRange(.5, 3.)
@@ -605,6 +614,7 @@ class ScanWorkbench(QWidget):
         self._actions['finish'].setEnabled(available and any(l.visible for l in self.session.layers))
         self.tree.setEnabled(available)
         self.mode.setEnabled(available)
+        self.function_button.setEnabled(available)
         self.spacing.setEnabled(available)
         self.speed.setEnabled(available)
         states = {'ready': '待机 · 离线演示', 'scanning': '正在模拟扫描', 'paused': '扫描已暂停',
@@ -641,7 +651,7 @@ class ScanWorkbench(QWidget):
         self.canvas = create_canvas(renderer='software')
         if self.log_toggle.isChecked():
             self.canvas.setMinimumHeight(140)
-        self._view_layout.replaceWidget(old, self.canvas)
+        self._replace_canvas(old, self.canvas)
         self.canvas.status_changed.connect(self._render_status)
         self.canvas.set_layers(self.session.layers, fit=True)
         self._display_changed()
@@ -650,6 +660,9 @@ class ScanWorkbench(QWidget):
         self.log(message + ' 兼容模式仅用于预览，非大点云 GPU 渲染。', 'error')
         self.log_toggle.setChecked(True)
         self._render_status()
+
+    def _replace_canvas(self, old, new):
+        self._view_layout.replaceWidget(old, new)
 
     def _visibility_changed(self, item, column):
         if self._rebuilding:
@@ -823,23 +836,32 @@ class ScanWorkbench(QWidget):
         QMessageBox.information(self, '工业扫描 UI 原型',
             '参考视频的顶部功能带、项目树、参数面板与大视区布局。\n\n'
             '可用：导入/导出点云、图层显隐、旋转缩放、正交视图、Z 裁切与撤销、模拟扫描。\n'
+            '入口：选择多相机、移动链式或转台功能，进入各自工作区；可通过顶部“选择功能”返回小窗。\n'
+            '离线计算：多相机支持检测JSON外参计算，转台支持frame0/frame1标记标定。\n'
             '视角：左键轨迹球自由旋转，右键/中键或 Shift 平移；双击可见点设置旋转中心，F/Z 适配。\n'
-            '模拟扫描只生成合成点云，不连接相机、不控制机器人、不执行标定。\n'
+            '模拟扫描只生成合成点云，不连接相机、不控制机器人或真实转台。\n'
             'GPU 按帧缓存：静止高细节、拖动低密度，停止后恢复。显示降采样不影响原始数据与导出。\n'
             'OpenGL 不可用时明确降级为 18,000 点兼容预览，拖动 3,000 点。内部和导出单位均为 mm。\n'
             '本原型尚未接入正式 A/B/C 工作流，也不提供性能或精度验收结果。')
 
-    def closeEvent(self, event):
+    def can_leave(self):
         if self._busy or self.canvas.is_busy or any(canvas.is_busy for canvas in self._retired_canvases):
             self.log('文件任务仍在运行，请等待完成后关闭。', 'warn')
-            event.ignore()
-            return
+            return False
         if self._dirty and QMessageBox.question(self, '关闭原型', '关闭当前会话？未导出的修改将丢失。') != QMessageBox.Yes:
-            event.ignore()
-            return
+            return False
+        return True
+
+    def shutdown(self):
         self._timer.stop()
         self.logs.detach_loggers()
         self.canvas.shutdown()
         for canvas in self._retired_canvases:
             canvas.shutdown()
+
+    def closeEvent(self, event):
+        if not self.can_leave():
+            event.ignore()
+            return
+        self.shutdown()
         event.accept()
