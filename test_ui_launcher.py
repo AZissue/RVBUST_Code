@@ -1,0 +1,111 @@
+"""Production entrance contracts; no backend construction or SDK access."""
+import os
+import sys
+from pathlib import Path
+import unittest
+
+os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+sys.path.insert(0, str(Path(__file__).parent/'src'))
+from PySide6.QtWidgets import QApplication
+from PySide6.QtTest import QSignalSpy
+from ui_v2 import GLOBAL_QSS, LauncherDialog
+from ui_v2.widgets.device_table import DeviceInfo
+
+
+class LauncherTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+        cls.app.setStyleSheet(GLOBAL_QSS)
+
+    def setUp(self):
+        self.dialog = LauncherDialog()
+        self.dialog.set_devices([
+            DeviceInfo(model='M2600R', serial='SN1', ip='192.168.1.10', backend_ref=0),
+            DeviceInfo(model='M2600R', serial='SN2', ip='192.168.1.11', backend_ref=1),
+        ])
+
+    def tearDown(self):
+        self.dialog.set_busy(False)
+        self.dialog.set_auto_ip_busy(False)
+        self.dialog.hide_connection_overlay()
+        self.dialog.close()
+        self.dialog.deleteLater()
+        self.app.processEvents()
+
+    def select_two(self):
+        for checkbox in self.dialog._table._check_widgets:
+            checkbox.setChecked(True)
+
+    def test_selection_never_moves_cards_and_modes_keep_rules(self):
+        dlg = self.dialog
+        dlg.show(); self.app.processEvents()
+        before = {key: card.geometry() for key,card in dlg._cards.items()}
+        self.assertEqual({r.height() for r in before.values()}, {100})
+        self.select_two()
+        self.assertTrue(dlg._btn_connect.isEnabled())
+        for mode in (dlg.MODE_MOBILE_CHAIN, dlg.MODE_TURNTABLE, dlg.MODE_MULTI_CAM):
+            dlg._set_mode(mode); self.app.processEvents()
+            self.assertEqual(before, {key: card.geometry() for key,card in dlg._cards.items()})
+            self.assertEqual(dlg.selected_devices(), [])
+            self.assertFalse(dlg._btn_connect.isEnabled())
+            if mode != dlg.MODE_MULTI_CAM:
+                dlg._table._check_widgets[0].setChecked(True)
+                self.assertTrue(dlg._btn_connect.isEnabled())
+
+    def test_existing_backend_ports_receive_exact_devices(self):
+        dlg = self.dialog
+        refresh = QSignalSpy(dlg.refresh_requested)
+        auto_ip = QSignalSpy(dlg.auto_ip_requested)
+        connect = QSignalSpy(dlg.connect_requested)
+        dlg._btn_refresh.click()
+        self.assertEqual(refresh.count(), 1)
+        self.select_two()
+        chosen = dlg.selected_devices()
+        dlg._btn_auto_ip.click()
+        self.assertEqual(auto_ip.at(0)[0], chosen)
+        dlg._btn_connect.click()
+        self.assertEqual(connect.at(0), [dlg.MODE_MULTI_CAM, chosen])
+        self.assertEqual(dlg.result(), 0)  # Only the backend may accept after success.
+
+    def test_busy_selection_and_close_are_locked_then_restored(self):
+        dlg = self.dialog
+        self.select_two()
+        dlg.show_connection_overlay('正在连接测试')
+        dlg._set_mode(dlg.MODE_TURNTABLE)
+        self.assertEqual(dlg.selected_mode(), dlg.MODE_MULTI_CAM)
+        self.assertFalse(dlg._btn_connect.isEnabled())
+        self.assertFalse(dlg._table.isEnabled())
+        self.assertFalse(dlg.close())
+        # An independent busy operation must not be cleared by hiding the overlay.
+        dlg.set_auto_ip_busy(True)
+        dlg.hide_connection_overlay()
+        self.assertFalse(dlg._btn_connect.isEnabled())
+        dlg.set_auto_ip_busy(False)
+        self.assertTrue(dlg._btn_connect.isEnabled())
+        self.assertTrue(dlg._table.isEnabled())
+        dlg.set_busy(True)
+        dlg.set_devices(dlg._table.devices())
+        self.assertFalse(dlg._btn_connect.isEnabled())
+        dlg.set_busy(False)
+        self.assertTrue(dlg._btn_connect.isEnabled())
+
+    def test_empty_message_filter_and_reopen_state(self):
+        dlg = self.dialog
+        dlg.set_devices([])
+        self.assertIn('未检测到相机', dlg._device_hint.text())
+        self.assertIn('2D', dlg._rule_hint.text())
+        device = DeviceInfo(model='X1', serial='RESTORED', ip='192.168.1.12',
+                            backend_ref=3, checked=True)
+        dlg.restore_state(dlg.MODE_TURNTABLE, [device])
+        self.assertEqual(dlg.selected_devices(), [device])
+        self.assertTrue(dlg._btn_connect.isEnabled())
+        dlg._search_edit.setText('missing')
+        self.assertTrue(dlg._table.isRowHidden(0))
+        dlg._search_edit.clear()
+        self.assertFalse(dlg._table.isRowHidden(0))
+        self.assertNotIn('core.camera_manager', sys.modules)
+
+
+if __name__ == '__main__':
+    unittest.main(verbosity=2)

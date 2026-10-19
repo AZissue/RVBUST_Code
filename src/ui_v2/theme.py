@@ -34,6 +34,38 @@ STATUS_ERR = "#F44336"    # 红
 RADIUS = "6px"
 SPACE = 8                 # 8px 间距基准
 
+# Scoped to the production entrance. The main workspaces retain their own skin.
+LAUNCHER_QSS = """
+QDialog { background:#292929; }
+QWidget { background:#292929; color:#dedede; font-family:"Microsoft YaHei"; font-size:12px; }
+QLabel { background:transparent; border:0; }
+QLabel#launcherBrand { color:#eeeeee; font-size:18px; font-weight:700; }
+QLabel#launcherSubtitle, QLabel#launcherHint { color:#aaaaaa; }
+QLabel#launcherModeTitle { font-size:14px; font-weight:600; }
+QGroupBox { border:1px solid #454545; border-radius:4px; margin-top:12px; padding-top:10px; }
+QGroupBox::title { subcontrol-origin:margin; left:12px; padding:0 5px; color:#cccccc; }
+QLineEdit { background:#222222; border:1px solid #555555; border-radius:3px; padding:6px 8px; min-height:22px; }
+QLineEdit:focus { border-color:#d32f2f; }
+QPushButton { background:#393939; color:#dedede; border:1px solid #555555; border-radius:3px; padding:6px 12px; min-height:22px; }
+QPushButton:hover { background:#464646; border-color:#888888; }
+QPushButton:pressed { background:#333333; }
+QPushButton:disabled { background:#303030; border-color:#3c3c3c; color:#777777; }
+QPushButton#secondary { background:#393939; border-color:#555555; }
+QPushButton#secondary:hover { background:#464646; border-color:#888888; }
+QPushButton#secondary:disabled { background:#303030; border-color:#3c3c3c; color:#777777; }
+QPushButton#primary { background:#d32f2f; color:white; border-color:#df4a4a; font-weight:600; }
+QPushButton#primary:hover { background:#e04343; border-color:#e04343; }
+QPushButton#primary:pressed { background:#b71c1c; }
+QPushButton#primary:disabled { background:#463333; border-color:#604242; color:#9b8585; }
+QTableWidget { background:#242424; alternate-background-color:#2b2b2b; border:1px solid #454545; border-radius:0; gridline-color:#454545; }
+QHeaderView::section { background:#343434; color:#aaaaaa; border:0; padding:7px 6px; }
+QScrollArea { background:transparent; border:0; }
+QScrollBar:vertical { background:#242424; width:8px; margin:0; }
+QScrollBar::handle:vertical { background:#555555; border-radius:3px; min-height:24px; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height:0; }
+QToolTip { background:#333333; color:#eeeeee; border:1px solid #555555; padding:5px; }
+"""
+
 # 相机分色调色板（3D 预览 / 卡片角标共用，占位阶段仅作常量）
 CAMERA_PALETTE = [
     "#F0F0F0", "#29B6F6", "#FFA726", "#66BB6A", "#EC407A",

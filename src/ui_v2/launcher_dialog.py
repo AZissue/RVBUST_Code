@@ -1,21 +1,7 @@
 # -*- coding: utf-8 -*-
-"""
-ui_v2.launcher_dialog —— 启动小窗（重构版，空壳）。
+"""Production function entrance: industrial gray/red design and existing device ports.
 
-模态对话框，左右分栏，默认约 900×560，居中显示：
-  - 左侧 ① 工作模式：两张可选中卡片（默认选中「多相机外参标定」）+ 模式说明；
-  - 右侧 ② 设备管理：搜索过滤 / 刷新 / 自动设置IP / 网络配置 / 多选设备表格；
-  - 底部：已选数量提示（模式联动）+ 取消 / 连接设备。
-
-模式-设备数量规则（连接按钮启用条件）：
-  - 多相机外参标定：必须选中 ≥2 台；
-  - 单相机移动拼接：必须且只能选中 1 台；
-  - 切换模式时清空设备多选，防止残留选择误导。
-
-接口预留（信号全部由主窗口/后端连接）：
-  refresh_requested()              重新枚举设备（SDK SystemListDevices）
-  auto_ip_requested(list)          自动设置 IP（勾选设备列表）
-  connect_requested(str, list)     连接设备（模式, DeviceInfo 列表）
+The launcher emits device operations to BackendBridge; it never initializes the SDK.
 """
 
 from __future__ import annotations
@@ -25,11 +11,11 @@ from typing import List, Optional
 from PySide6.QtCore import Qt, QPropertyAnimation, Signal
 from PySide6.QtWidgets import (
     QApplication, QDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
-    QPushButton, QVBoxLayout,
+    QPushButton, QVBoxLayout, QGroupBox, QScrollArea, QWidget,
 )
 
 from .theme import (
-    ACCENT, BG_CARD, BORDER, STATUS_OK, TEXT_MUTED, TEXT_SECONDARY,
+    ACCENT, LAUNCHER_QSS, STATUS_OK, TEXT_MUTED, TEXT_SECONDARY,
 )
 from . import icons as ui_icons
 from .widgets import DeviceInfo, DeviceTable, ModeCard
@@ -60,9 +46,14 @@ class LauncherDialog(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("RVC 拼接工作站")
+        self.setWindowTitle("MCC · 选择功能")
+        self.setStyleSheet(LAUNCHER_QSS)
         self.setModal(True)
-        self.resize(900, 560)
+        self.resize(1060, 620)
+        self.setMinimumSize(960, 580)
+        self._busy = False
+        self._auto_ip_busy = False
+        self._connecting = False
 
         self._mode = self.MODE_MULTI_CAM
         self._setup_ui()
@@ -70,178 +61,123 @@ class LauncherDialog(QDialog):
         self._center_on_screen()
 
     # ------------------------------------------------------------ UI 搭建
-    def _panel_card(self, title: str) -> tuple[QFrame, QVBoxLayout]:
-        """启动小窗用的圆角卡片容器。"""
-        card = QFrame()
-        card.setStyleSheet(
-            f"QFrame {{ background-color: {BG_CARD}; border: none;"
-            f" border-radius: 8px; }}"
-        )
-        lo = QVBoxLayout(card)
-        lo.setContentsMargins(14, 12, 14, 12)
-        lo.setSpacing(10)
-        if title:
-            lbl = QLabel(title)
-            lbl.setObjectName("sectionTitle")
-            lo.addWidget(lbl)
-        return card, lo
-
     def _setup_ui(self):
         root = QVBoxLayout(self)
-        root.setContentsMargins(16, 14, 16, 14)
-        root.setSpacing(12)
-
-        # ===== 标题栏 =====
-        head = QHBoxLayout()
-        title = QLabel("RVC 拼接工作站")
-        title.setObjectName("sectionTitle")
-        title.setStyleSheet("font-size: 18px; font-weight: 700;")
-        head.addWidget(title)
-        head.addStretch(1)
-        logo = QLabel("RVC")
-        logo.setStyleSheet(
-            f"color: {ACCENT}; font-size: 18px; font-weight: 800;")
-        head.addWidget(logo)
-        root.addLayout(head)
-
-        # ===== 主区域（左右卡片） =====
+        root.setContentsMargins(18, 16, 18, 16)
+        root.setSpacing(8)
+        root.addWidget(QLabel("MCC / 重建工作站", objectName="launcherBrand"))
+        root.addWidget(QLabel("选择工作方案 → 连接相机 → 进入工作区",
+                             objectName="launcherSubtitle"))
         main = QHBoxLayout()
-        main.setSpacing(14)
+        main.setSpacing(16)
 
-        # ---- 左侧：工作模式 ----
-        left_card, left = self._panel_card("工作模式")
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._mode_choices = QWidget()
+        left = QVBoxLayout(self._mode_choices)
+        left.setContentsMargins(0, 0, 0, 0)
+        left.setSpacing(8)
         self.card_multi = ModeCard(
             "camera_multi", "多相机外参标定",
-            "多台相机固定安装，先标定外参，后撤板扫描拼接")
-        self.card_multi.clicked.connect(
-            lambda: self._set_mode(self.MODE_MULTI_CAM))
-        left.addWidget(self.card_multi)
-
+            "多台相机固定安装，设置参考相机，标定外参后进行固定工位拼接。")
         self.card_mobile = ModeCard(
-            "chain", "单相机移动拼接",
-            "一台相机移动拍摄，自动检测标记物，边走边拼")
-        self.card_mobile.clicked.connect(
-            lambda: self._set_mode(self.MODE_MOBILE_CHAIN))
-        left.addWidget(self.card_mobile)
-
+            "chain", "单相机移动链式拼接",
+            "一台相机移动拍摄，检测编码圆，逐帧配准并累积点云。")
         self.card_turntable = ModeCard(
-            "loop", "转台 360° 拼接",
-            "相机固定，手动旋转转台，自动标定角度并拼接 360° 点云")
-        self.card_turntable.clicked.connect(
-            lambda: self._set_mode(self.MODE_TURNTABLE))
-        left.addWidget(self.card_turntable)
-
-        self._mode_desc = QLabel()
-        self._mode_desc.setWordWrap(True)
-        self._mode_desc.setStyleSheet(
-            f"color: {TEXT_SECONDARY}; font-size: 12px; padding: 4px 2px;")
-        left.addWidget(self._mode_desc)
+            "loop", "转台拼接",
+            "先完成 frame0 / frame1 转台标定，再按固定角度旋转、采集与拼接。")
+        self._cards = {
+            self.MODE_MULTI_CAM: self.card_multi,
+            self.MODE_MOBILE_CHAIN: self.card_mobile,
+            self.MODE_TURNTABLE: self.card_turntable,
+        }
+        for mode, card in self._cards.items():
+            card.setFixedHeight(100)
+            card.clicked.connect(lambda key=mode: self._set_mode(key))
+            left.addWidget(card)
         left.addStretch(1)
-        main.addWidget(left_card, 2)
+        scroll.setWidget(self._mode_choices)
+        main.addWidget(scroll, 3)
 
-        # ---- 右侧：设备管理 ----
-        right_card, right = self._panel_card("设备管理")
+        self._device_panel = QGroupBox("连接设备")
+        right = QVBoxLayout(self._device_panel)
+        right.setContentsMargins(12, 16, 12, 12)
+        right.setSpacing(8)
+        self._mode_title = QLabel(objectName="launcherModeTitle")
+        right.addWidget(self._mode_title)
+        self._mode_desc = QLabel(objectName="launcherHint")
+        self._mode_desc.setWordWrap(True)
+        self._mode_desc.setMinimumHeight(40)
+        right.addWidget(self._mode_desc)
 
-        # 搜索行
         search_row = QHBoxLayout()
         search_row.setSpacing(8)
         self._search_edit = QLineEdit()
-        self._search_edit.setPlaceholderText("搜索 型号 / IP / 序列号")
+        self._search_edit.setPlaceholderText("搜索型号 / 序列号 / IP")
         self._search_edit.setClearButtonEnabled(True)
-        self._search_edit.addAction(
-            ui_icons.icon("search", TEXT_SECONDARY, 15),
-            QLineEdit.LeadingPosition)
+        self._search_edit.addAction(ui_icons.icon("search", TEXT_SECONDARY, 15),
+                                    QLineEdit.LeadingPosition)
         self._search_edit.textChanged.connect(self._on_filter)
         search_row.addWidget(self._search_edit, 1)
-
-        self._btn_refresh = QPushButton("刷新")
-        self._btn_refresh.setObjectName("secondary")
-        self._btn_refresh.setToolTip("重新枚举设备")
+        self._btn_refresh = QPushButton("刷新设备")
+        self._btn_refresh.setToolTip("重新搜索 USB 与网口相机")
         ui_icons.apply(self._btn_refresh, "refresh", TEXT_SECONDARY, 15)
         self._btn_refresh.clicked.connect(self.refresh_requested)
         search_row.addWidget(self._btn_refresh)
-
-        # TODO(TEMP): 临时添加测试设备，便于无真实多机环境时进入主界面排查问题
-        self._btn_add_test = QPushButton("+ 测试")
-        self._btn_add_test.setObjectName("secondary")
-        self._btn_add_test.setToolTip("临时添加 4 台测试相机（TEST-A ~ TEST-D）")
-        self._btn_add_test.clicked.connect(self._on_add_test_devices)
-        search_row.addWidget(self._btn_add_test)
         right.addLayout(search_row)
 
-        # 网络操作行
+        self._table = DeviceTable()
+        self._table.checked_changed.connect(self._on_checked_changed)
+        right.addWidget(self._table, 1)
         net_row = QHBoxLayout()
         self._btn_auto_ip = QPushButton("自动设置 IP")
-        self._btn_auto_ip.setObjectName("secondary")
-        self._btn_auto_ip.setToolTip("为勾选设备自动配置网络")
+        self._btn_auto_ip.setToolTip("为选中的网口相机配置网络；未选中时处理所有网口相机")
         ui_icons.apply(self._btn_auto_ip, "bolt", TEXT_SECONDARY, 15)
         self._btn_auto_ip.clicked.connect(self._on_auto_ip)
         net_row.addWidget(self._btn_auto_ip)
         net_row.addStretch(1)
+        self._btn_add_test = QPushButton("添加测试设备")
+        self._btn_add_test.setToolTip("仅供界面调试：添加 TEST-A～TEST-D，不代表已连接真实相机")
+        self._btn_add_test.clicked.connect(self._on_add_test_devices)
+        net_row.addWidget(self._btn_add_test)
         right.addLayout(net_row)
-
-        # 设备多选表格
-        self._table = DeviceTable()
-        self._table.checked_changed.connect(self._on_checked_changed)
-        right.addWidget(self._table, 1)
-        main.addWidget(right_card, 3)
-
+        self._device_hint = QLabel("正在等待设备列表…", objectName="launcherHint")
+        self._device_hint.setWordWrap(True)
+        right.addWidget(self._device_hint)
+        self._rule_hint = QLabel(objectName="launcherHint")
+        self._rule_hint.setWordWrap(True)
+        self._rule_hint.setMinimumHeight(36)
+        right.addWidget(self._rule_hint)
+        main.addWidget(self._device_panel, 4)
         root.addLayout(main, 1)
 
-        # ===== 底部状态栏 + 按钮行 =====
-        status_card = QFrame()
-        status_card.setStyleSheet(
-            f"QFrame {{ background-color: {BG_CARD}; border: none;"
-            f" border-radius: 6px; }}"
-        )
-        status_lo = QHBoxLayout(status_card)
-        status_lo.setContentsMargins(10, 6, 10, 6)
-        status_lo.setSpacing(10)
-
-        self._selection_label = QLabel("未选择设备")
-        self._selection_label.setStyleSheet(
-            f"color: {TEXT_MUTED}; font-size: 12px;")
-        status_lo.addWidget(self._selection_label)
-        status_lo.addStretch(1)
-
-        self._rule_hint = QLabel()
-        self._rule_hint.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 12px;")
-        status_lo.addWidget(self._rule_hint)
-        root.addWidget(status_card)
-
         bottom = QHBoxLayout()
-        bottom.addStretch(1)
-
+        self._selection_label = QLabel("未选择设备")
+        bottom.addWidget(self._selection_label, 1)
         self._btn_cancel = QPushButton("取消")
-        self._btn_cancel.setObjectName("secondary")
-        self._btn_cancel.setMinimumWidth(100)
+        self._btn_cancel.setMinimumWidth(80)
         self._btn_cancel.clicked.connect(self.reject)
         bottom.addWidget(self._btn_cancel)
-
-        self._btn_connect = QPushButton("  连接设备")
+        self._btn_connect = QPushButton("连接并进入")
         self._btn_connect.setObjectName("primary")
-        self._btn_connect.setMinimumWidth(140)
-        self._btn_connect.setMinimumHeight(34)
+        self._btn_connect.setMinimumWidth(120)
         ui_icons.apply(self._btn_connect, "arrow_right", "#FFFFFF", 16)
         self._btn_connect.clicked.connect(self._on_connect)
         bottom.addWidget(self._btn_connect)
         root.addLayout(bottom)
-
         self._set_mode(self._mode)
-
-        # 连接遮罩：点击连接后覆盖小窗，显示"正在连接相机"
         self._connection_overlay = self._build_connection_overlay()
-
-        # 淡出动画：连接完成后小窗淡出，主窗口已在下方显示
         self._fade_animation = QPropertyAnimation(self, b"windowOpacity")
         self._fade_animation.setDuration(200)
         self._fade_animation.finished.connect(self.accept)
 
     def _build_connection_overlay(self) -> QFrame:
         overlay = QFrame(self)
+        overlay.setObjectName("connectionOverlay")
         overlay.setStyleSheet(
-            f"QFrame {{ background-color: rgba(30, 31, 36, 0.92); border-radius: 8px; }}"
-        )
+            "QFrame#connectionOverlay { background-color:rgba(35,35,35,235); border-radius:4px; }"
+            "QLabel { background:transparent; }")
         lo = QVBoxLayout(overlay)
         lo.setAlignment(Qt.AlignCenter)
         lo.setSpacing(16)
@@ -263,6 +199,8 @@ class LauncherDialog(QDialog):
 
     def show_connection_overlay(self, text: str = "正在连接相机..."):
         """显示全屏连接遮罩。"""
+        self._connecting = True
+        self._update_busy_controls()
         self._overlay_label.setText(text)
         self._connection_overlay.setGeometry(self.rect())
         self._connection_overlay.show()
@@ -271,6 +209,8 @@ class LauncherDialog(QDialog):
     def hide_connection_overlay(self):
         """隐藏连接遮罩。"""
         self._connection_overlay.hide()
+        self._connecting = False
+        self._update_busy_controls()
 
     def fade_out_and_accept(self):
         """小窗淡出后关闭，实现与主窗口的平滑过渡。
@@ -291,13 +231,16 @@ class LauncherDialog(QDialog):
         screen = QApplication.primaryScreen()
         if screen:
             geo = screen.availableGeometry()
-            self.move((geo.width() - self.width()) // 2,
-                      (geo.height() - self.height()) // 2)
+            self.move(geo.x() + (geo.width() - self.width()) // 2,
+                      geo.y() + (geo.height() - self.height()) // 2)
 
     # ------------------------------------------------------------ 模式联动
     def _set_mode(self, mode: str):
         """切换模式：更新卡片态 / 说明 / 数量提示，并清空设备多选。"""
+        if self._is_busy() or mode not in self.MODE_NAMES:
+            return
         self._mode = mode
+        self._mode_title.setText(self.MODE_NAMES[mode])
         self.card_multi.setChecked(mode == self.MODE_MULTI_CAM)
         self.card_mobile.setChecked(mode == self.MODE_MOBILE_CHAIN)
         self.card_turntable.setChecked(mode == self.MODE_TURNTABLE)
@@ -323,16 +266,16 @@ class LauncherDialog(QDialog):
         """模式-设备数量规则：连接按钮启用条件 + 底部提示。"""
         n = len(self._table.checked_devices())
         if self._mode == self.MODE_MULTI_CAM:
-            self._rule_hint.setText("多相机外参标定：至少需要 2 台相机")
+            self._rule_hint.setText("选择至少 2 台相机；每台连接相机对应一个独立 2D 窗口。")
             ok = n >= 2
             if n == 0:
                 hint, color = "未选择设备", TEXT_MUTED
             elif n < 2:
                 hint, color = f"已选 {n} 台 / 多相机模式至少需要 2 台", ACCENT
             else:
-                hint, color = f"已选 {n} 台 ✓", STATUS_OK
+                hint, color = f"已选 {n} 台 · 待连接", STATUS_OK
         elif self._mode == self.MODE_MOBILE_CHAIN:
-            self._rule_hint.setText("单相机移动拼接：必须且只能选中 1 台相机")
+            self._rule_hint.setText("选择 1 台相机；进入工作区后显示一个 2D 窗口。")
             ok = n == 1
             if n == 0:
                 hint, color = "未选择设备", TEXT_MUTED
@@ -341,9 +284,9 @@ class LauncherDialog(QDialog):
                     f"已选 {n} 台 / 单相机移动拼接仅支持 1 台相机，"
                     "请取消多余选择"), ACCENT
             else:
-                hint, color = "已选 1 台 ✓", STATUS_OK
+                hint, color = "已选 1 台 · 待连接", STATUS_OK
         else:
-            self._rule_hint.setText("转台 360° 拼接：必须且只能选中 1 台相机")
+            self._rule_hint.setText("选择 1 台相机；进入工作区后显示一个 2D 窗口及转台标定功能。")
             ok = n == 1
             if n == 0:
                 hint, color = "未选择设备", TEXT_MUTED
@@ -352,11 +295,11 @@ class LauncherDialog(QDialog):
                     f"已选 {n} 台 / 转台模式仅支持 1 台相机，"
                     "请取消多余选择"), ACCENT
             else:
-                hint, color = "已选 1 台 ✓", STATUS_OK
+                hint, color = "已选 1 台 · 待连接", STATUS_OK
 
         self._selection_label.setText(hint)
         self._selection_label.setStyleSheet(f"color: {color}; font-size: 12px;")
-        self._btn_connect.setEnabled(ok)
+        self._btn_connect.setEnabled(ok and not self._is_busy())
 
     # ------------------------------------------------------------ 事件
     def _on_filter(self, text: str):
@@ -376,8 +319,7 @@ class LauncherDialog(QDialog):
         for d in test_devices:
             if d.serial not in existing_serials:
                 existing.append(d)
-        self._table.set_devices(existing)
-        self._refresh_connect_state()
+        self.set_devices(existing)
 
     def _on_checked_changed(self, _checked: list):
         self._refresh_connect_state()
@@ -395,7 +337,9 @@ class LauncherDialog(QDialog):
         # TODO(BACKEND): 调 CameraManager 逐台连接并显示进度；
         全部成功 → accept()；部分失败 → 弹窗列出失败设备，可重试或仅用成功的进入。
         """
-        self.connect_requested.emit(self._mode, self._table.checked_devices())
+        self._refresh_connect_state()
+        if self._btn_connect.isEnabled():
+            self.connect_requested.emit(self._mode, self._table.checked_devices())
 
     # ------------------------------------------------------------ 公共接口
     def selected_mode(self) -> str:
@@ -407,31 +351,52 @@ class LauncherDialog(QDialog):
     def set_devices(self, devices: List[DeviceInfo]):
         """填充设备列表（后端枚举结果）。"""
         self._table.set_devices(devices)
-        if not devices:
-            self._rule_hint.setText("未检测到相机（可检查网络或稍后刷新）")
+        self._update_device_hint()
+        self._refresh_connect_state()
+
+    def _update_device_hint(self):
+        devices = self._table.devices()
+        tests = sum(not isinstance(d.backend_ref, int) for d in devices)
+        self._device_hint.setText(
+            f"发现 {len(devices)} 台设备" + (f"（含 {tests} 台测试设备，仅供调试）" if tests else "；请选择需要连接的相机。")
+            if devices else "未检测到相机，请检查电源、网络或 USB 连接后刷新。")
+
+    def _is_busy(self):
+        return self._busy or self._auto_ip_busy or self._connecting
+
+    def _update_busy_controls(self):
+        busy = self._is_busy()
+        for widget in (self._mode_choices, self._search_edit, self._table,
+                       self._btn_refresh, self._btn_auto_ip, self._btn_add_test,
+                       self._btn_cancel):
+            widget.setEnabled(not busy)
         self._refresh_connect_state()
 
     def set_busy(self, busy: bool, text: str = ""):
-        """连接/枚举进行中：禁用操作按钮（加载遮罩由主窗口统一控制）。"""
-        for btn in (self._btn_connect, self._btn_refresh,
-                    self._btn_auto_ip, self._btn_add_test):
-            btn.setEnabled(not busy)
-        if not busy:
-            self._refresh_connect_state()
+        self._busy = busy
+        if text:
+            self._device_hint.setText(text)
+        elif not busy:
+            self._update_device_hint()
+        self._update_busy_controls()
 
     def set_auto_ip_busy(self, busy: bool):
-        """自动配置 IP 进行中：禁用操作并显示 loading 文案。"""
-        for btn in (self._btn_connect, self._btn_refresh,
-                    self._btn_auto_ip, self._btn_add_test):
-            btn.setEnabled(not busy)
-        self._btn_auto_ip.setText("配置中..." if busy else "自动设置 IP")
-        # 保持图标：恢复原始图标
-        if not busy:
-            ui_icons.apply(self._btn_auto_ip, "bolt", TEXT_SECONDARY, 15)
+        self._auto_ip_busy = busy
+        self._btn_auto_ip.setText("配置中…" if busy else "自动设置 IP")
+        self._update_busy_controls()
+
+    def reject(self):
+        if not self._is_busy():
+            super().reject()
+
+    def closeEvent(self, event):
+        if self._is_busy():
+            event.ignore()
+            return
+        super().closeEvent(event)
 
     # ------------------------------------------------------------ 回填（设备管理重开时用）
     def restore_state(self, mode: str, devices: List[DeviceInfo]):
         """回填当前模式与已连接设备勾选状态。"""
         self._set_mode(mode)
-        self._table.set_devices(devices)
-        self._refresh_connect_state()
+        self.set_devices(devices)
