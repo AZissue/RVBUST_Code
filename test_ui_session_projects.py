@@ -200,6 +200,67 @@ class SessionUiTests(unittest.TestCase):
         self.assertIn('当前工作区', dialog.summary.text())
         dialog.close()
 
+    def test_storage_checkbox_multi_selection_refresh_width_and_batch_delete(self):
+        from ui_v2.session_storage_dialog import SessionStorageDialog
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+        controller, project = self.mobile()
+        fake_root = Path(self.temp.name) / 'manager'
+        targets = [fake_root / 'offline_data' / f'session_{i}' for i in range(3)]
+        for path in targets:
+            path.mkdir(parents=True)
+            (path / 'meta.json').write_text('{}')
+        with patch('ui_v2.session_storage_dialog.PROJECT_ROOT', fake_root):
+            dialog = SessionStorageDialog(controller, 'mobile_chain', self.win)
+            dialog.show()
+            self.wait(lambda: not dialog._busy)
+            self.assertEqual(len(dialog.rows), 3)
+            self.assertFalse(dialog.delete_button.isEnabled())
+            for row in (0, 1):
+                pos = dialog.table.visualItemRect(dialog.table.item(row, 0)).center()
+                QTest.mouseClick(dialog.table.viewport(), Qt.LeftButton, pos=pos)
+            self.assertEqual(dialog.selected_rows(), [0, 1])
+            self.assertEqual(dialog.select_all.checkState(), Qt.PartiallyChecked)
+            dialog.select_all.click()
+            self.assertEqual(dialog.selected_rows(), [0, 1, 2])
+            dialog.select_all.click()
+            self.assertEqual(dialog.selected_rows(), [])
+            dialog.table.item(0, 0).setCheckState(Qt.Checked)
+            dialog.table.item(1, 0).setCheckState(Qt.Checked)
+            dialog.table.setColumnWidth(4, 230)
+            dialog.resize(800, 480)
+            self.app.processEvents()
+            dialog.refresh()
+            self.wait(lambda: not dialog._busy)
+            self.assertEqual(dialog.table.columnWidth(4), 230)
+            self.assertEqual(dialog.selected_rows(), [0, 1])
+            self.assertIn('（修改）', dialog.table.item(0, 4).text())
+            selected = {dialog.rows[i][0] for i in dialog.selected_rows()}
+            with patch('ui_v2.session_storage_dialog.QMessageBox.question', return_value=QMessageBox.Yes):
+                dialog.delete()
+                self.wait(lambda: not dialog._busy)
+            self.assertTrue(all(not path.exists() for path in selected))
+            self.assertEqual(len(dialog.rows), 1)
+            self.assertEqual(dialog.selected_rows(), [])
+            dialog.close()
+
+    def test_storage_open_folder_creates_missing_root_and_reports_failure(self):
+        from ui_v2.session_storage_dialog import SessionStorageDialog
+        controller, project = self.mobile()
+        dialog = SessionStorageDialog(controller, 'mobile_chain', self.win)
+        self.wait(lambda: not dialog._busy)
+        self.assertFalse(project.save_root.exists())
+        with patch('ui_v2.session_storage_dialog.os.startfile') as launch:
+            dialog.folder_button.click()
+            launch.assert_called_once_with(str(project.save_root.resolve()))
+        self.assertTrue(project.save_root.is_dir())
+        with patch('ui_v2.session_storage_dialog.os.startfile', side_effect=OSError('launch failed')), \
+             patch('ui_v2.session_storage_dialog.QMessageBox.warning') as warning:
+            dialog.folder_button.click()
+            self.assertIn('launch failed', warning.call_args.args[2])
+            self.assertIn(str(project.save_root.resolve()), warning.call_args.args[2])
+        dialog.close()
+
     def test_turntable_parameters_only_save_and_restore(self):
         controller = self.bridge.projects
         self.win.set_mode('turntable', [])

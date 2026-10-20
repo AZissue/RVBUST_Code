@@ -2,12 +2,15 @@
 from pathlib import Path
 import json
 import shutil
+import os
+from datetime import datetime
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import Qt, QUrl, QItemSelectionModel
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (QAbstractItemView, QDialog, QHBoxLayout, QLabel,
-    QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout)
+    QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout, QCheckBox, QHeaderView)
 from .dialogs import ChineseMessageBox as QMessageBox
+from .launcher_dialog import LauncherDialog
 from core.session_project import PROJECT_ROOT, disk_usage
 
 
@@ -18,23 +21,66 @@ def human_size(value):
         value /= 1024
 
 
+class _SessionTable(QTableWidget):
+    def mousePressEvent(self, event):
+        index = self.indexAt(event.position().toPoint())
+        if event.button() == Qt.LeftButton and index.isValid() and index.column() == 0:
+            item = self.item(index.row(), 0)
+            item.setCheckState(Qt.Unchecked if item.checkState() == Qt.Checked else Qt.Checked)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        if self.indexAt(event.position().toPoint()).column() == 0:
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
+
 class SessionStorageDialog(QDialog):
     def __init__(self, controller, mode, parent=None):
         super().__init__(parent)
         self.controller, self.mode = controller, mode
         self.project = controller.projects[mode]
         self.setWindowTitle('会话占用与管理')
-        self.resize(780, 480)
+        self.resize(960, 560)
+        self.setMinimumSize(780, 460)
+        self._syncing = False
+        self._busy = False
+        self.rows = []
         layout = QVBoxLayout(self)
         self.summary = QLabel('正在统计当前工作区、已保存会话和历史离线数据...')
         self.summary.setWordWrap(True)
         layout.addWidget(self.summary)
-        self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(['已保存会话', '功能', '占用', '保存时间'])
+        selection_bar = QHBoxLayout()
+        self.select_all = QCheckBox('全选会话')
+        self.select_all.setTristate(True)
+        self.select_all.clicked.connect(self.toggle_all)
+        selection_bar.addWidget(self.select_all)
+        self.selection_count = QLabel('已选 0 / 0 项；可勾选多项，或使用 Ctrl / Shift 多选')
+        selection_bar.addWidget(self.selection_count)
+        selection_bar.addStretch(1)
+        layout.addLayout(selection_bar)
+        self.table = _SessionTable(0, 5)
+        self.table.setHorizontalHeaderLabels(['选择', '已保存会话', '功能', '占用', '保存时间'])
+        self.table.verticalHeader().hide()
+        self.table.setCornerButtonEnabled(False)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setStyleSheet('QTableView {selection-background-color:#563030;selection-color:#ffffff;}'
+                                 'QTableView::indicator {width:14px;height:14px;}')
+        header = self.table.horizontalHeader()
+        header.setStretchLastSection(False)
+        header.setMinimumSectionSize(48)
+        header.setSectionResizeMode(QHeaderView.Interactive)
+        header.setSectionResizeMode(0, QHeaderView.Fixed)
+        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        for column, width in ((0, 48), (2, 130), (3, 100), (4, 185)):
+            self.table.setColumnWidth(column, width)
+        self.table.itemSelectionChanged.connect(self.sync_selection)
+        self.table.itemChanged.connect(self.check_item)
         layout.addWidget(self.table, 1)
         note = QLabel('删除已保存会话为永久删除，当前已打开的会话受到保护。\n'
             '清空回收区只处理当前临时工作区中未被工作流引用的数据；保存后更新正式会话。\n'
@@ -51,18 +97,65 @@ class SessionStorageDialog(QDialog):
         self.delete_button = QPushButton('删除选中会话')
         self.delete_button.clicked.connect(self.delete)
         bar.addWidget(self.delete_button)
-        folder = QPushButton('打开存储目录')
-        folder.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.project.save_root))))
-        bar.addWidget(folder)
+        self.folder_button = QPushButton('打开存储目录')
+        self.folder_button.clicked.connect(self.open_folder)
+        bar.addWidget(self.folder_button)
         layout.addLayout(bar)
-        self.rows = []
         self.refresh()
 
+    def open_folder(self):
+        path = self.project.save_root.resolve()
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+            if os.name == 'nt':
+                os.startfile(str(path))
+            elif not QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))):
+                raise OSError('系统未能打开文件管理器')
+        except OSError as error:
+            QMessageBox.warning(self, '打开存储目录失败', f'无法打开：{path}\n{error}')
+
+    def toggle_all(self):
+        if self.select_all.checkState() == Qt.Unchecked:
+            self.table.clearSelection()
+        else:
+            self.table.selectAll()
+
+    def selected_rows(self):
+        return sorted(index.row() for index in self.table.selectionModel().selectedRows())
+
+    def check_item(self, item):
+        if self._syncing or item.column() != 0:
+            return
+        flag = QItemSelectionModel.Select if item.checkState() == Qt.Checked else QItemSelectionModel.Deselect
+        self.table.selectionModel().select(self.table.model().index(item.row(), 0), flag | QItemSelectionModel.Rows)
+
+    def sync_selection(self):
+        if self._syncing:
+            return
+        self._syncing = True
+        selected = set(self.selected_rows())
+        for i in range(self.table.rowCount()):
+            item = self.table.item(i, 0)
+            if item:
+                item.setCheckState(Qt.Checked if i in selected else Qt.Unchecked)
+        total = len(self.rows)
+        self.select_all.blockSignals(True)
+        self.select_all.setCheckState(Qt.Unchecked if not selected else
+                                     Qt.Checked if len(selected) == total else Qt.PartiallyChecked)
+        self.select_all.blockSignals(False)
+        self.selection_count.setText(f'已选 {len(selected)} / {total} 项；可勾选多项，或使用 Ctrl / Shift 多选')
+        self.delete_button.setText(f'删除选中会话（{len(selected)}）')
+        self.delete_button.setEnabled(not self._busy and bool(selected))
+        self._syncing = False
+
     def busy(self, value):
-        for button in (self.refresh_button, self.purge_button, self.delete_button):
+        self._busy = value
+        for button in (self.refresh_button, self.purge_button, self.select_all, self.table):
             button.setEnabled(not value)
+        self.sync_selection()
 
     def refresh(self):
+        selected_paths = {self.rows[i][0] for i in self.selected_rows()}
         self.busy(True)
         root = self.project.save_root
         def work():
@@ -104,13 +197,31 @@ class SessionStorageDialog(QDialog):
             self.summary.setText(f'当前工作区：{human_size(current["bytes"])}，回收区 {human_size(current["trash_bytes"])}\n'
                 f'已保存会话：{human_size(sum(row[2]["bytes"] for row in self.rows if row[1]["kind"] == "project"))}；'
                 f'历史 offline_data：{human_size(legacy["bytes"])}\n存储根目录：{root}')
+            self._syncing = True
+            self.table.clearSelection()
             self.table.setRowCount(len(self.rows))
             for i, (path, info, usage) in enumerate(self.rows):
-                for j, text in enumerate((info['name'], info['mode'], human_size(usage['bytes']), info.get('saved', ''))):
+                saved = info.get('saved')
+                try:
+                    timestamp = datetime.fromisoformat(saved) if saved else datetime.fromtimestamp(path.stat().st_mtime)
+                    saved_text = timestamp.strftime('%Y-%m-%d %H:%M:%S')
+                    if not saved:
+                        saved_text += '（修改）'
+                except (OSError, ValueError):
+                    saved_text = '—'
+                mode_name = LauncherDialog.MODE_NAMES.get(info['mode'], info['mode'])
+                for j, text in enumerate(('', info['name'], mode_name, human_size(usage['bytes']), saved_text)):
                     item = QTableWidgetItem(text)
                     item.setToolTip(str(path))
+                    if j == 0:
+                        item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+                        item.setCheckState(Qt.Unchecked)
                     self.table.setItem(i, j, item)
-            self.table.resizeColumnsToContents()
+                if path in selected_paths:
+                    self.table.selectionModel().select(self.table.model().index(i, 0),
+                        QItemSelectionModel.Select | QItemSelectionModel.Rows)
+            self._syncing = False
+            self.sync_selection()
         self.controller.bridge._run_background(work, done, name='project_stats')
 
     def purge(self):
@@ -136,7 +247,7 @@ class SessionStorageDialog(QDialog):
     def delete(self):
         if not self.controller._available():
             return
-        indices = sorted({item.row() for item in self.table.selectedItems()})
+        indices = self.selected_rows()
         if not indices:
             return
         targets = [self.rows[i][0] for i in indices]
