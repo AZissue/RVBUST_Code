@@ -146,8 +146,6 @@ class IndustrialViewer(QWidget):
                 continue
             # Array views keep the actual source geometry; no raw-point decimation.
             colors = np.asarray(cloud.colors) if cloud.has_colors() else None
-            if key == self._reference:
-                colors = np.broadcast_to([.92,.92,.92], (len(cloud.points),3))
             if self._highlights.get(key):
                 colors = np.array(colors if colors is not None else np.broadcast_to([.66,.81,.91], (len(cloud.points),3)), copy=True)
                 ids = np.asarray(self._highlights[key], dtype=int)

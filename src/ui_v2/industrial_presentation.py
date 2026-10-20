@@ -115,7 +115,23 @@ class IndustrialPresentation:
             workspace.frame_database = FrameDatabase(mode)
         self.frame_browser = FrameBrowser(workspace.frame_database)
         self.side_column.addWidget(self.frame_browser)
-        self.side_column.addWidget(self.sidebar)
+        self.legacy_panel = None
+        if mode == 'multi_cam':
+            self.legacy_panel = QWidget()
+            legacy_layout = QVBoxLayout(self.legacy_panel)
+            legacy_layout.setContentsMargins(0, 0, 0, 0)
+            legacy_layout.setSpacing(4)
+            self.legacy_toggle = QToolButton()
+            self.legacy_toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+            self.legacy_toggle.setCheckable(True)
+            self.legacy_toggle.setMinimumHeight(30)
+            self.legacy_toggle.toggled.connect(self.set_legacy_expanded)
+            legacy_layout.addWidget(self.legacy_toggle)
+            legacy_layout.addWidget(self.sidebar, 1)
+            self.side_column.addWidget(self.legacy_panel)
+            self.set_legacy_expanded(False)
+        else:
+            self.side_column.addWidget(self.sidebar)
         self.side_column.setSizes([320, 440])
         self.body.addWidget(self.side_column)
         self.stage = QWidget()
@@ -215,6 +231,18 @@ class IndustrialPresentation:
     def _mount(self, widget, target):
         self.mounts.append(_Mount.capture(widget, target))
 
+    def set_legacy_expanded(self, expanded):
+        """Keep production controls mounted and reachable during sidebar migration."""
+        if self.legacy_panel is None:
+            return
+        self.legacy_toggle.setChecked(expanded)
+        self.legacy_toggle.setText('旧版操作栏 · 收起' if expanded else '旧版操作栏 · 展开')
+        self.legacy_toggle.setArrowType(Qt.DownArrow if expanded else Qt.RightArrow)
+        self.sidebar.setVisible(expanded)
+        self.legacy_panel.setMaximumHeight(16777215 if expanded else 30)
+        if expanded:
+            self.side_column.setSizes([320, 440])
+
     def activate(self, enabled):
         if self.active == enabled:
             return
@@ -276,7 +304,7 @@ class IndustrialPresentation:
 
     def maximize(self, enabled):
         self.side_column.setVisible(not enabled)
-        self.sidebar.setVisible(not enabled)
+        self.sidebar.setVisible(not enabled and (self.legacy_panel is None or self.legacy_toggle.isChecked()))
         if self.overlay:
             self.overlay.setVisible(False if self.inspector else not enabled)
         if self.inspector:

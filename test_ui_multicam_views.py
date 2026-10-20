@@ -138,6 +138,35 @@ class MulticamViewTests(unittest.TestCase):
         self.assertIs(self.grid.card('cam0').current_frame(), updated)
         self.assertTrue(all(card.isVisible() for card in self.grid._cards.values()))
 
+    def test_legacy_controls_collapse_restore_and_keep_reference_colors(self):
+        import open3d as o3d
+        p = self.presentation
+        self.assertTrue(p.sidebar.isHidden())
+        self.assertFalse(p.frame_browser.isHidden())
+        p.legacy_toggle.click()
+        self.flush()
+        self.assertFalse(p.sidebar.isHidden())
+        p.legacy_toggle.click()
+        p.maximize(True)
+        p.maximize(False)
+        self.assertTrue(p.sidebar.isHidden())
+        self.win.set_presentation('classic')
+        self.assertFalse(self.ws._left_widget.isHidden())
+        self.win.set_presentation('industrial')
+        self.assertTrue(p.sidebar.isHidden())
+        cloud = o3d.geometry.PointCloud()
+        cloud.points = o3d.utility.Vector3dVector([[1., 2., 3.], [4., 5., 6.]])
+        colors = np.array([[.8, .1, .2], [.2, .3, .4]])
+        cloud.colors = o3d.utility.Vector3dVector(colors)
+        viewer = self.ws.viewer()
+        viewer.set_pointcloud('cam0', cloud)
+        viewer.set_pointcloud('cam1', cloud)
+        for ref in ('cam1', 'cam0', None):
+            viewer.set_reference(ref)
+            for layer in viewer.viewer()._layers:
+                np.testing.assert_array_equal(layer.colors, colors)
+        np.testing.assert_array_equal(np.asarray(cloud.colors), colors)
+
     def test_save_dialog_labels_and_standard_result_flags_are_chinese(self):
         box = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         localize_buttons(box)

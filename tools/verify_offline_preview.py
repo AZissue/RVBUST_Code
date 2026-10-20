@@ -98,6 +98,24 @@ with patch.object(CameraManager, 'initialize', side_effect=AssertionError('SDK i
                 presentation.all_cameras_button.click()
                 app.processEvents()
                 assert presentation._multi_view == 'joint'
+                assert presentation.sidebar.isHidden()
+                presentation.legacy_toggle.click()
+                app.processEvents()
+                assert presentation.sidebar.isVisible()
+                presentation.legacy_toggle.click()
+                # Follow the production reference-switch path using real source RGB.
+                import numpy as np
+                for reference in ('cam1', 'cam0'):
+                    bridge._on_multi_reference_changed(reference)
+                    wait_for(lambda: not win.workspace_multi().viewer()._viewer.canvas.is_busy)
+                    renderer = win.workspace_multi().viewer()._viewer
+                    for layer in renderer._layers:
+                        source = bridge._offline_clouds[layer.name]
+                        np.testing.assert_array_equal(layer.colors, np.asarray(source.colors))
+                for _ in range(10):
+                    app.processEvents()
+                    time.sleep(.02)
+                assert win.grab().save(str(report / 'multi_cam_reference_rgb.png'))
                 bridge._on_multi_calibrate()
                 wait_for(lambda: not any(w.isRunning() for w in bridge._workers))
                 app.processEvents()

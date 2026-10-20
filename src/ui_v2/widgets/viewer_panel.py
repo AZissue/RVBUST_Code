@@ -148,7 +148,7 @@ class ViewerPanel(QFrame):
         self._viewer.set_point_size(size)
 
     def set_reference(self, camera_id: Optional[str]):
-        """设置参考相机（参考相机点云显示为白色）。"""
+        """设置参考相机；新版保留原始颜色，旧版沿用参考色规则。"""
         self._reference = camera_id
         self._viewer.set_reference(camera_id)
 
