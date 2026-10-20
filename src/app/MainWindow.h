@@ -3,7 +3,6 @@
 #include <QMainWindow>
 #include <QString>
 #include <QStringList>
-#include <QFutureWatcher>
 #include <array>
 #include <vector>
 #include "models/CalibrationMode.h"
@@ -22,6 +21,7 @@ class DataManager;
 class LogManager;
 class CaptureFlow;
 class CameraConnectionFlow;
+class CalibrationController;
 class TopNavBar;
 class ModeSelector;
 class Image2DView;
@@ -228,8 +228,9 @@ private:
     int m_correspondH = 0;
     bool m_correspondBuilt = false;
 
-    // Stage 7: in-app calibration (async, UI stays responsive)
-    QFutureWatcher<CalibrationService::Result>* m_calibWatcher = nullptr;
+    // Stage 7: in-app calibration (async, UI stays responsive).  The watcher
+    // and the result live in CalibrationController.
+    CalibrationController* m_calib = nullptr;
 
     // Stage 8: board-pose overlay (advisory visualization)
     struct BoardFrameEntry {

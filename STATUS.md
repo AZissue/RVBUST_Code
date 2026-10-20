@@ -1,9 +1,28 @@
 # STATUS.md — 进度状态（每次会话结束必须更新）
 
-> 最后更新：2026-10-20（之十九：架构收敛第 1 批 —— 机器人通道 / 相机连接状态机）
+> 最后更新：2026-10-20（之二十：架构收敛第 2 批 —— 标定控制器 / 相机帧缓存）
 > 只保留「当前快照」，不积累历史；旧条目删除即可，git 历史里仍可追溯。
 
 ## ⏭ 交接块（新会话先读这里）
+
+- **2026-10-20（之二十：架构收敛第 2 批，功能行为不变）**
+  - **① `app/CalibrationController.{h,cpp}`**：`QFutureWatcher`、后台标定任务与
+    "最后一组结果"从 MainWindow 移出。`start(folder, records, params)` 在已有任务
+    运行时返回 false；worker 只捕获值拷贝（不捕获 `this`）；信号只有 `finished()`，
+    结果经 `result()` 读取。busy 文案与结果渲染仍在 MainWindow。
+  - **② `CalibrationService::columnsFromRecords()`**：会话记录 → 三列文本的唯一实现。
+    空行保留、三列按下标对齐（原 `onCalibrate` 与「用当前会话」各写一遍）；
+    新增单测 1 条。
+  - **③ `logic/CameraFrameCache.{h,cpp}`**：grid / correspond / 原生同心圆检测缓存、
+    `gridAligned`、字节统计、`clear()` 从 CameraManager 移出，成为不依赖 SDK 的
+    值对象。CameraManager 的公开签名一个没变，调用方零改动；换帧仍由
+    `BufferSlot::publish()` 释放上一帧几十 MB。
+  - **测试**：新增 `tests/test_camera_frame_cache`（7 条）；
+    `unit_tests` **361 通过 / 0 失败**；`ctest` **3/3 绿**；构建 0、exe 刷新。
+  - **文档**：`reports/阶段16-架构收敛-控制器与状态机.md` 增 §2.3/§2.4、量化表、
+    后续路线（下一步建议 `GuidancePresenter`；`CameraHealthMonitor` 等有真机窗口）
+    与 5 条新人工验收项。
+  - **只本地提交，未推送、未打包。**
 
 - **2026-10-20（之十九：架构收敛第 1 批，功能行为不变）**
   - **起因**：架构评审指出 MainWindow / CameraManager 过重、状态入口过多。本轮只做

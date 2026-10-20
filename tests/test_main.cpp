@@ -21,6 +21,7 @@
 #include "test_data_quality_check.h"
 #include "test_board_pose_fit.h"
 #include "test_frame_buffer.h"
+#include "test_camera_frame_cache.h"
 #include "test_ui_stall_watchdog.h"
 #include "test_measure_tools.h"
 #include "test_auto_flow_policy.h"
@@ -212,6 +213,12 @@ int main(int argc, char** argv)
         // 覆盖每个方法、正文不许写死版本号、更新记录第一条就是当前版本。
         TestHelpContent t27;
         status |= runClass(&t27, argc, argv, "help_content");
+    }
+    {
+        // 架构收敛第 2 批：相机帧缓存（共享不拷贝、换帧释放旧块、清空、
+        // 字节统计、原生检测结果按值返回）——不依赖 RVC/SDK。
+        TestCameraFrameCache t28;
+        status |= runClass(&t28, argc, argv, "camera_frame_cache");
     }
     return status;
 }

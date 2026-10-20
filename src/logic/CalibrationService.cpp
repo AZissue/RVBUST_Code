@@ -46,6 +46,22 @@ bool writeLines(const QString& path, const QStringList& lines, QString& err)
 
 } // namespace
 
+Columns columnsFromRecords(const std::vector<CaptureRecord>& records)
+{
+    Columns c;
+    c.camera.reserve(records.size());
+    c.pose.reserve(records.size());
+    c.tcp.reserve(records.size());
+    for (const auto& r : records) {
+        // 不跳过空行：三列按**下标**对齐，跳过空的会让后面的组整体错位，
+        // 报出来的"第 N 组"就对应不到用户看到的那一行。
+        c.camera.push_back(r.cameraTargetXyz);
+        c.pose.push_back(r.robotCapturePose);
+        c.tcp.push_back(r.robotTargetXyz);
+    }
+    return c;
+}
+
 QString normalizePoseLine(const QString& raw)
 {
     const auto r = ToolInputParser::parseNumberList(raw.toStdString(), 6);

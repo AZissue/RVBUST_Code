@@ -19,6 +19,7 @@ set(TEST_SOURCES
     test_data_quality_check.cpp
     test_board_pose_fit.cpp
     test_frame_buffer.cpp
+    test_camera_frame_cache.cpp
     test_ui_stall_watchdog.cpp
     test_measure_tools.cpp
     test_auto_flow_policy.cpp
@@ -52,6 +53,8 @@ set(TEST_SOURCES
 
 add_executable(unit_tests ${TEST_SOURCES}
     ${CMAKE_SOURCE_DIR}/src/logic/FrameBuffer.cpp
+    # 架构收敛第 2 批：帧缓存是纯值对象（无 SDK），直接测真实实现。
+    ${CMAKE_SOURCE_DIR}/src/logic/CameraFrameCache.cpp
     ${CMAKE_SOURCE_DIR}/src/logic/UiStallWatchdog.cpp
     ${CMAKE_SOURCE_DIR}/src/logic/PointCloudUtils.cpp
     ${CMAKE_SOURCE_DIR}/src/logic/DetectionEngine.cpp

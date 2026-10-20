@@ -14,6 +14,7 @@
 #include <QFutureWatcher>
 
 #include "logic/FrameBuffer.h"
+#include "logic/CameraFrameCache.h"
 
 // Forward-declare RVC types to avoid leaking RVC headers into all consumers
 namespace RVC {
@@ -284,20 +285,10 @@ private:
     std::vector<float> m_intrinsicMatrix;   // 9 elements
     std::vector<float> m_distortion;        // 5 elements
 
-    // Last capture's pixel<->3D lookup data (UI thread, filled on success).
-    // Slots, not vectors: publishing the shared buffer from the capture result
-    // and releasing the previous frame's block are both refcount operations.
-    FrameBuffer::BufferSlot<std::vector<double>> m_lastGrid;
-    int m_lastGridW = 0;
-    int m_lastGridH = 0;
-    FrameBuffer::BufferSlot<std::vector<double>> m_lastCorrespond;
-    int m_lastCmW = 0;
-    int m_lastCmH = 0;
-    bool m_lastGridAligned = true;
-
-    // Cached native concentric circle detection from last capture
-    std::vector<float> m_nativeMarkerPixels;   // flat [x0,y0,...] in px
-    std::vector<float> m_nativeMarkerPoints;   // flat [x0,y0,z0,...] in mm
+    // Last capture's pixel<->3D lookup data + native detection cache.  Owned
+    // by a plain (SDK-free) value object so the replacement/release rules are
+    // unit-tested independently of the device; this class only delegates.
+    CameraFrameCache m_frameCache;
 
     // Read the device's stored capture options into `m_impl->capOpts*` (the
     // read-only mirror).  Must be called with the device lock held; returns false

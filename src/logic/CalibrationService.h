@@ -7,6 +7,7 @@
 #include "logic/RobotDataFormats.h"
 #include "logic/TransformTools.h"
 #include "models/CalibrationMode.h"
+#include "models/CaptureRecord.h"
 
 // Hand-eye calibration computation backed by the RVC HandEyeSDK.
 //
@@ -46,6 +47,22 @@ struct Result {
     double totalMeanError = 0.0;
     int usedCount = 0;               // frames the SDK actually used
 };
+
+// The three per-frame text columns the two SDK entry points consume.
+struct Columns {
+    std::vector<QString> camera;   // 相机目标点 "x y z"
+    std::vector<QString> pose;     // 机器人拍照位姿 "x y z rx ry rz"
+    std::vector<QString> tcp;      // 机器人 TCP 戳点 "x y z"
+};
+
+// Collect the three columns from the session records, in record order.
+//
+// Empty cells are kept on purpose: the columns are matched by *index*, so
+// skipping an empty row would shift every later frame and produce a much harder
+// "column N belongs to frame M" failure than letting the SDK report the first
+// invalid line.  Shared by the calibration run and the tools panel's
+// "use current session" copy so the two can never disagree.
+Columns columnsFromRecords(const std::vector<CaptureRecord>& records);
 
 // Normalize one robot-pose line ("x y z rx ry rz", spaces or English commas)
 // into the SDK's comma-separated format.  Returns empty on invalid input.

@@ -3,6 +3,7 @@
 #include "AppInfo.h"
 
 #include "app/CameraConnectionFlow.h"
+#include "app/CalibrationController.h"
 #include "logic/CameraManager.h"
 #include "logic/CalibrationService.h"
 #include "logic/CaptureFlow.h"
@@ -51,7 +52,6 @@
 #include <QFileInfo>
 #include <QTimer>
 #include <QCursor>
-#include <QtConcurrent>
 #include <vector>
 #include <array>
 #include <tuple>
@@ -70,6 +70,17 @@ namespace {
 constexpr int kCloseWorkerWaitMs = 3000;
 // 任务 3.2: bounded release attempt when Windows ends the session (<= 2 s).
 constexpr int kSessionEndWaitMs = 1500;
+
+// The tools panel takes QStringList; the shared column builder returns
+// std::vector<QString>.  One conversion, in one place.
+QStringList toQStringList(const std::vector<QString>& values)
+{
+    QStringList out;
+    out.reserve(static_cast<int>(values.size()));
+    for (const auto& v : values)
+        out.push_back(v);
+    return out;
+}
 } // namespace
 
 MainWindow::MainWindow(QWidget* parent)
@@ -89,8 +100,8 @@ MainWindow::MainWindow(QWidget* parent)
     m_data   = new DataManager(this);
     m_logger = new LogManager(this);
     m_flow   = new CaptureFlow(m_camera, m_data, this);
-    m_calibWatcher = new QFutureWatcher<CalibrationService::Result>(this);
-    connect(m_calibWatcher, &QFutureWatcher<CalibrationService::Result>::finished,
+    m_calib = new CalibrationController(this);
+    connect(m_calib, &CalibrationController::finished,
             this, &MainWindow::onCalibrationFinished);
 
     m_saveBaseDir = m_config.saveBaseDir();
@@ -1065,7 +1076,7 @@ void MainWindow::onPixelTo3DOfflineImageEnded()
 
 void MainWindow::onCalibrate()
 {
-    if (m_calibWatcher->isRunning())
+    if (m_calib->isRunning())
         return;
     const auto records = m_data->allRecords();
     if (records.empty()) {
@@ -1076,18 +1087,6 @@ void MainWindow::onCalibrate()
     // Advisory quality check runs once before calibrating — reports only, it
     // never blocks the calibration (PROJECT.md "质量告警不拦截").
     refreshQualityReport();
-
-    // 三列原样带上（不跳过空行）：列与列的**下标必须对齐**，跳过空的会让
-    // 「相机目标点 / 拍照位姿 / 戳点」三列错位，比直接报"第 N 组缺失"更难查。
-    std::vector<QString> cameraLines, poseLines, tcpLines;
-    cameraLines.reserve(records.size());
-    poseLines.reserve(records.size());
-    tcpLines.reserve(records.size());
-    for (const auto& r : records) {
-        cameraLines.push_back(r.cameraTargetXyz);
-        poseLines.push_back(r.robotCapturePose);
-        tcpLines.push_back(r.robotTargetXyz);
-    }
 
     CalibrationService::Params params;
     params.calibType = m_calibType;   // ← 按标定方式分派（标定板 / 戳点）
@@ -1103,28 +1102,21 @@ void MainWindow::onCalibrate()
              params.poseAngleUnit == TransformTools::AngleUnit::Radian
                  ? QStringLiteral("弧度") : QStringLiteral("度")));
 
-    const QString folder = m_data->saveDir();
     setBusy(QStringLiteral("计算中..."), ActionButtons::BusyTarget::Calc);
-    m_calibWatcher->setFuture(QtConcurrent::run(
-        [folder, cameraLines, poseLines, tcpLines, params]() {
-            return CalibrationService::calibrate(folder, cameraLines, poseLines,
-                                                 tcpLines, params);
-        }));
+    // 三列原样带上（不跳过空行）由 CalibrationService::columnsFromRecords
+    // 统一处理：列与列的下标必须对齐（PROJECT.md 质量告警不拦截之外的另一条
+    // 数据约束），这里不再有第二份拼列逻辑。
+    m_calib->start(m_data->saveDir(), records, params);
 }
 
 void MainWindow::onCalibrationSessionRequested()
 {
     const auto records = m_data->allRecords();
-    QStringList cameraLines, poseLines, tcpLines;
-    for (const auto& r : records) {
-        // 不跳过空行 —— 面板按当前标定方式自己判断哪几列必须有值。
-        cameraLines.push_back(r.cameraTargetXyz);
-        poseLines.push_back(r.robotCapturePose);
-        tcpLines.push_back(r.robotTargetXyz);
-    }
+    const auto columns = CalibrationService::columnsFromRecords(records);
     // 没有记录时也要回一次（三列都空），让面板给出可读提示。
     m_toolsPanel->useCurrentSession(
-        m_data->saveDir(), cameraLines, poseLines, tcpLines,
+        m_data->saveDir(), toQStringList(columns.camera),
+        toQStringList(columns.pose), toQStringList(columns.tcp),
         m_eyeHandMode == EyeHandMode::EyeInHand,
         m_calibType == CalibType::Marker,
         m_markerType == MarkerType::ConcentricCircle);
@@ -1133,7 +1125,7 @@ void MainWindow::onCalibrationSessionRequested()
 void MainWindow::onCalibrationFinished()
 {
     clearBusy();
-    const auto r = m_calibWatcher->result();
+    const auto& r = m_calib->result();
     if (!r.ok) {
         const QString msg = QStringLiteral("标定失败：%1").arg(r.error);
         m_sidePanel->setCalibrationResult(msg);

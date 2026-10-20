@@ -429,3 +429,37 @@ void TestCalibrationService::calibrateDispatchesOnCalibType()
     QVERIFY(!m.ok);
     QVERIFY2(m.error.contains(QStringLiteral("标定数据")), qPrintable(m.error));
 }
+
+void TestCalibrationService::columnBuilderKeepsEmptyRowsAligned()
+{
+    // 第 2 组什么都没填，第 3 组只有戳点和相机点：三列仍必须各 3 行，
+    // 且同一行的值来自同一条记录。
+    CaptureRecord a;
+    a.cameraTargetXyz = QStringLiteral("1 2 3");
+    a.robotCapturePose = QStringLiteral("1 2 3 0 0 0");
+    a.robotTargetXyz = QStringLiteral("4 5 6");
+    CaptureRecord empty;
+    CaptureRecord c;
+    c.cameraTargetXyz = QStringLiteral("7 8 9");
+    c.robotTargetXyz = QStringLiteral("10 11 12");
+
+    const auto cols = CalibrationService::columnsFromRecords({a, empty, c});
+    QCOMPARE(int(cols.camera.size()), 3);
+    QCOMPARE(int(cols.pose.size()), 3);
+    QCOMPARE(int(cols.tcp.size()), 3);
+
+    QCOMPARE(cols.camera[0], QStringLiteral("1 2 3"));
+    QCOMPARE(cols.camera[1], QString());
+    QCOMPARE(cols.camera[2], QStringLiteral("7 8 9"));
+    QCOMPARE(cols.pose[0], QStringLiteral("1 2 3 0 0 0"));
+    QCOMPARE(cols.pose[1], QString());
+    QCOMPARE(cols.pose[2], QString());
+    QCOMPARE(cols.tcp[0], QStringLiteral("4 5 6"));
+    QCOMPARE(cols.tcp[1], QString());
+    QCOMPARE(cols.tcp[2], QStringLiteral("10 11 12"));
+
+    const auto none = CalibrationService::columnsFromRecords({});
+    QVERIFY(none.camera.empty());
+    QVERIFY(none.pose.empty());
+    QVERIFY(none.tcp.empty());
+}

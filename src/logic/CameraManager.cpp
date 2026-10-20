@@ -908,51 +908,32 @@ std::pair<std::vector<float>, std::vector<float>> CameraManager::intrinsics() co
 
 bool CameraManager::lastGrid(FrameBuffer::DoubleBuf& xyzMm, int& w, int& h) const
 {
-    if (!m_lastGrid.valid())
-        return false;
-    xyzMm = m_lastGrid.get();   // refcount bump, not a 37 MB copy
-    w = m_lastGridW;
-    h = m_lastGridH;
-    return true;
+    return m_frameCache.grid(xyzMm, w, h);
 }
 
 bool CameraManager::lastCorrespond(FrameBuffer::DoubleBuf& cmap, int& w, int& h) const
 {
-    if (!m_lastCorrespond.valid())
-        return false;
-    cmap = m_lastCorrespond.get();
-    w = m_lastCmW;
-    h = m_lastCmH;
-    return true;
+    return m_frameCache.correspond(cmap, w, h);
 }
 
 std::size_t CameraManager::cachedBufferBytes() const
 {
-    return m_lastGrid.bytes() + m_lastCorrespond.bytes()
-         + FrameBuffer::bytes(m_nativeMarkerPixels)
-         + FrameBuffer::bytes(m_nativeMarkerPoints);
+    return m_frameCache.bytes();
 }
 
 void CameraManager::releaseFrameCaches()
 {
-    m_lastGrid.clear();
-    m_lastGridW = m_lastGridH = 0;
-    m_lastCorrespond.clear();
-    m_lastCmW = m_lastCmH = 0;
-    m_nativeMarkerPixels.clear();
-    m_nativeMarkerPixels.shrink_to_fit();
-    m_nativeMarkerPoints.clear();
-    m_nativeMarkerPoints.shrink_to_fit();
+    m_frameCache.clear();
 }
 
 bool CameraManager::lastGridAligned() const
 {
-    return m_lastGridAligned;
+    return m_frameCache.gridAligned();
 }
 
 std::pair<std::vector<float>, std::vector<float>> CameraManager::nativeMarkerResult() const
 {
-    return {m_nativeMarkerPixels, m_nativeMarkerPoints};
+    return m_frameCache.nativeMarkers();
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1453,7 +1434,7 @@ void CameraManager::onCaptureFinished()
     // callback lands on a torn-down interface (SEH 0xC0000005 right after
     // "setFuture returned").  One retained CaptureResult costs a few refcounts
     // plus the frame's QImage; the heavy blocks are already shared with
-    // m_lastGrid/m_lastCorrespond and are freed by BufferSlot::publish().
+    // m_frameCache and are freed by BufferSlot::publish().
     if (m_captureTimedOut) {
         m_captureTimedOut = false;
         return;  // timeout already reported; late result ignored
@@ -1471,20 +1452,22 @@ void CameraManager::onCaptureFinished()
         return;
     }
 
-    // Apply native detection cache on the UI thread (written by the worker).
-    m_nativeMarkerPixels = result.nativePixels;
-    m_nativeMarkerPoints = result.nativePoints;
-
-    // Publish the new frame's lookup buffers.  This also drops the previous
-    // frame's grid/correspond block (tens of MB) right here instead of leaving
-    // it to linger until the next capture overwrote it.
-    m_lastGrid.publish(result.gridPoints);
-    m_lastGridW = result.gridW;
-    m_lastGridH = result.gridH;
-    m_lastCorrespond.publish(result.correspondMap);
-    m_lastCmW = result.cmW;
-    m_lastCmH = result.cmH;
-    m_lastGridAligned = result.gridAligned;
+    // Publish the new frame's lookup buffers and native detection cache on the
+    // UI thread.  This also drops the previous frame's grid/correspond block
+    // (tens of MB) right here instead of leaving it to linger until the next
+    // capture overwrote it.  CaptureResult is cheap to copy (shared buffers),
+    // so handing its members over is just a refcount bump.
+    CameraFrameCache::Frame frame;
+    frame.gridPoints    = result.gridPoints;
+    frame.gridW         = result.gridW;
+    frame.gridH         = result.gridH;
+    frame.correspondMap = result.correspondMap;
+    frame.cmW           = result.cmW;
+    frame.cmH           = result.cmH;
+    frame.gridAligned   = result.gridAligned;
+    frame.nativePixels  = result.nativePixels;
+    frame.nativePoints  = result.nativePoints;
+    m_frameCache.publish(std::move(frame));
 
     RuntimeLog::log("capture OK: %zu points in %lld ms (png=%s ply=%s)",
                     result.points ? result.points->size() / 3 : 0, elapsed,

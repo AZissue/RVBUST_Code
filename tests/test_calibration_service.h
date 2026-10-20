@@ -42,4 +42,7 @@ private slots:
     void toSdkPoseLineRejectsBadInput();
     // 格式名要给界面和日志用：7 个都得有、且互不相同。
     void poseFormatNamesAreDistinctAndComplete();
+
+    // 会话记录 -> 三列文本：空行必须保留，否则后面的组整体错位。
+    void columnBuilderKeepsEmptyRowsAligned();
 };

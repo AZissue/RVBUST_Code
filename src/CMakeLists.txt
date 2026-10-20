@@ -7,6 +7,9 @@ set(SOURCES
     # 相机枚举/预扫描/设备缓存状态机——MainWindow 只弹设备列表
     app/CameraConnectionFlow.cpp
     app/CameraConnectionFlow.h
+    # 标定工作线程 + watcher + 结果——MainWindow 只设置 busy 并渲染结果
+    app/CalibrationController.cpp
+    app/CalibrationController.h
     models/CalibrationMode.h
     models/CaptureRecord.h
     logic/AppConfig.cpp
@@ -17,6 +20,8 @@ set(SOURCES
     logic/DetectionEngine.cpp
     logic/CaptureFlow.cpp
     logic/FrameBuffer.cpp
+    # 最近一帧的 grid / correspond / 原生检测缓存（纯值对象，可单测）
+    logic/CameraFrameCache.cpp
     logic/UiStallWatchdog.cpp
     logic/PointCloudUtils.cpp
     logic/CalibrationService.cpp
