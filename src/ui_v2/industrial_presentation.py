@@ -116,7 +116,7 @@ class IndustrialPresentation:
         self.frame_browser = FrameBrowser(workspace.frame_database)
         self.side_column.addWidget(self.frame_browser)
         self.legacy_panel = None
-        if mode == 'multi_cam':
+        if mode in ('multi_cam', 'mobile_chain', 'turntable'):
             self.legacy_panel = QWidget()
             legacy_layout = QVBoxLayout(self.legacy_panel)
             legacy_layout.setContentsMargins(0, 0, 0, 0)
@@ -217,8 +217,8 @@ class IndustrialPresentation:
                              '_btn_save','_btn_offline_load','_btn_delete_node'):
                     self._mount(getattr(workspace, name), actions)
                 self._mount(workspace._timeline, self.controls)
-                self._mount(workspace._eval_card, stage)
-                self._mount(workspace._stats_label, stage)
+                # Classic evaluation widgets stay in the inactive classic page.
+                # Industrial evaluation is presented by the shell status bar.
             else:
                 self._mount(workspace._left_panel, self.controls)
                 self._mount(workspace._preview_panel, preview)
@@ -316,9 +316,6 @@ class IndustrialPresentation:
                 self.workspace._viewer.show()
             else:
                 self.set_multi_view(self._multi_view, resize=False)
-        if self.mode == 'mobile_chain':
-            self.workspace._eval_card.setVisible(not enabled)
-            self.workspace._stats_label.setVisible(not enabled)
 
     def _preview_frame(self, pixmap):
         if self.inspector:

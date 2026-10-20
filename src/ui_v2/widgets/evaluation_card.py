@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout
 
 from ..theme import (
@@ -34,6 +34,8 @@ _LEVEL_STYLE = {
 
 class EvaluationCard(QFrame):
     """单步配准评估卡片（空壳，等待工作流评估结果驱动）。"""
+
+    changed = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -62,6 +64,11 @@ class EvaluationCard(QFrame):
         lo.addWidget(self._suggestion)
 
         self._apply_style()
+
+    def summary(self):
+        """Plain-text metrics shared with the industrial status bar."""
+        return (f'共视 {self._shared.text()} | 内点 {self._inlier.text()} | '
+                f'本步误差 {self._rms.text()}')
 
     @staticmethod
     def _metric(parent_lo: QHBoxLayout, name: str, value: str) -> QLabel:
@@ -113,6 +120,7 @@ class EvaluationCard(QFrame):
             self._suggestion.setStyleSheet(
                 f"color: {TEXT_MUTED}; font-size: 12px;")
         self._apply_style()
+        self.changed.emit()
 
     def reset(self):
         """恢复待评估状态（撤销/重拍/新会话时调用）。"""
@@ -123,6 +131,7 @@ class EvaluationCard(QFrame):
         self._suggestion.setText("拍摄机位后自动评估")
         self._suggestion.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 12px;")
         self._apply_style()
+        self.changed.emit()
 
     # ------------------------------------------------------------ 内部
     def _apply_style(self):

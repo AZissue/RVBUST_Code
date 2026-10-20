@@ -22,11 +22,11 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QApplication, QDialog, QFrame, QHBoxLayout, QLabel, QMainWindow,
     QMessageBox, QPushButton, QStackedWidget, QToolButton, QVBoxLayout,
-    QWidget, QSplitter,
+    QWidget, QSplitter, QSizePolicy,
 )
 
 from .launcher_dialog import LauncherDialog
-from .theme import ACCENT, ACCENT_DIM, BG_CARD, BORDER, STATUS_OK, STATUS_WARN, TEXT_MUTED, TEXT_SECONDARY
+from .theme import ACCENT, ACCENT_DIM, BG_CARD, BORDER, STATUS_ERR, STATUS_OK, STATUS_WARN, TEXT_MUTED, TEXT_SECONDARY
 from . import icons as ui_icons
 from .widgets import FloatingLogPanel, LoadingOverlay
 from .widgets.device_table import DeviceInfo
@@ -37,6 +37,24 @@ from .composition import WorkspaceFactories
 if False:
     # 仅类型提示，避免循环导入
     from .backend_bridge import BackendBridge
+
+
+class _StatusSummary(QLabel):
+    """One-line metrics with full details on hover, without growing the window."""
+    def __init__(self):
+        super().__init__()
+        self.full_text = ''
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+
+    def set_summary(self, text, details):
+        self.full_text = text
+        self.setToolTip(details)
+        self.setText(self.fontMetrics().elidedText(text, Qt.ElideRight, self.contentsRect().width()))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.setText(self.fontMetrics().elidedText(self.full_text, Qt.ElideRight, self.contentsRect().width()))
 
 
 class MainWindowShell(QMainWindow):
@@ -136,6 +154,7 @@ class MainWindowShell(QMainWindow):
         self._ws_mobile.log_message.connect(self.log)
         self._ws_turntable.log_message.connect(self.log)
         self._ws_mobile.chain_stats_changed.connect(self._on_chain_stats)
+        self._ws_mobile._eval_card.changed.connect(self._refresh_chain_summary)
         self._ws_mobile.dirty_changed.connect(self.set_dirty)
         self._ws_turntable.dirty_changed.connect(self.set_dirty)
         # 转台工作区"保存会话"按钮 → 统一走 BackendBridge 的 B 类保存（1.0.10 池合并）
@@ -268,10 +287,14 @@ class MainWindowShell(QMainWindow):
         left_lo.addWidget(self._st_step)
 
         lo.addWidget(left_group)
-        lo.addStretch(1)
+        self._st_quality = _StatusSummary()
+        self._st_quality.hide()
+        lo.addWidget(self._st_quality, 2)
 
         # ---- 右侧提示组：最近一条日志/操作建议 ----
         right_group = QFrame()
+        right_group.setMinimumWidth(0)
+        right_group.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         right_group.setStyleSheet(
             f"QFrame {{ background-color: {BG_CARD}; border: none;"
             f" border-radius: 6px; }}"
@@ -280,6 +303,8 @@ class MainWindowShell(QMainWindow):
         right_lo.setContentsMargins(8, 3, 8, 3)
 
         self._st_hint = QLabel("")
+        self._st_hint.setMinimumWidth(0)
+        self._st_hint.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self._st_hint.setStyleSheet(f"color: {TEXT_MUTED};")
         right_lo.addWidget(self._st_hint)
         lo.addWidget(right_group, 1)
@@ -345,6 +370,7 @@ class MainWindowShell(QMainWindow):
         self.setStyleSheet(LAUNCHER_QSS if industrial else '')
         self._toolbar.setVisible(not industrial)
         self._industrial_ribbon.activate(industrial, self._mode)
+        self._refresh_chain_summary()
         if hasattr(self, '_log_panel'):
             self._btn_log.setChecked(False)
             self._log_panel.hide()
@@ -590,6 +616,7 @@ class MainWindowShell(QMainWindow):
         logger.log({'error': logging.ERROR, 'warn': logging.WARNING}.get(level, logging.INFO),
                    message, extra={'activity_owned': True, 'ui_level': level})
         self._st_hint.setText(message)
+        self._st_hint.setToolTip(message)
 
     def show_loading(self, text: str = "处理中..."):
         """耗时操作遮罩（拍摄/标定/拼接/自动设IP 统一入口）。"""
@@ -611,6 +638,7 @@ class MainWindowShell(QMainWindow):
 
     # ------------------------------------------------------------ 内部
     def _refresh_statusbar(self):
+        self._refresh_chain_summary()
         if hasattr(self, '_industrial_ribbon'):
             self._industrial_ribbon.update_status()
         mode_name = LauncherDialog.MODE_NAMES.get(self._mode, self._mode)
@@ -641,7 +669,23 @@ class MainWindowShell(QMainWindow):
             f"color: {dot_color}; font-size: 12px;")
 
     def _on_chain_stats(self, text: str):
-        self._st_hint.setText(text)
+        if self._presentation == 'industrial':
+            self._refresh_chain_summary()
+        elif self._mode == LauncherDialog.MODE_MOBILE_CHAIN:
+            self._st_hint.setText(text)
+
+    def _refresh_chain_summary(self):
+        if not hasattr(self, '_st_quality'):
+            return
+        visible = self._presentation == 'industrial' and self._mode == LauncherDialog.MODE_MOBILE_CHAIN
+        self._st_quality.setVisible(visible)
+        ws = self._ws_mobile
+        card = ws._eval_card
+        text = f'{card.summary()} | 已接 {ws._station_count} 机位 | 累计 {ws._total_error_mm:.2f}mm'
+        details = f'{card.summary()}\n{card._suggestion.text()}\n{ws._stats_label.text()}'
+        self._st_quality.set_summary(text, details)
+        color = {'ok': STATUS_OK, 'warn': STATUS_WARN, 'fail': STATUS_ERR}.get(card._level, TEXT_MUTED)
+        self._st_quality.setStyleSheet(f'color:{color}; border:none;')
 
     def _log_dock_toggle(self, checked: bool):
         if checked:

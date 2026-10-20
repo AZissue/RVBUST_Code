@@ -132,6 +132,46 @@ class IndustrialTests(unittest.TestCase):
         self.assertIs(viewer._merged,cloud)
         self.assertIs(win._log_panel.parentWidget(),win)
 
+    def test_mobile_turntable_collapsed_controls_and_persistent_footer_evaluation(self):
+        win = self.win
+        win.resize(1600, 950)
+        win.show()
+        for mode in ('mobile_chain', 'turntable'):
+            win.set_mode(mode, [])
+            win.set_presentation('industrial')
+            p = win._stack.currentWidget()._industrial
+            self.assertTrue(p.sidebar.isHidden())
+            p.legacy_toggle.click()
+            self.assertFalse(p.sidebar.isHidden())
+            p.legacy_toggle.click()
+            p.maximize(True)
+            p.maximize(False)
+            self.assertTrue(p.sidebar.isHidden())
+        win.set_mode('mobile_chain', [])
+        ws = win.workspace_mobile()
+        ws.on_evaluation_done(12, .85, .24, 'ok', '继续移动')
+        self.app.processEvents()
+        self.assertFalse(ws._eval_card.isVisible())
+        self.assertFalse(ws._stats_label.isVisible())
+        self.assertTrue(win._st_quality.isVisible())
+        self.assertIn('本步误差 0.24mm', win._st_quality.full_text)
+        self.assertIn('已接 1 机位', win._st_quality.full_text)
+        win.log('最新日志', 'info')
+        self.assertIn('本步误差 0.24mm', win._st_quality.full_text)
+        ws.on_evaluation_done(2, .1, None, 'fail', '请重拍')
+        self.assertIn('请重拍', win._st_quality.toolTip())
+        self.assertIn('已接 1 机位', win._st_quality.full_text)
+        ws.reset_session()
+        self.assertIn('已接 0 机位', win._st_quality.full_text)
+        self.assertIn('本步误差 —', win._st_quality.full_text)
+        win.set_presentation('classic')
+        self.app.processEvents()
+        self.assertFalse(win._st_quality.isVisible())
+        self.assertTrue(ws._eval_card.isVisible())
+        win.set_mode('turntable', [])
+        win.set_presentation('industrial')
+        self.assertFalse(win._st_quality.isVisible())
+
     def test_marker_inspector_live_preview_and_failed_pair(self):
         win=self.win
         win.set_mode('mobile_chain',[]);win.set_presentation('industrial')

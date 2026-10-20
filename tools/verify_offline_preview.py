@@ -124,6 +124,16 @@ with patch.object(CameraManager, 'initialize', side_effect=AssertionError('SDK i
             elif mode == 'mobile_chain':
                 assert len(bridge.mobile_workflow.get_station_evaluations()) == 2
                 assert len(win.workspace_mobile().viewer()._merged.points) > 1000000
+                mobile = win.workspace_mobile()
+                assert mobile._industrial.sidebar.isHidden()
+                assert not mobile._eval_card.isVisible() and not mobile._stats_label.isVisible()
+                assert win._st_quality.isVisible() and '已接 2 机位' in win._st_quality.full_text
+                wait_for(lambda: not mobile.viewer()._viewer.canvas.is_busy and
+                         mobile.viewer()._viewer.canvas.displayed_points > 0)
+                for _ in range(10):
+                    app.processEvents()
+                    time.sleep(.02)
+                assert win.grab().save(str(report / 'mobile_chain_footer.png'))
                 source = ROOT / 'offline_test_data' / 'stool' / 'frame_2.zip'
                 bridge._on_mobile_station_selected(1)
                 bridge._on_mobile_undo()
@@ -135,6 +145,7 @@ with patch.object(CameraManager, 'initialize', side_effect=AssertionError('SDK i
                 assert source.exists()
                 assert (ROOT / 'offline_test_data' / 'stool' / '.cache' / '2.ply').exists()
             else:
+                assert win.workspace_turntable()._industrial.sidebar.isHidden()
                 assert win.workspace_turntable().session.frame0 is not None
                 assert win.workspace_turntable().session.frame1 is not None
                 assert not win.workspace_turntable().btn_capture_frame1.isEnabled()
