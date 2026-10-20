@@ -1,5 +1,5 @@
 """Polygon picking overlay: child of the canvas, locks navigation while active."""
-from PySide6.QtCore import Qt, QEvent, Signal, QPointF
+from PySide6.QtCore import Qt, QEvent, Signal, QPointF, QRectF
 from PySide6.QtGui import QColor, QPainter, QPen, QPolygonF
 from PySide6.QtWidgets import QWidget
 
@@ -79,8 +79,21 @@ class PolygonSelectionOverlay(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         painter.fillRect(self.rect(), QColor(15, 15, 15, 70))
-        painter.setPen(QColor('#ffe082'))
-        painter.drawText(18, 24, '框选模式：左键添加顶点，双击或右键闭合（至少 3 点），Esc 取消')
+        lines = ['框选模式：左键添加顶点，双击或右键闭合（至少 3 点），Esc 取消']
+        if self._vertices:
+            lines.append(f'已添加 {len(self._vertices)} 个顶点')
+        metrics = painter.fontMetrics()
+        line_height = metrics.height() + 4
+        banner_width = max(metrics.horizontalAdvance(line) for line in lines) + 48
+        banner_height = len(lines) * line_height + 18
+        banner = QRectF((self.width() - banner_width) / 2, 10, banner_width, banner_height)
+        painter.setPen(QPen(QColor('#D32F2F'), 1))
+        painter.setBrush(QColor(30, 32, 38, 220))
+        painter.drawRoundedRect(banner, 8, 8)
+        painter.setPen(QColor('#E8EAED'))
+        for i, line in enumerate(lines):
+            painter.drawText(QRectF(banner.left(), banner.top() + 9 + i * line_height,
+                                    banner.width(), line_height), Qt.AlignCenter, line)
         if self._vertices:
             painter.setPen(QPen(QColor('#d32f2f'), 2))
             polygon = QPolygonF([QPointF(x, y) for x, y in self._vertices])
@@ -92,6 +105,4 @@ class PolygonSelectionOverlay(QWidget):
             painter.setPen(Qt.NoPen)
             for x, y in self._vertices:
                 painter.drawEllipse(QPointF(x, y), 3.5, 3.5)
-            painter.setPen(QColor('#ffe082'))
-            painter.drawText(18, 46, f'已添加 {len(self._vertices)} 个顶点')
         painter.end()

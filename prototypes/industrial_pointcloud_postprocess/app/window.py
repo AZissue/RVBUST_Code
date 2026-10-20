@@ -7,12 +7,13 @@ from PySide6.QtGui import QFont, QFontDatabase
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QToolButton,
     QSplitter, QTreeWidget, QTreeWidgetItem, QGroupBox, QFormLayout,
-    QDoubleSpinBox, QSpinBox, QComboBox, QCheckBox,
+    QDoubleSpinBox, QSpinBox, QComboBox, QCheckBox, QFrame,
     QFileDialog, QMessageBox, QScrollArea, QHeaderView,
 )
 from ui_common.symbols import icon
 from ui_common.worker_thread import WorkerThread
 from ui_common.activity_log import ActivityLogPanel
+from ui_v2 import theme
 from ..core.session import CloudLayer, PostProcessSession, demo_cloud, read_cloud, write_cloud
 from ..core.processing import polygon_crop_mask, voxel_downsample, random_downsample
 from .viewer_factory import create_canvas
@@ -20,41 +21,68 @@ from .selection import PolygonSelectionOverlay
 
 logger = logging.getLogger('industrial_pointcloud_postprocess')
 
-STYLE = '''
-QWidget { background:#292929; color:#dedede; font-family:"Microsoft YaHei"; font-size:12px; }
-QWidget#ribbon { background:#333333; border-bottom:1px solid #1b1b1b; }
-QWidget#menubar { background:#222222; }
-QLabel#brand { color:#eeeeee; font-size:17px; font-weight:700; }
-QLabel#muted { color:#aaaaaa; }
-QLabel#badge { background:#353535; color:#c7c7c7; padding:5px 10px; border-radius:3px; }
-QLabel#status { background:#222222; color:#aaaaaa; padding:6px; }
-QLabel#section { color:#aaaaaa; font-size:11px; }
-QPushButton,QToolButton { background:#393939; border:1px solid #555555; border-radius:3px; padding:6px 11px; }
-QPushButton:hover,QToolButton:hover { background:#464646; border-color:#888888; }
-QPushButton:disabled,QToolButton:disabled { background:#303030; border-color:#3c3c3c; color:#777777; }
-QPushButton#primary { background:#d32f2f; border-color:#df4a4a; color:#ffffff; font-weight:700; }
-QPushButton#primary:hover { background:#e04343; }
-QPushButton#primary:disabled { background:#463333; color:#9b8585; border-color:#604242; }
-QToolButton { border:0; background:transparent; padding:5px; }
-QToolButton:checked { background:#583737; }
-QGroupBox { font-weight:600; border:1px solid #454545; border-radius:3px; margin-top:12px; padding-top:10px; }
-QGroupBox::title { subcontrol-origin:margin; left:10px; padding:0 5px; color:#cccccc; }
-QTreeWidget { background:#242424; border:0; outline:0; }
-QTreeWidget::item { height:29px; }
-QTreeWidget::item:selected { background:#583737; color:white; }
-QHeaderView::section { background:#343434; border:0; padding:5px; color:#aaaaaa; }
-QDoubleSpinBox,QSpinBox,QComboBox { background:#222222; border:1px solid #555555; border-radius:2px; min-height:25px; padding:1px 5px; }
-QComboBox QAbstractItemView { background:#2c2c2c; selection-background-color:#583737; }
-QCheckBox { spacing:7px; padding:4px 0; }
-QCheckBox::indicator { width:13px; height:13px; border:1px solid #777777; background:#242424; border-radius:2px; }
-QCheckBox::indicator:checked { background:#d32f2f; border-color:#d32f2f; }
-QSplitter::handle { background:#1d1d1d; }
-QPlainTextEdit { background:#222222; border:0; color:#b6b6b6; font-family:Consolas; font-size:11px; }
-QLineEdit { background:#222222; border:1px solid #555555; padding:6px; border-radius:3px; }
-QScrollArea { border:0; }
-QScrollBar:vertical { background:#242424; width:8px; }
-QScrollBar::handle:vertical { background:#555555; min-height:24px; }
-QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical { height:0; }
+STYLE = f'''
+QWidget {{ background:{theme.BG_WINDOW}; color:{theme.TEXT_PRIMARY};
+    font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif; font-size:13px; }}
+QLabel {{ background:transparent; }}
+QLabel#mutedLabel {{ color:{theme.TEXT_MUTED}; font-size:12px; }}
+QWidget#studioHeader {{ background:#222222; border-bottom:1px solid {theme.BORDER}; }}
+QLabel#studioBrand {{ color:#eeeeee; font-size:18px; font-weight:700; }}
+QLabel#studioBadge {{ color:{theme.TEXT_SECONDARY}; background:{theme.BG_CARD};
+    border:1px solid {theme.BORDER}; border-radius:6px; padding:5px 10px; }}
+QWidget#industrialRibbon {{ background:#2e2e2e; border-bottom:1px solid #444444; }}
+QFrame#ribbonGroup {{ background:transparent; border:0; border-right:1px solid #454545; }}
+QLabel#ribbonCaption {{ color:{theme.TEXT_SECONDARY}; font-size:11px; }}
+QWidget#industrialRibbon QToolButton {{ color:#dddddd; background:transparent;
+    border:1px solid transparent; border-radius:6px; padding:3px; font-size:12px; }}
+QWidget#industrialRibbon QToolButton:hover {{ background:#414141; border-color:#565656; }}
+QWidget#industrialRibbon QToolButton:pressed {{ background:{theme.ACCENT_PRESSED}; border-color:{theme.ACCENT}; }}
+QWidget#industrialRibbon QToolButton:checked {{ background:{theme.ACCENT_DIM}; border-color:{theme.ACCENT}; color:#ffffff; }}
+QWidget#industrialRibbon QToolButton:disabled {{ color:#727272; background:transparent; border-color:transparent; }}
+QToolButton[headerAction="true"] {{ background:{theme.BG_CARD}; color:{theme.TEXT_PRIMARY};
+    border:1px solid {theme.BORDER}; border-radius:6px; padding:5px 12px; }}
+QToolButton[headerAction="true"]:hover {{ background:#363943; border-color:{theme.BORDER_HOVER}; }}
+QToolButton[headerAction="true"]:checked {{ background:{theme.ACCENT_DIM}; border-color:{theme.ACCENT}; color:{theme.ACCENT}; }}
+QPushButton {{ background:{theme.BG_CARD}; border:1px solid {theme.BORDER};
+    border-radius:6px; padding:6px 14px; min-height:26px; color:{theme.TEXT_PRIMARY}; }}
+QPushButton:hover {{ background:#363943; border-color:{theme.BORDER_HOVER}; }}
+QPushButton:pressed {{ background:#3E424E; }}
+QPushButton:disabled {{ background:{theme.BG_PANEL}; color:{theme.TEXT_MUTED}; border-color:#2E313A; }}
+QGroupBox {{ background:{theme.BG_PANEL}; border:none; border-radius:6px;
+    margin-top:14px; padding-top:12px; font-weight:600; }}
+QGroupBox::title {{ subcontrol-origin:margin; left:12px; padding:0 4px; color:{theme.TEXT_SECONDARY}; }}
+QTreeWidget {{ background:{theme.BG_PANEL}; border:1px solid {theme.BORDER}; border-radius:6px; outline:0; }}
+QTreeWidget::item {{ height:28px; }}
+QTreeWidget::item:selected {{ background:{theme.ACCENT_DIM}; color:{theme.TEXT_PRIMARY}; }}
+QTreeWidget::item:hover {{ background:{theme.BG_CARD}; }}
+QHeaderView::section {{ background:{theme.BG_CARD}; border:0; padding:6px 8px;
+    color:{theme.TEXT_SECONDARY}; font-weight:600; }}
+QDoubleSpinBox,QSpinBox,QComboBox {{ background:{theme.BG_INPUT}; border:1px solid {theme.BORDER};
+    border-radius:6px; min-height:26px; padding:4px 8px; }}
+QDoubleSpinBox:focus,QSpinBox:focus,QComboBox:focus {{ border-color:{theme.ACCENT}; }}
+QComboBox::drop-down {{ border:none; width:22px; }}
+QComboBox QAbstractItemView {{ background:{theme.BG_CARD}; border:1px solid {theme.BORDER};
+    selection-background-color:{theme.ACCENT}; }}
+QCheckBox {{ spacing:8px; }}
+QCheckBox::indicator {{ width:16px; height:16px; border-radius:4px;
+    border:2px solid {theme.BORDER}; background:transparent; }}
+QCheckBox::indicator:hover {{ border-color:{theme.ACCENT}; }}
+QCheckBox::indicator:checked {{ border-color:{theme.ACCENT}; background:{theme.ACCENT}; }}
+QSplitter::handle {{ background:#26282F; }}
+QSplitter::handle:horizontal {{ width:2px; }}
+QSplitter::handle:vertical {{ height:2px; }}
+QSplitter::handle:hover {{ background:{theme.ACCENT}; }}
+QPlainTextEdit {{ background:{theme.BG_PANEL}; border:1px solid {theme.BORDER};
+    border-radius:6px; font-family:Consolas,"Courier New",monospace; font-size:12px; color:{theme.TEXT_SECONDARY}; }}
+QLineEdit {{ background:{theme.BG_INPUT}; border:1px solid {theme.BORDER}; border-radius:6px; padding:5px 10px; }}
+QScrollArea {{ background:transparent; border:0; }}
+QScrollBar:vertical {{ background:transparent; width:10px; margin:2px; }}
+QScrollBar::handle:vertical {{ background:{theme.BORDER}; border-radius:5px; min-height:28px; }}
+QScrollBar::handle:vertical:hover {{ background:{theme.BORDER_HOVER}; }}
+QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical {{ height:0; }}
+QLabel#statusBar {{ background:{theme.BG_PANEL}; color:{theme.TEXT_SECONDARY}; padding:6px 10px; }}
+QLabel#viewTitle {{ font-size:14px; font-weight:600; }}
+QToolTip {{ background:{theme.BG_CARD}; color:{theme.TEXT_PRIMARY}; border:1px solid {theme.BORDER}; padding:4px 8px; }}
 '''
 
 
@@ -93,21 +121,34 @@ class PostProcessWorkbench(QWidget):
         root = QVBoxLayout(self)
         root.setSpacing(0)
         root.setContentsMargins(0, 0, 0, 0)
-        menubar = QWidget(objectName='menubar')
-        menu = QHBoxLayout(menubar)
-        menu.setContentsMargins(18, 10, 16, 10)
-        menu.addWidget(QLabel('MCC   /   POINT STUDIO', objectName='brand'))
-        menu.addStretch()
-        menu.addWidget(QLabel('OFFLINE PROTOTYPE', objectName='badge'))
-        help_btn = QPushButton('原型说明')
+        header = QWidget(objectName='studioHeader')
+        header_line = QHBoxLayout(header)
+        header_line.setContentsMargins(18, 8, 14, 8)
+        header_line.setSpacing(10)
+        header_line.addWidget(QLabel('MCC   /   POINT STUDIO', objectName='studioBrand'))
+        header_line.addStretch(1)
+        header_line.addWidget(QLabel('OFFLINE PROTOTYPE', objectName='studioBadge'))
+        self.log_toggle = QToolButton()
+        self.log_toggle.setProperty('headerAction', True)
+        self.log_toggle.setText('运行日志')
+        self.log_toggle.setIcon(icon('terminal', '#cccccc', 15))
+        self.log_toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.log_toggle.setCheckable(True)
+        self.log_toggle.toggled.connect(self._toggle_logs)
+        header_line.addWidget(self.log_toggle)
+        help_btn = QToolButton()
+        help_btn.setProperty('headerAction', True)
+        help_btn.setText('原型说明')
+        help_btn.setIcon(icon('help', '#cccccc', 15))
+        help_btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         help_btn.clicked.connect(self._help)
-        menu.addWidget(help_btn)
-        root.addWidget(menubar)
+        header_line.addWidget(help_btn)
+        root.addWidget(header)
 
-        ribbon = QWidget(objectName='ribbon')
-        ribbon_layout = QHBoxLayout(ribbon)
-        ribbon_layout.setContentsMargins(10, 5, 12, 4)
-        ribbon_layout.setSpacing(14)
+        ribbon = QWidget(objectName='industrialRibbon')
+        ribbon_row = QHBoxLayout(ribbon)
+        ribbon_row.setContentsMargins(10, 6, 10, 5)
+        ribbon_row.setSpacing(10)
         self._actions = {}
         groups = [
             ('文件', [('open', '打开点云', 'folder_open', self.open_dialog),
@@ -119,19 +160,19 @@ class PostProcessWorkbench(QWidget):
                       ('shot', '视区截图', 'video', self.screenshot_dialog)]),
         ]
         for title, actions in groups:
-            box = QWidget()
-            col = QVBoxLayout(box)
-            col.setContentsMargins(0, 0, 0, 0)
+            group = QFrame(objectName='ribbonGroup')
+            col = QVBoxLayout(group)
+            col.setContentsMargins(4, 0, 10, 2)
             col.setSpacing(2)
             row = QHBoxLayout()
             row.setSpacing(2)
             for key, text, glyph, callback in actions:
                 button = QToolButton()
                 button.setText(text)
-                button.setIcon(icon(glyph, '#d6e0e8', 23))
+                button.setIcon(icon(glyph, '#d6d6d6', 23))
                 button.setIconSize(QSize(23, 23))
                 button.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
-                button.setMinimumSize(66, 53)
+                button.setFixedSize(78, 55)
                 if key == 'select':
                     button.setCheckable(True)
                     button.toggled.connect(self._selection_toggled)
@@ -140,24 +181,39 @@ class PostProcessWorkbench(QWidget):
                 row.addWidget(button)
                 self._actions[key] = button
             col.addLayout(row)
-            col.addWidget(QLabel(title, alignment=Qt.AlignCenter, objectName='section'))
-            ribbon_layout.addWidget(box)
-        ribbon_layout.addStretch()
+            col.addWidget(QLabel(title, alignment=Qt.AlignCenter, objectName='ribbonCaption'))
+            ribbon_row.addWidget(group)
+        ribbon_row.addStretch(1)
         root.addWidget(ribbon)
 
-        split = QSplitter(Qt.Horizontal)
-        split.setChildrenCollapsible(False)
-        sidebar = QWidget()
-        sidebar.setMinimumWidth(260)
-        side = QVBoxLayout(sidebar)
-        side.setContentsMargins(10, 10, 10, 8)
-        side.setSpacing(8)
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(8, 8, 8, 8)
+        content_layout.setSpacing(8)
+        root.addWidget(content, 1)
+        self.content_splitter = QSplitter(Qt.Vertical)
+        self.content_splitter.setChildrenCollapsible(False)
+        self.content_splitter.setHandleWidth(2)
+        self.content_splitter.splitterMoved.connect(self._log_splitter_moved)
+        self._log_height = 200
+        content_layout.addWidget(self.content_splitter, 1)
+
+        body = QSplitter(Qt.Horizontal)
+        body.setChildrenCollapsible(False)
+        side_column = QSplitter(Qt.Vertical)
+        side_column.setChildrenCollapsible(False)
+        side_column.setMinimumWidth(290)
+        side_column.setMaximumWidth(420)
+        tree_panel = QWidget()
+        tree_layout = QVBoxLayout(tree_panel)
+        tree_layout.setContentsMargins(0, 0, 0, 0)
+        tree_layout.setSpacing(6)
         tree_title = QHBoxLayout()
-        tree_title.addWidget(QLabel('图层'))
+        tree_title.addWidget(QLabel('图层', objectName='viewTitle'))
         tree_title.addStretch()
-        self.layer_count = QLabel('0 图层', objectName='muted')
+        self.layer_count = QLabel('0 图层', objectName='mutedLabel')
         tree_title.addWidget(self.layer_count)
-        side.addLayout(tree_title)
+        tree_layout.addLayout(tree_title)
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels(['名称', '点数'])
         self.tree.setToolTip('勾选控制显隐；选中图层作为编辑对象')
@@ -166,9 +222,9 @@ class PostProcessWorkbench(QWidget):
         self.tree.header().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         self.tree.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.tree.setMinimumHeight(130)
-        self.tree.setMaximumHeight(220)
         self.tree.itemChanged.connect(self._visibility_changed)
-        side.addWidget(self.tree, 1)
+        tree_layout.addWidget(self.tree, 1)
+        side_column.addWidget(tree_panel)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -183,7 +239,7 @@ class PostProcessWorkbench(QWidget):
         data_form.addRow('导入源单位', self.units)
         data_note = QLabel('支持 ply / pcd / xyz / pts；打开与导出在后台线程执行。')
         data_note.setWordWrap(True)
-        data_note.setObjectName('muted')
+        data_note.setObjectName('mutedLabel')
         data_form.addRow(data_note)
         form_col.addWidget(data_group)
 
@@ -195,7 +251,7 @@ class PostProcessWorkbench(QWidget):
         crop_form.addRow('裁剪模式', self.crop_mode)
         crop_note = QLabel('点击工具条“多边形框选”进入框选：左键加顶点，双击或右键闭合，Esc 取消；可撤销。')
         crop_note.setWordWrap(True)
-        crop_note.setObjectName('muted')
+        crop_note.setObjectName('mutedLabel')
         crop_form.addRow(crop_note)
         form_col.addWidget(crop_group)
 
@@ -249,61 +305,49 @@ class PostProcessWorkbench(QWidget):
         form_col.addWidget(display_group)
         form_col.addStretch()
         scroll.setWidget(params)
-        side.addWidget(scroll, 3)
-        split.addWidget(sidebar)
+        side_column.addWidget(scroll)
+        side_column.setSizes([260, 560])
+        body.addWidget(side_column)
 
-        view = QWidget()
-        view_layout = QVBoxLayout(view)
-        view_layout.setContentsMargins(0, 0, 0, 0)
-        view_layout.setSpacing(0)
-        tools = QHBoxLayout()
-        tools.setContentsMargins(14, 6, 14, 6)
-        tools.addWidget(QLabel('3D 点云视图'))
-        tools.addStretch()
+        stage = QWidget()
+        stage_layout = QVBoxLayout(stage)
+        stage_layout.setContentsMargins(0, 0, 0, 0)
+        stage_layout.setSpacing(6)
+        view_bar = QWidget()
+        bar = QHBoxLayout(view_bar)
+        bar.setContentsMargins(2, 0, 2, 0)
+        bar.setSpacing(6)
+        bar.addWidget(QLabel('3D 点云视图', objectName='viewTitle'))
+        bar.addStretch(1)
         for name in ['等轴测', '顶视', '正视', '右视']:
             button = QPushButton(name)
             button.clicked.connect(lambda checked=False, value=name: self.canvas.set_view(value))
-            tools.addWidget(button)
-        view_layout.addLayout(tools)
+            bar.addWidget(button)
+        stage_layout.addWidget(view_bar)
         self.canvas = create_canvas(renderer=self._renderer)
         self.canvas.status_changed.connect(self._render_status)
         if hasattr(self.canvas, 'render_failed'):
             self.canvas.render_failed.connect(self._renderer_failed)
-        self._view_layout = view_layout
-        view_layout.addWidget(self.canvas, 1)
+        self._view_layout = stage_layout
+        stage_layout.addWidget(self.canvas, 1)
         self._make_overlay()
         details = QWidget()
         self.details_bar = details
         details_layout = QHBoxLayout(details)
-        details_layout.setContentsMargins(16, 8, 16, 8)
-        self.details = QLabel('选择图层查看点数和数据来源', objectName='muted')
+        details_layout.setContentsMargins(4, 0, 0, 0)
+        self.details = QLabel('选择图层查看点数和数据来源', objectName='mutedLabel')
         self.details.setWordWrap(True)
         details_layout.addWidget(self.details, 1)
         self.reset_button = QPushButton('适配全部')
         self.reset_button.clicked.connect(self._fit)
         details_layout.addWidget(self.reset_button)
-        view_layout.addWidget(details)
-        split.addWidget(view)
-        split.setSizes([290, 1150])
-        self.content_splitter = QSplitter(Qt.Vertical)
-        self.content_splitter.setChildrenCollapsible(False)
-        self.content_splitter.setHandleWidth(6)
-        self.content_splitter.addWidget(split)
+        stage_layout.addWidget(details)
+        body.addWidget(stage)
+        body.setStretchFactor(1, 1)
+        body.setSizes([320, 1120])
+        self.content_splitter.addWidget(body)
         self.content_splitter.setStretchFactor(0, 1)
-        self.content_splitter.splitterMoved.connect(self._log_splitter_moved)
-        self._log_height = 200
-        root.addWidget(self.content_splitter, 1)
 
-        bottom = QWidget()
-        bottom_layout = QHBoxLayout(bottom)
-        bottom_layout.setContentsMargins(15, 6, 15, 6)
-        self.state_label = QLabel('待机 · 离线后处理')
-        bottom_layout.addWidget(self.state_label, 1)
-        self.log_toggle = QPushButton('运行日志')
-        self.log_toggle.setCheckable(True)
-        self.log_toggle.toggled.connect(self._toggle_logs)
-        bottom_layout.addWidget(self.log_toggle)
-        root.addWidget(bottom)
         self.logs = ActivityLogPanel(docked=True)
         self.logs.setMinimumHeight(140)
         self.content_splitter.addWidget(self.logs)
@@ -311,10 +355,18 @@ class PostProcessWorkbench(QWidget):
         self.logs.attach_logger(logger)
         self.logs.closed.connect(lambda: self.log_toggle.setChecked(False))
         self.logs.hide()
-        self.status = QLabel(objectName='status')
+
+        bottom = QWidget()
+        bottom_line = QHBoxLayout(bottom)
+        bottom_line.setContentsMargins(10, 0, 10, 0)
+        bottom_line.setSpacing(12)
+        self.state_label = QLabel('待机 · 离线后处理', objectName='statusBar')
+        bottom_line.addWidget(self.state_label)
+        self.status = QLabel(objectName='statusBar')
         self.status.setWordWrap(True)
-        root.addWidget(self.status)
-        self.latest_status = QLabel('就绪', objectName='status')
+        bottom_line.addWidget(self.status, 1)
+        root.addWidget(bottom)
+        self.latest_status = QLabel('就绪', objectName='statusBar')
         self.latest_status.setMaximumHeight(28)
         root.addWidget(self.latest_status)
 

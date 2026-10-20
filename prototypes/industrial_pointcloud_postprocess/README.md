@@ -3,7 +3,8 @@
 工业风格 UI 的轻量点云后处理工具，定位是 `prototypes/cloudcompare_like/` 的
 "工业风 UI + 基础功能"轻量对照版：仅包含 **加载 / 多边形框选裁剪 / 下采样 / 撤销 / 导出**，
 算法与 UI 独立自包含（不 import cloudcompare_like 或其他原型的代码），渲染直接复用
-`src/ui_common/industrial_scene/` 的 `CloudCanvas` / `GpuCloudCanvas`。
+`src/ui_common/industrial_scene/` 的 `CloudCanvas` / `GpuCloudCanvas`，界面视觉语言对齐
+主程序新版 `src/ui_v2`（theme 设计 token + studioHeader/ribbon/侧栏卡片布局）。
 
 ## 功能
 
@@ -33,10 +34,12 @@ python prototypes/industrial_pointcloud_postprocess/tests/test_processing.py
 QT_QPA_PLATFORM=offscreen python prototypes/industrial_pointcloud_postprocess/tests/test_ui_smoke.py
 QT_QPA_PLATFORM=offscreen python prototypes/industrial_pointcloud_postprocess/run.py --screenshot tmp_proto_shot.png
 python prototypes/industrial_pointcloud_postprocess/run.py --self-test-io
+QT_QPA_PLATFORM=offscreen python prototypes/industrial_pointcloud_postprocess/tools/shot_selection_mode.py tmp_proto_shot_selection.png
 ```
 
-通过线：四条命令退出码均为 0；第 2、4 条打印 `[OK]` 标记；第 3 条生成非空截图
-（offscreen 下自动使用软件渲染，截图逻辑等待图层加载与画面稳定后再 grab）。
+通过线：五条命令退出码均为 0；第 2、4 条打印 `[OK]` 标记；第 3 条生成非空截图
+（offscreen 下自动使用软件渲染，截图逻辑等待图层加载与画面稳定后再 grab）；
+第 5 条进入框选模式并截取激活态画面，用于回归验证框选提示横幅与画布 HUD 不重叠。
 
 ## 已知边界
 
