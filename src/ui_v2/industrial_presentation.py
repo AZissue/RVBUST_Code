@@ -127,7 +127,6 @@ class IndustrialPresentation:
         self.body.setSizes([320, 1120])
         self.overlay = None
         self.inspector = None
-        self._database_inspector = None
         self._business_marker_image = None
         self.grid = None
         self._multi_view = 'joint'
@@ -282,8 +281,6 @@ class IndustrialPresentation:
             self.overlay.setVisible(False if self.inspector else not enabled)
         if self.inspector:
             self.inspector.setVisible(not enabled)
-        if self._database_inspector:
-            self._database_inspector.setVisible(not enabled and self.workspace._viewer._database_cloud is not None)
         if self.mode == 'multi_cam':
             self.view_bar.setVisible(not enabled)
             if enabled:
@@ -344,32 +341,20 @@ class IndustrialPresentation:
                 current_visible=False)
 
     def show_database_image(self, frame):
-        if self.mode == 'multi_cam' and self._multi_view == '2d':
+        if self.mode == 'multi_cam':
+            self.workspace._camera_grid.show_database_frame(frame)
+            self.all_cameras_button.setEnabled(False)
             self.set_multi_view('joint')
-        inspector = self.inspector
-        if inspector is None:
-            # Multi-camera cards remain bound to acquisition/detection. Show
-            # archived frames separately in the right viewport without replacing
-            # the cards' current business frame objects.
-            viewer = self.workspace._viewer.viewer()
-            if self._database_inspector is None:
-                from ui_common.industrial_scene.marker_inspector import MarkerInspector
-                self._database_inspector = MarkerInspector(viewer.canvas, show_world=False)
-                viewer.canvas_changed.connect(self._bind_database_canvas)
-            inspector = self._database_inspector
-            inspector.bind_viewport(viewer.canvas)
-            inspector.show()
-            inspector.raise_()
-        inspector.set_frame(frame.image_np, frame.markers_all or frame.markers,
+            return
+        self.inspector.set_frame(frame.image_np, frame.markers_all or frame.markers,
             frame_id=f'DB原始帧 {frame.frame_id}', current_visible=False)
 
-    def _bind_database_canvas(self, canvas):
-        if self._database_inspector:
-            self._database_inspector.bind_viewport(canvas)
-
     def restore_business_image(self):
-        if self._database_inspector:
-            self._database_inspector.hide()
+        if self.mode == 'multi_cam':
+            self.workspace._camera_grid.show_database_frame(None)
+            self.all_cameras_button.setEnabled(bool(self.workspace._camera_grid._focused_id))
+            self.workspace.refresh_marker_pair()
+            return
         if self._business_marker_image:
             args, kwargs = self._business_marker_image
             self.set_marker_image(*args, **kwargs)

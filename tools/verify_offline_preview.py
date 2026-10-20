@@ -136,8 +136,13 @@ with patch.object(CameraManager, 'initialize', side_effect=AssertionError('SDK i
                 assert scene.stored_points > 1000000
             assert len(viewer._database_cloud.points) == database.records[uid].points
             presentation = win._stack.currentWidget()._industrial
-            inspector = presentation.inspector or presentation._database_inspector
-            assert not inspector.image_view.image.isNull() and inspector.isVisible()
+            if mode == 'multi_cam':
+                card = win.workspace_multi().camera_grid()._database_card
+                assert card.isVisible() and card.current_frame().image_np is not None
+                assert presentation.inspector is None
+            else:
+                inspector = presentation.inspector
+                assert not inspector.image_view.image.isNull() and inspector.isVisible()
             assert len(database.records) == 2
             for _ in range(10):
                 app.processEvents()

@@ -363,6 +363,7 @@ class CameraGrid(QScrollArea):
         self._last_cols: Optional[int] = None
         self._overview = False
         self._focused_id = None
+        self._database_card = None
 
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.NoFrame)
@@ -381,6 +382,7 @@ class CameraGrid(QScrollArea):
 
         titles: {camera_id: 显示名称}，未提供时显示 camera_id。
         """
+        self.show_database_frame(None)
         for card in self._cards.values():
             self._grid.removeWidget(card)
             card.hide()
@@ -403,6 +405,7 @@ class CameraGrid(QScrollArea):
     def set_overview(self, enabled):
         if self._overview == enabled:
             return
+        self.show_database_frame(None)
         self._overview = enabled
         self._focused_id = None
         self._grid.setAlignment(Qt.AlignTop if enabled else Qt.AlignTop | Qt.AlignLeft)
@@ -417,7 +420,7 @@ class CameraGrid(QScrollArea):
         self.focus_changed.emit('')
 
     def focus_camera(self, camera_id=None):
-        if not self._overview:
+        if not self._overview or self._database_card is not None:
             return
         self._focused_id = camera_id if camera_id in self._cards and self._focused_id != camera_id else None
         for cid, card in self._cards.items():
@@ -425,6 +428,30 @@ class CameraGrid(QScrollArea):
         self._last_cols = None
         self._relayout()
         self.focus_changed.emit(self._focused_id or '')
+
+    def show_database_frame(self, frame):
+        """Read-only archive display in the shared 2D area; never replace live frames."""
+        if self._database_card is not None:
+            self._grid.removeWidget(self._database_card)
+            self._database_card.hide()
+            self._database_card.deleteLater()
+            self._database_card = None
+        if frame is not None:
+            card = CameraCard(frame.camera_name, title=f'DB 原始帧 {frame.frame_id} · {frame.camera_name}',
+                              preview_factory=self._preview_factory)
+            card.set_overview(True)
+            card.set_frame(frame)
+            card.set_marker_count(len(frame.markers_all or frame.markers))
+            card.set_frame_kind(None)
+            card._kind.setText('只读 · 返回工作视图恢复相机')
+            card._thumb.setToolTip('DB历史帧预览；点击“返回工作视图”恢复实时相机画面')
+            for button in (card._btn_preview, card._btn_capture, card._btn_detect):
+                button.hide()
+            self._database_card = card
+        for cid, card in self._cards.items():
+            card.setVisible(frame is None and (self._focused_id is None or cid == self._focused_id))
+        self._last_cols = None
+        self._relayout()
 
     def set_marker_pair(self, reference_id, accepted=None):
         from ui_common.industrial_scene.marker_display import classify_markers
@@ -451,7 +478,8 @@ class CameraGrid(QScrollArea):
         仅当列数真正变化时才移除/重加卡片，避免拖动 splitter 或窗口
         缩放时频繁全量 relayout 造成卡顿。
         """
-        cards = [card for cid, card in self._cards.items() if self._focused_id is None or cid == self._focused_id]
+        cards = ([self._database_card] if self._database_card is not None else
+                 [card for cid, card in self._cards.items() if self._focused_id is None or cid == self._focused_id])
         n = len(cards)
         if n == 0:
             return

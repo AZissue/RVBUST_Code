@@ -113,6 +113,31 @@ class MulticamViewTests(unittest.TestCase):
         self.presentation.maximize(False)
         self.assertTrue(self.ws.viewer().isHidden())
 
+    def test_database_preview_uses_2d_area_without_mutating_live_frames(self):
+        original = {cid: card.current_frame() for cid, card in self.grid._cards.items()}
+        archived = FrameData(99, 'disconnected_camera', image_np=np.ones((120, 160, 3), np.uint8))
+        self.presentation.set_multi_view('3d')
+        self.presentation.show_database_image(archived)
+        self.flush()
+        self.assertEqual(self.presentation._multi_view, 'joint')
+        preview = self.grid._database_card
+        self.assertIs(preview.current_frame(), archived)
+        self.assertTrue(preview.isVisible())
+        self.assertTrue(preview._btn_capture.isHidden())
+        self.assertIsNone(self.presentation.inspector)
+        for cid, frame in original.items():
+            self.assertIs(self.grid.card(cid).current_frame(), frame)
+            self.assertTrue(self.grid.card(cid).isHidden())
+        updated = FrameData(2, 'cam0', image_np=np.zeros((120, 160, 3), np.uint8))
+        self.grid.set_frame('cam0', updated)
+        self.assertIs(preview.current_frame(), archived)
+        self.presentation.show_database_image(archived)
+        self.presentation.restore_business_image()
+        self.flush()
+        self.assertIsNone(self.grid._database_card)
+        self.assertIs(self.grid.card('cam0').current_frame(), updated)
+        self.assertTrue(all(card.isVisible() for card in self.grid._cards.values()))
+
     def test_save_dialog_labels_and_standard_result_flags_are_chinese(self):
         box = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         localize_buttons(box)
