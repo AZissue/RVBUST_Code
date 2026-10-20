@@ -91,7 +91,7 @@ class ChainStitcher:
     # ------------------------------------------------------------------
     # 公共接口
     # ------------------------------------------------------------------
-    def add_frame(self, frame: FrameData) -> Tuple[bool, str, Optional[ChainEdge]]:
+    def add_frame(self, frame: FrameData, *, detect_markers: bool = True) -> Tuple[bool, str, Optional[ChainEdge]]:
         """添加新机位帧：检测标记 → 匹配共有标记 → 配准 → 评估 → 入图。
 
         Returns:
@@ -102,13 +102,18 @@ class ChainStitcher:
         """
         # 1. 检测标记（include_invalid=True：全量存 frame.markers_all 供 UI
         #    红/绿圈显示；配准只用过滤后的 frame.markers）
-        markers_all = self.marker_detector.detect_3d(
-            frame.image_np,
-            pointmap=frame.pointmap,
-            rvc_image=frame.rvc_image,
-            offline_ply_path=frame.offline_pointmap_path,
-            include_invalid=True,
-        )
+        if detect_markers:
+            markers_all = self.marker_detector.detect_3d(
+                frame.image_np,
+                pointmap=frame.pointmap,
+                rvc_image=frame.rvc_image,
+                offline_ply_path=frame.offline_pointmap_path,
+                include_invalid=True,
+            )
+        else:
+            if not frame.is_offline:
+                return False, '仅离线帧支持回放已保存的识别结果', None
+            markers_all = copy.deepcopy(frame.markers_all if frame.markers_all is not None else frame.markers)
         markers = [m for m in markers_all if m.get('valid_3d', True)]
         if not markers:
             return False, "未检测到标记物，请调整机位或光照", None

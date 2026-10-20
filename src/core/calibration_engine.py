@@ -219,7 +219,7 @@ class CalibrationEngine:
             'details': details,
         }
         self.pair_results[(ref_id, cam_id)] = result
-        logger.info(f"标定 {cam_id}→{ref_id}: 匹配 {n_pairs} 对, 内点 {len(best_inliers)}, "
+        logger.info(f"标定 {cam_id}→{ref_id}: 匹配 {n_pairs} 对, 内点 {result['inlier_count']}, "
                     f"RMS {result['rms_mm']:.4f}")
         return result
 

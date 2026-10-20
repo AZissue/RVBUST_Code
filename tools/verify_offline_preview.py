@@ -20,6 +20,7 @@ sys.path.insert(0, str(ROOT / 'src'))
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QFontDatabase
 from core.camera_manager import CameraManager
+from core.marker_detector import MarkerDetector
 from ui_v2 import MainWindowShell
 from ui_v2.backend_bridge import BackendBridge
 from ui_v2.composition import UiComposition
@@ -41,7 +42,8 @@ def wait_for(condition, timeout=120):
 
 
 with patch.object(CameraManager, 'initialize', side_effect=AssertionError('SDK initialization forbidden')), \
-     patch.object(CameraManager, 'find_devices', side_effect=AssertionError('device enumeration forbidden')):
+     patch.object(CameraManager, 'find_devices', side_effect=AssertionError('device enumeration forbidden')), \
+     patch.object(MarkerDetector, 'detect_3d', side_effect=AssertionError('fixture replay must not redetect')):
     win = MainWindowShell()
     bridge = BackendBridge(win)
     bridge.wire_all()

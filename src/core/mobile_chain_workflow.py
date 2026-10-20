@@ -108,12 +108,16 @@ class MobileChainWorkflow(WorkflowBase):
         logger.info("链式拼接已就绪，等待拍摄首个机位")
         return True, "链式拼接已就绪，等待拍摄首个机位"
 
-    def load_session_dir(self, session_dir: str) -> Tuple[bool, str]:
+    def load_session_dir(self, session_dir: str, *,
+                         saved_markers: Optional[Dict[str, List[Dict]]] = None) -> Tuple[bool, str]:
         """从已有会话目录离线加载所有站位并自动拼接。
 
         目录结构要求：
             session_*/station_1/station_1.png + station_1.ply + meta.json
             session_*/station_2/...
+
+        saved_markers: 显式提供各 station 的离线识别记录时，仅回放这些记录，
+        不调用检测器；配准与质量门禁仍走正式流程。未提供时每帧检测一次。
         """
         if not os.path.isdir(session_dir):
             return False, f"目录不存在: {session_dir}"
@@ -151,23 +155,32 @@ class MobileChainWorkflow(WorkflowBase):
         self._state = self.STATE_CHAINING
 
         loaded = 0
+        failures = []
         for station_name in station_names:
             station_dir = os.path.join(session_dir, station_name)
             img_path = os.path.join(station_dir, f"{station_name}.png")
             ply_path = os.path.join(station_dir, f"{station_name}.ply")
             if not os.path.exists(img_path) or not os.path.exists(ply_path):
                 logger.warning(f"{station_name} 缺少 png/ply，跳过")
+                failures.append(f'{station_name} 缺少 png/ply')
                 continue
 
             image = cv2.imread(img_path)
             if image is None:
                 logger.warning(f"{station_name} 图像读取失败，跳过")
+                failures.append(f'{station_name} 图像读取失败')
                 continue
 
-            markers = self.marker_detector.detect_3d(
-                image, offline_ply_path=ply_path)
+            if saved_markers is None:
+                markers_all = self.marker_detector.detect_3d(
+                    image, offline_ply_path=ply_path, include_invalid=True)
+            else:
+                import copy
+                markers_all = copy.deepcopy(saved_markers.get(station_name, []))
+            markers = [m for m in markers_all if m.get('valid_3d', True)]
             if not markers:
                 logger.warning(f"{station_name} 未检测到标记物，跳过")
+                failures.append(f'{station_name} 无有效3D标记')
                 continue
 
             # 统一字段名
@@ -193,11 +206,13 @@ class MobileChainWorkflow(WorkflowBase):
                 offline_image_path=img_path,
                 offline_pointmap_path=ply_path,
                 markers=markers,
+                markers_all=markers_all,
             )
 
-            ok, msg, _edge = self._chain_stitcher.add_frame(frame)
+            ok, msg, _edge = self._chain_stitcher.add_frame(frame, detect_markers=False)
             if not ok:
                 logger.warning(f"{station_name} 配准失败: {msg}，跳过")
+                failures.append(f'{station_name} 配准失败: {msg}')
                 continue
 
             self._station_manager._stations[station_name] = frame
@@ -206,19 +221,20 @@ class MobileChainWorkflow(WorkflowBase):
                 self._station_manager._station_seq, seq)
             loaded += 1
 
+        details = ('；' + '；'.join(failures)) if failures else ''
         if loaded == 0:
             # 回滚到加载前的状态，避免半初始化
             self._chain_stitcher = old_chain
             self._station_manager = old_station
             self._session_dir = old_session_dir
             self._state = old_state
-            return False, "没有成功加载任何站位"
+            return False, "没有成功加载任何站位" + details
         if len(self._chain_stitcher.nodes) < 2:
-            return True, f"仅成功加载 {loaded} 个有效站位，无法形成拼接链"
+            return True, f"仅成功加载 {loaded} 个有效站位，无法形成拼接链" + details
 
         self._state = self.STATE_READY if len(self._chain_stitcher.nodes) >= 3 else self.STATE_CHAINING
         logger.info(f"离线加载会话完成: {session_dir}，共 {loaded} 个站位入链")
-        return True, f"离线加载完成: {loaded} 个站位入链"
+        return True, f"离线加载完成: {loaded} 个站位入链" + details
 
     def capture_station(self) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
         """拍摄当前机位并自动配准。

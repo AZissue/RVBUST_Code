@@ -44,7 +44,9 @@ def open_preview(bridge, mode, on_finished=None):
                 preview_processor.enable_outlier_removal = False
                 mobile = MobileChainWorkflow(bridge.camera_manager, MarkerDetector(),
                     CalibrationEngine(), bridge.stitch_engine, preview_processor)
-                ok, message = mobile.load_session_dir(str(session))
+                saved_markers = {f'station_{index}': frame.markers_all
+                                 for index, (frame, _) in enumerate(records, 1)}
+                ok, message = mobile.load_session_dir(str(session), saved_markers=saved_markers)
                 if not ok or len(mobile.get_station_evaluations()) != len(records):
                     raise ValueError('离线链式拼接未完整加载两帧：' + message)
                 merged = mobile.get_merged_pointcloud()
