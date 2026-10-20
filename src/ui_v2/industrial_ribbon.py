@@ -152,7 +152,8 @@ class IndustrialRibbon(QWidget):
         multi, mobile, turn = shell.workspace_multi(), shell.workspace_mobile(), shell.workspace_turntable()
         exports = dict(multi_cam=multi._btn_stitch_save, mobile_chain=mobile._btn_save, turntable=turn.btn_save)
         self._group(row, '项目', [
-            ('open', '打开会话', 'folder_open', mobile._btn_offline_load if mode == 'mobile_chain' else shell.open_session_requested.emit),
+            ('new', '新建会话', 'folder_open', lambda: self._project_action('new_dialog')),
+            ('open', '打开会话', 'folder_open', shell.open_session_requested.emit),
             ('save', '保存会话', 'save', turn.btn_save_session if mode == 'turntable' else shell.save_session_requested.emit),
             ('export', '拼接并导出' if mode == 'multi_cam' else '导出点云', 'layers', exports[mode]),
         ], mode)
@@ -193,6 +194,11 @@ class IndustrialRibbon(QWidget):
             self._sources.append(turn.btn_save_session)
         for _, entries in groups:
             self._sources.extend(entry[3] for entry in entries)
+
+    def _project_action(self, name):
+        bridge = self.shell._backend_bridge
+        if bridge and hasattr(bridge, 'projects'):
+            getattr(bridge.projects, name)()
 
     def activate(self, enabled, mode):
         self.setVisible(enabled)

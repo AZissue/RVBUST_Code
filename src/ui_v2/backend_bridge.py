@@ -169,6 +169,8 @@ class BackendBridge(QObject):
         from .frame_database import FrameDatabaseController
         self.frame_db = FrameDatabaseController(self)
         self.camera_manager.capture_sink = self.frame_db.capture
+        from .session_projects import SessionProjects
+        self.projects = SessionProjects(self)
 
     def _ensure_sdk(self):
         if not getattr(self, '_sdk_initialized', False):
@@ -619,8 +621,11 @@ class BackendBridge(QObject):
                     self._show_debug_mode_notice(
                         "单相机移动拼接", ok_count, test_count)
                 # 模式 B 需要初始化链式拼接会话
-                ok, msg = self.mobile_workflow.start_chaining()
-                self.shell.log(msg, "success" if ok else "warn")
+                if self.mobile_workflow.station_manager is None:
+                    ok, msg = self.mobile_workflow.start_chaining()
+                    self.shell.log(msg, "success" if ok else "warn")
+                if self.shell._presentation == 'industrial':
+                    self.projects.prepare(mode)
                 self.shell.workspace_mobile().set_state("connected")
             elif mode == LauncherDialog.MODE_TURNTABLE:
                 # 模式 C：转台要求至少 1 台设备（真实或测试均可进入 UI）
@@ -770,7 +775,7 @@ class BackendBridge(QObject):
         一致（仅多 camera_names / saved_at 字段，load 时忽略），可直接
         当作外参文件手动加载。
         """
-        if self.offline_preview or not self.calibration_engine.pair_results:
+        if self.shell._presentation == 'industrial' or self.offline_preview or not self.calibration_engine.pair_results:
             return
         try:
             payload = self.calibration_engine.to_dict()
@@ -790,7 +795,7 @@ class BackendBridge(QObject):
         恢复走 fixed_workflow.load_calibration（与手动「加载外参」同一条
         已验证路径）：仅恢复矩阵，不需要标定帧即可进入扫描阶段。
         """
-        if self.calibration_engine.pair_results:
+        if self.shell._presentation == 'industrial' or self.calibration_engine.pair_results:
             return
         path = self._AUTOSAVE_CALIBRATION_PATH
         if not os.path.exists(path):
@@ -1479,6 +1484,7 @@ class BackendBridge(QObject):
             ws = self.shell.workspace_mobile()
             ws.live_view().set_frame(None)
             ws.live_view().set_detection_overlay([])
+            ws.live_view().set_marker_context(None)
             return
         self._update_mobile_live_view(station_ids[-1])
 
@@ -1579,7 +1585,9 @@ class BackendBridge(QObject):
                 self.shell.set_dirty(True)
                 ws.on_undo_done()
                 self._refresh_mobile_live_view_to_latest()
-                if merged is not None:
+                if merged is None:
+                    ws.viewer().clear_all()
+                else:
                     ws.viewer().set_pointcloud_merged(merged)
 
         self._run_background(_work, _done)
@@ -1725,7 +1733,9 @@ class BackendBridge(QObject):
             if error:
                 self.shell.log(f"刷新点云失败: {error}", "error")
                 return
-            if merged is not None:
+            if merged is None:
+                ws.viewer().clear_all()
+            else:
                 ws.viewer().set_pointcloud_merged(merged)
 
         self._run_background(_work, _done)
@@ -1766,26 +1776,37 @@ class BackendBridge(QObject):
 
     def _on_mobile_save(self):
         """保存拼接数据：合并点云 PLY + 误差报告 JSON。"""
+        export_path = None
+        if self.shell._presentation == 'industrial':
+            project = self.projects.projects['mobile_chain']
+            default = project.save_root / (project.name + '_merged.ply')
+            export_path, _ = QFileDialog.getSaveFileName(self.shell, '导出拼接点云', str(default), 'PLY 点云 (*.ply)')
+            if not export_path:
+                return
         self.shell.show_loading("正在保存拼接数据...")
 
         def _work():
             report = self.mobile_workflow.get_error_report()
             if not report:
                 return False, "无机位数据可保存", None
-            session_dir = report.get('session_dir')
+            session_dir = os.path.dirname(os.path.abspath(export_path)) if export_path else report.get('session_dir')
             if not session_dir:
                 return False, "会话目录未知，无法保存", None
             os.makedirs(session_dir, exist_ok=True)
 
             merged = self.mobile_workflow.get_merged_pointcloud()
-            ply_path = os.path.join(session_dir, "merged.ply")
+            ply_path = export_path or os.path.join(session_dir, "merged.ply")
             if merged is not None:
                 if not write_point_cloud_atomic(ply_path, merged):
                     return False, f"点云写盘失败（详见日志）: {ply_path}", None
             else:
                 ply_path = None
 
-            json_path = os.path.join(session_dir, "error_report.json")
+            json_path = os.path.splitext(export_path)[0] + '_report.json' if export_path else os.path.join(session_dir, "error_report.json")
+            if export_path:
+                project = self.projects.projects['mobile_chain']
+                report.update(session_dir=str(project.saved_path) if project.saved_path else None,
+                              project_id=project.uid, project_name=project.name)
             write_json_atomic(json_path, report, ensure_ascii=False, indent=2)
 
             # 1.0.12 终态日志写进 worker 内部
@@ -1810,12 +1831,12 @@ class BackendBridge(QObject):
 
         self._run_background(_work, _done, must_finish=True, name="保存拼接数据")
 
-    def _on_mobile_offline_load(self):
+    def _on_mobile_offline_load(self, session_dir=None):
         """离线加载单相机站位会话目录并自动拼接。"""
         from PySide6.QtWidgets import QFileDialog
 
         base = self.mobile_workflow.session_dir or "offline_data/stations"
-        session_dir = QFileDialog.getExistingDirectory(
+        session_dir = session_dir or QFileDialog.getExistingDirectory(
             self.shell, "选择单相机会话目录", base)
         if not session_dir:
             return
@@ -1841,6 +1862,9 @@ class BackendBridge(QObject):
             if not ok or not evaluations:
                 return
 
+            if self.shell._presentation == 'industrial':
+                self.projects.prepare('mobile_chain')
+
             ws = self.shell.workspace_mobile()
             ws.reset_session()
             ws.set_stations(evaluations)
@@ -1864,6 +1888,9 @@ class BackendBridge(QObject):
     # ------------------------------------------------------------------
     def _on_save_session(self):
         """保存当前会话（标定帧 + 扫描帧 + 外参）。"""
+        if self.shell._presentation == 'industrial':
+            self.projects.save()
+            return
         self.shell.show_loading("正在保存会话...")
 
         def _work():
@@ -1965,11 +1992,19 @@ class BackendBridge(QObject):
     def _on_open_session(self):
         """打开离线会话并加载帧。"""
         from PySide6.QtWidgets import QFileDialog
-        base = os.path.abspath("offline_data")
+        base = str(self.projects.projects[self._current_mode].save_root) if self.shell._presentation == 'industrial' else os.path.abspath('offline_data')
         os.makedirs(base, exist_ok=True)
         path = QFileDialog.getExistingDirectory(
             self.shell, "选择会话目录", base)
         if not path:
+            return
+        if self.shell._presentation == 'industrial' and os.path.isfile(os.path.join(path, 'session.json')):
+            mode = self._current_mode
+            self.projects.guard_switch(mode, lambda: self.projects.open(path, mode))
+            return
+        if self.shell._presentation == 'industrial':
+            mode = self._current_mode
+            self.projects.guard_switch(mode, lambda: self.projects.open(path, mode, legacy=True))
             return
         self.shell.show_loading("正在加载会话...")
 
@@ -2089,6 +2124,8 @@ class BackendBridge(QObject):
         # 2. 确定参考相机并进入标定阶段
         ref_id = self.calibration_engine.reference_id if calib_ok else None
         camera_ids = sorted(set(calib_latest) | set(scan_latest))
+        if not camera_ids and calib_ok:
+            camera_ids = sorted({cid for pair in self.calibration_engine.pair_results for cid in pair})
         if not camera_ids:
             self.shell.log("会话为空，无帧数据可加载", "warn")
             return
@@ -2191,11 +2228,14 @@ class BackendBridge(QObject):
         if name is None:
             import traceback
             name = traceback.extract_stack()[-2].name
-        if name not in ('offline_preview', 'db_frame_preview', 'db_open_project', 'db_mutation') and self.shell._presentation == 'industrial':
+        project_task = name.startswith('project_')
+        if self.shell._presentation == 'industrial' and not project_task:
+            self.projects.prepare(self._current_mode)
+        if name not in ('offline_preview', 'db_frame_preview', 'db_open_project', 'db_mutation') and not project_task and self.shell._presentation == 'industrial':
             self.frame_db.restore(self._current_mode)
         def archive_work():
             result = work()
-            if name not in ('offline_preview', 'db_frame_preview', 'db_open_project', 'db_mutation'):
+            if name not in ('offline_preview', 'db_frame_preview', 'db_open_project', 'db_mutation') and not project_task:
                 self.frame_db.archive_context(result)
             return result
         worker = WorkerThread(archive_work)
@@ -2204,7 +2244,7 @@ class BackendBridge(QObject):
         self._workers.append(worker)
 
         def _wrapped_done(result, error):
-            update_metadata = name not in ('offline_preview', 'db_frame_preview', 'db_open_project', 'db_mutation')
+            update_metadata = name not in ('offline_preview', 'db_frame_preview', 'db_open_project', 'db_mutation') and not project_task
             if error is None and update_metadata:
                 try:
                     self.frame_db.synchronize(result)
@@ -2267,6 +2307,8 @@ class BackendBridge(QObject):
         if self._sdk_initialized:
             self.camera_manager.shutdown()
             self._sdk_initialized = False
+        if not pending:
+            self.projects.cleanup()
         return pending
 
     def abandon_must_finish_tasks(self):

@@ -461,16 +461,22 @@ class MainWindowShell(QMainWindow):
 
         def _open_offline(mode):
             bridge = self._backend_bridge
-            if bridge is None or (self._dirty and not self._confirm_discard()):
+            if bridge is None:
                 return
-            dialog.show_connection_overlay('正在加载凳子离线数据...')
             def finished(ok, message):
                 dialog.hide_connection_overlay()
                 if ok:
                     dialog.accept()
                 else:
                     dialog.log_summary.append(message, 'error')
-            bridge.open_offline_preview(mode, finished)
+            def load():
+                dialog.show_connection_overlay('正在加载凳子离线数据...')
+                bridge.open_offline_preview(mode, finished)
+            projects = getattr(bridge, 'projects', None)
+            if projects:
+                projects.guard_switch(mode, load)
+            elif not self._dirty or self._confirm_discard():
+                load()
         dialog.offline_requested.connect(_open_offline)
 
         if dialog.exec() == QDialog.Accepted and connected["mode"]:
@@ -486,7 +492,7 @@ class MainWindowShell(QMainWindow):
                 self.set_presentation(connected['presentation'])
                 self.log('已切换界面呈现，保留当前设备连接和会话数据。', 'info')
                 return
-            if self._dirty and not self._confirm_discard():
+            if self._dirty and not hasattr(self._backend_bridge, 'projects') and not self._confirm_discard():
                 return
             previous_dirty = self._dirty
             self._dirty = False
@@ -594,6 +600,13 @@ class MainWindowShell(QMainWindow):
 
     def set_dirty(self, dirty: bool):
         """标记有未保存的标定/会话数据。"""
+        projects = getattr(self._backend_bridge, 'projects', None)
+        if projects and self._presentation == 'industrial':
+            if dirty:
+                projects.mark_changed(self._mode)
+            else:
+                projects.update(self._mode)
+            return
         self._dirty = dirty
 
     # ------------------------------------------------------------ 内部
@@ -688,6 +701,14 @@ class MainWindowShell(QMainWindow):
 
     def _close_event_impl(self, event):
         """主窗口关闭即退出程序；有未保存数据时提示保存并等待完成。"""
+        projects = getattr(self._backend_bridge, 'projects', None)
+        if projects and (self._presentation == 'industrial' or any(p.dirty for p in projects.projects.values())):
+            if not projects.closed and not projects.request_close():
+                event.ignore()
+                return
+            self._log_panel.detach_loggers()
+            event.accept()
+            return
         if self._dirty:
             ret = QMessageBox.warning(
                 self, "会话未保存",

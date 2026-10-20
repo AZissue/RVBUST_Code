@@ -112,6 +112,12 @@ class GpuCloudCanvas(NavigationMixin, QOpenGLWidget):
         self._layers = list(layers)
         self.total_points = sum(len(layer.points) for layer in layers if layer.visible)
         self._request += 1
+        if self.total_points == 0:
+            # Clearing a session must hide the old scene immediately, even if
+            # an older cache preparation is still finishing in the background.
+            self.scene = None
+            self.update()
+            self.status_changed.emit()
         self._pending = (self._request, sources_from_layers(layers), self.policy)
         self._fit_pending |= fit
         if not self.is_busy:

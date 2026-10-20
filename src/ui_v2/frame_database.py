@@ -17,6 +17,7 @@ class FrameBrowser(QWidget):
     restore_requested = Signal()
     delete_requested = Signal(list)
     recover_requested = Signal()
+    manage_requested = Signal()
 
     def __init__(self, database, parent=None):
         super().__init__(parent)
@@ -55,7 +56,7 @@ class FrameBrowser(QWidget):
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._context_menu)
         layout.addWidget(self.tree, 1)
-        self.details = QLabel('原始帧自动保存 · 选择单帧联动2D / 3D')
+        self.details = QLabel('临时工作区 · 请主动保存会话')
         self.details.setWordWrap(True)
         layout.addWidget(self.details)
         actions = QHBoxLayout()
@@ -66,6 +67,9 @@ class FrameBrowser(QWidget):
         self.restore_button.clicked.connect(self.restore_requested)
         actions.addWidget(self.restore_button)
         layout.addLayout(actions)
+        self.manage_button = QPushButton('会话占用 / 管理')
+        self.manage_button.clicked.connect(self.manage_requested)
+        layout.addWidget(self.manage_button)
         self._items = {}
         self.refresh()
 
@@ -85,11 +89,15 @@ class FrameBrowser(QWidget):
         self._items.clear()
         sessions, records = self.database.snapshot()
         groups = {}
+        project_root = None
+        if hasattr(self.database, 'project_title'):
+            project_root = QTreeWidgetItem(self.tree, [self.database.project_title, f'{len(records)} 帧'])
+            project_root.setIcon(0, icons.icon('folder_open', '#bbbbbb', 16))
         for record in records:
             session = sessions[record.session_id]
             session_key = record.session_id
             if session_key not in groups:
-                groups[session_key] = QTreeWidgetItem(self.tree, [session['title'] + ' · ' + session['created'][11:], ''])
+                groups[session_key] = project_root if project_root is not None else QTreeWidgetItem(self.tree, [session['title'] + ' · ' + session['created'][11:], ''])
                 groups[session_key].setData(0, Qt.UserRole + 1, session_key)
                 groups[session_key].setToolTip(0, session['created'])
                 groups[session_key].setIcon(0, icons.icon('folder_open', '#bbbbbb', 16))
@@ -163,6 +171,7 @@ class FrameBrowser(QWidget):
         menu.addAction('展开全部', self.tree.expandAll)
         menu.addAction('折叠全部', self.tree.collapseAll)
         menu.addAction('返回工作视图', self.restore_requested.emit)
+        menu.addAction('会话占用 / 管理', self.manage_requested.emit)
         menu.exec(self.tree.viewport().mapToGlobal(position))
 
     def _selected(self, item, previous):
@@ -191,7 +200,9 @@ class FrameDatabaseController(QObject):
         return self.databases[mode].ingest(frame, **kwargs)
 
     def capture(self, frame):
-        if self.bridge.shell._presentation != 'industrial':
+        manager = self.bridge.mobile_workflow.station_manager
+        if self.bridge.shell._presentation != 'industrial' and not (
+                self.bridge._current_mode == 'mobile_chain' and manager and manager.managed_frames):
             return
         mode = self.bridge._current_mode
         purpose = '移动机位' if mode == 'mobile_chain' else '转台采集' if mode == 'turntable' else (
@@ -207,6 +218,9 @@ class FrameDatabaseController(QObject):
 
     @Slot(str)
     def _changed(self, mode):
+        projects = getattr(self.bridge, 'projects', None)
+        if projects:
+            projects.mark_changed(mode)
         browser = self.browsers.get(mode)
         if browser:
             browser.refresh()
@@ -216,7 +230,9 @@ class FrameDatabaseController(QObject):
             return
         self.browsers[mode] = browser
         browser.frame_selected.connect(lambda uid: self.select(mode, uid))
-        browser.open_requested.connect(lambda: self.open_project(mode))
+        browser.open_button.setText('打开会话')
+        browser.open_requested.connect(self.bridge._on_open_session)
+        browser.manage_requested.connect(lambda: self.bridge.projects.manage())
         browser.restore_requested.connect(lambda: self.restore(mode))
         browser.delete_requested.connect(lambda identifiers: self.remove(mode, identifiers))
         browser.recover_requested.connect(lambda: self.recover(mode))
@@ -233,7 +249,7 @@ class FrameDatabaseController(QObject):
             viewer.show_database_frame(None)
         browser = self.browsers.get(mode)
         if browser:
-            browser.details.setText('原始帧自动保存 · 选择单帧联动2D / 3D')
+            browser.details.setText('临时工作区 · 请主动保存会话')
         if had_preview and hasattr(workspace, '_industrial'):
             workspace._industrial.restore_business_image()
 

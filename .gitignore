@@ -46,3 +46,6 @@ meta.json
 
 # Immutable offline test captures are lossless archives; expanded files are local.
 offline_test_data/**/.cache/
+
+# Explicit user session projects are local data, not source files.
+/sessions/

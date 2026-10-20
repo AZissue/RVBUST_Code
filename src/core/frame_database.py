@@ -269,6 +269,34 @@ class FrameDatabase:
         self._notify()
         return moves
 
+    def purge_removed(self, protected=()):
+        """Permanently clear only unreferenced recycle entries after UI approval."""
+        protected = set(protected)
+        with rvc_sdk_lock, self._lock:
+            eligible = {uid: entry for uid, entry in self.removed.items() if uid not in protected}
+            if not eligible:
+                return 0
+            staging = self.directory / '.purge' / uuid.uuid4().hex
+            moves = []
+            before = self.removed.copy()
+            try:
+                for uid, entry in eligible.items():
+                    old = self.directory / '.trash' / entry['batch'] / uid
+                    new = staging / uid
+                    staging.mkdir(parents=True, exist_ok=True)
+                    old.rename(new)
+                    moves.append((old, new))
+                    self.removed.pop(uid)
+                self._save_index()
+            except Exception:
+                self.removed = before
+                for old, new in reversed(moves):
+                    new.rename(old)
+                raise
+        shutil.rmtree(staging)
+        self._notify()
+        return len(eligible)
+
     def open_project(self, index):
         directory = Path(index).resolve().parent
         data = json.loads((directory / 'index.json').read_text(encoding='utf-8'))

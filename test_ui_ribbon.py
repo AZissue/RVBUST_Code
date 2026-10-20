@@ -76,7 +76,7 @@ class RibbonTests(unittest.TestCase):
 
     def test_mobile_open_and_edit_commands_use_existing_business_routes(self):
         ws = self.enter('mobile_chain')
-        load = QSignalSpy(ws.offline_load_requested)
+        load = QSignalSpy(self.win.open_session_requested)
         undo = QSignalSpy(ws.undo_requested)
         self.ribbon.commands[('mobile_chain', 'open')].click()
         self.assertEqual(load.count(), 1)

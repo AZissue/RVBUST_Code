@@ -9,6 +9,7 @@ from core.offline_session import OfflineSession
 from core.calibration_engine import CalibrationEngine
 from core.point_cloud_processor import PointCloudProcessor
 from core.marker_detector import MarkerDetector, MARKER_TYPE_CODED_CIRCLE
+from core.session_project import SessionProject
 
 
 def open_preview(bridge, mode, on_finished=None):
@@ -24,8 +25,16 @@ def open_preview(bridge, mode, on_finished=None):
     shell.show_loading('正在加载凳子第 1、2 帧离线数据...')
 
     def work():
+        project = SessionProject(mode, '凳子离线预览', bridge.projects.projects[mode].save_root)
+        try:
+            return build(project)
+        except Exception:
+            project.dispose()
+            raise
+
+    def build(project):
         records = load_stool()
-        database = bridge.frame_db.databases[mode]
+        database = project.database
         database.begin_session('凳子离线数据')
         for index, (frame, _) in enumerate(records):
             purpose = '标定数据' if mode == 'multi_cam' else '移动机位' if mode == 'mobile_chain' else f'转台标定 frame{index}'
@@ -38,7 +47,7 @@ def open_preview(bridge, mode, on_finished=None):
         if mode == 'mobile_chain':
             # Existing station deletion removes directories. Give it disposable
             # copies, never point StationManager at the immutable fixture/cache.
-            runtime = Path(__file__).resolve().parents[2] / 'offline_data' / 'preview_sessions'
+            runtime = project.directory / 'preview_work'
             runtime.mkdir(parents=True, exist_ok=True)
             session = Path(tempfile.mkdtemp(prefix='stool_', dir=runtime))
             try:
@@ -60,13 +69,19 @@ def open_preview(bridge, mode, on_finished=None):
                     loaded = manager.get_frame(f'station_{index}') if manager else None
                     if loaded:
                         loaded.database_id = source.database_id
+                        folder = database.directory / 'frames' / source.database_id
+                        loaded.offline_dir = None
+                        loaded.offline_image_path = str(folder / 'image.png')
+                        loaded.offline_pointmap_path = str(folder / 'pointmap.ply')
+                manager.managed_frames = True
                 if not ok or len(mobile.get_station_evaluations()) != len(records):
                     raise ValueError('离线链式拼接未完整加载两帧：' + message)
                 merged = mobile.get_merged_pointcloud()
+                shutil.rmtree(session)
             except Exception:
                 shutil.rmtree(session)
                 raise
-        return records, mobile, merged
+        return records, mobile, merged, project
 
     def done(result, error):
         shell.hide_loading()
@@ -76,7 +91,12 @@ def open_preview(bridge, mode, on_finished=None):
             if on_finished:
                 on_finished(False, message)
             return
-        records, mobile, merged = result
+        records, mobile, merged, project = result
+        old = bridge.projects.projects[mode]
+        bridge.projects.reset_workflow(mode)
+        bridge.projects.install(mode, project)
+        project.dirty = True
+        old.dispose()
         bridge.camera_manager.clear()
         bridge.offline_preview = True
         bridge._offline_clouds = {frame.camera_name: cloud for frame, cloud in records} if mode == 'multi_cam' else {}
@@ -131,6 +151,8 @@ def open_preview(bridge, mode, on_finished=None):
         from .launcher_dialog import LauncherDialog
         shell.setWindowTitle(f'MCC 拼接工作站 — {LauncherDialog.MODE_NAMES[mode]} {get_version()} · 新版 · 离线预览')
         shell.set_dirty(False)
+        bridge.projects.prepare(mode)
+        bridge.projects.update(mode)
         shell._refresh_statusbar()
         shell.log(message, 'success')
         bridge.frame_db.synchronize()

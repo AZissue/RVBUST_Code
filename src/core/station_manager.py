@@ -55,6 +55,7 @@ class StationManager:
         self._session_dir: Optional[str] = None     # 当前会话目录
         self._created: str = ""                     # 会话创建时间（ISO）
         self._station_seq = 0                       # 站位序号（会话内递增）
+        self.managed_frames = False  # New project DB owns raw pairs; no duplicate station copy.
 
     # ------------------------------------------------------------------
     # 会话管理
@@ -112,7 +113,7 @@ class StationManager:
 
     def _write_meta(self):
         """重写会话级 meta.json（站位列表 + 创建 / 更新时间）。"""
-        if not self._session_dir:
+        if self.managed_frames or not self._session_dir:
             return
         meta = {
             "type": "single_camera_stations",
@@ -151,7 +152,13 @@ class StationManager:
         frame.frame_id = self._station_seq
         frame_dir = os.path.join(self._session_dir, station_id)
         try:
-            frame.save(self._session_dir, frame_dir=frame_dir)
+            if self.managed_frames:
+                if not frame.database_id or not frame.has_pointcloud:
+                    raise RuntimeError('机位帧尚未进入当前项目DB')
+                # DB deletion/lifecycle is independent of removing a station.
+                frame.offline_dir = None
+            else:
+                frame.save(self._session_dir, frame_dir=frame_dir)
         except Exception as e:
             self._station_seq -= 1
             logger.error(f"站位帧存盘失败: {e}")
@@ -180,7 +187,7 @@ class StationManager:
         if frame is None:
             return False
         self._station_times.pop(station_id, None)
-        if frame.offline_dir and os.path.isdir(frame.offline_dir):
+        if not self.managed_frames and frame.offline_dir and os.path.isdir(frame.offline_dir):
             shutil.rmtree(frame.offline_dir, ignore_errors=True)
         self._write_meta()
         logger.info(f"站位 {station_id} 已删除")

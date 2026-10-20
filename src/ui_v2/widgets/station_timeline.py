@@ -196,6 +196,7 @@ class StationTimeline(QScrollArea):
                 # 记录旧节点在布局中的真实位置
                 layout_index = self._vbox.indexOf(node)
                 self._vbox.removeWidget(node)
+                node.hide()
                 node.deleteLater()
                 new_node = StationNode(data)
                 new_node.clicked.connect(self._on_node_clicked)
@@ -212,6 +213,7 @@ class StationTimeline(QScrollArea):
         for node in self._nodes:
             if node._data.index == index:
                 self._vbox.removeWidget(node)
+                node.hide()
                 node.deleteLater()
                 self._nodes.remove(node)
                 break
@@ -221,6 +223,8 @@ class StationTimeline(QScrollArea):
     def clear(self):
         """清空整条链（新会话）。"""
         for node in self._nodes:
+            self._vbox.removeWidget(node)
+            node.hide()
             node.deleteLater()
         self._nodes.clear()
         self._current_index = 0

@@ -19,6 +19,7 @@ if not args.native:
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'src'))
 from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtCore import QTimer
 from PySide6.QtGui import QFontDatabase
 from core.camera_manager import CameraManager
 from core.marker_detector import MarkerDetector
@@ -138,6 +139,39 @@ with patch.object(CameraManager, 'initialize', side_effect=AssertionError('SDK i
                 ribbon.commands[(mode, 'screenshot')].click()
             assert shot.exists() and shot.stat().st_size > 100
             assert win.grab().save(str(report / f'offline_{mode}.png'))
+            # Explicit save/new/reopen is isolated in a temporary save root.
+            project = bridge.projects.projects[mode]
+            project.save_root = Path(db_temp.name) / 'sessions'
+            QTimer.singleShot(0, lambda: QApplication.activeModalWidget().accept())
+            ribbon.commands[(mode, 'save')].click()
+            wait_for(lambda: project.saved_path is not None and not project.dirty)
+            wait_for(lambda: not any(w.isRunning() for w in bridge._workers))
+            path = project.saved_path
+            import json
+            manifest = json.loads((path / 'session.json').read_text(encoding='utf-8'))
+            if mode == 'multi_cam':
+                assert not manifest['include_raw'] and not (path / 'data').exists()
+            bridge.projects.new(mode, '新项目验证')
+            assert browser.tree.topLevelItem(0).childCount() == 0
+            bridge.projects.open(path, mode)
+            wait_for(lambda: bridge.projects.projects[mode].saved_path == path)
+            wait_for(lambda: not any(w.isRunning() for w in bridge._workers))
+            assert not bridge.projects.projects[mode].dirty
+            if mode == 'mobile_chain':
+                assert len(bridge.mobile_workflow.get_station_evaluations()) == 1
+                bridge._on_mobile_delete_station(1)
+                wait_for(lambda: viewer._merged is None)
+                wait_for(lambda: not any(w.isRunning() for w in bridge._workers))
+                assert viewer._clouds == {} and viewer._viewer.canvas.total_points == 0
+                wait_for(lambda: not viewer._viewer.canvas.is_busy)
+                assert viewer._viewer.canvas.displayed_points == 0
+                assert len(win.workspace_mobile()._timeline._nodes) == 0
+            elif mode == 'multi_cam':
+                assert bridge.calibration_engine.pair_results
+            else:
+                assert win.workspace_turntable().current_frame0 is not None
+                assert win.workspace_turntable().current_frame1 is not None
+            assert win.grab().save(str(report / f'session_{mode}.png'))
             print('PASS', mode, complete[0][1], flush=True)
     finally:
         # Wait CPU preparation before destroying Qt/OpenGL owners.
