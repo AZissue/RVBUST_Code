@@ -76,6 +76,7 @@ def main(*, composition=None):
         在启动小窗上显示遮罩，后台连接相机；连接完成后平滑切换到主窗口。
         """
         launcher.show_connection_overlay("正在连接相机...")
+        main_window.set_presentation(launcher.selected_presentation())
         ordered = BackendBridge.get_ordered_devices(devices)
         bridge.connect_devices(mode, ordered, show_loading=False)
 
@@ -90,9 +91,10 @@ def main(*, composition=None):
             return
         mode = launcher.selected_mode()
         devices = BackendBridge.get_ordered_devices(launcher.selected_devices())
-        main_window.set_mode(mode, devices)
+        main_window.set_mode(mode, devices, preserve_state=True)
         main_window.setWindowTitle(
-            f"RVC 拼接工作站 — {LauncherDialog.MODE_NAMES[mode]} {get_version()}")
+            f"MCC 拼接工作站 — {LauncherDialog.MODE_NAMES[mode]} {get_version()}"
+            + (' · 新版工作区' if launcher.selected_presentation() == 'industrial' else ''))
 
         # 主窗口从透明淡入，同时直接关闭启动小窗，避免小窗淡出时闪一下
         main_window.setWindowOpacity(0.0)

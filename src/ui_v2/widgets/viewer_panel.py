@@ -33,6 +33,11 @@ class ViewerPanel(QFrame):
     def __init__(self, title: str = "3D 拼接预览", parent=None, *, renderer_factory=None):
         super().__init__(parent)
         self._title = title
+        self._clouds = {}
+        self._merged = None
+        self._reference = None
+        self._industrial_enabled = False
+        self._retired = []
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -42,6 +47,7 @@ class ViewerPanel(QFrame):
             from ui_common.point_cloud_viewer import EmbeddedPointCloudViewer
             renderer_factory = EmbeddedPointCloudViewer
         factory = renderer_factory
+        self._renderer_factory = factory
         self._viewer = factory(parent=self)
         from ..contracts import PointCloudView
         if not isinstance(self._viewer, PointCloudView):
@@ -51,6 +57,51 @@ class ViewerPanel(QFrame):
         self._viewer.maximize_toggled.connect(self.maximize_toggled.emit)
         root.addWidget(self._viewer, 1)
 
+    def set_industrial(self, enabled):
+        if self._industrial_enabled == enabled:
+            return
+        old = self._viewer
+        if enabled:
+            from ui_common.industrial_viewer import IndustrialViewer
+            candidate = IndustrialViewer(parent=self)
+        else:
+            candidate = self._renderer_factory(parent=self)
+        candidate.status_changed.connect(self.viewer_message.emit)
+        candidate.collapse_toggled.connect(self.collapse_toggled.emit)
+        candidate.maximize_toggled.connect(self.maximize_toggled.emit)
+        self.layout().replaceWidget(old, candidate)
+        self._viewer = candidate
+        self._industrial_enabled = enabled
+        old.hide()
+        if hasattr(old, 'shutdown'):
+            old.shutdown()
+        self._retired.append(old)
+        self._release_retired()
+        candidate.set_reference(self._reference)
+        for key, pcd in self._clouds.items():
+            candidate.set_pointcloud(key, pcd)
+        if self._merged is not None:
+            candidate.set_pointcloud_merged(self._merged)
+        candidate.show()
+
+    def _release_retired(self):
+        from PySide6.QtCore import QTimer
+        pending = []
+        for renderer in self._retired:
+            if hasattr(renderer, 'is_busy') and renderer.is_busy():
+                pending.append(renderer)
+            else:
+                renderer.close()
+                renderer.deleteLater()
+        self._retired = pending
+        if pending:
+            QTimer.singleShot(50, self._release_retired)
+
+    def shutdown(self):
+        for renderer in [self._viewer, *self._retired]:
+            if hasattr(renderer, 'shutdown'):
+                renderer.shutdown()
+
     def viewer(self) -> PointCloudView:
         """返回底层 3D 查看器实例（高级操作使用）。"""
         return self._viewer
@@ -58,16 +109,24 @@ class ViewerPanel(QFrame):
     # ------------------------------------------------------------ 公共接口（转发）
     def set_pointcloud(self, camera_id: str, pcd: Any):
         """按相机分色叠加一路点云。"""
+        if pcd is None:
+            self._clouds.pop(camera_id, None)
+        else:
+            self._clouds[camera_id] = pcd
         self._viewer.set_pointcloud(camera_id, pcd)
 
     def set_pointcloud_merged(self, pcd: Any):
         """设置拼接合并结果。"""
+        self._merged = pcd
         self._viewer.set_pointcloud_merged(pcd)
 
     def remove_camera(self, camera_id: str):
+        self._clouds.pop(camera_id, None)
         self._viewer.remove_camera(camera_id)
 
     def clear_all(self):
+        self._clouds.clear()
+        self._merged = None
         self._viewer.clear_all()
 
     def reset_view(self):
@@ -81,6 +140,7 @@ class ViewerPanel(QFrame):
 
     def set_reference(self, camera_id: Optional[str]):
         """设置参考相机（参考相机点云显示为白色）。"""
+        self._reference = camera_id
         self._viewer.set_reference(camera_id)
 
     def set_highlight(self, camera_id: str, indices: Optional[list] = None):

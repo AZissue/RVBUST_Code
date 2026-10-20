@@ -478,13 +478,16 @@ class TurntableWorkspace(QWidget):
             import traceback
             self.log(traceback.format_exc(), "error")
 
-    def _display_2d(self, image_np: np.ndarray, markers: Optional[list] = None):
+    def _display_2d(self, image_np: np.ndarray, markers: Optional[list] = None, reference_markers=None):
         """刷新 2D 预览；可选叠加识别结果（红/绿圈 + code）。
 
         markers 为 detect_3d(include_invalid=True) 的原始输出（原图像素坐标 +
         code + valid_3d）；缺省/None 时清空叠加，避免残留上一帧的圈。
         AspectRatioLabel 内部完成等比缩放绘制，无需手动 scaled。
         """
+        presentation = getattr(self, '_industrial', None)
+        if presentation is not None:
+            presentation.set_marker_image(image_np, markers, reference_markers)
         pixmap = _np_to_qpixmap(image_np)
         if pixmap is None:
             self.preview_2d_label.clear_image()
@@ -655,7 +658,8 @@ class TurntableWorkspace(QWidget):
             self.log(f"{label} 拍摄完成: {len(pcd.points)} 点, "
                      f"检测到 {len(markers)} 个标记（3D 有效 {n_valid} 个）")
             # 2D 预览叠加红/绿圈（markers 为全量，含 3D 无效）
-            self._display_2d(frame.image_np, markers)
+            self._display_2d(frame.image_np, markers,
+                             reference_markers=self.current_markers0 if not is_frame0 else None)
             if is_frame0:
                 self.current_frame0 = frame
                 self.current_markers0 = markers_valid
@@ -971,6 +975,10 @@ class TurntableWorkspace(QWidget):
                 self.log(f"点云保存失败（详见日志）: {path}")
 
     def _on_viewer_maximize_toggled(self, maximized: bool):
+        presentation = getattr(self, '_industrial', None)
+        if presentation is not None and presentation.active:
+            presentation.maximize(maximized)
+            return
         """3D 查看器最大化/恢复：隐藏/恢复左侧面板与 2D 预览区。"""
         self._viewer_maximized = maximized
         if maximized:

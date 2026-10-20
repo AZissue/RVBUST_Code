@@ -22,7 +22,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QApplication, QDialog, QFrame, QHBoxLayout, QLabel, QMainWindow,
     QMessageBox, QPushButton, QStackedWidget, QToolButton, QVBoxLayout,
-    QWidget,
+    QWidget, QSplitter,
 )
 
 from .launcher_dialog import LauncherDialog
@@ -88,6 +88,7 @@ class MainWindowShell(QMainWindow):
         self._center_on_screen()
 
         self._mode = LauncherDialog.MODE_MULTI_CAM
+        self._presentation = 'classic'
         self._devices: List[DeviceInfo] = []
         self._dirty = False  # 有未保存的标定/会话数据
         self._backend_bridge: Optional['BackendBridge'] = None
@@ -137,7 +138,10 @@ class MainWindowShell(QMainWindow):
         self._ws_turntable.save_session_requested.connect(
             lambda: self.save_session_requested.emit())
 
-        root.addWidget(self._stack, 1)
+        self._content_split = QSplitter(Qt.Vertical)
+        self._content_split.setChildrenCollapsible(False)
+        self._content_split.addWidget(self._stack)
+        root.addWidget(self._content_split, 1)
 
         # ===== 底部状态栏 =====
         self._statusbar = self._build_statusbar()
@@ -276,19 +280,24 @@ class MainWindowShell(QMainWindow):
         return bar
 
     # ------------------------------------------------------------ 模式与工作区
-    def set_mode(self, mode: str, devices: List[DeviceInfo]):
+    def set_mode(self, mode: str, devices: List[DeviceInfo], *, preserve_state=False):
         """进入指定模式工作区（启动小窗连接成功后调用）。"""
         self._mode = mode
         self._devices = list(devices)
+        def state(workspace):
+            current = workspace.current_state()
+            return current if preserve_state and devices and current != 'idle' else ('connected' if devices else 'idle')
+        states = {workspace: state(workspace) for workspace in
+                  (self._ws_multi, self._ws_mobile, self._ws_turntable)}
 
         if mode == LauncherDialog.MODE_MULTI_CAM:
             self._stack.setCurrentWidget(self._ws_multi)
             self._ws_multi.set_devices(devices)
-            self._ws_multi.set_state("connected" if devices else "idle")
+            self._ws_multi.set_state(states[self._ws_multi])
         elif mode == LauncherDialog.MODE_MOBILE_CHAIN:
             self._stack.setCurrentWidget(self._ws_mobile)
             self._ws_mobile.set_devices(devices)
-            self._ws_mobile.set_state("connected" if devices else "idle")
+            self._ws_mobile.set_state(states[self._ws_mobile])
         else:
             self._stack.setCurrentWidget(self._ws_turntable)
             if self._backend_bridge is not None:
@@ -297,14 +306,46 @@ class MainWindowShell(QMainWindow):
                     self._backend_bridge.marker_detector,
                 )
             self._ws_turntable.set_devices(devices)
-            self._ws_turntable.set_state("connected" if devices else "idle")
+            self._ws_turntable.set_state(states[self._ws_turntable])
 
         self._refresh_statusbar()
+        self._apply_presentation()
         self.log(f"已进入「{LauncherDialog.MODE_NAMES[mode]}」工作区"
                  f"（{len(devices)} 台设备）", "success")
 
     def current_mode(self) -> str:
         return self._mode
+
+    def current_presentation(self):
+        return self._presentation
+
+    def set_presentation(self, presentation):
+        if presentation not in ('classic', 'industrial'):
+            raise ValueError(f'未知界面：{presentation}')
+        self._presentation = presentation
+        self._apply_presentation()
+
+    def _apply_presentation(self):
+        from .industrial_presentation import set_presentation
+        industrial = self._presentation == 'industrial'
+        set_presentation(self._stack.currentWidget(), self._mode, industrial)
+        from .theme import LAUNCHER_QSS
+        self.setStyleSheet(LAUNCHER_QSS if industrial else '')
+        if hasattr(self, '_log_panel'):
+            self._btn_log.setChecked(False)
+            self._log_panel.hide()
+            self._log_panel._docked = industrial
+            if industrial:
+                self._content_split.addWidget(self._log_panel)
+                self._log_panel.setMinimumHeight(100)
+                self._log_panel.setMaximumHeight(380)
+            else:
+                self._log_panel.setParent(self)
+                self._log_panel.setMinimumHeight(0)
+                self._log_panel.setMaximumHeight(16777215)
+                self._log_panel.resize(540, 320)
+        self.setWindowTitle('MCC · ' + LauncherDialog.MODE_NAMES[self._mode] +
+                            (' · 新版工作区' if industrial else ''))
 
     def workspace_multi(self) -> MultiCamWorkspace:
         return self._ws_multi
@@ -352,16 +393,16 @@ class MainWindowShell(QMainWindow):
 
         有未保存的标定/会话数据时先弹确认；取消则保持现状。
         """
-        if self._dirty and not self._confirm_discard():
+        if self._backend_bridge is not None and not self._backend_bridge.can_change_workspace():
+            self.log('当前正在采集或处理任务，请完成任务后再切换工作区。', 'warn')
             return
-
         dialog = self._launcher_factory(parent=self)
 
         # 如有 backend_bridge，先真实枚举设备，再恢复当前勾选状态
         if self._backend_bridge is not None:
             devices = self._backend_bridge.enumerate_devices()
             dialog.set_devices(devices)
-        dialog.restore_state(self._mode, self._devices)
+        dialog.restore_state(self._mode, self._devices, self._presentation)
 
         # 小窗内操作转发给后端
         def _do_refresh():
@@ -389,28 +430,35 @@ class MainWindowShell(QMainWindow):
         dialog.refresh_requested.connect(_do_refresh)
         dialog.auto_ip_requested.connect(_do_auto_ip)
 
-        connected = {"mode": None, "devices": []}
+        connected = {"mode": None, "devices": [], 'presentation': self._presentation}
 
         def _on_connect(mode: str, devices: list):
             # TODO(BACKEND): CameraManager 逐台连接并显示进度；
             # 部分失败 → 弹窗列出失败设备，可重试或仅用成功的进入
             connected["mode"] = mode
             connected["devices"] = devices
+            connected['presentation'] = dialog.selected_presentation()
             dialog.accept()
 
         dialog.connect_requested.connect(_on_connect)
 
         if dialog.exec() == QDialog.Accepted and connected["mode"]:
-            self._dirty = False
             # 与 backend 的 camera_id 分配顺序对齐：真实设备在前，测试设备在后
             ordered_devices = connected["devices"]
             if self._backend_bridge is not None:
                 ordered_devices = self._backend_bridge.get_ordered_devices(
                     connected["devices"])
 
-            prev_mode = self._mode
-            prev_devices = list(self._devices)
             new_mode = connected["mode"]
+            identity = lambda items: [(item.serial, isinstance(item.backend_ref, int)) for item in items]
+            if new_mode == self._mode and identity(ordered_devices) == identity(self._devices):
+                self.set_presentation(connected['presentation'])
+                self.log('已切换界面呈现，保留当前设备连接和会话数据。', 'info')
+                return
+            if self._dirty and not self._confirm_discard():
+                return
+            previous_dirty = self._dirty
+            self._dirty = False
 
             if self._backend_bridge is not None:
                 self.show_loading("正在连接设备...")
@@ -425,9 +473,11 @@ class MainWindowShell(QMainWindow):
                     if success:
                         self.log(message, "success")
                         # 连接成功后再切换到新模式工作区
-                        self.set_mode(new_mode, ordered_devices)
+                        self._presentation = connected['presentation']
+                        self.set_mode(new_mode, ordered_devices, preserve_state=True)
                         return
                     # 连接失败：弹窗提示并保持在之前的模式
+                    self._dirty = previous_dirty
                     self.log(f"设备连接失败: {message}", "error")
                     suggestion = self._connection_failure_suggestion(message)
                     QMessageBox.warning(
@@ -443,6 +493,7 @@ class MainWindowShell(QMainWindow):
                     new_mode, ordered_devices, show_loading=False)
             else:
                 # 无 backend_bridge 时直接按旧流程切换
+                self._presentation = connected['presentation']
                 self.set_mode(new_mode, ordered_devices)
                 self.device_manager_reopened.emit(
                     connected["mode"], ordered_devices)
@@ -546,6 +597,8 @@ class MainWindowShell(QMainWindow):
 
     def _log_dock_toggle(self, checked: bool):
         if checked:
+            if self._presentation == 'industrial':
+                self._content_split.setSizes([max(300, self.height()-270), 220])
             self._position_log_panel()
             self._log_panel.show()
             self._log_panel.raise_()
@@ -559,6 +612,8 @@ class MainWindowShell(QMainWindow):
 
     def _position_log_panel(self):
         """把浮动日志面板定位到主窗口右侧偏下（不挤占顶部工具栏）。"""
+        if self._presentation == 'industrial':
+            return
         margin = 8
         panel_w = self._log_panel.width()
         panel_h = self._log_panel.height()
@@ -590,6 +645,13 @@ class MainWindowShell(QMainWindow):
             "提示：无真实多机环境时，可在启动小窗点击『+ 测试设备』临时添加虚拟相机。")
 
     def closeEvent(self, event):
+        self._close_event_impl(event)
+        if event.isAccepted():
+            for workspace in (self._ws_multi, self._ws_mobile, self._ws_turntable):
+                viewer = workspace.viewer if workspace is self._ws_turntable else workspace.viewer()
+                viewer.shutdown()
+
+    def _close_event_impl(self, event):
         """主窗口关闭即退出程序；有未保存数据时提示保存并等待完成。"""
         if self._dirty:
             ret = QMessageBox.warning(

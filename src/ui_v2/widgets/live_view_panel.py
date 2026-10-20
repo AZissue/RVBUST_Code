@@ -44,11 +44,14 @@ class LiveViewPanel(QFrame):
     """
 
     mode_toggled = Signal(bool)  # True=自动
+    frame_changed = Signal(object)
+    marker_context_changed = Signal(object, object, object)
 
     def __init__(self, parent=None, *, preview_factory=None):
         super().__init__(parent)
         self._auto_mode = True
         self._current_pixmap: Optional[QPixmap] = None
+        self.marker_context = None
 
         self.setStyleSheet(
             f"LiveViewPanel {{ background-color: {BG_PANEL};"
@@ -101,10 +104,16 @@ class LiveViewPanel(QFrame):
     def set_frame(self, pixmap: Optional[QPixmap]):
         """刷新实时画面；传入 None 时清空画布与叠加。"""
         self._current_pixmap = pixmap
+        self.marker_context = None
+        self.frame_changed.emit(pixmap)
         if pixmap is None:
             self._canvas.clear_image()
         else:
             self._canvas.setPixmap(pixmap)
+
+    def set_marker_context(self, frame, reference=None, accepted=None):
+        self.marker_context = (frame, reference, accepted)
+        self.marker_context_changed.emit(frame, reference, accepted)
 
     def _refresh_frame(self):
         """按当前画布尺寸重绘（AspectRatioLabel.paintEvent 自行等比缩放）。"""

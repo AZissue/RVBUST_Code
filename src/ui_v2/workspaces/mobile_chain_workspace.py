@@ -449,6 +449,10 @@ class MobileChainWorkspace(QWidget):
             self._btn_delete_node.setEnabled(False)
 
     def _on_viewer_maximize_toggled(self, maximized: bool):
+        presentation = getattr(self, '_industrial', None)
+        if presentation is not None and presentation.active:
+            presentation.maximize(maximized)
+            return
         """3D 查看器最大化/恢复：隐藏/恢复时间线、底部操作区和 2D 取景。"""
         self._viewer_maximized = maximized
         if maximized:

@@ -20,6 +20,7 @@ class LauncherTests(unittest.TestCase):
         cls.app.setStyleSheet(GLOBAL_QSS)
 
     def setUp(self):
+        self._had_camera_module = 'core.camera_manager' in sys.modules
         self.dialog = LauncherDialog()
         self.dialog.set_devices([
             DeviceInfo(model='M2600R', serial='SN1', ip='192.168.1.10', backend_ref=0),
@@ -105,7 +106,7 @@ class LauncherTests(unittest.TestCase):
         self.assertTrue(dlg._table.isRowHidden(0))
         dlg._search_edit.clear()
         self.assertFalse(dlg._table.isRowHidden(0))
-        self.assertNotIn('core.camera_manager', sys.modules)
+        self.assertEqual('core.camera_manager' in sys.modules, self._had_camera_module)
 
     def test_test_devices_auto_ip_warns_without_calling_backend(self):
         dlg = self.dialog

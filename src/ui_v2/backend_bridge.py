@@ -207,6 +207,11 @@ class BackendBridge(QObject):
         """Public startup/reconnection command, independent of launcher layout."""
         return self._on_device_manager_reopened(mode, devices, show_loading=show_loading)
 
+    def can_change_workspace(self):
+        return (not any(worker.isRunning() for worker in self._workers)
+                and not self.shell.workspace_turntable().btn_auto_capture.isChecked()
+                and not self.shell.workspace_turntable()._busy)
+
     # ------------------------------------------------------------------
     # 参数调试：打开官方 RVCManager
     # ------------------------------------------------------------------
@@ -474,6 +479,8 @@ class BackendBridge(QObject):
         """
         if show_loading:
             self.shell.show_loading("正在连接设备...")
+        self._pause_2d_preview()
+        self._pause_card_preview()
         # 清空旧相机注册表（避免多次进入设备管理后 camera_id 递增错乱）
         self.camera_manager.clear()
 
@@ -1334,7 +1341,7 @@ class BackendBridge(QObject):
             ws.set_preview_enabled(True)
         logger.info(f"已恢复 2D 预览: {camera_id}")
 
-    def _update_mobile_live_view(self, station_id: str):
+    def _update_mobile_live_view(self, station_id: str, accepted=None):
         """把指定机位的 2D 图像与检测标记刷新到 LiveViewPanel。"""
         sm = self.mobile_workflow.station_manager
         if sm is None:
@@ -1358,8 +1365,19 @@ class BackendBridge(QObject):
                 for m in (frame.markers_all or frame.markers)
             ]
             ws.live_view().set_detection_overlay(markers)
+        self._set_mobile_marker_context(frame, accepted)
 
-    def _refresh_mobile_frame_to_ui(self, frame: FrameData):
+    def _set_mobile_marker_context(self, frame, accepted=None):
+        manager = self.mobile_workflow.station_manager
+        reference = None
+        if manager is not None:
+            ids = manager.get_station_ids()
+            index = next((i for i, key in enumerate(ids) if manager.get_frame(key) is frame), len(ids))
+            if index > 0:
+                reference = manager.get_frame(ids[index-1])
+        self.shell.workspace_mobile().live_view().set_marker_context(frame, reference, accepted)
+
+    def _refresh_mobile_frame_to_ui(self, frame: FrameData, accepted=None):
         """把任意 FrameData 的 2D 图像与 3D 点云刷新到模式 B UI。
 
         用于配准失败帧：该帧已从 station_manager 删除，但 evaluation 中仍附带，
@@ -1384,6 +1402,7 @@ class BackendBridge(QObject):
                 for m in (frame.markers_all or frame.markers)
             ]
             ws.live_view().set_detection_overlay(markers)
+        self._set_mobile_marker_context(frame, accepted)
 
         # 3D 点云（单帧预览）
         try:
@@ -1467,9 +1486,9 @@ class BackendBridge(QObject):
                 frame = evaluation.get('frame')
                 station_id = evaluation.get('station_id')
                 if frame is not None:
-                    self._refresh_mobile_frame_to_ui(frame)
+                    self._refresh_mobile_frame_to_ui(frame, accepted=ok)
                 elif station_id:
-                    self._update_mobile_live_view(station_id)
+                    self._update_mobile_live_view(station_id, accepted=ok)
             else:
                 ws.set_state("chaining")
             if ok:

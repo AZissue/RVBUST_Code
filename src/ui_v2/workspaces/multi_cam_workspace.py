@@ -469,6 +469,13 @@ class MultiCamWorkspace(QWidget):
         self._btn_batch.setEnabled(locked)
         self._batch_spin.setEnabled(locked)
         self._lock_banner.setVisible(locked)
+        self.refresh_marker_pair()
+
+    def refresh_marker_pair(self):
+        presentation = getattr(self, '_industrial', None)
+        if presentation is not None and presentation.active:
+            accepted = self._quality_passed if self._state in ('calibrated', 'locked') else None
+            self._camera_grid.set_marker_pair(self.current_reference_id(), accepted)
 
     def current_state(self) -> str:
         return self._state
@@ -553,6 +560,7 @@ class MultiCamWorkspace(QWidget):
             if card:
                 card.set_marker_count(count)
                 card.set_covis_status(count > 0)
+        self.refresh_marker_pair()
 
     def on_calibrate_done(
         self,
@@ -645,6 +653,10 @@ class MultiCamWorkspace(QWidget):
                 self._center_split.setSizes(self._viewer_expanded_sizes)
 
     def _on_viewer_maximize_toggled(self, maximized: bool):
+        presentation = getattr(self, '_industrial', None)
+        if presentation is not None and presentation.active:
+            presentation.maximize(maximized)
+            return
         """3D 查看器最大化/恢复：隐藏/恢复左右面板与相机卡片区。"""
         self._viewer_maximized = maximized
         if maximized:

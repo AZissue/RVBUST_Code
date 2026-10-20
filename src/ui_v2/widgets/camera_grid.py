@@ -181,6 +181,28 @@ class CameraCard(QFrame):
         for button in (self._btn_preview, self._btn_capture, self._btn_detect):
             button.hide()
 
+    def set_overview(self, enabled):
+        """Compact production overview retaining every per-camera action."""
+        buttons = (self._btn_preview, self._btn_capture, self._btn_detect)
+        if enabled:
+            if not hasattr(self, '_overview_original'):
+                self._overview_original = (self.minimumSize(), self.maximumSize(),
+                    self._thumb.minimumSize(), [(b.text(), b.styleSheet()) for b in buttons])
+            self.setMinimumSize(230, 190)
+            self._thumb.setMinimumSize(180, 80)
+            for button, text in zip(buttons, ('预览', '拍摄', '检测')):
+                button.setText(text)
+                button.setStyleSheet(button.styleSheet() + ' QPushButton {min-width:0px;padding:3px 4px;font-size:11px;}')
+        elif hasattr(self, '_overview_original'):
+            minimum, maximum, thumb, styles = self._overview_original
+            self.setMinimumSize(minimum)
+            self.setMaximumSize(maximum)
+            self._thumb.setMinimumSize(thumb)
+            for button, (text, style) in zip(buttons, styles):
+                button.setText(text)
+                button.setStyleSheet(style)
+            del self._overview_original
+
     def set_calibration_status(self, text: str, success: bool):
         self._covis_badge.setText(text)
         color = STATUS_OK if success else STATUS_ERR
@@ -312,6 +334,7 @@ class CameraGrid(QScrollArea):
         self._cards: Dict[str, CameraCard] = {}
         self._titles: Dict[str, str] = {}
         self._last_cols: Optional[int] = None
+        self._overview = False
 
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.NoFrame)
@@ -339,8 +362,37 @@ class CameraGrid(QScrollArea):
             card = CameraCard(cid, title=self._titles.get(cid, cid), preview_factory=self._preview_factory)
             card.clicked.connect(self.card_clicked)
             self._cards[cid] = card
+            if self._overview:
+                card.set_overview(True)
         self._last_cols = None
         self._relayout()
+
+    def set_overview(self, enabled):
+        if self._overview == enabled:
+            return
+        self._overview = enabled
+        self.CARD_WIDTH = 245 if enabled else type(self).CARD_WIDTH
+        for card in self._cards.values():
+            card.set_overview(enabled)
+            if not enabled and card.current_frame() is not None:
+                card.set_frame(card.current_frame())
+        self._last_cols = None
+        self._relayout()
+
+    def set_marker_pair(self, reference_id, accepted=None):
+        from ui_common.industrial_scene.marker_display import classify_markers
+        reference_card = self.card(reference_id)
+        reference = reference_card.current_frame() if reference_card else None
+        reference_markers = (reference.markers_all or reference.markers) if reference is not None else None
+        for cid, card in self._cards.items():
+            frame = card.current_frame()
+            if frame is None or frame.image_np is None:
+                continue
+            height, width = frame.image_np.shape[:2]
+            display = classify_markers(frame.markers_all or frame.markers,
+                reference_markers if cid != reference_id else None, registration_accepted=accepted)
+            card.set_marker_overlay([dict(x=row.xy[0]/max(1,width), y=row.xy[1]/max(1,height),
+                code=row.code, valid_3d=row.xyz is not None, display_color=row.color) for row in display.rows])
 
     def resizeEvent(self, event: QResizeEvent):
         super().resizeEvent(event)
@@ -361,6 +413,11 @@ class CameraGrid(QScrollArea):
         col_unit = self.CARD_WIDTH + self.H_SPACING
         cols = max(1, viewport_w // col_unit)
         cols = min(cols, n)
+        if self._overview:
+            rows = (n + cols - 1) // cols
+            height = max(190, min(320, (self.viewport().height()-8-(rows-1)*self.V_SPACING)//rows))
+            for card in self._cards.values():
+                card.setFixedHeight(height)
 
         if cols == self._last_cols:
             # 列数未变，QGridLayout 的 stretch 会让卡片自动均分宽度，
