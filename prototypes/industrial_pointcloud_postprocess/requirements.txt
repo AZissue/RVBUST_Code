@@ -1,0 +1,4 @@
+PySide6>=6.5
+numpy>=1.24
+open3d>=0.18
+PyOpenGL>=3.1

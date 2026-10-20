@@ -8,6 +8,15 @@
 
 ---
 
+## [1.12.5] - 2026-10-20
+
+### Added
+- 新增轻量点云后处理原型 `prototypes/industrial_pointcloud_postprocess/`：沿用 industrial_scan_ui 工业风 UI 与 `ui_common/industrial_scene` 渲染组件，仅含加载点云（ply/pcd/xyz/pts）、多边形框选裁剪（保留/移除框内）、体素与随机下采样、撤销（上限 8 步）、PLY 导出和多图层管理；定位为 `cloudcompare_like` 的"工业风 UI + 基础功能"轻量对照版，独立自包含，不改主程序与其他原型。
+
+### Validation
+- 原型 16 项纯算法单测、离屏 UI 冒烟（框选裁剪 → 下采样 → 撤销恢复 → PLY 往返）、`--screenshot` 截图冒烟与 `--self-test-io` 全部退出码 0。
+- 未验证：原生窗口 GPU 渲染交互与实机大数据性能；原型未并入主程序，离屏通过不等于客户交付验收。
+
 ## [1.12.4] - 2026-10-20
 
 ### Changed

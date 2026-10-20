@@ -18,6 +18,7 @@
 | `postprocess_test/` | 点云后处理 v1（CloudCompare 式布局的初版） | **已冻结**，被 `cloudcompare_like` 取代 | 否 | 2 脚本全绿 |
 | `coded_circle_ui/` | 编码圆标定板生成器 UI（参数化预览 + 导出 PDF/PNG） | 生成逻辑未并入 `src/`；主程序测试反向依赖本目录 | 否 | 无独立测试 |
 | `sync_capture_stress/` | 多相机并发采集污染复现（双 X1 GigE 并发 `Capture()` 深度污染定位） | **待实机复现验证** | 不适用（诊断脚本） | 无 |
+| `industrial_pointcloud_postprocess/` | 点云后处理轻量原型（工业风 UI：加载 / 多边形框选裁剪 / 体素与随机下采样 / 撤销 / 导出） | 离屏测试与截图冒烟通过（2026-10-20） | 否 | 16 单测 + UI 冒烟全绿（exit 0） |
 
 ### 已知问题（2026-10-10 实测）
 
