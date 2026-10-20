@@ -113,7 +113,6 @@ class IndustrialPresentation:
         self.inspector = None
         self.grid = None
         if mode == 'multi_cam':
-            self._mount(workspace._step_bar, root)
             self._mount(workspace._left_widget, self.controls)
             self._mount(workspace._right_widget, self.controls)
             self.grid = QSplitter(Qt.Horizontal)
@@ -175,8 +174,6 @@ class IndustrialPresentation:
                                  if isinstance(mount.layout, QSplitter)}
             for mount in self.mounts:
                 mount.move()
-            if self.mode == 'multi_cam':
-                self.surface.layout().insertWidget(1, self.workspace._step_bar)
             if self.mode == 'mobile_chain':
                 self.workspace._timeline.setMinimumHeight(220)
                 self.workspace._live_view._canvas.hide()
