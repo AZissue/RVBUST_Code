@@ -144,6 +144,7 @@ class IndustrialPresentation:
         self.overlay = None
         self.inspector = None
         self._business_marker_image = None
+        self._database_result = False
         self.grid = None
         self._multi_view = 'joint'
         self._view_before_focus = None
@@ -308,7 +309,7 @@ class IndustrialPresentation:
         if self.overlay:
             self.overlay.setVisible(False if self.inspector else not enabled)
         if self.inspector:
-            self.inspector.setVisible(not enabled)
+            self.inspector.setVisible(not enabled and not self._database_result)
         if self.mode == 'multi_cam':
             self.view_bar.setVisible(not enabled)
             if enabled:
@@ -366,6 +367,7 @@ class IndustrialPresentation:
                 current_visible=False)
 
     def show_database_image(self, frame):
+        self._database_result = False
         if self.mode == 'multi_cam':
             self.workspace._camera_grid.show_database_frame(frame)
             self.all_cameras_button.setEnabled(False)
@@ -373,8 +375,20 @@ class IndustrialPresentation:
             return
         self.inspector.set_frame(frame.image_np, frame.markers_all or frame.markers,
             frame_id=f'DB原始帧 {frame.frame_id}', current_visible=False)
+        self.inspector.show()
+        self.inspector.raise_()
+
+    def show_database_result(self):
+        self._database_result = True
+        if self.mode == 'multi_cam':
+            self.workspace._camera_grid.show_database_frame(None)
+            if self._multi_view == '2d':
+                self.set_multi_view('joint')
+        elif self.inspector:
+            self.inspector.hide()
 
     def restore_business_image(self):
+        self._database_result = False
         if self.mode == 'multi_cam':
             self.workspace._camera_grid.show_database_frame(None)
             self.all_cameras_button.setEnabled(bool(self.workspace._camera_grid._focused_id))
@@ -383,8 +397,10 @@ class IndustrialPresentation:
         if self._business_marker_image:
             args, kwargs = self._business_marker_image
             self.set_marker_image(*args, **kwargs)
+            self.inspector.setVisible(args[0] is not None)
         elif self.inspector:
             self.inspector.set_frame(None, [], current_visible=False)
+            self.inspector.hide()
 
 
 def set_presentation(workspace, mode, enabled):

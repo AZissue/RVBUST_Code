@@ -244,7 +244,7 @@ class SessionProjects(QObject):
             label = QLabel(f'{project.name}\n保存到：{project.save_root}\n重复保存更新同一项目。')
             label.setWordWrap(True)
             layout.addWidget(label)
-            check = QCheckBox('包含原始点云和2D图像（可离线复核/继续拼接）')
+            check = QCheckBox('包含原始点云、2D图像及拼接结果（取消则仅保存标定信息）')
             has_calibration = (bool(self.bridge.calibration_engine.pair_results) if mode == 'multi_cam'
                 else self.bridge.shell.workspace_turntable().session.is_calibrated())
             check.setChecked(include_raw or not has_calibration)
@@ -322,16 +322,23 @@ class SessionProjects(QObject):
             if mode == 'multi_cam' and (Path(path) / 'turntable_meta.json').is_file():
                 raise ValueError('这是转台会话，请进入转台工作区导入')
             if mode == 'mobile_chain':
-                bridge = self.bridge
-                workflow = MobileChainWorkflow(bridge.camera_manager, bridge.marker_detector,
-                    CalibrationEngine(), bridge.stitch_engine, bridge.processor)
-                ok, message = workflow.load_session_dir(str(path))
-                if not ok:
-                    raise ValueError(message)
-                chain = workflow._chain_stitcher
-                data = dict(nodes=[dict(station_id=node.station_id, frame=frame_description(db, node.frame),
-                    T_world=node.T_world, cum_rms_mm=node.cum_rms_mm) for node in chain.nodes.values()],
-                    edges=[asdict(edge) for edge in chain.edges], reference_id=chain._reference_id)
+                import cv2
+                folders = sorted(Path(path).glob('station_*'),
+                    key=lambda folder: int(folder.name[8:]) if folder.name[8:].isdigit() else -1)
+                for folder in folders:
+                    if not folder.is_dir() or not folder.name[8:].isdigit():
+                        continue
+                    image_path = folder / (folder.name + '.png')
+                    point_path = folder / (folder.name + '.ply')
+                    image = cv2.imdecode(np.fromfile(image_path, np.uint8), cv2.IMREAD_UNCHANGED)
+                    if image is None or not point_path.is_file():
+                        raise ValueError('原始机位缺少点云或图像：' + folder.name)
+                    frame = FrameData(int(folder.name[8:]), 'cam0', image_np=image,
+                        is_offline=True, offline_image_path=str(image_path), offline_pointmap_path=str(point_path))
+                    db.ingest(frame, purpose='导入原始数据', logical_name=folder.name)
+                if not db.records:
+                    raise ValueError('未找到原始机位数据')
+                data = dict(nodes=[], edges=[], reference_id=None)
             else:
                 session = OfflineSession()
                 frames = session.load_session(str(path))
@@ -385,6 +392,8 @@ class SessionProjects(QObject):
                 chain.pose_graph.add_node(sid, transform)
                 manager._stations[sid] = frame
                 manager._station_seq = max(manager._station_seq, int(sid[8:]))
+                from core.point_cloud_processor import PointCloudProcessor
+                cloud, _ = PointCloudProcessor._filter_valid(cloud)
                 cloud.transform(transform)
                 chain._node_pcd_cache[sid] = cloud
                 chain._node_T_cache[sid] = transform.copy()
@@ -403,7 +412,13 @@ class SessionProjects(QObject):
                 if sid != chain._reference_id:
                     chain.pose_graph.get_transform(sid, chain._reference_id)
             workflow._state = workflow.STATE_READY if len(chain.nodes) >= 3 else workflow.STATE_CHAINING
-            return workflow, workflow.get_merged_pointcloud()
+            merged = workflow.get_merged_pointcloud()
+            results = [uid for uid, row in project.database.records.items() if row.kind == 'result']
+            raw = [uid for uid, row in project.database.records.items() if row.kind == 'raw']
+            selected = results[-1] if results else raw[0] if raw else None
+            if selected:
+                workflow._database_preview = (selected, *project.database.load_frame(selected))
+            return workflow, merged
         if mode == 'multi_cam':
             engine = CalibrationEngine()
             if data.get('calibration'):
@@ -447,8 +462,13 @@ class SessionProjects(QObject):
             ws = bridge.shell.workspace_mobile()
             ws.set_stations(workflow.get_station_evaluations())
             ws.set_state(workflow.get_state())
-            ws.viewer().set_pointcloud_merged(merged)
             bridge._refresh_mobile_live_view_to_latest()
+            ws.viewer().set_pointcloud_merged(merged)
+            preview = getattr(workflow, '_database_preview', None)
+            if preview:
+                bridge.frame_db.browsers[mode].refresh()
+                bridge.frame_db.display_frame(mode, *preview)
+                del workflow._database_preview
         elif mode == 'multi_cam':
             session = OfflineSession()
             session._meta['calibration'] = data.get('calibration')

@@ -82,6 +82,7 @@ with patch.object(CameraManager, 'initialize', side_effect=AssertionError('SDK i
                 bridge.projects.guard_switch(mode, lambda: (_ for _ in ()).throw(AssertionError('cancel must keep session')))
                 presentation = win.workspace_multi()._industrial
                 cameras = win.workspace_multi().camera_grid()
+                bridge.frame_db.restore(mode)
                 for view in ('2d', '3d', 'joint'):
                     presentation.view_buttons[view].click()
                     wait_for(lambda: not win.workspace_multi().viewer()._viewer.canvas.is_busy)
@@ -103,6 +104,7 @@ with patch.object(CameraManager, 'initialize', side_effect=AssertionError('SDK i
                 app.processEvents()
                 assert presentation.sidebar.isVisible()
                 presentation.legacy_toggle.click()
+                bridge.frame_db.restore('multi_cam')
                 # Follow the production reference-switch path using real source RGB.
                 import numpy as np
                 for reference in ('cam1', 'cam0'):
@@ -122,6 +124,13 @@ with patch.object(CameraManager, 'initialize', side_effect=AssertionError('SDK i
                 assert win.workspace_multi().current_state() == 'locked'
                 assert len(bridge.fixed_workflow.frames_scan) == 2
             elif mode == 'mobile_chain':
+                assert bridge.mobile_workflow.get_station_evaluations() == []
+                assert win.workspace_mobile().viewer()._merged is None
+                assert all(row.kind == 'raw' for row in database.records.values())
+                win._industrial_ribbon.commands[(mode, 'stitch')].click()
+                wait_for(lambda: not any(w.isRunning() for w in bridge._workers))
+                wait_for(lambda: len(bridge.mobile_workflow.get_station_evaluations()) == 2 or '拼接失败' in win._st_hint.text())
+                assert sum(row.kind == 'result' for row in database.records.values()) == 1, win._st_hint.text()
                 assert len(bridge.mobile_workflow.get_station_evaluations()) == 2
                 assert len(win.workspace_mobile().viewer()._merged.points) > 1000000
                 mobile = win.workspace_mobile()
@@ -140,7 +149,7 @@ with patch.object(CameraManager, 'initialize', side_effect=AssertionError('SDK i
                 wait_for(lambda: not any(w.isRunning() for w in bridge._workers))
                 app.processEvents()
                 assert len(bridge.mobile_workflow.get_station_evaluations()) == 1
-                assert len(database.records) == 2
+                assert len(database.records) == 3
                 assert any('退出拼接' in row.status for row in database.records.values())
                 assert source.exists()
                 assert (ROOT / 'offline_test_data' / 'stool' / '.cache' / '2.ply').exists()
@@ -172,7 +181,7 @@ with patch.object(CameraManager, 'initialize', side_effect=AssertionError('SDK i
             else:
                 inspector = presentation.inspector
                 assert not inspector.image_view.image.isNull() and inspector.isVisible()
-            assert len(database.records) == 2
+            assert len(database.records) == (3 if mode == 'mobile_chain' else 2)
             for _ in range(10):
                 app.processEvents()
                 time.sleep(.02)
@@ -184,13 +193,13 @@ with patch.object(CameraManager, 'initialize', side_effect=AssertionError('SDK i
                 bridge.frame_db.remove(mode, [uid])
                 wait_for(lambda: uid not in browser._items and '已删除' in win._st_hint.text())
                 wait_for(lambda: not any(w.isRunning() for w in bridge._workers))
-            assert len(database.records) == 1 and uid not in browser._items, (mode, len(database.records), win._st_hint.text())
+            assert len(database.records) == (2 if mode == 'mobile_chain' else 1) and uid not in browser._items, (mode, len(database.records), win._st_hint.text())
             bridge.frame_db.archive_context()
-            assert len(database.records) == 1
+            assert len(database.records) == (2 if mode == 'mobile_chain' else 1)
             bridge.frame_db.recover(mode)
             wait_for(lambda: uid in browser._items and '已恢复' in win._st_hint.text())
             wait_for(lambda: not any(w.isRunning() for w in bridge._workers))
-            assert len(database.records) == 2 and uid in browser._items
+            assert len(database.records) == (3 if mode == 'mobile_chain' else 2) and uid in browser._items
             for _ in range(20):
                 app.processEvents()
                 time.sleep(.02)

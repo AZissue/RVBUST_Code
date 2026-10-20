@@ -112,6 +112,18 @@ class OfflinePreviewTests(unittest.TestCase):
         self.assertFalse(ws.btn_capture_frame1.isEnabled())
         self.assertFalse(ws.session.is_calibrated())
 
+    def test_mobile_offline_load_only_archives_raw_frames(self):
+        with patch('ui_v2.offline_preview.load_stool', side_effect=self.records), \
+             patch('core.mobile_chain_workflow.MobileChainWorkflow.load_session_dir', side_effect=AssertionError('load must not stitch')):
+            self.bridge.open_offline_preview('mobile_chain')
+        database = self.bridge.frame_db.databases['mobile_chain']
+        self.assertEqual(len(database.records), 2)
+        self.assertTrue(all(row.kind == 'raw' for row in database.records.values()))
+        self.assertEqual(self.bridge.mobile_workflow.get_station_evaluations(), [])
+        self.assertIsNone(self.win.workspace_mobile().viewer()._merged)
+        self.assertIsNotNone(self.win.workspace_mobile().viewer()._database_cloud)
+        self.assertTrue(self.win._industrial_ribbon.commands[('mobile_chain', 'stitch')].isEnabled())
+
     def test_missing_data_reports_failure_and_retains_previous_workspace(self):
         before = self.win.current_mode()
         result = []

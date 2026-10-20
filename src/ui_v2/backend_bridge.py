@@ -171,6 +171,8 @@ class BackendBridge(QObject):
         self.camera_manager.capture_sink = self.frame_db.capture
         from .session_projects import SessionProjects
         self.projects = SessionProjects(self)
+        from .explicit_stitching import ExplicitStitching
+        self.stitching = ExplicitStitching(self)
 
     def _ensure_sdk(self):
         if not getattr(self, '_sdk_initialized', False):
@@ -199,6 +201,8 @@ class BackendBridge(QObject):
         self._wire_main_window()
         # 1.0.10 池合并：给转台工作区注入统一 runner，全工程只留一个引用池
         self.shell.workspace_turntable().set_background_runner(self._run_background)
+        if hasattr(self, 'stitching'):
+            self.shell.workspace_turntable()._explicit_stitch = self.stitching.execute
         self._wired = True
 
     def _wire_launcher(self):
@@ -955,6 +959,8 @@ class BackendBridge(QObject):
 
     def _on_multi_stitch_save(self):
         """拼接并保存。"""
+        if self.shell._presentation == 'industrial':
+            return self.stitching.execute()
         # 暂停实时预览/卡片预览：拼接 worker 与预览采集共享 SDK 全局锁，
         # 暂停可避免预览周期性地阻塞拼接（与批量扫描流程保持一致）
         preview_cam = self._pause_2d_preview()
@@ -1513,6 +1519,8 @@ class BackendBridge(QObject):
 
     def _on_mobile_capture_station(self):
         """拍摄机位（自动配准）。"""
+        if self.shell._presentation == 'industrial':
+            return self.stitching.capture_mobile()
         preview_cam = self._pause_2d_preview()
         ws = self.shell.workspace_mobile()
         ws.set_state("capturing")
@@ -1594,6 +1602,8 @@ class BackendBridge(QObject):
 
     def _on_mobile_recapture(self, index: int):
         """重拍指定机位（index 为时间线索引，-1 表示当前/最新机位）。"""
+        if self.shell._presentation == 'industrial':
+            return self.stitching.capture_mobile()
         preview_cam = self._pause_2d_preview()
         ws = self.shell.workspace_mobile()
 
@@ -1840,6 +1850,9 @@ class BackendBridge(QObject):
             self.shell, "选择单相机会话目录", base)
         if not session_dir:
             return
+        if self.shell._presentation == 'industrial':
+            return self.projects.guard_switch('mobile_chain', lambda:
+                self.projects.open(session_dir, 'mobile_chain', legacy=True))
 
         self.shell.show_loading("正在离线加载会话...")
 

@@ -155,7 +155,7 @@ class IndustrialRibbon(QWidget):
             ('new', '新建会话', 'folder_open', lambda: self._project_action('new_dialog')),
             ('open', '打开会话', 'folder_open', shell.open_session_requested.emit),
             ('save', '保存会话', 'save', turn.btn_save_session if mode == 'turntable' else shell.save_session_requested.emit),
-            ('export', '拼接并导出' if mode == 'multi_cam' else '导出点云', 'layers', exports[mode]),
+            ('export', '导出点云', 'layers', lambda: self._stitch_action('export')),
         ], mode)
         self._group(row, '设备', [
             ('devices', '设备管理', 'camera_multi', shell.open_device_manager),
@@ -179,10 +179,10 @@ class IndustrialRibbon(QWidget):
                                   ('frame1', '拍摄 frame1', 'camera', turn.btn_capture_frame1),
                                   ('calibrate', '计算转台', 'calibrate', turn.btn_online_calib)]),
                       ('步进采集', [('capture', '采集下一帧', 'camera', turn.btn_capture_step),
-                                  ('auto', '自动采集', 'loop', turn.btn_auto_capture),
-                                  ('stitch', '拼接点云', 'stitch', turn.btn_stitch)])]
+                                  ('auto', '自动采集', 'loop', turn.btn_auto_capture)])]
         for caption, entries in groups:
             self._group(row, caption, entries, mode)
+        self._group(row, '拼接', [('stitch', '执行拼接', 'stitch', lambda: self._stitch_action('execute'))], mode)
         self._group(row, '视图', [('fit', '适配视图', 'reset_view', self.fit_view),
                                  ('screenshot', '视图截图', 'video', self.screenshot)], mode)
         # Keep existing controls for business logic; hide only their duplicates
@@ -199,6 +199,11 @@ class IndustrialRibbon(QWidget):
         bridge = self.shell._backend_bridge
         if bridge and hasattr(bridge, 'projects'):
             getattr(bridge.projects, name)()
+
+    def _stitch_action(self, name):
+        bridge = self.shell._backend_bridge
+        if bridge and hasattr(bridge, 'stitching'):
+            getattr(bridge.stitching, name)()
 
     def activate(self, enabled, mode):
         self.setVisible(enabled)
@@ -236,6 +241,12 @@ class IndustrialRibbon(QWidget):
         self.mode_label.setText(LauncherDialog.MODE_NAMES[shell.current_mode()])
         self.badge.setText('离线预览' if getattr(shell, '_offline_preview', False) else
                            f'已连接 {len(shell._devices)} 台设备' if shell._devices else '未连接相机')
+        database = shell._frame_databases[shell.current_mode()]
+        raw = sum(row.kind == 'raw' for row in database.records.values())
+        results = any(row.kind == 'result' for row in database.records.values())
+        self.commands[(shell.current_mode(), 'stitch')].setEnabled(raw >= 2)
+        self.commands[(shell.current_mode(), 'stitch')].setToolTip('至少两帧原始数据；多角度选择两帧以上时拼接选中帧，否则使用全部原始帧')
+        self.commands[(shell.current_mode(), 'export')].setEnabled(results)
 
     def _viewer(self):
         workspace = self.shell._stack.currentWidget()

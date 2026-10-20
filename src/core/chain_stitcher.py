@@ -407,6 +407,10 @@ class ChainStitcher:
             return None
         # 复制一份避免污染原始 FrameData 中的点云数据
         pcd = o3d.geometry.PointCloud(pcd)
+        # Invalid organized pixels must be removed before translation, otherwise
+        # zero placeholders become a dense, apparently valid point at the pose.
+        from .point_cloud_processor import PointCloudProcessor
+        pcd, _ = PointCloudProcessor._filter_valid(pcd)
         if T is not None:
             pcd.transform(T.astype(np.float64))
         self._node_pcd_cache[sid] = pcd

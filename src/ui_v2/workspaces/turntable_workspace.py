@@ -869,7 +869,7 @@ class TurntableWorkspace(QWidget):
                         self, "采集完成",
                         f"已完成 360° 步进采集（{self.session.current_step}/{total} 帧）。"
                     )
-            if self.chk_auto_stitch.isChecked():
+            if self.chk_auto_stitch.isChecked() and not getattr(getattr(self, '_industrial', None), 'active', False):
                 self.log("自动实时拼接...")
                 self._do_stitch(silent=True)
             self.set_state("capturing")
@@ -939,6 +939,8 @@ class TurntableWorkspace(QWidget):
 
     # ------------------------------------------------------------------ 拼接 / 保存
     def _on_stitch(self):
+        if getattr(getattr(self, '_industrial', None), 'active', False) and hasattr(self, '_explicit_stitch'):
+            return self._explicit_stitch()
         if not self.session.can_stitch():
             QMessageBox.warning(self, "无法拼接", "请先完成标定并采集至少 2 帧")
             return

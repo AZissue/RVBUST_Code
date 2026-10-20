@@ -38,7 +38,7 @@ class FrameBrowser(QWidget):
         self.count = QLabel('0 帧')
         bar.addWidget(self.count)
         self.delete_button = QPushButton('删除')
-        self.delete_button.setToolTip('删除选中帧或整批数据（可在右键菜单恢复）')
+        self.delete_button.setToolTip('删除选中原始帧、拼接结果或整批数据（可在右键菜单恢复）')
         self.delete_button.clicked.connect(self.delete_selected)
         bar.addWidget(self.delete_button)
         layout.addLayout(bar)
@@ -88,10 +88,12 @@ class FrameBrowser(QWidget):
         self.tree.clear()
         self._items.clear()
         sessions, records = self.database.snapshot()
+        results = sum(record.kind == 'result' for record in records)
+        count_text = f'{len(records)-results} 帧' + (f' / {results} 结果' if results else '')
         groups = {}
         project_root = None
         if hasattr(self.database, 'project_title'):
-            project_root = QTreeWidgetItem(self.tree, [self.database.project_title, f'{len(records)} 帧'])
+            project_root = QTreeWidgetItem(self.tree, [self.database.project_title, count_text])
             project_root.setIcon(0, icons.icon('folder_open', '#bbbbbb', 16))
         for record in records:
             session = sessions[record.session_id]
@@ -101,8 +103,8 @@ class FrameBrowser(QWidget):
                 groups[session_key].setData(0, Qt.UserRole + 1, session_key)
                 groups[session_key].setToolTip(0, session['created'])
                 groups[session_key].setIcon(0, icons.icon('folder_open', '#bbbbbb', 16))
-            title = f'帧 {record.frame_id:04d}'
-            if self.database.mode == 'multi_cam':
+            title = record.logical_name if record.kind == 'result' else f'帧 {record.frame_id:04d}'
+            if self.database.mode == 'multi_cam' and record.kind == 'raw':
                 title += ' · ' + record.camera
             row = QTreeWidgetItem(groups[session_key], [title, f'{record.points:,}' if record.points is not None else '—'])
             row.setData(0, Qt.UserRole, record.uid)
@@ -111,6 +113,10 @@ class FrameBrowser(QWidget):
                 '原始相机坐标；选择后在右侧查看2D / 3D。\n' + record.created)
             row.setIcon(0, icons.icon('layers', '#bbbbbb', 16))
             row.setToolTip(1, '原始点槽位数，包含有序点云中的无效占位点；文件不下采样。')
+            if record.kind == 'result':
+                row.setIcon(0, icons.icon('stitch', '#d65050', 16))
+                row.setToolTip(0, '独立拼接结果 · mm\n来源帧：' + '\n'.join(record.source_ids) + '\n' + record.created)
+                row.setToolTip(1, '拼接结果点数；原始帧保持独立。')
             self._items[record.uid] = row
         def restore(item, key=''):
             key += '/' + item.text(0)
@@ -127,7 +133,7 @@ class FrameBrowser(QWidget):
             if uid in self._items:
                 self._items[uid].setSelected(True)
         self.tree.blockSignals(False)
-        self.count.setText(f'{len(records)} 帧')
+        self.count.setText(count_text)
         self._update_delete_button()
 
     def selected_ids(self):
@@ -180,6 +186,9 @@ class FrameBrowser(QWidget):
 
     def show_frame(self, uid, frame):
         row = self.database.records[uid]
+        if row.kind == 'result':
+            self.details.setText(f'{row.logical_name} · {row.points:,} 点\n来源 {len(row.source_ids)} 帧 · 独立结果，原始数据保留')
+            return
         self.details.setText(f'{row.logical_name} · {row.status}\n原始PLY + 2D PNG · 在右侧联动查看')
 
 
@@ -224,6 +233,8 @@ class FrameDatabaseController(QObject):
         browser = self.browsers.get(mode)
         if browser:
             browser.refresh()
+        if hasattr(self.bridge.shell, '_industrial_ribbon'):
+            self.bridge.shell._industrial_ribbon.update_status()
 
     def bind(self, mode, browser):
         if mode in self.browsers:
@@ -250,6 +261,11 @@ class FrameDatabaseController(QObject):
         browser = self.browsers.get(mode)
         if browser:
             browser.details.setText('临时工作区 · 请主动保存会话')
+            browser.tree.blockSignals(True)
+            browser.tree.setCurrentItem(None)
+            browser.tree.clearSelection()
+            browser.tree.blockSignals(False)
+            browser._update_delete_button()
         if had_preview and hasattr(workspace, '_industrial'):
             workspace._industrial.restore_business_image()
 
@@ -269,14 +285,25 @@ class FrameDatabaseController(QObject):
                 bridge.shell.log('DB单帧读取失败：' + str(error), 'error')
                 return
             frame, cloud = result
-            self.browsers[mode].show_frame(uid, frame)
-            workspace = bridge.shell._stack.currentWidget()
-            viewer = workspace.viewer() if callable(workspace.viewer) else workspace.viewer
-            viewer.show_database_frame(cloud)
-            workspace._industrial.show_database_image(frame)
-            viewer.reset_view()
-            bridge.shell.log('正在查看DB原始单帧；返回工作视图可继续查看拼接结果。', 'info')
+            self.display_frame(mode, uid, frame, cloud)
+            bridge.shell.log('已显示DB选中数据。', 'info')
         bridge._run_background(lambda: self.databases[mode].load_frame(uid), done, name='db_frame_preview')
+
+    def display_frame(self, mode, uid, frame, cloud):
+        browser = self.browsers.get(mode)
+        if browser:
+            browser.show_frame(uid, frame)
+            browser.tree.blockSignals(True)
+            browser.tree.setCurrentItem(browser._items.get(uid))
+            browser.tree.blockSignals(False)
+        workspace = self.bridge.shell._stack.currentWidget()
+        viewer = workspace.viewer() if callable(workspace.viewer) else workspace.viewer
+        viewer.show_database_frame(cloud)
+        if self.databases[mode].records[uid].kind == 'result':
+            workspace._industrial.show_database_result()
+        else:
+            workspace._industrial.show_database_image(frame)
+        viewer.reset_view()
 
     def remove(self, mode, identifiers):
         if not self.bridge.can_change_workspace() or mode != self.bridge._current_mode:
@@ -285,7 +312,7 @@ class FrameDatabaseController(QObject):
         if not identifiers:
             return
         answer = QMessageBox.question(self.bridge.shell, '删除 DB 数据',
-            f'从DB移除选中的 {len(identifiers)} 帧及对应2D图像？\n'
+            f'从DB移除选中的 {len(identifiers)} 项原始帧或拼接结果？原始帧的2D图像一并移除。\n'
             '数据移至项目回收区，可通过右键菜单恢复上次删除。\n'
             '当前标定和拼接工作流保持；退出拼接请使用机位删除功能。',
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
@@ -299,6 +326,7 @@ class FrameDatabaseController(QObject):
 
     def _mutate(self, mode, work, verb):
         bridge = self.bridge
+        previous_results = {uid for uid, row in self.databases[mode].records.items() if row.kind == 'result'}
         self.restore(mode)
         # Retarget only references into this DB. Imported source files and
         # independent station copies remain untouched.
@@ -319,7 +347,12 @@ class FrameDatabaseController(QObject):
                     if value and Path(value).resolve().is_relative_to(old.resolve()):
                         setattr(frame, attribute, str(new / Path(value).resolve().relative_to(old.resolve())))
             self.browsers[mode].refresh()
-            bridge.shell.log(f'已{verb} {len(moves)} 帧DB数据及对应2D图像。', 'success')
+            if previous_results - set(self.databases[mode].records):
+                workspace = bridge.shell._stack.currentWidget()
+                viewer = workspace.viewer() if callable(workspace.viewer) else workspace.viewer
+                viewer.clear_all()
+                workspace._industrial.restore_business_image()
+            bridge.shell.log(f'已{verb} {len(moves)} 项DB数据。', 'success')
         bridge._run_background(work, done, name='db_mutation', must_finish=True)
 
     def open_project(self, mode):

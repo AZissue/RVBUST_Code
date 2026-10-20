@@ -59,6 +59,8 @@ class FrameRecord:
     image_size: list
     markers: list = field(default_factory=list)
     status: str = '已入库'
+    kind: str = 'raw'
+    source_ids: list = field(default_factory=list)
 
 
 class FrameDatabase:
@@ -197,6 +199,13 @@ class FrameDatabase:
         with self._lock:
             record = copy.deepcopy(self.records[uid])
             folder = self.directory / 'frames' / uid
+        if record.kind == 'result':
+            frame = FrameData(record.frame_id, record.logical_name, is_offline=True,
+                offline_pointmap_path=str(folder / 'pointmap.ply'), database_id=uid)
+            cloud = frame.load_pointcloud_o3d()
+            if cloud is None or not len(cloud.points):
+                raise IOError('DB拼接点云读取失败')
+            return frame, cloud
         image = cv2.imdecode(np.fromfile(folder / 'image.png', np.uint8), cv2.IMREAD_UNCHANGED)
         if image is None:
             raise IOError('DB中对应2D图像读取失败')
@@ -208,6 +217,32 @@ class FrameDatabase:
         if cloud is None or not len(cloud.points):
             raise IOError('DB中原始点云读取失败')
         return frame, cloud
+
+    def publish_result(self, cloud, source_ids):
+        """Commit a separate immutable result; never change raw frame geometry."""
+        from .utils import write_point_cloud_atomic
+        uid = uuid.uuid4().hex
+        with self._lock:
+            if not source_ids or any(key not in self.records or self.records[key].kind != 'raw' for key in source_ids):
+                raise ValueError('拼接来源帧已变化，请重新执行')
+            if self.session_id is None:
+                self.begin_session()
+            folder = self.directory / 'frames' / uid
+            folder.mkdir(parents=True)
+            try:
+                if cloud is None or not len(cloud.points) or not write_point_cloud_atomic(str(folder / 'pointmap.ply'), cloud):
+                    raise IOError('拼接结果写入失败')
+                number = 1 + sum(row.kind == 'result' for row in self.records.values())
+                self.records[uid] = FrameRecord(uid, self.session_id, '', number, '拼接结果',
+                    f'拼接帧 {number:04d}', datetime.now().isoformat(timespec='seconds'),
+                    len(cloud.points), [0, 0], status='已拼接', kind='result', source_ids=list(source_ids))
+                self._save_index()
+            except Exception:
+                self.records.pop(uid, None)
+                shutil.rmtree(folder, ignore_errors=True)
+                raise
+        self._notify()
+        return uid
 
     def remove(self, identifiers):
         """Move owned pairs into a recoverable batch, committing the index last.
@@ -252,7 +287,8 @@ class FrameDatabase:
                 for uid, entry in entries.items():
                     old = self.directory / '.trash' / batch / uid
                     new = self.directory / 'frames' / uid
-                    if not all((old / name).is_file() for name in ('image.png', 'pointmap.ply')):
+                    names = ('pointmap.ply',) if entry['record'].get('kind') == 'result' else ('image.png', 'pointmap.ply')
+                    if not all((old / name).is_file() for name in names):
                         raise IOError('回收区原始数据不完整')
                     new.parent.mkdir(parents=True, exist_ok=True)
                     old.rename(new)
@@ -319,11 +355,14 @@ class FrameDatabase:
             session = data['sessions'][row.session_id]
             if (not isinstance(row.frame_id, int) or row.frame_id < 0 or
                     not isinstance(row.points, int) or row.points <= 0 or
-                    len(row.image_size) != 2 or not all(isinstance(v, int) and v > 0 for v in row.image_size) or
+                    row.kind not in ('raw', 'result') or len(row.image_size) != 2 or
+                    not all(isinstance(v, int) and v >= (1 if row.kind == 'raw' else 0) for v in row.image_size) or
+                    not isinstance(row.source_ids, list) or any(not isinstance(v, str) or len(v) != 32 or
+                        any(c not in '0123456789abcdef' for c in v) for v in row.source_ids) or
                     not isinstance(row.markers, list) or not all(isinstance(v, dict) for v in row.markers) or
                     not all(isinstance(v, str) for v in (row.camera, row.purpose, row.logical_name, row.status, session['title'], session['created']))):
                 raise ValueError('DB帧元数据无效')
-            for name in ('image.png', 'pointmap.ply'):
+            for name in (('image.png', 'pointmap.ply') if row.kind == 'raw' else ('pointmap.ply',)):
                 if not (directory / 'frames' / row.uid / name).is_file():
                     raise ValueError(f'DB帧缺少文件: {row.uid}/{name}')
             records[row.uid] = row
