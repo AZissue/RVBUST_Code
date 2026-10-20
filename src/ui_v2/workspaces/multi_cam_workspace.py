@@ -468,6 +468,9 @@ class MultiCamWorkspace(QWidget):
         self._btn_stitch_save.setEnabled(locked)
         self._btn_batch.setEnabled(locked)
         self._batch_spin.setEnabled(locked)
+        if getattr(self, 'offline_preview', False):
+            for button in (self._btn_capture, self._btn_scan_capture, self._btn_batch):
+                button.setEnabled(False)
         self._lock_banner.setVisible(locked)
         self.refresh_marker_pair()
 

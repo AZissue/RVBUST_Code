@@ -18,6 +18,7 @@ class NetworkFeedbackTests(unittest.TestCase):
         QObject.__init__(bridge)
         bridge.shell = Mock()
         bridge.camera_manager = Mock()
+        bridge.camera_manager.initialize.return_value = (True, 'mock SDK ready')
         bridge._run_background = Mock()
         return bridge
 

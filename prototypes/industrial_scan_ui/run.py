@@ -63,7 +63,7 @@ def main():
     if args.screenshot:
         def save():
             args.screenshot.parent.mkdir(parents=True, exist_ok=True)
-            if win.workspace.canvas.is_busy:
+            if win.workspace._busy or win.workspace.canvas.is_busy:
                 QTimer.singleShot(50, save)
                 return
             ok = win.grab().save(str(args.screenshot))

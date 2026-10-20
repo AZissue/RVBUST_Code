@@ -399,7 +399,7 @@ class MainWindowShell(QMainWindow):
         dialog = self._launcher_factory(parent=self)
 
         # 如有 backend_bridge，先真实枚举设备，再恢复当前勾选状态
-        if self._backend_bridge is not None:
+        if self._backend_bridge is not None and not getattr(self, '_offline_preview', False):
             devices = self._backend_bridge.enumerate_devices()
             dialog.set_devices(devices)
         dialog.restore_state(self._mode, self._devices, self._presentation)
@@ -442,6 +442,20 @@ class MainWindowShell(QMainWindow):
 
         dialog.connect_requested.connect(_on_connect)
 
+        def _open_offline(mode):
+            bridge = self._backend_bridge
+            if bridge is None or (self._dirty and not self._confirm_discard()):
+                return
+            dialog.show_connection_overlay('正在加载凳子离线数据...')
+            def finished(ok, message):
+                dialog.hide_connection_overlay()
+                if ok:
+                    dialog.accept()
+                else:
+                    dialog.log_summary.append(message, 'error')
+            bridge.open_offline_preview(mode, finished)
+        dialog.offline_requested.connect(_open_offline)
+
         if dialog.exec() == QDialog.Accepted and connected["mode"]:
             # 与 backend 的 camera_id 分配顺序对齐：真实设备在前，测试设备在后
             ordered_devices = connected["devices"]
@@ -451,7 +465,7 @@ class MainWindowShell(QMainWindow):
 
             new_mode = connected["mode"]
             identity = lambda items: [(item.serial, isinstance(item.backend_ref, int)) for item in items]
-            if new_mode == self._mode and identity(ordered_devices) == identity(self._devices):
+            if not getattr(self, '_offline_preview', False) and new_mode == self._mode and identity(ordered_devices) == identity(self._devices):
                 self.set_presentation(connected['presentation'])
                 self.log('已切换界面呈现，保留当前设备连接和会话数据。', 'info')
                 return
@@ -572,6 +586,8 @@ class MainWindowShell(QMainWindow):
         online = sum(1 for d in self._devices if d.online)
         total = len(self._devices)
         self._st_devices.setText(f"设备 {online}/{total} 在线")
+        if getattr(self, '_offline_preview', False):
+            self._st_devices.setText('离线数据 · 未连接相机')
 
         if self._mode == LauncherDialog.MODE_MULTI_CAM:
             ws = self._ws_multi

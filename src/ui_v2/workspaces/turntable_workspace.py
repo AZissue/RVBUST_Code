@@ -432,7 +432,7 @@ class TurntableWorkspace(QWidget):
 
             frame0_shot = self.current_frame0 is not None
             f0_ok = frame0_shot and len(self.current_markers0) >= 3
-            self.btn_capture_frame1.setEnabled(frame0_shot and not busy)
+            self.btn_capture_frame1.setEnabled(connected and frame0_shot and not busy)
 
             f1_ok = self.current_frame1 is not None and len(self.current_markers1) >= 3
             self.btn_online_calib.setEnabled(f0_ok and f1_ok and not busy)
@@ -440,8 +440,8 @@ class TurntableWorkspace(QWidget):
             calibrated = self.session.is_calibrated()
             total_steps = self.session.total_steps_needed() if calibrated else 0
             capture_finished = calibrated and self.session.current_step >= total_steps
-            self.btn_capture_step.setEnabled(calibrated and not busy and not capture_finished)
-            self.btn_auto_capture.setEnabled(calibrated and not busy and not capture_finished)
+            self.btn_capture_step.setEnabled(connected and calibrated and not busy and not capture_finished)
+            self.btn_auto_capture.setEnabled(connected and calibrated and not busy and not capture_finished)
             self.chk_auto_stitch.setEnabled(calibrated)
             self.btn_stitch.setEnabled(self.session.can_stitch())
             self.btn_save.setEnabled(self.merged is not None)

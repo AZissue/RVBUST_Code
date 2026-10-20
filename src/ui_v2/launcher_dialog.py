@@ -46,6 +46,9 @@ class LauncherDialog(QDialog):
     connect_requested = Signal(str, list)
     """连接设备：(mode, List[DeviceInfo])。全部成功后由调用方 accept() 本对话框。"""
 
+    offline_requested = Signal(str)
+    """使用项目自带数据进入新版工作区，不连接相机。"""
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("MCC · 选择功能")
@@ -174,6 +177,10 @@ class LauncherDialog(QDialog):
         bottom = QHBoxLayout()
         self._selection_label = QLabel("未选择设备")
         bottom.addWidget(self._selection_label, 1)
+        self._btn_offline = QPushButton("离线预览 · 凳子数据")
+        self._btn_offline.setToolTip("无需相机，自动加载项目内的第 1、2 帧原始图像和点云")
+        self._btn_offline.clicked.connect(self._on_offline)
+        bottom.addWidget(self._btn_offline)
         self._btn_cancel = QPushButton("取消")
         self._btn_cancel.setMinimumWidth(80)
         self._btn_cancel.clicked.connect(self.reject)
@@ -325,8 +332,14 @@ class LauncherDialog(QDialog):
         self._selection_label.setText(hint)
         self._selection_label.setStyleSheet(f"color: {color}; font-size: 12px;")
         self._btn_connect.setEnabled(ok and not self._is_busy())
+        self._btn_offline.setVisible(self._presentation == 'industrial')
+        self._btn_offline.setEnabled(not self._is_busy())
 
     # ------------------------------------------------------------ 事件
+    def _on_offline(self):
+        if self._presentation == 'industrial' and not self._is_busy():
+            self.offline_requested.emit(self._mode)
+
     def _on_filter(self, text: str):
         self._table.apply_filter(text)
 

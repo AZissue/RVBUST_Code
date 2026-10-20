@@ -208,9 +208,17 @@ class StudioWindow(QMainWindow):
         self.setMinimumSize(1000, 660)
         if devices:
             camera_count = len(devices)
+        elif load_demo and key == 'multi_cam' and camera_count is None:
+            camera_count = 2
         workspace = registry.create(key, camera_count=camera_count, renderer=renderer, load_demo=load_demo)
         self._install(key, workspace)
         self._apply_devices(devices or [])
+        if not devices and load_demo:
+            self.load_offline_fixture()
+
+    def load_offline_fixture(self):
+        from .offline_fixture import load_fixture
+        load_fixture(self.workspace, self.key)
 
     def _apply_devices(self, devices):
         previous = [d.serial for d in getattr(self.workspace, '_devices', [])]
@@ -286,6 +294,8 @@ class StudioWindow(QMainWindow):
                 if dialog.offline:
                     self.service.close()
                 self._apply_devices(dialog.connected_devices)
+                if dialog.offline:
+                    self.load_offline_fixture()
             else:
                 self.service.close()
                 self._apply_devices([])

@@ -218,11 +218,16 @@ class MobileChainWorkspace(QWidget):
 
         connected = state != "idle"
         busy = state in ("capturing", "evaluating")
+        self._btn_preview.setEnabled(connected and not busy)
 
         # 拍摄中/评估中禁用全部操作（防止并发与覆盖已拍机位）
         self._btn_capture.setEnabled(connected and not busy)
         self._btn_undo.setEnabled(self._station_count > 0 and not busy)
         self._btn_recapture.setEnabled(self._station_count > 0 and not busy)
+        if getattr(self, 'offline_preview', False):
+            self._btn_capture.setEnabled(False)
+            self._btn_recapture.setEnabled(False)
+            self._btn_preview.setEnabled(False)
         self._btn_save.setEnabled(self._station_count > 0 and not busy)
         self._btn_delete_node.setEnabled(
             self._selected_node is not None and not busy)

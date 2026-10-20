@@ -163,12 +163,20 @@ class BackendBridge(QObject):
         # 后台任务引用保护：防止 QThread 运行期间被 Python GC 销毁
         self._workers: List[WorkerThread] = []
 
-        # 初始化 RVC 系统
-        ok, msg = self.camera_manager.initialize()
-        if ok:
-            logger.info("RVC 系统初始化成功")
-        else:
-            logger.warning(f"RVC 系统初始化失败: {msg}")
+        # Offline preview never initializes the SDK. Hardware entry points opt in.
+        self._sdk_initialized = False
+        self.offline_preview = False
+
+    def _ensure_sdk(self):
+        if not getattr(self, '_sdk_initialized', False):
+            ok, msg = self.camera_manager.initialize()
+            self._sdk_initialized = bool(ok)
+            logger.log(20 if ok else 30, msg)
+        return self._sdk_initialized
+
+    def open_offline_preview(self, mode, on_finished=None):
+        from .offline_preview import open_preview
+        return open_preview(self, mode, on_finished)
 
     # ------------------------------------------------------------------
     # 接线入口
@@ -406,6 +414,8 @@ class BackendBridge(QObject):
     def enumerate_devices(self) -> List[DeviceInfo]:
         """枚举所有 RVC 设备并返回 DeviceInfo 列表。"""
         device_infos = []
+        if not self._ensure_sdk():
+            return device_infos
         for i, dev in enumerate(self.camera_manager.find_devices()):
             try:
                 ret, info = dev.GetDeviceInfo()
@@ -449,6 +459,10 @@ class BackendBridge(QObject):
             if on_finished is not None:
                 on_finished([(-1, False, message)], None)
             return
+        if not self._ensure_sdk():
+            if on_finished:
+                on_finished([], '相机 SDK 初始化失败')
+            return
         target_desc = f"选中 {len(indices)} 台" if indices else "所有 GigE"
         self.shell.log(f"开始对 {target_desc} 设备进行自动 IP 配置...", "info")
 
@@ -477,6 +491,15 @@ class BackendBridge(QObject):
                           主程序新流程会在 launcher 小窗上先显示遮罩，
                           因此调用时传入 False。
         """
+        if not self._ensure_sdk():
+            self.connection_finished.emit(False, '相机 SDK 初始化失败，请查看日志')
+            return
+        self.offline_preview = False
+        self.shell._offline_preview = False
+        self._offline_clouds = {}
+        for workspace in (self.shell.workspace_multi(), self.shell.workspace_mobile(),
+                          self.shell.workspace_turntable()):
+            workspace.offline_preview = False
         if show_loading:
             self.shell.show_loading("正在连接设备...")
         self._pause_2d_preview()
@@ -742,7 +765,7 @@ class BackendBridge(QObject):
         一致（仅多 camera_names / saved_at 字段，load 时忽略），可直接
         当作外参文件手动加载。
         """
-        if not self.calibration_engine.pair_results:
+        if self.offline_preview or not self.calibration_engine.pair_results:
             return
         try:
             payload = self.calibration_engine.to_dict()
@@ -806,13 +829,20 @@ class BackendBridge(QObject):
         self.shell.show_loading("正在计算外参...")
         def _work():
             ok, msg = self.fixed_workflow.calibrate()
-            return ok, msg, _pairs_from_engine(self.calibration_engine)
+            clouds = {}
+            if ok and self.offline_preview:
+                import copy
+                ref = self.fixed_workflow.reference_id
+                for cid, cloud in self._offline_clouds.items():
+                    clouds[cid] = copy.deepcopy(cloud)
+                    clouds[cid].transform(self.calibration_engine.get_transform(cid, ref))
+            return ok, msg, _pairs_from_engine(self.calibration_engine), clouds
         def _done(result, error):
             self.shell.hide_loading()
             if error:
                 self.shell.log(f"标定异常: {error}", "error")
                 return
-            ok, msg, pairs = result
+            ok, msg, pairs, clouds = result
             score = _score_from_pairs(pairs)
             ws = self.shell.workspace_multi()
             # 设置参考相机，viewer 中参考相机显示为白色
@@ -822,6 +852,12 @@ class BackendBridge(QObject):
             if ok:
                 ok_scan, msg_scan = self.fixed_workflow.start_scanning()
                 if ok_scan:
+                    if self.offline_preview:
+                        from dataclasses import replace
+                        for frame in self.fixed_workflow.frames_calib.values():
+                            self.fixed_workflow.add_scan_frame(replace(frame, kind='scan'))
+                        for cid, cloud in clouds.items():
+                            ws.viewer().set_pointcloud(cid, cloud)
                     ws.set_state("locked")
                     self.shell.log(f"标定完成: {msg} | {msg_scan}", "success")
                     self._autosave_calibration()
@@ -831,6 +867,7 @@ class BackendBridge(QObject):
             else:
                 ws.set_state("calibrated")
                 self.shell.log(f"标定质量不达标: {msg}", "warn")
+            self.shell._refresh_statusbar()
         self._run_background(_work, _done)
 
     def _on_multi_save_extrinsics(self):
@@ -996,6 +1033,19 @@ class BackendBridge(QObject):
         工作流并清空 UI 结果，提示用户重新拍摄。
         """
         ws = self.shell.workspace_multi()
+        if self.offline_preview:
+            frames = dict(self.fixed_workflow.frames_calib)
+            self.fixed_workflow.reset()
+            self.fixed_workflow.start_calibration(camera_id)
+            for frame in frames.values():
+                self.fixed_workflow.add_calibration_frame(frame)
+            ws.clear_calibration_results()
+            for cid, cloud in self._offline_clouds.items():
+                ws.viewer().set_pointcloud(cid, cloud)
+            ws.set_state('detected' if frames and all(f.markers for f in frames.values()) else 'captured')
+            ws.viewer().set_reference(camera_id)
+            self.shell._refresh_statusbar()
+            return
         state = self.fixed_workflow.get_state()
         if state in (self.fixed_workflow.STATE_CALIBRATING,
                      self.fixed_workflow.STATE_CALIBRATED,
@@ -2190,7 +2240,9 @@ class BackendBridge(QObject):
                     f"[cleanup] 后台任务超过 3 秒未结束，保留引用待其自然退出: {task_name} ({worker})")
         self._workers[:] = pending
         self._pending_workers = pending
-        self.camera_manager.shutdown()
+        if self._sdk_initialized:
+            self.camera_manager.shutdown()
+            self._sdk_initialized = False
         return pending
 
     def abandon_must_finish_tasks(self):

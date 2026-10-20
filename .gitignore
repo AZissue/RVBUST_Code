@@ -43,3 +43,6 @@ build/
 dist/
 data/
 meta.json
+
+# Immutable offline test captures are lossless archives; expanded files are local.
+offline_test_data/**/.cache/

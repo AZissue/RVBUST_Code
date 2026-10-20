@@ -37,7 +37,7 @@ def main(*, composition=None):
     from version import get_version
 
     try:
-        from PySide6.QtCore import QPropertyAnimation
+        from PySide6.QtCore import QPropertyAnimation, QTimer
         from PySide6.QtWidgets import QApplication, QDialog
     except ImportError:
         print("[ERROR] PySide6 未安装，仅 core 模块可用（python test_core.py）")
@@ -125,12 +125,30 @@ def main(*, composition=None):
     launcher.refresh_requested.connect(on_refresh)
     launcher.connect_requested.connect(on_connect)
     launcher.auto_ip_requested.connect(on_auto_ip)
+    def on_offline(mode):
+        launcher.show_connection_overlay("正在加载凳子离线数据...")
+        def finished(ok, message):
+            launcher.hide_connection_overlay()
+            if ok:
+                main_window.show()
+                launcher.accept()
+            else:
+                launcher.log_summary.append(message, 'error')
+        bridge.open_offline_preview(mode, finished)
+    launcher.offline_requested.connect(on_offline)
     bridge.connection_finished.connect(on_connection_finished)
     # 事件循环退出前统一收口清理（此时事件循环仍可处理线程退出信号）
     app.aboutToQuit.connect(bridge.cleanup)
 
-    # 初始枚举设备
-    on_refresh()
+    # Hardware discovery is explicit so offline entry does not initialize the SDK.
+    launcher.set_devices([])
+    if '--offline-preview' in sys.argv:
+        index = sys.argv.index('--offline-preview')
+        mode = sys.argv[index + 1] if index + 1 < len(sys.argv) else 'multi_cam'
+        if mode not in LauncherDialog.MODE_NAMES:
+            raise ValueError('未知离线功能：' + mode)
+        launcher._set_mode(mode, 'industrial')
+        QTimer.singleShot(0, lambda: on_offline(mode))
 
     exit_code = 0
     try:
