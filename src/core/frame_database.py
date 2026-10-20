@@ -1,4 +1,4 @@
-"""Append-only raw capture archive. Geometry is owned on disk, not by UI rows.
+"""Raw capture archive. Geometry is owned on disk, not by UI rows.
 
 Published records contain no SDK handles or large numpy arrays. A frame is
 published only after its organized PLY and matching PNG have both been saved.
@@ -66,6 +66,7 @@ class FrameDatabase:
         self.mode = mode
         self.directory = Path(base_dir or DEFAULT_ROOT) / (mode + '_' + datetime.now().strftime('%Y%m%d_%H%M%S') + '_' + uuid.uuid4().hex[:8])
         self.records = {}
+        self.removed = {}
         self.sessions = {}
         self.session_id = None
         self._lock = threading.RLock()
@@ -81,7 +82,7 @@ class FrameDatabase:
         self.directory.mkdir(parents=True, exist_ok=True)
         write_json_atomic(str(self.directory / 'index.json'), _json_value(dict(
             schema=1, mode=self.mode, sessions=self.sessions,
-            records=[vars(row) for row in self.records.values()])), ensure_ascii=False, indent=2)
+            records=[vars(row) for row in self.records.values()], removed=self.removed)), ensure_ascii=False, indent=2)
 
     def _notify(self):
         if self.on_changed:
@@ -96,6 +97,8 @@ class FrameDatabase:
         with rvc_sdk_lock:
             with self._lock:
                 old = getattr(frame, 'database_id', None)
+                if old in self.removed:
+                    raise ValueError('该帧已从DB移除，请先恢复删除')
                 if old in self.records:
                     return old
                 if self.session_id is None:
@@ -206,12 +209,79 @@ class FrameDatabase:
             raise IOError('DB中原始点云读取失败')
         return frame, cloud
 
+    def remove(self, identifiers):
+        """Move owned pairs into a recoverable batch, committing the index last.
+
+        Returns {uid: (old_folder, new_folder)} so workflow references can follow
+        the move without deleting an already accepted station or calibration.
+        """
+        with rvc_sdk_lock, self._lock:
+            identifiers = list(dict.fromkeys(identifiers))
+            if not identifiers or any(uid not in self.records for uid in identifiers):
+                raise ValueError('请选择有效的DB帧')
+            batch = uuid.uuid4().hex
+            moves = {}
+            before = self.records.copy()
+            try:
+                for uid in identifiers:
+                    old = self.directory / 'frames' / uid
+                    new = self.directory / '.trash' / batch / uid
+                    new.parent.mkdir(parents=True, exist_ok=True)
+                    old.rename(new)
+                    moves[uid] = (old, new)
+                    self.removed[uid] = dict(batch=batch, record=vars(self.records.pop(uid)).copy())
+                self._save_index()
+            except Exception:
+                self.records = before
+                for uid, (old, new) in reversed(list(moves.items())):
+                    new.rename(old)
+                    self.removed.pop(uid, None)
+                raise
+        self._notify()
+        return moves
+
+    def restore_last_removal(self):
+        with rvc_sdk_lock, self._lock:
+            if not self.removed:
+                raise ValueError('没有可恢复的删除')
+            batch = next(reversed(self.removed.values()))['batch']
+            entries = {uid: entry for uid, entry in self.removed.items() if entry['batch'] == batch}
+            moves = {}
+            before = self.removed.copy()
+            try:
+                for uid, entry in entries.items():
+                    old = self.directory / '.trash' / batch / uid
+                    new = self.directory / 'frames' / uid
+                    if not all((old / name).is_file() for name in ('image.png', 'pointmap.ply')):
+                        raise IOError('回收区原始数据不完整')
+                    new.parent.mkdir(parents=True, exist_ok=True)
+                    old.rename(new)
+                    moves[uid] = (old, new)
+                    self.records[uid] = FrameRecord(**entry['record'])
+                    self.removed.pop(uid)
+                self._save_index()
+            except Exception:
+                self.removed = before
+                for uid, (old, new) in reversed(list(moves.items())):
+                    new.rename(old)
+                    self.records.pop(uid, None)
+                raise
+        self._notify()
+        return moves
+
     def open_project(self, index):
         directory = Path(index).resolve().parent
         data = json.loads((directory / 'index.json').read_text(encoding='utf-8'))
         if data.get('schema') != 1 or data.get('mode') != self.mode:
             raise ValueError('DB项目版本或工作区类型不匹配')
         records = {}
+        removed = data.get('removed', {})
+        for uid, entry in removed.items():
+            batch = entry['batch']
+            if (len(uid) != 32 or len(batch) != 32 or
+                    any(c not in '0123456789abcdef' for c in uid + batch) or
+                    FrameRecord(**entry['record']).uid != uid):
+                raise ValueError('DB回收区索引无效')
         for values in data['records']:
             row = FrameRecord(**values)
             if len(row.uid) != 32 or any(c not in '0123456789abcdef' for c in row.uid):
@@ -229,7 +299,10 @@ class FrameDatabase:
                 if not (directory / 'frames' / row.uid / name).is_file():
                     raise ValueError(f'DB帧缺少文件: {row.uid}/{name}')
             records[row.uid] = row
+        if set(records) & set(removed):
+            raise ValueError('DB帧同时存在于回收区')
         with self._lock:
             self.directory, self.records, self.sessions = directory, records, data['sessions']
+            self.removed = removed
             self.session_id = None
         self._notify()

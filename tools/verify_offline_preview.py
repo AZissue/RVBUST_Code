@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import sys
 import time
+import tempfile
 from unittest.mock import patch
 
 parser = argparse.ArgumentParser()
@@ -17,7 +18,7 @@ if not args.native:
     os.environ['QT_QPA_PLATFORM'] = 'offscreen'
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'src'))
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 from PySide6.QtGui import QFontDatabase
 from core.camera_manager import CameraManager
 from core.marker_detector import MarkerDetector
@@ -45,6 +46,9 @@ with patch.object(CameraManager, 'initialize', side_effect=AssertionError('SDK i
      patch.object(CameraManager, 'find_devices', side_effect=AssertionError('device enumeration forbidden')), \
      patch.object(MarkerDetector, 'detect_3d', side_effect=AssertionError('fixture replay must not redetect')):
     win = MainWindowShell()
+    db_temp = tempfile.TemporaryDirectory(prefix='mcc_db_verify_')
+    for mode, database in win._frame_databases.items():
+        database.directory = Path(db_temp.name) / mode
     bridge = BackendBridge(win)
     bridge.wire_all()
     win.set_backend_bridge(bridge)
@@ -60,6 +64,9 @@ with patch.object(CameraManager, 'initialize', side_effect=AssertionError('SDK i
             database = bridge.frame_db.databases[mode]
             browser = win._stack.currentWidget()._industrial.frame_browser
             assert len(database.records) == 2 and len(browser._items) == 2
+            assert browser.tree.topLevelItemCount() == 1
+            assert browser.tree.topLevelItem(0).childCount() == 2
+            assert not hasattr(browser, 'image')
             if mode == 'multi_cam':
                 assert len(bridge.fixed_workflow.frames_calib) == 2
                 bridge._on_multi_calibrate()
@@ -99,7 +106,9 @@ with patch.object(CameraManager, 'initialize', side_effect=AssertionError('SDK i
                 assert scene.bounds is not None and np.isfinite(scene.bounds).all()
                 assert scene.stored_points > 1000000
             assert len(viewer._database_cloud.points) == database.records[uid].points
-            assert browser.image._pixmap is not None and not browser.image._pixmap.isNull()
+            presentation = win._stack.currentWidget()._industrial
+            inspector = presentation.inspector or presentation._database_inspector
+            assert not inspector.image_view.image.isNull() and inspector.isVisible()
             assert len(database.records) == 2
             for _ in range(10):
                 app.processEvents()
@@ -108,6 +117,17 @@ with patch.object(CameraManager, 'initialize', side_effect=AssertionError('SDK i
             browser.restore_button.click()
             wait_for(lambda: not viewer._viewer.canvas.is_busy)
             assert viewer._database_cloud is None
+            with patch('ui_v2.frame_database.QMessageBox.question', return_value=QMessageBox.Yes):
+                bridge.frame_db.remove(mode, [uid])
+                wait_for(lambda: uid not in browser._items and '已删除' in win._st_hint.text())
+                wait_for(lambda: not any(w.isRunning() for w in bridge._workers))
+            assert len(database.records) == 1 and uid not in browser._items, (mode, len(database.records), win._st_hint.text())
+            bridge.frame_db.archive_context()
+            assert len(database.records) == 1
+            bridge.frame_db.recover(mode)
+            wait_for(lambda: uid in browser._items and '已恢复' in win._st_hint.text())
+            wait_for(lambda: not any(w.isRunning() for w in bridge._workers))
+            assert len(database.records) == 2 and uid in browser._items
             for _ in range(20):
                 app.processEvents()
                 time.sleep(.02)
@@ -126,3 +146,4 @@ with patch.object(CameraManager, 'initialize', side_effect=AssertionError('SDK i
         win._dirty = False
         win.close()
         app.processEvents()
+        db_temp.cleanup()

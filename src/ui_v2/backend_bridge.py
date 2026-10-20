@@ -2191,11 +2191,11 @@ class BackendBridge(QObject):
         if name is None:
             import traceback
             name = traceback.extract_stack()[-2].name
-        if name not in ('offline_preview', 'db_frame_preview', 'db_open_project') and self.shell._presentation == 'industrial':
+        if name not in ('offline_preview', 'db_frame_preview', 'db_open_project', 'db_mutation') and self.shell._presentation == 'industrial':
             self.frame_db.restore(self._current_mode)
         def archive_work():
             result = work()
-            if name not in ('offline_preview', 'db_frame_preview', 'db_open_project'):
+            if name not in ('offline_preview', 'db_frame_preview', 'db_open_project', 'db_mutation'):
                 self.frame_db.archive_context(result)
             return result
         worker = WorkerThread(archive_work)
@@ -2204,7 +2204,7 @@ class BackendBridge(QObject):
         self._workers.append(worker)
 
         def _wrapped_done(result, error):
-            update_metadata = name not in ('offline_preview', 'db_frame_preview', 'db_open_project')
+            update_metadata = name not in ('offline_preview', 'db_frame_preview', 'db_open_project', 'db_mutation')
             if error is None and update_metadata:
                 try:
                     self.frame_db.synchronize(result)

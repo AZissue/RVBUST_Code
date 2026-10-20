@@ -1,13 +1,13 @@
 """New-UI frame archive controller and hierarchical browser."""
 from PySide6.QtCore import QObject, Qt, Signal, Slot
-from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (QFileDialog, QHBoxLayout, QHeaderView, QLabel,
-    QPushButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
+    QPushButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
+    QAbstractItemView, QMenu, QMessageBox)
 from dataclasses import replace
+from pathlib import Path
 
-from core.frame_database import FrameDatabase, DEFAULT_ROOT
+from core.frame_database import DEFAULT_ROOT
 from core.frame_data import FrameData
-from ui_common.image_preview import numpy_to_qpixmap, AspectRatioLabel
 from . import icons
 
 
@@ -15,6 +15,8 @@ class FrameBrowser(QWidget):
     frame_selected = Signal(str)
     open_requested = Signal()
     restore_requested = Signal()
+    delete_requested = Signal(list)
+    recover_requested = Signal()
 
     def __init__(self, database, parent=None):
         super().__init__(parent)
@@ -34,6 +36,10 @@ class FrameBrowser(QWidget):
         bar.addStretch()
         self.count = QLabel('0 帧')
         bar.addWidget(self.count)
+        self.delete_button = QPushButton('删除')
+        self.delete_button.setToolTip('删除选中帧或整批数据（可在右键菜单恢复）')
+        self.delete_button.clicked.connect(self.delete_selected)
+        bar.addWidget(self.delete_button)
         layout.addLayout(bar)
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels(['单帧 / 对应数据', '点数'])
@@ -44,15 +50,14 @@ class FrameBrowser(QWidget):
         self.tree.setMinimumHeight(180)
         self.tree.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.tree.currentItemChanged.connect(self._selected)
+        self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.tree.itemSelectionChanged.connect(self._update_delete_button)
+        self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._context_menu)
         layout.addWidget(self.tree, 1)
         self.details = QLabel('原始帧自动保存 · 选择单帧联动2D / 3D')
         self.details.setWordWrap(True)
         layout.addWidget(self.details)
-        self.image = AspectRatioLabel()
-        self.image.setMinimumHeight(90)
-        self.image.setMaximumHeight(110)
-        self.image.hide()
-        layout.addWidget(self.image)
         actions = QHBoxLayout()
         self.open_button = QPushButton('打开 DB 项目')
         self.open_button.clicked.connect(self.open_requested)
@@ -65,8 +70,7 @@ class FrameBrowser(QWidget):
         self.refresh()
 
     def refresh(self):
-        current = self.tree.currentItem()
-        selected = current.data(0, Qt.UserRole) if current else None
+        selected = {item.data(0, Qt.UserRole) for item in self.tree.selectedItems()}
         expanded = set()
         def remember(item, key=''):
             key += '/' + item.text(0)
@@ -80,48 +84,86 @@ class FrameBrowser(QWidget):
         self.tree.clear()
         self._items.clear()
         sessions, records = self.database.snapshot()
-        root = QTreeWidgetItem(self.tree, ['原始采集数据', ''])
-        root.setIcon(0, icons.icon('folder_open', '#bbbbbb', 16))
         groups = {}
         for record in records:
             session = sessions[record.session_id]
             session_key = record.session_id
             if session_key not in groups:
-                groups[session_key] = QTreeWidgetItem(root, [session['title'] + ' · ' + session['created'][11:], ''])
+                groups[session_key] = QTreeWidgetItem(self.tree, [session['title'] + ' · ' + session['created'][11:], ''])
+                groups[session_key].setData(0, Qt.UserRole + 1, session_key)
                 groups[session_key].setToolTip(0, session['created'])
                 groups[session_key].setIcon(0, icons.icon('folder_open', '#bbbbbb', 16))
-            key = (record.session_id, record.purpose)
-            if key not in groups:
-                groups[key] = QTreeWidgetItem(groups[session_key], [record.purpose, ''])
-            camera_key = (*key, record.camera)
-            if camera_key not in groups:
-                groups[camera_key] = QTreeWidgetItem(groups[key], [record.camera, ''])
-                groups[camera_key].setIcon(0, icons.icon('camera', '#bbbbbb', 16))
             title = f'帧 {record.frame_id:04d}'
-            row = QTreeWidgetItem(groups[camera_key], [title, f'{record.points:,}' if record.points is not None else '—'])
+            if self.database.mode == 'multi_cam':
+                title += ' · ' + record.camera
+            row = QTreeWidgetItem(groups[session_key], [title, f'{record.points:,}' if record.points is not None else '—'])
             row.setData(0, Qt.UserRole, record.uid)
-            row.setToolTip(0, record.logical_name + ' · ' + record.status + '\n原始相机坐标；查看不改变拼接输入。\n' + record.created)
+            row.setToolTip(0, f'{record.camera} · {record.purpose} · {record.logical_name}\n{record.status}\n'
+                f'原始PLY + 2D PNG（{record.image_size[0]} × {record.image_size[1]}）\n'
+                '原始相机坐标；选择后在右侧查看2D / 3D。\n' + record.created)
             row.setIcon(0, icons.icon('layers', '#bbbbbb', 16))
             row.setToolTip(1, '原始点槽位数，包含有序点云中的无效占位点；文件不下采样。')
-            cloud = QTreeWidgetItem(row, ['点云 · 原始 PLY', ''])
-            image = QTreeWidgetItem(row, [f'2D 图像 · {record.image_size[0]} × {record.image_size[1]}', ''])
-            cloud.setIcon(0, icons.icon('layers', '#bbbbbb', 16))
-            image.setIcon(0, icons.icon('camera', '#bbbbbb', 16))
-            cloud.setData(0, Qt.UserRole, record.uid)
-            image.setData(0, Qt.UserRole, record.uid)
             self._items[record.uid] = row
-        root.setExpanded(True)
         def restore(item, key=''):
             key += '/' + item.text(0)
             if item.childCount():
-                item.setExpanded(key in expanded or item.data(0, Qt.UserRole) is None)
+                item.setExpanded(key in expanded or key not in self._known_groups)
             for i in range(item.childCount()):
                 restore(item.child(i), key)
-        restore(root)
-        if selected in self._items:
-            self.tree.setCurrentItem(self._items[selected])
+        self._known_groups = getattr(self, '_known_groups', set())
+        for i in range(self.tree.topLevelItemCount()):
+            item = self.tree.topLevelItem(i)
+            restore(item)
+            self._known_groups.add('/' + item.text(0))
+        for uid in selected:
+            if uid in self._items:
+                self._items[uid].setSelected(True)
         self.tree.blockSignals(False)
         self.count.setText(f'{len(records)} 帧')
+        self._update_delete_button()
+
+    def selected_ids(self):
+        identifiers = set()
+        for item in self.tree.selectedItems():
+            uid = item.data(0, Qt.UserRole)
+            if uid:
+                identifiers.add(uid)
+            else:
+                for i in range(item.childCount()):
+                    identifiers.add(item.child(i).data(0, Qt.UserRole))
+        return [uid for uid in self.database.records if uid in identifiers]
+
+    def _update_delete_button(self):
+        self.delete_button.setEnabled(bool(self.selected_ids()))
+
+    def delete_selected(self):
+        identifiers = self.selected_ids()
+        if identifiers:
+            self.delete_requested.emit(identifiers)
+
+    def _context_menu(self, position):
+        item = self.tree.itemAt(position)
+        if item and not item.isSelected():
+            # A context click selects the deletion target without starting a
+            # large PLY preview that would immediately make deletion busy.
+            self.tree.blockSignals(True)
+            self.tree.setCurrentItem(item)
+            self.tree.blockSignals(False)
+            self._update_delete_button()
+        menu = QMenu(self)
+        if item and item.data(0, Qt.UserRole):
+            menu.addAction('查看2D / 3D', lambda: self.frame_selected.emit(item.data(0, Qt.UserRole)))
+        action = menu.addAction('删除选中数据', self.delete_selected)
+        action.setEnabled(bool(self.selected_ids()))
+        action = menu.addAction('清空当前 DB', lambda: self.delete_requested.emit(list(self.database.records)))
+        action.setEnabled(bool(self.database.records))
+        action = menu.addAction('恢复上次删除', self.recover_requested.emit)
+        action.setEnabled(bool(self.database.removed))
+        menu.addSeparator()
+        menu.addAction('展开全部', self.tree.expandAll)
+        menu.addAction('折叠全部', self.tree.collapseAll)
+        menu.addAction('返回工作视图', self.restore_requested.emit)
+        menu.exec(self.tree.viewport().mapToGlobal(position))
 
     def _selected(self, item, previous):
         if item and item.data(0, Qt.UserRole):
@@ -129,10 +171,7 @@ class FrameBrowser(QWidget):
 
     def show_frame(self, uid, frame):
         row = self.database.records[uid]
-        self.image.setPixmap(numpy_to_qpixmap(frame.image_np))
-        self.image.show()
-        self.setMinimumHeight(380)
-        self.details.setText(f'{row.logical_name} · {row.status}\n原始相机坐标 / mm；点云和2D图像为同一次拍摄。')
+        self.details.setText(f'{row.logical_name} · {row.status}\n原始PLY + 2D PNG · 在右侧联动查看')
 
 
 class FrameDatabaseController(QObject):
@@ -179,6 +218,8 @@ class FrameDatabaseController(QObject):
         browser.frame_selected.connect(lambda uid: self.select(mode, uid))
         browser.open_requested.connect(lambda: self.open_project(mode))
         browser.restore_requested.connect(lambda: self.restore(mode))
+        browser.delete_requested.connect(lambda identifiers: self.remove(mode, identifiers))
+        browser.recover_requested.connect(lambda: self.recover(mode))
         browser.refresh()
 
     def restore(self, mode):
@@ -192,8 +233,6 @@ class FrameDatabaseController(QObject):
             viewer.show_database_frame(None)
         browser = self.browsers.get(mode)
         if browser:
-            browser.image.hide()
-            browser.setMinimumHeight(280)
             browser.details.setText('原始帧自动保存 · 选择单帧联动2D / 3D')
         if had_preview and hasattr(workspace, '_industrial'):
             workspace._industrial.restore_business_image()
@@ -222,6 +261,50 @@ class FrameDatabaseController(QObject):
             viewer.reset_view()
             bridge.shell.log('正在查看DB原始单帧；返回工作视图可继续查看拼接结果。', 'info')
         bridge._run_background(lambda: self.databases[mode].load_frame(uid), done, name='db_frame_preview')
+
+    def remove(self, mode, identifiers):
+        if not self.bridge.can_change_workspace() or mode != self.bridge._current_mode:
+            self.bridge.shell.log('正在处理数据，请完成后删除DB数据。', 'warn')
+            return
+        if not identifiers:
+            return
+        answer = QMessageBox.question(self.bridge.shell, '删除 DB 数据',
+            f'从DB移除选中的 {len(identifiers)} 帧及对应2D图像？\n'
+            '数据移至项目回收区，可通过右键菜单恢复上次删除。\n'
+            '当前标定和拼接工作流保持；退出拼接请使用机位删除功能。',
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if answer != QMessageBox.Yes:
+            return
+        self._mutate(mode, lambda: self.databases[mode].remove(identifiers), '删除')
+
+    def recover(self, mode):
+        if self.bridge.can_change_workspace() and mode == self.bridge._current_mode:
+            self._mutate(mode, self.databases[mode].restore_last_removal, '恢复')
+
+    def _mutate(self, mode, work, verb):
+        bridge = self.bridge
+        self.restore(mode)
+        # Retarget only references into this DB. Imported source files and
+        # independent station copies remain untouched.
+        frames = self._frames()
+        bridge.shell.show_loading(f'正在{verb}DB数据...')
+        def done(moves, error):
+            bridge.shell.hide_loading()
+            if error:
+                bridge.shell.log(f'DB{verb}失败：{error}', 'error')
+                return
+            for frame in frames:
+                pair = moves.get(frame.database_id)
+                if not pair:
+                    continue
+                old, new = pair
+                for attribute in ('offline_dir', 'offline_image_path', 'offline_pointmap_path'):
+                    value = getattr(frame, attribute)
+                    if value and Path(value).resolve().is_relative_to(old.resolve()):
+                        setattr(frame, attribute, str(new / Path(value).resolve().relative_to(old.resolve())))
+            self.browsers[mode].refresh()
+            bridge.shell.log(f'已{verb} {len(moves)} 帧DB数据及对应2D图像。', 'success')
+        bridge._run_background(work, done, name='db_mutation', must_finish=True)
 
     def open_project(self, mode):
         if not self.bridge.can_change_workspace():
@@ -269,7 +352,8 @@ class FrameDatabaseController(QObject):
             return
         database = self.databases[self.bridge._current_mode]
         for frame in self._frames(result):
-            if getattr(frame, 'database_id', None) not in database.records and frame.has_pointcloud:
+            uid = getattr(frame, 'database_id', None)
+            if uid not in database.records and uid not in database.removed and frame.has_pointcloud:
                 database.ingest(frame, purpose={'calib': '标定数据', 'scan': '扫描数据'}.get(frame.kind, frame.kind or '导入数据'))
 
     def synchronize(self, result=None):

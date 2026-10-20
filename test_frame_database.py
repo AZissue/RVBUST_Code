@@ -115,6 +115,56 @@ class FrameDatabaseTests(unittest.TestCase):
                 manager.capture('cam0')
             release.assert_called_once()
 
+    def test_remove_and_recover_batch_survives_reopening_and_never_deletes_source(self):
+        first = self.frame()
+        uid = self.db.ingest(first)
+        second = self.db.ingest(self.frame('cam1'))
+        moves = self.db.remove([uid, second])
+        self.assertEqual(self.db.records, {})
+        self.assertTrue(self.source.is_file())
+        self.assertTrue(all((new / 'image.png').is_file() for old, new in moves.values()))
+        with self.assertRaisesRegex(ValueError, '已从DB移除'):
+            self.db.ingest(first)
+        other = FrameDatabase('multi_cam', self.root / 'other')
+        other.open_project(self.db.directory / 'index.json')
+        other.restore_last_removal()
+        self.assertEqual(set(other.records), {uid, second})
+        np.testing.assert_array_equal(other.load_frame(uid)[0].image_np, self.image)
+        self.assertEqual(other.removed, {})
+
+    def test_remove_and_restore_failures_roll_back_files_and_index(self):
+        uid = self.db.ingest(self.frame())
+        with patch.object(self.db, '_save_index', side_effect=OSError('disk full')):
+            with self.assertRaises(OSError):
+                self.db.remove([uid])
+        self.assertIn(uid, self.db.records)
+        self.assertNotIn(uid, self.db.removed)
+        self.assertTrue((self.db.directory / 'frames' / uid / 'pointmap.ply').exists())
+        self.db.remove([uid])
+        with patch.object(self.db, '_save_index', side_effect=OSError('disk full')):
+            with self.assertRaises(OSError):
+                self.db.restore_last_removal()
+        self.assertNotIn(uid, self.db.records)
+        self.assertIn(uid, self.db.removed)
+        self.db.restore_last_removal()
+        self.assertIn(uid, self.db.records)
+
+    def test_partial_missing_file_rollback_and_latest_batch_restore(self):
+        one = self.db.ingest(self.frame())
+        two = self.db.ingest(self.frame())
+        (self.db.directory / 'frames' / two).rename(self.root / 'missing')
+        with self.assertRaises(OSError):
+            self.db.remove([one, two])
+        self.assertIn(one, self.db.records)
+        self.assertTrue((self.db.directory / 'frames' / one / 'image.png').is_file())
+        (self.root / 'missing').rename(self.db.directory / 'frames' / two)
+        self.db.remove([one])
+        self.db.remove([two])
+        self.db.restore_last_removal()
+        self.assertEqual(set(self.db.records), {two})
+        self.db.restore_last_removal()
+        self.assertEqual(set(self.db.records), {one, two})
+
     def test_raw_organized_cloud_render_cache_has_finite_bounds_without_changing_source(self):
         from ui_common.industrial_scene.render_cache import FrameRenderCache, FrameSource, RenderPolicy
         points = np.array([[0., 0., 0.], [1., 2., 3.], [4., 5., 6.], [np.nan]*3])

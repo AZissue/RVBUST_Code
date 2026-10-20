@@ -14,7 +14,8 @@ import open3d as o3d
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 sys.path.insert(0, str(Path(__file__).parent / 'src'))
 from PySide6.QtGui import QFontDatabase
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QApplication, QMessageBox
 from core.camera_manager import CameraManager
 from core.frame_data import FrameData
 from ui_v2 import MainWindowShell
@@ -73,20 +74,24 @@ class FrameBrowserTests(unittest.TestCase):
         frame = self.source()
         uid = self.db.ingest(frame)
         self.assertEqual(self.browser.count.text(), '1 帧')
-        self.assertEqual(self.browser._items[uid].childCount(), 2)
+        self.assertEqual(self.browser._items[uid].childCount(), 0)
+        self.assertIsNone(self.browser._items[uid].parent().parent())
+        self.assertFalse(hasattr(self.browser, 'image'))
         viewer = self.win.workspace_multi().viewer()
         merged = o3d.geometry.PointCloud()
         merged.points = o3d.utility.Vector3dVector([[1., 2., 3.]])
         viewer.set_pointcloud_merged(merged)
-        self.browser.tree.setCurrentItem(self.browser._items[uid].child(1))
+        self.browser.tree.setCurrentItem(self.browser._items[uid])
         self.wait(lambda: viewer._database_cloud is not None)
         self.assertEqual(len(viewer._database_cloud.points), 4)
         self.assertTrue(np.isfinite(viewer.viewer().canvas._points).all())
         self.assertIs(viewer._merged, merged)
-        self.assertFalse(self.browser.image._pixmap.isNull())
-        self.assertEqual(self.browser.image._pixmap.size().width(), 2)
+        inspector = self.win.workspace_multi()._industrial._database_inspector
+        self.assertEqual(inspector.image_view.image.width(), 2)
+        self.assertTrue(inspector.isVisible())
         self.browser.restore_button.click()
         self.assertIsNone(viewer._database_cloud)
+        self.assertFalse(inspector.isVisible())
         self.assertEqual(viewer.viewer().mode.currentData(), '__merged__')
         self.assertEqual(len(self.db.records), 1)
         self.bridge.frame_db.restore('multi_cam')
@@ -140,6 +145,90 @@ class FrameBrowserTests(unittest.TestCase):
         self.browser.tree.setCurrentItem(self.browser._items[uid])
         self.wait(lambda: 'DB单帧读取失败' in self.win._st_hint.text())
         self.assertIsNone(self.win.workspace_multi().viewer()._database_cloud)
+
+    def test_delete_batch_and_recover_keep_workflow_readable_without_reimporting(self):
+        frame = self.source()
+        uid = self.db.ingest(frame)
+        folder = self.db.directory / 'frames' / uid
+        # A real camera capture returns these archive-owned paths to workflows.
+        frame.offline_pointmap_path = str(folder / 'pointmap.ply')
+        frame.offline_image_path = str(folder / 'image.png')
+        frame.offline_dir = str(folder)
+        self.bridge.fixed_workflow.frames_calib['cam0'] = frame
+        second = self.db.ingest(self.source(2))
+        session = self.browser.tree.topLevelItem(0)
+        session.setSelected(True)
+        self.assertEqual(set(self.browser.selected_ids()), {uid, second})
+        with patch('ui_v2.frame_database.QMessageBox.question', return_value=QMessageBox.Yes):
+            self.browser.delete_button.click()
+            self.wait(lambda: '已删除' in self.win._st_hint.text())
+            self.wait(lambda: not any(w.isRunning() for w in self.bridge._workers))
+        self.assertEqual(self.browser.count.text(), '0 帧')
+        self.assertTrue(frame.has_pointcloud)
+        self.assertTrue(Path(frame.offline_image_path).is_file())
+        self.assertIn('.trash', frame.offline_pointmap_path)
+        self.bridge.frame_db.archive_context()
+        self.bridge.frame_db.synchronize()
+        self.assertEqual(len(self.db.records), 0)
+        self.bridge.frame_db.recover('multi_cam')
+        self.wait(lambda: '已恢复' in self.win._st_hint.text())
+        self.wait(lambda: not any(w.isRunning() for w in self.bridge._workers))
+        self.assertEqual(set(self.db.records), {uid, second})
+        self.assertEqual(frame.offline_pointmap_path, str(folder / 'pointmap.ply'))
+        self.assertIs(self.bridge.fixed_workflow.frames_calib['cam0'], frame)
+
+    def test_delete_cancel_busy_and_error_leave_archive_unchanged(self):
+        uid = self.db.ingest(self.source())
+        with patch('ui_v2.frame_database.QMessageBox.question', return_value=QMessageBox.No):
+            self.bridge.frame_db.remove('multi_cam', [uid])
+        self.assertIn(uid, self.db.records)
+        with patch.object(self.bridge, 'can_change_workspace', return_value=False):
+            self.bridge.frame_db.remove('multi_cam', [uid])
+        self.assertIn(uid, self.db.records)
+        with patch('ui_v2.frame_database.QMessageBox.question', return_value=QMessageBox.Yes), \
+             patch.object(self.db, '_save_index', side_effect=OSError('disk full')):
+            self.bridge.frame_db.remove('multi_cam', [uid])
+            self.wait(lambda: 'DB删除失败' in self.win._st_hint.text())
+            self.wait(lambda: not any(w.isRunning() for w in self.bridge._workers))
+        self.assertIn(uid, self.db.records)
+        self.assertIn('DB删除失败', self.win._st_hint.text())
+
+    def test_multi_selection_and_refresh_preserve_collapsed_batch(self):
+        first = self.db.ingest(self.source())
+        second = self.db.ingest(self.source(2))
+        self.browser._items[first].setSelected(True)
+        self.browser._items[second].setSelected(True)
+        self.assertEqual(set(self.browser.selected_ids()), {first, second})
+        self.browser.tree.topLevelItem(0).setExpanded(False)
+        self.browser.refresh()
+        self.assertFalse(self.browser.tree.topLevelItem(0).isExpanded())
+        self.assertEqual(set(self.browser.selected_ids()), {first, second})
+
+    def test_context_click_can_clear_db_without_loading_a_pointcloud(self):
+        first = self.db.ingest(self.source())
+        second = self.db.ingest(self.source(2))
+        requests = []
+        self.browser.delete_requested.connect(lambda ids: requests.append(ids))
+        observed = []
+        def choose_clear():
+            menu = self.app.activePopupWidget()
+            actions = {a.text(): a for a in menu.actions()}
+            observed.append((list(actions), actions['恢复上次删除'].isEnabled(),
+                             any(w.isRunning() for w in self.bridge._workers)))
+            try:
+                actions['清空当前 DB'].trigger()
+            finally:
+                menu.close()
+        self.app.processEvents()
+        position = self.browser.tree.visualItemRect(self.browser._items[first]).center()
+        with patch('ui_v2.frame_database.QMessageBox.question', return_value=QMessageBox.No):
+            QTimer.singleShot(0, choose_clear)
+            self.browser._context_menu(position)
+        self.assertIn('删除选中数据', observed[0][0])
+        self.assertFalse(observed[0][1])
+        self.assertFalse(observed[0][2])
+        self.assertEqual(requests, [[first, second]])
+        self.assertEqual(self.browser.selected_ids(), [first])
 
 
 if __name__ == '__main__':
