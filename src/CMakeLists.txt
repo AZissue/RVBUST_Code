@@ -1,6 +1,12 @@
 set(SOURCES
     main.cpp
     app/MainWindow.cpp
+    # 机器人通道（线程 + 四个 reader + 逻辑连接状态）——MainWindow 只做 UI
+    app/RobotController.cpp
+    app/RobotController.h
+    # 相机枚举/预扫描/设备缓存状态机——MainWindow 只弹设备列表
+    app/CameraConnectionFlow.cpp
+    app/CameraConnectionFlow.h
     models/CalibrationMode.h
     models/CaptureRecord.h
     logic/AppConfig.cpp

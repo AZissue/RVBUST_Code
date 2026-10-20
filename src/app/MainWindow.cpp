@@ -2,10 +2,10 @@
 
 #include "AppInfo.h"
 
+#include "app/CameraConnectionFlow.h"
 #include "logic/CameraManager.h"
 #include "logic/CalibrationService.h"
 #include "logic/CaptureFlow.h"
-#include "logic/RobotPose.h"
 #include "logic/PixelTo3DService.h"
 #include "logic/DataManager.h"
 #include "logic/LogManager.h"
@@ -51,7 +51,6 @@
 #include <QFileInfo>
 #include <QTimer>
 #include <QCursor>
-#include <QThread>
 #include <QtConcurrent>
 #include <vector>
 #include <array>
@@ -71,20 +70,6 @@ namespace {
 constexpr int kCloseWorkerWaitMs = 3000;
 // 任务 3.2: bounded release attempt when Windows ends the session (<= 2 s).
 constexpr int kSessionEndWaitMs = 1500;
-
-// T-009: format a robot pose for the UI the exact way the old synchronous path
-// did (".arg(v, 0, 'f', 3)" == QString::number(v, 'f', 3)), so the values shown
-// in the cards / logs / 探针 regex are byte-for-byte unchanged.  Carried across
-// the worker->UI signal hop as plain strings (no custom metatype needed).
-QStringList robotPoseFields(const RobotPose::Pose& pose)
-{
-    QStringList f;
-    for (int i = 0; i < 3; ++i)
-        f << QString::number(pose.xyz[i], 'f', 3);
-    for (int i = 0; i < 3; ++i)
-        f << QString::number(pose.rpy[i], 'f', 3);
-    return f;
-}
 } // namespace
 
 MainWindow::MainWindow(QWidget* parent)
@@ -100,6 +85,7 @@ MainWindow::MainWindow(QWidget* parent)
 
     // Create owned objects
     m_camera = new CameraManager(this);
+    m_cameraFlow = new CameraConnectionFlow(m_camera, this);
     m_data   = new DataManager(this);
     m_logger = new LogManager(this);
     m_flow   = new CaptureFlow(m_camera, m_data, this);
@@ -173,17 +159,9 @@ MainWindow::MainWindow(QWidget* parent)
                         r.detail.isEmpty() ? "" : qPrintable(r.detail));
     });
 
-    // ── T-009: robot channel on its own thread ──
-    // Every robot network call blocks (waitForConnected / waitForReadyRead up to
-    // 1.5 s) and QTcpSocket is thread-affine, so the four readers and all calls
-    // on them live together on this thread; the UI reaches it only through the
-    // queued signals wired in wireSignals().  The worker has no parent because
-    // moveToThread() requires it; it deletes itself when the thread finishes.
-    m_robotThread = new QThread(this);
-    m_robotWorker = new RobotWorker;
-    m_robotWorker->moveToThread(m_robotThread);
-    connect(m_robotThread, &QThread::finished, m_robotWorker, &QObject::deleteLater);
-    m_robotThread->start();
+    // T-009: the robot channel (thread + readers + logical state) lives in
+    // RobotController; the window only receives its results in wireSignals().
+    m_robot = new RobotController(this);
 
     buildUi();
     wireSignals();
@@ -235,14 +213,15 @@ MainWindow::MainWindow(QWidget* parent)
 
     // Warm up the camera system + device scan in the background so that
     // clicking 连接 later goes straight to the device list and Open().
-    startPreScan();
+    m_cameraFlow->preScan();
 }
 
 MainWindow::~MainWindow()
 {
     // T-009: stop the robot worker thread first — a blocking robot call must
-    // never outlive this window (see shutdownRobotThread()).
-    shutdownRobotThread();
+    // never outlive this window (RobotController::shutdown is bounded and
+    // idempotent).
+    m_robot->shutdown();
     // closeEvent normally released the camera already; this is the abnormal
     // path (destruction without a close, e.g. an explicit qApp->quit()).  The
     // call is the same either way because shutdown() is idempotent — on the
@@ -257,36 +236,6 @@ MainWindow::~MainWindow()
                         r.attempted ? 1 : 0, r.released ? 1 : 0,
                         r.detail.isEmpty() ? "" : qPrintable(r.detail));
     }
-}
-
-// T-009: tear the robot worker thread down without ever letting an in-flight
-// blocking call touch a half-destroyed object.
-//   1. cut the worker<->window signals both ways, so no late pose/connect result
-//      can be delivered into this window once it is closing;
-//   2. quit() the worker's event loop and wait (bounded) — the loop returns as
-//      soon as the current blocking call (<= 1.5 s) finishes; a queued request
-//      then never runs at all;
-//   3. the worker deletes itself in its own thread (QThread::finished ->
-//      deleteLater), so we drop the pointer and never touch it again.
-// Idempotent: safe to call from both closeEvent() and ~MainWindow().
-void MainWindow::shutdownRobotThread()
-{
-    if (!m_robotThread)
-        return;
-    if (m_robotWorker) {
-        QObject::disconnect(m_robotWorker, nullptr, this, nullptr);
-        QObject::disconnect(this, nullptr, m_robotWorker, nullptr);
-    }
-    m_robotThread->quit();
-    if (!m_robotThread->wait(kCloseWorkerWaitMs)) {
-        RuntimeLog::log("[ROBOT] worker thread still busy after %d ms at shutdown",
-                        kCloseWorkerWaitMs);
-        // Do not let ~QObject delete a still-running QThread: detach it and let
-        // the process exit reclaim it.
-        m_robotThread->setParent(nullptr);
-    }
-    m_robotWorker = nullptr;
-    m_robotThread = nullptr;
 }
 
 // ── UI Construction ───────────────────────────────────────────────────
@@ -458,6 +407,21 @@ void MainWindow::wireSignals()
     // 工具面板「手眼标定」页：用当前会话一键算（路径与位姿由主窗口给回）
     connect(m_toolsPanel, &ToolsPanel::calibrationSessionRequested, this,
             &MainWindow::onCalibrationSessionRequested);
+    // Camera enumeration: the flow owns the scan/cache state, the window shows
+    // the busy state and the device dialog.
+    connect(m_cameraFlow, &CameraConnectionFlow::scanStarted, this, [this]() {
+        setConnectBusy(QStringLiteral("正在搜索相机..."));
+        m_logger->info(QStringLiteral("正在搜索相机..."));
+    });
+    connect(m_cameraFlow, &CameraConnectionFlow::devicesReady, this,
+            [this](const std::vector<DeviceEntry>& devices) {
+                clearBusy();
+                proceedWithDevices(devices);
+            });
+    connect(m_cameraFlow, &CameraConnectionFlow::rescanned, this, [this](int count) {
+        RuntimeLog::log("[CAM] rescan after release: %d device(s)", count);
+        m_logger->info(QStringLiteral("释放后重新扫描：发现 %1 个设备").arg(count));
+    });
     // Robot communication (isolated; wiring is inert until the user connects)
     connect(m_toolsPanel, &ToolsPanel::robotConnectRequested,
             this, &MainWindow::onRobotConnect);
@@ -467,7 +431,7 @@ void MainWindow::wireSignals()
             this, &MainWindow::onRobotSimulateConnect);
     connect(m_toolsPanel, &ToolsPanel::robotAutoReadToggled, this,
             [this](bool on) {
-                m_robotAutoRead = on;
+                m_robot->setAutoRead(on);
                 // 任务 2: the checkbox is a view of AppConfig's single key, so a
                 // change here is persisted and shows up in 设置 next time.
                 m_config.setAutoReadRobotPose(on);
@@ -480,19 +444,11 @@ void MainWindow::wireSignals()
             this, &MainWindow::onRobotRead);
     connect(m_actionButtons, &ActionButtons::readTouchPoseClicked,
             this, &MainWindow::onRobotReadTouch);
-    // T-009: UI -> worker thread (auto = queued, since the worker moved there),
-    // and its two answers back into the UI thread.
-    connect(this, &MainWindow::robotConnectRequested,
-            m_robotWorker, &RobotWorker::connectRobot);
-    connect(this, &MainWindow::robotDisconnectRequested,
-            m_robotWorker, &RobotWorker::disconnectRobot);
-    connect(this, &MainWindow::robotSimulateConnectRequested,
-            m_robotWorker, &RobotWorker::simulateConnect);
-    connect(this, &MainWindow::robotReadPoseRequested,
-            m_robotWorker, &RobotWorker::readPose);
-    connect(m_robotWorker, &RobotWorker::connectFinished,
+    // RobotController owns the worker thread; its results come back here only
+    // as queued signals, so the UI thread never blocks on a network call.
+    connect(m_robot, &RobotController::connectFinished,
             this, &MainWindow::onRobotConnectFinished);
-    connect(m_robotWorker, &RobotWorker::poseReady,
+    connect(m_robot, &RobotController::poseReady,
             this, &MainWindow::onRobotPoseReady);
     connect(m_flow, &CaptureFlow::imageCaptured, this,
             [this](const QImage& img) {
@@ -894,47 +850,9 @@ void MainWindow::onNewSessionRequested()
 
 void MainWindow::onConnectCamera()
 {
-    if (m_preScanning) {
-        // Startup pre-scan still running; continue automatically when done.
-        // setConnectBusy() repaints the busy state directly — no nested event
-        // loop here, which could re-enter this very handler.
-        m_connectRequested = true;
-        setConnectBusy(QStringLiteral("正在搜索相机..."));
-        m_logger->info(QStringLiteral("正在搜索相机..."));
-        return;
-    }
-    if (m_cachedDevices.empty()) {
-        setConnectBusy(QStringLiteral("正在搜索相机..."));
-        m_logger->info(QStringLiteral("正在搜索相机..."));
-        m_camera->scanDevicesAsync([this](const std::vector<DeviceEntry>& devices) {
-            clearBusy();
-            m_cachedDevices = devices;
-            proceedWithDevices(devices);
-        });
-        return;
-    }
-    proceedWithDevices(m_cachedDevices);
-}
-
-void MainWindow::startPreScan()
-{
-    if (m_preScanning)
-        return;
-    m_preScanning = true;
-    QTimer::singleShot(0, this, [this]() {
-        // SystemInit must run on the UI thread (device objects are created
-        // here later); the enumeration itself runs in a worker.
-        m_camera->prewarmSystem();
-        m_camera->scanDevicesAsync([this](const std::vector<DeviceEntry>& devices) {
-            m_preScanning = false;
-            m_cachedDevices = devices;
-            if (m_connectRequested) {
-                m_connectRequested = false;
-                clearBusy();
-                proceedWithDevices(devices);
-            }
-        });
-    });
+    // Scan / cache / pending-request state is owned by CameraConnectionFlow;
+    // the two signals below drive the busy state and the device dialog.
+    m_cameraFlow->requestConnect();
 }
 
 void MainWindow::proceedWithDevices(const std::vector<DeviceEntry>& devices)
@@ -990,9 +908,9 @@ void MainWindow::onCapture()
     // answer arrives (onRobotPoseReady); the capture pipeline is unaffected.
     // 这一列在本模式不存在时（眼在手外+戳点）不要读：卡片是隐藏的，读回来的值只会
     // 跟着记录存进一个本模式不用的列。
-    if (m_robotAutoRead && m_robotConnected
+    if (m_robot->autoRead() && m_robot->isConnected()
             && needsCapturePose(m_eyeHandMode, m_calibType)) {
-        emit robotReadPoseRequested(RobotReadAutoBeforeCapture);
+        m_robot->readPose(RobotReadAutoBeforeCapture);
     }
     // Stop preview and hide right-camera overlay before 3D capture
     if (m_camera->isPreviewing()) {
@@ -1248,135 +1166,23 @@ void MainWindow::onCalibrationFinished()
     }
 }
 
-// ── RobotWorker：机器人通道整体住在这条线程上（T-009）──────────────
-// 四个 reader 原来住在 MainWindow 上；现在整块搬到这里。所有 connect() /
-// disconnect() / readPose() 只在本 worker 的线程被调用，socket 的亲和性因此一致。
-
-RobotWorker::RobotWorker(QObject* parent) : QObject(parent) {}
-
-RobotWorker::~RobotWorker() = default;
-
-RobotPose::Reader* RobotWorker::readerFor(int protocol)
-{
-    switch (protocol) {
-    case 4:  return &m_rtdeReader;
-    case 3:  return &m_eftReader;
-    case 2:  return &m_nrcReader;
-    case 1:  return &m_urReader;
-    default: return &m_robotReader;   // 0 = Modbus TCP，其它协议号也按 Modbus
-    }
-}
-
-void RobotWorker::connectRobot(const QString& host, quint16 port, int protocol,
-                               int format, double scale, quint8 unitId,
-                               quint16 startAddress)
-{
-    m_protocol = protocol;
-    m_simulated = false;   // 一次真实连接尝试离开「模拟」态
-
-    // 协议特有的「连接前设置」+ 已连接文案里的协议标签，集中在这里一处。
-    QString label;
-    if (protocol == 3) {
-        // 埃夫特：走厂商 EfortSDK（EftSdk.dll）。地址串与端口由适配器决定，
-        // 与 UR/NRC 一样没有寄存器格式/系数要配。
-        label = QStringLiteral("%1，埃夫特 EfortSDK").arg(host);
-    } else if (protocol == 2) {
-        // 博纳斯/纳博特 JSON over TCP: like UR, no register format/scale to
-        // configure — the adapter owns the framing and the JSON payload.
-        m_nrcReader.setTimeoutMs(1500);
-        label = QStringLiteral("%1:%2，博纳斯 JSON/TCP").arg(host).arg(port);
-    } else if (protocol == 4) {
-        // UR RTDE (30004): like the 30003 port there is no register
-        // format/scale to configure -- the adapter owns the handshake and the
-        // recipe. The timeout also bounds each handshake step.
-        m_rtdeReader.setTimeoutMs(1500);
-        label = QStringLiteral("%1:%2，UR RTDE").arg(host).arg(port);
-    } else if (protocol == 1) {
-        // UR Realtime interface: no register format/scale to configure.
-        m_urReader.setTimeoutMs(1500);
-        label = QStringLiteral("%1:%2，UR Realtime").arg(host).arg(port);
-    } else {
-        RobotPose::ModbusConfig cfg;
-        switch (format) {
-        case 1:  cfg.format = RobotPose::RegisterFormat::Int32Scaled; break;
-        case 2:  cfg.format = RobotPose::RegisterFormat::Int16Scaled; break;
-        default: cfg.format = RobotPose::RegisterFormat::Float32; break;
-        }
-        cfg.scale = scale;
-        cfg.unitId = unitId;
-        cfg.startAddress = startAddress;
-        cfg.timeoutMs = 1500;
-        m_robotReader.setConfig(cfg);
-        label = QStringLiteral("%1:%2").arg(host).arg(port);
-    }
-
-    RobotPose::Reader* reader = readerFor(protocol);
-    // 重复点「连接」：先把目标 reader 上的旧 socket 收掉再重连，免得残留；
-    // 第一次连接时它是空操作。都在同一线程，没有并发。
-    reader->disconnect();
-    if (!reader->connect(host, port)) {
-        emit connectFinished(false, label, reader->lastError());
-        return;
-    }
-    emit connectFinished(true, label, QString());
-}
-
-void RobotWorker::disconnectRobot()
-{
-    for (int p = 0; p <= 4; ++p)
-        readerFor(p)->disconnect();
-    m_simulated = false;
-}
-
-void RobotWorker::simulateConnect()
-{
-    // "模拟连接成功" — no real Modbus socket; only sets the logical connected
-    // state so the read buttons / cards can be exercised in the UI.
-    for (int p = 0; p <= 4; ++p)
-        readerFor(p)->disconnect();
-    m_simulated = true;
-}
-
-void RobotWorker::readPose(int kind)
-{
-    if (m_simulated) {
-        // Deterministic dummy pose so the read buttons / cards can be verified
-        // without real Modbus hardware.
-        const double base = 100.0 + (m_simCounter++ % 50) * 10.0;
-        RobotPose::Pose pose;
-        pose.xyz = { base, base + 1.0, base + 2.0 };
-        pose.rpy = { 0.0, 0.0, 0.0 };
-        emit poseReady(kind, true, robotPoseFields(pose), QString());
-        return;
-    }
-    RobotPose::Pose pose;
-    RobotPose::Reader* reader = readerFor(m_protocol);
-    if (reader->readPose(pose) != RobotPose::Status::Ok) {
-        emit poseReady(kind, false, QStringList(), reader->lastError());
-        return;
-    }
-    emit poseReady(kind, true, robotPoseFields(pose), QString());
-}
-
-// ── MainWindow：机器人槽只把请求发给 worker（签名不变，判据见 §6）──────
+// ── MainWindow：机器人槽只把请求交给 RobotController，并更新界面 ──────
+// 阻塞调用、线程、reader 全部在 RobotController 里；这里只做 UI。
 
 void MainWindow::onRobotConnect(const QString& host, quint16 port,
                                 int protocol, int format, double scale,
                                 quint8 unitId, quint16 startAddress)
 {
-    // T-009: connect() 是阻塞调用——交给机器人 worker 线程，UI 立刻返回；
-    // 结果经 onRobotConnectFinished() 回到这里。
-    emit robotConnectRequested(host, port, protocol, format, scale, unitId,
-                               startAddress);
+    // 结果经 onRobotConnectFinished() 回来；UI 线程不阻塞。
+    m_robot->connectToRobot(host, port, protocol, format, scale, unitId,
+                            startAddress);
 }
 
 void MainWindow::onRobotConnectFinished(bool ok, const QString& label,
                                         const QString& error)
 {
-    // 文案/级别/去向与原来的同步路径逐字一致。
+    // Logical state was already updated by RobotController.
     if (!ok) {
-        m_robotSimulated = false;
-        m_robotConnected = false;
         m_toolsPanel->setRobotStatus(QStringLiteral("连接失败"), true);
         m_sidePanel->setTip(
             QStringLiteral("机器人连接失败：%1").arg(error), true);
@@ -1384,8 +1190,6 @@ void MainWindow::onRobotConnectFinished(bool ok, const QString& label,
         updateRobotReadBar();
         return;
     }
-    m_robotSimulated = false;
-    m_robotConnected = true;
     m_toolsPanel->setRobotConnected(true);
     m_toolsPanel->setRobotStatus(QStringLiteral("已连接"), false);
     m_sidePanel->setTip(QStringLiteral("机器人已连接（%1）").arg(label), false);
@@ -1395,9 +1199,7 @@ void MainWindow::onRobotConnectFinished(bool ok, const QString& label,
 
 void MainWindow::onRobotDisconnect()
 {
-    emit robotDisconnectRequested();
-    m_robotConnected = false;
-    m_robotSimulated = false;
+    m_robot->disconnectRobot();
     m_toolsPanel->setRobotConnected(false);
     m_toolsPanel->setRobotStatus(QStringLiteral("未连接"), false);
     m_logger->info(QStringLiteral("机器人已断开"));
@@ -1406,9 +1208,7 @@ void MainWindow::onRobotDisconnect()
 
 void MainWindow::onRobotSimulateConnect()
 {
-    emit robotSimulateConnectRequested();
-    m_robotSimulated = true;
-    m_robotConnected = true;
+    m_robot->simulateConnect();
     m_toolsPanel->setRobotConnected(true);
     m_toolsPanel->setRobotStatus(QStringLiteral("已连接（模拟）"), false);
     m_sidePanel->setTip(QStringLiteral("机器人已模拟连接（无真机）"), false);
@@ -1418,21 +1218,21 @@ void MainWindow::onRobotSimulateConnect()
 
 void MainWindow::onRobotRead()
 {
-    if (!m_robotConnected) {
+    if (!m_robot->isConnected()) {
         m_sidePanel->setTip(QStringLiteral("请先连接机器人"), true);
         return;
     }
-    // 读位姿是阻塞调用：发给 worker，结果经 onRobotPoseReady() 回来。
-    emit robotReadPoseRequested(RobotReadCapturePose);
+    // 读位姿是阻塞调用：交给 worker，结果经 onRobotPoseReady() 回来。
+    m_robot->readPose(RobotReadCapturePose);
 }
 
 void MainWindow::onRobotReadTouch()
 {
-    if (!m_robotConnected) {
+    if (!m_robot->isConnected()) {
         m_sidePanel->setTip(QStringLiteral("请先连接机器人"), true);
         return;
     }
-    emit robotReadPoseRequested(RobotReadTouchPose);
+    m_robot->readPose(RobotReadTouchPose);
 }
 
 void MainWindow::onRobotPoseReady(int kind, bool ok, const QStringList& fields,
@@ -1484,13 +1284,13 @@ void MainWindow::updateRobotReadBar()
 {
     // The read buttons live in the ActionButtons row.  Each one mirrors the card
     // it fills: a button for a column this mode does not have must not appear.
-    // 从前「拍照位姿」只看 m_robotConnected，所以眼在手外+戳点时（那一列根本不存在）
+    // 从前「拍照位姿」只看机器人是否连接，所以眼在手外+戳点时（那一列根本不存在）
     // 机器人一连上它就冒出来 —— 判据走 needsCapturePose()，与卡片显隐同源。
     const bool poseCol = needsCapturePose(m_eyeHandMode, m_calibType);
     const bool tcpCol  = needsRobotTarget(m_calibType);
     if (m_actionButtons) {
-        m_actionButtons->setReadCapturePoseVisible(m_robotConnected && poseCol);
-        m_actionButtons->setReadTouchPoseVisible(m_robotConnected && tcpCol);
+        m_actionButtons->setReadCapturePoseVisible(m_robot->isConnected() && poseCol);
+        m_actionButtons->setReadTouchPoseVisible(m_robot->isConnected() && tcpCol);
     }
 }
 
@@ -1941,14 +1741,15 @@ void MainWindow::applyAutoFlowSettings()
 {
     m_autoDetectAfterCapture = m_config.autoDetectAfterCapture();
     m_autoSaveAfterDetect = m_config.autoSaveAfterDetect();
-    m_robotAutoRead = m_config.autoReadRobotPose();
+    const bool autoReadPose = m_config.autoReadRobotPose();
+    m_robot->setAutoRead(autoReadPose);
 
     m_flow->setAutoDetectAfterCapture(m_autoDetectAfterCapture);
     // One config key, two views: 设置 checkbox and the tools-panel checkbox.
-    m_toolsPanel->setRobotAutoRead(m_robotAutoRead);
+    m_toolsPanel->setRobotAutoRead(autoReadPose);
     RuntimeLog::log("[FLOW] automation: auto_detect=%d auto_save=%d auto_read_pose=%d",
                     m_autoDetectAfterCapture ? 1 : 0, m_autoSaveAfterDetect ? 1 : 0,
-                    m_robotAutoRead ? 1 : 0);
+                    autoReadPose ? 1 : 0);
 }
 
 void MainWindow::onDetectionFinished(bool ok)
@@ -2083,13 +1884,7 @@ void MainWindow::releaseCameraNow(int deviceWaitMs, const QString& why)
 
     // Re-enumerate so "相机被占用/状态异常" can be cleared on the spot: the bus
     // scan is what makes the next 连接 go straight to Open().
-    m_cachedDevices.clear();
-    m_camera->scanDevicesAsync([this](const std::vector<DeviceEntry>& devices) {
-        m_cachedDevices = devices;
-        RuntimeLog::log("[CAM] rescan after release: %zu device(s)", devices.size());
-        m_logger->info(QStringLiteral("释放后重新扫描：发现 %1 个设备")
-                           .arg(static_cast<int>(devices.size())));
-    });
+    m_cameraFlow->refreshCache();
 }
 
 // ── Settings Dialog ───────────────────────────────────────────────────
@@ -2305,8 +2100,9 @@ void MainWindow::closeEvent(QCloseEvent* event)
 
     // T-009: the robot channel is torn down here too (while the event loop still
     // runs), so an in-flight blocking robot call finishes/discards before the
-    // window and its thread are destroyed.
-    shutdownRobotThread();
+    // window and its thread are destroyed.  Idempotent (~MainWindow calls it
+    // again).
+    m_robot->shutdown();
 
     // Shut down camera while event loop is still running.  The 3D view is
     // torn down here as well, for the same reason — see the block below.

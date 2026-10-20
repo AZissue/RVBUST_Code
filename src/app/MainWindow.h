@@ -9,12 +9,8 @@
 #include "models/CalibrationMode.h"
 #include "logic/AppConfig.h"
 #include "logic/CalibrationService.h"
-#include "logic/EfortPoseReader.h"
-#include "logic/NrcJsonReader.h"
-#include "logic/RobotPose.h"
-#include "logic/URRealtimeReader.h"
-#include "logic/URRtdeReader.h"
 #include "logic/BoardPoseFit.h"
+#include "app/RobotController.h"
 #include "logic/FrameBuffer.h"
 #include "logic/UiStallWatchdog.h"
 #include "ui/ActionButtons.h"
@@ -25,6 +21,7 @@ class CameraManager;
 class DataManager;
 class LogManager;
 class CaptureFlow;
+class CameraConnectionFlow;
 class TopNavBar;
 class ModeSelector;
 class Image2DView;
@@ -37,60 +34,7 @@ class ToolsPanel;
 class HelpDialog;
 class QShowEvent;
 class QTimer;
-class QThread;
 struct DeviceEntry;
-
-// kind values for RobotWorker::readPose / its poseReady() signal: which UI
-// request asked for the pose decides where the answer goes.
-enum RobotReadKind {
-    RobotReadCapturePose       = 0,   // 「拍照位姿」 → robot_capture_pose 卡片
-    RobotReadTouchPose         = 1,   // 「戳点位姿」 → robot_target_xyz 卡片
-    RobotReadAutoBeforeCapture = 2    // 拍照前自动读取 → robot_capture_pose 卡片
-};
-
-// ── Robot channel worker (T-009) ──
-// Every robot operation is a *blocking* network call (waitForConnected /
-// waitForReadyRead, up to 1.5 s).  QTcpSocket is thread-affine, so the whole
-// channel — the four readers and every call on them — lives on one dedicated
-// thread (moveToThread); the UI thread only talks to it through queued
-// signals/slots.  That is what keeps a connect / read / capture-time read from
-// freezing the window (and the UI stall watchdog from firing).
-class RobotWorker : public QObject {
-    Q_OBJECT
-public:
-    explicit RobotWorker(QObject* parent = nullptr);
-    ~RobotWorker() override;
-
-public slots:
-    // All of these run on the worker thread.  connectRobot mirrors the old
-    // MainWindow::onRobotConnect body (protocol-specific setup + connect()).
-    void connectRobot(const QString& host, quint16 port, int protocol, int format,
-                      double scale, quint8 unitId, quint16 startAddress);
-    void disconnectRobot();
-    void simulateConnect();
-    void readPose(int kind);
-
-signals:
-    // ok=false → error carries the adapter's lastError() text.
-    void connectFinished(bool ok, const QString& label, const QString& error);
-    // fields = the six pose numbers already formatted "%.3f" (x y z rx ry rz),
-    // so the cross-thread hop needs no custom metatype.
-    void poseReady(int kind, bool ok, const QStringList& fields, const QString& error);
-
-private:
-    RobotPose::Reader* readerFor(int protocol);
-
-    // The four readers live here, not in MainWindow: they own the QTcpSocket and
-    // must only ever be touched from this worker's thread.
-    RobotPose::ModbusTcpReader   m_robotReader;
-    RobotPose::URRealtimeReader  m_urReader;
-    RobotPose::URRtdeReader      m_rtdeReader;
-    RobotPose::NrcJsonReader     m_nrcReader;
-    EfortPoseReader::EfortReader m_eftReader;
-    int  m_protocol    = 0;
-    bool m_simulated   = false;
-    int  m_simCounter  = 0;   // 模拟位姿每次 +10（原来是函数内的 static n）
-};
 
 // MainWindow is the UI assembler / signal adapter.  Business logic of the
 // capture->detect->save pipeline lives in CaptureFlow; the settings dialog
@@ -133,7 +77,6 @@ private:
     // Camera
     void onConnectCamera();
     void onDisconnectCamera();
-    void startPreScan();
     void proceedWithDevices(const std::vector<DeviceEntry>& devices);
     // 相机维护 →「释放相机」: 断开 + 重新扫描, for the "device looks occupied /
     // wedged" case.  Also used by the OS-session path (shorter device wait).
@@ -178,22 +121,8 @@ private:
                           const QString& error);
     void updateRobotReadBar();
 
-    // ── 机器人协议分派：搬到了 RobotWorker::readerFor()（worker 线程）──
+    // ── 机器人协议分派：在 RobotController/RobotWorker 里（worker 线程）──
     // MainWindow 不再持有 reader，也不再直接调用它们的阻塞方法。
-
-    // T-009: stop the robot worker thread before this window goes away, so a
-    // blocking call in flight can never touch a half-destroyed object.
-    void shutdownRobotThread();
-
-signals:
-    // UI → robot worker.  The worker lives on its own thread, so every one of
-    // these is delivered as a queued call; the UI thread never blocks on it.
-    void robotConnectRequested(const QString& host, quint16 port, int protocol,
-                               int format, double scale, quint8 unitId,
-                               quint16 startAddress);
-    void robotDisconnectRequested();
-    void robotSimulateConnectRequested();
-    void robotReadPoseRequested(int kind);
 
 private:
     // Card updates
@@ -234,6 +163,7 @@ private:
     // Owned managers / services
     AppConfig          m_config;
     CameraManager*     m_camera = nullptr;
+    CameraConnectionFlow* m_cameraFlow = nullptr;
     DataManager*       m_data   = nullptr;
     LogManager*        m_logger = nullptr;
     CaptureFlow*       m_flow   = nullptr;
@@ -271,9 +201,8 @@ private:
     QString m_saveBaseDir;
     bool m_busy = false;
     bool m_savePathFellBack = false;   // portable-build: configured path unusable
-    std::vector<DeviceEntry> m_cachedDevices;
-    bool m_preScanning = false;
-    bool m_connectRequested = false;
+    // Scan/cache/pending-connect state lives in CameraConnectionFlow; this
+    // window only shows the device dialog and connects the chosen serial.
 
     // ── Round 5: automation + lifetime ──
     // (第 12 回合 任务 1 删掉了 m_useCameraParams：拍摄参数已完全交由相机持有。)
@@ -311,14 +240,11 @@ private:
     BoardPoseFit::Pose m_pendingBoardPose;           // last detected frame's board pose
 
     // Stage 8: robot communication (isolated, default off).
-    // T-009: the readers themselves now live in the worker on m_robotThread; the
-    // UI only holds the thread handle and the logical connection state below.
+    // The thread, the four readers and the logical connection state live in
+    // RobotController; this window only reads isConnected()/autoRead() and
+    // updates the widgets from its two signals.
     // 0 = Modbus TCP, 1 = UR Realtime, 2 = 博纳斯(纳博特) JSON/TCP（协议号语义不变）
-    QThread*     m_robotThread = nullptr;
-    RobotWorker* m_robotWorker = nullptr;
-    bool m_robotAutoRead = false;
-    bool m_robotConnected = false;     // logical connection (real or simulated)
-    bool m_robotSimulated = false;     // "模拟连接成功" — no real socket
+    RobotController* m_robot = nullptr;
 
     // Window centering (restore/clamp once on first show)
     bool m_windowPositioned = false;

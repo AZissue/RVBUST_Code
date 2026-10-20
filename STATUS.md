@@ -1,9 +1,32 @@
 # STATUS.md — 进度状态（每次会话结束必须更新）
 
-> 最后更新：2026-10-19（之十八：高级格式目录修正、标定/推算页文件选择合一、按钮显隐）
+> 最后更新：2026-10-20（之十九：架构收敛第 1 批 —— 机器人通道 / 相机连接状态机）
 > 只保留「当前快照」，不积累历史；旧条目删除即可，git 历史里仍可追溯。
 
 ## ⏭ 交接块（新会话先读这里）
+
+- **2026-10-20（之十九：架构收敛第 1 批，功能行为不变）**
+  - **起因**：架构评审指出 MainWindow / CameraManager 过重、状态入口过多。本轮只做
+    两个低风险接缝，**不碰采集/预览/设备锁**，先建立可回溯的收敛起点。
+  - **① 新增 `app/RobotController.{h,cpp}`**：`RobotReadKind`、`RobotWorker`（四个
+    reader + socket 分派 + 模拟位姿）、QThread 生命周期、`connected/simulated/
+    autoRead` 逻辑状态整体搬出 MainWindow。对外只有
+    `connectToRobot/disconnectRobot/simulateConnect/readPose/setAutoRead/isConnected/
+    isSimulated/autoRead/shutdown` 与 `connectFinished`/`poseReady` 两个信号。
+    MainWindow 只留状态文案、tip、日志、卡片填充、按钮显隐。线程模型逐字保留
+    （阻塞调用排队进 worker、3 s 有界幂等 shutdown）；UI→worker 改用带上下文对象的
+    `QMetaObject::invokeMethod(worker, lambda, Qt::QueuedConnection)`。
+  - **② 新增 `app/CameraConnectionFlow.{h,cpp}`**：`m_preScanning / m_cachedDevices /
+    m_connectRequested` 三个散落标志收进一个状态机
+    （`preScan / requestConnect / refreshCache`，信号 `scanStarted / devicesReady /
+    rescanned`）。MainWindow 只弹设备列表、连接选中序列号；RVC 对象仍在 UI 线程创建。
+  - **量化**：`MainWindow.cpp` 2368→2164、`MainWindow.h` 334→260；新增 480 行独立单元。
+  - **验证**：构建 `$LASTEXITCODE = 0`、exe 已刷新；`unit_tests` **351 通过 / 0 失败**；
+    `ctest` **3/3 绿**。**只本地提交，未推送、未打包。**
+  - **文档**：`reports/阶段16-架构收敛-控制器与状态机.md` —— 含后续批次路线
+    （CalibrationController / CameraFrameCache / HealthMonitor / GuidancePresenter）
+    与"不推荐"项（CaptureController 转发层、全局 SystemState 镜像、
+    CameraCapturePipeline 近期不动）、7 条人工验收清单。
 
 - **2026-10-19（之十八：现场复测反馈 4 条，前 3 条已修、第 4 条已分析）**
   - **① 「高级格式」名不副实（已修）**：未勾选时下拉框仍出现 rZYZ（首尾同轴）。
