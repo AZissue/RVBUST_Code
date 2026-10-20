@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 
-from PySide6.QtCore import Qt, QSize, Signal
+from PySide6.QtCore import Qt, QSize, Signal, QEvent
 from PySide6.QtGui import QPixmap, QResizeEvent
 from PySide6.QtWidgets import (
     QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QScrollArea,
@@ -53,6 +53,7 @@ class CameraCard(QFrame):
     preview_toggled = Signal(str, bool)
     capture_requested = Signal(str)
     detect_requested = Signal(str)
+    focus_requested = Signal(str)
 
     def __init__(self, camera_id: str, title: Optional[str] = None, parent=None, *, preview_factory=None):
         super().__init__(parent)
@@ -91,9 +92,14 @@ class CameraCard(QFrame):
         self._thumb.setSizePolicy(
             QSizePolicy.Expanding, QSizePolicy.Expanding)
         lo.addWidget(self._thumb, 1)
+        self._thumb.installEventFilter(self)
+        self._overview_meta = QHBoxLayout()
+        self._overview_meta.setContentsMargins(0, 0, 0, 0)
+        lo.addLayout(self._overview_meta)
 
         # 底部角标 + 单相机控制按钮
         bottom = QHBoxLayout()
+        self._bottom = bottom
         self._marker_badge = QLabel("标记: —")
         self._marker_badge.setStyleSheet(
             f"color: {TEXT_SECONDARY}; font-size: 12px;"
@@ -190,6 +196,13 @@ class CameraCard(QFrame):
                     self._thumb.minimumSize(), [(b.text(), b.styleSheet()) for b in buttons])
             self.setMinimumSize(230, 190)
             self._thumb.setMinimumSize(180, 80)
+            if self._overview_meta.count() == 0:
+                self._bottom.removeWidget(self._marker_badge)
+                self._bottom.removeWidget(self._covis_badge)
+                self._overview_meta.addWidget(self._marker_badge)
+                self._overview_meta.addStretch(1)
+                self._overview_meta.addWidget(self._covis_badge)
+            self._thumb.setToolTip('双击画面放大此相机，再次双击返回全部相机')
             for button, text in zip(buttons, ('预览', '拍摄', '检测')):
                 button.setText(text)
                 button.setStyleSheet(button.styleSheet() + ' QPushButton {min-width:0px;padding:3px 4px;font-size:11px;}')
@@ -201,7 +214,20 @@ class CameraCard(QFrame):
             for button, (text, style) in zip(buttons, styles):
                 button.setText(text)
                 button.setStyleSheet(style)
+            self._overview_meta.removeWidget(self._marker_badge)
+            self._overview_meta.removeWidget(self._covis_badge)
+            while self._overview_meta.count():
+                self._overview_meta.takeAt(0)
+            self._bottom.insertWidget(0, self._marker_badge)
+            self._bottom.insertWidget(2, self._covis_badge)
+            self._thumb.setToolTip('')
             del self._overview_original
+
+    def eventFilter(self, watched, event):
+        if watched is self._thumb and event.type() == QEvent.MouseButtonDblClick and hasattr(self, '_overview_original'):
+            self.focus_requested.emit(self.camera_id)
+            return True
+        return super().eventFilter(watched, event)
 
     def set_calibration_status(self, text: str, success: bool):
         self._covis_badge.setText(text)
@@ -323,6 +349,7 @@ class CameraGrid(QScrollArea):
     """
 
     card_clicked = Signal(str)
+    focus_changed = Signal(str)
     CARD_WIDTH = 300
     CARD_HEIGHT = 270
     H_SPACING = 8
@@ -335,6 +362,7 @@ class CameraGrid(QScrollArea):
         self._titles: Dict[str, str] = {}
         self._last_cols: Optional[int] = None
         self._overview = False
+        self._focused_id = None
 
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.NoFrame)
@@ -354,30 +382,49 @@ class CameraGrid(QScrollArea):
         titles: {camera_id: 显示名称}，未提供时显示 camera_id。
         """
         for card in self._cards.values():
+            self._grid.removeWidget(card)
+            card.hide()
             card.deleteLater()
         self._cards.clear()
         self._titles = dict(titles or {})
+        self._focused_id = None
 
         for cid in camera_ids:
             card = CameraCard(cid, title=self._titles.get(cid, cid), preview_factory=self._preview_factory)
             card.clicked.connect(self.card_clicked)
+            card.focus_requested.connect(self.focus_camera)
             self._cards[cid] = card
             if self._overview:
                 card.set_overview(True)
         self._last_cols = None
         self._relayout()
+        self.focus_changed.emit('')
 
     def set_overview(self, enabled):
         if self._overview == enabled:
             return
         self._overview = enabled
+        self._focused_id = None
+        self._grid.setAlignment(Qt.AlignTop if enabled else Qt.AlignTop | Qt.AlignLeft)
         self.CARD_WIDTH = 245 if enabled else type(self).CARD_WIDTH
         for card in self._cards.values():
+            card.show()
             card.set_overview(enabled)
             if not enabled and card.current_frame() is not None:
                 card.set_frame(card.current_frame())
         self._last_cols = None
         self._relayout()
+        self.focus_changed.emit('')
+
+    def focus_camera(self, camera_id=None):
+        if not self._overview:
+            return
+        self._focused_id = camera_id if camera_id in self._cards and self._focused_id != camera_id else None
+        for cid, card in self._cards.items():
+            card.setVisible(self._focused_id is None or cid == self._focused_id)
+        self._last_cols = None
+        self._relayout()
+        self.focus_changed.emit(self._focused_id or '')
 
     def set_marker_pair(self, reference_id, accepted=None):
         from ui_common.industrial_scene.marker_display import classify_markers
@@ -404,7 +451,8 @@ class CameraGrid(QScrollArea):
         仅当列数真正变化时才移除/重加卡片，避免拖动 splitter 或窗口
         缩放时频繁全量 relayout 造成卡顿。
         """
-        n = len(self._cards)
+        cards = [card for cid, card in self._cards.items() if self._focused_id is None or cid == self._focused_id]
+        n = len(cards)
         if n == 0:
             return
 
@@ -414,9 +462,23 @@ class CameraGrid(QScrollArea):
         cols = max(1, viewport_w // col_unit)
         cols = min(cols, n)
         if self._overview:
-            rows = (n + cols - 1) // cols
-            height = max(190, min(320, (self.viewport().height()-8-(rows-1)*self.V_SPACING)//rows))
-            for card in self._cards.values():
+            # Choose the arrangement by actual image area. In a narrow joint
+            # view, two cameras stack; in a wide 2D view they sit side by side.
+            ratios = [card.current_frame().image_np.shape[1] / card.current_frame().image_np.shape[0]
+                for card in cards if card.current_frame() is not None and card.current_frame().image_np is not None]
+            ratio = sum(ratios)/len(ratios) if ratios else 4/3
+            available_h = max(1, self.viewport().height()-8)
+            best = (-1, 1, 210)
+            for candidate in range(1, min(n, max(1, (viewport_w-8+self.H_SPACING)//(230+self.H_SPACING)))+1):
+                rows = (n+candidate-1)//candidate
+                width = (viewport_w-8-(candidate-1)*self.H_SPACING)/candidate
+                height = max(210, (available_h-(rows-1)*self.V_SPACING)//rows)
+                image_h = max(1, min(height-100, (width-12)/ratio))
+                score = image_h*image_h*ratio*n*min(1, available_h/(rows*height+(rows-1)*self.V_SPACING))
+                if score > best[0]:
+                    best = (score, candidate, height)
+            _, cols, height = best
+            for card in cards:
                 card.setFixedHeight(height)
 
         if cols == self._last_cols:
@@ -431,7 +493,7 @@ class CameraGrid(QScrollArea):
         for c in range(self._grid.columnCount()):
             self._grid.setColumnStretch(c, 0)
         # 重新按行添加
-        for i, card in enumerate(self._cards.values()):
+        for i, card in enumerate(cards):
             self._grid.addWidget(card, i // cols, i % cols)
         # 当前使用的列均分可用宽度
         for c in range(cols):
@@ -451,6 +513,8 @@ class CameraGrid(QScrollArea):
         card = self._cards.get(camera_id)
         if card is not None:
             card.set_frame(frame, markers)
+            if self._overview:
+                self._relayout()
 
     def set_marker_count(self, camera_id: str, count: Optional[int]):
         """更新指定相机卡片的标记数量角标。"""

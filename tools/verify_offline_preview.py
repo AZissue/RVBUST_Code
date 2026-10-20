@@ -13,13 +13,16 @@ from unittest.mock import patch
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--native', action='store_true')
+parser.add_argument('--mode', choices=('multi_cam', 'mobile_chain', 'turntable'))
 args = parser.parse_args()
 if not args.native:
     os.environ['QT_QPA_PLATFORM'] = 'offscreen'
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'src'))
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication, QMessageBox, QDialogButtonBox
 from PySide6.QtCore import QTimer
+from PySide6.QtTest import QTest
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QFontDatabase
 from core.camera_manager import CameraManager
 from core.marker_detector import MarkerDetector
@@ -55,7 +58,7 @@ with patch.object(CameraManager, 'initialize', side_effect=AssertionError('SDK i
     win.set_backend_bridge(bridge)
     win.show()
     try:
-        for mode in ('multi_cam', 'mobile_chain', 'turntable'):
+        for mode in ((args.mode,) if args.mode else ('multi_cam', 'mobile_chain', 'turntable')):
             complete = []
             bridge.open_offline_preview(mode, lambda *result: complete.append(result))
             wait_for(lambda: bool(complete))
@@ -70,6 +73,31 @@ with patch.object(CameraManager, 'initialize', side_effect=AssertionError('SDK i
             assert not hasattr(browser, 'image')
             if mode == 'multi_cam':
                 assert len(bridge.fixed_workflow.frames_calib) == 2
+                def cancel_unsaved():
+                    dialog = QApplication.activeModalWidget()
+                    assert [dialog.button(flag).text() for flag in (QMessageBox.Save, QMessageBox.Discard, QMessageBox.Cancel)] == ['保存', '放弃修改', '取消']
+                    assert dialog.grab().save(str(report / 'session_unsaved_chinese.png'))
+                    dialog.button(QMessageBox.Cancel).click()
+                QTimer.singleShot(20, cancel_unsaved)
+                bridge.projects.guard_switch(mode, lambda: (_ for _ in ()).throw(AssertionError('cancel must keep session')))
+                presentation = win.workspace_multi()._industrial
+                cameras = win.workspace_multi().camera_grid()
+                for view in ('2d', '3d', 'joint'):
+                    presentation.view_buttons[view].click()
+                    wait_for(lambda: not win.workspace_multi().viewer()._viewer.canvas.is_busy)
+                    for _ in range(10):
+                        app.processEvents()
+                        time.sleep(.02)
+                    assert cameras.isHidden() == (view == '3d')
+                    assert win.workspace_multi().viewer().isHidden() == (view == '2d')
+                    assert win.grab().save(str(report / f'multi_cam_view_{view}.png'))
+                QTest.mouseDClick(cameras.card('cam0')._thumb, Qt.LeftButton)
+                app.processEvents()
+                assert cameras._focused_id == 'cam0' and presentation._multi_view == '2d'
+                assert win.grab().save(str(report / 'multi_cam_view_focus.png'))
+                presentation.all_cameras_button.click()
+                app.processEvents()
+                assert presentation._multi_view == 'joint'
                 bridge._on_multi_calibrate()
                 wait_for(lambda: not any(w.isRunning() for w in bridge._workers))
                 app.processEvents()
@@ -142,7 +170,14 @@ with patch.object(CameraManager, 'initialize', side_effect=AssertionError('SDK i
             # Explicit save/new/reopen is isolated in a temporary save root.
             project = bridge.projects.projects[mode]
             project.save_root = Path(db_temp.name) / 'sessions'
-            QTimer.singleShot(0, lambda: QApplication.activeModalWidget().accept())
+            def accept_save_options():
+                dialog = QApplication.activeModalWidget()
+                buttons = dialog.findChild(QDialogButtonBox)
+                assert buttons.button(QDialogButtonBox.Save).text() == '保存'
+                assert buttons.button(QDialogButtonBox.Cancel).text() == '取消'
+                assert dialog.grab().save(str(report / 'session_save_options_chinese.png'))
+                dialog.accept()
+            QTimer.singleShot(20, accept_save_options)
             ribbon.commands[(mode, 'save')].click()
             wait_for(lambda: project.saved_path is not None and not project.dirty)
             wait_for(lambda: not any(w.isRunning() for w in bridge._workers))

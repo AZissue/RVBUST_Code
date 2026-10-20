@@ -6,7 +6,8 @@ import shutil
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (QAbstractItemView, QDialog, QHBoxLayout, QLabel,
-    QMessageBox, QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout)
+    QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout)
+from .dialogs import ChineseMessageBox as QMessageBox
 from core.session_project import PROJECT_ROOT, disk_usage
 
 

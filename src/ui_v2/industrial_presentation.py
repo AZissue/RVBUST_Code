@@ -6,7 +6,7 @@ Changing presentation never instantiates a camera service or connects an action.
 from dataclasses import dataclass
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
-    QStackedLayout, QSplitter, QScrollArea, QGroupBox, QLabel)
+    QStackedLayout, QSplitter, QScrollArea, QGroupBox, QLabel, QToolButton, QButtonGroup)
 
 
 class _Viewport(QWidget):
@@ -130,9 +130,39 @@ class IndustrialPresentation:
         self._database_inspector = None
         self._business_marker_image = None
         self.grid = None
+        self._multi_view = 'joint'
+        self._view_before_focus = None
         if mode == 'multi_cam':
             self._mount(workspace._left_widget, self.controls)
             self._mount(workspace._right_widget, self.controls)
+            self.view_bar = QWidget()
+            bar = QHBoxLayout(self.view_bar)
+            bar.setContentsMargins(0, 0, 0, 0)
+            bar.setSpacing(4)
+            bar.addWidget(QLabel('标定工作视图'))
+            self.view_buttons = {}
+            self.view_group = QButtonGroup(self.view_bar)
+            for key, title in (('2d', '2D 对比'), ('joint', '联合视图'), ('3d', '3D 主视图')):
+                button = QToolButton()
+                button.setText(title)
+                button.setCheckable(True)
+                button.setStyleSheet('QToolButton {padding:5px 12px;border:1px solid #454545;background:#303030;}'
+                    'QToolButton:checked {background:#563030;border-color:#d12d30;color:#ffffff;}')
+                button.clicked.connect(lambda checked=False, value=key: self.set_multi_view(value))
+                self.view_group.addButton(button)
+                self.view_buttons[key] = button
+                bar.addWidget(button)
+            self.all_cameras_button = QToolButton()
+            self.all_cameras_button.setText('全部相机')
+            self.all_cameras_button.setEnabled(False)
+            self.all_cameras_button.clicked.connect(lambda: workspace._camera_grid.focus_camera())
+            bar.addWidget(self.all_cameras_button)
+            bar.addStretch(1)
+            hint = QLabel('双击画面放大 / 返回')
+            hint.setStyleSheet('color:#aaaaaa;')
+            bar.addWidget(hint)
+            stage.addWidget(self.view_bar)
+            workspace._camera_grid.focus_changed.connect(self._camera_focus_changed)
             self.grid = QSplitter(Qt.Horizontal)
             self.grid.setChildrenCollapsible(False)
             stage.addWidget(self.grid, 1)
@@ -200,8 +230,9 @@ class IndustrialPresentation:
                 self.workspace._live_view.setMaximumHeight(100)
             if self.grid:
                 self.workspace._camera_grid.set_overview(True)
-                self.grid.setSizes([580, 600])
             self.stack.setCurrentWidget(self.surface)
+            if self.grid:
+                self.set_multi_view(self._multi_view)
             if self.overlay:
                 if self.inspector:
                     self.overlay.hide()
@@ -254,7 +285,12 @@ class IndustrialPresentation:
         if self._database_inspector:
             self._database_inspector.setVisible(not enabled and self.workspace._viewer._database_cloud is not None)
         if self.mode == 'multi_cam':
-            self.workspace._camera_grid.setVisible(not enabled)
+            self.view_bar.setVisible(not enabled)
+            if enabled:
+                self.workspace._camera_grid.hide()
+                self.workspace._viewer.show()
+            else:
+                self.set_multi_view(self._multi_view, resize=False)
         if self.mode == 'mobile_chain':
             self.workspace._eval_card.setVisible(not enabled)
             self.workspace._stats_label.setVisible(not enabled)
@@ -262,6 +298,29 @@ class IndustrialPresentation:
     def _preview_frame(self, pixmap):
         if self.inspector:
             self.set_marker_image(pixmap.toImage() if pixmap is not None else None, [])
+
+    def set_multi_view(self, view, *, resize=True):
+        if self.mode != 'multi_cam' or view not in ('2d', 'joint', '3d'):
+            return
+        self._multi_view = view
+        self.view_buttons[view].setChecked(True)
+        self.workspace._camera_grid.setVisible(view != '3d')
+        self.workspace._viewer.setVisible(view != '2d')
+        if view == 'joint' and resize:
+            count = len(self.workspace._camera_grid.camera_ids())
+            self.grid.setSizes([380 if count <= 2 else 540, 820])
+
+    def _camera_focus_changed(self, camera_id):
+        self.all_cameras_button.setEnabled(bool(camera_id))
+        if camera_id:
+            if self._view_before_focus is None:
+                self._view_before_focus = self._multi_view
+            self.set_multi_view('2d')
+        elif self._view_before_focus is not None:
+            previous, self._view_before_focus = self._view_before_focus, None
+            self.set_multi_view(previous)
+        elif self.active:
+            self.set_multi_view(self._multi_view)
 
     def _marker_context(self, frame, reference=None, accepted=None):
         if frame is None:
@@ -285,6 +344,8 @@ class IndustrialPresentation:
                 current_visible=False)
 
     def show_database_image(self, frame):
+        if self.mode == 'multi_cam' and self._multi_view == '2d':
+            self.set_multi_view('joint')
         inspector = self.inspector
         if inspector is None:
             # Multi-camera cards remain bound to acquisition/detection. Show

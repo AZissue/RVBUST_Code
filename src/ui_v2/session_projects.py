@@ -7,7 +7,8 @@ import numpy as np
 import open3d as o3d
 from PySide6.QtCore import QObject, QEventLoop, QTimer
 from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QInputDialog,
-    QLabel, QMessageBox, QVBoxLayout)
+    QLabel, QVBoxLayout)
+from .dialogs import ChineseMessageBox as QMessageBox, localize_buttons
 
 from core.session_project import SessionProject, MODE_LABELS
 from core.frame_database import _json_value
@@ -250,6 +251,7 @@ class SessionProjects(QObject):
             check.setEnabled(mode != 'mobile_chain')
             layout.addWidget(check)
             buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+            localize_buttons(buttons)
             buttons.accepted.connect(dialog.accept)
             buttons.rejected.connect(dialog.reject)
             layout.addWidget(buttons)
