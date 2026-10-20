@@ -15,6 +15,7 @@
 
 #include "logic/FrameBuffer.h"
 #include "logic/CameraFrameCache.h"
+#include "logic/CameraHealthMonitor.h"
 
 // Forward-declare RVC types to avoid leaking RVC headers into all consumers
 namespace RVC {
@@ -251,8 +252,9 @@ private:
     QFutureWatcher<std::vector<DeviceEntry>>* m_scanWatcher = nullptr;
     QFutureWatcher<CaptureResult>* m_captureWatcher = nullptr;
     QTimer* m_captureWatchdog = nullptr;
-    QTimer* m_reconnectTimer = nullptr;
-    QTimer* m_healthTimer = nullptr;
+    // 健康扫描 / 有界自动重连的定时器与尝试预算（纯策略，可单测）。
+    // CameraManager 仍决定"是否允许重连"并执行真正的重连。
+    CameraHealthMonitor* m_health = nullptr;
     int m_previewFps = 20;
     // Preview-stall diagnostic (第 13 回合): wall time of the last frame that
     // reached the UI thread.  UI thread only.  Reset whenever the stream is
@@ -274,7 +276,7 @@ private:
     std::atomic<int> m_previewFailures{0};
     std::atomic<bool> m_healthBusy{false};
     std::atomic<bool> m_scanBusy{false};
-    int  m_reconnectAttempts = 0;
+    // 只记"这次重连前是否在预览"；尝试次数与定时器已归 CameraHealthMonitor。
     bool m_wasPreviewing = false;
     QString m_lastSerial;
     qint64 m_scanStartMs = 0;    // runtime-log timing
@@ -307,12 +309,11 @@ private:
 
 public:
     static constexpr int CAPTURE_TIMEOUT_MS = 60000;  // 5M-point GigE captures are slow
-    static constexpr int RECONNECT_MAX_ATTEMPTS = 3;
-    static constexpr int RECONNECT_INTERVAL_MS = 3000;
-    // 任务 3.4: was 5 s, which took the device lock (SystemFindDevice) 12x per
-    // minute and wrote a "[DEV] health-scan acquired device" line each time.
-    // 30 s is plenty for hot-plug detection; AppConfig can tune it.
-    static constexpr int HEALTH_CHECK_INTERVAL_MS = 30000;
+    // 策略常量留在公开接口上（历史调用方不变），数值的唯一出处是
+    // CameraHealthMonitor —— 重连节奏与健康扫描间隔由它实际执行。
+    static constexpr int RECONNECT_MAX_ATTEMPTS = CameraHealthMonitor::MAX_ATTEMPTS;
+    static constexpr int RECONNECT_INTERVAL_MS = CameraHealthMonitor::RECONNECT_INTERVAL_MS;
+    static constexpr int HEALTH_CHECK_INTERVAL_MS = CameraHealthMonitor::HEALTH_INTERVAL_MS;
     // Bounded wait for the device lock on the close path.  If a worker is still
     // inside a hung SDK call we skip teardown instead of hanging the UI or
     // racing the device (see shutdown()).

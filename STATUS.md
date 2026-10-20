@@ -1,9 +1,28 @@
 # STATUS.md — 进度状态（每次会话结束必须更新）
 
-> 最后更新：2026-10-20（之二十：架构收敛第 2 批 —— 标定控制器 / 相机帧缓存）
+> 最后更新：2026-10-20（之二十一：架构收敛第 3 批 —— 重连策略 / 引导文案）
 > 只保留「当前快照」，不积累历史；旧条目删除即可，git 历史里仍可追溯。
 
 ## ⏭ 交接块（新会话先读这里）
+
+- **2026-10-20（之二十一：架构收敛第 3 批，功能行为不变；批次 1–3 代码完成）**
+  - **① `logic/CameraHealthMonitor.{h,cpp}`**：健康扫描 / 有界自动重连的两个
+    QTimer、`m_reconnectAttempts`、三个策略常量从 CameraManager 移出。
+    `planReconnect()` 三态（Ignored/Scheduled/Exhausted）、`noteConnected()` 清零、
+    `stop()` 停表并清预算。**设备锁顺序、worker token、预览停/启、真正的
+    `initWithDeviceSerial()` 全留在 CameraManager**；CameraManager 的公开常量改为
+    别名，调用方零改动。
+  - **② `logic/GuidanceText.h`（header-only）**：`updatePoseGuide` 的 5 个文案分支
+    与 `refreshQualityReport` 的全部 HTML 拼装（配色/标签/八项顺序/details 缩进）
+    变成纯函数。判定仍只来自 `PoseGuide` / `DataQualityCheck`。
+  - **量化**：`MainWindow.cpp` 2368→2094（累计 −274）；新增独立单元 938 行。
+  - **测试**：新增 `test_camera_health_monitor`（7 条，含预算耗尽/去重/重置/停止）
+    与 `test_guidance_text`（8 条，含文案分支与 HTML 转义/顺序/配色）；
+    `unit_tests` **380 通过 / 0 失败**；`ctest` **3/3 绿**；构建 0、exe 刷新
+    （14:44）。
+  - **文档**：`reports/阶段16-架构收敛-控制器与状态机.md` 增 §2.5/§2.6，更新量化、
+    验证与路线；人工清单增至 16 条，**第 13–15 条覆盖重连/健康扫描**。
+  - **只本地提交，未推送、未打包。代码工作到此为止，下一步是人工复测。**
 
 - **2026-10-20（之二十：架构收敛第 2 批，功能行为不变）**
   - **① `app/CalibrationController.{h,cpp}`**：`QFutureWatcher`、后台标定任务与

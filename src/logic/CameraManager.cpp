@@ -207,14 +207,12 @@ CameraManager::CameraManager(QObject* parent)
     connect(m_captureWatchdog, &QTimer::timeout,
             this, &CameraManager::onCaptureTimeout);
 
-    m_reconnectTimer = new QTimer(this);
-    m_reconnectTimer->setSingleShot(true);
-    connect(m_reconnectTimer, &QTimer::timeout,
+    // 健康扫描与自动重连的节奏/预算由 CameraHealthMonitor 持有；这里只接它的
+    // 两个"到点了"信号，具体扫描与重连仍由本类（持有设备锁的那一方）执行。
+    m_health = new CameraHealthMonitor(this);
+    connect(m_health, &CameraHealthMonitor::reconnectDue,
             this, &CameraManager::onReconnectTick);
-
-    m_healthTimer = new QTimer(this);
-    m_healthTimer->setInterval(HEALTH_CHECK_INTERVAL_MS);
-    connect(m_healthTimer, &QTimer::timeout,
+    connect(m_health, &CameraHealthMonitor::healthCheckDue,
             this, &CameraManager::onHealthTick);
 }
 
@@ -611,13 +609,13 @@ bool CameraManager::initWithDeviceSerial(const QString& serial)
         m_isConnected = true;
         m_released = false;            // a new session must be releasable again
         m_lastSerial = serial;
-        m_reconnectAttempts = 0;
+        m_health->noteConnected();
         logCameraOptions("connect");
         RuntimeLog::log("connect OK: %s (%s, %lld ms)",
                         qPrintable(serial), model, connectTimer.elapsed());
         // Timers must be started from their owning (UI) thread; queue it so
         // this works whether connect runs on the UI or a worker thread.
-        QMetaObject::invokeMethod(this, [this]() { m_healthTimer->start(); },
+        QMetaObject::invokeMethod(this, [this]() { m_health->startHealthChecks(); },
                                   Qt::QueuedConnection);
         emit cameraConnected();
         // 崩溃注入 (TEST ONLY): HEC_CRASH_INJECT=after-connect.  Placed after the
@@ -715,12 +713,12 @@ void CameraManager::logCameraOptions(const char* when)
 
 void CameraManager::setHealthCheckInterval(int ms)
 {
-    m_healthTimer->setInterval(ms > 0 ? ms : HEALTH_CHECK_INTERVAL_MS);
+    m_health->setHealthInterval(ms);
 }
 
 int CameraManager::healthCheckInterval() const
 {
-    return m_healthTimer->interval();
+    return m_health->healthInterval();
 }
 
 bool CameraManager::waitForCaptureIdle(int timeoutMs)
@@ -782,9 +780,7 @@ void CameraManager::shutdown(int deviceWaitMs)
         m_workerToken->cancelRequested = true;
     stopPreview();
     m_captureWatchdog->stop();
-    m_reconnectTimer->stop();
-    m_healthTimer->stop();
-    m_reconnectAttempts = 0;
+    m_health->stop();
 
     // 2. Drop the previous frame's caches now, not when the next capture
     //    happens to overwrite them — nothing reads them after a teardown.
@@ -1500,22 +1496,26 @@ void CameraManager::onCaptureTimeout()
 
 void CameraManager::scheduleReconnect()
 {
-    if (m_shuttingDown || !m_isConnected || m_reconnectTimer->isActive())
+    if (m_shuttingDown || !m_isConnected)
         return;
 
-    if (m_reconnectAttempts >= RECONNECT_MAX_ATTEMPTS) {
-        m_reconnectAttempts = 0;
+    switch (m_health->planReconnect()) {
+    case CameraHealthMonitor::ReconnectPlan::Ignored:
+        // 已有一次重连在排队：不重复提示、不重复停预览。
+        return;
+    case CameraHealthMonitor::ReconnectPlan::Exhausted:
         emit cameraError(QStringLiteral("自动重连失败（%1 次），请手动重新连接")
                              .arg(RECONNECT_MAX_ATTEMPTS));
         return;
+    case CameraHealthMonitor::ReconnectPlan::Scheduled:
+        break;
     }
 
+    // 与原实现同序：先记住预览是否开着，再停预览，再发提示。
     m_wasPreviewing = m_previewTimer->isActive() || m_previewPaused;
     stopPreview();
-    ++m_reconnectAttempts;
     emit cameraError(QStringLiteral("检测到相机异常，尝试自动重连 (%1/%2)")
-                         .arg(m_reconnectAttempts).arg(RECONNECT_MAX_ATTEMPTS));
-    m_reconnectTimer->start(RECONNECT_INTERVAL_MS);
+                         .arg(m_health->attempts()).arg(RECONNECT_MAX_ATTEMPTS));
 }
 
 void CameraManager::onReconnectTick()
@@ -1527,7 +1527,7 @@ void CameraManager::onReconnectTick()
     // reconnect happens synchronously on this (UI) thread as well.
     const bool ok = initWithDeviceSerial(m_lastSerial);
     if (ok) {
-        m_reconnectAttempts = 0;
+        m_health->noteConnected();
         if (m_wasPreviewing)
             startPreview();
     } else {

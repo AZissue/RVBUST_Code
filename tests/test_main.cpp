@@ -22,6 +22,8 @@
 #include "test_board_pose_fit.h"
 #include "test_frame_buffer.h"
 #include "test_camera_frame_cache.h"
+#include "test_camera_health_monitor.h"
+#include "test_guidance_text.h"
 #include "test_ui_stall_watchdog.h"
 #include "test_measure_tools.h"
 #include "test_auto_flow_policy.h"
@@ -219,6 +221,16 @@ int main(int argc, char** argv)
         // 字节统计、原生检测结果按值返回）——不依赖 RVC/SDK。
         TestCameraFrameCache t28;
         status |= runClass(&t28, argc, argv, "camera_frame_cache");
+    }
+    {
+        // 架构收敛第 3 批：重连节奏与尝试预算（无相机、无 SDK）。
+        TestCameraHealthMonitor t29;
+        status |= runClass(&t29, argc, argv, "camera_health_monitor");
+    }
+    {
+        // 架构收敛第 3 批：位姿引导文案 + 质检报告 HTML 的转义/顺序/配色。
+        TestGuidanceText t30;
+        status |= runClass(&t30, argc, argv, "guidance_text");
     }
     return status;
 }

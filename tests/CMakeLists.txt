@@ -20,6 +20,9 @@ set(TEST_SOURCES
     test_board_pose_fit.cpp
     test_frame_buffer.cpp
     test_camera_frame_cache.cpp
+    # 架构收敛第 3 批：重连节奏/预算，以及引导文案与质检 HTML。
+    test_camera_health_monitor.cpp
+    test_guidance_text.cpp
     test_ui_stall_watchdog.cpp
     test_measure_tools.cpp
     test_auto_flow_policy.cpp
@@ -55,6 +58,8 @@ add_executable(unit_tests ${TEST_SOURCES}
     ${CMAKE_SOURCE_DIR}/src/logic/FrameBuffer.cpp
     # 架构收敛第 2 批：帧缓存是纯值对象（无 SDK），直接测真实实现。
     ${CMAKE_SOURCE_DIR}/src/logic/CameraFrameCache.cpp
+    # CameraManager 现在把健康扫描/重连交给它；纯 Qt，无 SDK。
+    ${CMAKE_SOURCE_DIR}/src/logic/CameraHealthMonitor.cpp
     ${CMAKE_SOURCE_DIR}/src/logic/UiStallWatchdog.cpp
     ${CMAKE_SOURCE_DIR}/src/logic/PointCloudUtils.cpp
     ${CMAKE_SOURCE_DIR}/src/logic/DetectionEngine.cpp

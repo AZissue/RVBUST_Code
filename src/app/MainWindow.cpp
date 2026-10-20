@@ -12,6 +12,7 @@
 #include "logic/LogManager.h"
 #include "logic/PoseGuide.h"
 #include "logic/DataQualityCheck.h"
+#include "logic/GuidanceText.h"
 #include "logic/ToolInputParser.h"
 #include "logic/FrameBuffer.h"
 #include "logic/LogPresentation.h"
@@ -1347,7 +1348,7 @@ void MainWindow::updatePoseGuide()
             ? QStringLiteral("robot_target_xyz") : QStringLiteral("robot_capture_pose"));
     const QString text = card ? card->value().trimmed() : QString();
     if (text.isEmpty()) {
-        m_sidePanel->setPoseGuide(QStringLiteral("暂无%1参考，可自由采集").arg(what), false);
+        m_sidePanel->setPoseGuide(GuidanceText::pendingReference(what), false);
         return;
     }
 
@@ -1358,10 +1359,7 @@ void MainWindow::updatePoseGuide()
     else
         ok = DataQualityCheck::parseXyzText(text, current.xyz);
     if (!ok) {
-        m_sidePanel->setPoseGuide(
-            hasOri ? QStringLiteral("机器人拍照位姿需为 6 个数值（x y z rx ry rz）")
-                   : QStringLiteral("机器人目标点需为 3 个数值（x y z）"),
-            false);
+        m_sidePanel->setPoseGuide(GuidanceText::invalidPoseText(hasOri), false);
         return;
     }
 
@@ -1378,8 +1376,7 @@ void MainWindow::updatePoseGuide()
     }
 
     if (collected.empty()) {
-        m_sidePanel->setPoseGuide(
-            QStringLiteral("暂无已采%1参考，可自由采集").arg(what), false);
+        m_sidePanel->setPoseGuide(GuidanceText::noCollectedReference(what), false);
         return;
     }
 
@@ -1388,25 +1385,8 @@ void MainWindow::updatePoseGuide()
     const PoseGuide::Guide g = PoseGuide::guide(
         current, collected, PoseGuide::DEFAULT_MIN_POS_MM,
         hasOri ? PoseGuide::DEFAULT_MIN_ANGLE_DEG : 0.0);
-    if (g.tooClose) {
-        m_sidePanel->setPoseGuide(
-            hasOri
-                ? QStringLiteral("与第 %1 组%2过于接近（间距 %3 mm / 角差 %4°），建议拉开位置或旋转角度")
-                      .arg(g.refIndex + 1).arg(what)
-                      .arg(g.distanceMm, 0, 'f', 1).arg(g.angleDeg, 0, 'f', 1)
-                : QStringLiteral("与第 %1 组%2过于接近（间距 %3 mm），建议拉开位置")
-                      .arg(g.refIndex + 1).arg(what).arg(g.distanceMm, 0, 'f', 1),
-            true);
-    } else {
-        m_sidePanel->setPoseGuide(
-            hasOri
-                ? QStringLiteral("最近第 %1 组：间距 %2 mm / 角差 %3°，分散度良好")
-                      .arg(g.refIndex + 1)
-                      .arg(g.distanceMm, 0, 'f', 1).arg(g.angleDeg, 0, 'f', 1)
-                : QStringLiteral("最近第 %1 组：间距 %2 mm，分散度良好")
-                      .arg(g.refIndex + 1).arg(g.distanceMm, 0, 'f', 1),
-            false);
-    }
+    const GuidanceText::Message msg = GuidanceText::poseGuideMessage(g, hasOri, what);
+    m_sidePanel->setPoseGuide(msg.text, msg.warn);
 }
 
 void MainWindow::refreshQualityReport()
@@ -1430,49 +1410,7 @@ void MainWindow::refreshQualityReport()
     params.source = source;
     const DataQualityCheck::Report rep = DataQualityCheck::run(records, params);
 
-    auto levelColor = [](DataQualityCheck::Level lvl) -> QString {
-        switch (lvl) {
-        case DataQualityCheck::Level::Pass: return QStringLiteral("#52C41A");
-        case DataQualityCheck::Level::Warn: return QStringLiteral("#FAAD14");
-        case DataQualityCheck::Level::Fail: return QStringLiteral("#F5222D");
-        case DataQualityCheck::Level::NotApplicable: return QStringLiteral("#8C8C8C");
-        }
-        return QStringLiteral("#8C8C8C");
-    };
-    auto levelTag = [](DataQualityCheck::Level lvl) -> QString {
-        switch (lvl) {
-        case DataQualityCheck::Level::Pass: return QStringLiteral("通过");
-        case DataQualityCheck::Level::Warn: return QStringLiteral("提示");
-        case DataQualityCheck::Level::Fail: return QStringLiteral("不足");
-        case DataQualityCheck::Level::NotApplicable: return QStringLiteral("不适用");
-        }
-        return QStringLiteral("—");
-    };
-
-    QString html = QStringLiteral("<p style='margin:2px 0;'><b>总体：%1</b></p>")
-                       .arg(rep.overall.toHtmlEscaped());
-
-    auto appendCheck = [&](const QString& name, const DataQualityCheck::Check& c) {
-        html += QStringLiteral("<p style='margin:3px 0; color:%1;'>%2 <b>%3</b>：%4</p>")
-                    .arg(levelColor(c.level),
-                         levelTag(c.level),
-                         name,
-                         c.summary.toHtmlEscaped());
-        for (const auto& d : c.details)
-            html += QStringLiteral("<p style='margin:1px 0 1px 12px; font-size:11px; color:#8C8C8C;'>· %1</p>")
-                        .arg(d.toHtmlEscaped());
-    };
-
-    appendCheck(QStringLiteral("数量"), rep.count);
-    appendCheck(QStringLiteral("数据源"), rep.source);
-    appendCheck(QStringLiteral("近重复"), rep.nearDup);
-    appendCheck(QStringLiteral("离群"), rep.outlier);
-    appendCheck(QStringLiteral("相机目标点"), rep.cameraTarget);
-    appendCheck(QStringLiteral("单帧误差"), rep.frameError);
-    appendCheck(QStringLiteral("标记点数"), rep.detection);
-    appendCheck(QStringLiteral("分散度"), rep.spread);
-
-    m_sidePanel->setQualityReport(html);
+    m_sidePanel->setQualityReport(GuidanceText::qualityReportHtml(rep));
 }
 
 void MainWindow::onBoardMarkers(const std::vector<std::array<float, 3>>& pts3d)

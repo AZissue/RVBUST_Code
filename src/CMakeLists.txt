@@ -22,6 +22,11 @@ set(SOURCES
     logic/FrameBuffer.cpp
     # 最近一帧的 grid / correspond / 原生检测缓存（纯值对象，可单测）
     logic/CameraFrameCache.cpp
+    # 健康扫描 / 有界自动重连的定时器与尝试预算（纯策略，可单测）
+    logic/CameraHealthMonitor.cpp
+    logic/CameraHealthMonitor.h
+    # 位姿引导与质检报告的文案/HTML（header-only 纯函数，可单测）
+    logic/GuidanceText.h
     logic/UiStallWatchdog.cpp
     logic/PointCloudUtils.cpp
     logic/CalibrationService.cpp
