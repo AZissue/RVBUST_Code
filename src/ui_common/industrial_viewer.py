@@ -27,6 +27,8 @@ class IndustrialViewer(QWidget):
         super().__init__(parent)
         self._pcds = {}
         self._merged = None
+        self._database_cloud = None
+        self._database_previous_mode = None
         self._reference = None
         self._highlights = {}
         self._collapsed = False
@@ -131,10 +133,12 @@ class IndustrialViewer(QWidget):
         text = f'{self.canvas.backend_name} | 原始 {self.canvas.total_points:,} / 显示 {self.canvas.displayed_points:,} 点'
         self.status.setText(text)
 
-    def _refresh(self, *_):
+    def _refresh(self, *_, fit=False):
         selected = self.mode.currentData()
         clouds = {'__merged__':self._merged} if selected == '__merged__' else self._pcds
-        if selected not in (None,'__merged__'):
+        if selected == '__db_frame__':
+            clouds = {'DB原始单帧 / 相机坐标': self._database_cloud}
+        elif selected not in (None,'__merged__'):
             clouds = {selected:self._pcds.get(selected)}
         layers = []
         for key, cloud in clouds.items():
@@ -151,7 +155,7 @@ class IndustrialViewer(QWidget):
                 colors[ids] = [1., .3, .3]
             layers.append(DisplayLayer(key, np.asarray(cloud.points), colors))
         self._layers = layers
-        self.canvas.set_layers(layers, fit=self.canvas.total_points == 0)
+        self.canvas.set_layers(layers, fit=fit or self.canvas.total_points == 0)
 
     def set_pointcloud(self, camera_id, pcd):
         if pcd is None:
@@ -176,6 +180,7 @@ class IndustrialViewer(QWidget):
     def clear_all(self):
         self._pcds.clear()
         self._merged = None
+        self._database_cloud = None
         self._highlights.clear()
         self.mode.blockSignals(True)
         while self.mode.count() > 2:
@@ -186,6 +191,26 @@ class IndustrialViewer(QWidget):
 
     def reset_view(self):
         self.canvas.fit_view()
+
+    def show_database_frame(self, cloud):
+        self.mode.blockSignals(True)
+        if cloud is not None:
+            if self.mode.currentData() != '__db_frame__':
+                self._database_previous_mode = self.mode.currentData()
+            self._database_cloud = cloud
+            if self.mode.findData('__db_frame__') < 0:
+                self.mode.addItem('DB原始单帧 / 相机坐标', '__db_frame__')
+            self.mode.setCurrentIndex(self.mode.findData('__db_frame__'))
+        else:
+            self._database_cloud = None
+            restore_mode = self._database_previous_mode if self.mode.currentData() == '__db_frame__' else self.mode.currentData()
+            index = self.mode.findData('__db_frame__')
+            if index >= 0:
+                self.mode.removeItem(index)
+            index = self.mode.findData(restore_mode)
+            self.mode.setCurrentIndex(max(0, index))
+        self.mode.blockSignals(False)
+        self._refresh(fit=True)
 
     def set_view_preset(self, name):
         self.canvas.set_view({'iso':'等轴测','top':'顶视','front':'正视','side':'右视','right':'右视'}.get(name,name))

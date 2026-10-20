@@ -82,9 +82,12 @@ class CloudCanvas(NavigationMixin, QWidget):
             if not count:
                 continue
             idx = np.linspace(0, len(layer.points) - 1, count, dtype=int)
-            points.append(layer.points[idx])
-            colors.append(layer.colors[idx] if layer.colors is not None else
-                          np.tile([.66, .81, .91], (count, 1)))
+            sample = np.asarray(layer.points)[idx]
+            valid = np.isfinite(sample).all(axis=1) & (np.abs(sample).sum(axis=1) > 0)
+            sample = sample[valid]
+            points.append(sample)
+            colors.append(np.asarray(layer.colors)[idx][valid] if layer.colors is not None else
+                          np.tile([.66, .81, .91], (len(sample), 1)))
         self._points = np.vstack(points) if points else np.empty((0, 3))
         self._colors = np.vstack(colors) if colors else np.empty((0, 3))
         if fit:

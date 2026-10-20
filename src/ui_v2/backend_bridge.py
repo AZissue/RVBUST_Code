@@ -166,6 +166,9 @@ class BackendBridge(QObject):
         # Offline preview never initializes the SDK. Hardware entry points opt in.
         self._sdk_initialized = False
         self.offline_preview = False
+        from .frame_database import FrameDatabaseController
+        self.frame_db = FrameDatabaseController(self)
+        self.camera_manager.capture_sink = self.frame_db.capture
 
     def _ensure_sdk(self):
         if not getattr(self, '_sdk_initialized', False):
@@ -549,6 +552,8 @@ class BackendBridge(QObject):
                 f"设备连接完成: {ok_count}/{real_count} 台真实相机成功，"
                 f"测试设备 {test_count} 台", "info")
             self._current_mode = mode
+            if self.shell._presentation == 'industrial':
+                self.frame_db.databases[mode].begin_session('相机采集')
 
             # 若用户勾选了真实相机但全部连接失败，阻断进入工作区并给出排查建议
             if real_count > 0 and ok_count == 0:
@@ -2186,13 +2191,32 @@ class BackendBridge(QObject):
         if name is None:
             import traceback
             name = traceback.extract_stack()[-2].name
-        worker = WorkerThread(work)
+        if name not in ('offline_preview', 'db_frame_preview', 'db_open_project') and self.shell._presentation == 'industrial':
+            self.frame_db.restore(self._current_mode)
+        def archive_work():
+            result = work()
+            if name not in ('offline_preview', 'db_frame_preview', 'db_open_project'):
+                self.frame_db.archive_context(result)
+            return result
+        worker = WorkerThread(archive_work)
         worker._task_name = name
         worker._must_finish = must_finish
         self._workers.append(worker)
 
         def _wrapped_done(result, error):
+            update_metadata = name not in ('offline_preview', 'db_frame_preview', 'db_open_project')
+            if error is None and update_metadata:
+                try:
+                    self.frame_db.synchronize(result)
+                    self.frame_db._changed(self._current_mode)
+                except Exception as exc:
+                    self.shell.log('DB元数据更新失败：' + str(exc), 'error')
             on_done(result, error)
+            if error is None and update_metadata:
+                try:
+                    self.frame_db.synchronize()
+                except Exception as exc:
+                    self.shell.log('DB元数据更新失败：' + str(exc), 'error')
 
         worker.result_ready.connect(_wrapped_done)
         # 基类 QThread.finished：线程真正退出后才摘除引用并交 Qt 回收。

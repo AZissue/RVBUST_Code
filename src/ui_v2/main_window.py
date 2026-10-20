@@ -126,6 +126,10 @@ class MainWindowShell(QMainWindow):
         self._stack.addWidget(self._ws_multi)
         self._stack.addWidget(self._ws_mobile)
         self._stack.addWidget(self._ws_turntable)
+        from core.frame_database import FrameDatabase
+        self._frame_databases = {mode: FrameDatabase(mode) for mode in LauncherDialog.MODE_NAMES}
+        for mode, workspace in zip(LauncherDialog.MODE_NAMES, (self._ws_multi, self._ws_mobile, self._ws_turntable)):
+            workspace.frame_database = self._frame_databases[mode]
 
         # 工作区日志统一汇入日志面板与状态栏
         self._ws_multi.log_message.connect(self.log)
@@ -332,7 +336,11 @@ class MainWindowShell(QMainWindow):
     def _apply_presentation(self):
         from .industrial_presentation import set_presentation
         industrial = self._presentation == 'industrial'
+        if not industrial and self._backend_bridge is not None and hasattr(self._backend_bridge, 'frame_db'):
+            self._backend_bridge.frame_db.restore(self._mode)
         set_presentation(self._stack.currentWidget(), self._mode, industrial)
+        if industrial and self._backend_bridge is not None and hasattr(self._backend_bridge, 'frame_db'):
+            self._backend_bridge.frame_db.bind(self._mode, self._stack.currentWidget()._industrial.frame_browser)
         from .theme import LAUNCHER_QSS
         self.setStyleSheet(LAUNCHER_QSS if industrial else '')
         self._toolbar.setVisible(not industrial)
@@ -365,6 +373,9 @@ class MainWindowShell(QMainWindow):
     def set_backend_bridge(self, bridge: 'BackendBridge'):
         """设置后端桥接器引用（用于设备枚举等 core 操作）。"""
         self._backend_bridge = bridge
+        for mode, workspace in zip(LauncherDialog.MODE_NAMES, (self._ws_multi, self._ws_mobile, self._ws_turntable)):
+            if hasattr(workspace, '_industrial') and hasattr(bridge, 'frame_db'):
+                bridge.frame_db.bind(mode, workspace._industrial.frame_browser)
 
     # ------------------------------------------------------------ 参数调试（打开 RVCManager）
     def open_param_debug(self):

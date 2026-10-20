@@ -332,6 +332,7 @@ class CameraManager:
     def __init__(self):
         self._cameras: Dict[str, SingleCameraController] = {}
         self._frame_counter = 0  # 全局帧号（每次 capture_all 递增）
+        self.capture_sink = None  # Optional raw-frame archive, installed by new UI.
 
     # ------------------------------------------------------------------
     # RVC 系统初始化（引用计数）
@@ -640,12 +641,24 @@ class CameraManager:
         if frame_id is None:
             self._frame_counter += 1
             frame_id = self._frame_counter
-        img, pm, rvc_img, msg = cam.capture_3d(options)
-        if img is None:
-            logger.error(f"capture {camera_id} 失败: {msg}")
-            return None
-        return FrameData(frame_id=frame_id, camera_name=camera_id,
-                         image_np=img, pointmap=pm, rvc_image=rvc_img)
+        with rvc_sdk_lock:
+            img, pm, rvc_img, msg = cam.capture_3d(options)
+            if img is None:
+                logger.error(f"capture {camera_id} 失败: {msg}")
+                return None
+            frame = FrameData(frame_id=frame_id, camera_name=camera_id,
+                              image_np=img, pointmap=pm, rvc_image=rvc_img)
+            capture_sink = getattr(self, 'capture_sink', None)
+            if capture_sink is not None:
+                try:
+                    stored = capture_sink(frame)
+                    if isinstance(stored, FrameData) and stored is not frame:
+                        frame.release_rvc()
+                        return stored
+                except Exception:
+                    frame.release_rvc()
+                    raise
+            return frame
 
     def capture_all(self, camera_ids: Optional[List[str]] = None,
                     sync: bool = True, options=None) -> Dict[str, FrameData]:

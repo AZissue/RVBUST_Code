@@ -35,6 +35,10 @@ class OfflinePreviewTests(unittest.TestCase):
         self.hardware = patch.object(CameraManager, 'initialize', side_effect=AssertionError('SDK used'))
         self.hardware.start()
         self.win = MainWindowShell()
+        self.storage = tempfile.TemporaryDirectory()
+        self.addCleanup(self.storage.cleanup)
+        for mode, database in self.win._frame_databases.items():
+            database.directory = Path(self.storage.name) / mode
         self.bridge = BackendBridge(self.win)
         self.bridge.wire_all()
         self.win.set_backend_bridge(self.bridge)
@@ -61,8 +65,13 @@ class OfflinePreviewTests(unittest.TestCase):
         for i in range(2):
             cloud = o3d.geometry.PointCloud()
             cloud.points = o3d.utility.Vector3dVector(np.arange(30).reshape(10, 3).astype(float))
+            source = Path(self.storage.name) / f'input_{i}.ply'
+            image = Path(self.storage.name) / f'input_{i}.png'
+            o3d.io.write_point_cloud(str(source), cloud)
+            cv2.imwrite(str(image), np.zeros((20, 30, 3), np.uint8))
             frame = FrameData(i + 1, f'cam{i}', image_np=np.zeros((20, 30, 3), np.uint8),
-                              is_offline=True, kind='calib', markers=[], markers_all=[])
+                              is_offline=True, kind='calib', markers=[], markers_all=[],
+                              offline_pointmap_path=str(source), offline_image_path=str(image))
             records.append((frame, cloud))
         return records
 

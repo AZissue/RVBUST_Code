@@ -105,7 +105,19 @@ class IndustrialPresentation:
         self.controls.setContentsMargins(0, 0, 6, 0)
         self.controls.setSpacing(8)
         self.sidebar.setWidget(content)
-        self.body.addWidget(self.sidebar)
+        self.side_column = QSplitter(Qt.Vertical)
+        self.side_column.setChildrenCollapsible(False)
+        self.side_column.setMinimumWidth(290)
+        self.side_column.setMaximumWidth(420)
+        from core.frame_database import FrameDatabase
+        from .frame_database import FrameBrowser
+        if not hasattr(workspace, 'frame_database'):
+            workspace.frame_database = FrameDatabase(mode)
+        self.frame_browser = FrameBrowser(workspace.frame_database)
+        self.side_column.addWidget(self.frame_browser)
+        self.side_column.addWidget(self.sidebar)
+        self.side_column.setSizes([320, 440])
+        self.body.addWidget(self.side_column)
         self.stage = QWidget()
         stage = QVBoxLayout(self.stage)
         stage.setContentsMargins(0, 0, 0, 0)
@@ -115,6 +127,7 @@ class IndustrialPresentation:
         self.body.setSizes([320, 1120])
         self.overlay = None
         self.inspector = None
+        self._business_marker_image = None
         self.grid = None
         if mode == 'multi_cam':
             self._mount(workspace._left_widget, self.controls)
@@ -231,6 +244,7 @@ class IndustrialPresentation:
             self.inspector.bind_viewport(canvas)
 
     def maximize(self, enabled):
+        self.side_column.setVisible(not enabled)
         self.sidebar.setVisible(not enabled)
         if self.overlay:
             self.overlay.setVisible(False if self.inspector else not enabled)
@@ -244,8 +258,7 @@ class IndustrialPresentation:
 
     def _preview_frame(self, pixmap):
         if self.inspector:
-            self.inspector.set_frame(pixmap.toImage() if pixmap is not None else None,
-                                     [], current_visible=False)
+            self.set_marker_image(pixmap.toImage() if pixmap is not None else None, [])
 
     def _marker_context(self, frame, reference=None, accepted=None):
         if frame is None:
@@ -260,11 +273,25 @@ class IndustrialPresentation:
 
     def set_marker_image(self, image, markers, reference=None, accepted=None,
                          *, frame_id='—', reference_id='参考帧'):
+        self._business_marker_image = ((image, markers, reference, accepted),
+                                       dict(frame_id=frame_id, reference_id=reference_id))
         if self.inspector:
             self.inspector.set_frame(image, markers or [], frame_id=frame_id,
                 reference_id=reference_id if reference is not None else None,
                 reference_markers=reference, registration_accepted=accepted,
                 current_visible=False)
+
+    def show_database_image(self, frame):
+        if self.inspector:
+            self.inspector.set_frame(frame.image_np, frame.markers_all or frame.markers,
+                frame_id=f'DB原始帧 {frame.frame_id}', current_visible=False)
+
+    def restore_business_image(self):
+        if self._business_marker_image:
+            args, kwargs = self._business_marker_image
+            self.set_marker_image(*args, **kwargs)
+        elif self.inspector:
+            self.inspector.set_frame(None, [], current_visible=False)
 
 
 def set_presentation(workspace, mode, enabled):

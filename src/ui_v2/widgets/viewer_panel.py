@@ -35,6 +35,7 @@ class ViewerPanel(QFrame):
         self._title = title
         self._clouds = {}
         self._merged = None
+        self._database_cloud = None
         self._reference = None
         self._industrial_enabled = False
         self._retired = []
@@ -83,6 +84,8 @@ class ViewerPanel(QFrame):
         if self._merged is not None:
             candidate.set_pointcloud_merged(self._merged)
         candidate.show()
+        if enabled and self._database_cloud is not None:
+            candidate.show_database_frame(self._database_cloud)
 
     def _release_retired(self):
         from PySide6.QtCore import QTimer
@@ -127,10 +130,16 @@ class ViewerPanel(QFrame):
     def clear_all(self):
         self._clouds.clear()
         self._merged = None
+        self._database_cloud = None
         self._viewer.clear_all()
 
     def reset_view(self):
         self._viewer.reset_view()
+
+    def show_database_frame(self, cloud):
+        self._database_cloud = cloud
+        if hasattr(self._viewer, 'show_database_frame'):
+            self._viewer.show_database_frame(cloud)
 
     def set_view_preset(self, name: str):
         self._viewer.set_view_preset(name)

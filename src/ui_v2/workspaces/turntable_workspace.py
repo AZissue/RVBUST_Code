@@ -640,6 +640,7 @@ class TurntableWorkspace(QWidget):
             frame = self.cam_mgr.capture("cam0")
             if frame is None:
                 raise RuntimeError("拍摄失败")
+            frame.kind = '转台标定 frame0' if is_frame0 else '转台标定 frame1'
             pcd = _pcd_from_frame(frame)
             if pcd is None:
                 raise RuntimeError("点云获取失败")
@@ -647,9 +648,12 @@ class TurntableWorkspace(QWidget):
             # 标定仍使用下方过滤后的 markers_valid
             markers = self.marker_detector.detect_3d(
                 frame.image_np, frame.pointmap, frame.rvc_image,
+                offline_ply_path=frame.offline_pointmap_path,
                 include_invalid=True,
             ) if self.marker_detector else []
             markers_valid = [m for m in markers if m.get('valid_3d', True)]
+            frame.markers_all = markers
+            frame.markers = markers_valid
             return frame, pcd, markers, markers_valid
 
         def _done(result):
@@ -831,6 +835,7 @@ class TurntableWorkspace(QWidget):
             if self.marker_detector is not None:
                 markers_all = self.marker_detector.detect_3d(
                     frame.image_np, frame.pointmap, frame.rvc_image,
+                    offline_ply_path=frame.offline_pointmap_path,
                     include_invalid=True)
                 markers = [m for m in markers_all if m.get('valid_3d', True)]
                 frame.markers_all = markers_all
@@ -840,6 +845,7 @@ class TurntableWorkspace(QWidget):
         def _done(result):
             frame, pcd, markers, markers_all = result
             self.session.add_sequence_frame(frame, pcd, markers=markers)
+            frame.kind = '转台扫描'
             step_idx = self.session.current_step
             total = self.session.total_steps_needed()
             n_valid = len(markers)

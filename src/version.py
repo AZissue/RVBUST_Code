@@ -2,8 +2,8 @@
 """版本控制模块 — MultiCameraCalibration
 
 版本规则（语义化版本）：
-  - PATCH → 缺陷修复、局部UI/文案调整、独立文档/测试更新
-  - MINOR → 兼容性新增功能、完整子功能、保持业务契约的模块重构
+  - PATCH → 默认选择：修复、UI调整、兼容性小功能及渐进优化
+  - MINOR → 完整功能阶段、较大流程扩展或中等以上规模的整体重构
   - MAJOR → 不兼容变更、核心架构替换或明确的大版本发布
   - 每个独立交付批次按最高级别升号，并同步根目录 CHANGELOG.md。
   - 完整规则见 CONTRIBUTING.md 和 AGENTS.md。
@@ -12,7 +12,7 @@
   v1.0.1+g<hash>
 """
 
-__VERSION__ = "1.12.2"
+__VERSION__ = "1.12.3"
 __VERSION_FILE__ = __file__
 
 

@@ -25,6 +25,14 @@ def open_preview(bridge, mode, on_finished=None):
 
     def work():
         records = load_stool()
+        database = bridge.frame_db.databases[mode]
+        database.begin_session('凳子离线数据')
+        for index, (frame, _) in enumerate(records):
+            purpose = '标定数据' if mode == 'multi_cam' else '移动机位' if mode == 'mobile_chain' else f'转台标定 frame{index}'
+            if mode == 'turntable':
+                frame.kind = purpose
+            database.ingest(frame, purpose=purpose, camera=frame.camera_name if mode == 'multi_cam' else 'cam0',
+                            logical_name=f'station_{index+1}' if mode == 'mobile_chain' else frame.camera_name)
         mobile = None
         merged = None
         if mode == 'mobile_chain':
@@ -47,6 +55,11 @@ def open_preview(bridge, mode, on_finished=None):
                 saved_markers = {f'station_{index}': frame.markers_all
                                  for index, (frame, _) in enumerate(records, 1)}
                 ok, message = mobile.load_session_dir(str(session), saved_markers=saved_markers)
+                manager = mobile.station_manager
+                for index, (source, _) in enumerate(records, 1):
+                    loaded = manager.get_frame(f'station_{index}') if manager else None
+                    if loaded:
+                        loaded.database_id = source.database_id
                 if not ok or len(mobile.get_station_evaluations()) != len(records):
                     raise ValueError('离线链式拼接未完整加载两帧：' + message)
                 merged = mobile.get_merged_pointcloud()
@@ -120,6 +133,7 @@ def open_preview(bridge, mode, on_finished=None):
         shell.set_dirty(False)
         shell._refresh_statusbar()
         shell.log(message, 'success')
+        bridge.frame_db.synchronize()
         if on_finished:
             on_finished(True, message)
 

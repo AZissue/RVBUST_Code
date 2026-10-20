@@ -57,6 +57,9 @@ with patch.object(CameraManager, 'initialize', side_effect=AssertionError('SDK i
             assert complete[0][0], complete
             assert bridge.camera_manager.get_connected_ids() == []
             assert win.current_mode() == mode and win.current_presentation() == 'industrial'
+            database = bridge.frame_db.databases[mode]
+            browser = win._stack.currentWidget()._industrial.frame_browser
+            assert len(database.records) == 2 and len(browser._items) == 2
             if mode == 'multi_cam':
                 assert len(bridge.fixed_workflow.frames_calib) == 2
                 bridge._on_multi_calibrate()
@@ -69,8 +72,12 @@ with patch.object(CameraManager, 'initialize', side_effect=AssertionError('SDK i
                 assert len(win.workspace_mobile().viewer()._merged.points) > 1000000
                 source = ROOT / 'offline_test_data' / 'stool' / 'frame_2.zip'
                 bridge._on_mobile_station_selected(1)
-                ok, message = bridge.mobile_workflow.undo_last_station()
-                assert ok, message
+                bridge._on_mobile_undo()
+                wait_for(lambda: not any(w.isRunning() for w in bridge._workers))
+                app.processEvents()
+                assert len(bridge.mobile_workflow.get_station_evaluations()) == 1
+                assert len(database.records) == 2
+                assert any('退出拼接' in row.status for row in database.records.values())
                 assert source.exists()
                 assert (ROOT / 'offline_test_data' / 'stool' / '.cache' / '2.ply').exists()
             else:
@@ -81,6 +88,26 @@ with patch.object(CameraManager, 'initialize', side_effect=AssertionError('SDK i
                       win.workspace_mobile().viewer() if mode == 'mobile_chain' else win.workspace_turntable().viewer)
             canvas = viewer._viewer.canvas
             wait_for(lambda: not canvas.is_busy)
+            wait_for(lambda: not any(w.isRunning() for w in bridge._workers))
+            uid = next(iter(database.records))
+            browser.tree.setCurrentItem(browser._items[uid])
+            wait_for(lambda: viewer._database_cloud is not None)
+            wait_for(lambda: not viewer._viewer.canvas.is_busy)
+            scene = getattr(viewer._viewer.canvas, 'scene', None)
+            if scene is not None:
+                import numpy as np
+                assert scene.bounds is not None and np.isfinite(scene.bounds).all()
+                assert scene.stored_points > 1000000
+            assert len(viewer._database_cloud.points) == database.records[uid].points
+            assert browser.image._pixmap is not None and not browser.image._pixmap.isNull()
+            assert len(database.records) == 2
+            for _ in range(10):
+                app.processEvents()
+                time.sleep(.02)
+            assert win.grab().save(str(report / f'db_{mode}.png'))
+            browser.restore_button.click()
+            wait_for(lambda: not viewer._viewer.canvas.is_busy)
+            assert viewer._database_cloud is None
             for _ in range(20):
                 app.processEvents()
                 time.sleep(.02)

@@ -78,6 +78,7 @@ class PackedFrame:
     packed: np.ndarray
     origin: np.ndarray
     bounds: np.ndarray
+    valid_indices: object = None
 
     @property
     def key(self):
@@ -105,11 +106,26 @@ class FrameRenderCache:
         self._frames = {}
 
     def prepare(self, sources, policy):
-        sizes = [min(len(source.points), policy.per_frame_points) for source in sources]
+        geometry = []
+        for source in sources:
+            old = self._frames.get(source.key)
+            if old is not None:
+                indices, bounds = old.valid_indices, old.bounds
+                size = len(indices) if indices is not None else len(source.points)
+            else:
+                valid = np.isfinite(source.points).all(axis=1) & (np.abs(source.points).sum(axis=1) > 0)
+                indices = None if valid.all() else np.flatnonzero(valid)
+                points = source.points if indices is None else source.points[indices]
+                size = len(points)
+                bounds = np.array([points.min(axis=0), points.max(axis=0)]) if size else None
+                if indices is not None:
+                    indices.setflags(write=False)
+            geometry.append((indices, bounds, size))
+        sizes = [min(size, policy.per_frame_points) for _, _, size in geometry]
         counts = allocate_counts(sizes, policy.static_points)
         frames, drawn, current, builds = [], [], {}, 0
         # Copy the dict: old scene arrays remain owned by old GUI snapshots.
-        for source, target in zip(sources, counts):
+        for source, target, (valid_indices, bounds, size) in zip(sources, counts, geometry):
             if not target:
                 continue
             old = self._frames.get(source.key)
@@ -117,14 +133,15 @@ class FrameRenderCache:
                 frame = old
             else:
                 if old is None:
-                    bounds = np.array([source.points.min(axis=0), source.points.max(axis=0)])
                     origin = (bounds[0] + bounds[1]) * .5
                 else:
                     bounds, origin = old.bounds, old.origin
                 packed = np.empty(target, dtype=PACK_DTYPE)
                 for start in range(0, target, 262144):
                     count = min(262144, target - start)
-                    idx = progressive_indices(len(source.points), count, start)
+                    idx = progressive_indices(size, count, start)
+                    if valid_indices is not None:
+                        idx = valid_indices[idx]
                     block = packed[start:start + count]
                     # Subtract a local float64 origin before float32 conversion.
                     block['position'] = source.points[idx] - origin
@@ -134,7 +151,7 @@ class FrameRenderCache:
                         block['color'][:, :3] = np.clip(source.colors[idx] * 255, 0, 255).astype(np.uint8)
                     block['color'][:, 3] = 255
                 packed.setflags(write=False)
-                frame = PackedFrame(source, packed, origin, bounds)
+                frame = PackedFrame(source, packed, origin, bounds, valid_indices)
                 builds += 1
             current[source.key] = frame
             frames.append(frame)
