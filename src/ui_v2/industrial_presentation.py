@@ -55,7 +55,13 @@ class _Mount:
     def move(self):
         self.widget.setMinimumSize(0, 0)
         self.widget.setMaximumSize(16777215, 16777215)
-        self.target.addWidget(self.widget)
+        # Controls belong before the trailing stretch. Appending after it can
+        # push the entire sidebar down once duplicate action buttons are hidden.
+        count = self.target.count()
+        if isinstance(self.target, (QVBoxLayout, QHBoxLayout)) and count and self.target.itemAt(count-1).spacerItem():
+            self.target.insertWidget(count-1, self.widget)
+        else:
+            self.target.addWidget(self.widget)
         self.widget.show()
 
     def restore(self):
@@ -86,8 +92,6 @@ class IndustrialPresentation:
         root = QVBoxLayout(self.surface)
         root.setContentsMargins(8, 8, 8, 8)
         root.setSpacing(8)
-        title = dict(multi_cam='多相机外参标定', mobile_chain='单相机移动链式拼接', turntable='转台拼接')[mode]
-        root.addWidget(QLabel('MCC / SCAN STUDIO     ' + title + ' · 新版工作区'))
         self.body = QSplitter(Qt.Horizontal)
         self.body.setChildrenCollapsible(False)
         root.addWidget(self.body, 1)
@@ -159,7 +163,9 @@ class IndustrialPresentation:
             else:
                 self._mount(workspace._left_panel, self.controls)
                 self._mount(workspace._preview_panel, preview)
-        self.controls.addStretch(1)
+        # Turntable already contains a scroll area; let it fill the sidebar.
+        if mode != 'turntable':
+            self.controls.addStretch(1)
         self.stack.addWidget(self.surface)
         self.stack.setCurrentWidget(self.classic)
 

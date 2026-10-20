@@ -84,6 +84,12 @@ with patch.object(CameraManager, 'initialize', side_effect=AssertionError('SDK i
             for _ in range(20):
                 app.processEvents()
                 time.sleep(.02)
+            ribbon = win._industrial_ribbon
+            assert not ribbon.isHidden() and win._toolbar.isHidden()
+            shot = report / f'offline_{mode}_viewport.png'
+            with patch('ui_v2.industrial_ribbon.QFileDialog.getSaveFileName', return_value=(str(shot), '')):
+                ribbon.commands[(mode, 'screenshot')].click()
+            assert shot.exists() and shot.stat().st_size > 100
             assert win.grab().save(str(report / f'offline_{mode}.png'))
             print('PASS', mode, complete[0][1], flush=True)
     finally:

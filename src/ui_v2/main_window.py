@@ -158,6 +158,10 @@ class MainWindowShell(QMainWindow):
         self._overlay = LoadingOverlay(self)
         self._overlay.hide()
 
+        from .industrial_ribbon import IndustrialRibbon
+        self._industrial_ribbon = IndustrialRibbon(self)
+        root.insertWidget(0, self._industrial_ribbon)
+
     def _build_toolbar(self) -> QWidget:
         bar = QWidget()
         bar.setStyleSheet("background-color: #26272E; border-bottom: 1px solid #3A3D46;")
@@ -331,6 +335,8 @@ class MainWindowShell(QMainWindow):
         set_presentation(self._stack.currentWidget(), self._mode, industrial)
         from .theme import LAUNCHER_QSS
         self.setStyleSheet(LAUNCHER_QSS if industrial else '')
+        self._toolbar.setVisible(not industrial)
+        self._industrial_ribbon.activate(industrial, self._mode)
         if hasattr(self, '_log_panel'):
             self._btn_log.setChecked(False)
             self._log_panel.hide()
@@ -581,6 +587,8 @@ class MainWindowShell(QMainWindow):
 
     # ------------------------------------------------------------ 内部
     def _refresh_statusbar(self):
+        if hasattr(self, '_industrial_ribbon'):
+            self._industrial_ribbon.update_status()
         mode_name = LauncherDialog.MODE_NAMES.get(self._mode, self._mode)
         self._st_mode.setText(mode_name)
         online = sum(1 for d in self._devices if d.online)
