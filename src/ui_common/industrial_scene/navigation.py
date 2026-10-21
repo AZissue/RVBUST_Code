@@ -19,6 +19,7 @@ class _RotationOverlay(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
         self.parentWidget()._paint_rotation_geometry(painter)
         self.parentWidget()._paint_cloud_markers(painter)
+        self.parentWidget()._paint_navigation_pivot(painter)
         painter.end()
 
 
@@ -33,9 +34,13 @@ class NavigationMixin:
         self._drag_button = Qt.NoButton
         self._last = None
         self._navigation_enabled = True
+        self._pivot_highlight = False
         self.setFocusPolicy(Qt.StrongFocus)
 
     def _notify_view_changed(self):
+        self._rotation_overlay.setVisible(self._rotation_geometry is not None or bool(self._cloud_markers)
+            or self._last is not None or self._pivot_highlight)
+        self._rotation_overlay.raise_()
         self._rotation_overlay.update()
         self.update()
         if hasattr(self, 'view_changed'):
@@ -47,14 +52,16 @@ class NavigationMixin:
             axis, center = np.asarray(axis, dtype=float), np.asarray(center, dtype=float)
             if axis.shape == (3,) and center.shape == (3,) and np.isfinite(axis).all() and np.isfinite(center).all() and np.linalg.norm(axis) > 1e-9:
                 self._rotation_geometry = (axis / np.linalg.norm(axis), center.copy())
-        self._rotation_overlay.setVisible(self._rotation_geometry is not None or bool(self._cloud_markers))
+        self._rotation_overlay.setVisible(self._rotation_geometry is not None or bool(self._cloud_markers)
+            or self._last is not None or self._pivot_highlight)
         self._rotation_overlay.raise_()
         self._rotation_overlay.update()
         self.update()
 
     def set_cloud_markers(self, points):
         self._cloud_markers = list(points)
-        self._rotation_overlay.setVisible(self._rotation_geometry is not None or bool(self._cloud_markers))
+        self._rotation_overlay.setVisible(self._rotation_geometry is not None or bool(self._cloud_markers)
+            or self._last is not None or self._pivot_highlight)
         self._rotation_overlay.raise_()
         self._rotation_overlay.update()
 
@@ -149,6 +156,42 @@ class NavigationMixin:
     def _pivot_pixel(self):
         return self.width()/2+self.pan[0], self.height()/2+self.pan[1]
 
+    def _paint_navigation_pivot(self, painter):
+        if self._last is None and not self._pivot_highlight:
+            return
+        from PySide6.QtCore import QPointF, QRectF
+        from PySide6.QtGui import QColor, QPen
+        x, y = self._pivot_pixel()
+        if not np.isfinite([x, y]).all() or not self.rect().contains(QPointF(x, y).toPoint()):
+            return
+        p = QPointF(x, y)
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setBrush(Qt.NoBrush)
+        # Fixed screen size and a dark halo stay legible on dense/light clouds.
+        for color, width in (('#171a20', 6), ('#ffe45c', 2.5)):
+            painter.setPen(QPen(QColor(color), width))
+            painter.drawEllipse(p, 12, 12)
+            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                painter.drawLine(p+QPointF(dx*7, dy*7), p+QPointF(dx*20, dy*20))
+        painter.setPen(QPen(QColor('#171a20'), 2))
+        painter.setBrush(QColor('#ffe45c'))
+        painter.drawEllipse(p, 3, 3)
+        font = painter.font()
+        font.setBold(True)
+        painter.setFont(font)
+        label = '旋转中心'
+        metrics = painter.fontMetrics()
+        w, h = metrics.horizontalAdvance(label)+16, metrics.height()+8
+        left = max(2, min(x+25, self.width()-w-2))
+        top = max(2, min(y-32, self.height()-h-2))
+        box = QRectF(left, top, w, h)
+        painter.setPen(QPen(QColor('#ffe45c'), 1))
+        painter.setBrush(QColor(23, 26, 32, 235))
+        painter.drawRoundedRect(box, 4, 4)
+        painter.drawText(box, Qt.AlignCenter, label)
+        painter.restore()
+
     def set_pivot(self, point):
         """Change orbit centre without a jump in the projected scene."""
         point = np.asarray(point, dtype=float)
@@ -156,6 +199,7 @@ class NavigationMixin:
         scale = min(self.width(), self.height())*1.65/self.extent*self.zoom
         self.pan += [shift[0]*scale, -shift[1]*scale]
         self.center = point.copy()
+        self._pivot_highlight = True
         self._notify_view_changed()
 
     def set_view(self, name):

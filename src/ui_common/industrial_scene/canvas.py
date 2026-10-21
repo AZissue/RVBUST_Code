@@ -96,6 +96,7 @@ class CloudCanvas(NavigationMixin, QWidget):
         self.status_changed.emit()
 
     def fit_view(self):
+        self._pivot_highlight = False
         if len(self._points):
             low, high = self._points.min(axis=0), self._points.max(axis=0)
             self.center = (low + high) / 2

@@ -229,10 +229,6 @@ class GpuCloudCanvas(NavigationMixin, QOpenGLWidget):
         painter.drawText(18, 28, f'{self.displayed_points:,} / {self.total_points:,} 点 · {"交互降采样" if self._moving else "静止细节"} · {self.policy_name}')
         painter.drawText(18, 48, '正在后台准备显示缓存…' if self.is_busy else self.backend_name)
         painter.drawText(18, self.height() - 18, '左键旋转 · 右键拖动平移 · 中键设旋转中心 · 滚轮缩放 · F/Z 适配')
-        if self._last is not None:
-            x, y = self._pivot_pixel()
-            painter.setPen(QPen(QColor('#cccccc'), 1))
-            painter.drawEllipse(int(x)-7, int(y)-7, 14, 14)
         if self.axes:
             for text, color, origin, end in self.axis_endpoints():
                 painter.setPen(QPen(QColor(color), 2))
@@ -357,6 +353,7 @@ class GpuCloudCanvas(NavigationMixin, QOpenGLWidget):
             self.doneCurrent()
 
     def fit_view(self):
+        self._pivot_highlight = False
         if self.scene is not None and self.scene.bounds is not None:
             low, high = self.scene.bounds
             self.center = (low + high) * .5
