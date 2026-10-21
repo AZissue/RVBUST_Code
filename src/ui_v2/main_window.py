@@ -164,6 +164,9 @@ class MainWindowShell(QMainWindow):
 
         self._content_split = QSplitter(Qt.Vertical)
         self._content_split.setChildrenCollapsible(False)
+        self._content_split.setHandleWidth(8)
+        self._stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Ignored)
+        self._stack.setMinimumHeight(160)
         self._content_split.addWidget(self._stack)
         root.addWidget(self._content_split, 1)
 
@@ -378,8 +381,11 @@ class MainWindowShell(QMainWindow):
             self._log_panel._docked = industrial
             if industrial:
                 self._content_split.addWidget(self._log_panel)
-                self._log_panel.setMinimumHeight(100)
-                self._log_panel.setMaximumHeight(380)
+                self._log_panel.setMinimumHeight(180)
+                self._log_panel.setMaximumHeight(16777215)
+                self._log_panel._text.setMinimumHeight(30)
+                self._content_split.setStretchFactor(0, 1)
+                self._content_split.setStretchFactor(1, 0)
             else:
                 self._log_panel.setParent(self)
                 self._log_panel.setMinimumHeight(0)
@@ -691,7 +697,9 @@ class MainWindowShell(QMainWindow):
     def _log_dock_toggle(self, checked: bool):
         if checked:
             if self._presentation == 'industrial':
-                self._content_split.setSizes([max(300, self.height()-270), 220])
+                self._log_panel.show()
+                height = self._content_split.height()
+                self._content_split.setSizes([max(160, height-240), 240])
             self._position_log_panel()
             self._log_panel.show()
             self._log_panel.raise_()

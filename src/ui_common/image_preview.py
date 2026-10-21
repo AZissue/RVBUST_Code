@@ -53,6 +53,7 @@ class AspectRatioLabel(QLabel):
         super().__init__(parent)
         self._appearance = appearance or ImagePreviewAppearance()
         self._ratio = ratio
+        self._fill = False
         self.setAlignment(Qt.AlignCenter)
         self.setStyleSheet(f"background-color: {self._appearance.background}; "
                           f"border: 1px solid {self._appearance.border};")
@@ -73,6 +74,11 @@ class AspectRatioLabel(QLabel):
 
     def clear_markers(self):
         self._markers = []
+        self.update()
+
+    def set_fill(self, enabled):
+        """Fill by proportional cropping; markers use the same transform."""
+        self._fill = bool(enabled)
         self.update()
 
     def setPixmap(self, pixmap):  # noqa: N802（保持 Qt 接口名）
@@ -98,7 +104,7 @@ class AspectRatioLabel(QLabel):
         # 在标签内居中按比例缩放绘制
         pw, ph = self._pixmap.width(), self._pixmap.height()
         lw, lh = self.width(), self.height()
-        scale = min(lw / pw, lh / ph)
+        scale = (max if self._fill else min)(lw / pw, lh / ph)
         sw, sh = int(pw * scale), int(ph * scale)
         x, y = (lw - sw) // 2, (lh - sh) // 2
         painter = QPainter(self)

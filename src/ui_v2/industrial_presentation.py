@@ -12,6 +12,10 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
 class _Viewport(QWidget):
     view_changed = Signal()
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.view_changed.emit()
+
 
 def _locate(layout, widget):
     if layout is None:
@@ -159,6 +163,18 @@ class IndustrialPresentation:
         if mode == 'multi_cam':
             self._mount(workspace._left_widget, self.controls)
             self._mount(workspace._right_widget, self.controls)
+            self.calibration_panel = QScrollArea()
+            self.calibration_panel.setWidgetResizable(True)
+            self.calibration_panel.setMinimumHeight(140)
+            result_content = QWidget()
+            result_layout = QVBoxLayout(result_content)
+            result_layout.setContentsMargins(0, 0, 0, 0)
+            self._mount(workspace._gate_card, result_layout)
+            self._mount(workspace._result_card, result_layout)
+            self.calibration_panel.setWidget(result_content)
+            self.side_column.insertWidget(1, self.calibration_panel)
+            self.side_column.setSizes([300, 300, 30])
+            self.frame_browser.calibration_selected.connect(self._show_calibration)
             self.view_bar = QWidget()
             bar = QHBoxLayout(self.view_bar)
             bar.setContentsMargins(0, 0, 0, 0)
@@ -186,14 +202,54 @@ class IndustrialPresentation:
             hint.setStyleSheet('color:#aaaaaa;')
             bar.addWidget(hint)
             stage.addWidget(self.view_bar)
+            self.preview_all = QToolButton()
+            self.preview_all.setText('全部开启2D')
+            self.preview_all.clicked.connect(lambda: self._preview_all(True))
+            bar.insertWidget(5, self.preview_all)
+            self.preview_stop = QToolButton()
+            self.preview_stop.setText('停止全部2D')
+            self.preview_stop.clicked.connect(lambda: self._preview_all(False))
+            bar.insertWidget(6, self.preview_stop)
             workspace._camera_grid.focus_changed.connect(self._camera_focus_changed)
             self.grid = QSplitter(Qt.Horizontal)
             self.grid.setChildrenCollapsible(False)
             stage.addWidget(self.grid, 1)
-            self._mount(workspace._camera_grid, self.grid)
-            self._mount(workspace._viewer, self.grid)
-            self.grid.setStretchFactor(0, 1)
-            self.grid.setStretchFactor(1, 2)
+            self.viewport = _Viewport()
+            self.viewport.view_changed.connect(self._size_preview)
+            self.scene = QGridLayout(self.viewport)
+            self.scene.setContentsMargins(0, 0, 0, 0)
+            self.grid.addWidget(self.viewport)
+            base = QWidget()
+            base_layout = QVBoxLayout(base)
+            base_layout.setContentsMargins(0, 0, 0, 0)
+            self._mount(workspace._viewer, base_layout)
+            self.scene.addWidget(base, 0, 0)
+            self.preview_panel = QWidget()
+            self.preview_panel.setStyleSheet('background:#28282c;border:1px solid #49494d;')
+            preview_layout = QVBoxLayout(self.preview_panel)
+            preview_layout.setContentsMargins(4, 4, 4, 4)
+            self.preview_toggle = QToolButton()
+            self.preview_toggle.setText('多相机 2D · 收起')
+            self.preview_toggle.setCheckable(True)
+            self.preview_toggle.setChecked(True)
+            self.preview_toggle.toggled.connect(self._toggle_preview)
+            preview_header = QHBoxLayout()
+            preview_header.addWidget(self.preview_toggle)
+            preview_layout.addLayout(preview_header)
+            self.fill_button = QToolButton()
+            self.fill_button.setText('铺满图像（裁边）')
+            self.fill_button.setToolTip('保持比例铺满，可裁去图像边缘；取消后显示完整图像，标记同步缩放。')
+            self.fill_button.setCheckable(True)
+            self.fill_button.setChecked(True)
+            self.fill_button.toggled.connect(self._fill_images)
+            preview_header.addWidget(self.fill_button)
+            self.preview_images = QWidget()
+            images_layout = QVBoxLayout(self.preview_images)
+            images_layout.setContentsMargins(0, 0, 0, 0)
+            self._mount(workspace._camera_grid, images_layout)
+            preview_layout.addWidget(self.preview_images, 1)
+            self.scene.addWidget(self.preview_panel, 0, 0, Qt.AlignTop | Qt.AlignRight)
+            self.preview_panel.raise_()
         else:
             viewport = _Viewport()
             self.viewport = viewport
@@ -285,6 +341,7 @@ class IndustrialPresentation:
         else:
             self.maximize(False)
             if self.grid:
+                self._fill_images(False)
                 self.workspace._camera_grid.set_overview(False)
             if self.inspector:
                 self.inspector.bind_viewport(self.viewport)
@@ -303,7 +360,7 @@ class IndustrialPresentation:
             self.workspace.refresh_marker_pair()
         viewer = self.workspace.viewer if self.mode == 'turntable' else self.workspace._viewer
         viewer.set_industrial(enabled)
-        if self.calibration_panel and enabled:
+        if self.calibration_panel and enabled and self.mode == 'turntable':
             self.calibration_panel.refresh()
         if self.inspector and enabled:
             self.inspector.bind_viewport(viewer.viewer().canvas)
@@ -323,6 +380,7 @@ class IndustrialPresentation:
         if self.mode == 'multi_cam':
             self.view_bar.setVisible(not enabled)
             if enabled:
+                self.preview_panel.hide()
                 self.workspace._camera_grid.hide()
                 self.workspace._viewer.show()
             else:
@@ -337,11 +395,58 @@ class IndustrialPresentation:
             return
         self._multi_view = view
         self.view_buttons[view].setChecked(True)
+        if view == '2d':
+            self.scene.removeWidget(self.preview_panel)
+            self.grid.insertWidget(0, self.preview_panel)
+            self.preview_panel.setMaximumSize(16777215, 16777215)
+            self.preview_panel.setMinimumSize(0, 0)
+            self.viewport.hide()
+        else:
+            self.scene.addWidget(self.preview_panel, 0, 0, Qt.AlignTop | Qt.AlignRight)
+            self.viewport.show()
+            self._size_preview()
+        self.preview_panel.setVisible(view != '3d')
+        self.preview_images.setVisible(view == '2d' or self.preview_toggle.isChecked())
+        self.fill_button.setVisible(view == '2d' or self.preview_toggle.isChecked())
         self.workspace._camera_grid.setVisible(view != '3d')
         self.workspace._viewer.setVisible(view != '2d')
-        if view == 'joint' and resize:
-            count = len(self.workspace._camera_grid.camera_ids())
-            self.grid.setSizes([380 if count <= 2 else 540, 820])
+        self.preview_panel.raise_()
+        self._fill_images(self.fill_button.isChecked())
+
+    def _toggle_preview(self, expanded):
+        self.preview_toggle.setText('多相机 2D · 收起' if expanded else '多相机 2D · 展开')
+        self.preview_images.setVisible(expanded or self._multi_view == '2d')
+        self.fill_button.setVisible(expanded or self._multi_view == '2d')
+        self._size_preview()
+
+    def _fill_images(self, enabled):
+        grid = self.workspace._camera_grid
+        for card in list(grid._cards.values()) + ([grid._database_card] if grid._database_card else []):
+            if hasattr(card._thumb, 'set_fill'):
+                card._thumb.set_fill(enabled)
+
+    def _size_preview(self):
+        if not hasattr(self, 'preview_panel') or self._multi_view == '2d':
+            return
+        width = min(620, max(260, int(self.viewport.width() * .55)))
+        self.preview_panel.setFixedWidth(width)
+        height = min(480, max(220, int(self.viewport.height() * .72)))
+        if not self.preview_toggle.isChecked():
+            height = self.preview_toggle.sizeHint().height() + 10
+        self.preview_panel.setFixedHeight(height)
+
+    def _preview_all(self, enabled):
+        # Drive the production buttons, preserving backend permission checks.
+        if enabled:
+            self.restore_business_image()
+        for card in self.workspace._camera_grid._cards.values():
+            if card._btn_preview.isEnabled():
+                card._btn_preview.setChecked(enabled)
+
+    def _show_calibration(self):
+        self.calibration_panel.show()
+        self.side_column.setSizes([280, 330, 30])
+        self.calibration_panel.ensureWidgetVisible(self.workspace._matrix_values)
 
     def _camera_focus_changed(self, camera_id):
         self.all_cameras_button.setEnabled(bool(camera_id))

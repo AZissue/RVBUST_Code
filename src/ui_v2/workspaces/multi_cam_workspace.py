@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
     QComboBox, QFrame, QGroupBox, QHBoxLayout, QLabel, QListWidget,
     QProgressBar, QPushButton, QRadioButton, QSpinBox, QSplitter,
     QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView,
-    QVBoxLayout, QWidget,
+    QVBoxLayout, QWidget, QPlainTextEdit,
 )
 
 from ..theme import (
@@ -319,6 +319,7 @@ class MultiCamWorkspace(QWidget):
 
         # ---- 标定结果 ----
         res_card, res_lo = self._section_card("标定结果")
+        self._result_card = res_card
         self._result_table = QTableWidget(0, 4)
         self._result_table.setHorizontalHeaderLabels(
             ["pair", "RMS(mm)", "内点率", "状态"])
@@ -327,11 +328,18 @@ class MultiCamWorkspace(QWidget):
         self._result_table.horizontalHeader().setSectionResizeMode(
             QHeaderView.Stretch)
         self._result_table.setMinimumHeight(120)
+        self._result_table.setMaximumHeight(160)
         res_lo.addWidget(self._result_table, 1)
+        self._matrix_values = QPlainTextEdit()
+        self._matrix_values.setReadOnly(True)
+        self._matrix_values.setMinimumHeight(85)
+        self._matrix_values.setPlaceholderText('尚无外参。计算或打开标定会话后显示 cam → ref 齐次矩阵，平移单位 mm。')
+        res_lo.addWidget(self._matrix_values)
         lo.addWidget(res_card, 1)
 
         # ---- 质量门禁 ----
         gate_card, gate_lo = self._section_card("质量门禁")
+        self._gate_card = gate_card
         score_row = QHBoxLayout()
         score_row.addWidget(QLabel("质量评分:"))
         self._score_bar = QProgressBar()
@@ -344,6 +352,9 @@ class MultiCamWorkspace(QWidget):
         self._gate_hint.setWordWrap(True)
         self._gate_hint.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 12px;")
         gate_lo.addWidget(self._gate_hint)
+        rules = QLabel('门禁：最大 RMS ≤ 2.0 mm，最小内点率 ≥ 50%。\n质量评分仅供参考；任一配对失败禁止扫描。')
+        rules.setWordWrap(True)
+        gate_lo.addWidget(rules)
         lo.addWidget(gate_card)
         return tab
 
@@ -580,6 +591,14 @@ class MultiCamWorkspace(QWidget):
             quality_passed  质量门禁结果（False 时扫描按钮保持置灰）
         """
         self._quality_passed = quality_passed
+        import numpy as np
+        matrices = []
+        for pair in pairs:
+            if pair.get('T') is not None:
+                matrices.append(pair['pair'] + ' · p_ref = T @ p_cam · 平移 mm\n' +
+                    np.array2string(np.asarray(pair['T']), precision=6, suppress_small=True))
+        self._matrix_values.setPlainText('\n\n'.join(matrices))
+        self._gate_card.setToolTip('业务门禁：所有所需相机可达参考相机，最大 RMS ≤ 2.0 mm，最小内点率 ≥ 50%。质量评分仅作参考。')
         self._score_bar.setValue(max(0, min(100, score)))
         self._result_table.setRowCount(len(pairs))
         level_style = {
@@ -615,6 +634,7 @@ class MultiCamWorkspace(QWidget):
     def clear_calibration_results(self):
         """清空标定结果表格、质量评分与门禁提示（重新标定时调用）。"""
         self._quality_passed = False
+        self._matrix_values.clear()
         self._score_bar.setValue(0)
         self._result_table.setRowCount(0)
         self._gate_hint.setText("质量门禁：任一 pair 未达标时禁止进入扫描")

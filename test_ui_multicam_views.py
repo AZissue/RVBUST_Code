@@ -45,18 +45,78 @@ class MulticamViewTests(unittest.TestCase):
         self.win.deleteLater()
         self.app.processEvents()
 
-    def test_joint_stacks_two_cameras_and_uses_height_with_readable_controls(self):
+    def test_joint_overlay_collapses_without_stopping_previews(self):
         self.assertEqual(self.presentation._multi_view, 'joint')
-        self.assertEqual(self.grid._last_cols, 1)
+        self.assertEqual(self.grid._last_cols, 2)
         cards = list(self.grid._cards.values())
-        self.assertGreater(cards[1].y(), cards[0].y())
-        bottom = cards[-1].y()+cards[-1].height()
-        self.assertLess(abs(bottom-self.grid.viewport().height()), 16)
         self.assertGreater(self.ws.viewer().width(), self.grid.width())
+        self.presentation.preview_all.click()
+        self.assertTrue(all(c._btn_preview.isChecked() for c in cards))
+        self.presentation.preview_toggle.click()
+        self.flush()
+        self.assertTrue(self.grid.isHidden() or self.presentation.preview_images.isHidden())
+        self.assertTrue(all(c._btn_preview.isChecked() for c in cards))
+        self.assertLess(self.presentation.preview_panel.height(), 70)
+        self.presentation.preview_toggle.click()
+        self.presentation.preview_stop.click()
+        self.assertTrue(all(not c._btn_preview.isChecked() for c in cards))
+        self.flush()
         for card in cards:
+            self.assertTrue(card._thumb._fill)
             self.assertLess(card._marker_badge.y(), card._btn_capture.y())
             for button in (card._btn_preview, card._btn_capture, card._btn_detect):
                 self.assertGreaterEqual(button.width(), 48)
+
+    def test_calibration_panel_and_log_can_expand(self):
+        ws = self.ws
+        ws.on_calibrate_done([dict(pair='cam1→cam0', rms_mm=.2, inlier_ratio=.9,
+                                  level='ok', T=np.eye(4))], 90, True)
+        ws.set_state('calibrated')
+        self.flush()
+        self.assertTrue(ws._result_card.isVisible())
+        self.assertTrue(ws._gate_card.isVisible())
+        self.assertIn('cam1→cam0', ws._matrix_values.toPlainText())
+        self.assertTrue(ws._btn_scan_capture.isEnabled())
+        ws.on_calibrate_done([], 0, False)
+        ws.set_state('calibrated')
+        self.assertFalse(ws._btn_scan_capture.isEnabled())
+        self.win._btn_log.setChecked(True)
+        self.flush()
+        before = self.win._log_panel.height()
+        split = self.win._content_split
+        split.moveSplitter(250, 1)
+        self.flush()
+        self.assertGreater(self.win._log_panel.height(), before)
+        self.assertGreaterEqual(self.win._log_panel._text.height(), 30)
+        self.assertLessEqual(self.win._log_panel.body.geometry().bottom(), self.win._log_panel.height())
+
+    def test_database_calibration_node_opens_new_panel_and_clear_removes_matrix(self):
+        browser = self.presentation.frame_browser
+        browser.database.project_title = '测试项目'
+        browser.database.has_calibration = True
+        browser.refresh()
+        root = browser.tree.topLevelItem(0)
+        parameters = root.child(0).child(0)
+        self.assertEqual(parameters.text(0), '标定参数')
+        self.presentation.calibration_panel.hide()
+        browser.tree.setCurrentItem(parameters)
+        self.flush()
+        self.assertTrue(self.presentation.calibration_panel.isVisible())
+        self.ws.on_calibrate_done([dict(pair='cam1→cam0', rms_mm=.2, inlier_ratio=.9,
+                                       T=np.eye(4))], 95, True)
+        self.ws.clear_calibration_results()
+        self.assertEqual(self.ws._matrix_values.toPlainText(), '')
+
+    def test_fill_switch_and_quality_levels_use_business_limits(self):
+        from types import SimpleNamespace
+        from ui_v2.backend_bridge import _pairs_from_engine
+        for rms, ratio, expected in ((1.8, .9, 'warn'), (2.01, .9, 'fail'), (.2, .49, 'fail')):
+            pairs = _pairs_from_engine(SimpleNamespace(pair_results={('cam0', 'cam1'):
+                dict(success=True, rms_mm=rms, inlier_ratio=ratio, T=np.eye(4))}))
+            self.assertEqual(pairs[0]['level'], expected)
+            np.testing.assert_array_equal(pairs[0]['T'], np.eye(4))
+        self.presentation.fill_button.click()
+        self.assertTrue(all(not c._thumb._fill for c in self.grid._cards.values()))
 
     def test_view_modes_and_double_click_focus_keep_exact_frames_and_actions(self):
         original = {cid: card.current_frame() for cid, card in self.grid._cards.items()}

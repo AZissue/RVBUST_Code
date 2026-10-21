@@ -15,6 +15,7 @@ from .dialogs import ChineseMessageBox as QMessageBox
 
 
 class FrameBrowser(QWidget):
+    calibration_selected = Signal()
     frame_selected = Signal(str)
     component_selected = Signal(str, str)
     open_requested = Signal()
@@ -159,6 +160,7 @@ class FrameBrowser(QWidget):
                 calibration_group.setIcon(0, icons.icon('folder_open', '#aaaaaa', 16))
                 categories[('parameters', 'calibration')] = calibration_group
             parameters = QTreeWidgetItem(calibration_group, ['标定参数', '多相机外参' if self.database.mode == 'multi_cam' else '转台轴心'])
+            parameters.setData(0, Qt.UserRole + 2, 'calibration')
             parameters.setToolTip(0, '会话中的标定参数；采集帧中的点云和2D图像保存在各自子项。')
         for item in categories.values():
             item.setText(1, f'{item.childCount()} 项')
@@ -246,6 +248,9 @@ class FrameBrowser(QWidget):
         menu.exec(self.tree.viewport().mapToGlobal(position))
 
     def _selected(self, item, previous):
+        if item and item.data(0, Qt.UserRole + 2) == 'calibration':
+            self.calibration_selected.emit()
+            return
         if item and item.data(0, Qt.UserRole):
             component = item.data(0, Qt.UserRole + 2)
             if component:

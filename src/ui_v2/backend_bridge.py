@@ -57,7 +57,9 @@ def _pairs_from_engine(engine) -> List[Dict]:
                 'pair': f"{cam}→{ref}",
                 'rms_mm': res['rms_mm'],
                 'inlier_ratio': res['inlier_ratio'],
-                'level': 'ok' if res['rms_mm'] < 0.5 else 'warn' if res['rms_mm'] < 1.5 else 'fail',
+                'T': res.get('T'),
+                'level': ('fail' if res['rms_mm'] > 2.0 or res['inlier_ratio'] < .5
+                          else 'ok' if res['rms_mm'] < .5 else 'warn'),
             })
     return pairs
 
