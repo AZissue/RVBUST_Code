@@ -329,3 +329,17 @@ QPlainTextEdit {{
     font-family: "Consolas", "Courier New", monospace; font-size: 12px;
 }}
 """
+
+
+# Share item focus styling across the application and the industrial/launcher
+# skin, whose local stylesheet also cascades into workbench-owned dialogs.
+ITEM_VIEW_FOCUS_QSS = """
+QAbstractItemView { outline: none; }
+QAbstractItemView:focus { border-color: #805052; }
+QAbstractItemView::item:hover { background-color: #353030; }
+QAbstractItemView::item:selected { background-color: #573232; color: #ffffff; }
+QAbstractItemView::item:selected:!active { background-color: #453435; color: #e3dada; }
+QAbstractItemView::item:focus { background-color: #694044; }
+"""
+GLOBAL_QSS += ITEM_VIEW_FOCUS_QSS
+LAUNCHER_QSS += ITEM_VIEW_FOCUS_QSS
