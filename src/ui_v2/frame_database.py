@@ -26,9 +26,12 @@ class FrameBrowser(QWidget):
         self.database = database
         self.setObjectName('frameDatabaseBrowser')
         self.setStyleSheet('''
-            QWidget#frameDatabaseBrowser QTreeWidget { background:#252525; border:1px solid #454545; }
+            QWidget#frameDatabaseBrowser QTreeWidget { background:#252525; border:1px solid #454545; outline:none; }
+            QWidget#frameDatabaseBrowser QTreeWidget:focus { border-color:#805052; }
             QWidget#frameDatabaseBrowser QTreeWidget::item { min-height:22px; }
+            QWidget#frameDatabaseBrowser QTreeWidget::item:hover { background:#353030; }
             QWidget#frameDatabaseBrowser QTreeWidget::item:selected { background:#573232; color:#ffffff; }
+            QWidget#frameDatabaseBrowser QTreeWidget::item:selected:!active { background:#453435; color:#e3dada; }
         ''')
         self.setMinimumHeight(280)
         layout = QVBoxLayout(self)
