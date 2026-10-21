@@ -190,6 +190,10 @@ int main(int argc, char* argv[])
              QDir::toNativeSeparators(QCoreApplication::applicationDirPath())
                  .toLocal8Bit().constData());
     earlyLog("qt: %s (build %s)\n", qVersion(), QT_VERSION_STR);
+#ifdef HANDEYE_HIDE_MEASUREMENT_TOOLS
+    // 现场回传的日志要能一眼认出"这是隐藏了测量工具的正式包"。
+    earlyLog("edition: release package (measurement tools hidden)\n");
+#endif
     earlyLog("cwd: %s\n",
              QDir::toNativeSeparators(QDir::currentPath()).toLocal8Bit().constData());
     earlyLog("config: %s\n",

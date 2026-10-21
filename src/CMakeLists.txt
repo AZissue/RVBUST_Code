@@ -89,6 +89,12 @@ set(SOURCES
 
 add_executable(${PROJECT_NAME} ${SOURCES})
 
+# 正式发布包：隐藏尚未验收的测量工具（见根 CMakeLists 的 option 注释）。
+# 只作用于应用目标，单元测试/真值回归仍按完整功能编译。
+if(HANDEYE_HIDE_MEASUREMENT_TOOLS)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE HANDEYE_HIDE_MEASUREMENT_TOOLS)
+endif()
+
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/..
