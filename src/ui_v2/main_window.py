@@ -22,7 +22,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QApplication, QDialog, QFrame, QHBoxLayout, QLabel, QMainWindow,
     QPushButton, QStackedWidget, QToolButton, QVBoxLayout,
-    QWidget, QSplitter, QSizePolicy,
+    QWidget, QSplitter, QSizePolicy, QProgressBar,
 )
 
 from .launcher_dialog import LauncherDialog
@@ -294,6 +294,16 @@ class MainWindowShell(QMainWindow):
         self._st_quality = _StatusSummary()
         self._st_quality.hide()
         lo.addWidget(self._st_quality, 2)
+        self._st_multi = QLabel()
+        self._st_multi.setStyleSheet('color:#b8c7bc;background:transparent;font-size:11px;')
+        self._st_multi.hide()
+        lo.addWidget(self._st_multi)
+        self._task_progress = QProgressBar()
+        self._task_progress.setRange(0, 0)
+        self._task_progress.setMaximumWidth(110)
+        self._task_progress.setMaximumHeight(10)
+        self._task_progress.hide()
+        lo.addWidget(self._task_progress)
 
         # ---- 右侧提示组：最近一条日志/操作建议 ----
         right_group = QFrame()
@@ -374,6 +384,7 @@ class MainWindowShell(QMainWindow):
         self.setStyleSheet(LAUNCHER_QSS if industrial else '')
         self._toolbar.setVisible(not industrial)
         self._industrial_ribbon.activate(industrial, self._mode)
+        self._st_multi.setVisible(industrial and self._mode == 'multi_cam')
         self._refresh_chain_summary()
         if hasattr(self, '_log_panel'):
             self._btn_log.setChecked(False)
@@ -628,9 +639,12 @@ class MainWindowShell(QMainWindow):
     def show_loading(self, text: str = "处理中..."):
         """耗时操作遮罩（拍摄/标定/拼接/自动设IP 统一入口）。"""
         self._overlay.show_message(text)
+        self._task_progress.setToolTip(text)
+        self._task_progress.show()
 
     def hide_loading(self):
         self._overlay.hide_overlay()
+        self._task_progress.hide()
 
     def set_dirty(self, dirty: bool):
         """标记有未保存的标定/会话数据。"""
@@ -645,6 +659,7 @@ class MainWindowShell(QMainWindow):
 
     # ------------------------------------------------------------ 内部
     def _refresh_statusbar(self):
+        self._st_multi.setVisible(self._presentation == 'industrial' and self._mode == 'multi_cam')
         self._refresh_chain_summary()
         if hasattr(self, '_industrial_ribbon'):
             self._industrial_ribbon.update_status()

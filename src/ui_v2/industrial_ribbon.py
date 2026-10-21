@@ -8,7 +8,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QEvent, QSize, Qt
 from PySide6.QtWidgets import (QFileDialog, QFrame, QHBoxLayout, QLabel,
-    QStackedWidget, QToolButton, QVBoxLayout, QWidget)
+    QStackedWidget, QToolButton, QVBoxLayout, QWidget, QSizePolicy)
 
 from . import icons
 from .launcher_dialog import LauncherDialog
@@ -102,7 +102,19 @@ class IndustrialRibbon(QWidget):
         line.addWidget(divider)
         self.mode_label = QLabel(objectName='studioMode')
         line.addWidget(self.mode_label)
+        self.camera_status = QLabel()
+        self.camera_status.setStyleSheet('color:#cccccc;background:#292929;padding:5px;border-radius:4px;font-size:11px;')
+        self.camera_status.setMaximumWidth(330)
+        self.camera_status.setMinimumWidth(180)
+        self.camera_status.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+        line.addWidget(self.camera_status)
         line.addStretch(1)
+        self.workflow_status = QLabel()
+        self.workflow_status.setStyleSheet('background:transparent;font-size:11px;')
+        self.workflow_status.setMaximumWidth(420)
+        self.workflow_status.setMinimumWidth(330)
+        self.workflow_status.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+        line.addWidget(self.workflow_status)
         self.badge = QLabel(objectName='studioBadge')
         line.addWidget(self.badge)
         self.log_button = self._header_button('运行日志', 'terminal', shell._btn_log.click)
@@ -258,6 +270,10 @@ class IndustrialRibbon(QWidget):
     def update_status(self):
         shell = self.shell
         self.mode_label.setText(LauncherDialog.MODE_NAMES[shell.current_mode()])
+        multi = shell.current_mode() == 'multi_cam'
+        self.camera_status.setVisible(multi)
+        self.workflow_status.setVisible(multi)
+        self.badge.setVisible(not multi or getattr(shell, '_offline_preview', False))
         self.badge.setText('离线预览' if getattr(shell, '_offline_preview', False) else
                            f'已连接 {len(shell._devices)} 台设备' if shell._devices else '未连接相机')
         self.badge.setProperty('offline', bool(getattr(shell, '_offline_preview', False) or not shell._devices))

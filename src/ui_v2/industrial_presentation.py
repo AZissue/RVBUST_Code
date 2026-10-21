@@ -6,7 +6,7 @@ Changing presentation never instantiates a camera service or connects an action.
 from dataclasses import dataclass
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
-    QStackedLayout, QSplitter, QScrollArea, QGroupBox, QLabel, QToolButton, QButtonGroup)
+    QStackedLayout, QSplitter, QScrollArea, QGroupBox, QLabel, QToolButton, QButtonGroup, QComboBox)
 
 
 class _Viewport(QWidget):
@@ -178,7 +178,24 @@ class IndustrialPresentation:
             workspace._gate_card.setObjectName('multiGateCard')
             workspace._result_card.setObjectName('multiResultCard')
             self.side_column.insertWidget(1, self.calibration_panel)
-            self.side_column.setSizes([300, 300, 30])
+            from .widgets.multi_camera_overview import MultiCameraOverview
+            self.device_overview = MultiCameraOverview(workspace)
+            self.side_column.insertWidget(0, self.device_overview)
+            self.frame_browser.setMinimumHeight(205)
+            self.frame_browser.tree.setMinimumHeight(75)
+            self.side_column.setSizes([190, 290, 220, 30])
+            parameters = QGroupBox('标定参数')
+            parameter_layout = QVBoxLayout(parameters)
+            for label, widget in (('参考相机', workspace._ref_combo), ('检测方式', workspace._detect_combo)):
+                row = QHBoxLayout()
+                row.addWidget(QLabel(label))
+                self._mount(widget, row)
+                parameter_layout.addLayout(row)
+            capture_mode = QHBoxLayout()
+            self._mount(workspace._rb_sync, capture_mode)
+            self._mount(workspace._rb_async, capture_mode)
+            parameter_layout.addLayout(capture_mode)
+            result_layout.insertWidget(1, parameters)
             self.frame_browser.calibration_selected.connect(self._show_calibration)
             self.view_bar = QWidget()
             bar = QHBoxLayout(self.view_bar)
@@ -219,9 +236,9 @@ class IndustrialPresentation:
             workspace._camera_grid.database_focus_requested.connect(self._focus_database)
             self.grid = QSplitter(Qt.Horizontal)
             self.grid.setChildrenCollapsible(False)
+            self.grid.setHandleWidth(8)
             stage.addWidget(self.grid, 1)
             self.viewport = _Viewport()
-            self.viewport.view_changed.connect(self._size_preview)
             self.scene = QGridLayout(self.viewport)
             self.scene.setContentsMargins(0, 0, 0, 0)
             self.grid.addWidget(self.viewport)
@@ -267,7 +284,16 @@ class IndustrialPresentation:
             images_layout.setContentsMargins(0, 0, 0, 0)
             self._mount(workspace._camera_grid, images_layout)
             preview_layout.addWidget(self.preview_images, 1)
-            self.scene.addWidget(self.preview_panel, 0, 0, Qt.AlignTop | Qt.AlignRight)
+            self.grid.addWidget(self.preview_panel)
+            self.grid.setStretchFactor(0, 1)
+            self.grid.setStretchFactor(1, 0)
+            self.grid.setSizes([820, 380])
+            self.layout_choice = QComboBox()
+            for text, columns in (('自动布局', 0), ('1 列', 1), ('2 列', 2), ('3 列', 3), ('4 列', 4)):
+                self.layout_choice.addItem(text, columns)
+            self.layout_choice.setMaximumWidth(110)
+            self.layout_choice.currentIndexChanged.connect(self._change_camera_layout)
+            preview_layout.insertWidget(1, self.layout_choice)
             self.preview_panel.raise_()
         else:
             viewport = _Viewport()
@@ -325,7 +351,8 @@ class IndustrialPresentation:
         self.sidebar.setVisible(expanded)
         self.legacy_panel.setMaximumHeight(16777215 if expanded else 30)
         if expanded:
-            self.side_column.setSizes([320, 210, 440] if getattr(self, 'calibration_panel', None) else [320, 440])
+            self.side_column.setSizes([150, 220, 180, 300] if self.mode == 'multi_cam' else
+                [320, 210, 440] if getattr(self, 'calibration_panel', None) else [320, 440])
 
     def activate(self, enabled):
         if self.active == enabled:
@@ -380,6 +407,7 @@ class IndustrialPresentation:
         self.active = enabled
         if self.mode == 'multi_cam' and enabled:
             self.workspace.refresh_marker_pair()
+            self.device_overview.refresh()
         viewer = self.workspace.viewer if self.mode == 'turntable' else self.workspace._viewer
         viewer.set_industrial(enabled)
         if self.calibration_panel and enabled and self.mode == 'turntable':
@@ -418,17 +446,18 @@ class IndustrialPresentation:
         self._multi_view = view
         self.view_buttons[view].setChecked(True)
         if view == '2d':
-            self.scene.removeWidget(self.preview_panel)
-            self.grid.insertWidget(0, self.preview_panel)
             self.preview_panel.setMaximumSize(16777215, 16777215)
             self.preview_panel.setMinimumSize(0, 0)
             self.viewport.hide()
         else:
-            self.scene.addWidget(self.preview_panel, 0, 0, Qt.AlignTop | Qt.AlignRight)
             self.viewport.show()
             self._size_preview()
+            if view == 'joint' and resize:
+                width = self.grid.width()
+                self.grid.setSizes([max(300, width-380), 380])
         self.preview_panel.setVisible(view != '3d')
         self.preview_images.setVisible(view == '2d' or self.preview_toggle.isChecked())
+        self.layout_choice.setVisible(view == '2d' or self.preview_toggle.isChecked())
         self.fill_button.setVisible(view == '2d' or self.preview_toggle.isChecked())
         self.workspace._camera_grid.setVisible(view != '3d')
         self.workspace._viewer.setVisible(view != '2d')
@@ -436,10 +465,16 @@ class IndustrialPresentation:
         self._fill_images(self.fill_button.isChecked())
 
     def _toggle_preview(self, expanded):
+        if not expanded:
+            self._expanded_preview_width = self.preview_panel.width()
         self.preview_toggle.setArrowType(Qt.DownArrow if expanded else Qt.RightArrow)
         self.preview_images.setVisible(expanded or self._multi_view == '2d')
+        self.layout_choice.setVisible(expanded or self._multi_view == '2d')
         self.fill_button.setVisible(expanded or self._multi_view == '2d')
         self._size_preview()
+        if expanded and self._multi_view == 'joint':
+            width = getattr(self, '_expanded_preview_width', 380)
+            self.grid.setSizes([max(200, self.grid.width()-width), width])
 
     def _fill_images(self, enabled):
         grid = self.workspace._camera_grid
@@ -450,21 +485,16 @@ class IndustrialPresentation:
     def _size_preview(self):
         if not hasattr(self, 'preview_panel') or self._multi_view == '2d':
             return
-        grid = self.workspace._camera_grid
-        cards = [grid._database_card] if grid._database_card else list(grid._cards.values())
-        count = max(1, len(cards))
-        width = min(380 if count == 1 else 520, max(260, int(self.viewport.width() * .42)))
-        self.preview_panel.setFixedWidth(width)
-        ratios = [c.current_frame().image_np.shape[1] / c.current_frame().image_np.shape[0]
-                  for c in cards if c.current_frame() is not None and c.current_frame().image_np is not None]
-        ratio = sum(ratios) / len(ratios) if ratios else 4/3
-        columns = 2 if width >= 510 and count > 1 else 1
-        rows = (count + columns - 1) // columns
-        height = min(max(210, int(self.viewport.height() * .60)),
-                     max(210, int(((width-24)/columns/ratio + 94)*rows + 38)))
-        if not self.preview_toggle.isChecked():
-            height = self.preview_toggle.sizeHint().height() + 10
-        self.preview_panel.setFixedHeight(height)
+        self.preview_panel.setMinimumHeight(0)
+        self.preview_panel.setMaximumHeight(16777215)
+        self.preview_panel.setMinimumWidth(300 if self.preview_toggle.isChecked() else 190)
+        self.preview_panel.setMaximumWidth(16777215 if self.preview_toggle.isChecked() else 230)
+
+    def _change_camera_layout(self):
+        columns = self.layout_choice.currentData()
+        self.workspace._camera_grid.set_layout_columns(columns)
+        if columns > 1:
+            self.set_multi_view('2d')
 
     def _style_calibration(self, enabled):
         self.workspace._result_table.setVisible(not enabled or self.workspace._result_table.rowCount() > 0)
@@ -489,7 +519,7 @@ class IndustrialPresentation:
 
     def _show_calibration(self):
         self.calibration_panel.show()
-        self.side_column.setSizes([280, 330, 30])
+        self.side_column.setSizes([160, 240, 330, 30])
         self.calibration_panel.ensureWidgetVisible(self.workspace._matrix_values)
 
     def _camera_focus_changed(self, camera_id):

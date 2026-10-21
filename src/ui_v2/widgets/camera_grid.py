@@ -15,12 +15,14 @@ ui_v2.widgets.camera_grid —— 模式 A 中央相机取景网格。
 from __future__ import annotations
 
 from typing import Dict, List, Optional
+from collections import deque
+from time import monotonic
 
 from PySide6.QtCore import Qt, QSize, Signal, QEvent
 from PySide6.QtGui import QPixmap, QResizeEvent
 from PySide6.QtWidgets import (
     QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QScrollArea,
-    QSizePolicy, QVBoxLayout, QWidget,
+    QSizePolicy, QVBoxLayout, QWidget, QToolButton, QFileDialog,
 )
 
 from core.frame_data import FrameData
@@ -59,6 +61,7 @@ class CameraCard(QFrame):
         super().__init__(parent)
         self.camera_id = camera_id
         self._current_frame: Optional[FrameData] = None
+        self._arrival_times = deque(maxlen=20)
 
         self.setStyleSheet(
             f"CameraCard {{ background-color: {BG_CARD};"
@@ -79,11 +82,36 @@ class CameraCard(QFrame):
         self._name = QLabel(title or camera_id)
         self._name.setStyleSheet(
             f"font-weight: 600; color: {TEXT_PRIMARY};")
-        title_row.addWidget(self._name)
-        title_row.addStretch(1)
+        self._name.setMinimumWidth(65)
+        self._name.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        title_row.addWidget(self._name, 1)
         self._kind = QLabel("")
         self._kind.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 12px;")
         title_row.addWidget(self._kind)
+        self._quick_actions = QWidget()
+        quick = QHBoxLayout(self._quick_actions)
+        quick.setContentsMargins(0, 0, 0, 0)
+        quick.setSpacing(2)
+        for title, glyph, callback in (
+                ('保存当前2D图像', 'camera', self._save_image),
+                ('放大 / 返回', 'maximize', lambda: self.focus_requested.emit(self.camera_id))):
+            button = QToolButton()
+            button.setToolTip(title)
+            ui_icons.apply(button, glyph, TEXT_SECONDARY, 14)
+            button.clicked.connect(callback)
+            if glyph == 'camera':
+                self._save_button = button
+                button.setEnabled(False)
+            quick.addWidget(button)
+        self._freeze = QToolButton()
+        self._freeze.setText('锁')
+        self._freeze.setCheckable(True)
+        self._freeze.setEnabled(False)
+        self._freeze.setToolTip('冻结显示；后台采集继续，解锁后显示最新帧')
+        self._freeze.toggled.connect(self._freeze_changed)
+        quick.addWidget(self._freeze)
+        title_row.addWidget(self._quick_actions)
+        self._quick_actions.hide()
         lo.addLayout(title_row)
 
         # 缩略图占位（4:3，宽度随卡片水平铺满，保持比例）
@@ -96,6 +124,9 @@ class CameraCard(QFrame):
         self._overview_meta = QHBoxLayout()
         self._overview_meta.setContentsMargins(0, 0, 0, 0)
         lo.addLayout(self._overview_meta)
+        self._image_info = QLabel('等待图像')
+        self._image_info.setStyleSheet('color:#999999;font-size:11px;background:transparent;')
+        self._image_info.hide()
 
         # 底部角标 + 单相机控制按钮
         bottom = QHBoxLayout()
@@ -174,11 +205,13 @@ class CameraCard(QFrame):
         if pixmap is None:
             self._thumb.clear_image()
             return
-        self._thumb.setPixmap(pixmap)
+        if not self._freeze.isChecked():
+            self._thumb.setPixmap(pixmap)
 
     def set_marker_overlay(self, markers: list):
         """Display an explicit normalized overlay supplied by a controller."""
-        self._thumb.set_markers(markers)
+        if not self._freeze.isChecked():
+            self._thumb.set_markers(markers)
 
     def set_compact_preview(self):
         """Read-only overview cards for displaying multiple images together."""
@@ -195,8 +228,13 @@ class CameraCard(QFrame):
                 self._overview_original = (self.minimumSize(), self.maximumSize(),
                     self._thumb.minimumSize(), [(b.text(), b.styleSheet()) for b in buttons])
                 self._overview_chrome = (self.styleSheet(), self._thumb.styleSheet())
+                self._overview_name = self._name.text()
+            self._name.setText(self._overview_name if self._overview_name.startswith(self.camera_id)
+                               else f'{self.camera_id} · {self._overview_name}')
             self.setStyleSheet('CameraCard {background:#292929;border:0;border-radius:3px;}')
             self._thumb.setStyleSheet('background:#202020;border:0;')
+            self._quick_actions.show()
+            self._image_info.show()
             self.setMinimumSize(230, 190)
             self._thumb.setMinimumSize(180, 80)
             if self._overview_meta.count() == 0:
@@ -205,6 +243,8 @@ class CameraCard(QFrame):
                 self._overview_meta.addWidget(self._marker_badge)
                 self._overview_meta.addStretch(1)
                 self._overview_meta.addWidget(self._covis_badge)
+            if self._overview_meta.indexOf(self._image_info) < 0:
+                self._overview_meta.addWidget(self._image_info)
             self._thumb.setToolTip('双击画面放大此相机，再次双击返回全部相机')
             for button, text in zip(buttons, ('预览', '拍摄', '检测')):
                 button.setText(text)
@@ -224,8 +264,13 @@ class CameraCard(QFrame):
             self._bottom.insertWidget(0, self._marker_badge)
             self._bottom.insertWidget(2, self._covis_badge)
             self._thumb.setToolTip('')
+            self._quick_actions.hide()
+            self._image_info.hide()
+            self._freeze.setChecked(False)
             self.setStyleSheet(self._overview_chrome[0])
             self._thumb.setStyleSheet(self._overview_chrome[1])
+            self._name.setText(self._overview_name)
+            del self._overview_name
             del self._overview_chrome
             del self._overview_original
 
@@ -240,11 +285,26 @@ class CameraCard(QFrame):
         color = STATUS_OK if success else STATUS_ERR
         self._covis_badge.setStyleSheet(f'color:{color};font-size:12px;font-weight:600;')
 
-    def set_frame(self, frame: Optional[FrameData], markers: Optional[list] = None):
+    def set_frame(self, frame: Optional[FrameData], markers: Optional[list] = None, *, arrival=True):
         """由 FrameData 更新缩略图与标记叠加，并保留当前帧供检测使用。"""
         self._current_frame = frame
         if frame is None or frame.image_np is None:
+            self._save_button.setEnabled(False)
+            self._freeze.setEnabled(False)
+            self._freeze.blockSignals(True)
+            self._freeze.setChecked(False)
+            self._freeze.blockSignals(False)
+            self._image_info.setText('等待图像')
+            self._arrival_times.clear()
             self._thumb.clear_image()
+            return
+        self._save_button.setEnabled(True)
+        self._freeze.setEnabled(True)
+        if arrival and self._btn_preview.isChecked():
+            self._arrival_times.append(monotonic())
+        height, width = frame.image_np.shape[:2]
+        self._image_info.setText(f'{width} × {height} · {self.preview_rate_text()}')
+        if self._freeze.isChecked():
             return
         pixmap = numpy_to_qpixmap(frame.image_np)
         self._thumb.setPixmap(pixmap)
@@ -270,6 +330,31 @@ class CameraCard(QFrame):
                 'marker_type': 'board' if is_board else 'coded',
             })
         self._thumb.set_markers(overlay)
+
+    def preview_rate_text(self):
+        if self._freeze.isChecked():
+            return '已冻结'
+        if not self._btn_preview.isChecked():
+            return '静帧'
+        if len(self._arrival_times) < 2:
+            return '预览中'
+        if monotonic() - self._arrival_times[-1] > 2:
+            return '等待新帧'
+        elapsed = self._arrival_times[-1] - self._arrival_times[0]
+        return f'{(len(self._arrival_times)-1)/max(.001, elapsed):.1f} FPS'
+
+    def _freeze_changed(self, frozen):
+        if not frozen:
+            self.set_frame(self._current_frame, arrival=False)
+
+    def _save_image(self):
+        pixmap = getattr(self._thumb, '_pixmap', None)
+        if pixmap is None or pixmap.isNull():
+            return
+        path, _ = QFileDialog.getSaveFileName(self, '保存当前2D图像', f'{self.camera_id}.png', 'PNG 图像 (*.png)')
+        if path and not pixmap.save(path, 'PNG'):
+            from ..dialogs import ChineseMessageBox
+            ChineseMessageBox.warning(self, '保存失败', '无法写入图像，请检查路径及目录权限。')
 
     def current_frame(self) -> Optional[FrameData]:
         """返回当前卡片持有的最新帧（预览/拍摄/检测用）。"""
@@ -327,6 +412,8 @@ class CameraCard(QFrame):
 
     def set_preview_checked(self, checked: bool):
         """同步 2D 预览按钮勾选状态（不触发 toggled 信号）。"""
+        if self._btn_preview.isChecked() != checked:
+            self._arrival_times.clear()
         self._btn_preview.blockSignals(True)
         self._btn_preview.setChecked(checked)
         self._btn_preview.blockSignals(False)
@@ -335,6 +422,7 @@ class CameraCard(QFrame):
     def _on_preview_toggled(self, checked: bool):
         """2D 预览按钮切换：同步图标颜色并向上转发信号。"""
         self._update_preview_icon(checked)
+        self._arrival_times.clear()
         self.preview_toggled.emit(self.camera_id, checked)
 
     def _update_preview_icon(self, checked: bool):
@@ -357,6 +445,7 @@ class CameraGrid(QScrollArea):
     card_clicked = Signal(str)
     focus_changed = Signal(str)
     database_focus_requested = Signal()
+    frames_changed = Signal()
     CARD_WIDTH = 300
     CARD_HEIGHT = 270
     H_SPACING = 8
@@ -371,6 +460,7 @@ class CameraGrid(QScrollArea):
         self._overview = False
         self._focused_id = None
         self._database_card = None
+        self._layout_columns = 0
 
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.NoFrame)
@@ -408,6 +498,7 @@ class CameraGrid(QScrollArea):
         self._last_cols = None
         self._relayout()
         self.focus_changed.emit('')
+        self.frames_changed.emit()
 
     def set_overview(self, enabled):
         if self._overview == enabled:
@@ -481,6 +572,11 @@ class CameraGrid(QScrollArea):
         super().resizeEvent(event)
         self._relayout()
 
+    def set_layout_columns(self, columns):
+        self._layout_columns = max(0, min(4, int(columns)))
+        self._last_cols = None
+        self._relayout()
+
     def _relayout(self):
         """根据当前 viewport 宽度计算列数并重新排布卡片，列宽水平铺满。
 
@@ -506,7 +602,9 @@ class CameraGrid(QScrollArea):
             ratio = sum(ratios)/len(ratios) if ratios else 4/3
             available_h = max(1, self.viewport().height()-8)
             best = (-1, 1, 210)
-            for candidate in range(1, min(n, max(1, (viewport_w-8+self.H_SPACING)//(230+self.H_SPACING)))+1):
+            max_cols = min(n, max(1, (viewport_w-8+self.H_SPACING)//(230+self.H_SPACING)))
+            candidates = [min(max_cols, self._layout_columns)] if self._layout_columns else range(1, max_cols+1)
+            for candidate in candidates:
                 rows = (n+candidate-1)//candidate
                 width = (viewport_w-8-(candidate-1)*self.H_SPACING)/candidate
                 height = max(210, (available_h-(rows-1)*self.V_SPACING)//rows)
@@ -552,6 +650,7 @@ class CameraGrid(QScrollArea):
             card.set_frame(frame, markers)
             if self._overview:
                 self._relayout()
+            self.frames_changed.emit()
 
     def set_marker_count(self, camera_id: str, count: Optional[int]):
         """更新指定相机卡片的标记数量角标。"""

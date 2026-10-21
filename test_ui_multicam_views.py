@@ -45,9 +45,9 @@ class MulticamViewTests(unittest.TestCase):
         self.win.deleteLater()
         self.app.processEvents()
 
-    def test_joint_overlay_collapses_without_stopping_previews(self):
+    def test_joint_sidebar_collapses_without_stopping_previews(self):
         self.assertEqual(self.presentation._multi_view, 'joint')
-        self.assertEqual(self.grid._last_cols, 2)
+        self.assertEqual(self.grid._last_cols, 1)
         cards = list(self.grid._cards.values())
         self.assertGreater(self.ws.viewer().width(), self.grid.width())
         self.presentation.preview_all.click()
@@ -56,7 +56,7 @@ class MulticamViewTests(unittest.TestCase):
         self.flush()
         self.assertTrue(self.grid.isHidden() or self.presentation.preview_images.isHidden())
         self.assertTrue(all(c._btn_preview.isChecked() for c in cards))
-        self.assertLess(self.presentation.preview_panel.height(), 70)
+        self.assertLessEqual(self.presentation.preview_panel.width(), 230)
         self.presentation.preview_toggle.click()
         self.presentation.preview_stop.click()
         self.assertTrue(all(not c._btn_preview.isChecked() for c in cards))
@@ -118,12 +118,77 @@ class MulticamViewTests(unittest.TestCase):
         self.presentation.fill_button.click()
         self.assertTrue(all(c._thumb._fill for c in self.grid._cards.values()))
 
-    def test_compact_history_preview_and_neutral_calibration_chrome(self):
+    def test_device_switches_delegate_once_and_follow_backend_gates(self):
+        panel = self.presentation.device_overview
+        panel.refresh()
+        card = self.grid.card('cam0')
+        spy = QSignalSpy(self.ws.card_preview_toggled)
+        switch = panel.rows['cam0'][2]
+        switch.click()
+        self.assertTrue(card._btn_preview.isChecked())
+        self.assertEqual(spy.count(), 1)
+        card.set_controls_enabled(False)
+        panel.refresh()
+        self.assertFalse(switch.isEnabled())
+        self.assertFalse(switch.isChecked())
+        self.assertIn('2/2', self.win._industrial_ribbon.camera_status.text())
+
+    def test_layout_presets_show_all_cameras_and_dock_never_overlays_3d(self):
+        for count in (1, 2, 3, 4, 6):
+            self.grid.set_cameras([f'cam{i}' for i in range(count)])
+            self.presentation.set_multi_view('joint')
+            self.flush()
+            self.assertEqual(self.grid._last_cols, 1)
+            self.assertLessEqual(self.presentation.viewport.geometry().right(), self.presentation.preview_panel.x())
+            for columns in range(1, 5):
+                self.presentation.set_multi_view('2d')
+                self.presentation.layout_choice.setCurrentIndex(columns)
+                self.presentation._change_camera_layout()
+                self.flush()
+                self.assertEqual(self.presentation._multi_view, '2d')
+                self.assertEqual(self.grid._last_cols, min(columns, count))
+                self.assertEqual(sum(not c.isHidden() for c in self.grid._cards.values()), count)
+            self.presentation.layout_choice.setCurrentIndex(0)
+
+    def test_freeze_preserves_display_but_keeps_latest_frame_for_unlock(self):
+        card = self.grid.card('cam0')
+        old = card._thumb._pixmap.toImage()
+        card._freeze.setChecked(True)
+        latest = FrameData(8, 'cam0', image_np=np.full((204, 244, 3), 200, np.uint8))
+        self.grid.set_frame('cam0', latest)
+        self.assertIs(card.current_frame(), latest)
+        self.assertEqual(card._thumb._pixmap.toImage(), old)
+        card._freeze.setChecked(False)
+        self.assertEqual(card._thumb._pixmap.toImage().pixelColor(20, 20).red(), 200)
+        card._freeze.setChecked(True)
+        self.grid.set_frame('cam0', None)
+        self.assertFalse(card._freeze.isChecked())
+        self.assertIsNone(card._thumb._pixmap)
+
+    def test_image_export_and_header_task_feedback(self):
+        import tempfile
+        from unittest.mock import patch
+        from PySide6.QtGui import QImage
+        card = self.grid.card('cam0')
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / 'preview.png')
+            with patch('ui_v2.widgets.camera_grid.QFileDialog.getSaveFileName', return_value=(path, 'PNG')):
+                card._save_button.click()
+            self.assertFalse(QImage(path).isNull())
+        self.assertLessEqual(self.win._industrial_ribbon.workflow_status.geometry().right(),
+                             self.win._industrial_ribbon.log_button.x())
+        self.win.show_loading('正在计算外参')
+        self.assertFalse(self.win._task_progress.isHidden())
+        self.win.hide_loading()
+        self.assertTrue(self.win._task_progress.isHidden())
+
+    def test_docked_history_preview_and_neutral_calibration_chrome(self):
         p = self.presentation
         p.show_database_image(FrameData(99, 'cam1', image_np=np.ones((204, 244, 3), np.uint8)))
         self.flush()
         self.assertLessEqual(p.preview_panel.width(), 380)
-        self.assertLess(p.preview_panel.height(), 450)
+        self.assertEqual(p.preview_panel.parentWidget(), p.grid)
+        self.assertLessEqual(p.viewport.geometry().right(), p.preview_panel.x())
         self.assertFalse(self.grid._database_card._thumb._fill)
         self.assertEqual(self.grid._database_card._kind.text(), '只读')
         self.assertEqual(self.presentation.preview_all.parentWidget(), p.preview_panel)
