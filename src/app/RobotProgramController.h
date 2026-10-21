@@ -52,6 +52,8 @@ public:
     bool updateMoveTarget(int index, const RobotMotion::Pose& target);
     // 把选中移动节点的速度改掉。
     bool updateMoveSpeed(int index, double speedPct);
+    // 把选中等待节点的秒数改掉（0..3600）。
+    bool updateWaitSeconds(int index, double seconds);
 
     // ── 运行 ──
     void runAll();

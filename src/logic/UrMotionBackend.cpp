@@ -114,10 +114,16 @@ void UrMotionWorker::start(const QString& host, quint16 feedbackPort)
     }
 
     // 2) 脚本端口：移动指令的通道。连不上就明确失败，避免"界面已连接但
-    //    点不动"的假连接。
+    //    点不动"的假连接。30001 同时以 ~10 Hz 回推状态包；必须持续排空，
+    //    否则接收缓冲满了以后控制器会认为客户端卡死。这里不解析它的内容
+    //    （实时位姿只信 30003），只把数据读掉。
     makeSocket(m_script, this);
     QObject::connect(m_script, &QTcpSocket::disconnected, this,
                      &UrMotionWorker::onDisconnected);
+    QObject::connect(m_script, &QTcpSocket::readyRead, this, [this]() {
+        if (m_script)
+            m_script->readAll();
+    });
     m_script->connectToHost(host, kScriptPort);
     if (!m_script->waitForConnected(2000)) {
         const QString error =
@@ -148,11 +154,21 @@ void UrMotionWorker::start(const QString& host, quint16 feedbackPort)
     m_streamWarned = false;
     m_lastPacketAt.start();
     m_lastPublishAt.invalidate();
+    // 新连接不继承上一次的位姿：第一次反馈到达前，任何基于位姿的点动都
+    // 必须被拒绝，而不是把全零状态当成"机器人在原点"。
+    m_state = RobotMotion::State{};
+    m_havePose = false;
+    m_pending = PendingMove{};
+    m_motionInFlight = false;
     m_connected = true;
     m_enabled = false;
 
-    // 让操作员看到控制器当前模式；非 RUNNING 时 movel 不会执行。
+    // 让操作员看到控制器当前模式；非 RUNNING / MANUAL / 保护性停止时
+    // movel 不会执行（UR 会静默丢弃或直接触发保护性停止），所以连接后
+    // 主动查询并把这些状态告诉操作员。
     sendDashboard(QStringLiteral("robotmode"));
+    sendDashboard(QStringLiteral("safetymode"));
+    sendDashboard(QStringLiteral("get operational mode"));
 
     if (!m_watchdog) {
         m_watchdog = new QTimer(this);
@@ -188,6 +204,8 @@ void UrMotionWorker::teardown(bool notify)
     m_enabled = false;
     m_motionInFlight = false;
     m_streamWarned = false;
+    m_havePose = false;
+    m_state = RobotMotion::State{};
 
     if (m_pending.active) {
         m_pending.active = false;
@@ -289,6 +307,14 @@ void UrMotionWorker::jogCartesian(int axis, double delta, double speedPct)
         emit motionFinished(false, QStringLiteral("点动轴无效"));
         return;
     }
+    // 没有实时位姿就无从计算"在当前位姿上加一步"。30003 断流超过 0.5 s
+    // 时同样拒绝：拿旧位姿累加会让目标与真机越来越远。
+    if (!m_havePose || !m_lastPacketAt.isValid()
+        || m_lastPacketAt.elapsed() > 500) {
+        emit statusMessage(
+            QStringLiteral("点动已拒绝：尚未收到有效的实时位姿（30003）"), true);
+        return;
+    }
 
     // 连续点击时以上一条指令的目标为基准，否则每次都用反馈位置会把前一次
     // 增量"吃掉"（反馈还没到，目标就已经被后一次覆盖）。
@@ -307,6 +333,55 @@ void UrMotionWorker::jogCartesian(int axis, double delta, double speedPct)
         target[5] = rotated[2];
     }
     beginMove(target, speedPct, 0.2, 0.2, 10000, false, true);
+}
+
+void UrMotionWorker::jogJoint(int axis, double delta, double speedPct)
+{
+    if (!ensureReady(QStringLiteral("关节点动")))
+        return;
+    if (!JogPolicy::validAxis(axis)) {
+        emit motionFinished(false, QStringLiteral("点动轴无效"));
+        return;
+    }
+    if (!m_havePose || !m_lastPacketAt.isValid()
+        || m_lastPacketAt.elapsed() > 500) {
+        emit statusMessage(
+            QStringLiteral("关节点动已拒绝：尚未收到有效的实时位姿（30003）"),
+            true);
+        return;
+    }
+
+    // 与笛卡尔点动一样：连续点击时以上一条指令的目标为基准，避免界面
+    // 缓存（50 ms 节流）把上一拍的增量吃掉。
+    const RobotMotion::Pose base =
+        (m_pending.active && m_pending.joint) ? m_pending.target : m_state.joint;
+    const RobotMotion::Pose target =
+        JogPolicy::clampJoints(JogPolicy::jog(base, axis, delta));
+    beginMove(target, speedPct, 2.0, 0.2, 10000, true, true);
+}
+
+void UrMotionWorker::moveJointAxisTo(int axis, double degrees,
+                                     double speedPct)
+{
+    if (!ensureReady(QStringLiteral("关节滑杆")))
+        return;
+    if (!JogPolicy::validAxis(axis) || !std::isfinite(degrees)) {
+        emit motionFinished(false, QStringLiteral("关节轴或角度无效"));
+        return;
+    }
+    if (!m_havePose || !m_lastPacketAt.isValid()
+        || m_lastPacketAt.elapsed() > 500) {
+        emit statusMessage(
+            QStringLiteral("关节移动已拒绝：尚未收到有效的实时位姿（30003）"),
+            true);
+        return;
+    }
+
+    RobotMotion::Pose target =
+        (m_pending.active && m_pending.joint) ? m_pending.target : m_state.joint;
+    target[static_cast<std::size_t>(axis)] = JogPolicy::clampJoint(degrees);
+    beginMove(JogPolicy::clampJoints(target), speedPct, 2.0, 0.2, 10000,
+              true, true);
 }
 
 void UrMotionWorker::beginMove(const RobotMotion::Pose& target,
@@ -451,6 +526,7 @@ void UrMotionWorker::onFeedbackReady()
 void UrMotionWorker::onStatePacket(const RobotMotion::State& state)
 {
     m_state = state;
+    m_havePose = true;
     m_lastPacketAt.start();
     if (m_streamWarned) {
         m_streamWarned = false;
@@ -491,6 +567,10 @@ void UrMotionWorker::checkReached()
             false,
             QStringLiteral("超时未到位（%1 ms）；请检查示教器程序状态")
                 .arg(m_pending.timeoutMs));
+        // 超时最常见的两个原因：安全停止 / MANUAL 模式。把控制器状态
+        // 查回来，操作员就不用猜为什么"发了指令但不动"。
+        sendDashboard(QStringLiteral("safetymode"));
+        sendDashboard(QStringLiteral("get operational mode"));
     }
 }
 
@@ -524,6 +604,27 @@ void UrMotionWorker::onDashboardReady()
                         : QStringLiteral("UR 控制器模式：%1（movel 不会执行）")
                               .arg(line.section(QLatin1Char(':'), 1).trimmed()),
                 !running);
+        } else if (line.startsWith(QStringLiteral("Safetymode"),
+                                   Qt::CaseInsensitive)) {
+            const QString mode =
+                line.section(QLatin1Char(':'), 1).trimmed();
+            const bool normal =
+                mode.compare(QStringLiteral("NORMAL"), Qt::CaseInsensitive) == 0;
+            emit statusMessage(
+                normal ? QStringLiteral("UR 安全状态：NORMAL")
+                       : QStringLiteral("UR 安全状态：%1（请先在示教器复位，"
+                                        "否则运动指令会被拒绝）").arg(mode),
+                !normal);
+        } else if (line.compare(QStringLiteral("MANUAL"),
+                                Qt::CaseInsensitive) == 0) {
+            // CB3/e-Series：MANUAL 操作模式下外部脚本不会驱动真机。
+            emit statusMessage(
+                QStringLiteral("UR 操作模式：MANUAL（外部运动指令会被忽略；"
+                               "请在示教器切换到自动/远程模式）"),
+                true);
+        } else if (line.compare(QStringLiteral("AUTOMATIC"),
+                                Qt::CaseInsensitive) == 0) {
+            emit statusMessage(QStringLiteral("UR 操作模式：AUTOMATIC"), false);
         }
     }
 }
@@ -634,6 +735,27 @@ void UrMotionBackend::jogCartesian(int axis, double delta, double speedPct)
         m_worker,
         [worker = m_worker, axis, delta, speedPct]() {
             worker->jogCartesian(axis, delta, speedPct);
+        },
+        Qt::QueuedConnection);
+}
+
+void UrMotionBackend::jogJoint(int axis, double delta, double speedPct)
+{
+    QMetaObject::invokeMethod(
+        m_worker,
+        [worker = m_worker, axis, delta, speedPct]() {
+            worker->jogJoint(axis, delta, speedPct);
+        },
+        Qt::QueuedConnection);
+}
+
+void UrMotionBackend::moveJointAxisTo(int axis, double degrees,
+                                      double speedPct)
+{
+    QMetaObject::invokeMethod(
+        m_worker,
+        [worker = m_worker, axis, degrees, speedPct]() {
+            worker->moveJointAxisTo(axis, degrees, speedPct);
         },
         Qt::QueuedConnection);
 }

@@ -29,6 +29,8 @@ public slots:
     void moveJoint(const RobotMotion::Pose& target, double speedPct,
                    double toleranceDeg = 1.0, int timeoutMs = 15000) override;
     void jogCartesian(int axis, double delta, double speedPct) override;
+    void jogJoint(int axis, double delta, double speedPct) override;
+    void moveJointAxisTo(int axis, double degrees, double speedPct) override;
     void stopMotion() override;
 
 private:

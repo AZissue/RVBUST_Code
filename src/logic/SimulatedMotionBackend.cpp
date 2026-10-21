@@ -155,7 +155,26 @@ void SimulatedMotionBackend::moveJoint(const RobotMotion::Pose& target,
 void SimulatedMotionBackend::jogCartesian(int axis, double delta,
                                           double speedPct)
 {
-    moveCartesian(JogPolicy::jog(m_state.cart, axis, delta), speedPct);
+    // 连点时以上一条目标为基准；用插值中的当前位置会把上一拍吃掉。
+    const RobotMotion::Pose base = m_moving ? m_targetCart : m_state.cart;
+    moveCartesian(JogPolicy::jog(base, axis, delta), speedPct);
+}
+
+void SimulatedMotionBackend::jogJoint(int axis, double delta, double speedPct)
+{
+    const RobotMotion::Pose base = m_moving ? m_targetJoint : m_state.joint;
+    moveJoint(JogPolicy::clampJoints(JogPolicy::jog(base, axis, delta)),
+              speedPct);
+}
+
+void SimulatedMotionBackend::moveJointAxisTo(int axis, double degrees,
+                                             double speedPct)
+{
+    if (!JogPolicy::validAxis(axis))
+        return;
+    RobotMotion::Pose target = m_moving ? m_targetJoint : m_state.joint;
+    target[static_cast<std::size_t>(axis)] = JogPolicy::clampJoint(degrees);
+    moveJoint(target, speedPct);
 }
 
 void SimulatedMotionBackend::startMove(const RobotMotion::Pose& cartTarget,

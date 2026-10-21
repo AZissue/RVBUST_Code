@@ -168,6 +168,22 @@ bool RobotProgramController::updateMoveSpeed(int index, double speedPct)
     return true;
 }
 
+bool RobotProgramController::updateWaitSeconds(int index, double seconds)
+{
+    if (m_runner->isRunning())
+        return false;
+    RobotProgram::Program program = m_runner->program();
+    if (index < 0 || index >= static_cast<int>(program.nodes.size()))
+        return false;
+    auto* wait = std::get_if<RobotProgram::WaitNode>(
+        &program.nodes[static_cast<std::size_t>(index)].payload);
+    if (!wait)
+        return false;
+    wait->seconds = std::clamp(seconds, 0.0, 3600.0);
+    m_runner->setProgram(program);
+    return true;
+}
+
 void RobotProgramController::runAll()
 {
     m_runner->runAll();
@@ -222,9 +238,9 @@ void RobotProgramController::jog(int axis, double delta, bool jointMode)
         return;
     }
     if (jointMode) {
-        const RobotMotion::Pose target =
-            JogPolicy::jog(m_backend->state().joint, axis, delta);
-        m_backend->moveJoint(JogPolicy::clampJoints(target), m_jogSpeedPct);
+        // 基准由后端用最新反馈算：界面缓存有 50 ms 节流，连续点按时会
+        // 从同一个旧值出发，机器人少走一步（看起来像"乱走/不跟手"）。
+        m_backend->jogJoint(axis, delta, m_jogSpeedPct);
     } else {
         // 姿态增量由后端按自己的约定合成（UR 是旋转向量，不是欧拉角）。
         m_backend->jogCartesian(axis, delta, m_jogSpeedPct);
@@ -239,9 +255,7 @@ void RobotProgramController::moveJointAxisTo(int axis, double degrees)
         emit statusMessage(QStringLiteral("程序运行中不能点动"), true);
         return;
     }
-    RobotMotion::Pose target = m_backend->state().joint;
-    target[static_cast<std::size_t>(axis)] = JogPolicy::clampJoint(degrees);
-    m_backend->moveJoint(target, m_jogSpeedPct);
+    m_backend->moveJointAxisTo(axis, degrees, m_jogSpeedPct);
 }
 
 void RobotProgramController::setPhotoHandler(PhotoHandler start, PhotoAbort abort)

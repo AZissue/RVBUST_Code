@@ -33,4 +33,5 @@ private slots:
     void runnerRejectsEmptyProgram();
     void simulatedBackendMovesOnlyWhenEnabled();
     void simulatedBackendCompletesMove();
+    void simulatedBackendJogsJoints();
 };

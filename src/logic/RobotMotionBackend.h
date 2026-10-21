@@ -61,6 +61,12 @@ public slots:
     // 单轴点动：真机后端按"绕基座轴旋转"正确合成姿态增量；仿真后端直接
     // 相加即可。界面不关心差异。
     virtual void jogCartesian(int axis, double delta, double speedPct) = 0;
+    // 关节点动必须由后端按自己的最新反馈（而不是界面缓存的位姿）计算基准：
+    // 界面缓存有 50 ms 节流，连续点按时会漏掉上一拍的增量。
+    virtual void jogJoint(int axis, double delta, double speedPct) = 0;
+    // 关节滑杆：把某一轴移动到绝对角度，其余轴保持后端的最新目标。
+    virtual void moveJointAxisTo(int axis, double degrees,
+                                 double speedPct) = 0;
     virtual void stopMotion() = 0;
 
 signals:

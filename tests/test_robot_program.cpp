@@ -300,8 +300,9 @@ void TestRobotProgram::urBackendLiveMovesIfRequested()
     // 硬件在环冒烟测试：ctest 默认不跑（没有 HE_UR_HOST）。它验证的是
     // 本工具自己的那条链路——工作线程、30003 解析、30001 movel、到位判据
     // ——而不是 UR 的数学库。
-    //   HE_UR_HOST=192.168.0.38 build/src/Release/unit_tests.exe \
-    //       robot_program urBackendLiveMovesIfRequested -o out.txt,txt
+    // 注意：test_main 会把参数转发给全部测试类，按函数名过滤并不能只跑这一条；
+    // 设了环境变量后直接跑整个 unit_tests 即可，其他用例不碰硬件。
+    //   HE_UR_HOST=192.168.0.38 build/src/Release/unit_tests.exe -o out.txt,txt
     const QString host = qEnvironmentVariable("HE_UR_HOST").trimmed();
     if (host.isEmpty())
         QSKIP("set HE_UR_HOST to run the live UR smoke test");
@@ -340,13 +341,18 @@ void TestRobotProgram::urBackendLiveMovesIfRequested()
 
     const RobotMotion::Pose start = backend.state().cart;
     QVERIFY(std::abs(start[0]) + std::abs(start[1]) + std::abs(start[2]) > 1.0);
+    // 向 -Z 走：多数现场/URSim 的起点上方空间更小（安全平面、工作空间
+    // 上限），往上 5 mm 就可能触发保护性停止；往下始终在工作空间内。
     RobotMotion::Pose target = start;
-    target[2] += 5.0;
+    target[2] -= 5.0;
 
     finished.clear();
     backend.moveCartesian(target, 20.0, 2.0, 1.0, 10000);
     QTRY_VERIFY_WITH_TIMEOUT(finished.count() > 0, 15000);
-    QCOMPARE(finished.last().at(0).toBool(), true);
+    QVERIFY2(finished.last().at(0).toBool(),
+             qPrintable(QStringLiteral("first move: %1 | %2")
+                            .arg(finished.last().at(1).toString(),
+                                 messages.join(QStringLiteral(" | ")))));
     QVERIFY2(std::abs(backend.state().cart[2] - target[2]) < 2.5,
              qPrintable(QStringLiteral("z=%1 target=%2")
                             .arg(backend.state().cart[2]).arg(target[2])));
@@ -356,7 +362,7 @@ void TestRobotProgram::urBackendLiveMovesIfRequested()
     // 把控制台锁死。
     finished.clear();
     RobotMotion::Pose longTarget = backend.state().cart;
-    longTarget[2] += 100.0;
+    longTarget[2] -= 100.0;
     backend.moveCartesian(longTarget, 5.0, 2.0, 1.0, 15000);
     QTest::qWait(400);
     backend.stopMotion();
@@ -365,7 +371,7 @@ void TestRobotProgram::urBackendLiveMovesIfRequested()
 
     const RobotMotion::Pose resumeBase = backend.state().cart;
     RobotMotion::Pose resumeTarget = resumeBase;
-    resumeTarget[2] += 5.0;
+    resumeTarget[2] -= 5.0;
     finished.clear();
     backend.moveCartesian(resumeTarget, 20.0, 2.0, 1.0, 10000);
     QTRY_VERIFY_WITH_TIMEOUT(finished.count() > 0, 15000);
@@ -376,6 +382,138 @@ void TestRobotProgram::urBackendLiveMovesIfRequested()
     backend.moveCartesian(start, 20.0, 2.0, 1.0, 10000);
     QTRY_VERIFY_WITH_TIMEOUT(finished.count() > 0, 15000);
     QCOMPARE(finished.last().at(0).toBool(), true);
+
+    // ── 点动 ─────────────────────────────────────────────────────────
+    // 用户报过"点 X+/- 机器人乱走"。这里的断言很具体：每一次点动都必须
+    // 是"实时位姿 + 步长"，且只沿指定基座轴改变，其它位置/姿态不动。
+    // 上一条移动的到位判据是 2 mm，门面缓存又按 50 ms 节流刷新；先等
+    // 机器人停稳、缓存追上，再取点动基准，否则基准本身会差 1~2 mm。
+    QTest::qWait(150);
+    const RobotMotion::Pose jogBase = backend.state().cart;
+
+    finished.clear();
+    backend.jogCartesian(0, 10.0, 10.0);
+    QTRY_VERIFY_WITH_TIMEOUT(finished.count() > 0, 15000);
+    QVERIFY2(finished.last().at(0).toBool(),
+             qPrintable(finished.last().at(1).toString()));
+    const RobotMotion::Pose xPlus = backend.state().cart;
+    QVERIFY2(std::abs(xPlus[0] - jogBase[0] - 10.0) < 2.5,
+             qPrintable(QStringLiteral("jog X+10 moved dx=%1 (want 10)")
+                            .arg(xPlus[0] - jogBase[0])));
+    QVERIFY2(std::abs(xPlus[1] - jogBase[1]) < 1.0,
+             qPrintable(QStringLiteral("jog X+10 moved y by %1")
+                            .arg(xPlus[1] - jogBase[1])));
+    QVERIFY2(std::abs(xPlus[2] - jogBase[2]) < 1.0,
+             qPrintable(QStringLiteral("jog X+10 moved z by %1")
+                            .arg(xPlus[2] - jogBase[2])));
+    const UrMotionMath::Vec3 baseRot{ jogBase[3], jogBase[4], jogBase[5] };
+    QVERIFY2(UrMotionMath::rotationDistanceDeg(
+                 baseRot, UrMotionMath::Vec3{ xPlus[3], xPlus[4], xPlus[5] })
+                 < 1.0,
+             "jog X+10 changed the orientation");
+
+    finished.clear();
+    backend.jogCartesian(0, -10.0, 10.0);
+    QTRY_VERIFY_WITH_TIMEOUT(finished.count() > 0, 15000);
+    QVERIFY2(finished.last().at(0).toBool(),
+             qPrintable(finished.last().at(1).toString()));
+    const RobotMotion::Pose xBack = backend.state().cart;
+    QVERIFY2(std::abs(xBack[0] - jogBase[0]) < 2.5,
+             qPrintable(QStringLiteral("jog X-10 left dx=%1")
+                            .arg(xBack[0] - jogBase[0])));
+
+    // 姿态点动：绕基座 X 轴 +5°，TCP 位置不变，姿态夹角约 5°。
+    finished.clear();
+    backend.jogCartesian(3, 5.0, 10.0);
+    QTRY_VERIFY_WITH_TIMEOUT(finished.count() > 0, 15000);
+    QVERIFY2(finished.last().at(0).toBool(),
+             qPrintable(finished.last().at(1).toString()));
+    const RobotMotion::Pose rxPlus = backend.state().cart;
+    const double rxDx = rxPlus[0] - xBack[0];
+    const double rxDy = rxPlus[1] - xBack[1];
+    const double rxDz = rxPlus[2] - xBack[2];
+    QVERIFY2(std::sqrt(rxDx * rxDx + rxDy * rxDy + rxDz * rxDz) < 1.5,
+             qPrintable(QStringLiteral("jog RX moved TCP by %1 mm")
+                            .arg(std::sqrt(rxDx * rxDx + rxDy * rxDy
+                                           + rxDz * rxDz))));
+    const double rxAngle = UrMotionMath::rotationDistanceDeg(
+        UrMotionMath::Vec3{ xBack[3], xBack[4], xBack[5] },
+        UrMotionMath::Vec3{ rxPlus[3], rxPlus[4], rxPlus[5] });
+    QVERIFY2(std::abs(rxAngle - 5.0) < 1.5,
+             qPrintable(QStringLiteral("jog RX+5 rotated %1 deg").arg(rxAngle)));
+
+    finished.clear();
+    backend.jogCartesian(3, -5.0, 10.0);
+    QTRY_VERIFY_WITH_TIMEOUT(finished.count() > 0, 15000);
+    QVERIFY2(finished.last().at(0).toBool(),
+             qPrintable(finished.last().at(1).toString()));
+    const RobotMotion::Pose rxBack = backend.state().cart;
+    QVERIFY2(UrMotionMath::rotationDistanceDeg(
+                 UrMotionMath::Vec3{ xBack[3], xBack[4], xBack[5] },
+                 UrMotionMath::Vec3{ rxBack[3], rxBack[4], rxBack[5] })
+                 < 1.5,
+             "jog RX-5 did not return to the start orientation");
+
+    // 连点两下：第二条指令必须以上一条的目标为基准（+5 +5 = +10），
+    // 而不是都从同一个实时位姿出发（那样只会走 5 mm）。
+    finished.clear();
+    backend.jogCartesian(0, 5.0, 10.0);
+    backend.jogCartesian(0, 5.0, 10.0);
+    QTRY_VERIFY_WITH_TIMEOUT(finished.count() > 0, 15000);
+    QCOMPARE(finished.last().at(0).toBool(), true);
+    const RobotMotion::Pose doubled = backend.state().cart;
+    QVERIFY2(std::abs(doubled[0] - jogBase[0] - 10.0) < 2.5,
+             qPrintable(QStringLiteral("two jogs moved dx=%1 (want 10)")
+                            .arg(doubled[0] - jogBase[0])));
+    finished.clear();
+    backend.jogCartesian(0, -10.0, 10.0);
+    QTRY_VERIFY_WITH_TIMEOUT(finished.count() > 0, 15000);
+    QVERIFY2(finished.last().at(0).toBool(),
+             qPrintable(finished.last().at(1).toString()));
+
+    // 关节点动：基准必须由后端用最新反馈算（界面缓存有 50 ms 节流）。
+    // 只动 J2，其它轴保持；两次连点要累加，而不是都从同一个旧值出发。
+    QTest::qWait(150);
+    const RobotMotion::Pose jointBase = backend.state().joint;
+    finished.clear();
+    backend.jogJoint(1, 2.0, 10.0);
+    QTRY_VERIFY_WITH_TIMEOUT(finished.count() > 0, 15000);
+    QVERIFY2(finished.last().at(0).toBool(),
+             qPrintable(finished.last().at(1).toString()));
+    const RobotMotion::Pose jointPlus = backend.state().joint;
+    QVERIFY2(std::abs(jointPlus[1] - jointBase[1] - 2.0) < 0.6,
+             qPrintable(QStringLiteral("joint jog moved J2 by %1 (want 2)")
+                            .arg(jointPlus[1] - jointBase[1])));
+    for (int i = 0; i < 6; ++i) {
+        if (i == 1)
+            continue;
+        QVERIFY2(std::abs(jointPlus[static_cast<std::size_t>(i)]
+                          - jointBase[static_cast<std::size_t>(i)]) < 0.2,
+                 qPrintable(QStringLiteral("joint jog changed J%1 by %2")
+                                .arg(i + 1)
+                                .arg(jointPlus[static_cast<std::size_t>(i)]
+                                     - jointBase[static_cast<std::size_t>(i)])));
+    }
+
+    finished.clear();
+    backend.jogJoint(1, 1.0, 10.0);
+    backend.jogJoint(1, 1.0, 10.0);
+    QTRY_VERIFY_WITH_TIMEOUT(finished.count() > 0, 15000);
+    QCOMPARE(finished.last().at(0).toBool(), true);
+    const RobotMotion::Pose jointDoubled = backend.state().joint;
+    QVERIFY2(std::abs(jointDoubled[1] - jointBase[1] - 4.0) < 0.8,
+             qPrintable(QStringLiteral("two joint jogs moved J2 by %1 "
+                                       "(want 4)")
+                            .arg(jointDoubled[1] - jointBase[1])));
+
+    finished.clear();
+    backend.jogJoint(1, -4.0, 10.0);
+    QTRY_VERIFY_WITH_TIMEOUT(finished.count() > 0, 15000);
+    QVERIFY2(finished.last().at(0).toBool(),
+             qPrintable(finished.last().at(1).toString()));
+    QVERIFY2(std::abs(backend.state().joint[1] - jointBase[1]) < 0.8,
+             qPrintable(QStringLiteral("joint jog did not return: J2=%1")
+                            .arg(backend.state().joint[1])));
 
     backend.setEnabled(false);
     backend.disconnectDevice();
@@ -510,4 +648,46 @@ void TestRobotProgram::simulatedBackendCompletesMove()
     QTRY_VERIFY_WITH_TIMEOUT(finished.count() > 0, 5000);
     QCOMPARE(finished.last().at(0).toBool(), true);
     QVERIFY(std::abs(backend.state().cart[0] - target[0]) < 1e-6);
+}
+
+void TestRobotProgram::simulatedBackendJogsJoints()
+{
+    SimulatedMotionBackend backend;
+    backend.connectDevice(QStringLiteral("127.0.0.1"), 30001);
+    QTRY_VERIFY_WITH_TIMEOUT(backend.isConnected(), 2000);
+    backend.setEnabled(true);
+
+    const RobotMotion::Pose base = backend.state().joint;
+    QSignalSpy finished(&backend, &RobotMotionBackend::motionFinished);
+
+    backend.jogJoint(1, 2.0, 100.0);
+    QTRY_VERIFY_WITH_TIMEOUT(finished.count() > 0, 5000);
+    QCOMPARE(finished.last().at(0).toBool(), true);
+    QVERIFY(std::abs(backend.state().joint[1] - base[1] - 2.0) < 1e-6);
+    for (int i = 0; i < 6; ++i) {
+        if (i == 1)
+            continue;
+        QVERIFY(std::abs(backend.state().joint[static_cast<std::size_t>(i)]
+                         - base[static_cast<std::size_t>(i)]) < 1e-6);
+    }
+
+    // 连点两次必须累加：第二次以上一次的关节目标为基准。
+    finished.clear();
+    backend.jogJoint(1, 1.0, 100.0);
+    backend.jogJoint(1, 1.0, 100.0);
+    QTRY_VERIFY_WITH_TIMEOUT(finished.count() > 0, 5000);
+    QVERIFY(std::abs(backend.state().joint[1] - base[1] - 4.0) < 1e-6);
+
+    // 滑杆的绝对角度只改目标轴。
+    finished.clear();
+    backend.moveJointAxisTo(1, base[1], 100.0);
+    QTRY_VERIFY_WITH_TIMEOUT(finished.count() > 0, 5000);
+    QCOMPARE(finished.last().at(0).toBool(), true);
+    QVERIFY(std::abs(backend.state().joint[1] - base[1]) < 1e-6);
+    for (int i = 0; i < 6; ++i) {
+        if (i == 1)
+            continue;
+        QVERIFY(std::abs(backend.state().joint[static_cast<std::size_t>(i)]
+                         - base[static_cast<std::size_t>(i)]) < 1e-6);
+    }
 }

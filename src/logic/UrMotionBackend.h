@@ -45,6 +45,8 @@ public:
     void moveJoint(const RobotMotion::Pose& target, double speedPct,
                    double toleranceDeg, int timeoutMs);
     void jogCartesian(int axis, double delta, double speedPct);
+    void jogJoint(int axis, double delta, double speedPct);
+    void moveJointAxisTo(int axis, double degrees, double speedPct);
     void stopMotion();
 
 signals:
@@ -89,6 +91,9 @@ private:
     QByteArray m_dashboardBuf;
 
     RobotMotion::State m_state;
+    // 收到过至少一个有效 30003 包。点动/preview 绝不能拿全零的初始状态当
+    // 基准——那会算出接近基座原点的目标，机器人会出现"乱走"。
+    bool m_havePose = false;
     bool m_connected = false;
     bool m_enabled = false;
     bool m_motionInFlight = false;
@@ -120,6 +125,8 @@ public slots:
     void moveJoint(const RobotMotion::Pose& target, double speedPct,
                    double toleranceDeg = 1.0, int timeoutMs = 15000) override;
     void jogCartesian(int axis, double delta, double speedPct) override;
+    void jogJoint(int axis, double delta, double speedPct) override;
+    void moveJointAxisTo(int axis, double degrees, double speedPct) override;
     void stopMotion() override;
 
 private:
