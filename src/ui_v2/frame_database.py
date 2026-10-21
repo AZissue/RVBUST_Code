@@ -5,8 +5,10 @@ from PySide6.QtWidgets import (QFileDialog, QHBoxLayout, QHeaderView, QLabel,
     QAbstractItemView, QMenu)
 from dataclasses import replace
 from pathlib import Path
+from contextlib import contextmanager
+import threading
 
-from core.frame_database import DEFAULT_ROOT
+from core.frame_database import DEFAULT_ROOT, STALE_RESULT
 from core.frame_data import FrameData
 from . import icons
 from .dialogs import ChineseMessageBox as QMessageBox
@@ -121,6 +123,8 @@ class FrameBrowser(QWidget):
                 categories[category_key].setIcon(0, icons.icon('folder_open', '#aaaaaa', 16))
             parent = categories[category_key]
             title = f'拼接帧 {record.frame_id:03d}' if record.kind == 'result' else f'帧 {record.frame_id:03d}'
+            if record.kind == 'result' and record.status == STALE_RESULT:
+                title += ' · 需重新拼接'
             if self.database.mode == 'multi_cam' and record.kind == 'raw':
                 title += ' · ' + record.camera
             row = QTreeWidgetItem(parent, [title, ''])
@@ -131,7 +135,7 @@ class FrameBrowser(QWidget):
             row.setIcon(0, icons.icon('layers', '#bbbbbb', 16))
             if record.kind == 'result':
                 row.setIcon(0, icons.icon('stitch', '#d65050', 16))
-                row.setToolTip(0, '独立拼接结果 · mm\n来源帧：' + '\n'.join(record.source_ids) + '\n' + record.created)
+                row.setToolTip(0, '独立拼接结果 · mm\n' + record.status + '\n来源帧：' + '\n'.join(record.source_ids) + '\n' + record.created)
             self._items[record.uid] = row
             cloud_item = QTreeWidgetItem(row, ['点云 · PLY', f'{record.points:,}' if record.points is not None else '—'])
             cloud_item.setIcon(0, icons.icon('layers', '#bbbbbb', 16))
@@ -193,6 +197,9 @@ class FrameBrowser(QWidget):
 
     def _update_delete_button(self):
         self.delete_button.setEnabled(bool(self.selected_ids()))
+        changed = getattr(self, '_edit_selection_changed', None)
+        if changed:
+            changed()
 
     def delete_selected(self):
         identifiers = self.selected_ids()
@@ -266,12 +273,21 @@ class FrameDatabaseController(QObject):
         self.browsers = {}
         self._selection = 0
         self._preview_modes = set()
+        self._capture_target = threading.local()
         for mode, database in self.databases.items():
             database.on_changed = lambda key=mode: self.changed.emit(key)
         self.changed.connect(self._changed)
 
     def ingest(self, mode, frame, **kwargs):
         return self.databases[mode].ingest(frame, **kwargs)
+
+    @contextmanager
+    def replacing_capture(self, mode, uid):
+        self._capture_target.value = (mode, uid)
+        try:
+            yield
+        finally:
+            self._capture_target.value = None
 
     def capture(self, frame):
         manager = self.bridge.mobile_workflow.station_manager
@@ -281,7 +297,16 @@ class FrameDatabaseController(QObject):
         mode = self.bridge._current_mode
         purpose = '移动机位' if mode == 'mobile_chain' else '转台采集' if mode == 'turntable' else (
             '扫描数据' if self.bridge.fixed_workflow.is_calibration_locked else '标定数据')
-        uid = self.ingest(mode, frame, purpose=purpose)
+        target = getattr(self._capture_target, 'value', None)
+        if target is not None:
+            if target[0] != mode:
+                raise RuntimeError('重拍期间工作区已变化')
+            uid = self.databases[mode].replace_capture(target[1], frame)
+        else:
+            if mode == 'mobile_chain' and self.bridge.shell._presentation == 'industrial':
+                frame.frame_id = 1 + max((row.frame_id for row in self.databases[mode].records.values()
+                                         if row.kind == 'raw'), default=0)
+            uid = self.ingest(mode, frame, purpose=purpose)
         folder = self.databases[mode].directory / 'frames' / uid
         # Return a stable archive reference to the workflow. CameraManager frees
         # SDK handles after this snapshot is complete, before the next capture.
@@ -307,6 +332,11 @@ class FrameDatabaseController(QObject):
         self.browsers[mode] = browser
         browser.frame_selected.connect(lambda uid: self.select(mode, uid))
         browser.component_selected.connect(lambda uid, component: self.select(mode, uid, component))
+        if mode == 'mobile_chain':
+            workspace = self.bridge.shell.workspace_mobile()
+            workspace._db_edit_gate = self.bridge.stitching.update_mobile_actions
+            workspace._db_delete_action = self.bridge.stitching.delete_mobile
+            browser._edit_selection_changed = self.bridge.stitching.update_mobile_actions
         browser.open_button.setText('打开会话')
         browser.open_requested.connect(self.bridge._on_open_session)
         browser.manage_requested.connect(lambda: self.bridge.projects.manage())
@@ -363,6 +393,7 @@ class FrameDatabaseController(QObject):
             browser.tree.blockSignals(True)
             browser.tree.setCurrentItem(browser._component_items.get((uid, component)) if component != 'frame' else browser._items.get(uid))
             browser.tree.blockSignals(False)
+            browser._update_delete_button()
         workspace = self.bridge.shell._stack.currentWidget()
         viewer = workspace.viewer() if callable(workspace.viewer) else workspace.viewer
         if component != 'image':
@@ -386,6 +417,8 @@ class FrameDatabaseController(QObject):
             hint += ' · 仅3D点云'
         self.bridge.shell._st_hint.setText(hint)
         self.bridge.shell._st_hint.setToolTip(hint)
+        if mode == 'mobile_chain':
+            self.bridge.stitching.update_mobile_actions()
 
     def remove(self, mode, identifiers):
         if not self.bridge.can_change_workspace() or mode != self.bridge._current_mode:

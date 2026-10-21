@@ -96,13 +96,26 @@ class SessionProject:
                         shutil.copy2(item, staging / item.name)
             if include_raw:
                 self.database._save_index()
+                previous_revisions = {}
+                previous_index = destination / 'data' / 'index.json'
+                if previous_index.is_file():
+                    previous_data = json.loads(previous_index.read_text(encoding='utf-8'))
+                    previous_revisions = {row['uid']: row.get('revision', 0)
+                        for row in previous_data['records']}
+                    previous_revisions.update({uid: entry['record'].get('revision', 0)
+                        for uid, entry in previous_data.get('removed', {}).items()})
+                revisions = {uid: row.revision for uid, row in self.database.records.items()}
+                revisions.update({uid: entry['record'].get('revision', 0)
+                    for uid, entry in self.database.removed.items()})
                 def copy_asset(source, target):
                     source = Path(source)
                     previous = destination / 'data' / source.relative_to(self.database.directory)
-                    # Immutable assets keep their UUID. Reuse the saved inode
-                    # inside the new snapshot, never link to the mutable draft.
+                    # Reuse only the same exposure revision of a stable UUID.
+                    # Link the saved inode, never the mutable draft.
                     # Filesystems without hard-link support use ordinary copies.
-                    if source.suffix.lower() in ('.ply', '.png') and previous.is_file() and previous.stat().st_size == source.stat().st_size:
+                    if (source.suffix.lower() in ('.ply', '.png') and previous.is_file()
+                            and previous.stat().st_size == source.stat().st_size
+                            and previous_revisions.get(source.parent.name) == revisions.get(source.parent.name)):
                         try:
                             os.link(previous, target)
                             return str(target)

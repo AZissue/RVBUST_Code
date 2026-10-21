@@ -54,6 +54,59 @@ class FrameDatabaseTests(unittest.TestCase):
         self.assertNotEqual(second, first)
         self.assertEqual(len(self.db.records), 2)
 
+    def test_retake_replaces_pair_keeps_identity_and_invalidates_only_dependent_results(self):
+        from core.frame_database import STALE_RESULT
+        first = self.db.ingest(self.frame())
+        second = self.db.ingest(self.frame())
+        _, cloud = self.db.load_frame(first)
+        result = self.db.publish_result(cloud, [first, second])
+        unrelated = self.db.publish_result(cloud, [first])
+        before = list(self.db.records)
+        original = self.db.records[second]
+        replacement = self.frame()
+        replacement.frame_id = 99
+        replacement.image_np[:] = 211
+        self.source.write_bytes(PLY.replace(b'1 2 3', b'7 8 9'))
+        self.db.replace_capture(second, replacement)
+        self.assertEqual(list(self.db.records), before)
+        self.assertEqual(self.db.records[second].frame_id, original.frame_id)
+        self.assertEqual(self.db.records[second].revision, 1)
+        self.assertEqual(self.db.records[result].status, STALE_RESULT)
+        self.assertEqual(self.db.records[unrelated].status, '已拼接')
+        frame, _ = self.db.load_frame(second)
+        np.testing.assert_array_equal(frame.image_np, replacement.image_np)
+        self.assertIn(b'7 8 9', Path(frame.offline_pointmap_path).read_bytes())
+        self.assertEqual((self.db.directory/'frames'/first/'pointmap.ply').read_bytes(), PLY)
+        reopened = FrameDatabase('multi_cam', self.root/'reopened')
+        reopened.open_project(self.db.directory/'index.json')
+        self.assertEqual(reopened.records[second].revision, 1)
+        self.assertEqual(reopened.records[result].status, STALE_RESULT)
+        self.assertEqual(list(self.db.directory.glob('.replacing_*')), [])
+
+    def test_retake_io_and_index_failure_restore_pair_metadata_and_result_status(self):
+        uid = self.db.ingest(self.frame())
+        _, cloud = self.db.load_frame(uid)
+        result = self.db.publish_result(cloud, [uid])
+        before = (self.db.directory/'index.json').read_bytes()
+        old_png = (self.db.directory/'frames'/uid/'image.png').read_bytes()
+        replacement = self.frame()
+        replacement.image_np[:] = 202
+        self.source.write_bytes(PLY.replace(b'1 2 3', b'7 8 9'))
+        with patch.object(self.db, '_save_index', side_effect=OSError('disk full')):
+            with self.assertRaisesRegex(OSError, 'disk full'):
+                self.db.replace_capture(uid, replacement)
+        self.assertEqual((self.db.directory/'index.json').read_bytes(), before)
+        self.assertEqual((self.db.directory/'frames'/uid/'image.png').read_bytes(), old_png)
+        self.assertEqual((self.db.directory/'frames'/uid/'pointmap.ply').read_bytes(), PLY)
+        self.assertEqual(self.db.records[uid].revision, 0)
+        self.assertEqual(self.db.records[result].status, '已拼接')
+        self.assertIsNone(replacement.database_id)
+        replacement.offline_pointmap_path = 'missing.ply'
+        with self.assertRaises(OSError):
+            self.db.replace_capture(uid, replacement)
+        self.assertEqual((self.db.directory/'index.json').read_bytes(), before)
+        self.assertEqual(list(self.db.directory.glob('.replacing_*')), [])
+
     def test_image_preview_does_not_read_pointcloud_and_cloud_does_not_require_image(self):
         uid = self.db.ingest(self.frame())
         with patch.object(FrameData, 'load_pointcloud_o3d', side_effect=AssertionError('image preview must not load PLY')):

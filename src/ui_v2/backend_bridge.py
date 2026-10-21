@@ -1575,6 +1575,8 @@ class BackendBridge(QObject):
 
     def _on_mobile_undo(self):
         """撤销上一机位（合并点云在后台计算）。"""
+        if self.shell._presentation == 'industrial':
+            return self.stitching.undo_mobile()
         ws = self.shell.workspace_mobile()
         self.shell.show_loading("正在撤销...")
 
@@ -1606,7 +1608,7 @@ class BackendBridge(QObject):
     def _on_mobile_recapture(self, index: int):
         """重拍指定机位（index 为时间线索引，-1 表示当前/最新机位）。"""
         if self.shell._presentation == 'industrial':
-            return self.stitching.capture_mobile()
+            return self.stitching.recapture_mobile()
         preview_cam = self._pause_2d_preview()
         ws = self.shell.workspace_mobile()
 
@@ -1707,6 +1709,8 @@ class BackendBridge(QObject):
 
     def _on_mobile_delete_station(self, index: int):
         """删除指定机位（index 为时间线索引）。"""
+        if self.shell._presentation == 'industrial':
+            return self.stitching.delete_mobile()
         station_id, _ = self._station_id_from_timeline_index(index)
         if station_id is None:
             self.shell.log("删除失败: 指定机位不存在", "warn")
@@ -2280,12 +2284,16 @@ class BackendBridge(QObject):
         # 也不能挂在已遮蔽的自定义信号上，否则运行中析构 → __fastfail。
         worker.finished.connect(lambda w=worker: self._on_worker_thread_finished(w))
         worker.start()
+        if hasattr(self.shell, '_industrial_ribbon'):
+            self.shell._industrial_ribbon.update_status()
 
     def _on_worker_thread_finished(self, worker):
         """线程退出回调：从引用池摘除并调度 Qt 回收。"""
         if worker in self._workers:
             self._workers.remove(worker)
         worker.deleteLater()
+        if hasattr(self.shell, '_industrial_ribbon'):
+            self.shell._industrial_ribbon.update_status()
 
     def cleanup(self):
         """清理资源（关闭窗口时调用）。幂等：aboutToQuit 与 main 尾部可能各调一次。

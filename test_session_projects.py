@@ -80,6 +80,30 @@ class SessionProjectTests(unittest.TestCase):
                 self.assertEqual((path / 'data' / 'frames' / uid / 'pointmap.ply').read_bytes(), PLY)
                 self.assertTrue((path / 'data' / 'frames' / uid / 'image.png').is_file())
 
+    def test_same_size_retake_changes_saved_assets_only_after_explicit_save(self):
+        uid = self.ingest()
+        database = self.project.database
+        saved = self.project.save({})
+        target = saved/'data'/'frames'/uid/'pointmap.ply'
+        saved_before = target.read_bytes()
+        modified = PLY.replace(b'1 2 3', b'7 8 9')
+        self.assertEqual(len(modified), len(saved_before))
+        self.source.write_bytes(modified)
+        replacement = FrameData(99, 'cam0', image_np=np.full((2,2,3),199,np.uint8),
+            is_offline=True, offline_pointmap_path=str(self.source))
+        database.replace_capture(uid, replacement)
+        self.assertEqual(target.read_bytes(), saved_before)
+        self.project.save({})
+        self.assertEqual(target.read_bytes(), modified)
+        loaded, manifest = SessionProject.load(saved, 'mobile_chain', self.project.save_root)
+        try:
+            self.assertEqual(loaded.database.records[uid].revision, 1)
+            frame,_ = loaded.database.load_frame(uid)
+            np.testing.assert_array_equal(frame.image_np, replacement.image_np)
+            self.assertEqual(Path(frame.offline_pointmap_path).read_bytes(), modified)
+        finally:
+            loaded.dispose()
+
     def test_failed_save_preserves_previous_snapshot(self):
         self.ingest()
         path = self.project.save(dict(value=1))

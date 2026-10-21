@@ -79,28 +79,38 @@ class SessionUiTests(unittest.TestCase):
         self.assertEqual(chain.nodes['station_2'].T_world[0, 3], 10)
         self.assertEqual(chain.nodes['station_2'].frame.image_np[0, 0, 0], 2)
         self.assertFalse(controller.projects['mobile_chain'].dirty)
-        self.bridge._on_mobile_delete_station(2)
+        uid = chain.nodes['station_2'].frame.database_id
+        browser = self.bridge.frame_db.browsers['mobile_chain']
+        browser.tree.setCurrentItem(browser._items[uid])
         self.wait(lambda: not any(w.isRunning() for w in self.bridge._workers))
-        self.assertEqual(len(self.bridge.mobile_workflow.get_station_evaluations()), 1)
+        with patch('ui_v2.explicit_stitching.QMessageBox.question', return_value=QMessageBox.Yes):
+            self.bridge._on_mobile_delete_station(2)
+            self.wait(lambda: not any(w.isRunning() for w in self.bridge._workers))
+        self.assertNotIn(uid, self.bridge.frame_db.databases['mobile_chain'].records)
+        self.assertEqual(len(self.bridge.mobile_workflow.get_station_evaluations()), 0)
         self.bridge._on_save_session()
         self.wait(lambda: not controller.projects['mobile_chain'].dirty)
         self.wait(lambda: not any(w.isRunning() for w in self.bridge._workers))
-        self.assertEqual(len(json.loads((saved / 'session.json').read_text(encoding='utf-8'))['workflow']['nodes']), 1)
+        self.assertEqual(len(json.loads((saved / 'session.json').read_text(encoding='utf-8'))['workflow']['nodes']), 0)
         self.assertEqual(len(list(project.save_root.iterdir())), 1)
 
-    def test_deleting_final_station_clears_2d_3d_and_raw_db_stays(self):
+    def test_deleting_db_stations_clears_2d_3d_and_removes_matching_raw_pairs(self):
         controller, project = self.mobile()
-        self.bridge._on_mobile_delete_station(2)
-        self.wait(lambda: not any(w.isRunning() for w in self.bridge._workers))
-        self.bridge._on_mobile_delete_station(1)
+        browser = self.bridge.frame_db.browsers['mobile_chain']
+        for uid in list(project.database.records):
+            browser.tree.setCurrentItem(browser._items[uid])
+            self.wait(lambda: not any(w.isRunning() for w in self.bridge._workers))
+            with patch('ui_v2.explicit_stitching.QMessageBox.question', return_value=QMessageBox.Yes):
+                self.win._industrial_ribbon.commands[('mobile_chain','delete')].click()
+                self.wait(lambda: not any(w.isRunning() for w in self.bridge._workers))
         ws = self.win.workspace_mobile()
-        self.wait(lambda: ws.viewer()._merged is None)
-        self.wait(lambda: not any(w.isRunning() for w in self.bridge._workers))
         self.assertEqual(ws._station_count, 0)
+        self.assertIsNone(ws.viewer()._merged)
         self.assertEqual(ws.viewer()._clouds, {})
         self.assertIsNone(ws.live_view()._current_pixmap)
         self.assertIsNone(ws.live_view().marker_context[0])
-        self.assertEqual(len(project.database.records), 2)
+        self.assertEqual(len(project.database.records), 0)
+        self.assertEqual(len(project.database.removed), 2)
 
     def test_export_goes_to_explicit_path_and_survives_discarding_draft(self):
         controller, project = self.mobile()

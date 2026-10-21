@@ -3,8 +3,9 @@
 Published records contain no SDK handles or large numpy arrays. A frame is
 published only after its organized PLY and matching PNG have both been saved.
 Workflow deletion, re-registration and display sampling never alter this store.
+Explicit retakes replace a complete pair under the same record identity/revision.
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 import copy
@@ -21,6 +22,7 @@ from .utils import rvc_sdk_lock, write_json_atomic
 
 
 DEFAULT_ROOT = Path(__file__).resolve().parents[2] / 'offline_data' / 'frame_db'
+STALE_RESULT = '来源数据已变更，请重新拼接'
 
 
 def _json_value(value):
@@ -61,6 +63,7 @@ class FrameRecord:
     status: str = '已入库'
     kind: str = 'raw'
     source_ids: list = field(default_factory=list)
+    revision: int = 0
 
 
 class FrameDatabase:
@@ -155,6 +158,74 @@ class FrameDatabase:
             frame.database_id = uid
         self._notify()
         return uid
+
+    def replace_capture(self, uid, frame):
+        """Stage a complete exposure, then replace one owned pair and its index.
+
+        Keep the record identity/order; failed capture/validation/index writes
+        leave the old pair and every result status unchanged.
+        """
+        with rvc_sdk_lock:
+            with self._lock:
+                original = copy.deepcopy(self.records[uid])
+                if original.kind != 'raw':
+                    raise ValueError('只能重拍原始帧')
+                directory = self.directory
+            staging = FrameDatabase(self.mode)
+            staging.directory = directory / ('.replacing_' + uuid.uuid4().hex)
+            backup = staging.directory / 'previous'
+            committed = False
+            candidate = replace(frame, database_id=None, markers=[], markers_all=None,
+                                board_pose=None, board_pattern=None, board_pattern_name=None, board_rms_mm=0)
+            try:
+                staged_uid = staging.ingest(candidate)
+                # Validate readable geometry before any existing files change.
+                staging.load_frame(staged_uid)
+                incoming = staging.directory / 'frames' / staged_uid
+                target = directory / 'frames' / uid
+                with self._lock:
+                    if self.directory != directory or self.records.get(uid) != original:
+                        raise RuntimeError('重拍期间DB帧已变化，请重试')
+                    before = copy.deepcopy(self.records)
+                    new = staging.records[staged_uid]
+                    new = replace(new, uid=uid, session_id=original.session_id,
+                        camera=original.camera, frame_id=original.frame_id,
+                        purpose=original.purpose, logical_name=original.logical_name,
+                        revision=original.revision + 1, status='已重拍，待拼接')
+                    target.rename(backup)
+                    try:
+                        incoming.rename(target)
+                        self.records[uid] = new
+                        self._invalidate_results([uid])
+                        self._save_index()
+                        committed = True
+                    except Exception:
+                        self.records = before
+                        if target.exists():
+                            target.rename(incoming)
+                        backup.rename(target)
+                        raise
+                frame.database_id = uid
+                frame.frame_id = original.frame_id
+                frame.markers = []
+                frame.markers_all = None
+                frame.board_pose = None
+                frame.board_pattern = None
+                frame.board_pattern_name = None
+                frame.board_rms_mm = 0
+            finally:
+                # If an OS error also prevents rollback, keep the old pair for
+                # recovery instead of deleting its only remaining directory.
+                if committed or not backup.exists():
+                    shutil.rmtree(staging.directory, ignore_errors=True)
+        self._notify()
+        return uid
+
+    def _invalidate_results(self, identifiers):
+        changed = set(identifiers)
+        for row in self.records.values():
+            if row.kind == 'result' and changed.intersection(row.source_ids):
+                row.status = STALE_RESULT
 
     def annotate(self, frame, *, purpose=None, status=None, logical_name=None):
         with self._lock:
@@ -252,7 +323,7 @@ class FrameDatabase:
         self._notify()
         return uid
 
-    def remove(self, identifiers):
+    def remove(self, identifiers, *, invalidate_results=False):
         """Move owned pairs into a recoverable batch, committing the index last.
 
         Returns {uid: (old_folder, new_folder)} so workflow references can follow
@@ -264,7 +335,7 @@ class FrameDatabase:
                 raise ValueError('请选择有效的DB帧')
             batch = uuid.uuid4().hex
             moves = {}
-            before = self.records.copy()
+            before = copy.deepcopy(self.records)
             try:
                 for uid in identifiers:
                     old = self.directory / 'frames' / uid
@@ -273,6 +344,8 @@ class FrameDatabase:
                     old.rename(new)
                     moves[uid] = (old, new)
                     self.removed[uid] = dict(batch=batch, record=vars(self.records.pop(uid)).copy())
+                if invalidate_results:
+                    self._invalidate_results(identifiers)
                 self._save_index()
             except Exception:
                 self.records = before
@@ -362,6 +435,7 @@ class FrameDatabase:
                 raise ValueError('DB索引重复或会话缺失')
             session = data['sessions'][row.session_id]
             if (not isinstance(row.frame_id, int) or row.frame_id < 0 or
+                    not isinstance(row.revision, int) or row.revision < 0 or
                     not isinstance(row.points, int) or row.points <= 0 or
                     row.kind not in ('raw', 'result') or len(row.image_size) != 2 or
                     not all(isinstance(v, int) and v >= (1 if row.kind == 'raw' else 0) for v in row.image_size) or

@@ -3,6 +3,8 @@ import hashlib
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
+from contextlib import contextmanager
+from PySide6.QtCore import Qt
 import unittest
 
 import numpy as np
@@ -178,6 +180,180 @@ class ExplicitStitchingTests(unittest.TestCase):
             valid = self.bridge.mobile_workflow._chain_stitcher._cache_node_pcd(ChainNode('x', frame, [], transform))
         np.testing.assert_array_equal(np.asarray(valid.points), [[11., 2., 3.]])
         self.assertEqual(len(original.points), 3)
+
+    def select_raw(self, uid, component=None):
+        browser = self.bridge.frame_db.browsers['mobile_chain']
+        browser.tree.clearSelection()
+        browser.tree.setCurrentItem(browser._component_items[(uid, component)] if component else browser._items[uid])
+        self.wait(lambda: not any(w.isRunning() for w in self.bridge._workers))
+
+    @contextmanager
+    def camera(self, value=211):
+        from test_frame_database import PLY
+        sdk = SimpleNamespace(PointMapUnitEnum=SimpleNamespace(Millimeter=1),
+            PointMap=SimpleNamespace(Destroy=Mock()), Image=SimpleNamespace(Destroy=Mock()))
+        pm = Mock()
+        def save(path, *args):
+            Path(path).write_bytes(PLY.replace(b'1 2 3', b'7 8 9'))
+            return True
+        pm.SaveWithImage.side_effect = save
+        self.bridge.camera_manager._cameras = {'cam0': SimpleNamespace(is_connected=True,
+            capture_3d=lambda options: (np.full((2,2,3),value,np.uint8), pm, object(), 'ok'))}
+        self.bridge.stitching.update_mobile_actions()
+        with patch('core.frame_database._import_rvc', return_value=sdk), \
+             patch('core.frame_data._import_rvc', return_value=sdk):
+            yield sdk
+
+    def test_selected_raw_retake_overwrites_same_pair_and_discards_stale_registration(self):
+        from core.frame_database import STALE_RESULT
+        ws = self.mobile()
+        raw = list(self.db.records)
+        self.execute()
+        result = next(uid for uid,row in self.db.records.items() if row.kind=='result')
+        before = list(self.db.records)
+        first_bytes = (self.db.directory/'frames'/raw[0]/'pointmap.ply').read_bytes()
+        self.select_raw(raw[1], 'image')
+        with self.camera() as sdk:
+            button = self.win._industrial_ribbon.commands[('mobile_chain','recapture')]
+            self.assertTrue(button.isEnabled())
+            self.assertIn('002', button.toolTip())
+            self.select_raw(raw[0])
+            self.assertIn('001', button.toolTip())
+            self.select_raw(raw[1], 'image')
+            self.assertIn('002', button.toolTip())
+            button.click()
+            self.wait(lambda: not any(w.isRunning() for w in self.bridge._workers))
+            sdk.PointMap.Destroy.assert_called_once()
+        self.assertEqual(list(self.db.records), before)
+        self.assertEqual(self.db.records[raw[1]].frame_id, 2)
+        self.assertEqual(self.db.records[raw[1]].revision, 1)
+        self.assertEqual(self.db.records[result].status, STALE_RESULT)
+        self.assertIn('需重新拼接', ws._industrial.frame_browser._items[result].text(0))
+        self.assertEqual(self.db.records[raw[1]].markers, [])
+        self.assertEqual((self.db.directory/'frames'/raw[0]/'pointmap.ply').read_bytes(), first_bytes)
+        frame,_ = self.db.load_frame(raw[1])
+        np.testing.assert_array_equal(frame.image_np, np.full((2,2,3),211,np.uint8))
+        self.assertIn(b'7 8 9', Path(frame.offline_pointmap_path).read_bytes())
+        self.assertEqual(self.bridge.mobile_workflow.get_station_evaluations(), [])
+        self.assertEqual(ws._station_count, 0)
+        self.assertNotEqual(self.db.records[raw[0]].status, '已入链')
+        self.assertEqual(ws._industrial.frame_browser.selected_ids(), [raw[1]])
+        self.assertTrue(ws._industrial.frame_browser.delete_button.isEnabled())
+        self.assertIsNotNone(ws.viewer()._database_cloud)
+        self.assertIsNone(ws.viewer()._merged)
+        self.assertFalse(self.win._industrial_ribbon.commands[('mobile_chain','export')].isEnabled())
+        with patch('ui_v2.explicit_stitching.QFileDialog.getSaveFileName') as dialog:
+            self.bridge.stitching.export()
+            dialog.assert_not_called()
+
+    def test_retake_can_register_again_and_publish_a_new_exportable_result(self):
+        from core.frame_database import STALE_RESULT
+        self.mobile()
+        raw = list(self.db.records)
+        markers = [dict(marker) for marker in self.db.records[raw[1]].markers]
+        self.execute()
+        old = next(uid for uid,row in self.db.records.items() if row.kind == 'result')
+        self.select_raw(raw[1])
+        with self.camera():
+            self.win._industrial_ribbon.commands[('mobile_chain','recapture')].click()
+            self.wait(lambda: not any(w.isRunning() for w in self.bridge._workers))
+        with patch.object(self.bridge.marker_detector, 'detect_3d', return_value=markers) as detect:
+            self.execute()
+            detect.assert_called_once()
+        results = [row for row in self.db.records.values() if row.kind == 'result' and row.status != STALE_RESULT]
+        self.assertEqual(len(results), 1, self.win._st_hint.text())
+        self.assertEqual(results[0].source_ids, raw)
+        self.assertEqual(self.db.records[old].status, STALE_RESULT)
+        self.assertEqual(len(self.bridge.mobile_workflow.get_station_evaluations()), 2)
+        self.assertTrue(self.win._industrial_ribbon.commands[('mobile_chain','export')].isEnabled())
+
+    def test_unregistered_frame_can_be_retaken_and_undo_targets_db_last_not_selected(self):
+        ws = self.mobile()
+        first, second = list(self.db.records)
+        self.select_raw(first)
+        with self.camera(), patch('ui_v2.explicit_stitching.QMessageBox.question', side_effect=AssertionError('no chain reset prompt')):
+            self.win._industrial_ribbon.commands[('mobile_chain','recapture')].click()
+            self.wait(lambda: not any(w.isRunning() for w in self.bridge._workers))
+        self.assertEqual(list(self.db.records), [first,second])
+        self.assertEqual(self.db.records[first].revision, 1)
+        self.select_raw(first)
+        with patch('ui_v2.explicit_stitching.QMessageBox.question', return_value=QMessageBox.Yes):
+            self.win._industrial_ribbon.commands[('mobile_chain','undo')].click()
+            self.wait(lambda: not any(w.isRunning() for w in self.bridge._workers))
+        self.assertIn(first, self.db.records)
+        self.assertNotIn(second, self.db.records)
+        self.assertIsNone(ws.viewer()._database_cloud)
+        self.assertIsNone(ws.viewer()._merged)
+
+    def test_failed_retake_preserves_selected_record_chain_and_capture_target_clears(self):
+        ws = self.mobile()
+        raw = list(self.db.records)
+        self.execute()
+        chain = self.bridge.mobile_workflow._chain_stitcher
+        self.select_raw(raw[0])
+        before = (self.db.directory/'index.json').read_bytes()
+        with self.camera():
+            with patch.object(self.bridge.camera_manager, 'capture', return_value=None):
+                self.win._industrial_ribbon.commands[('mobile_chain','recapture')].click()
+                self.wait(lambda: not any(w.isRunning() for w in self.bridge._workers))
+            self.assertEqual((self.db.directory/'index.json').read_bytes(), before)
+            self.assertIs(self.bridge.mobile_workflow._chain_stitcher, chain)
+            self.assertEqual(self.db.records[raw[0]].revision, 0)
+            self.bridge.stitching.capture_mobile()
+            self.wait(lambda: not any(w.isRunning() for w in self.bridge._workers))
+        self.assertEqual(sum(row.kind=='raw' for row in self.db.records.values()), 3)
+        self.assertEqual([row.frame_id for row in self.db.records.values() if row.kind=='raw'], [1,2,3])
+        self.assertEqual(self.db.records[raw[0]].revision, 0)
+
+    def test_db_edit_buttons_follow_raw_selection_and_delete_undo_move_corresponding_pairs(self):
+        from core.frame_database import STALE_RESULT
+        ws = self.mobile()
+        raw = list(self.db.records)
+        self.execute()
+        result = next(uid for uid,row in self.db.records.items() if row.kind=='result')
+        ribbon = self.win._industrial_ribbon.commands
+        self.assertFalse(ribbon[('mobile_chain','recapture')].isEnabled())
+        self.assertFalse(ribbon[('mobile_chain','delete')].isEnabled())
+        self.select_raw(raw[0], 'cloud')
+        self.assertTrue(ribbon[('mobile_chain','delete')].isEnabled())
+        self.assertFalse(ribbon[('mobile_chain','recapture')].isEnabled())
+        with patch('ui_v2.explicit_stitching.QMessageBox.question', return_value=QMessageBox.No):
+            ribbon[('mobile_chain','delete')].click()
+        self.assertIn(raw[0], self.db.records)
+        with patch('ui_v2.explicit_stitching.QMessageBox.question', return_value=QMessageBox.Yes):
+            ribbon[('mobile_chain','delete')].click()
+            self.wait(lambda: not any(w.isRunning() for w in self.bridge._workers))
+        self.assertNotIn(raw[0], self.db.records)
+        self.assertIn(raw[0], self.db.removed)
+        self.assertIn(raw[1], self.db.records)
+        self.assertEqual(self.db.records[result].status, STALE_RESULT)
+        self.assertEqual(ws._station_count, 0)
+        with patch('ui_v2.explicit_stitching.QMessageBox.question', return_value=QMessageBox.Yes):
+            ribbon[('mobile_chain','undo')].click()
+            self.wait(lambda: not any(w.isRunning() for w in self.bridge._workers))
+        self.assertNotIn(raw[1], self.db.records)
+        self.assertIn(raw[1], self.db.removed)
+        self.assertFalse(ribbon[('mobile_chain','undo')].isEnabled())
+        self.bridge.frame_db.recover('mobile_chain')
+        self.wait(lambda: not any(w.isRunning() for w in self.bridge._workers))
+        self.assertIn(raw[1], self.db.records)
+        self.assertTrue(ribbon[('mobile_chain','undo')].isEnabled())
+
+    def test_group_mixed_and_multiple_selection_cannot_silently_retake_latest_frame(self):
+        self.mobile()
+        raw = list(self.db.records)
+        self.execute()
+        browser = self.bridge.frame_db.browsers['mobile_chain']
+        with self.camera(), patch.object(self.bridge.camera_manager,'capture') as capture:
+            self.select_raw(raw[0])
+            browser._items[raw[1]].setSelected(True)
+            self.bridge.stitching.recapture_mobile()
+            capture.assert_not_called()
+            browser.tree.clearSelection()
+            browser.tree.setCurrentItem(browser._items[raw[0]].parent())
+            self.bridge.stitching.recapture_mobile()
+            capture.assert_not_called()
+            self.assertFalse(self.win._industrial_ribbon.commands[('mobile_chain','recapture')].isEnabled())
 
     def test_online_capture_stores_raw_without_registration(self):
         ws = self.mobile()

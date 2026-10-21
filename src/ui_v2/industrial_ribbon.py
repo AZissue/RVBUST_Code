@@ -73,7 +73,7 @@ class CommandButton(QToolButton):
         self.blockSignals(False)
 
     def eventFilter(self, watched, event):
-        if event.type() == QEvent.EnabledChange:
+        if event.type() in (QEvent.EnabledChange, QEvent.ToolTipChange):
             self.sync()
         return super().eventFilter(watched, event)
 
@@ -269,6 +269,9 @@ class IndustrialRibbon(QWidget):
         self.commands[(shell.current_mode(), 'stitch')].setEnabled(raw >= 2)
         self.commands[(shell.current_mode(), 'stitch')].setToolTip('至少两帧原始数据；多角度选择两帧以上时拼接选中帧，否则使用全部原始帧')
         self.commands[(shell.current_mode(), 'export')].setEnabled(results)
+        bridge = shell._backend_bridge
+        if bridge and hasattr(bridge, 'stitching'):
+            bridge.stitching.update_mobile_actions()
 
     def _viewer(self):
         workspace = self.shell._stack.currentWidget()

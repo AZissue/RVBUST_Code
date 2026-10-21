@@ -231,6 +231,10 @@ class MobileChainWorkspace(QWidget):
         self._btn_save.setEnabled(self._station_count > 0 and not busy)
         self._btn_delete_node.setEnabled(
             self._selected_node is not None and not busy)
+        if getattr(getattr(self, '_industrial', None), 'active', False):
+            refresh = getattr(self, '_db_edit_gate', None)
+            if refresh:
+                refresh()
 
     def current_state(self) -> str:
         return self._state
@@ -448,6 +452,11 @@ class MobileChainWorkspace(QWidget):
         self.station_selected.emit(index)
 
     def _on_delete_selected(self):
+        if getattr(getattr(self, '_industrial', None), 'active', False):
+            action = getattr(self, '_db_delete_action', None)
+            if action:
+                action()
+                return
         if self._selected_node is not None:
             self.delete_station_requested.emit(self._selected_node)
             self._selected_node = None
