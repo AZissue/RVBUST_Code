@@ -13,6 +13,7 @@ from . import icons
 
 class FrameBrowser(QWidget):
     frame_selected = Signal(str)
+    component_selected = Signal(str, str)
     open_requested = Signal()
     restore_requested = Signal()
     delete_requested = Signal(list)
@@ -72,10 +73,11 @@ class FrameBrowser(QWidget):
         self.manage_button.clicked.connect(self.manage_requested)
         layout.addWidget(self.manage_button)
         self._items = {}
+        self._component_items = {}
         self.refresh()
 
     def refresh(self):
-        selected = {item.data(0, Qt.UserRole) for item in self.tree.selectedItems()}
+        selected = {(item.data(0, Qt.UserRole), item.data(0, Qt.UserRole + 2)) for item in self.tree.selectedItems()}
         expanded = set()
         def remember(item, key=''):
             key += '/' + item.text(0)
@@ -88,6 +90,7 @@ class FrameBrowser(QWidget):
         self.tree.blockSignals(True)
         self.tree.clear()
         self._items.clear()
+        self._component_items.clear()
         sessions, records = self.database.snapshot()
         results = sum(record.kind == 'result' for record in records)
         count_text = f'{len(records)-results} 帧' + (f' / {results} 结果' if results else '')
@@ -127,6 +130,18 @@ class FrameBrowser(QWidget):
                 row.setToolTip(0, '独立拼接结果 · mm\n来源帧：' + '\n'.join(record.source_ids) + '\n' + record.created)
                 row.setToolTip(1, '拼接结果点数；原始帧保持独立。')
             self._items[record.uid] = row
+            cloud_item = QTreeWidgetItem(row, ['点云 · PLY', ''])
+            cloud_item.setIcon(0, icons.icon('layers', '#bbbbbb', 16))
+            components = [('cloud', cloud_item)]
+            if record.kind != 'result':
+                image_item = QTreeWidgetItem(row, ['2D 图像', f'{record.image_size[0]} × {record.image_size[1]}'])
+                image_item.setIcon(0, icons.icon('camera', '#bbbbbb', 16))
+                components.append(('image', image_item))
+            for component, item in components:
+                item.setData(0, Qt.UserRole, record.uid)
+                item.setData(0, Qt.UserRole + 2, component)
+                item.setToolTip(0, ('仅查看3D点云' if component == 'cloud' else '仅在右侧查看2D图像，不重载点云') + '\n删除操作针对所属完整帧，可在回收区恢复。')
+                self._component_items[(record.uid, component)] = item
         for item in categories.values():
             item.setText(1, f'{item.childCount()} 项')
         def restore(item, key=''):
@@ -141,9 +156,10 @@ class FrameBrowser(QWidget):
             item = self.tree.topLevelItem(i)
             restore(item)
             self._known_groups.add('/' + item.text(0))
-        for uid in selected:
-            if uid in self._items:
-                self._items[uid].setSelected(True)
+        for uid, component in selected:
+            item = self._component_items.get((uid, component)) if component else self._items.get(uid)
+            if item:
+                item.setSelected(True)
         self.tree.blockSignals(False)
         self.count.setText(count_text)
         self._update_delete_button()
@@ -180,7 +196,8 @@ class FrameBrowser(QWidget):
             self._update_delete_button()
         menu = QMenu(self)
         if item and item.data(0, Qt.UserRole):
-            menu.addAction('查看2D / 3D', lambda: self.frame_selected.emit(item.data(0, Qt.UserRole)))
+            label = {'cloud': '查看3D点云', 'image': '查看右侧2D图像'}.get(item.data(0, Qt.UserRole + 2), '查看2D / 3D')
+            menu.addAction(label, lambda: self._selected(item, None))
         action = menu.addAction('删除选中数据', self.delete_selected)
         action.setEnabled(bool(self.selected_ids()))
         action = menu.addAction('清空当前 DB', lambda: self.delete_requested.emit(list(self.database.records)))
@@ -196,14 +213,20 @@ class FrameBrowser(QWidget):
 
     def _selected(self, item, previous):
         if item and item.data(0, Qt.UserRole):
-            self.frame_selected.emit(item.data(0, Qt.UserRole))
+            component = item.data(0, Qt.UserRole + 2)
+            if component:
+                self.component_selected.emit(item.data(0, Qt.UserRole), component)
+            else:
+                self.frame_selected.emit(item.data(0, Qt.UserRole))
 
-    def show_frame(self, uid, frame):
+    def show_frame(self, uid, frame, component='frame'):
         row = self.database.records[uid]
         if row.kind == 'result':
             self.details.setText(f'拼接帧 {row.frame_id:03d} · {row.points:,} 个有效点\n来源 {len(row.source_ids)} 帧 · 独立结果，原始数据保留')
             return
-        self.details.setText(f'{row.logical_name} · {row.status}\n原始PLY + 2D PNG · 在右侧联动查看')
+        description = {'frame': '原始PLY + 2D PNG · 联动查看', 'cloud': '仅查看原始点云 · 相机坐标系 / mm',
+                       'image': '仅查看2D图像 · 保留当前3D视图'}[component]
+        self.details.setText(f'{row.logical_name} · {row.status}\n{description}')
 
 
 class FrameDatabaseController(QObject):
@@ -215,6 +238,7 @@ class FrameDatabaseController(QObject):
         self.databases = bridge.shell._frame_databases
         self.browsers = {}
         self._selection = 0
+        self._preview_modes = set()
         for mode, database in self.databases.items():
             database.on_changed = lambda key=mode: self.changed.emit(key)
         self.changed.connect(self._changed)
@@ -255,6 +279,7 @@ class FrameDatabaseController(QObject):
             return
         self.browsers[mode] = browser
         browser.frame_selected.connect(lambda uid: self.select(mode, uid))
+        browser.component_selected.connect(lambda uid, component: self.select(mode, uid, component))
         browser.open_button.setText('打开会话')
         browser.open_requested.connect(self.bridge._on_open_session)
         browser.manage_requested.connect(lambda: self.bridge.projects.manage())
@@ -280,10 +305,11 @@ class FrameDatabaseController(QObject):
             browser.tree.clearSelection()
             browser.tree.blockSignals(False)
             browser._update_delete_button()
-        if had_preview and hasattr(workspace, '_industrial'):
+        if (had_preview or mode in self._preview_modes) and hasattr(workspace, '_industrial'):
             workspace._industrial.restore_business_image()
+        self._preview_modes.discard(mode)
 
-    def select(self, mode, uid):
+    def select(self, mode, uid, component='frame'):
         bridge = self.bridge
         if not bridge.can_change_workspace():
             bridge.shell.log('正在处理数据，请完成后查看DB单帧。', 'warn')
@@ -299,27 +325,33 @@ class FrameDatabaseController(QObject):
                 bridge.shell.log('DB单帧读取失败：' + str(error), 'error')
                 return
             frame, cloud = result
-            self.display_frame(mode, uid, frame, cloud)
-        bridge._run_background(lambda: self.databases[mode].load_frame(uid), done, name='db_frame_preview')
+            self.display_frame(mode, uid, frame, cloud, component)
+        bridge._run_background(lambda: self.databases[mode].load_frame(uid, component), done, name='db_frame_preview')
 
-    def display_frame(self, mode, uid, frame, cloud):
+    def display_frame(self, mode, uid, frame, cloud, component='frame'):
+        self._preview_modes.add(mode)
         browser = self.browsers.get(mode)
         if browser:
-            browser.show_frame(uid, frame)
+            browser.show_frame(uid, frame, component)
             browser.tree.blockSignals(True)
-            browser.tree.setCurrentItem(browser._items.get(uid))
+            browser.tree.setCurrentItem(browser._component_items.get((uid, component)) if component != 'frame' else browser._items.get(uid))
             browser.tree.blockSignals(False)
         workspace = self.bridge.shell._stack.currentWidget()
         viewer = workspace.viewer() if callable(workspace.viewer) else workspace.viewer
-        viewer.show_database_frame(cloud)
-        if self.databases[mode].records[uid].kind == 'result':
+        if component != 'image':
+            viewer.show_database_frame(cloud)
+            viewer.reset_view()
+        if component == 'cloud' or self.databases[mode].records[uid].kind == 'result':
             workspace._industrial.show_database_result()
         else:
             workspace._industrial.show_database_image(frame)
-        viewer.reset_view()
         record = self.databases[mode].records[uid]
         hint = (f'正在查看：拼接帧 {record.frame_id:03d} · {record.points:,} 个有效点' if record.kind == 'result' else
                 f'正在查看：原始帧 {record.frame_id:03d} · {record.points:,} 个槽位（含无效深度）')
+        if component == 'image':
+            hint = f'正在查看：帧 {record.frame_id:03d} 的2D图像 · {record.image_size[0]} × {record.image_size[1]}'
+        elif component == 'cloud':
+            hint += ' · 仅3D点云'
         self.bridge.shell._st_hint.setText(hint)
         self.bridge.shell._st_hint.setToolTip(hint)
 

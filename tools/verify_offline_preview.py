@@ -187,6 +187,15 @@ with patch.object(CameraManager, 'initialize', side_effect=AssertionError('SDK i
                 app.processEvents()
                 time.sleep(.02)
             assert win.grab().save(str(report / f'db_{mode}.png'))
+            # Component rows must not reload/reset the 3D scene when browsing 2D.
+            before_cloud, before_zoom = viewer._database_cloud, viewer._viewer.canvas.zoom
+            wait_for(bridge.can_change_workspace)
+            browser.tree.setCurrentItem(browser._component_items[(uid, 'image')])
+            wait_for(lambda: '的2D图像' in win._st_hint.text())
+            assert viewer._database_cloud is before_cloud
+            assert viewer._viewer.canvas.zoom == before_zoom
+            assert browser.tree.currentItem() is browser._component_items[(uid, 'image')]
+            assert win.grab().save(str(report / f'db_components_{mode}.png'))
             browser.restore_button.click()
             wait_for(lambda: not viewer._viewer.canvas.is_busy)
             assert viewer._database_cloud is None

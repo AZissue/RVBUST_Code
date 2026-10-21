@@ -195,24 +195,32 @@ class FrameDatabase:
                 raise
         self._notify()
 
-    def load_frame(self, uid):
+    def load_frame(self, uid, component='frame'):
+        if component not in ('frame', 'cloud', 'image'):
+            raise ValueError('未知DB预览类型')
         with self._lock:
             record = copy.deepcopy(self.records[uid])
             folder = self.directory / 'frames' / uid
         if record.kind == 'result':
+            if component == 'image':
+                raise ValueError('拼接结果没有对应2D图像')
             frame = FrameData(record.frame_id, record.logical_name, is_offline=True,
                 offline_pointmap_path=str(folder / 'pointmap.ply'), database_id=uid)
             cloud = frame.load_pointcloud_o3d()
             if cloud is None or not len(cloud.points):
                 raise IOError('DB拼接点云读取失败')
             return frame, cloud
-        image = cv2.imdecode(np.fromfile(folder / 'image.png', np.uint8), cv2.IMREAD_UNCHANGED)
-        if image is None:
-            raise IOError('DB中对应2D图像读取失败')
+        image = None
+        if component != 'cloud':
+            image = cv2.imdecode(np.fromfile(folder / 'image.png', np.uint8), cv2.IMREAD_UNCHANGED)
+            if image is None:
+                raise IOError('DB中对应2D图像读取失败')
         frame = FrameData(record.frame_id, record.camera, image_np=image,
             markers=[m for m in record.markers if m.get('valid_3d', True)], markers_all=record.markers,
             is_offline=True, offline_image_path=str(folder / 'image.png'),
             offline_pointmap_path=str(folder / 'pointmap.ply'), database_id=uid)
+        if component == 'image':
+            return frame, None
         cloud = frame.load_pointcloud_o3d()
         if cloud is None or not len(cloud.points):
             raise IOError('DB中原始点云读取失败')

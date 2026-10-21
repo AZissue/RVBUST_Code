@@ -74,7 +74,7 @@ class FrameBrowserTests(unittest.TestCase):
         frame = self.source()
         uid = self.db.ingest(frame)
         self.assertEqual(self.browser.count.text(), '1 帧')
-        self.assertEqual(self.browser._items[uid].childCount(), 0)
+        self.assertEqual(self.browser._items[uid].childCount(), 2)
         self.assertEqual(self.browser._items[uid].parent().text(0), '标定帧')
         self.assertIsNone(self.browser._items[uid].parent().parent().parent())
         self.assertFalse(hasattr(self.browser, 'image'))
@@ -147,6 +147,43 @@ class FrameBrowserTests(unittest.TestCase):
         self.browser.tree.setCurrentItem(self.browser._items[uid])
         self.wait(lambda: 'DB单帧读取失败' in self.win._st_hint.text())
         self.assertIsNone(self.win.workspace_multi().viewer()._database_cloud)
+
+    def test_component_selection_is_independent_and_refresh_keeps_child_selection(self):
+        first = self.db.ingest(self.source(1))
+        second = self.db.ingest(self.source(2))
+        viewer = self.win.workspace_multi().viewer()
+        grid = self.win.workspace_multi().camera_grid()
+        cloud_item = self.browser._component_items[(first, 'cloud')]
+        self.browser.tree.setCurrentItem(cloud_item)
+        self.wait(lambda: viewer._database_cloud is not None)
+        self.assertIsNone(grid._database_card)
+        original_cloud = viewer._database_cloud
+        canvas = viewer.viewer().canvas
+        canvas.zoom = 2.
+        image_item = self.browser._component_items[(second, 'image')]
+        with patch.object(FrameData, 'load_pointcloud_o3d', side_effect=AssertionError('2D selection loaded PLY')):
+            self.browser.tree.setCurrentItem(image_item)
+            self.wait(lambda: '的2D图像' in self.win._st_hint.text())
+        self.assertIs(viewer._database_cloud, original_cloud)
+        self.assertEqual(canvas.zoom, 2.)
+        self.assertTrue(grid._database_card.isVisible())
+        self.assertIs(self.browser.tree.currentItem(), image_item)
+        self.assertEqual(self.browser.selected_ids(), [second])
+        self.browser.refresh()
+        self.assertTrue(self.browser._component_items[(second, 'image')].isSelected())
+        self.browser.restore_button.click()
+        self.assertIsNone(grid._database_card)
+
+    def test_image_only_preview_restores_without_a_database_cloud(self):
+        uid = self.db.ingest(self.source())
+        viewer = self.win.workspace_multi().viewer()
+        grid = self.win.workspace_multi().camera_grid()
+        self.browser.tree.setCurrentItem(self.browser._component_items[(uid, 'image')])
+        self.wait(lambda: '的2D图像' in self.win._st_hint.text())
+        self.assertIsNone(viewer._database_cloud)
+        self.assertTrue(grid._database_card.isVisible())
+        self.browser.restore_button.click()
+        self.assertIsNone(grid._database_card)
 
     def test_delete_batch_and_recover_keep_workflow_readable_without_reimporting(self):
         frame = self.source()

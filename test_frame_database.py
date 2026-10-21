@@ -54,6 +54,17 @@ class FrameDatabaseTests(unittest.TestCase):
         self.assertNotEqual(second, first)
         self.assertEqual(len(self.db.records), 2)
 
+    def test_image_preview_does_not_read_pointcloud_and_cloud_does_not_require_image(self):
+        uid = self.db.ingest(self.frame())
+        with patch.object(FrameData, 'load_pointcloud_o3d', side_effect=AssertionError('image preview must not load PLY')):
+            frame, cloud = self.db.load_frame(uid, 'image')
+        self.assertIsNone(cloud)
+        np.testing.assert_array_equal(frame.image_np, self.image)
+        (self.db.directory / 'frames' / uid / 'image.png').unlink()
+        frame, cloud = self.db.load_frame(uid, 'cloud')
+        self.assertIsNone(frame.image_np)
+        self.assertEqual(len(cloud.points), 4)
+
     def test_project_can_move_and_reopen_with_stable_identifiers(self):
         uid = self.db.ingest(self.frame())
         moved = self.root / 'moved'
