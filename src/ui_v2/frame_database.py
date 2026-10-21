@@ -340,6 +340,11 @@ class FrameDatabaseController(QObject):
         viewer = workspace.viewer() if callable(workspace.viewer) else workspace.viewer
         if component != 'image':
             viewer.show_database_frame(cloud)
+            from ui_common.industrial_scene.marker_display import classify_markers
+            display = classify_markers(frame.markers_all or frame.markers)
+            viewer.set_cloud_markers([(row.code, (row.xyz, row.color)) for row in display.rows
+                                     if row.xyz is not None and row.code is not None]
+                                    if self.databases[mode].records[uid].kind == 'raw' else [])
             viewer.reset_view()
         if component == 'cloud' or self.databases[mode].records[uid].kind == 'result':
             workspace._industrial.show_database_result()

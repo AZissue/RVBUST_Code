@@ -185,6 +185,39 @@ class FrameBrowserTests(unittest.TestCase):
         self.browser.restore_button.click()
         self.assertIsNone(grid._database_card)
 
+    def test_raw_cloud_marks_only_valid_centers_and_image_selection_keeps_geometry(self):
+        frame = self.source()
+        frame.markers_all = [dict(code=37, x_2d=1, y_2d=1, x_3d=10., y_3d=20., z_3d=30., valid_3d=True),
+                             dict(code=13, x_2d=0, y_2d=0, valid_3d=False),
+                             dict(code=23, x_2d=0, y_2d=1, x_3d=float('nan'), y_3d=0., z_3d=1.)]
+        uid = self.db.ingest(frame)
+        viewer = self.win.workspace_multi().viewer()
+        self.browser.tree.setCurrentItem(self.browser._component_items[(uid, 'cloud')])
+        self.wait(lambda: viewer._database_cloud is not None)
+        canvas = viewer.viewer().canvas
+        self.assertEqual(len(canvas._cloud_markers), 1)
+        self.assertEqual(canvas._cloud_markers[0][0], 37)
+        np.testing.assert_allclose(canvas._cloud_markers[0][1][0], [10, 20, 30])
+        count = canvas.total_points
+        canvas.center = np.array([10., 20., 30.])
+        canvas._notify_view_changed()
+        self.app.processEvents()
+        image = canvas._rotation_overlay.grab().toImage()
+        colors = {image.pixelColor(x, y).name() for x in range(image.width()//2-10, image.width()//2+11)
+                  for y in range(image.height()//2-10, image.height()//2+11)}
+        self.assertIn('#4ee887', colors)
+        action = next(a for a in viewer.viewer().options_button.menu().actions() if a.text() == '编码圆圆心与编号')
+        action.setChecked(False)
+        self.assertFalse(canvas.marker_centers)
+        action.setChecked(True)
+        self.assertEqual(canvas.total_points, count)
+        self.wait(self.bridge.can_change_workspace)
+        self.browser.tree.setCurrentItem(self.browser._component_items[(uid, 'image')])
+        self.wait(lambda: '的2D图像' in self.win._st_hint.text())
+        self.assertEqual(len(canvas._cloud_markers), 1)
+        self.browser.restore_button.click()
+        self.assertEqual(canvas._cloud_markers, [])
+
     def test_delete_batch_and_recover_keep_workflow_readable_without_reimporting(self):
         frame = self.source()
         uid = self.db.ingest(frame)

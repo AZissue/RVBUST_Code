@@ -77,7 +77,7 @@ class IndustrialViewer(QWidget):
         self.options_button.setText('显示选项')
         self.options_button.setPopupMode(QToolButton.InstantPopup)
         menu = QMenu(self.options_button)
-        for label, attribute in (('参考网格', 'grid'), ('坐标轴', 'axes')):
+        for label, attribute in (('参考网格', 'grid'), ('坐标轴', 'axes'), ('编码圆圆心与编号', 'marker_centers')):
             action = menu.addAction(label)
             action.setCheckable(True)
             action.setChecked(True)
@@ -122,6 +122,8 @@ class IndustrialViewer(QWidget):
         self.canvas.set_layers(self._layers, fit=True)
         geometry = getattr(old, '_rotation_geometry', None)
         self.canvas.set_rotation_geometry(*(geometry or (None, None)))
+        self.canvas.set_cloud_markers(getattr(old, '_cloud_markers', []))
+        self.canvas.marker_centers = getattr(old, 'marker_centers', True)
         self.canvas_changed.emit(self.canvas)
         self.status_changed.emit(str(message) + '；已切换软件兼容预览，显示点数受限。')
 
@@ -134,6 +136,7 @@ class IndustrialViewer(QWidget):
 
     def _display_option(self, name, value):
         setattr(self.canvas, name, value)
+        self.canvas._rotation_overlay.update()
         self.canvas.update()
 
     def _status(self):
@@ -183,6 +186,7 @@ class IndustrialViewer(QWidget):
         self.set_pointcloud(camera_id, None)
 
     def clear_all(self):
+        self.canvas.set_cloud_markers([])
         self._pcds.clear()
         self._merged = None
         self._database_cloud = None
@@ -230,6 +234,9 @@ class IndustrialViewer(QWidget):
 
     def set_rotation_geometry(self, axis=None, center=None):
         self.canvas.set_rotation_geometry(axis, center)
+
+    def set_cloud_markers(self, points):
+        self.canvas.set_cloud_markers(points)
 
     def set_highlight(self, camera_id, indices=None):
         self._highlights[camera_id] = list(indices or [])

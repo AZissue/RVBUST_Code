@@ -18,12 +18,15 @@ class _RotationOverlay(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         self.parentWidget()._paint_rotation_geometry(painter)
+        self.parentWidget()._paint_cloud_markers(painter)
         painter.end()
 
 
 class NavigationMixin:
     def _init_navigation(self):
         self._rotation_geometry = None
+        self._cloud_markers = []
+        self.marker_centers = True
         self._rotation_overlay = _RotationOverlay(self)
         self._rotation_overlay.setGeometry(self.rect())
         self.rotation = Trackball()
@@ -44,10 +47,67 @@ class NavigationMixin:
             axis, center = np.asarray(axis, dtype=float), np.asarray(center, dtype=float)
             if axis.shape == (3,) and center.shape == (3,) and np.isfinite(axis).all() and np.isfinite(center).all() and np.linalg.norm(axis) > 1e-9:
                 self._rotation_geometry = (axis / np.linalg.norm(axis), center.copy())
-        self._rotation_overlay.setVisible(self._rotation_geometry is not None)
+        self._rotation_overlay.setVisible(self._rotation_geometry is not None or bool(self._cloud_markers))
         self._rotation_overlay.raise_()
         self._rotation_overlay.update()
         self.update()
+
+    def set_cloud_markers(self, points):
+        self._cloud_markers = list(points)
+        self._rotation_overlay.setVisible(self._rotation_geometry is not None or bool(self._cloud_markers))
+        self._rotation_overlay.raise_()
+        self._rotation_overlay.update()
+
+    def _paint_cloud_markers(self, painter):
+        if not self.marker_centers or not self._cloud_markers:
+            return
+        from PySide6.QtCore import QPointF
+        from PySide6.QtGui import QColor, QPen
+        xyz = np.asarray([item[1][0] for item in self._cloud_markers], dtype=float)
+        camera = (xyz-self.center) @ self.rotation.matrix.T
+        scale = min(self.width(), self.height())*1.65/self.extent*self.zoom
+        pixels = camera[:, :2]*[scale, -scale] + [self.width()/2+self.pan[0], self.height()/2+self.pan[1]]
+        painter.save()
+        painter.setClipRect(self.rect())
+        painter.setBrush(Qt.NoBrush)
+        occupied = [child.geometry() for child in self.children() if isinstance(child, QWidget)
+                    and child.objectName() == 'markerInspector' and child.isVisible()]
+        for (code, (_, color)), (x, y) in zip(self._cloud_markers, pixels):
+            if not np.isfinite([x, y]).all() or not 0 <= x < self.width() or not 0 <= y < self.height():
+                continue
+            point = QPointF(x, y)
+            painter.setPen(QPen(QColor('#202226'), 4))
+            painter.drawEllipse(point, 6, 6)
+            painter.setPen(QPen(QColor(color), 2))
+            painter.drawEllipse(point, 6, 6)
+            painter.drawLine(point+QPointF(-9, 0), point+QPointF(9, 0))
+            painter.drawLine(point+QPointF(0, -9), point+QPointF(0, 9))
+            painter.setPen(QPen(QColor('#202226'), 3))
+            label = f'ID {code}'
+            box = None
+            for level in range(5):
+                for side in (1, -1):
+                    for vertical in (-1, 1):
+                        candidate = painter.fontMetrics().boundingRect(label).adjusted(-3, -2, 3, 2)
+                        left = x+11 if side > 0 else x-11-candidate.width()
+                        top = y-10-candidate.height()-level*18 if vertical < 0 else y+10+level*18
+                        candidate.moveTopLeft(QPointF(left, top).toPoint())
+                        if self.rect().contains(candidate) and not any(candidate.adjusted(-2, -2, 2, 2).intersects(other) for other in occupied):
+                            box = candidate
+                            break
+                    if box is not None:
+                        break
+                if box is not None:
+                    break
+            if box is None:
+                continue  # Keep the centre visible when the label cannot fit.
+            occupied.append(box)
+            painter.setPen(QPen(QColor(color), 1))
+            painter.drawLine(point, QPointF(box.center()))
+            painter.fillRect(box, QColor(24, 26, 29, 210))
+            painter.setPen(QColor(color))
+            painter.drawText(box, Qt.AlignCenter, label)
+        painter.restore()
 
     def _paint_rotation_geometry(self, painter):
         if self._rotation_geometry is None:

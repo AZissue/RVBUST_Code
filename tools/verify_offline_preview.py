@@ -174,6 +174,7 @@ with patch.object(CameraManager, 'initialize', side_effect=AssertionError('SDK i
                 assert scene.bounds is not None and np.isfinite(scene.bounds).all()
                 assert scene.stored_points > 1000000
             assert len(viewer._database_cloud.points) == database.records[uid].points
+            assert viewer._viewer.canvas._cloud_markers
             presentation = win._stack.currentWidget()._industrial
             if mode == 'multi_cam':
                 card = win.workspace_multi().camera_grid()._database_card

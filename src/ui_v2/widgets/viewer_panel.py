@@ -38,6 +38,7 @@ class ViewerPanel(QFrame):
         self._database_cloud = None
         self._reference = None
         self._rotation_geometry = (None, None)
+        self._cloud_markers = []
         self._industrial_enabled = False
         self._retired = []
 
@@ -82,6 +83,7 @@ class ViewerPanel(QFrame):
         candidate.set_reference(self._reference)
         if enabled:
             candidate.set_rotation_geometry(*self._rotation_geometry)
+            candidate.set_cloud_markers(self._cloud_markers)
         for key, pcd in self._clouds.items():
             candidate.set_pointcloud(key, pcd)
         if self._merged is not None:
@@ -131,6 +133,7 @@ class ViewerPanel(QFrame):
         self._viewer.remove_camera(camera_id)
 
     def clear_all(self):
+        self.set_cloud_markers([])
         self._clouds.clear()
         self._merged = None
         self._database_cloud = None
@@ -140,6 +143,7 @@ class ViewerPanel(QFrame):
         self._viewer.reset_view()
 
     def show_database_frame(self, cloud):
+        self.set_cloud_markers([])
         self._database_cloud = cloud
         if hasattr(self._viewer, 'show_database_frame'):
             self._viewer.show_database_frame(cloud)
@@ -159,6 +163,11 @@ class ViewerPanel(QFrame):
         self._rotation_geometry = (axis, center)
         if hasattr(self._viewer, 'set_rotation_geometry'):
             self._viewer.set_rotation_geometry(axis, center)
+
+    def set_cloud_markers(self, points):
+        self._cloud_markers = list(points)
+        if hasattr(self._viewer, 'set_cloud_markers'):
+            self._viewer.set_cloud_markers(points)
 
     def set_highlight(self, camera_id: str, indices: Optional[list] = None):
         """高亮指定相机的部分点。"""
