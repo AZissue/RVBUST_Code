@@ -98,7 +98,11 @@ class MulticamViewTests(unittest.TestCase):
         self.flush()
         self.assertTrue(ws._result_card.isVisible())
         self.assertTrue(ws._gate_card.isVisible())
-        self.assertIn('cam1→cam0', ws._matrix_values.toPlainText())
+        self.assertTrue(ws._matrix_values.isHidden())
+        self.assertEqual(ws._result_table.item(0, 0).text(), 'cam1→cam0')
+        from PySide6.QtWidgets import QGroupBox
+        self.assertFalse(any(group.title() == '标定参数'
+                             for group in self.presentation.calibration_panel.findChildren(QGroupBox)))
         self.assertTrue(ws._btn_scan_capture.isEnabled())
         ws.on_calibrate_done([], 0, False)
         ws.set_state('calibrated')
@@ -216,7 +220,7 @@ class MulticamViewTests(unittest.TestCase):
         self.assertEqual(self.grid._database_card._kind.text(), '只读')
         self.assertEqual(self.presentation.preview_all.parentWidget(), p.preview_panel)
         self.assertIn('background:#292929', self.ws._gate_card.styleSheet())
-        self.assertIn('background:#222222', self.ws._matrix_values.styleSheet())
+        self.assertTrue(self.ws._matrix_values.isHidden())
         preview = self.grid._database_card
         QTest.mouseDClick(preview._thumb, Qt.LeftButton)
         self.flush()

@@ -209,25 +209,13 @@ class IndustrialPresentation:
             result_layout.addStretch(1)
             self.calibration_panel.setWidget(result_content)
             self._calibration_styles = {widget: widget.styleSheet() for widget in
-                (workspace._gate_card, workspace._result_card, workspace._matrix_values)}
+                (workspace._gate_card, workspace._result_card)}
             workspace._gate_card.setObjectName('multiGateCard')
             workspace._result_card.setObjectName('multiResultCard')
             self.side_column.insertWidget(1, self.calibration_panel)
             from .widgets.multi_camera_status import MultiCameraStatus
             self.camera_status = MultiCameraStatus(workspace)
             self.side_column.setSizes([360, 300, 30])
-            parameters = QGroupBox('标定参数')
-            parameter_layout = QVBoxLayout(parameters)
-            for label, widget in (('参考相机', workspace._ref_combo), ('检测方式', workspace._detect_combo)):
-                row = QHBoxLayout()
-                row.addWidget(QLabel(label))
-                self._mount(widget, row)
-                parameter_layout.addLayout(row)
-            capture_mode = QHBoxLayout()
-            self._mount(workspace._rb_sync, capture_mode)
-            self._mount(workspace._rb_async, capture_mode)
-            parameter_layout.addLayout(capture_mode)
-            result_layout.insertWidget(1, parameters)
             self.frame_browser.calibration_selected.connect(self._show_calibration)
             self.view_bar = QWidget()
             bar = QHBoxLayout(self.view_bar)
@@ -552,12 +540,10 @@ class IndustrialPresentation:
 
     def _style_calibration(self, enabled):
         self.workspace._result_table.setVisible(not enabled or self.workspace._result_table.rowCount() > 0)
-        self.workspace._matrix_values.setMaximumHeight(125 if enabled else 16777215)
+        self.workspace._matrix_values.setVisible(not enabled)
         for widget, original in self._calibration_styles.items():
             if not enabled:
                 widget.setStyleSheet(original)
-            elif widget is self.workspace._matrix_values:
-                widget.setStyleSheet('QPlainTextEdit {background:#222222;color:#cccccc;border:1px solid #414141;border-radius:3px;}')
             else:
                 name = widget.objectName()
                 widget.setStyleSheet(f'QFrame#{name} {{background:#292929;border:1px solid #414141;border-radius:4px;}} '
@@ -574,7 +560,7 @@ class IndustrialPresentation:
     def _show_calibration(self):
         self.calibration_panel.show()
         self.side_column.setSizes([280, 330, 30])
-        self.calibration_panel.ensureWidgetVisible(self.workspace._matrix_values)
+        self.calibration_panel.ensureWidgetVisible(self.workspace._result_card)
 
     def _camera_focus_changed(self, camera_id):
         self.all_cameras_button.setEnabled(bool(camera_id))
