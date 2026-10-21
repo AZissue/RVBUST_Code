@@ -20,6 +20,7 @@ class CameraManager;
 class DataManager;
 class LogManager;
 class CaptureFlow;
+class RobotProgramController;
 class CameraConnectionFlow;
 class CalibrationController;
 class TopNavBar;
@@ -120,6 +121,17 @@ private:
     void onRobotPoseReady(int kind, bool ok, const QStringList& fields,
                           const QString& error);
     void updateRobotReadBar();
+
+    // ── 机器人控制台的拍照节点：读位姿 → 拍照 → 识别 → 保存 ────────
+    // 这是一条由程序执行器触发的采集链，复用与手动按钮完全相同的
+    // CaptureFlow / 卡片校验；不另写一套保存逻辑。
+    bool beginProgramPhoto(QString* error);
+    void beginProgramCapture();
+    void onProgramPhotoCaptured(const FrameBuffer::FloatBuf& points,
+                                const FrameBuffer::FloatBuf& colors);
+    void onProgramPhotoDetected(bool ok);
+    void finishProgramPhoto(bool ok, const QString& error);
+    void abortProgramPhoto();
 
     // ── 机器人协议分派：在 RobotController/RobotWorker 里（worker 线程）──
     // MainWindow 不再持有 reader，也不再直接调用它们的阻塞方法。
@@ -258,6 +270,14 @@ private:
     // updates the widgets from its two signals.
     // 0 = Modbus TCP, 1 = UR Realtime, 2 = 博纳斯(纳博特) JSON/TCP（协议号语义不变）
     RobotController* m_robot = nullptr;
+
+    // 第 17 阶段 P1：机器人控制台（程序节点 / 仿真运动后端 / 拍照一条龙）。
+    RobotProgramController* m_programController = nullptr;
+    enum class ProgramPhotoStep { None, WaitingPose, WaitingCapture, WaitingDetect };
+    ProgramPhotoStep m_programPhotoStep = ProgramPhotoStep::None;
+    bool m_programPhotoAutoSave = true;
+    int  m_programPhotoRecordBase = 0;
+    QTimer* m_programPhotoTimer = nullptr;
 
     // Window centering (restore/clamp once on first show)
     bool m_windowPositioned = false;

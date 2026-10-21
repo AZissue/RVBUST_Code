@@ -29,6 +29,8 @@
 
 class MeasurePage;
 class AppConfig;
+class RobotProgramController;
+class RobotProgramPanel;
 class QFormLayout;
 class QGroupBox;
 
@@ -43,6 +45,9 @@ public:
     // 主窗口把自己的 AppConfig 借给本页（唯一写入者仍是主窗口持有的那一份实例，
     // 避免两个 AppConfig 各存一份 m_data 互相覆盖）。必须在 show 前调用。
     void setAppConfig(AppConfig* cfg);
+
+    // 机器人控制台的控制端由主窗口创建后晚绑定（ToolsPanel 构造时它还不存在）。
+    void setRobotProgramController(RobotProgramController* controller);
 
     void setRobotStatus(const QString& text, bool ok);
     void setRobotConnected(bool connected);
@@ -145,6 +150,8 @@ private:
     void buildTransformPage(QStackedWidget* stack);
     void buildFormatInferencePage(QStackedWidget* stack);
     void buildRobotCommPage(QStackedWidget* stack);
+    // 机器人控制台（程序节点 + 点动）。独立一项，不塞进「机器人通信」页。
+    void buildRobotProgramPage(QStackedWidget* stack);
     // 8 个方法页（顺序 = MeasureTools::methodSpecs()），共用 MeasurePage 基类。
     void buildMeasurePages(QStackedWidget* stack);
     // 左侧列表换项：切换显示页、把当前 ROI 推给新页、写一条 [测量-说明]。
@@ -209,6 +216,7 @@ private:
 
     QListWidget* m_toolList = nullptr;
     QStackedWidget* m_stack = nullptr;
+    RobotProgramPanel* m_robotProgramPage = nullptr;
 
     // Distance tool inputs
     QLineEdit* m_p1Input = nullptr;

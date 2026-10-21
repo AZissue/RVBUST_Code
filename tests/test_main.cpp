@@ -36,6 +36,7 @@
 #include "test_save_export.h"
 #include "test_app_info.h"
 #include "test_help_content.h"
+#include "test_robot_program.h"
 
 namespace {
 
@@ -231,6 +232,11 @@ int main(int argc, char** argv)
         // 架构收敛第 3 批：位姿引导文案 + 质检报告 HTML 的转义/顺序/配色。
         TestGuidanceText t30;
         status |= runClass(&t30, argc, argv, "guidance_text");
+    }
+    {
+        // 第 17 阶段 P1：机器人程序节点 JSON / 点动规则 / 执行器 / 仿真后端。
+        TestRobotProgram t31;
+        status |= runClass(&t31, argc, argv, "robot_program");
     }
     return status;
 }

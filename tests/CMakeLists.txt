@@ -52,6 +52,8 @@ set(TEST_SOURCES
     # 东西。这里钉住章节完整性、测量方法一章必须覆盖每个方法、以及"正文不许
     # 写死版本号"。
     test_help_content.cpp
+    # 第 17 阶段 P1：机器人程序节点 / 执行器 / 点动规则 / 仿真后端。
+    test_robot_program.cpp
 )
 
 add_executable(unit_tests ${TEST_SOURCES}
@@ -89,6 +91,12 @@ add_executable(unit_tests ${TEST_SOURCES}
     ${CMAKE_SOURCE_DIR}/src/logic/CameraManager.cpp
     # T-005：CaptureFlow::save()/undo() 的导出失败上报要在真对象上验。
     ${CMAKE_SOURCE_DIR}/src/logic/CaptureFlow.cpp
+    # 第 17 阶段 P1：节点模型 + 执行状态机 + 仿真后端（纯 Qt，无网络）。
+    ${CMAKE_SOURCE_DIR}/src/logic/RobotProgram.cpp
+    ${CMAKE_SOURCE_DIR}/src/logic/ProgramRunner.cpp
+    # 抽象后端只有头文件；列进 target 才能让 AUTOMOC 生成它的 metaobject。
+    ${CMAKE_SOURCE_DIR}/src/logic/RobotMotionBackend.h
+    ${CMAKE_SOURCE_DIR}/src/logic/SimulatedMotionBackend.cpp
 )
 
 target_include_directories(unit_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)

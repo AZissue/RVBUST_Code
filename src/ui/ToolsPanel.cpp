@@ -13,6 +13,7 @@
 #include "ui/ArrowComboBox.h"
 #include "ui/MeasurePage.h"
 #include "ui/MeasurePages.h"
+#include "ui/RobotProgramPanel.h"
 #include "ui/Theme.h"
 
 #include <QApplication>
@@ -190,6 +191,9 @@ void ToolsPanel::buildUi()
     m_toolList->addItem(QStringLiteral("坐标转换"));
     m_toolList->addItem(QStringLiteral("机器人数据格式推算"));
     m_toolList->addItem(QStringLiteral("机器人通信"));
+    // 机器人控制台（程序节点 + 点动）是独立一项：它有自己的连接/使能/运行
+    // 状态，与「机器人通信」的位姿读取互不干扰。
+    m_toolList->addItem(QStringLiteral("机器人控制台"));
     // 测量方法不再是一个"测量页 + 方法下拉框"，而是下面 buildMeasurePages()
     // 加进来的 8 个独立列表项（P3）。
     m_toolList->setStyleSheet(QStringLiteral(
@@ -209,6 +213,7 @@ void ToolsPanel::buildUi()
     buildTransformPage(m_stack);
     buildFormatInferencePage(m_stack);
     buildRobotCommPage(m_stack);
+    buildRobotProgramPage(m_stack);
     buildMeasurePages(m_stack);
     layout->addWidget(m_stack, 1);
 
@@ -2564,6 +2569,24 @@ void ToolsPanel::setRobotConnected(bool connected)
         return;
     m_btnRobotConnect->setText(connected ? QStringLiteral("断开")
                                          : QStringLiteral("连接"));
+}
+
+void ToolsPanel::buildRobotProgramPage(QStackedWidget* stack)
+{
+    m_robotProgramPage = new RobotProgramPanel(stack);
+    m_robotProgramPage->setObjectName(QStringLiteral("robot_program_page"));
+    // 控制台自己的状态行/节点消息写进主窗口操作日志；面板不直接碰日志器。
+    connect(m_robotProgramPage, &RobotProgramPanel::logMessage, this,
+            [this](const QString& line) { emit logMessage(line); });
+    // 控制台比测量页高（状态条 + 地址 + 6 行点动）；窗口缩小时页内滚动，
+    // 不把整个工具对话框撑出屏幕。
+    stack->addWidget(wrapScrollable(m_robotProgramPage, stack));
+}
+
+void ToolsPanel::setRobotProgramController(RobotProgramController* controller)
+{
+    if (m_robotProgramPage)
+        m_robotProgramPage->setController(controller);
 }
 
 // ══════════════════════════════════════════════════════════════════════

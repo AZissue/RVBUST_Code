@@ -4,6 +4,9 @@
 
 #include "app/CameraConnectionFlow.h"
 #include "app/CalibrationController.h"
+#include "app/RobotProgramController.h"
+#include "logic/RobotProgram.h"
+#include "logic/SimulatedMotionBackend.h"
 #include "logic/CameraManager.h"
 #include "logic/CalibrationService.h"
 #include "logic/CaptureFlow.h"
@@ -38,6 +41,7 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QSplitter>
+#include <variant>
 #include <QShortcut>
 #include <QMessageBox>
 #include <QDialog>
@@ -178,6 +182,15 @@ MainWindow::MainWindow(QWidget* parent)
     // RobotController; the window only receives its results in wireSignals().
     m_robot = new RobotController(this);
 
+    // 第 17 阶段 P1：控制台先接仿真运动后端，把连接/使能/点动/程序运行整条
+    // 交互跑通；UR 真机后端按 RobotMotionBackend 接口接入后替换这一行即可。
+    m_programController = new RobotProgramController(new SimulatedMotionBackend, this);
+    m_programPhotoTimer = new QTimer(this);
+    m_programPhotoTimer->setSingleShot(true);
+    connect(m_programPhotoTimer, &QTimer::timeout, this, [this]() {
+        finishProgramPhoto(false, QStringLiteral("拍照节点超时（未收到采集/识别结果）"));
+    });
+
     buildUi();
     wireSignals();
     registerShortcuts();
@@ -316,6 +329,7 @@ void MainWindow::buildUi()
     // 把主窗口持有的那一份 AppConfig 借给工具页：位姿格式预设只有一个真源，
     // 否则工具页「应用」写的和主界面「计算」读的会是两个不同的实例。
     m_toolsPanel->setAppConfig(&m_config);
+    m_toolsPanel->setRobotProgramController(m_programController);
 }
 
 // ── Signal/Slot Wiring ────────────────────────────────────────────────
@@ -457,6 +471,15 @@ void MainWindow::wireSignals()
     // 任务 2: 识别成功 → 自动保存（走既有必填项校验）.
     connect(m_flow, &CaptureFlow::detectionFinished,
             this, &MainWindow::onDetectionFinished);
+    // 第 17 阶段 P1：拍照节点的一条龙采集。它与手动流程共用 CaptureFlow，
+    // 只是在每一步之间由这个窗口推进（读位姿 → 拍照 → 识别 → 保存）。
+    connect(m_flow, &CaptureFlow::pointCloudReady,
+            this, &MainWindow::onProgramPhotoCaptured);
+    connect(m_flow, &CaptureFlow::detectionFinished,
+            this, &MainWindow::onProgramPhotoDetected);
+    m_programController->setPhotoHandler(
+        [this](QString* error) { return beginProgramPhoto(error); },
+        [this]() { abortProgramPhoto(); });
     // Robot read buttons live in the ActionButtons row (visible while connected)
     connect(m_actionButtons, &ActionButtons::readCapturePoseClicked,
             this, &MainWindow::onRobotRead);
@@ -1303,6 +1326,13 @@ void MainWindow::onRobotPoseReady(int kind, bool ok, const QStringList& fields,
                                   const QString& error)
 {
     if (!ok) {
+        // 拍照节点正在等这次位姿：拿不到就停下整个节点，不能带着上一帧的
+        // 位姿继续拍照（那会把旧位姿和新图像配成一组错误数据）。
+        if (m_programPhotoStep == ProgramPhotoStep::WaitingPose
+                && kind == RobotReadAutoBeforeCapture) {
+            finishProgramPhoto(
+                false, QStringLiteral("机器人位姿读取失败：%1").arg(error));
+        }
         m_sidePanel->setTip(
             QStringLiteral("机器人位姿读取失败：%1").arg(error), true);
         // 自动读位姿那条（拍照前）原来只提示、不记日志，保持一样。
@@ -1337,6 +1367,9 @@ void MainWindow::onRobotPoseReady(int kind, bool ok, const QStringList& fields,
         // 与原自动路径一致：卡片存在时才刷新位姿引导，不提示、不记日志。
         if (card)
             updatePoseGuide();
+        // 拍照节点等的就是这次位姿：卡片已填好，接着拍照。
+        if (m_programPhotoStep == ProgramPhotoStep::WaitingPose)
+            beginProgramCapture();
         return;
     }
     updatePoseGuide();
@@ -1767,6 +1800,10 @@ void MainWindow::applyAutoFlowSettings()
 
 void MainWindow::onDetectionFinished(bool ok)
 {
+    // 拍照节点自己负责保存（autoSave=false 时明确不保存）。若这里再跑一次
+    // 「识别后自动保存」，同一个节点会落两条记录。
+    if (m_programPhotoStep != ProgramPhotoStep::None)
+        return;
     if (!m_autoSaveAfterDetect)
         return;
 
@@ -1802,6 +1839,131 @@ void MainWindow::onDetectionFinished(bool ok)
         m_logger->info(QStringLiteral("自动保存：识别成功且必填项校验通过，正在保存"));
         m_flow->save(v1, v2, v3);
     });
+}
+
+// ── 机器人控制台：拍照节点的一条龙采集 ────────────────────────────────
+//
+// 与手动流程共用同一条 CaptureFlow 和同一套卡片校验，区别只在于每一步由
+// 程序执行器推进。任何一步失败都停止整个节点（执行器随后会停下整张表），
+// 不会带着旧位姿/旧图像继续保存。
+
+bool MainWindow::beginProgramPhoto(QString* error)
+{
+    auto fail = [error](const QString& why) {
+        if (error)
+            *error = why;
+        return false;
+    };
+    if (m_programPhotoStep != ProgramPhotoStep::None)
+        return fail(QStringLiteral("拍照节点已经在运行"));
+    if (!m_camera || !m_camera->isConnected())
+        return fail(QStringLiteral("请先连接相机再运行拍照节点"));
+
+    // 眼在手上（以及需要拍照位姿的标定方式）必须从机器人读实时位姿；
+    // 没有机器人连接就拒绝，避免把空位姿或上一帧旧位姿存进记录。
+    const bool needPose = needsCapturePose(m_eyeHandMode, m_calibType);
+    if (needPose && (!m_robot || !m_robot->isConnected()))
+        return fail(QStringLiteral("拍照节点需要先连接机器人（读取拍照位姿）"));
+
+    const auto& nodes = m_programController->program().nodes;
+    const int index = m_programController->currentIndex();
+    m_programPhotoAutoSave = true;
+    if (index >= 0 && index < static_cast<int>(nodes.size())) {
+        if (const auto* photo = std::get_if<RobotProgram::PhotoNode>(
+                &nodes[static_cast<std::size_t>(index)].payload)) {
+            m_programPhotoAutoSave = photo->autoSave;
+        }
+    }
+
+    m_programPhotoRecordBase = m_data ? m_data->count() : 0;
+    m_programPhotoStep = needPose ? ProgramPhotoStep::WaitingPose
+                                  : ProgramPhotoStep::WaitingCapture;
+    // 兜底超时：相机没回调、窗口被关掉等情况下，节点不能永远挂着。
+    m_programPhotoTimer->start(90000);
+
+    if (needPose) {
+        // 结果回到 onRobotPoseReady()，填好卡片后再 beginProgramCapture()。
+        m_robot->readPose(RobotReadAutoBeforeCapture);
+    } else {
+        beginProgramCapture();
+    }
+    return true;
+}
+
+void MainWindow::beginProgramCapture()
+{
+    if (m_programPhotoStep != ProgramPhotoStep::WaitingPose
+            && m_programPhotoStep != ProgramPhotoStep::WaitingCapture) {
+        return;
+    }
+    m_programPhotoStep = ProgramPhotoStep::WaitingCapture;
+    // 与手动 onCapture() 相同的取景处理，但不触发"拍照前自动读位姿"：
+    // 这条链已经在 WaitingPose 阶段显式读过了。
+    if (m_camera->isPreviewing()) {
+        m_camera->stopPreview();
+        m_actionButtons->setPreviewActive(false);
+        if (m_view2d)
+            m_view2d->setPreviewPausedHint(false, 0);
+    }
+    m_view3d->hideImage();
+    m_flow->beginCapture();
+}
+
+void MainWindow::onProgramPhotoCaptured(const FrameBuffer::FloatBuf& points,
+                                        const FrameBuffer::FloatBuf& colors)
+{
+    Q_UNUSED(points);
+    Q_UNUSED(colors);
+    if (m_programPhotoStep != ProgramPhotoStep::WaitingCapture)
+        return;
+    m_programPhotoStep = ProgramPhotoStep::WaitingDetect;
+    // 「拍照后自动识别」开着时，CaptureFlow 会自己排队识别；这里再点一次
+    // 会跑两遍。没开就由本流程显式发起。
+    if (!m_flow->autoDetectAfterCapture())
+        m_flow->detect();
+}
+
+void MainWindow::onProgramPhotoDetected(bool ok)
+{
+    if (m_programPhotoStep != ProgramPhotoStep::WaitingDetect)
+        return;
+    if (!ok) {
+        finishProgramPhoto(false, QStringLiteral("识别失败，未保存"));
+        return;
+    }
+    if (!m_programPhotoAutoSave) {
+        finishProgramPhoto(true, QString());
+        return;
+    }
+
+    const int before = m_programPhotoRecordBase;
+    saveFromCards();
+    const bool saved = m_data && m_data->count() > before;
+    finishProgramPhoto(
+        saved,
+        saved ? QString()
+              : QStringLiteral("保存被拒绝：请检查相机目标点 / 机器人位姿等必填项"));
+}
+
+void MainWindow::finishProgramPhoto(bool ok, const QString& error)
+{
+    if (m_programPhotoStep == ProgramPhotoStep::None)
+        return;
+    m_programPhotoStep = ProgramPhotoStep::None;
+    if (m_programPhotoTimer)
+        m_programPhotoTimer->stop();
+    m_programController->notifyPhotoFinished(ok, error);
+}
+
+void MainWindow::abortProgramPhoto()
+{
+    if (m_programPhotoStep == ProgramPhotoStep::None)
+        return;
+    m_programPhotoStep = ProgramPhotoStep::None;
+    if (m_programPhotoTimer)
+        m_programPhotoTimer->stop();
+    // 控制端已把这次节点标记为取消；这里只负责把窗口侧的状态收干净。
+    m_programController->notifyPhotoFinished(false, QStringLiteral("已停止"));
 }
 
 void MainWindow::armIdleDetection(bool on)

@@ -4,6 +4,17 @@ set(SOURCES
     # 机器人通道（线程 + 四个 reader + 逻辑连接状态）——MainWindow 只做 UI
     app/RobotController.cpp
     app/RobotController.h
+    # 机器人控制台：程序节点 + 执行器 + 运动后端 + 粘合层（第 17 阶段 P1）
+    app/RobotProgramController.cpp
+    app/RobotProgramController.h
+    logic/RobotProgram.cpp
+    logic/RobotProgram.h
+    logic/ProgramRunner.cpp
+    logic/ProgramRunner.h
+    logic/RobotMotionBackend.h
+    logic/SimulatedMotionBackend.cpp
+    logic/SimulatedMotionBackend.h
+    logic/JogPolicy.h
     # 相机枚举/预扫描/设备缓存状态机——MainWindow 只弹设备列表
     app/CameraConnectionFlow.cpp
     app/CameraConnectionFlow.h
@@ -57,6 +68,9 @@ set(SOURCES
     ui/Image2DView.cpp
     ui/VisSceneView.cpp
     ui/ToolsPanel.cpp
+    # 机器人控制台页（第 17 阶段 P1：节点列表 + 点动 + 运行）
+    ui/RobotProgramPanel.cpp
+    ui/RobotProgramPanel.h
     # 测量页基类 + 8 个方法页（P3：左侧列表各一项，共用同一基类）
     ui/MeasurePage.cpp
     ui/MeasurePages.cpp
