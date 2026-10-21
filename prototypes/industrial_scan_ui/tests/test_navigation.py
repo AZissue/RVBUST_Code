@@ -85,13 +85,60 @@ class NavigationTests(unittest.TestCase):
 
     def test_pan_is_pixel_exact_and_does_not_change_rotation(self):
         before = self.view.rotation.matrix.copy()
-        for button in (Qt.RightButton, Qt.MiddleButton):
+        for button in (Qt.RightButton,):
             pan = self.view.pan.copy()
             QTest.mousePress(self.view, button, pos=QPoint(500, 300))
             self.move((512, 309), button)
             np.testing.assert_allclose(self.view.pan, pan+[12, 9])
             QTest.mouseRelease(self.view, button, pos=QPoint(512, 309))
         np.testing.assert_allclose(self.view.rotation.matrix, before)
+
+    def test_middle_pick_keeps_static_detail_and_does_not_drag(self):
+        full = self.view.displayed_points
+        center = self.view._points[len(self.view._points)//2].copy()
+        calls = []
+        def pick(position):
+            calls.append(self.view.displayed_points)
+            self.assertFalse(self.view._moving)
+            return center
+        self.view.pick_pivot = pick
+        QTest.mousePress(self.view, Qt.MiddleButton, pos=QPoint(500, 300))
+        np.testing.assert_array_equal(self.view.center, center)
+        pan = self.view.pan.copy()
+        rotation = self.view.rotation.matrix.copy()
+        self.move((520, 320), Qt.MiddleButton)
+        QTest.mouseRelease(self.view, Qt.MiddleButton, pos=QPoint(520, 320))
+        self.assertEqual(calls, [full])
+        self.assertEqual(self.view.displayed_points, full)
+        np.testing.assert_array_equal(self.view.pan, pan)
+        np.testing.assert_array_equal(self.view.rotation.matrix, rotation)
+        self.assertFalse(self.view._restore.isActive())
+
+    def test_middle_pick_restores_detail_before_pending_drag_timeout(self):
+        full = self.view.displayed_points
+        QTest.mousePress(self.view, Qt.LeftButton, pos=QPoint(500, 300))
+        QTest.mouseRelease(self.view, Qt.LeftButton, pos=QPoint(500, 300))
+        self.assertLess(self.view.displayed_points, full)
+        seen = []
+        self.view.pick_pivot = lambda point: seen.append(self.view.displayed_points)
+        QTest.mouseClick(self.view, Qt.MiddleButton, pos=QPoint(500, 300))
+        self.assertEqual(seen, [full])
+        self.assertFalse(self.view._moving)
+
+    def test_middle_background_preserves_view(self):
+        self.view.pan[:] = [24, 37]
+        center = self.view.center.copy()
+        self.view.pick_pivot = lambda point: None
+        QTest.mouseClick(self.view, Qt.MiddleButton, pos=QPoint(30, 30))
+        np.testing.assert_array_equal(self.view.center, center)
+        np.testing.assert_array_equal(self.view.pan, [24, 37])
+
+    def test_left_double_click_no_longer_picks(self):
+        calls = []
+        self.view.pick_pivot = lambda point: calls.append(point)
+        QTest.mouseDClick(self.view, Qt.LeftButton, pos=QPoint(500, 300))
+        QTest.mouseRelease(self.view, Qt.LeftButton, pos=QPoint(500, 300))
+        self.assertEqual(calls, [])
 
     def test_focus_loss_cancels_drag_and_next_press_responds(self):
         QTest.mousePress(self.view, Qt.LeftButton, pos=QPoint(500, 300))

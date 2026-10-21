@@ -38,6 +38,17 @@ class NavigationMixin:
             event.ignore()
             return
         self.setFocus(Qt.MouseFocusReason)
+        if event.button() == Qt.MiddleButton:
+            # Picking must not enter the reduced-detail drag path. Restore the
+            # static scene first, including a pending drag/wheel LOD timeout.
+            self._cancel_drag()
+            self._restore.stop()
+            self._end_interaction()
+            point = self.pick_pivot(event.position())
+            if point is not None:
+                self.set_pivot(point)
+            event.accept()
+            return
         self._drag_button = event.button()
         self._last = event.position()
         self.setCursor(Qt.ClosedHandCursor)
@@ -52,7 +63,7 @@ class NavigationMixin:
             return
         current = event.position()
         delta = current-self._last
-        if self._drag_button in (Qt.RightButton, Qt.MiddleButton) or event.modifiers() & Qt.ShiftModifier:
+        if self._drag_button == Qt.RightButton:
             self.pan += [delta.x(), delta.y()]
         else:
             self.rotation.drag((self._last.x(), self._last.y()), (current.x(), current.y()),
@@ -70,9 +81,9 @@ class NavigationMixin:
 
     def mouseReleaseEvent(self, event):
         if event.button() == self._drag_button:
-            remaining = event.buttons() & (Qt.LeftButton | Qt.RightButton | Qt.MiddleButton)
+            remaining = event.buttons() & (Qt.LeftButton | Qt.RightButton)
             if remaining:
-                self._drag_button = next(button for button in (Qt.RightButton, Qt.MiddleButton, Qt.LeftButton)
+                self._drag_button = next(button for button in (Qt.RightButton, Qt.LeftButton)
                                          if remaining & button)
                 self._last = event.position()
                 self._begin_interaction()
@@ -95,12 +106,9 @@ class NavigationMixin:
         event.accept()
 
     def mouseDoubleClickEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            point = self.pick_pivot(event.position())
-            if point is not None:
-                self.set_pivot(point)
-        self._cancel_drag()
-        event.accept()
+        # Qt sends a double-click event instead of the second press. Keep
+        # dragging consistent, but never use a left double-click to pick.
+        self.mousePressEvent(event)
 
     def keyPressEvent(self, event):
         if event.key() in (Qt.Key_F, Qt.Key_Z):

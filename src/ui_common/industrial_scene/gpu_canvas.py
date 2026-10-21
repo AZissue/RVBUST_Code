@@ -220,41 +220,15 @@ class GpuCloudCanvas(NavigationMixin, QOpenGLWidget):
     def paintGL(self):
         if not self._ready:
             return
-        gl = self.gl
         try:
-            gl.glViewport(0, 0, int(self.width()*self.devicePixelRatioF()), int(self.height()*self.devicePixelRatioF()))
-            gl.glEnable(gl.GL_DEPTH_TEST)
-            gl.glEnable(gl.GL_PROGRAM_POINT_SIZE)
-            gl.glDepthMask(gl.GL_TRUE)
-            gl.glClearColor(.29, .29, .29, 1.)
-            gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
-            gl.glBindVertexArray(self._vao)
-            self._upload()
-            gl.glUseProgram(self._program)
-            gl.glUniform1i(self._uniforms['markerMode'], 0)
-            gl.glUniformMatrix4fv(self._uniforms['mvp'], 1, False, np.asarray(self._matrix().data(), dtype=np.float32))
-            gl.glUniform1f(self._uniforms['pointSize'], self.point_size * self.devicePixelRatioF())
-            mode = {'原始颜色': 0, '高度着色': 1, '统一颜色': 2}[self.color_mode]
-            gl.glUniform1i(self._uniforms['colorMode'], mode)
-            heights = (self.scene.bounds[:, 2] - self.center[2]) if self.scene and self.scene.bounds is not None else [-1, 1]
-            gl.glUniform2f(self._uniforms['heightRange'], float(heights[0]), float(heights[1]))
-            if self.scene:
-                for frame, count in zip(self.scene.frames, self.scene.draw_counts(self._moving, self.policy)):
-                    self._bind(self._buffers[frame.key][0])
-                    gl.glUniform3f(self._uniforms['offset'], *(frame.origin - self.center).astype(float))
-                    gl.glDrawArrays(gl.GL_POINTS, 0, count)
-            self._draw_markers()
-            if self.grid:
-                self._draw_grid()
-            gl.glBindVertexArray(0)
-            gl.glUseProgram(0)
+            self._draw_scene()
         except Exception as exc:
             self._fail(f'GPU 点云绘制失败：{exc}')
         painter = QPainter(self)
         painter.setPen(QColor('#dce4eb'))
         painter.drawText(18, 28, f'{self.displayed_points:,} / {self.total_points:,} 点 · {"交互降采样" if self._moving else "静止细节"} · {self.policy_name}')
         painter.drawText(18, 48, '正在后台准备显示缓存…' if self.is_busy else self.backend_name)
-        painter.drawText(18, self.height() - 18, '左键轨迹球旋转 · 右键/中键平移 · 滚轮缩放 · 双击设旋转中心 · F/Z 适配')
+        painter.drawText(18, self.height() - 18, '左键旋转 · 右键拖动平移 · 中键设旋转中心 · 滚轮缩放 · F/Z 适配')
         if self._last is not None:
             x, y = self._pivot_pixel()
             painter.setPen(QPen(QColor('#cccccc'), 1))
@@ -265,6 +239,36 @@ class GpuCloudCanvas(NavigationMixin, QOpenGLWidget):
                 painter.drawLine(int(origin[0]), int(origin[1]), int(end[0]), int(end[1]))
                 painter.drawText(int(end[0])+3, int(end[1])-3, text)
         painter.end()
+
+    def _draw_scene(self):
+        """Render point depth without QPainter overlays, also used for picking."""
+        gl = self.gl
+        gl.glViewport(0, 0, int(self.width()*self.devicePixelRatioF()), int(self.height()*self.devicePixelRatioF()))
+        gl.glEnable(gl.GL_DEPTH_TEST)
+        gl.glEnable(gl.GL_PROGRAM_POINT_SIZE)
+        gl.glDepthMask(gl.GL_TRUE)
+        gl.glClearColor(.29, .29, .29, 1.)
+        gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
+        gl.glBindVertexArray(self._vao)
+        self._upload()
+        gl.glUseProgram(self._program)
+        gl.glUniform1i(self._uniforms['markerMode'], 0)
+        gl.glUniformMatrix4fv(self._uniforms['mvp'], 1, False, np.asarray(self._matrix().data(), dtype=np.float32))
+        gl.glUniform1f(self._uniforms['pointSize'], self.point_size * self.devicePixelRatioF())
+        mode = {'原始颜色': 0, '高度着色': 1, '统一颜色': 2}[self.color_mode]
+        gl.glUniform1i(self._uniforms['colorMode'], mode)
+        heights = (self.scene.bounds[:, 2] - self.center[2]) if self.scene and self.scene.bounds is not None else [-1, 1]
+        gl.glUniform2f(self._uniforms['heightRange'], float(heights[0]), float(heights[1]))
+        if self.scene:
+            for frame, count in zip(self.scene.frames, self.scene.draw_counts(self._moving, self.policy)):
+                self._bind(self._buffers[frame.key][0])
+                gl.glUniform3f(self._uniforms['offset'], *(frame.origin - self.center).astype(float))
+                gl.glDrawArrays(gl.GL_POINTS, 0, count)
+        self._draw_markers()
+        if self.grid:
+            self._draw_grid()
+        gl.glBindVertexArray(0)
+        gl.glUseProgram(0)
 
     def set_marker_annotations(self, points):
         self._marker_points = list(points)
@@ -330,11 +334,12 @@ class GpuCloudCanvas(NavigationMixin, QOpenGLWidget):
     def pick_pivot(self, position):
         if not self._ready or not self.scene or not self.scene.frames:
             return None
-        # A single depth read on double-click; never scans millions of CPU points.
+        # Render current detail synchronously; repaint() can be deferred by Qt.
         self.makeCurrent()
         gl = self.gl
         try:
             gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.defaultFramebufferObject())
+            self._draw_scene()
             ratio = self.devicePixelRatioF()
             x = int(position.x()*ratio)
             y = int((self.height()-position.y())*ratio)-1

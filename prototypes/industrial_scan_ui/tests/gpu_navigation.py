@@ -11,6 +11,7 @@ from PySide6.QtGui import QMouseEvent
 from PySide6.QtTest import QTest
 from industrial_scan_ui.app.gpu_canvas import GpuCloudCanvas
 from industrial_scan_ui.core.session import CloudLayer
+from ui_common.industrial_scene.render_cache import RenderPolicy
 
 
 def main():
@@ -37,7 +38,7 @@ def main():
     try:
         # Point at the centre, an offset surface point and background. Verify the
         # same QMatrix4x4 used by the shader, not just the pure math controller.
-        fixture = CloudLayer('pick fixture', [[-10, -10, 0], [0, 0, 0], [10, 10, 0]])
+        fixture = CloudLayer('pick fixture', [[-10, -10, 1], [0, 0, 1], [10, 10, 1]])
         view.set_layers([fixture], fit=True)
         wait_for(lambda: not view.is_busy)
         view.set_view('顶视')
@@ -46,10 +47,28 @@ def main():
         app.processEvents()
         hit = view.pick_pivot(QPointF(view.width()/2, view.height()/2))
         assert hit is not None, 'Rendered point cannot be picked from depth'
-        np.testing.assert_allclose(hit, [0, 0, 0], atol=.03)
+        np.testing.assert_allclose(hit, [0, 0, 1], atol=.03)
         assert view.pick_pivot(QPointF(10, 10)) is None, 'Background became a pivot'
+        # The centre point is absent from the moving draw prefix. A middle
+        # press before the LOD timer fires must restore and render static depth.
+        policy = view.policy
+        view.policy = RenderPolicy(static_points=3, moving_points=1)
+        view.center = np.array([0., 0., 5.])
+        QTest.mousePress(view, Qt.RightButton, pos=QPoint(500, 300))
+        QTest.mouseRelease(view, Qt.RightButton, pos=QPoint(500, 300))
+        view.repaint()
+        assert view._moving and view.displayed_points == 1
+        assert view.pick_pivot(QPointF(view.width()/2, view.height()/2)) is None
+        QTest.mouseClick(view, Qt.MiddleButton, pos=QPoint(view.width()//2, view.height()//2))
+        np.testing.assert_allclose(view.center, [0, 0, 1], atol=.03)
+        assert not view._moving and view.displayed_points == 3
+        assert not view._restore.isActive()
+        center_before = view.center.copy()
+        QTest.mouseClick(view, Qt.MiddleButton, pos=QPoint(10, 10))
+        np.testing.assert_array_equal(view.center, center_before)
+        view.policy = policy
         before_matrix = np.asarray(view._matrix().data()).reshape(4, 4, order='F')
-        point = np.array([0., 0., 0., 1.])
+        point = np.r_[-view.center, 1.]
         before = before_matrix @ point
         pivot = np.array([5., 3., 0.])
         view.set_pivot(pivot)
