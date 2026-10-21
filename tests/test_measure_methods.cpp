@@ -13,7 +13,8 @@ using namespace MeasureTools;
 namespace {
 
 // 用户在第 7 回合 P3.2 里给的声明样式：{1, "被测面"} / {2, "基准面", "被测面"}。
-// 这里把 8 个方法逐个钉死，任何"少要一个 ROI"的改动都会立刻红。
+// 这里把 7 个方法逐个钉死，任何"少要一个 ROI"的改动都会立刻红。
+// （圆环拟合 + 孔径已合并成「3D孔洞」，ROI 角色沿用孔径的说明。）
 struct Expected {
     Method method;
     int roiCount;
@@ -25,8 +26,7 @@ const Expected kExpected[] = {
     { Method::Flatness,      1, "被测面", nullptr },
     { Method::StepHeight,    2, "基准面", "被测面" },
     { Method::PlanePair,     2, "面 A", "面 B" },
-    { Method::RingCircle,    1, "环形材料", nullptr },
-    { Method::HoleDiameter,  1, "孔 + 约 2 个点距的材料", nullptr },
+    { Method::Hole3D,        1, "孔 + 约 2 个点距的材料", nullptr },
     { Method::BoundingBox,   1, "整个物体", nullptr },
     { Method::Section,       1, "被测区域", nullptr },
     { Method::Repeatability, 0, nullptr, nullptr },
@@ -54,12 +54,16 @@ void TestMeasureMethods::catalogueCoversEveryMethodOnce()
     int n = 0;
     const MethodSpec* specs = methodSpecs(n);
     QCOMPARE(n, static_cast<int>(sizeof(kExpected) / sizeof(kExpected[0])));
-    QCOMPARE(static_cast<int>(Method::Count), n);
+    // RingCircle / HoleDiameter 已并入 Hole3D，枚举值仍保留做旧数据兼容，
+    // 所以 Count 会比目录多 2；目录里每一项必须仍是"活的"方法。
+    QVERIFY(static_cast<int>(Method::Count) >= n);
 
     std::set<std::string> ids;
     std::set<std::string> names;
     for (int i = 0; i < n; ++i) {
         const MethodSpec& s = specs[i];
+        // 左侧列表的顺序就是目录顺序（kExpected 已按界面顺序钉死）。
+        QCOMPARE(s.method, kExpected[i].method);
         // 每一项都必须能填出一个"这一页是什么"的最小集合。
         QVERIFY(s.id && *s.id);
         QVERIFY(s.name && *s.name);
@@ -72,8 +76,6 @@ void TestMeasureMethods::catalogueCoversEveryMethodOnce()
         // id / 名字不能重（左侧列表项与日志都靠它们区分）。
         QVERIFY(ids.insert(s.id).second);
         QVERIFY(names.insert(s.name).second);
-        // 目录顺序必须与枚举顺序一致：左侧列表的顺序就是用户看到的顺序。
-        QCOMPARE(static_cast<int>(s.method), i);
         // 目录里的 id 必须与内核的稳定 id 一致（日志、测试数据、manifest 共用）。
         QCOMPARE(q(s.id), q(methodId(s.method)));
     }
@@ -265,9 +267,9 @@ void TestMeasureMethods::resultLineCarriesValuesAndConvention()
         { "孔半径", "2.5062", "mm" },
         { "扇区覆盖", "34/36", "" },
     };
-    const std::string line = resultLine(Method::HoleDiameter, items,
+    const std::string line = resultLine(Method::Hole3D, items,
                                         "36 点，高；扇区覆盖 34/36");
-    QVERIFY(contains(line, methodSpec(Method::HoleDiameter).name));
+    QVERIFY(contains(line, methodSpec(Method::Hole3D).name));
     QVERIFY(contains(line, "孔直径 = 5.0123 mm"));
     QVERIFY(contains(line, "孔半径 = 2.5062 mm"));
     // 没有单位的项不能留下一个孤零零的空格。
@@ -276,7 +278,7 @@ void TestMeasureMethods::resultLineCarriesValuesAndConvention()
     QVERIFY(contains(line, "扇区覆盖 34/36"));
     // 口径必须写进日志：用户要对数就要知道这个数是怎么来的。
     QVERIFY(contains(line, "口径"));
-    QVERIFY(contains(line, methodSpec(Method::HoleDiameter).convention));
+    QVERIFY(contains(line, methodSpec(Method::Hole3D).convention));
 
     // 空结果也要能成句（不该出现"方法名："后面什么都没有还带个分号）。
     const std::string bare = resultLine(Method::Flatness, {}, "");
@@ -305,11 +307,11 @@ void TestMeasureMethods::logTagsSeparateExplainFromResult()
     QVERIFY(contains(resultTag, "结果"));
 
     const std::string explain =
-        logTagged(kExplainLogTag, methodExplainLine(Method::HoleDiameter));
+        logTagged(kExplainLogTag, methodExplainLine(Method::Hole3D));
     const std::string result =
-        logTagged(kResultLogTag, resultLine(Method::HoleDiameter, {}, "36 点，高"));
+        logTagged(kResultLogTag, resultLine(Method::Hole3D, {}, "36 点，高"));
     const std::string refusal =
-        logTagged(kResultLogTag, resultRefusalLine(Method::HoleDiameter, "点数不足"));
+        logTagged(kResultLogTag, resultRefusalLine(Method::Hole3D, "点数不足"));
 
     QVERIFY(explain.rfind("[测量-说明] ", 0) == 0);
     QVERIFY(result.rfind("[测量-结果] ", 0) == 0);

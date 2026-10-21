@@ -6,7 +6,8 @@
 // 并且"目前支持两个 ROI A/B，有些方法只用一个或多个，你看是否需要单独做个
 // 限制；清除 ROI 可以放到视窗工具栏"。
 //
-// 于是把测量页拆成 8 个独立页（左侧列表各占一项，见 MeasurePages.cpp），它们
+// 于是把测量页拆成 7 个独立页（左侧列表各占一项，见 MeasurePages.cpp；「3D 孔洞」
+// 把原圆环拟合与孔径合并成一页，并按 2.html 自绘界面），它们
 // **共用本基类**里的四件事——这四件事以前是一个 700 行 switch 里的共享变量：
 //
 //   * ROI：像素矩形 -> 网格取点（走 MeasureTools::roiImageToGrid +
@@ -40,7 +41,7 @@ class QTableWidget;
 class QComboBox;
 
 // 一次测量的输入与输出。子类只碰这个结构，不碰界面控件——结果的排版、可信度
-// 标签、偏差色标、快照组装都由基类统一做，所以 8 个方法的显示行为必然一致。
+// 标签、偏差色标、快照组装都由基类统一做，所以 7 个方法的显示行为必然一致。
 struct MeasureContext {
     // ── 输入（基类已按 ROI 取好点）──
     const std::vector<MeasureTools::Vec3>* roi = nullptr;       // roi[0], roi[1]
@@ -101,13 +102,16 @@ public:
     // 重复性序列库由面板持有：跨页共用、跨帧累积。
     void setSeriesStore(QMap<QString, QVector<double>>* store);
     // 3D 偏差着色开关的双向同步（面板 / 3D 工具栏）。只同步勾选状态；要立刻
-    // 看到效果由调用方决定（rerun()），免得一次点击触发 8 页各自重算。
-    void setDeviationColoring(bool on);
+    // 看到效果由调用方决定（rerun()），免得一次点击触发 7 页各自重算。
+    // 自绘界面的页（3D 孔洞）没有基类的勾选框，所以这两个入口是虚函数。
+    virtual void setDeviationColoring(bool on);
     bool deviationColoring() const;
     // 用当前 ROI 重算上一次的结果（不写新的 [测量-结果]）：改着色开关时用。
-    void rerun();
+    // 自绘界面重写它来把重算后的数值重新画到结果面板。
+    virtual void rerun();
     // 新的一帧 / 新一轮测量：清掉结果与显示载荷（重复性序列不动）。
-    void resetResult();
+    // 自绘界面重写它来把结果面板复位成「等待测量」。
+    virtual void resetResult();
     // 面板切换工具项时调用：写一条 [测量-说明]。
     QString explainLine() const;
     Measurement::Snapshot snapshot() const;
@@ -118,21 +122,49 @@ signals:
     void deviationColoringChanged(bool on);
     void clearRoiRequested();
     void logRequested(const QString& line);
+    // ROI 选择变化（自定义界面的页用它刷新「测量区域」等显示）。
+    void roiChanged();
 
 protected:
-    // 子类唯一必须实现的东西：本方法自己的算法。基类已经保证 ROI 够用。
+    // 自绘界面的页（3D 孔洞）用：跳过基类的表单/结果表/序列区，
+    // 只保留 ROI 取点、算法调用与快照发布。子类自己建控件、自己显示结果。
+    MeasurePage(MeasureTools::Method method, bool buildGenericUi,
+                QWidget* parent);
+    void runMeasurement(bool logResult = true);
+
+    // 子类唯一的算法入口。基类已经保证 ROI 够用。
     virtual void compute(MeasureContext& ctx) = 0;
+
+    // 自绘界面读取最近一次 runMeasurement() 的结果。
+    bool hasResult() const { return m_hasResult; }
+    double primaryValue() const { return m_primaryValue; }
+    QString primaryKey() const { return m_primaryKey; }
+    QString lastHintText() const { return m_lastHint; }
+    // 自绘界面的公差（写进快照，3D 着色/趋势与其他页一致）。
+    void setCustomTolerance(bool enabled, double lo, double hi);
 
     // 给子类用的小工具（与旧面板同一套口径）。
     static QString confidenceFor(int points, double rms);
     static QString fmt4(double v);
     QString roiText(int slot) const;   // "ROI A: (x0,y0)-(x1,y1)，1234 点"
+    // 自绘界面画「探测位置边界」用：ROI 内已取好的 3D 点与图像像素矩形。
+    const std::vector<MeasureTools::Vec3>& roiPoints(int slot) const;
+    QRect roiRectPx(int slot) const;
+    // 重复性序列库（跨页共用、仅内存）。自绘界面把主值直接写进去，
+    // 「重复性」页仍能统计它。
+    QMap<QString, QVector<double>>* seriesStore() const { return m_series; }
     // 重复性页要读的当前序列（序列库在基类手里，跨页共用）。
     QString currentSeriesName() const;
     const QVector<double>* currentSeries() const;
+    // applyDeviation() 用它判断要不要生成 3D 着色点云（自绘界面重写）。
+    virtual bool wantsDeviationColors() const;
 
     double m_devLo = 0.0;
     double m_devHi = 0.0;
+    QString m_lastHint;
+    bool m_customTolEnabled = false;
+    double m_customTolLo = -0.05;
+    double m_customTolHi = 0.05;
 
 private:
     void buildUi();
@@ -157,7 +189,7 @@ private:
     std::vector<MeasureTools::Vec3> m_pts[2];
     std::vector<std::size_t> m_cells[2];
 
-    // 结果与显示载荷（本页私有：8 个页各有一份，互不干扰）
+    // 结果与显示载荷（本页私有：7 个页各有一份，互不干扰）
     std::vector<Measurement::ResultRow> m_rows;
     QString m_primaryKey;
     double m_primaryValue = 0.0;

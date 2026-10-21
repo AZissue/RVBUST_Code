@@ -152,7 +152,7 @@ private:
     void buildRobotCommPage(QStackedWidget* stack);
     // 机器人控制台（程序节点 + 点动）。独立一项，不塞进「机器人通信」页。
     void buildRobotProgramPage(QStackedWidget* stack);
-    // 8 个方法页（顺序 = MeasureTools::methodSpecs()），共用 MeasurePage 基类。
+    // 7 个方法页（顺序 = MeasureTools::methodSpecs()），共用 MeasurePage 基类。
     void buildMeasurePages(QStackedWidget* stack);
     // 左侧列表换项：切换显示页、把当前 ROI 推给新页、写一条 [测量-说明]。
     void onToolChanged(int row);
@@ -363,7 +363,7 @@ private:
     QCheckBox* m_robotAutoReadCheck = nullptr;
 
     // ── Measurement tools (3D 测量一体化工具 parity) ──
-    // 8 个方法页，左侧列表里各占一项。面板只留三样共享状态：点云、ROI 矩形、
+    // 7 个方法页，左侧列表里各占一项。面板只留三样共享状态：点云、ROI 矩形、
     // 重复性序列库；结果表 / 偏差图 / 快照都由各页自己发布（MeasurePage）。
     std::vector<MeasurePage*> m_pages;
     MeasurePage* m_page = nullptr;      // 最近一次显示的方法页（切到别的工具后仍指向它）

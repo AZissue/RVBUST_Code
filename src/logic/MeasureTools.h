@@ -33,8 +33,9 @@ enum class Method {
     Flatness = 0,      // 平面度
     StepHeight,        // 高度段差（面到面高度）
     PlanePair,         // 面面距离/夹角
-    RingCircle,        // 圆环拟合（ROI 必须是环形材料）
-    HoleDiameter,      // 孔径（孔洞边界法）
+    RingCircle,        // 圆环拟合（已并入 Hole3D，保留枚举做旧数据兼容）
+    HoleDiameter,      // 孔径（已并入 Hole3D，保留枚举做旧数据兼容）
+    Hole3D,            // 3D 孔洞：圆孔（内缘）/ 材料外缘（外缘）合一
     BoundingBox,       // 包围盒
     Section,           // 截面轮廓
     Repeatability,     // 重复性统计
@@ -62,6 +63,7 @@ inline const char* methodId(Method m)
     case Method::PlanePair:     return "plane_pair";
     case Method::RingCircle:    return "ring_circle";
     case Method::HoleDiameter:  return "hole_diameter";
+    case Method::Hole3D:        return "hole3d";
     case Method::BoundingBox:   return "bounding_box";
     case Method::Section:       return "section";
     case Method::Repeatability: return "repeatability";

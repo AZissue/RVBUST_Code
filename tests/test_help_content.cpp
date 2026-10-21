@@ -71,7 +71,8 @@ void TestHelpContent::measureChapterCoversEveryMethod()
 
     int n = 0;
     const MeasureTools::MethodSpec* specs = MeasureTools::methodSpecs(n);
-    QVERIFY(n >= 8);
+    // 圆环拟合 + 孔径合并成「3D孔洞」后目录是 7 项（合并前是 8）。
+    QVERIFY(n >= 7);
 
     // 方法名、用途、输出三项都取自 MeasureMethods.h —— 说明这一章是**生成**的，
     // 不是手抄的。新加一个测量方法而忘了写说明，会在这里断。

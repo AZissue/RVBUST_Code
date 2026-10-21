@@ -30,10 +30,30 @@ QString chainText(const char* tag, const QString& text)
 } // namespace
 
 MeasurePage::MeasurePage(MeasureTools::Method method, QWidget* parent)
+    : MeasurePage(method, true, parent)
+{
+}
+
+MeasurePage::MeasurePage(MeasureTools::Method method, bool buildGenericUi,
+                         QWidget* parent)
     : QWidget(parent)
 {
     m_spec = MeasureTools::methodSpec(method);
-    buildUi();
+    if (buildGenericUi)
+        buildUi();
+}
+
+void MeasurePage::runMeasurement(bool logResult)
+{
+    run(logResult);
+}
+
+void MeasurePage::setCustomTolerance(bool enabled, double lo, double hi)
+{
+    m_customTolEnabled = enabled;
+    m_customTolLo = lo;
+    m_customTolHi = hi;
+    publish();   // 只更新快照里的公差线，不重算
 }
 
 QString MeasurePage::confidenceFor(int points, double rms)
@@ -302,6 +322,7 @@ void MeasurePage::setRoiRects(const QVector<QRect>& rects, const QString& note)
     }
     if (m_roiNote)
         m_roiNote->setText(note);
+    emit roiChanged();
 }
 
 QString MeasurePage::currentSeriesName() const
@@ -343,8 +364,27 @@ bool MeasurePage::deviationColoring() const
     return m_devColorBox && m_devColorBox->isChecked();
 }
 
+bool MeasurePage::wantsDeviationColors() const
+{
+    return deviationColoring();
+}
+
+const std::vector<MeasureTools::Vec3>& MeasurePage::roiPoints(int slot) const
+{
+    static const std::vector<MeasureTools::Vec3> empty;
+    if (slot < 0 || slot >= 2)
+        return empty;
+    return m_pts[slot];
+}
+
+QRect MeasurePage::roiRectPx(int slot) const
+{
+    return slot >= 0 && slot < m_rects.size() ? m_rects[slot] : QRect();
+}
+
 void MeasurePage::resetResult()
 {
+    m_lastHint.clear();
     if (m_hint)
         m_hint->clear();
     if (m_table)
@@ -374,6 +414,7 @@ void MeasurePage::resetResult()
 
 void MeasurePage::showHint(const QString& text, bool error)
 {
+    m_lastHint = text;
     if (!m_hint)
         return;
     m_hint->setText(text);
@@ -536,7 +577,7 @@ void MeasurePage::applyDeviation(MeasureContext& ctx)
                    .arg(fmt4(lim.lo)).arg(fmt4(lim.hi)).arg(lim.nClipped);
 
     m_cloudColors.reset();
-    if (m_devColorBox && m_devColorBox->isChecked() && ctx.plane.valid
+    if (wantsDeviationColors() && ctx.plane.valid
         && m_grid && m_gridW > 0 && m_gridH > 0) {
         std::vector<std::size_t> highlight = m_cells[0];
         highlight.insert(highlight.end(), m_cells[1].begin(), m_cells[1].end());
@@ -650,9 +691,16 @@ Measurement::Snapshot MeasurePage::snapshot() const
             s.seriesRange = rep.range;
         }
     }
-    s.hasTolerance = m_tolEnable && m_tolEnable->isChecked();
-    s.tolLo = m_tolLo ? m_tolLo->value() : 0.0;
-    s.tolHi = m_tolHi ? m_tolHi->value() : 0.0;
+    if (m_tolEnable) {
+        s.hasTolerance = m_tolEnable->isChecked();
+        s.tolLo = m_tolLo ? m_tolLo->value() : 0.0;
+        s.tolHi = m_tolHi ? m_tolHi->value() : 0.0;
+    } else {
+        // 自绘界面（3D 孔洞）自己维护公差。
+        s.hasTolerance = m_customTolEnabled;
+        s.tolLo = m_customTolLo;
+        s.tolHi = m_customTolHi;
+    }
 
     s.cloudColors = m_cloudColors;   // 引用计数，不拷贝元素
     s.hasCloudColors = m_cloudColors && !m_cloudColors->empty();

@@ -195,7 +195,7 @@ void ToolsPanel::buildUi()
     // 状态，与「机器人通信」的位姿读取互不干扰。
     m_toolList->addItem(QStringLiteral("机器人控制台"));
     // 测量方法不再是一个"测量页 + 方法下拉框"，而是下面 buildMeasurePages()
-    // 加进来的 8 个独立列表项（P3）。
+    // 加进来的 7 个独立列表项（P3；「3D 孔洞」合并了原圆环拟合与孔径）。
     m_toolList->setStyleSheet(QStringLiteral(
         "QListWidget { background: %1; border: 1px solid %2; border-radius: %3px;"
         " font-size: %4px; }"
@@ -2623,7 +2623,7 @@ void ToolsPanel::buildMeasurePages(QStackedWidget* stack)
                 this, &ToolsPanel::clearMeasurementRois);
         connect(page, &MeasurePage::logRequested, this,
                 [this](const QString& line) { emit logMessage(line); });
-        // 8 个页的「3D 偏差着色」勾选状态必须一致：一页改了，其余 7 页跟着改，
+        // 7 个页的「3D 偏差着色」状态必须一致：一页改了，其余 6 页跟着改，
         // 再把事件转给 3D 工具栏的孪生按钮（MainWindow 是唯一的同步者）。
         connect(page, &MeasurePage::deviationColoringChanged, this,
                 [this, page](bool on) {
@@ -2789,7 +2789,7 @@ QStringList ToolsPanel::roiLabels() const
 
 void ToolsPanel::setDeviationColoring(bool on)
 {
-    // 只同步勾选状态（8 个页保持一致），重算交给最近测量的那一页自己做，
+    // 只同步状态（7 个页保持一致），重算交给最近测量的那一页自己做，
     // 免得一次点击触发 8 次 3D 点云重传。
     for (MeasurePage* page : m_pages)
         page->setDeviationColoring(on);

@@ -75,9 +75,12 @@ set(SOURCES
     # 机器人控制台页（第 17 阶段 P1：节点列表 + 点动 + 运行）
     ui/RobotProgramPanel.cpp
     ui/RobotProgramPanel.h
-    # 测量页基类 + 8 个方法页（P3：左侧列表各一项，共用同一基类）
+    # 测量页基类 + 7 个方法页（P3：左侧列表各一项，共用同一基类）
     ui/MeasurePage.cpp
     ui/MeasurePages.cpp
+    # 3D 孔洞（圆环拟合 + 孔径合并）：自绘整页，按 MyUIdesign/2.html
+    ui/Hole3DPage.cpp
+    ui/Hole3DPage.h
     ui/DeviceListDialog.cpp
     ui/SettingsDialog.cpp
     # 使用说明窗口（左侧章节 + 右侧正文）；正文在 logic/HelpContent.h

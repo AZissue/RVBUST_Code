@@ -362,10 +362,10 @@ Scene sceneHoles(double pitch)
     const double tolCentre = std::max(0.2, pitch);
 
     s.name = pitch <= 0.25 ? "holes_p025" : (pitch <= 0.5 ? "holes_p050" : "holes_p100");
-    s.method = "hole_diameter";
-    s.roiHint = "选「孔径(孔洞边界法)」，紧贴每个孔各拖一个近正方形 ROI"
-                "（ROI A = 孔 + 孔外约 2 个点距的材料，别框进别的孔）；"
-                "不要用「圆环拟合」测孔——它是给环形材料用的";
+    s.method = "hole3d";
+    s.roiHint = "选「3D孔洞」，探测方向用「从内向外（查找孔洞）」，紧贴每个孔各拖一个"
+                "近正方形 ROI（ROI A = 孔 + 孔外约 2 个点距的材料，别框进别的孔）；"
+                "量材料外缘时改选「从外向内」，工具本身是同一个";
     s.gridW = w;
     s.gridH = h;
     s.imageW = w;

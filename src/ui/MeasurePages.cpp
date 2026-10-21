@@ -1,12 +1,14 @@
 #include "ui/MeasurePages.h"
 
+#include "ui/Hole3DPage.h"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
 #include <string>
 #include <vector>
 
-// ── 8 个方法页 ─────────────────────────────────────────────────────────
+// ── 7 个方法页 ─────────────────────────────────────────────────────────
 //
 // 每个类的 compute() 就是旧面板 runMeasurement() 里对应 case 的算法部分，数值
 // 口径一行未改（同样的稳健剔除、同样的 minOutliers、同样的单位）。搬出来只是
@@ -230,173 +232,14 @@ protected:
     }
 };
 
-// ── 4. 圆环拟合（只对环形 ROI 有意义）─────────────────────────────────
-class RingCirclePage : public MeasurePage {
-public:
-    explicit RingCirclePage(QWidget* parent)
-        : MeasurePage(MeasureTools::Method::RingCircle, parent) {}
+// ── 4. 3D 孔洞 ─────────────────────────────────────────────────────────
+//
+// 圆环拟合（材料外缘）与孔径（孔壁内缘）在算法上是同一个
+// measureBoundaryCircle()，只差 materialInside：从内向外找孔壁，从外向内找
+// 材料外缘。两者合并成一个工具后，算法实现移到了自绘界面的 Hole3DPage
+// （ui/Hole3DPage.cpp）——它需要「探测方向」下拉框实时决定这个布尔值。
 
-protected:
-    void compute(MeasureContext& ctx) override
-    {
-        const std::vector<Vec3>& pts = ctx.roi[0];
-        if (pts.size() < 12) {
-            ctx.refusal = QStringLiteral("圆环拟合需要在 ROI A（环形材料）内至少 12 个点，"
-                                         "当前 %1 个。")
-                              .arg(static_cast<qulonglong>(pts.size()));
-            return;
-        }
-        // T-012：量的是"材料→背景"的外缘（实心外圆、台阶外缘），从 ROI 内的材料
-        // 连通区往外长，再在图像上把这条边抠到亚像素；不再是全体点的统计半径。
-        const std::vector<double> noGrid;
-        const std::vector<double>& gridRef = ctx.grid ? *ctx.grid : noGrid;
-        const MeasureTools::BoundaryCircle bc = MeasureTools::measureBoundaryCircle(
-            pts, ctx.roiCells[0], ctx.gridW, ctx.gridH, gridRef,
-            ctx.image ? ctx.image->width : 0, ctx.image ? ctx.image->height : 0,
-            ctx.image ? *ctx.image : MeasureTools::GrayImage{}, true);
-        if (!bc.valid) {
-            ctx.refusal = fromStd(bc.message);
-            return;
-        }
-        const int used = bc.used > 0 ? bc.used : bc.sectors;
-        const QString conf = bc.reliable ? confidenceFor(used, bc.rms)
-                                         : QStringLiteral("参考");
-        row(ctx, QStringLiteral("圆环直径"), fmt4(bc.diameter), QStringLiteral("mm"), used, conf);
-        row(ctx, QStringLiteral("圆环半径"), fmt4(bc.radius), QStringLiteral("mm"), used, conf);
-        row(ctx, QStringLiteral("圆环圆度(半径极差)"), fmt4(bc.roundness), QStringLiteral("mm"),
-            used, conf);
-        row(ctx, QStringLiteral("圆环圆心"),
-            QStringLiteral("(%1, %2, %3)")
-                .arg(fmt4(bc.center[0])).arg(fmt4(bc.center[1])).arg(fmt4(bc.center[2])),
-            QStringLiteral("mm"), used, conf);
-        ctx.primaryKey = QStringLiteral("圆环直径");
-        ctx.primaryValue = bc.diameter;
-        ctx.hasPrimary = true;
-
-        // 偏差图显示"到拟合圆的半径残差"：同一个符号距离思路，只是基准换成圆。
-        std::vector<double> radial(pts.size());
-        for (std::size_t k = 0; k < pts.size(); ++k) {
-            const double dx = pts[k][0] - bc.center[0];
-            const double dy = pts[k][1] - bc.center[1];
-            const double dz = pts[k][2] - bc.center[2];
-            radial[k] = std::sqrt(dx * dx + dy * dy + dz * dz) - bc.radius;
-        }
-        ctx.hasDeviation = true;
-        ctx.devValues = radial;
-        ctx.devCells = ctx.roiCells[0];
-        ctx.devCoolWarm = false;
-
-        const QRect r = ctx.roiRects->value(0);
-        ctx.annotations.push_back({ QStringLiteral("⌀%1 mm").arg(fmt4(bc.diameter)),
-                                    QPoint(r.center().x(), r.center().y()), false });
-        ctx.hasPlane = true;
-        ctx.planePoint = bc.center;
-        ctx.planeNormal = bc.normal;
-        // T-012：本工具现在量的是最外侧的材料边界（实心外圆 / 台阶外缘）。
-        ctx.footer = bc.subpixel
-            ? QStringLiteral("图像亚像素外缘 %1 条，局部尺度 %2 mm/px")
-                  .arg(bc.used).arg(fmt4(bc.mmPerPx))
-            : QStringLiteral("图像不可用，本结果为 3D 外缘边界（粗）");
-        ctx.confidenceNote = bc.subpixel
-            ? QStringLiteral("材料外缘（从外往内）：亚像素边缘 %1/360 条（覆盖 %2%%），"
-                             "圆度 %3 mm，尺度 %4 mm/px")
-                  .arg(used).arg(fmt4(100.0 * bc.coverage))
-                  .arg(fmt4(bc.roundness)).arg(fmt4(bc.mmPerPx))
-            : QStringLiteral("退回 3D 外缘边界：%1").arg(fromStd(bc.message));
-        if (!bc.reliable)
-            ctx.confidenceNote += QStringLiteral("；覆盖或圆度不达标，已标「参考」");
-        ctx.confidenceNote += QStringLiteral("；") + QString::fromStdString(bc.debug);
-    }
-};
-
-// ── 5. 孔径（孔洞边界法）──────────────────────────────────────────────
-class HoleDiameterPage : public MeasurePage {
-public:
-    explicit HoleDiameterPage(QWidget* parent)
-        : MeasurePage(MeasureTools::Method::HoleDiameter, parent) {}
-
-protected:
-    void compute(MeasureContext& ctx) override
-    {
-        const std::vector<Vec3>& pts = ctx.roi[0];
-        if (pts.size() < 8) {
-            ctx.refusal = QStringLiteral("孔径(孔洞边界法)需要在 ROI A 内至少 8 个点"
-                                         "（孔 + 孔外约 2 个点距的材料），当前 %1 个。")
-                              .arg(static_cast<qulonglong>(pts.size()));
-            return;
-        }
-        const std::vector<double> noGrid;
-        const std::vector<double>& gridRef = ctx.grid ? *ctx.grid : noGrid;
-        const MeasureTools::BoundaryCircle bc = MeasureTools::measureBoundaryCircle(
-            pts, ctx.roiCells[0], ctx.gridW, ctx.gridH, gridRef,
-            ctx.image ? ctx.image->width : 0, ctx.image ? ctx.image->height : 0,
-            ctx.image ? *ctx.image : MeasureTools::GrayImage{}, false);
-        if (!bc.valid) {
-            ctx.refusal = fromStd(bc.message);
-            return;
-        }
-        const int used = bc.used > 0 ? bc.used : bc.sectors;
-        // 可信度列：边缘样本不足时直接标"参考"——这是 P2 对用户承诺的降级口径。
-        const QString conf = bc.reliable ? confidenceFor(used, bc.rms)
-                                         : QStringLiteral("参考");
-        row(ctx, QStringLiteral("孔直径"), fmt4(bc.diameter), QStringLiteral("mm"), used, conf);
-        row(ctx, QStringLiteral("孔半径"), fmt4(bc.radius), QStringLiteral("mm"), used, conf);
-        row(ctx, QStringLiteral("孔圆心"),
-            QStringLiteral("(%1, %2, %3)")
-                .arg(fmt4(bc.center[0])).arg(fmt4(bc.center[1])).arg(fmt4(bc.center[2])),
-            QStringLiteral("mm"), used, conf);
-        row(ctx, QStringLiteral("孔圆度(半径极差)"), fmt4(bc.roundness), QStringLiteral("mm"),
-            used, conf);
-        row(ctx, QStringLiteral("扇区覆盖"),
-            QStringLiteral("%1/%2").arg(used).arg(bc.sectors),
-            QString(), used, conf);
-        row(ctx, QStringLiteral("圆拟合直径(未修正)"), fmt4(bc.diameter),
-            QStringLiteral("mm"), used, conf);
-        ctx.primaryKey = QStringLiteral("孔直径");
-        ctx.primaryValue = bc.diameter;
-        ctx.hasPrimary = true;
-
-        // 偏差图 = 到孔壁圆的半径残差（turbo，与旧圆拟合同一套视觉）。
-        std::vector<double> radial(pts.size());
-        for (std::size_t k = 0; k < pts.size(); ++k) {
-            const double dx = pts[k][0] - bc.center[0];
-            const double dy = pts[k][1] - bc.center[1];
-            const double dz = pts[k][2] - bc.center[2];
-            radial[k] = std::sqrt(dx * dx + dy * dy + dz * dz) - bc.radius;
-        }
-        ctx.hasDeviation = true;
-        ctx.devValues = radial;
-        ctx.devCells = ctx.roiCells[0];
-        ctx.devCoolWarm = false;
-
-        const QRect r = ctx.roiRects->value(0);
-        ctx.annotations.push_back({ QStringLiteral("⌀%1 mm").arg(fmt4(bc.diameter)),
-                                    QPoint(r.center().x(), r.center().y()), false });
-        ctx.hasPlane = true;
-        ctx.planePoint = bc.center;
-        ctx.planeNormal = bc.normal;
-
-        ctx.footer = bc.subpixel
-            ? QStringLiteral("图像亚像素边缘 %1 条，局部尺度 %2 mm/px")
-                  .arg(bc.used).arg(fmt4(bc.mmPerPx))
-            : QStringLiteral("图像不可用，本结果为 3D 边界（粗）");
-        ctx.confidenceNote = bc.subpixel
-            ? QStringLiteral("亚像素边缘 %1/360 条（覆盖 %2%%），圆度 %3 mm，尺度 %4 mm/px")
-                  .arg(used).arg(fmt4(100.0 * bc.coverage))
-                  .arg(fmt4(bc.roundness)).arg(fmt4(bc.mmPerPx))
-            : QStringLiteral("退回 3D 边界：%1").arg(fromStd(bc.message));
-        if (!bc.reliable)
-            ctx.confidenceNote += QStringLiteral("；覆盖或圆度不达标，已标「参考」");
-        ctx.confidenceNote += QStringLiteral("；") + QString::fromStdString(bc.debug);
-        if (ctx.roiRects && !ctx.roiRects->isEmpty()) {
-            const QRect rr = ctx.roiRects->value(0);
-            ctx.confidenceNote += QStringLiteral(" roiImg=(%1,%2)-(%3,%4)")
-                .arg(rr.left()).arg(rr.top()).arg(rr.right()).arg(rr.bottom());
-        }
-    }
-};
-
-// ── 6. 包围盒 ──────────────────────────────────────────────────────────
+// ── 5. 包围盒 ──────────────────────────────────────────────────────────
 class BoundingBoxPage : public MeasurePage {
 public:
     explicit BoundingBoxPage(QWidget* parent)
@@ -454,7 +297,7 @@ protected:
     }
 };
 
-// ── 7. 截面轮廓 ────────────────────────────────────────────────────────
+// ── 6. 截面轮廓 ────────────────────────────────────────────────────────
 class SectionPage : public MeasurePage {
 public:
     explicit SectionPage(QWidget* parent)
@@ -505,7 +348,7 @@ protected:
     }
 };
 
-// ── 8. 重复性 ──────────────────────────────────────────────────────────
+// ── 7. 重复性 ──────────────────────────────────────────────────────────
 class RepeatabilityPage : public MeasurePage {
 public:
     explicit RepeatabilityPage(QWidget* parent)
@@ -563,8 +406,7 @@ MeasurePage* create(MeasureTools::Method method, QWidget* parent)
     case MeasureTools::Method::Flatness:      return new FlatnessPage(parent);
     case MeasureTools::Method::StepHeight:    return new StepHeightPage(parent);
     case MeasureTools::Method::PlanePair:     return new PlanePairPage(parent);
-    case MeasureTools::Method::RingCircle:    return new RingCirclePage(parent);
-    case MeasureTools::Method::HoleDiameter:  return new HoleDiameterPage(parent);
+    case MeasureTools::Method::Hole3D:        return new Hole3DPage(parent);
     case MeasureTools::Method::BoundingBox:   return new BoundingBoxPage(parent);
     case MeasureTools::Method::Section:       return new SectionPage(parent);
     case MeasureTools::Method::Repeatability: return new RepeatabilityPage(parent);
