@@ -47,9 +47,20 @@ public:
 public slots:
     virtual void connectDevice(const QString& host, quint16 port) = 0;
     virtual void disconnectDevice() = 0;
+    // 「使能」是软件层的运动许可（UR 真机还需要控制器处于 RUNNING）。禁用
+    // 时必须立即停止正在执行的移动，不能只是把按钮变灰。
     virtual void setEnabled(bool enabled) = 0;
-    virtual void moveCartesian(const RobotMotion::Pose& target, double speedPct) = 0;
-    virtual void moveJoint(const RobotMotion::Pose& target, double speedPct) = 0;
+    // 到位判据由程序节点提供：位置 mm、姿态/关节 度、超时 ms。
+    virtual void moveCartesian(const RobotMotion::Pose& target, double speedPct,
+                               double toleranceMm = 2.0,
+                               double toleranceDeg = 1.0,
+                               int timeoutMs = 15000) = 0;
+    virtual void moveJoint(const RobotMotion::Pose& target, double speedPct,
+                           double toleranceDeg = 1.0,
+                           int timeoutMs = 15000) = 0;
+    // 单轴点动：真机后端按"绕基座轴旋转"正确合成姿态增量；仿真后端直接
+    // 相加即可。界面不关心差异。
+    virtual void jogCartesian(int axis, double delta, double speedPct) = 0;
     virtual void stopMotion() = 0;
 
 signals:

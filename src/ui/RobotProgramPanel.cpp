@@ -6,6 +6,7 @@
 
 #include <QAbstractButton>
 #include <QButtonGroup>
+#include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFrame>
 #include <QGridLayout>
@@ -65,6 +66,7 @@ QString distanceText(double v)
 RobotProgramPanel::RobotProgramPanel(QWidget* parent) : QWidget(parent)
 {
     buildUi();
+    syncAddressFields();
     updatePose(m_state);
     refreshActions();
 }
@@ -118,9 +120,18 @@ void RobotProgramPanel::buildUi()
     headerLayout->addWidget(m_stopButton);
     root->addWidget(header);
 
-    // ── 地址行（仿真后端不访问；真机后端接入后使用）──────────────
+    // ── 后端 / 地址行（仿真不访问网络；UR 用 30003 实时反馈）──────
     auto* addressRow = new QHBoxLayout;
     addressRow->setSpacing(6);
+    auto* backendTitle = new QLabel(QStringLiteral("后端"));
+    backendTitle->setStyleSheet(QStringLiteral("color:%1;").arg(Theme::TEXT_HINT));
+    m_backendCombo = new QComboBox;
+    m_backendCombo->setObjectName(QStringLiteral("robot_program_backend"));
+    m_backendCombo->addItem(QStringLiteral("仿真"));
+    m_backendCombo->addItem(QStringLiteral("UR 真机"));
+    m_backendCombo->setMinimumHeight(26);
+    m_backendCombo->setMaximumWidth(110);
+    m_backendCombo->setStyleSheet(Theme::inputStyle());
     auto* addressLabel = new QLabel(QStringLiteral("地址"));
     addressLabel->setStyleSheet(QStringLiteral("color:%1;").arg(Theme::TEXT_HINT));
     m_hostEdit = new QLineEdit(QStringLiteral("192.168.0.38"));
@@ -129,18 +140,22 @@ void RobotProgramPanel::buildUi()
     m_hostEdit->setStyleSheet(Theme::inputStyle());
     m_portSpin = new QSpinBox;
     m_portSpin->setRange(1, 65535);
-    m_portSpin->setValue(30001);
+    m_portSpin->setValue(30003);
     m_portSpin->setMinimumHeight(26);
     m_portSpin->setMaximumWidth(90);
+    m_portSpin->setToolTip(QStringLiteral(
+        "UR 实时反馈端口。脚本 30001 与 Dashboard 29999 固定，自动使用。"));
     m_portSpin->setStyleSheet(Theme::spinBoxStyle());
+    addressRow->addWidget(backendTitle);
+    addressRow->addWidget(m_backendCombo);
     addressRow->addWidget(addressLabel);
     addressRow->addWidget(m_hostEdit, 1);
     addressRow->addWidget(m_portSpin);
-    auto* addressHint = new QLabel(QStringLiteral("仿真不访问该地址"));
-    addressHint->setStyleSheet(QStringLiteral(
+    m_addressHint = new QLabel;
+    m_addressHint->setStyleSheet(QStringLiteral(
         "font-size:%1px;color:%2;")
         .arg(Theme::FONT_HINT).arg(Theme::TEXT_HINT));
-    addressRow->addWidget(addressHint);
+    addressRow->addWidget(m_addressHint);
     root->addLayout(addressRow);
 
     // ── 主体：左程序 / 右手动控制 ─────────────────────────────────
@@ -386,6 +401,9 @@ void RobotProgramPanel::buildUi()
     root->addLayout(body, 1);
 
     // ── 连接信号（全在 UI 线程）───────────────────────────────────
+    connect(m_backendCombo,
+            QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &RobotProgramPanel::onBackendKindChanged);
     connect(m_connectButton, &QPushButton::clicked,
             this, &RobotProgramPanel::onConnectClicked);
     connect(m_enableButton, &QPushButton::toggled,
@@ -435,14 +453,27 @@ void RobotProgramPanel::setController(RobotProgramController* controller)
 
 void RobotProgramPanel::bindController()
 {
-    m_backendLabel->setText(
-        QStringLiteral("%1后端 · %2")
-            .arg(m_controller->backend()->name(),
-                 m_controller->backend()->isSimulated()
-                     ? QStringLiteral("不控制真机")
-                     : QStringLiteral("真机")));
+    {
+        const QSignalBlocker blocker(m_backendCombo);
+        m_backendCombo->setCurrentIndex(
+            m_controller->backendKind()
+                    == RobotProgramController::BackendKind::Ur
+                ? 1 : 0);
+    }
+    syncAddressFields();
+    updateBackendLabel();
     m_controller->setJogSpeed(m_speedSlider->value());
 
+    connect(m_controller, &RobotProgramController::backendChanged, this,
+            [this]() {
+                syncAddressFields();
+                updateBackendLabel();
+                m_state = m_controller->backend()->state();
+                updatePose(m_state);
+                setConnected(m_controller->backend()->isConnected());
+                setEnabled(m_controller->backend()->isEnabled());
+                refreshActions();
+            });
     connect(m_controller, &RobotProgramController::connectedChanged,
             this, &RobotProgramPanel::setConnected);
     connect(m_controller, &RobotProgramController::enabledChanged,
@@ -603,6 +634,8 @@ void RobotProgramPanel::refreshActions()
         s->setEnabled(jogEnabled);
     m_speedSlider->setEnabled(!m_running);
     m_stepSpin->setEnabled(!m_running);
+    if (m_backendCombo)
+        m_backendCombo->setEnabled(bound && !m_running);
     if (m_modeGroup) {
         for (auto* b : m_modeGroup->buttons())
             b->setEnabled(!m_running);
@@ -614,7 +647,11 @@ void RobotProgramPanel::refreshActions()
         else if (m_running)
             m_hintLabel->setText(QStringLiteral("程序运行中：点动与编辑已锁定"));
         else if (!m_connected)
-            m_hintLabel->setText(QStringLiteral("先点「连接」；当前是仿真后端，不会动真机"));
+            m_hintLabel->setText(
+                m_controller->backendKind()
+                        == RobotProgramController::BackendKind::Simulated
+                    ? QStringLiteral("先点「连接」；当前是仿真后端，不会动真机")
+                    : QStringLiteral("先点「连接」；真机后端会实际驱动 UR"));
         else if (!m_enabled)
             m_hintLabel->setText(QStringLiteral("已连接，点「使能」后可手动移动"));
         else
@@ -696,6 +733,48 @@ void RobotProgramPanel::log(const QString& text, bool error)
     Q_UNUSED(error);
 }
 
+void RobotProgramPanel::updateBackendLabel()
+{
+    const bool simulated = !m_controller
+        || m_controller->backendKind()
+            == RobotProgramController::BackendKind::Simulated;
+    m_backendLabel->setText(
+        QStringLiteral("%1后端 · %2")
+            .arg(simulated ? QStringLiteral("仿真")
+                           : QStringLiteral("UR 真机"),
+                 simulated ? QStringLiteral("不控制真机")
+                           : QStringLiteral("控制真机")));
+}
+
+void RobotProgramPanel::syncAddressFields()
+{
+    const bool ur = m_backendCombo && m_backendCombo->currentIndex() == 1;
+    if (m_hostEdit)
+        m_hostEdit->setEnabled(ur);
+    if (m_portSpin)
+        m_portSpin->setEnabled(ur);
+    if (m_addressHint) {
+        m_addressHint->setText(
+            ur ? QStringLiteral("反馈 30003 · 脚本 30001 · 控制 29999")
+               : QStringLiteral("仿真不访问该地址"));
+    }
+}
+
+void RobotProgramPanel::onBackendKindChanged(int index)
+{
+    const auto kind = index == 1
+        ? RobotProgramController::BackendKind::Ur
+        : RobotProgramController::BackendKind::Simulated;
+    if (m_controller && m_controller->backendKind() != kind) {
+        m_controller->setBackendKind(kind);
+        m_portSpin->setValue(RobotProgramController::defaultPort(kind));
+        if (m_hostEdit->text().trimmed().isEmpty())
+            m_hostEdit->setText(RobotProgramController::defaultHost(kind));
+    }
+    syncAddressFields();
+    updateBackendLabel();
+}
+
 void RobotProgramPanel::onConnectClicked()
 {
     if (!m_controller)
@@ -716,12 +795,9 @@ void RobotProgramPanel::onEnableToggled(bool on)
 {
     if (!m_controller)
         return;
+    // 后端的 enabledChanged 是权威状态（UR 走工作线程，结果是异步回来的），
+    // 这里不做"调用后立刻回读"的判断，否则真机会被误判为拒绝而弹回按钮。
     m_controller->setEnabled(on);
-    // 后端拒绝（未连接）时不会发 enabledChanged，把按钮拨回去。
-    if (on && !m_controller->backend()->isEnabled()) {
-        const QSignalBlocker blocker(m_enableButton);
-        m_enableButton->setChecked(false);
-    }
 }
 
 void RobotProgramPanel::onStopClicked()

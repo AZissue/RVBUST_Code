@@ -17,6 +17,7 @@
 
 class QAbstractButton;
 class QButtonGroup;
+class QComboBox;
 class QDoubleSpinBox;
 class QLabel;
 class QLineEdit;
@@ -51,7 +52,10 @@ private:
     void onRunnerState(ProgramRunner::State state);
     void setStatus(const QString& text, bool error);
     void log(const QString& text, bool error = false);
+    void updateBackendLabel();
+    void syncAddressFields();
 
+    void onBackendKindChanged(int index);
     void onConnectClicked();
     void onEnableToggled(bool on);
     void onStopClicked();
@@ -78,6 +82,8 @@ private:
     QLabel* m_backendLabel = nullptr;
     QLabel* m_hintLabel = nullptr;
     QLabel* m_countLabel = nullptr;
+    QComboBox* m_backendCombo = nullptr;
+    QLabel* m_addressHint = nullptr;
     QLineEdit* m_hostEdit = nullptr;
     QSpinBox* m_portSpin = nullptr;
     QPushButton* m_connectButton = nullptr;

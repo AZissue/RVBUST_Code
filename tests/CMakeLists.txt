@@ -97,6 +97,9 @@ add_executable(unit_tests ${TEST_SOURCES}
     # 抽象后端只有头文件；列进 target 才能让 AUTOMOC 生成它的 metaobject。
     ${CMAKE_SOURCE_DIR}/src/logic/RobotMotionBackend.h
     ${CMAKE_SOURCE_DIR}/src/logic/SimulatedMotionBackend.cpp
+    # UR 真机后端也列进来：单测不连接设备，只保证它随每次构建编译通过。
+    ${CMAKE_SOURCE_DIR}/src/logic/UrMotionBackend.cpp
+    ${CMAKE_SOURCE_DIR}/src/logic/UrMotionBackend.h
 )
 
 target_include_directories(unit_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)

@@ -14,6 +14,10 @@ set(SOURCES
     logic/RobotMotionBackend.h
     logic/SimulatedMotionBackend.cpp
     logic/SimulatedMotionBackend.h
+    # UR 真机后端：30003 反馈 + 30001 脚本 + 29999 Dashboard（工作线程）
+    logic/UrMotionBackend.cpp
+    logic/UrMotionBackend.h
+    logic/UrMotionMath.h
     logic/JogPolicy.h
     # 相机枚举/预扫描/设备缓存状态机——MainWindow 只弹设备列表
     app/CameraConnectionFlow.cpp

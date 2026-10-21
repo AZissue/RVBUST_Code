@@ -1,16 +1,15 @@
 #include "app/RobotProgramController.h"
 
 #include "logic/JogPolicy.h"
+#include "logic/SimulatedMotionBackend.h"
+#include "logic/UrMotionBackend.h"
 
 #include <algorithm>
 
 RobotProgramController::RobotProgramController(RobotMotionBackend* backend,
                                                QObject* parent)
-    : QObject(parent), m_backend(backend)
+    : QObject(parent)
 {
-    if (m_backend && !m_backend->parent())
-        m_backend->setParent(this);
-
     m_runner = new ProgramRunner(this);
     m_runner->setActions(this);
 
@@ -20,18 +19,7 @@ RobotProgramController::RobotProgramController(RobotMotionBackend* backend,
         m_runner->notifyNodeFinished(true);
     });
 
-    if (m_backend) {
-        connect(m_backend, &RobotMotionBackend::connectedChanged,
-                this, &RobotProgramController::connectedChanged);
-        connect(m_backend, &RobotMotionBackend::enabledChanged,
-                this, &RobotProgramController::enabledChanged);
-        connect(m_backend, &RobotMotionBackend::poseUpdated,
-                this, &RobotProgramController::poseUpdated);
-        connect(m_backend, &RobotMotionBackend::statusMessage,
-                this, &RobotProgramController::statusMessage);
-        connect(m_backend, &RobotMotionBackend::motionFinished,
-                this, &RobotProgramController::onMotionFinished);
-    }
+    attachBackend(backend);
 
     connect(m_runner, &ProgramRunner::programChanged,
             this, &RobotProgramController::programChanged);
@@ -46,6 +34,74 @@ RobotProgramController::RobotProgramController(RobotMotionBackend* backend,
 }
 
 RobotProgramController::~RobotProgramController() = default;
+
+void RobotProgramController::attachBackend(RobotMotionBackend* backend)
+{
+    m_backend = backend;
+    if (!backend)
+        return;
+    if (!backend->parent())
+        backend->setParent(this);
+    m_backendKind = backend->isSimulated() ? BackendKind::Simulated
+                                            : BackendKind::Ur;
+
+    connect(m_backend, &RobotMotionBackend::connectedChanged,
+            this, &RobotProgramController::connectedChanged);
+    connect(m_backend, &RobotMotionBackend::enabledChanged,
+            this, &RobotProgramController::enabledChanged);
+    connect(m_backend, &RobotMotionBackend::poseUpdated,
+            this, &RobotProgramController::poseUpdated);
+    connect(m_backend, &RobotMotionBackend::statusMessage,
+            this, &RobotProgramController::statusMessage);
+    connect(m_backend, &RobotMotionBackend::motionFinished,
+            this, &RobotProgramController::onMotionFinished);
+}
+
+void RobotProgramController::detachBackend()
+{
+    if (!m_backend)
+        return;
+    m_backend->disconnect(this);
+    // 只销毁自己接管的后端；外部已指定 parent 的对象留给它的所有者。
+    if (m_backend->parent() == this)
+        m_backend->deleteLater();
+    m_backend = nullptr;
+}
+
+void RobotProgramController::setBackendKind(BackendKind kind)
+{
+    if (m_backend && m_backendKind == kind)
+        return;
+
+    if (m_runner->isRunning())
+        m_runner->stop();
+    m_waitTimer->stop();
+    m_photoPending = false;
+
+    if (m_backend) {
+        m_backend->disconnectDevice();
+        detachBackend();
+    }
+
+    RobotMotionBackend* next = kind == BackendKind::Simulated
+        ? static_cast<RobotMotionBackend*>(new SimulatedMotionBackend(this))
+        : static_cast<RobotMotionBackend*>(new UrMotionBackend(this));
+    attachBackend(next);
+    emit backendChanged();
+}
+
+QString RobotProgramController::defaultHost(BackendKind kind)
+{
+    Q_UNUSED(kind);
+    return QStringLiteral("192.168.0.38");
+}
+
+quint16 RobotProgramController::defaultPort(BackendKind kind)
+{
+    // UR 实时反馈端口；仿真不访问网络，填同一个值只为界面一致。
+    Q_UNUSED(kind);
+    return 30003;
+}
 
 void RobotProgramController::addNode(const RobotProgram::NodePayload& payload)
 {
@@ -165,14 +221,13 @@ void RobotProgramController::jog(int axis, double delta, bool jointMode)
         emit statusMessage(QStringLiteral("程序运行中不能点动"), true);
         return;
     }
-    const RobotMotion::State st = m_backend->state();
     if (jointMode) {
-        RobotMotion::Pose target =
-            JogPolicy::jog(st.joint, axis, delta);
+        const RobotMotion::Pose target =
+            JogPolicy::jog(m_backend->state().joint, axis, delta);
         m_backend->moveJoint(JogPolicy::clampJoints(target), m_jogSpeedPct);
     } else {
-        RobotMotion::Pose target = JogPolicy::jog(st.cart, axis, delta);
-        m_backend->moveCartesian(target, m_jogSpeedPct);
+        // 姿态增量由后端按自己的约定合成（UR 是旋转向量，不是欧拉角）。
+        m_backend->jogCartesian(axis, delta, m_jogSpeedPct);
     }
 }
 
@@ -218,9 +273,11 @@ void RobotProgramController::startNode(const RobotProgram::NodePayload& payload)
                 .arg(RobotProgram::displayDetail(payload))
                 .arg(speed, 0, 'f', 0), false);
         if (move->space == RobotProgram::MoveNode::Space::Joint)
-            m_backend->moveJoint(JogPolicy::clampJoints(move->target), speed);
+            m_backend->moveJoint(JogPolicy::clampJoints(move->target), speed,
+                                 move->toleranceDeg, move->settleTimeoutMs);
         else
-            m_backend->moveCartesian(move->target, speed);
+            m_backend->moveCartesian(move->target, speed, move->toleranceMm,
+                                     move->toleranceDeg, move->settleTimeoutMs);
         return;
     }
 

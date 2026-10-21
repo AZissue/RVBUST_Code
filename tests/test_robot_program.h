@@ -20,6 +20,13 @@ private slots:
 
     void jogPolicyClampsAndWraps();
     void jogPolicyReachesTolerance();
+    // UR 真机后端的单位/旋转换算（纯函数，不需要机器人）。
+    void urMathConvertsFeedbackUnits();
+    void urMathNormalizesScriptRotation();
+    void urMathRotatesAboutBaseAxis();
+    void urMathRotationTolerance();
+    // 可选的真机冒烟测试：默认 QSKIP，只有设置 HE_UR_HOST 才连接。
+    void urBackendLiveMovesIfRequested();
     void runnerRunsAllInOrder();
     void runnerStopsOnFailure();
     void runnerRunOneAndStop();

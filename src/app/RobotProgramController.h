@@ -24,11 +24,21 @@
 class RobotProgramController : public QObject, public ProgramActions {
     Q_OBJECT
 public:
+    // 运动后端种类。目前只有仿真和 UR；其他品牌按 RobotMotionBackend
+    // 接口新增一个枚举值 + 一个工厂分支即可，界面/执行器不用动。
+    enum class BackendKind { Simulated, Ur };
+
     explicit RobotProgramController(RobotMotionBackend* backend,
                                     QObject* parent = nullptr);
     ~RobotProgramController() override;
 
     RobotMotionBackend* backend() const { return m_backend; }
+    BackendKind backendKind() const { return m_backendKind; }
+    // 切换后端：会先停止正在运行的程序并断开旧后端。外部传入的后端由本类
+    // 接管所有权（与构造函数一致）。
+    void setBackendKind(BackendKind kind);
+    static QString defaultHost(BackendKind kind);
+    static quint16 defaultPort(BackendKind kind);
     ProgramRunner* runner() const { return m_runner; }
 
     const RobotProgram::Program& program() const { return m_runner->program(); }
@@ -73,6 +83,8 @@ public:
     void stopProgram() override;
 
 signals:
+    // 后端被替换（仿真 ⇄ UR）。界面据此重绑状态，不能沿用旧后端的连接状态。
+    void backendChanged();
     void connectedChanged(bool connected);
     void enabledChanged(bool enabled);
     void poseUpdated(const RobotMotion::State& state);
@@ -87,8 +99,11 @@ signals:
 
 private:
     void onMotionFinished(bool ok, const QString& error);
+    void attachBackend(RobotMotionBackend* backend);
+    void detachBackend();
 
     RobotMotionBackend* m_backend = nullptr;
+    BackendKind m_backendKind = BackendKind::Simulated;
     ProgramRunner* m_runner = nullptr;
     QTimer* m_waitTimer = nullptr;
     double m_jogSpeedPct = 30.0;

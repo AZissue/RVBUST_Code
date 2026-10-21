@@ -89,8 +89,12 @@ void SimulatedMotionBackend::setEnabled(bool enabled)
 }
 
 void SimulatedMotionBackend::moveCartesian(const RobotMotion::Pose& target,
-                                           double speedPct)
+                                           double speedPct, double toleranceMm,
+                                           double toleranceDeg, int timeoutMs)
 {
+    Q_UNUSED(toleranceMm);
+    Q_UNUSED(toleranceDeg);
+    Q_UNUSED(timeoutMs);
     if (!m_connected) {
         emit motionFinished(false, QStringLiteral("未连接机器人（仿真后端）"));
         return;
@@ -118,8 +122,11 @@ void SimulatedMotionBackend::moveCartesian(const RobotMotion::Pose& target,
 }
 
 void SimulatedMotionBackend::moveJoint(const RobotMotion::Pose& target,
-                                       double speedPct)
+                                       double speedPct, double toleranceDeg,
+                                       int timeoutMs)
 {
+    Q_UNUSED(toleranceDeg);
+    Q_UNUSED(timeoutMs);
     if (!m_connected) {
         emit motionFinished(false, QStringLiteral("未连接机器人（仿真后端）"));
         return;
@@ -143,6 +150,12 @@ void SimulatedMotionBackend::moveJoint(const RobotMotion::Pose& target,
             * 10.0;
 
     startMove(cartTarget, jointTarget, speedPct, true);
+}
+
+void SimulatedMotionBackend::jogCartesian(int axis, double delta,
+                                          double speedPct)
+{
+    moveCartesian(JogPolicy::jog(m_state.cart, axis, delta), speedPct);
 }
 
 void SimulatedMotionBackend::startMove(const RobotMotion::Pose& cartTarget,

@@ -23,8 +23,12 @@ public slots:
     void connectDevice(const QString& host, quint16 port) override;
     void disconnectDevice() override;
     void setEnabled(bool enabled) override;
-    void moveCartesian(const RobotMotion::Pose& target, double speedPct) override;
-    void moveJoint(const RobotMotion::Pose& target, double speedPct) override;
+    void moveCartesian(const RobotMotion::Pose& target, double speedPct,
+                       double toleranceMm = 2.0, double toleranceDeg = 1.0,
+                       int timeoutMs = 15000) override;
+    void moveJoint(const RobotMotion::Pose& target, double speedPct,
+                   double toleranceDeg = 1.0, int timeoutMs = 15000) override;
+    void jogCartesian(int axis, double delta, double speedPct) override;
     void stopMotion() override;
 
 private:
