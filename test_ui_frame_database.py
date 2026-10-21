@@ -76,7 +76,7 @@ class FrameBrowserTests(unittest.TestCase):
         uid = self.db.ingest(frame)
         self.assertEqual(self.browser.count.text(), '1 帧')
         self.assertEqual(self.browser._items[uid].childCount(), 2)
-        self.assertEqual(self.browser._items[uid].parent().text(0), '标定帧')
+        self.assertEqual(self.browser._items[uid].parent().text(0), '标定会话数据')
         self.assertIsNone(self.browser._items[uid].parent().parent().parent())
         self.assertFalse(hasattr(self.browser, 'image'))
         viewer = self.win.workspace_multi().viewer()

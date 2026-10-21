@@ -58,7 +58,7 @@ class SessionProject:
         self.save_root = Path(save_root or DEFAULT_SESSIONS).resolve()
         self.saved_path = None
         self.dirty = False
-        self.include_raw = mode == 'mobile_chain'
+        self.include_raw = True
         self.database = FrameDatabase(mode)
         self.database.directory = self.directory / 'data'
 
@@ -67,7 +67,7 @@ class SessionProject:
         return self.name + (' *' if self.dirty else '')
 
     def save(self, workflow, *, include_raw=None):
-        include_raw = self.include_raw if include_raw is None else include_raw
+        include_raw = True if include_raw is None else include_raw
         self.save_root.mkdir(parents=True, exist_ok=True)
         destination = self.saved_path or self.save_root / (
             MODE_LABELS[self.mode] + '_' + safe_name(self.name) + '_' +

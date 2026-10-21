@@ -113,7 +113,7 @@ class FrameBrowser(QWidget):
                 groups[session_key].setData(0, Qt.UserRole + 1, session_key)
                 groups[session_key].setToolTip(0, session['created'])
                 groups[session_key].setIcon(0, icons.icon('folder_open', '#bbbbbb', 16))
-            category = ('拼接结果' if record.kind == 'result' else '标定帧'
+            category = ('拼接结果' if record.kind == 'result' else '标定会话数据'
                 if self.database.mode != 'mobile_chain' and ('标定' in record.purpose or record.purpose == 'calib') else '扫描原始帧')
             category_key = (id(groups[session_key]), category)
             if category_key not in categories:
@@ -148,6 +148,14 @@ class FrameBrowser(QWidget):
                 item.setData(0, Qt.UserRole + 2, component)
                 item.setToolTip(0, ('仅查看3D点云' if component == 'cloud' else '仅在右侧查看2D图像，不重载点云') + '\n删除操作针对所属完整帧，可在回收区恢复。')
                 self._component_items[(record.uid, component)] = item
+        if project_root is not None and getattr(self.database, 'has_calibration', False):
+            calibration_group = next((item for item in categories.values() if item.text(0) == '标定会话数据'), None)
+            if calibration_group is None:
+                calibration_group = QTreeWidgetItem(project_root, ['标定会话数据', ''])
+                calibration_group.setIcon(0, icons.icon('folder_open', '#aaaaaa', 16))
+                categories[('parameters', 'calibration')] = calibration_group
+            parameters = QTreeWidgetItem(calibration_group, ['标定参数', '多相机外参' if self.database.mode == 'multi_cam' else '转台轴心'])
+            parameters.setToolTip(0, '会话中的标定参数；采集帧中的点云和2D图像保存在各自子项。')
         for item in categories.values():
             item.setText(1, f'{item.childCount()} 项')
         def restore(item, key=''):

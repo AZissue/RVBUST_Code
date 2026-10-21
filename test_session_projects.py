@@ -65,6 +65,21 @@ class SessionProjectTests(unittest.TestCase):
         self.assertFalse(data['include_raw'])
         self.assertEqual(data['mode'], 'mobile_chain')
 
+    def test_default_save_includes_raw_data_in_every_mode(self):
+        for mode in ('multi_cam', 'mobile_chain', 'turntable'):
+            with self.subTest(mode=mode):
+                project = SessionProject(mode, save_root=self.root / mode)
+                self.addCleanup(project.dispose)
+                frame = FrameData(1, 'cam0', image_np=np.zeros((2, 2, 3), np.uint8),
+                    is_offline=True, offline_pointmap_path=str(self.source))
+                uid = project.database.ingest(frame)
+                self.assertTrue(project.include_raw)
+                project.include_raw = False
+                path = project.save({})
+                self.assertTrue(json.loads((path / 'session.json').read_text(encoding='utf-8'))['include_raw'])
+                self.assertEqual((path / 'data' / 'frames' / uid / 'pointmap.ply').read_bytes(), PLY)
+                self.assertTrue((path / 'data' / 'frames' / uid / 'image.png').is_file())
+
     def test_failed_save_preserves_previous_snapshot(self):
         self.ingest()
         path = self.project.save(dict(value=1))

@@ -6,7 +6,7 @@ import json
 import numpy as np
 import open3d as o3d
 from PySide6.QtCore import QObject, QEventLoop, QTimer
-from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QInputDialog,
+from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QInputDialog,
     QLabel, QVBoxLayout)
 from .dialogs import ChineseMessageBox as QMessageBox, localize_buttons
 
@@ -90,6 +90,8 @@ class SessionProjects(QObject):
     def update(self, mode):
         project = self.projects[mode]
         project.database.project_title = project.title
+        project.database.has_calibration = (bool(self.bridge.calibration_engine.pair_results) if mode == 'multi_cam'
+            else self.bridge.shell.workspace_turntable().session.is_calibrated() if mode == 'turntable' else False)
         browser = self.bridge.frame_db.browsers.get(mode)
         if browser:
             browser.refresh()
@@ -236,20 +238,15 @@ class SessionProjects(QObject):
                 callback(False)
             return
         project = self.projects[mode]
-        include_raw = project.include_raw
+        include_raw = True
         if project.saved_path is None:
             dialog = QDialog(self.bridge.shell)
             dialog.setWindowTitle('保存会话')
             layout = QVBoxLayout(dialog)
-            label = QLabel(f'{project.name}\n保存到：{project.save_root}\n重复保存更新同一项目。')
+            label = QLabel(f'{project.name}\n保存到：{project.save_root}\n重复保存更新同一项目。\n'
+                '保存全部会话数据：标定信息、原始点云、2D图像及拼接结果。')
             label.setWordWrap(True)
             layout.addWidget(label)
-            check = QCheckBox('包含原始点云、2D图像及拼接结果（取消则仅保存标定信息）')
-            has_calibration = (bool(self.bridge.calibration_engine.pair_results) if mode == 'multi_cam'
-                else self.bridge.shell.workspace_turntable().session.is_calibrated())
-            check.setChecked(include_raw or not has_calibration)
-            check.setEnabled(mode != 'mobile_chain')
-            layout.addWidget(check)
             buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
             localize_buttons(buttons)
             buttons.accepted.connect(dialog.accept)
@@ -259,7 +256,6 @@ class SessionProjects(QObject):
                 if callback:
                     callback(False)
                 return
-            include_raw = check.isChecked()
         self.bridge.shell.show_loading('正在保存当前会话...')
         def work():
             data = self.describe(mode, include_raw)

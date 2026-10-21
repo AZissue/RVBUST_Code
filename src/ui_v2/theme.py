@@ -343,3 +343,10 @@ QAbstractItemView::item:focus { background-color: #694044; }
 """
 GLOBAL_QSS += ITEM_VIEW_FOCUS_QSS
 LAUNCHER_QSS += ITEM_VIEW_FOCUS_QSS
+
+BUTTON_FOCUS_QSS = """
+QPushButton, QToolButton, QCheckBox, QRadioButton { outline: none; }
+QPushButton:focus, QToolButton:focus { border-color: #805052; }
+"""
+GLOBAL_QSS += BUTTON_FOCUS_QSS
+LAUNCHER_QSS += BUTTON_FOCUS_QSS

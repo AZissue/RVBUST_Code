@@ -7,7 +7,7 @@ from unittest.mock import patch
 import numpy as np
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QCloseEvent
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication, QMessageBox, QCheckBox
 
 import test_ui_frame_database as fixture
 from core.chain_stitcher import ChainNode, ChainEdge
@@ -380,6 +380,59 @@ class SessionUiTests(unittest.TestCase):
         np.testing.assert_allclose(ws.session.calib.center, [10, 20, 30])
         self.assertEqual(ws.session.current_step, 0)
         self.assertFalse((path / 'data').exists())
+        browser = self.bridge.frame_db.browsers['turntable']
+        group = browser.tree.topLevelItem(0).child(0)
+        self.assertEqual(group.text(0), '标定会话数据')
+        self.assertEqual(group.child(0).text(0), '标定参数')
+
+    def test_calibration_workspaces_save_all_assets_and_reload_db_labels(self):
+        controller = self.bridge.projects
+        for mode in ('multi_cam', 'turntable'):
+            with self.subTest(mode=mode):
+                self.win.set_mode(mode, [])
+                self.bridge._current_mode = mode
+                if mode == 'turntable':
+                    self.win.workspace_turntable().apply_loaded_calibration(
+                        dict(axis=[0, 0, 1], center=[10, 20, 30], angle_deg=30., step_count=12))
+                project = controller.projects[mode]
+                project.save_root = Path(self.temp.name) / 'sessions'
+                project.include_raw = False  # Previously parameter-only projects also save all data.
+                source = Path(self.temp.name) / f'{mode}.ply'
+                source.write_bytes(PLY)
+                frame = FrameData(1, 'cam0', image_np=np.full((2, 2, 3), 42, np.uint8),
+                    is_offline=True, offline_pointmap_path=str(source), kind='calib')
+                uid = project.database.ingest(frame, purpose='标定数据')
+                cloud = fixture.o3d.geometry.PointCloud()
+                cloud.points = fixture.o3d.utility.Vector3dVector([[1., 2., 3.]])
+                result = project.database.publish_result(cloud, [uid])
+                options = []
+                def accept():
+                    dialog = QApplication.activeModalWidget()
+                    options.append(len(dialog.findChildren(QCheckBox)))
+                    dialog.accept()
+                QTimer.singleShot(0, accept)
+                controller.save(mode)
+                self.wait(lambda: project.saved_path is not None and not any(w.isRunning() for w in self.bridge._workers))
+                self.assertEqual(options, [0])
+                path = project.saved_path
+                self.assertTrue(json.loads((path / 'session.json').read_text(encoding='utf-8'))['include_raw'])
+                folder = path / 'data' / 'frames' / uid
+                self.assertEqual((folder / 'pointmap.ply').read_bytes(), PLY)
+                self.assertTrue((folder / 'image.png').is_file())
+                self.assertTrue((path / 'data' / 'frames' / result / 'pointmap.ply').is_file())
+                project.include_raw = False
+                controller.save(mode)  # Subsequent saves must use the same full-data policy.
+                self.wait(lambda: not any(w.isRunning() for w in self.bridge._workers))
+                self.assertTrue(json.loads((path / 'session.json').read_text(encoding='utf-8'))['include_raw'])
+                controller.new(mode, '新任务')
+                controller.open(path, mode)
+                self.wait(lambda: mode not in controller.loading and not any(w.isRunning() for w in self.bridge._workers))
+                loaded = controller.projects[mode]
+                self.assertEqual(set(loaded.database.records), {uid, result})
+                browser = self.bridge.frame_db.browsers[mode]
+                self.assertEqual(browser._items[uid].parent().text(0), '标定会话数据')
+                self.assertIn((uid, 'cloud'), browser._component_items)
+                self.assertIn((uid, 'image'), browser._component_items)
 
     def test_close_save_covers_dirty_projects_in_inactive_workspaces(self):
         controller, mobile = self.mobile()
