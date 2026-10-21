@@ -49,8 +49,8 @@ class FrameBrowser(QWidget):
         layout.addLayout(bar)
         self.tree = QTreeWidget()
         self.tree.viewport().installEventFilter(self)
-        self.tree.setHeaderLabels(['单帧 / 对应数据', '点数'])
-        self.tree.headerItem().setToolTip(1, '原始帧：完整有序点云槽位数（含无效深度）；拼接结果：有效几何点数。显示采样不改变文件点数。')
+        self.tree.setHeaderLabels(['单帧 / 对应数据', '数据信息'])
+        self.tree.headerItem().setToolTip(1, '点云显示文件点数，2D图像显示像素分辨率，分组显示数据数量。')
         self.tree.setIndentation(14)
         self.tree.header().setStretchLastSection(False)
         self.tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
@@ -123,24 +123,25 @@ class FrameBrowser(QWidget):
             title = f'拼接帧 {record.frame_id:03d}' if record.kind == 'result' else f'帧 {record.frame_id:03d}'
             if self.database.mode == 'multi_cam' and record.kind == 'raw':
                 title += ' · ' + record.camera
-            row = QTreeWidgetItem(parent, [title, f'{record.points:,}' if record.points is not None else '—'])
+            row = QTreeWidgetItem(parent, [title, ''])
             row.setData(0, Qt.UserRole, record.uid)
             row.setToolTip(0, f'{record.camera} · {record.purpose} · {record.logical_name}\n{record.status}\n'
                 f'原始PLY + 2D PNG（{record.image_size[0]} × {record.image_size[1]}）\n'
                 '原始相机坐标；选择后在右侧查看2D / 3D。\n' + record.created)
             row.setIcon(0, icons.icon('layers', '#bbbbbb', 16))
-            row.setToolTip(1, '原始点槽位数，包含有序点云中的无效占位点；文件不下采样。')
             if record.kind == 'result':
                 row.setIcon(0, icons.icon('stitch', '#d65050', 16))
                 row.setToolTip(0, '独立拼接结果 · mm\n来源帧：' + '\n'.join(record.source_ids) + '\n' + record.created)
-                row.setToolTip(1, '拼接结果点数；原始帧保持独立。')
             self._items[record.uid] = row
-            cloud_item = QTreeWidgetItem(row, ['点云 · PLY', ''])
+            cloud_item = QTreeWidgetItem(row, ['点云 · PLY', f'{record.points:,}' if record.points is not None else '—'])
             cloud_item.setIcon(0, icons.icon('layers', '#bbbbbb', 16))
+            cloud_item.setToolTip(1, '拼接结果有效几何点数；原始帧保持独立。' if record.kind == 'result'
+                else '原始点槽位数，包含有序点云中的无效占位点；文件不下采样。')
             components = [('cloud', cloud_item)]
             if record.kind != 'result':
                 image_item = QTreeWidgetItem(row, ['2D 图像', f'{record.image_size[0]} × {record.image_size[1]}'])
                 image_item.setIcon(0, icons.icon('camera', '#bbbbbb', 16))
+                image_item.setToolTip(1, '2D图像分辨率（宽 × 高，像素）。')
                 components.append(('image', image_item))
             for component, item in components:
                 item.setData(0, Qt.UserRole, record.uid)
