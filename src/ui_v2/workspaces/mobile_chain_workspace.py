@@ -287,10 +287,11 @@ class MobileChainWorkspace(QWidget):
         rms_mm: Optional[float],
         level: str,
         suggestion: str,
+        *, scope: str = '本步',
     ):
         """仅更新评估卡片（不修改时间线）。用于重拍/删除后刷新当前评估。"""
         self._eval_card.set_evaluation(
-            shared_markers, inlier_ratio, rms_mm, level, suggestion)
+            shared_markers, inlier_ratio, rms_mm, level, suggestion, scope=scope)
 
     def on_evaluation_done(
         self,

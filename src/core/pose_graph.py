@@ -27,6 +27,7 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 from scipy.optimize import least_squares
+from scipy.spatial.transform import Rotation
 
 from .utils import logger
 
@@ -335,11 +336,17 @@ class PoseGraph:
     # 全局优化（BA）
     # ------------------------------------------------------------------
     def optimize_global_ba(self, reference_id: str,
-                           max_iterations: int = 50) -> Dict[str, np.ndarray]:
+                           max_iterations: int = 50, *,
+                           point_constraints=None) -> Dict[str, np.ndarray]:
         """全局位姿图 BA：以 reference_id 为锚点，联合优化所有节点位姿。
 
-        使用 scipy.optimize.least_squares 在 SE(3) 李代数上参数化，
+        使用 scipy.optimize.least_squares 以轴角和独立平移参数化，
         以所有边为约束构建最小二乘问题，消除链式复合的累积误差。
+
+        point_constraints: optional (from_id, to_id, points_from, points_to)
+            measured inlier pairs in local coordinates. Their world-coordinate
+            differences provide a single physical unit for rotation/translation;
+            mobile stitching supplies millimeter observations.
 
         Returns:
             {node_id: T_node_to_ref}（参考节点自身为 4x4 单位阵）
@@ -374,6 +381,13 @@ class PoseGraph:
             for nid, idx in node_to_idx.items():
                 T_map[nid] = self._se3_exp(x[idx*6:(idx+1)*6])
             res = []
+            if point_constraints is not None:
+                for from_id, to_id, points_from, points_to in point_constraints:
+                    a, b = T_map[from_id], T_map[to_id]
+                    delta = (points_from @ a[:3, :3].T + a[:3, 3]) - (
+                        points_to @ b[:3, :3].T + b[:3, 3])
+                    res.extend(delta.ravel())
+                return np.asarray(res)
             for edge in self.edges:
                 if edge.from_id not in T_map or edge.to_id not in T_map:
                     continue
@@ -383,7 +397,10 @@ class PoseGraph:
             return np.array(res)
 
         try:
-            result = least_squares(residuals, x0, method='lm', max_nfev=max_iterations)
+            result = least_squares(residuals, x0, method='trf' if point_constraints is not None else 'lm',
+                                   max_nfev=max_iterations)
+            if not np.isfinite(result.x).all() or not np.isfinite(result.fun).all():
+                raise ValueError('全局优化产生非有限结果')
             # 恢复优化后的位姿
             optimized = {reference_id: np.eye(4, dtype=np.float64)}
             for nid, idx in node_to_idx.items():
@@ -413,42 +430,13 @@ class PoseGraph:
     # ------------------------------------------------------------------
     @staticmethod
     def _se3_log(T: np.ndarray) -> np.ndarray:
-        """SE(3) → se(3) 对数映射（4x4 → 6 维向量 [rx, ry, rz, tx, ty, tz]）。"""
-        R = T[:3, :3]
-        t = T[:3, 3]
-        # 旋转部分：矩阵对数（简化为轴角）
-        cos_theta = (np.trace(R) - 1.0) / 2.0
-        cos_theta = np.clip(cos_theta, -1.0, 1.0)
-        theta = np.arccos(cos_theta)
-        if abs(theta) < 1e-6:
-            omega = np.zeros(3, dtype=np.float64)
-        else:
-            omega = theta / (2.0 * np.sin(theta)) * np.array([
-                R[2, 1] - R[1, 2],
-                R[0, 2] - R[2, 0],
-                R[1, 0] - R[0, 1],
-            ], dtype=np.float64)
-        return np.concatenate([omega, t])
+        """Rigid pose → rotation vector plus translation (not a coupled SE(3) log)."""
+        return np.concatenate([Rotation.from_matrix(T[:3, :3]).as_rotvec(), T[:3, 3]])
 
     @staticmethod
     def _se3_exp(x: np.ndarray) -> np.ndarray:
-        """se(3) → SE(3) 指数映射（6 维向量 → 4x4）。"""
-        omega = x[:3]
-        t = x[3:]
-        theta = np.linalg.norm(omega)
-        if theta < 1e-6:
-            R = np.eye(3, dtype=np.float64)
-        else:
-            k = omega / theta
-            K = np.array([
-                [0, -k[2], k[1]],
-                [k[2], 0, -k[0]],
-                [-k[1], k[0], 0],
-            ], dtype=np.float64)
-            R = (np.eye(3, dtype=np.float64) +
-                 np.sin(theta) * K +
-                 (1.0 - np.cos(theta)) * (K @ K))
+        """Rotation vector plus independent translation → rigid pose."""
         T = np.eye(4, dtype=np.float64)
-        T[:3, :3] = R
-        T[:3, 3] = t
+        T[:3, :3] = Rotation.from_rotvec(x[:3]).as_matrix()
+        T[:3, 3] = x[3:]
         return T

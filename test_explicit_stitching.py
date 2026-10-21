@@ -115,6 +115,12 @@ class ExplicitStitchingTests(unittest.TestCase):
         self.assertIn(frozenset(('station_2', 'station_3')),
             {frozenset((edge.from_id, edge.to_id)) for edge in chain.edges})
         self.assertTrue(all(np.isfinite(node.T_world).all() for node in chain.nodes.values()))
+        rms = workflow.get_error_report()['global_marker_rms_mm']
+        card = self.win.workspace_mobile()._eval_card
+        self.assertIn('全局标记误差', card.summary())
+        self.assertEqual(card._rms.text(), f'{rms:.3f}mm')
+        card.set_evaluation(4, 1., .24, 'ok', '下一步')
+        self.assertIn('本步误差 0.24mm', card.summary())
         result = next(row for row in self.db.records.values() if row.kind == 'result')
         self.assertEqual(result.logical_name, '拼接帧 001')
         self.assertEqual(chain.add_cross_frame_constraints(), 0)

@@ -40,6 +40,7 @@ class EvaluationCard(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._level = "idle"
+        self._measurement_scope = '本步'
 
         lo = QVBoxLayout(self)
         lo.setContentsMargins(12, 10, 12, 10)
@@ -68,7 +69,7 @@ class EvaluationCard(QFrame):
     def summary(self):
         """Plain-text metrics shared with the industrial status bar."""
         return (f'共视 {self._shared.text()} | 内点 {self._inlier.text()} | '
-                f'本步误差 {self._rms.text()}')
+                f'{self._measurement_scope}误差 {self._rms.text()}')
 
     @staticmethod
     def _metric(parent_lo: QHBoxLayout, name: str, value: str) -> QLabel:
@@ -92,6 +93,7 @@ class EvaluationCard(QFrame):
         rms_mm: Optional[float],
         level: str,
         suggestion: str,
+        *, scope: str = '本步',
     ):
         """刷新评估结果。
 
@@ -105,9 +107,12 @@ class EvaluationCard(QFrame):
         # TODO(BACKEND): 评估阈值（共视≥6 / 内点率≥0.7 / RMS 达标）
         由移动链式工作流判定后传入 level 与 suggestion。
         """
+        self._measurement_scope = scope
+        self._head.setText(scope + '评估')
         self._shared.setText(str(shared_markers))
         self._inlier.setText(f"{inlier_ratio * 100:.0f}%")
-        self._rms.setText(f"{rms_mm:.2f}mm" if rms_mm is not None else "—")
+        precision = 2 if scope == '本步' else 3
+        self._rms.setText(f"{rms_mm:.{precision}f}mm" if rms_mm is not None else "—")
 
         self._level = level if level in _LEVEL_STYLE else "idle"
         color = _LEVEL_STYLE.get(self._level)
@@ -125,6 +130,8 @@ class EvaluationCard(QFrame):
     def reset(self):
         """恢复待评估状态（撤销/重拍/新会话时调用）。"""
         self._level = "idle"
+        self._measurement_scope = '本步'
+        self._head.setText('本步评估')
         self._shared.setText("—")
         self._inlier.setText("—")
         self._rms.setText("—")

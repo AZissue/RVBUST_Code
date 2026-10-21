@@ -269,7 +269,10 @@ class ExplicitStitching:
                 ws.set_state('chaining')
                 edge = workflow.last_edge
                 if edge:
-                    ws.set_evaluation(edge.common_markers, edge.inlier_ratio, edge.rms_mm, 'ok', '拼接完成')
+                    rms = workflow.get_error_report().get('global_marker_rms_mm', edge.rms_mm)
+                    ws.set_evaluation(edge.common_markers, edge.inlier_ratio, rms, 'ok',
+                                      '拼接完成：显示最终位姿的标记拟合误差，不代表整个表面精度',
+                                      scope='全局标记')
             else:
                 ws = bridge.shell.workspace_multi() if mode == 'multi_cam' else turn
                 if mode == 'turntable':

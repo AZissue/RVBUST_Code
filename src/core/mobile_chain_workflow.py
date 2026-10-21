@@ -402,7 +402,8 @@ class MobileChainWorkflow(WorkflowBase):
 
         Returns:
             (success, message, before_mm, after_mm)
-            before_mm / after_mm: 优化前后位姿图边平均平移残差（mm）。
+            before_mm / after_mm: 优化前后共有标记在世界系下的 RMS（mm），
+                不代表整个点云表面的配准精度。
         """
         if self._chain_stitcher is None or len(self._chain_stitcher.nodes) < 3:
             return False, "机位不足，无法全局优化", 0.0, 0.0
@@ -412,12 +413,27 @@ class MobileChainWorkflow(WorkflowBase):
         # accepted shared-code pairs (including nonadjacent frames) for BA.
         self._chain_stitcher.add_cross_frame_constraints()
 
-        # 优化前：用当前 BFS/树状位姿计算边平移残差
-        initial_poses = {sid: node.T_world for sid, node in
+        constraints = self._marker_constraints()
+        if not constraints:
+            return False, '没有有效的共有标记约束，未执行优化', 0.0, 0.0
+        initial_poses = {sid: node.T_world.copy() for sid, node in
                          self._chain_stitcher.nodes.items()}
-        before_mm = self._mean_translation_residual(initial_poses)
+        before_mm = self._marker_rms(initial_poses, constraints)
 
-        optimized = self._chain_stitcher.pose_graph.optimize_global_ba(ref_id)
+        optimized = self._chain_stitcher.pose_graph.optimize_global_ba(
+            ref_id, point_constraints=constraints)
+        # Check the same measured observations before publishing any new pose.
+        # A small edge-translation residual alone can hide large angular errors
+        # at a surface hundreds of millimeters from the camera origin.
+        valid = all(self._valid_pose(optimized.get(sid)) for sid in initial_poses)
+        valid = valid and np.allclose(optimized[ref_id], np.eye(4), atol=1e-9)
+        after_mm = self._marker_rms(optimized, constraints) if valid else float('inf')
+        if not np.isfinite(after_mm) or after_mm > before_mm + 1e-8:
+            logger.warning(f'全局优化未通过标记复核：{before_mm:.6f} -> {after_mm:.6f}mm；保留原位姿')
+            return (before_mm <= self._chain_stitcher.max_rms_mm,
+                    '全局优化结果变差或无效，保留原配准位姿', before_mm, before_mm)
+        if after_mm > self._chain_stitcher.max_rms_mm:
+            return False, '全局标记拟合误差超限，未应用优化结果', before_mm, before_mm
         # 更新所有节点的世界变换
         for sid, T in optimized.items():
             if sid in self._chain_stitcher.nodes:
@@ -426,10 +442,43 @@ class MobileChainWorkflow(WorkflowBase):
         # 清空拼接缓存，确保 get_merged_pointcloud 使用优化后的新位姿
         self._chain_stitcher.invalidate_cache()
 
-        after_mm = self._mean_translation_residual(optimized)
         logger.info(f"全局 BA 优化完成，锚点 {ref_id}, "
-                    f"残差 {before_mm:.3f}mm -> {after_mm:.3f}mm")
+                    f"全局标记 RMS {before_mm:.6f}mm -> {after_mm:.6f}mm")
         return True, f"全局优化完成，锚点 {ref_id}", before_mm, after_mm
+
+    def _marker_constraints(self):
+        """Freeze pair inliers using measured edges, never candidate world poses."""
+        constraints = []
+        chain = self._chain_stitcher
+        for edge in chain.edges:
+            _, target, source = self.calibration_engine._match_markers(
+                chain.nodes[edge.to_id].markers, chain.nodes[edge.from_id].markers)
+            if len(source) < 3:
+                # Older parameter-only sessions can retain poses without XYZ.
+                continue
+            # Match the 2 mm RANSAC threshold used by ChainStitcher._try_register.
+            keep = np.linalg.norm(source @ edge.T[:3, :3].T + edge.T[:3, 3] - target, axis=1) < 2.0
+            if keep.sum() >= 3:
+                constraints.append((edge.from_id, edge.to_id, source[keep], target[keep]))
+        return constraints
+
+    @staticmethod
+    def _marker_rms(poses, constraints):
+        errors = []
+        for from_id, to_id, source, target in constraints:
+            a, b = poses[from_id], poses[to_id]
+            delta = (source @ a[:3, :3].T + a[:3, 3]) - (target @ b[:3, :3].T + b[:3, 3])
+            errors.extend(np.sum(delta ** 2, axis=1))
+        return float(np.sqrt(np.mean(errors))) if errors else 0.0
+
+    @staticmethod
+    def _valid_pose(pose):
+        if pose is None or np.shape(pose) != (4, 4) or not np.isfinite(pose).all():
+            return False
+        rotation = pose[:3, :3]
+        return (np.allclose(pose[3], [0, 0, 0, 1], atol=1e-9) and
+                np.allclose(rotation.T @ rotation, np.eye(3), atol=1e-6) and
+                abs(np.linalg.det(rotation) - 1) < 1e-6)
 
     def _mean_translation_residual(self, poses: Dict[str, np.ndarray]) -> float:
         """计算当前位姿下所有边的平均平移残差（mm）。"""
@@ -459,6 +508,10 @@ class MobileChainWorkflow(WorkflowBase):
         if self._chain_stitcher is None:
             return {}
         report = self._chain_stitcher.get_error_report()
+        constraints = self._marker_constraints()
+        if constraints:
+            poses = {sid: node.T_world for sid, node in self._chain_stitcher.nodes.items()}
+            report['global_marker_rms_mm'] = self._marker_rms(poses, constraints)
         if self._station_manager is not None:
             report['session_dir'] = self._station_manager.session_dir
         return report
