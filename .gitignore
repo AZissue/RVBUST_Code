@@ -16,6 +16,7 @@ data/
 
 # Build / packaging artifacts
 build/
+build-release/
 dist/
 *.zip
 
