@@ -15,17 +15,21 @@ from .launcher_dialog import LauncherDialog
 
 
 STYLE = '''
-QWidget#industrialRibbon { background:#2e2e2e; border-bottom:1px solid #444444; }
-QWidget#studioHeader { background:#222222; }
-QLabel#studioBrand { color:#eeeeee; font-size:18px; font-weight:700; }
-QLabel#studioMode { background:#303030; color:#dddddd; border:1px solid #484848;
-    border-radius:3px; padding:5px 10px; }
-QLabel#studioBadge { color:#bbbbbb; background:#303030; padding:6px 10px; border-radius:3px; }
-QFrame#ribbonGroup { background:#2b2b2b; border:0; border-right:1px solid #454545; }
-QLabel#ribbonCaption { color:#aaaaaa; font-size:11px; background:transparent; }
+QWidget#industrialRibbon { background:#292b2f; border-bottom:1px solid #41444a; }
+QWidget#studioHeader { background:#202226; border-bottom:1px solid #383b41; }
+QLabel#studioLogo { color:#ffffff; background:#b93638; font-size:17px;
+    font-weight:800; padding:4px 9px; border-radius:5px; }
+QLabel#studioBrand { color:#b8bec8; font-size:13px; font-weight:600; background:transparent; }
+QFrame#studioDivider { background:#454850; border:0; }
+QLabel#studioMode { color:#f0f2f5; font-size:15px; font-weight:600;
+    background:transparent; padding:3px 0; }
+QLabel#studioBadge { color:#b6c7bc; background:#29322e; padding:5px 10px; border-radius:10px; }
+QLabel#studioBadge[offline="true"] { color:#b5c2d6; background:#2c3340; }
+QFrame#ribbonGroup { background:transparent; border:0; border-right:1px solid #41444a; }
+QLabel#ribbonCaption { color:#8f97a4; font-size:11px; background:transparent; padding-top:2px; }
 QWidget#industrialRibbon QToolButton { color:#dddddd; background:transparent;
-    border:1px solid transparent; border-radius:3px; padding:3px; font-size:12px; }
-QWidget#industrialRibbon QToolButton:hover { background:#414141; border-color:#565656; }
+    border:1px solid transparent; border-radius:5px; padding:3px; font-size:12px; }
+QWidget#industrialRibbon QToolButton:hover { background:#3b3f46; border-color:#555b65; }
 QWidget#industrialRibbon QToolButton:pressed { background:#4d3030; border-color:#d32f2f; }
 QWidget#industrialRibbon QToolButton:checked { background:#573232; border-color:#d32f2f; color:#ffffff; }
 QWidget#industrialRibbon QToolButton:disabled { color:#727272; background:transparent; border-color:transparent; }
@@ -33,6 +37,10 @@ QWidget#industrialRibbon QToolButton[headerAction="true"] { background:#353535;
     border-color:#4a4a4a; padding:4px 10px; }
 QWidget#industrialRibbon QToolButton[headerAction="true"]:hover { background:#464646; }
 QWidget#industrialRibbon QToolButton[headerAction="true"]:checked { background:#573232; border-color:#d32f2f; }
+QWidget#industrialRibbon QToolButton#workspaceSwitch { background:#343941; border-color:#505866; }
+QWidget#industrialRibbon QToolButton#workspaceSwitch:hover { background:#444c58; border-color:#7a8799; }
+QWidget#industrialRibbon QToolButton[primaryAction="true"]:enabled { background:#633134; border-color:#954447; color:#ffffff; }
+QWidget#industrialRibbon QToolButton[primaryAction="true"]:hover { background:#803b3f; border-color:#c45d62; }
 '''
 
 
@@ -46,7 +54,7 @@ class CommandButton(QToolButton):
         self.setIcon(icons.icon(glyph, '#d6d6d6', 23))
         self.setIconSize(QSize(23, 23))
         self.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
-        self.setFixedSize(78, 55)
+        self.setFixedSize(72, 55)
         self.setToolTip(source.toolTip() or source.text().strip())
         self.setCheckable(source.isCheckable())
         self.clicked.connect(lambda _checked=False: source.click())
@@ -83,16 +91,17 @@ class IndustrialRibbon(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
         header = QWidget(objectName='studioHeader')
+        header.setMinimumHeight(52)
         line = QHBoxLayout(header)
-        line.setContentsMargins(18, 8, 14, 8)
-        line.setSpacing(10)
-        line.addWidget(QLabel('MCC   /   SCAN STUDIO', objectName='studioBrand'))
-        line.addSpacing(18)
+        line.setContentsMargins(14, 8, 14, 8)
+        line.setSpacing(12)
+        line.addWidget(QLabel('MCC', objectName='studioLogo'))
+        line.addWidget(QLabel('SCAN STUDIO', objectName='studioBrand'))
+        divider = QFrame(objectName='studioDivider')
+        divider.setFixedSize(1, 22)
+        line.addWidget(divider)
         self.mode_label = QLabel(objectName='studioMode')
         line.addWidget(self.mode_label)
-        select = self._header_button('选择功能', 'layers', shell.open_device_manager)
-        select.setToolTip('返回启动窗口，选择工作区或切换离线预览')
-        line.addWidget(select)
         line.addStretch(1)
         self.badge = QLabel(objectName='studioBadge')
         line.addWidget(self.badge)
@@ -109,7 +118,7 @@ class IndustrialRibbon(QWidget):
             page = QWidget()
             row = QHBoxLayout(page)
             row.setContentsMargins(10, 5, 10, 4)
-            row.setSpacing(10)
+            row.setSpacing(6)
             self._pages[mode] = page
             self.pages.addWidget(page)
             self._build_mode(mode, row)
@@ -139,8 +148,15 @@ class IndustrialRibbon(QWidget):
                 button.setIcon(icons.icon(glyph, '#d6d6d6', 23))
                 button.setIconSize(QSize(23, 23))
                 button.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
-                button.setFixedSize(78, 55)
+                button.setFixedSize(72, 55)
                 button.clicked.connect(lambda _checked=False, action=source: action())
+            if key == 'select':
+                button.setObjectName('workspaceSwitch')
+                button.setToolTip('返回启动窗口，选择工作区或切换离线预览')
+            elif key in ('frame0', 'frame1'):
+                button.setFixedWidth(84)
+            elif key == 'stitch':
+                button.setProperty('primaryAction', True)
             self.commands[(mode, key)] = button
             actions.addWidget(button)
         col.addLayout(actions)
@@ -151,6 +167,9 @@ class IndustrialRibbon(QWidget):
         shell = self.shell
         multi, mobile, turn = shell.workspace_multi(), shell.workspace_mobile(), shell.workspace_turntable()
         exports = dict(multi_cam=multi._btn_stitch_save, mobile_chain=mobile._btn_save, turntable=turn.btn_save)
+        self._group(row, '工作区', [
+            ('select', '选择功能', 'layers', lambda: shell.open_device_manager()),
+        ], mode)
         self._group(row, '项目', [
             ('new', '新建会话', 'folder_open', lambda: self._project_action('new_dialog')),
             ('open', '打开会话', 'folder_open', shell.open_session_requested.emit),
@@ -241,6 +260,9 @@ class IndustrialRibbon(QWidget):
         self.mode_label.setText(LauncherDialog.MODE_NAMES[shell.current_mode()])
         self.badge.setText('离线预览' if getattr(shell, '_offline_preview', False) else
                            f'已连接 {len(shell._devices)} 台设备' if shell._devices else '未连接相机')
+        self.badge.setProperty('offline', bool(getattr(shell, '_offline_preview', False) or not shell._devices))
+        self.badge.style().unpolish(self.badge)
+        self.badge.style().polish(self.badge)
         database = shell._frame_databases[shell.current_mode()]
         raw = sum(row.kind == 'raw' for row in database.records.values())
         results = any(row.kind == 'result' for row in database.records.values())
