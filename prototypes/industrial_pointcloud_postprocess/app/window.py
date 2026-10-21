@@ -2,6 +2,7 @@
 from pathlib import Path
 import os
 import logging
+import numpy as np
 from PySide6.QtCore import Qt, QTimer, Signal, QSize, QSignalBlocker
 from PySide6.QtGui import QFont, QFontDatabase
 from PySide6.QtWidgets import (
@@ -108,6 +109,7 @@ class PostProcessWorkbench(QWidget):
         self._busy = False
         self._completion = None
         self._current_index = None
+        self._segment = None
         self._retired_canvases = []
         self._renderer = renderer
         self._build()
@@ -155,6 +157,7 @@ class PostProcessWorkbench(QWidget):
             ('文件', [('open', '打开点云', 'folder_open', self.open_dialog),
                       ('export', '导出PLY', 'save', self.export_dialog)]),
             ('编辑', [('select', '多边形框选', 'detect', None),
+                      ('merge', '合并图层', 'stitch', self.merge_selected),
                       ('undo', '撤销', 'undo', self.undo),
                       ('delete', '删除图层', 'trash', self.delete_layer)]),
             ('视图', [('fit', '适配全部', 'reset_view', self._fit),
@@ -211,6 +214,7 @@ class PostProcessWorkbench(QWidget):
         self.panel.restore_requested.connect(self.restore_last_removal)
         self.panel.visibility_changed.connect(self._visibility_changed)
         self.panel.current_changed.connect(self._current_changed)
+        self.panel.selection_changed.connect(self._refresh_controls)
         side_column.addWidget(self.panel)
 
         scroll = QScrollArea()
@@ -230,17 +234,26 @@ class PostProcessWorkbench(QWidget):
         data_form.addRow(data_note)
         form_col.addWidget(data_group)
 
-        crop_group = QGroupBox('02  框选裁剪')
-        crop_form = QFormLayout(crop_group)
-        self.crop_mode = QComboBox()
-        self.crop_mode.addItems(['保留框内', '移除框内'])
-        self.crop_mode.setToolTip('沿当前视线方向正交投影框选，作用于当前选中图层。')
-        crop_form.addRow('裁剪模式', self.crop_mode)
-        crop_note = QLabel('点击工具条“多边形框选”进入框选：左键加顶点，双击或右键闭合，Esc 取消；可撤销。')
-        crop_note.setWordWrap(True)
-        crop_note.setObjectName('mutedLabel')
-        crop_form.addRow(crop_note)
-        form_col.addWidget(crop_group)
+        seg_group = QGroupBox('02  框选分割')
+        seg_form = QFormLayout(seg_group)
+        self.seg_state = QLabel('未框选')
+        self.seg_state.setWordWrap(True)
+        seg_form.addRow(self.seg_state)
+        self.seg_in_button = QPushButton('保留框内')
+        self.seg_in_button.clicked.connect(lambda: self._apply_segment(True))
+        seg_form.addRow(self.seg_in_button)
+        self.seg_out_button = QPushButton('保留框外')
+        self.seg_out_button.clicked.connect(lambda: self._apply_segment(False))
+        seg_form.addRow(self.seg_out_button)
+        self.seg_discard_button = QPushButton('放弃框选')
+        self.seg_discard_button.clicked.connect(lambda: self._discard_segment('已放弃框选暂存。'))
+        seg_form.addRow(self.seg_discard_button)
+        seg_note = QLabel('工具条“多边形框选”进入绘制：左键加顶点，Alt+左键撤点，右键或双击封闭；'
+                          '封闭后在此执行分割，舍去部分作为分支图层保留。')
+        seg_note.setWordWrap(True)
+        seg_note.setObjectName('mutedLabel')
+        seg_form.addRow(seg_note)
+        form_col.addWidget(seg_group)
 
         sample_group = QGroupBox('03  下采样')
         sample_form = QFormLayout(sample_group)
@@ -359,7 +372,7 @@ class PostProcessWorkbench(QWidget):
 
     def _make_overlay(self):
         self.overlay = PolygonSelectionOverlay(self.canvas)
-        self.overlay.polygon_closed.connect(self._polygon_closed)
+        self.overlay.polygon_confirmed.connect(self._polygon_confirmed)
         self.overlay.cancelled.connect(self._selection_cancelled)
 
     def _log_splitter_moved(self, *_):
@@ -402,6 +415,8 @@ class PostProcessWorkbench(QWidget):
         return self._current_index
 
     def _current_changed(self, index):
+        if index != self._current_index:
+            self._invalidate_segment('当前图层已切换')
         self._current_index = index
         self._refresh_details()
         self._refresh_controls()
@@ -429,19 +444,23 @@ class PostProcessWorkbench(QWidget):
     def _refresh_controls(self):
         available = not self._busy
         selected = self._current_index is not None
+        staged = self._segment is not None
         self._actions['open'].setEnabled(available)
         self._actions['export'].setEnabled(available and any(l.visible for l in self.session.layers))
         self._actions['select'].setEnabled(available and selected and not self.overlay.active)
         if not available or not selected:
             self._actions['select'].setChecked(False)
+        self._actions['merge'].setEnabled(available and len(self.panel.selected_indices()) >= 2)
         self._actions['undo'].setEnabled(available and self.session.can_undo)
         self._actions['delete'].setEnabled(available and selected)
         self.panel.set_enabled(available)
+        self.seg_in_button.setEnabled(available and staged)
+        self.seg_out_button.setEnabled(available and staged)
+        self.seg_discard_button.setEnabled(available and (staged or self.overlay.active))
         self.voxel_button.setEnabled(available and selected)
         self.random_button.setEnabled(available and selected)
         self.voxel_size.setEnabled(available)
         self.sample_ratio.setEnabled(available)
-        self.crop_mode.setEnabled(available)
         self.units.setEnabled(available)
         self.state_label.setText('文件处理中…' if self._busy else '待机 · 离线后处理')
         self._render_status()
@@ -505,38 +524,84 @@ class PostProcessWorkbench(QWidget):
             layer.source_points if layer.source_points is not None else len(layer.points))
         return layer
 
-    def apply_polygon_crop(self, layer_index, polygon_xy):
+    def apply_polygon_split(self, layer_index, polygon_xy, keep_inside):
         polygon = [(float(x), float(y)) for x, y in polygon_xy]
         if len(polygon) < 3:
-            self.log('多边形顶点不足 3 个，无法裁剪。', 'warn')
-            return False
+            self.log('多边形顶点不足 3 个，无法分割。', 'warn')
+            return None
         if not 0 <= layer_index < len(self.session.layers):
-            self.log('请先选择要裁剪的图层。', 'warn')
-            return False
+            self.log('请先选择要分割的图层。', 'warn')
+            return None
         layer = self.session.layers[layer_index]
         if not len(layer.points):
-            self.log(f'{layer.name}：图层为空，无法裁剪。', 'warn')
-            return False
+            self.log(f'{layer.name}：图层为空，无法分割。', 'warn')
+            return None
         canvas = self.canvas
         mask = polygon_crop_mask(layer.points, polygon, center=canvas.center,
                                  rotation_matrix=canvas.rotation.matrix, extent=canvas.extent,
                                  zoom=canvas.zoom, pan=canvas.pan,
                                  width=max(1, canvas.width()), height=max(1, canvas.height()))
-        keep_inside = self.crop_mode.currentIndex() == 0
-        mode_text = '保留框内' if keep_inside else '移除框内'
-        keep = mask if keep_inside else ~mask
-        if not keep.any():
-            self.log(f'{layer.name}：{mode_text}将清空图层，已取消操作。', 'warn')
-            return False
-        if keep.all():
-            self.log(f'{layer.name}：多边形未影响任何点，未做修改。', 'warn')
-            return False
-        self._replace_layer(layer_index, layer.points[keep],
-                            None if layer.colors is None else layer.colors[keep],
-                            f'多边形裁剪({mode_text})')
-        self.log(f'{layer.name}：{mode_text}，{len(layer.points):,} → {keep.sum():,} 点。')
-        self._refresh()
-        return True
+        inside = int(mask.sum())
+        outside = len(layer.points) - inside
+        keep_mask = mask if keep_inside else ~mask
+        remainder_mask = ~keep_mask
+        mode_text = '框内' if keep_inside else '框外'
+        if not keep_mask.any():
+            self.log(f'{layer.name}：保留{mode_text}将清空图层，已取消分割。', 'warn')
+            return None
+        self._invalidate_segment('图层数据已变化')
+        self.session.snapshot()
+        kept = CloudLayer(layer.name, layer.points[keep_mask],
+                          None if layer.colors is None else layer.colors[keep_mask],
+                          layer.visible, layer.source + f' | 多边形分割(保留{mode_text})',
+                          layer.source_points if layer.source_points is not None else len(layer.points))
+        self.session.layers[layer_index] = kept
+        branch = None
+        if remainder_mask.any():
+            branch_text = '框外' if keep_inside else '框内'
+            branch = CloudLayer(f'{layer.name} · 分割({branch_text})',
+                                layer.points[remainder_mask],
+                                None if layer.colors is None else layer.colors[remainder_mask],
+                                layer.visible, f'由 {layer.name} 多边形分割生成')
+            self.session.layers.insert(layer_index + 1, branch)
+        kept_count = int(keep_mask.sum())
+        remainder_count = int(remainder_mask.sum())
+        self.log(f'{layer.name}：多边形分割保留{mode_text} {kept_count:,} 点' +
+                 (f'，舍去部分 {remainder_count:,} 点已生成分支图层。' if branch is not None else '，舍去部分为空。'))
+        self._refresh(select=layer_index)
+        return kept_count, remainder_count
+
+    def merge_layers(self, indices):
+        indices = sorted({int(i) for i in indices if isinstance(i, int) and 0 <= i < len(self.session.layers)})
+        if len(indices) < 2:
+            self.log('请至少选择 2 个图层进行合并。', 'warn')
+            return None
+        layers = [self.session.layers[i] for i in indices]
+        points = np.vstack([layer.points for layer in layers])
+        if not len(points):
+            self.log('选中图层没有可合并的点。', 'warn')
+            return None
+        colors = (np.vstack([layer.colors for layer in layers])
+                  if all(layer.colors is not None for layer in layers) else None)
+        names = '、'.join(layer.name for layer in layers)
+        merged = CloudLayer(f'合并点云 ({len(indices)} 层)', points, colors,
+                            any(layer.visible for layer in layers), '合并自：' + names)
+        self._invalidate_segment('图层数据已变化')
+        self.session.snapshot()
+        for index in reversed(indices):
+            self.session.layers.pop(index)
+        position = min(indices[0], len(self.session.layers))
+        self.session.layers.insert(position, merged)
+        self.log(f'已合并 {len(indices)} 个图层（{names}）→ {merged.name}：{len(points):,} 点；原图层已移除，可撤销。')
+        self._refresh(select=position)
+        return len(points)
+
+    def merge_selected(self):
+        indices = self.panel.selected_indices()
+        if len(indices) < 2:
+            self.log('请至少选择 2 个图层进行合并。', 'warn')
+            return
+        self.merge_layers(indices)
 
     def apply_voxel_downsample(self, layer_index, voxel_size):
         if not 0 <= layer_index < len(self.session.layers):
@@ -548,6 +613,7 @@ class PostProcessWorkbench(QWidget):
         except ValueError as exc:
             self.log(f'{layer.name}：{exc}', 'warn')
             return False
+        self._invalidate_segment('图层数据已变化')
         self._replace_layer(layer_index, points, colors, f'体素下采样({voxel_size:g} mm)')
         self.log(f'{layer.name}：体素 {voxel_size:g} mm，{len(layer.points):,} → {len(points):,} 点（体素内取均值）。')
         self._refresh()
@@ -563,12 +629,14 @@ class PostProcessWorkbench(QWidget):
         except ValueError as exc:
             self.log(f'{layer.name}：{exc}', 'warn')
             return False
+        self._invalidate_segment('图层数据已变化')
         self._replace_layer(layer_index, points, colors, f'随机抽样(保留 {ratio * 100:g}%)')
         self.log(f'{layer.name}：随机保留 {ratio * 100:g}%，{len(layer.points):,} → {len(points):,} 点。')
         self._refresh()
         return True
 
     def undo(self):
+        self._invalidate_segment('撤销改变了图层数据')
         if self.session.undo():
             self.log('已撤销上一次编辑。')
             self._refresh()
@@ -611,6 +679,7 @@ class PostProcessWorkbench(QWidget):
         batch.reverse()
         self.session.removed.append(batch)
         names = '、'.join(layer.name for _, layer in batch)
+        self._invalidate_segment('图层已被删除')
         self.log(f'已移入回收区 {len(batch)} 个图层：{names}；可右键"恢复上次删除"。')
         self._refresh(select=0)
         return True
@@ -625,6 +694,7 @@ class PostProcessWorkbench(QWidget):
         for index, layer in batch:
             self.session.layers.insert(min(index, len(self.session.layers)), layer)
         names = '、'.join(layer.name for _, layer in batch)
+        self._invalidate_segment('回收区恢复改变了图层列表')
         self.log(f'已恢复上次删除：{names}（{len(batch)} 个图层按原索引放回）。')
         self._refresh(select=batch[0][0])
         return True
@@ -641,30 +711,74 @@ class PostProcessWorkbench(QWidget):
 
     def _selection_toggled(self, checked):
         if not checked:
-            if self.overlay.active:
-                self.overlay.deactivate()
+            if self._segment is not None or self.overlay.active:
+                self._discard_segment('已退出框选。')
             return
         if self._selected_index() is None:
-            self.log('请先在图层树中选择要裁剪的图层。', 'warn')
+            self.log('请先在图层树中选择要分割的图层。', 'warn')
             with QSignalBlocker(self._actions['select']):
                 self._actions['select'].setChecked(False)
             return
+        self._segment = None
+        self.seg_state.setText('正在绘制多边形：左键加顶点，Alt+左键撤点，右键封闭。')
         self.overlay.activate()
-        self.log('已进入框选模式：左键加顶点，双击或右键闭合，Esc 取消。')
+        self.log('已进入框选模式：左键加顶点，Alt+左键撤销顶点，右键或双击封闭，Esc 取消。')
+        self._refresh_controls()
 
-    def _polygon_closed(self, polygon):
+    def _polygon_confirmed(self, polygon):
         idx = self._selected_index()
-        self.overlay.deactivate()
-        self._actions['select'].setChecked(False)
-        if idx is not None:
-            self.apply_polygon_crop(idx, polygon)
+        if idx is None or idx >= len(self.session.layers):
+            self.log('请先选择要分割的图层。', 'warn')
+            self._discard_segment()
+            return
+        layer = self.session.layers[idx]
+        canvas = self.canvas
+        mask = polygon_crop_mask(layer.points, polygon, center=canvas.center,
+                                 rotation_matrix=canvas.rotation.matrix, extent=canvas.extent,
+                                 zoom=canvas.zoom, pan=canvas.pan,
+                                 width=max(1, canvas.width()), height=max(1, canvas.height()))
+        inside = int(mask.sum())
+        outside = len(layer.points) - inside
+        self._segment = dict(polygon=polygon, layer_index=idx)
+        self.overlay.show_confirmed(f'框内 {inside:,} 点 / 框外 {outside:,} 点')
+        self.seg_state.setText(f'已封闭 {len(polygon)} 顶点：框内 {inside:,} 点，框外 {outside:,} 点')
+        self.log(f'多边形已封闭（{len(polygon)} 顶点）：框内 {inside:,} 点 / 框外 {outside:,} 点；请选择 保留框内 / 保留框外。')
+        self._refresh_controls()
+
+    def _apply_segment(self, keep_inside):
+        staged = self._segment
+        if staged is None:
+            self.log('请先完成多边形框选。', 'warn')
+            return
+        self._segment = None
+        self.seg_state.setText('未框选')
+        if self.overlay.active:
+            self.overlay.clear()
+        with QSignalBlocker(self._actions['select']):
+            self._actions['select'].setChecked(False)
+        self.apply_polygon_split(staged['layer_index'], staged['polygon'], keep_inside)
+
+    def _discard_segment(self, message=None):
+        had = self._segment is not None or self.overlay.active
+        self._segment = None
+        self.seg_state.setText('未框选')
+        if self.overlay.active:
+            self.overlay.clear()
+        with QSignalBlocker(self._actions['select']):
+            self._actions['select'].setChecked(False)
+        if message and had:
+            self.log(message)
+        self._refresh_controls()
+
+    def _invalidate_segment(self, reason=''):
+        if self._segment is not None:
+            self._discard_segment(f'框选暂存已失效：{reason}。')
 
     def _selection_cancelled(self):
-        self.overlay.deactivate()
-        self._actions['select'].setChecked(False)
-        self.log('已取消框选。')
+        self._discard_segment('已取消框选。')
 
     def add_layer(self, layer, fit=None):
+        self._invalidate_segment('图层列表已变化')
         self.session.layers.append(layer)
         self._refresh(fit=(len(self.session.layers) == 1) if fit is None else fit,
                       select=len(self.session.layers) - 1)
@@ -738,8 +852,9 @@ class PostProcessWorkbench(QWidget):
     def _help(self):
         QMessageBox.information(self, '点云后处理原型',
             '工业风 UI 的轻量点云后处理工具（CloudCompare 基础子集对照版）。\n\n'
-            '可用：打开/导出点云（ply/pcd/xyz/pts，mm/m 源单位）、多图层显隐与删除、\n'
-            '多边形框选裁剪（保留/移除框内，沿当前视线正交投影）、体素与随机下采样、撤销（8 步）。\n'
+            '可用：打开/导出点云（ply/pcd/xyz/pts，mm/m 源单位）、多图层显隐与回收区删除、\n'
+            '多边形分割（左键加顶点、Alt+左键撤点、右键封闭；保留框内/框外，舍去部分生成分支图层）、\n'
+            '多选合并图层、体素与随机下采样、撤销（8 步）。\n'
             '视角：左键轨迹球旋转，右键/中键或 Shift 平移，滚轮缩放，双击设旋转中心，F/Z 适配。\n'
             '显示抽稀只影响预览，不影响原始数据与导出。内部与导出单位均为 mm。\n'
             'OpenGL 不可用时明确降级为 18,000 点兼容软件预览。')

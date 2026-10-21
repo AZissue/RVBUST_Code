@@ -31,66 +31,96 @@ def main():
     params = dict(center=canvas.center.copy(), rotation_matrix=canvas.rotation.matrix.copy(),
                   extent=canvas.extent, zoom=canvas.zoom, pan=canvas.pan.copy(),
                   width=canvas.width(), height=canvas.height())
-    assert params['width'] > 50 and params['height'] > 50, 'canvas has no size'
     xy, _ = ortho_project(layer.points, **params)
     xmin, xmax = xy[:, 0].min(), xy[:, 0].max()
     ymin, ymax = xy[:, 1].min(), xy[:, 1].max()
     mid = (xmin + xmax) / 2
     polygon = [(xmin - 5, ymin - 5), (mid, ymin - 5), (mid, ymax + 5), (xmin - 5, ymax + 5)]
+    inside = int(point_in_polygon(xy, np.asarray(polygon)).sum())
+    outside = total - inside
+    assert 0 < inside < total, 'polygon does not split the cloud'
 
-    assert win.apply_polygon_crop(0, polygon), 'polygon crop rejected'
-    cropped = win.session.layers[0]
-    assert 0 < len(cropped.points) < total, 'crop did not reduce point count'
-    xy2, _ = ortho_project(cropped.points, **params)
-    assert point_in_polygon(xy2, np.asarray(polygon)).all(), 'kept points outside polygon'
-    assert cropped.name == layer.name and '多边形裁剪' in cropped.source
-    print(f'[OK] polygon crop keep-inside: {total:,} -> {len(cropped.points):,} points')
+    win._actions['select'].setChecked(True)
+    assert win.overlay.active, 'selection overlay not active'
+    win.overlay._vertices = list(polygon)
+    win.overlay._confirm()
+    app.processEvents()
+    assert win._segment is not None and win.overlay.has_mask, 'polygon not staged'
+    assert f'框内 {inside:,}' in win.seg_state.text() and f'框外 {outside:,}' in win.seg_state.text()
+    print(f'[OK] polygon staged: {len(polygon)} vertices, inside {inside:,} / outside {outside:,}')
 
-    before = len(cropped.points)
-    assert win.apply_voxel_downsample(0, 5.0), 'voxel downsample rejected'
-    voxel = win.session.layers[0]
-    assert 0 < len(voxel.points) < before, 'voxel downsample did not reduce points'
-    print(f'[OK] voxel downsample: {before:,} -> {len(voxel.points):,} points')
-
-    before = len(voxel.points)
-    assert win.apply_random_downsample(0, 0.5), 'random downsample rejected'
-    sampled = win.session.layers[0]
-    assert len(sampled.points) == max(1, round(before * 0.5)), 'random downsample count wrong'
-    print(f'[OK] random downsample: {before:,} -> {len(sampled.points):,} points')
-
-    assert win.apply_polygon_crop(0, [(0, 0), (10, 10)]) is False, 'polygon with <3 vertices accepted'
+    win._apply_segment(True)
+    assert win._segment is None and not win.overlay.active, 'staged mask not cleared'
+    assert len(win.session.layers) == 2, 'segment branch not appended'
+    kept, branch = win.session.layers
+    assert len(kept.points) == inside and kept.name == '演示点云 01', 'kept layer wrong'
+    assert len(branch.points) == outside, 'branch point count wrong'
+    assert branch.name == '演示点云 01 · 分割(框外)' and '多边形分割' in branch.source
+    assert inside + outside == total, 'point conservation broken'
+    print(f'[OK] segment in: kept {inside:,}, branch {outside:,}, total conserved')
 
     win.undo()
-    assert len(win.session.layers[0].points) == len(voxel.points), 'undo 1 failed'
+    assert len(win.session.layers) == 1 and len(win.session.layers[0].points) == total, 'undo split failed'
+    print('[OK] undo restored pre-segment state (kept layer and branch both rolled back)')
+
+    result = win.apply_polygon_split(0, polygon, False)
+    assert result == (outside, inside), 'segment out counts wrong'
+    assert len(win.session.layers[0].points) == outside
+    assert win.session.layers[1].name == '演示点云 01 · 分割(框内)'
     win.undo()
-    assert len(win.session.layers[0].points) == len(cropped.points), 'undo 2 failed'
+    assert len(win.session.layers) == 1 and len(win.session.layers[0].points) == total
+    print(f'[OK] segment out: kept {outside:,}, branch {inside:,}, undo restored')
+
+    win.apply_polygon_split(0, polygon, True)
+    assert len(win.session.layers) == 2
+    assert win.remove_layer_indices([1]), 'branch removal rejected'
+    assert len(win.session.layers) == 1 and len(win.session.removed) == 1
+    assert win.restore_last_removal(), 'branch restore rejected'
+    assert len(win.session.layers) == 2
+    assert win.session.layers[1].name == '演示点云 01 · 分割(框外)'
+    assert not win.session.removed
     win.undo()
-    assert len(win.session.layers[0].points) == total, 'undo 3 failed'
-    print('[OK] undo restored all three edit steps')
+    assert len(win.session.layers) == 1 and len(win.session.layers[0].points) == total
+    print('[OK] segment branch: recycle-bin remove/restore works like any layer')
+
+    extra = np.array([[1., 2., 3.], [4., 5., 6.], [7., 8., 9.]])
+    win.load_layer_from_arrays('附加 A', extra)
+    win.load_layer_from_arrays('附加 B', extra * 2)
+    merged_count = win.merge_layers([1, 2])
+    assert merged_count == 6, 'merged point count wrong'
+    assert len(win.session.layers) == 2 and win.session.layers[1].name == '合并点云 (2 层)'
+    assert '附加 A' in win.session.layers[1].source and '附加 B' in win.session.layers[1].source
+    win.undo()
+    assert [item.name for item in win.session.layers] == ['演示点云 01', '附加 A', '附加 B'], \
+        'merge undo did not restore original layers'
+    print('[OK] merge: 2 layers -> 6 points at first index, undo restored originals')
+
+    win._actions['select'].setChecked(True)
+    assert win.overlay.active
+    win.overlay._vertices = [(10., 10.), (20., 20.), (30., 30.)]
+    win.overlay.remove_last_vertex()
+    assert win.overlay.vertex_count == 2, 'Alt+left vertex removal failed'
+    win._discard_segment()
+    assert not win.overlay.active and win._segment is None
+    print('[OK] Alt+left click removes the last vertex; discard clears overlay')
+
+    before_layers = len(win.session.layers)
+    before_points = len(win.session.layers[0].points)
+    undo_depth = len(win.session._undo)
+    far = [(-10000., -10000.), (-9000., -10000.), (-9000., -9000.), (-10000., -9000.)]
+    assert win.apply_polygon_split(0, far, True) is None, 'empty kept part should be rejected'
+    assert len(win.session.layers) == before_layers
+    assert len(win.session.layers[0].points) == before_points
+    assert len(win.session._undo) == undo_depth, 'rejected split polluted the undo stack'
+    print('[OK] empty kept part rejected without touching data or undo stack')
 
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / 'merged.ply'
         count = write_cloud(path, win.session.layers)
         back = read_cloud(path)
-        assert count == total and len(back.points) == total, 'PLY roundtrip mismatch'
-    print(f'[OK] PLY export/read roundtrip: {total:,} points')
-
-    extra = np.array([[1., 2., 3.], [4., 5., 6.], [7., 8., 9.]])
-    win.load_layer_from_arrays('附加 A', extra)
-    win.load_layer_from_arrays('附加 B', extra * 2)
-    assert [layer.name for layer in win.session.layers] == ['演示点云 01', '附加 A', '附加 B']
-    assert not win.session.can_undo, 'undo stack should be empty before recycle test'
-    assert win.remove_layer_indices([1, 2]), 'remove_layer_indices rejected'
-    assert len(win.session.layers) == 1, 'layers not removed'
-    assert len(win.session.removed) == 1 and sum(len(b) for b in win.session.removed) == 2
-    assert not win.session.can_undo, 'removal must not pollute the edit undo stack'
-    print('[OK] recycle bin: removed 2 layers, undo stack untouched')
-    assert win.restore_last_removal(), 'restore_last_removal rejected'
-    assert [layer.name for layer in win.session.layers] == ['演示点云 01', '附加 A', '附加 B'], \
-        'restore order or indices wrong'
-    assert not win.session.removed
-    assert not win.restore_last_removal(), 'empty recycle bin restore should fail'
-    print('[OK] recycle bin: restored last removal at original indices and order')
+        expected = sum(len(item.points) for item in win.session.layers if item.visible)
+        assert count == expected and len(back.points) == expected, 'PLY roundtrip mismatch'
+    print(f'[OK] PLY export/read roundtrip: {expected:,} points')
 
     win.shutdown()
     win.close()

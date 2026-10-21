@@ -1,7 +1,7 @@
 """Layer tree panel modeled on the ui_v2 FrameBrowser structure and semantics."""
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QHeaderView, QLabel,
-    QMenu, QPushButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
+    QMenu, QPushButton, QSizePolicy, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 from ui_common.symbols import icon
 from ui_v2 import theme
 
@@ -12,6 +12,7 @@ class CloudTreePanel(QWidget):
     restore_requested = Signal()
     visibility_changed = Signal(int, bool)
     current_changed = Signal(object)
+    selection_changed = Signal()
 
     def __init__(self, session, parent=None):
         super().__init__(parent)
@@ -49,12 +50,14 @@ class CloudTreePanel(QWidget):
         self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.tree.itemChanged.connect(self._item_changed)
         self.tree.currentItemChanged.connect(self._current_item_changed)
-        self.tree.itemSelectionChanged.connect(self._update_delete_button)
+        self.tree.itemSelectionChanged.connect(self._selection_changed)
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._context_menu)
         layout.addWidget(self.tree, 1)
         self.details = QLabel('暂无图层，请打开点云文件。')
         self.details.setWordWrap(True)
+        self.details.setMaximumHeight(46)
+        self.details.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         layout.addWidget(self.details)
         self._items = {}
         self._rebuilding = False
@@ -133,6 +136,10 @@ class CloudTreePanel(QWidget):
         if indices:
             self.remove_requested.emit(indices)
 
+    def _selection_changed(self):
+        self._update_delete_button()
+        self.selection_changed.emit()
+
     def _item_changed(self, item, column):
         if self._rebuilding:
             return
@@ -151,13 +158,21 @@ class CloudTreePanel(QWidget):
         uid = item.data(0, Qt.UserRole) if item is not None else None
         if uid is None or uid not in self._items:
             if not self.session.layers:
-                self.details.setText('暂无图层，请打开点云文件。')
+                text = '暂无图层，请打开点云文件。'
             else:
-                self.details.setText(f'点云项目 · {len(self.session.layers)} 图层\n'
-                                     '选择图层查看来源；勾选控制 3D 显隐。')
+                text = (f'点云项目 · {len(self.session.layers)} 图层\n'
+                        '选择图层查看来源；勾选控制 3D 显隐。')
+            self.details.setText(text)
+            self.details.setToolTip(text)
             return
         layer = self.session.layers[uid]
-        self.details.setText(f'{layer.name} · {len(layer.points):,} 点\n来源 {layer.source}')
+        full = f'{layer.name} · {len(layer.points):,} 点\n来源 {layer.source}'
+        metrics = self.details.fontMetrics()
+        width = max(60, self.details.width() - 12)
+        elided = '\n'.join(metrics.elidedText(line, Qt.ElideRight, width)
+                           for line in full.split('\n'))
+        self.details.setText(elided)
+        self.details.setToolTip(full)
 
     def _context_menu(self, position):
         item = self.tree.itemAt(position)
