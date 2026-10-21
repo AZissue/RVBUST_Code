@@ -59,11 +59,17 @@ def decompose_rotation(R: np.ndarray) -> Tuple[np.ndarray, float]:
     return axis, float(angle)
 
 
-def estimate_rotation_center(R: np.ndarray, t: np.ndarray) -> np.ndarray:
+def estimate_rotation_center(R: np.ndarray, t: np.ndarray, anchor=None) -> np.ndarray:
     """已知 p' = R @ p + t，求旋转中心 c：(R - I)c = -t。"""
     A = R - np.eye(3)
     # 用最小二乘，容忍数值噪声
-    c, *_ = np.linalg.lstsq(A, -t, rcond=None)
+    # Rotation leaves one unobservable direction along its axis. Explicitly
+    # discard that singular value; numerical noise must not create a 1e13 centre.
+    c, *_ = np.linalg.lstsq(A, -t, rcond=1e-8)
+    if anchor is not None:
+        _, _, vh = np.linalg.svd(A)
+        axis = vh[-1]
+        c += axis * np.dot(np.asarray(anchor)-c, axis)
     return c.astype(np.float64)
 
 
@@ -119,7 +125,7 @@ class TurntableCalibrator:
         # 后续第 i 帧用 -i*θ 反向旋转即可回到参考系。
         R, t = kabsch_rigid_transform(points_frame0, points_frame1)
         axis, angle = decompose_rotation(R)
-        center = estimate_rotation_center(R, t)
+        center = estimate_rotation_center(R, t, points_frame0.mean(axis=0))
 
         self.axis = axis
         self.center = center

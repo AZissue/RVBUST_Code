@@ -69,7 +69,8 @@ with patch.object(CameraManager, 'initialize', side_effect=AssertionError('SDK i
             browser = win._stack.currentWidget()._industrial.frame_browser
             assert len(database.records) == 2 and len(browser._items) == 2
             assert browser.tree.topLevelItemCount() == 1
-            assert browser.tree.topLevelItem(0).childCount() == 2
+            assert browser.tree.topLevelItem(0).childCount() == 1
+            assert browser.tree.topLevelItem(0).child(0).childCount() == 2
             assert not hasattr(browser, 'image')
             if mode == 'multi_cam':
                 assert len(bridge.fixed_workflow.frames_calib) == 2
@@ -210,6 +211,27 @@ with patch.object(CameraManager, 'initialize', side_effect=AssertionError('SDK i
                 ribbon.commands[(mode, 'screenshot')].click()
             assert shot.exists() and shot.stat().st_size > 100
             assert win.grab().save(str(report / f'offline_{mode}.png'))
+            if mode == 'turntable':
+                # Known synthetic axis checks annotation rendering only; the
+                # stool pair has no measured turntable angle for calibration QA.
+                workspace = win.workspace_turntable()
+                panel = workspace._industrial.calibration_panel
+                previous = workspace.session.calib
+                was_calibrated = workspace.session.calibrated
+                from core.turntable_calibrator import TurntableCalibrator
+                workspace.session.calib = TurntableCalibrator()
+                workspace.session.calib.set_calibration([0, 0, 1], canvas.center.copy(), 30., 12)
+                workspace.session.calibrated = True
+                workspace._update_online_ui()
+                assert panel.isVisible() and canvas._rotation_geometry is not None
+                for _ in range(10):
+                    app.processEvents()
+                    time.sleep(.02)
+                assert win.grab().save(str(report / 'turntable_calibration_geometry.png'))
+                workspace.session.calib = previous
+                workspace.session.calibrated = was_calibrated
+                workspace._update_online_ui()
+                assert canvas._rotation_geometry is None
             # Explicit save/new/reopen is isolated in a temporary save root.
             project = bridge.projects.projects[mode]
             project.save_root = Path(db_temp.name) / 'sessions'

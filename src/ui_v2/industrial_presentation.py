@@ -133,6 +133,14 @@ class IndustrialPresentation:
         else:
             self.side_column.addWidget(self.sidebar)
         self.side_column.setSizes([320, 440])
+        self.calibration_panel = None
+        if mode == 'turntable':
+            from .widgets.turntable_calibration_panel import TurntableCalibrationPanel
+            self.frame_browser.setMinimumHeight(200)
+            self.frame_browser.tree.setMinimumHeight(90)
+            self.calibration_panel = TurntableCalibrationPanel(workspace)
+            self.side_column.insertWidget(1, self.calibration_panel)
+            self.side_column.setSizes([400, 210, 30])
         self.body.addWidget(self.side_column)
         self.stage = QWidget()
         stage = QVBoxLayout(self.stage)
@@ -242,7 +250,7 @@ class IndustrialPresentation:
         self.sidebar.setVisible(expanded)
         self.legacy_panel.setMaximumHeight(16777215 if expanded else 30)
         if expanded:
-            self.side_column.setSizes([320, 440])
+            self.side_column.setSizes([320, 210, 440] if getattr(self, 'calibration_panel', None) else [320, 440])
 
     def activate(self, enabled):
         if self.active == enabled:
@@ -295,6 +303,8 @@ class IndustrialPresentation:
             self.workspace.refresh_marker_pair()
         viewer = self.workspace.viewer if self.mode == 'turntable' else self.workspace._viewer
         viewer.set_industrial(enabled)
+        if self.calibration_panel and enabled:
+            self.calibration_panel.refresh()
         if self.inspector and enabled:
             self.inspector.bind_viewport(viewer.viewer().canvas)
             viewer.viewer().canvas_changed.connect(self._bind_canvas)

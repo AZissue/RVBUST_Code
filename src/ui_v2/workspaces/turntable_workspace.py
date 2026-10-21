@@ -94,6 +94,7 @@ class TurntableWorkspace(QWidget):
     """工作区日志（message, level）。"""
 
     dirty_changed = Signal(bool)
+    calibration_changed = Signal()
     """工作区数据脏标记变化（例如拍摄/标定/拼接后应设为 True）。"""
 
     save_session_requested = Signal()
@@ -415,6 +416,7 @@ class TurntableWorkspace(QWidget):
         self.current_markers1 = []
         self.merged = None
         self.session.reset()
+        self.lbl_online_calib.setText('未标定')
         self.viewer.clear_all()
         self.preview_2d_label.clear_image()
         self.set_state("idle" if not self._is_connected() else "connected")
@@ -477,6 +479,7 @@ class TurntableWorkspace(QWidget):
             self.log(f"[ERROR] 更新 UI 异常: {e}", "error")
             import traceback
             self.log(traceback.format_exc(), "error")
+        self.calibration_changed.emit()
 
     def _display_2d(self, image_np: np.ndarray, markers: Optional[list] = None, reference_markers=None):
         """刷新 2D 预览；可选叠加识别结果（红/绿圈 + code）。

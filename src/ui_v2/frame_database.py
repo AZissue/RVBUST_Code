@@ -92,6 +92,7 @@ class FrameBrowser(QWidget):
         results = sum(record.kind == 'result' for record in records)
         count_text = f'{len(records)-results} 帧' + (f' / {results} 结果' if results else '')
         groups = {}
+        categories = {}
         project_root = None
         if hasattr(self.database, 'project_title'):
             project_root = QTreeWidgetItem(self.tree, [self.database.project_title, count_text])
@@ -104,10 +105,17 @@ class FrameBrowser(QWidget):
                 groups[session_key].setData(0, Qt.UserRole + 1, session_key)
                 groups[session_key].setToolTip(0, session['created'])
                 groups[session_key].setIcon(0, icons.icon('folder_open', '#bbbbbb', 16))
+            category = ('拼接结果' if record.kind == 'result' else '标定帧'
+                if self.database.mode != 'mobile_chain' and ('标定' in record.purpose or record.purpose == 'calib') else '扫描原始帧')
+            category_key = (id(groups[session_key]), category)
+            if category_key not in categories:
+                categories[category_key] = QTreeWidgetItem(groups[session_key], [category, ''])
+                categories[category_key].setIcon(0, icons.icon('folder_open', '#aaaaaa', 16))
+            parent = categories[category_key]
             title = f'拼接帧 {record.frame_id:03d}' if record.kind == 'result' else f'帧 {record.frame_id:03d}'
             if self.database.mode == 'multi_cam' and record.kind == 'raw':
                 title += ' · ' + record.camera
-            row = QTreeWidgetItem(groups[session_key], [title, f'{record.points:,}' if record.points is not None else '—'])
+            row = QTreeWidgetItem(parent, [title, f'{record.points:,}' if record.points is not None else '—'])
             row.setData(0, Qt.UserRole, record.uid)
             row.setToolTip(0, f'{record.camera} · {record.purpose} · {record.logical_name}\n{record.status}\n'
                 f'原始PLY + 2D PNG（{record.image_size[0]} × {record.image_size[1]}）\n'
@@ -119,12 +127,15 @@ class FrameBrowser(QWidget):
                 row.setToolTip(0, '独立拼接结果 · mm\n来源帧：' + '\n'.join(record.source_ids) + '\n' + record.created)
                 row.setToolTip(1, '拼接结果点数；原始帧保持独立。')
             self._items[record.uid] = row
+        for item in categories.values():
+            item.setText(1, f'{item.childCount()} 项')
         def restore(item, key=''):
             key += '/' + item.text(0)
             if item.childCount():
                 item.setExpanded(key in expanded or key not in self._known_groups)
             for i in range(item.childCount()):
                 restore(item.child(i), key)
+            self._known_groups.add(key)
         self._known_groups = getattr(self, '_known_groups', set())
         for i in range(self.tree.topLevelItemCount()):
             item = self.tree.topLevelItem(i)
@@ -139,13 +150,15 @@ class FrameBrowser(QWidget):
 
     def selected_ids(self):
         identifiers = set()
-        for item in self.tree.selectedItems():
+        def visit(item):
             uid = item.data(0, Qt.UserRole)
             if uid:
                 identifiers.add(uid)
             else:
                 for i in range(item.childCount()):
-                    identifiers.add(item.child(i).data(0, Qt.UserRole))
+                    visit(item.child(i))
+        for item in self.tree.selectedItems():
+            visit(item)
         return [uid for uid in self.database.records if uid in identifiers]
 
     def _update_delete_button(self):

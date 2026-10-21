@@ -37,6 +37,7 @@ class ViewerPanel(QFrame):
         self._merged = None
         self._database_cloud = None
         self._reference = None
+        self._rotation_geometry = (None, None)
         self._industrial_enabled = False
         self._retired = []
 
@@ -79,6 +80,8 @@ class ViewerPanel(QFrame):
         self._retired.append(old)
         self._release_retired()
         candidate.set_reference(self._reference)
+        if enabled:
+            candidate.set_rotation_geometry(*self._rotation_geometry)
         for key, pcd in self._clouds.items():
             candidate.set_pointcloud(key, pcd)
         if self._merged is not None:
@@ -151,6 +154,11 @@ class ViewerPanel(QFrame):
         """设置参考相机；新版保留原始颜色，旧版沿用参考色规则。"""
         self._reference = camera_id
         self._viewer.set_reference(camera_id)
+
+    def set_rotation_geometry(self, axis=None, center=None):
+        self._rotation_geometry = (axis, center)
+        if hasattr(self._viewer, 'set_rotation_geometry'):
+            self._viewer.set_rotation_geometry(axis, center)
 
     def set_highlight(self, camera_id: str, indices: Optional[list] = None):
         """高亮指定相机的部分点。"""

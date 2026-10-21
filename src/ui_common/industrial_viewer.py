@@ -120,6 +120,8 @@ class IndustrialViewer(QWidget):
         self.layout().replaceWidget(old, self.canvas)
         self._bind_canvas()
         self.canvas.set_layers(self._layers, fit=True)
+        geometry = getattr(old, '_rotation_geometry', None)
+        self.canvas.set_rotation_geometry(*(geometry or (None, None)))
         self.canvas_changed.emit(self.canvas)
         self.status_changed.emit(str(message) + '；已切换软件兼容预览，显示点数受限。')
 
@@ -225,6 +227,9 @@ class IndustrialViewer(QWidget):
     def set_reference(self, camera_id):
         self._reference = camera_id
         self._refresh()
+
+    def set_rotation_geometry(self, axis=None, center=None):
+        self.canvas.set_rotation_geometry(axis, center)
 
     def set_highlight(self, camera_id, indices=None):
         self._highlights[camera_id] = list(indices or [])
