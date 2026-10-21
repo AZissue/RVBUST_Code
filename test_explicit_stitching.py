@@ -97,6 +97,74 @@ class ExplicitStitchingTests(unittest.TestCase):
         self.assertTrue(all(row.kind == 'raw' for row in self.db.records.values()))
         self.assertIn('no common markers', self.win._st_hint.text())
 
+    def test_three_frames_add_cross_constraints_and_run_global_optimization(self):
+        self.mobile()
+        frame = self.source(3)
+        frame.markers = [dict(marker, x_3d=marker['x_3d']+20)
+                         for marker in next(iter(self.db.records.values())).markers]
+        frame.markers_all = frame.markers
+        self.db.ingest(frame)
+        self.execute()
+        workflow = self.bridge.mobile_workflow
+        chain = workflow._chain_stitcher
+        self.assertEqual(len(chain.nodes), 3, self.win._st_hint.text())
+        self.assertEqual(len(chain.edges), 3)
+        self.assertEqual(len(chain.pose_graph.edges), 3)
+        self.assertIn(frozenset(('station_2', 'station_3')),
+            {frozenset((edge.from_id, edge.to_id)) for edge in chain.edges})
+        self.assertTrue(all(np.isfinite(node.T_world).all() for node in chain.nodes.values()))
+        result = next(row for row in self.db.records.values() if row.kind == 'result')
+        self.assertEqual(result.logical_name, '拼接帧 001')
+        self.assertEqual(chain.add_cross_frame_constraints(), 0)
+        self.assertEqual(len(chain.edges), 3)
+        # Retrying global optimization does not duplicate edges, and rejected
+        # extra constraints must not enter either graph representation.
+        from core.chain_stitcher import ChainEdge
+        third = chain.edges.pop()
+        chain.pose_graph.edges.pop()
+        rejected = ChainEdge(third.from_id, third.to_id, third.T, 10., .1, 8)
+        with patch.object(chain, '_try_register', return_value=rejected):
+            self.assertEqual(chain.add_cross_frame_constraints(), 0)
+        self.assertEqual(len(chain.edges), 2)
+        for row in self.win.workspace_mobile()._industrial.frame_browser._items.values():
+            self.assertNotIn('000', row.text(0))
+
+    def test_db_preview_selection_is_silent_but_errors_still_log(self):
+        self.mobile()
+        browser = self.bridge.frame_db.browsers['mobile_chain']
+        uid = next(iter(self.db.records))
+        with patch.object(self.win, 'log') as log:
+            for _ in range(3):
+                self.bridge.frame_db.select('mobile_chain', uid)
+                self.wait(lambda: not any(w.isRunning() for w in self.bridge._workers))
+            log.assert_not_called()
+            self.assertIn('原始帧 001', self.win._st_hint.text())
+        with patch.object(self.db, 'load_frame', side_effect=IOError('missing raw')), patch.object(self.win, 'log') as log:
+            self.bridge.frame_db.select('mobile_chain', uid)
+            self.wait(lambda: not any(w.isRunning() for w in self.bridge._workers))
+            self.assertIn('missing raw', log.call_args.args[0])
+            self.assertEqual(log.call_args.args[1], 'error')
+
+    def test_ui_log_keeps_important_events_when_diagnostics_are_enabled(self):
+        import logging
+        from ui_common.activity_log import ActivityLogPanel
+        panel = ActivityLogPanel()
+        logger = logging.getLogger('mcc_test_diagnostic_filter')
+        logger.setLevel(logging.DEBUG)
+        logger.propagate = False
+        try:
+            panel.attach_logger(logger)
+            logger.debug('diagnostic shape and file path')
+            logger.info('registration complete')
+            logger.warning('quality warning')
+            self.app.processEvents()
+            messages = [row[4] for row in panel.records]
+            self.assertEqual(messages, ['registration complete', 'quality warning'])
+        finally:
+            panel.detach_loggers()
+            panel.close()
+            panel.deleteLater()
+
     def test_invalid_raw_slots_do_not_become_valid_after_pose_translation(self):
         import open3d as o3d
         from core.chain_stitcher import ChainNode

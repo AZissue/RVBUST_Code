@@ -114,9 +114,9 @@ class MarkerDetector:
             logger.warning("detect: PyRVC 未安装，无法检测")
             return []
         try:
-            logger.info(f"detect 输入: shape={image.shape}, dtype={image.dtype}, min={image.min()}, max={image.max()}")
+            logger.debug(f"detect 输入: shape={image.shape}, dtype={image.dtype}, min={image.min()}, max={image.max()}")
             base = self._preprocess(image)
-            logger.info(f"detect 预处理后: shape={base.shape}, dtype={base.dtype}")
+            logger.debug(f"detect 预处理后: shape={base.shape}, dtype={base.dtype}")
 
             found: Dict[int, Dict] = {}
             per_scale_hits = []
@@ -146,7 +146,7 @@ class MarkerDetector:
                 per_scale_hits.append(f"{scale:.2f}x={len(markers)}(新增{n_new})")
 
             if found:
-                logger.info(f"detect 结果: 共 {len(found)} 个编码圆"
+                logger.debug(f"detect 结果: 共 {len(found)} 个编码圆"
                             f"（{'，'.join(per_scale_hits)}）")
                 return list(found.values())
             logger.info(f"detect 结果: 0 个编码圆（所有尺度 {_DETECT_FALLBACK_SCALES} 均未检出）")
@@ -166,13 +166,13 @@ class MarkerDetector:
                 image = (image / 256).astype(np.uint8)
             else:
                 image = image.astype(np.uint8)
-            logger.info(f"图像 uint16 → uint8 转换")
+            logger.debug(f"图像 uint16 → uint8 转换")
         elif image.dtype != np.uint8:
             if image.max() <= 1.0:
                 image = (image * 255).clip(0, 255).astype(np.uint8)
             else:
                 image = image.clip(0, 255).astype(np.uint8)
-            logger.info(f"图像 {image.dtype} → uint8 转换")
+            logger.debug(f"图像 {image.dtype} → uint8 转换")
 
         # 确保值范围正确：仅对仍在 [0,1] 区间的浮点图像做归一化缩放
         if image.dtype != np.uint8 and image.max() <= 1.0:
@@ -223,7 +223,7 @@ class MarkerDetector:
             # 获取 PLY 点云文件
             if ply_path and os.path.exists(ply_path):
                 # 离线模式：直接使用已有 PLY
-                logger.info(f"离线模式：使用 PLY 文件 {ply_path}")
+                logger.debug(f"离线模式：使用 PLY 文件 {ply_path}")
             elif pointmap is not None and rvc_image is not None and RVC is not None:
                 # 在线模式：保存临时 PLY
                 fd, tmp_path = tempfile.mkstemp(suffix=".ply")
@@ -242,7 +242,7 @@ class MarkerDetector:
                 import open3d as o3d
                 pcd = o3d.io.read_point_cloud(ply_path)
                 points = np.asarray(pcd.points)
-                logger.info(f"PLY 读取成功: {len(points)} 点")
+                logger.debug(f"PLY 读取成功: {len(points)} 点")
             except Exception as e:
                 logger.error(f"读取 PLY 失败: {e}")
                 return []
@@ -252,7 +252,7 @@ class MarkerDetector:
                 logger.warning("image_np 为 None")
                 return []
             h_img, w_img = image_np.shape[:2]
-            logger.info(f"图像尺寸: {w_img}×{h_img}, dtype={image_np.dtype}")
+            logger.debug(f"图像尺寸: {w_img}×{h_img}, dtype={image_np.dtype}")
 
             markers_2d = self.detect(image_np)
             logger.info(f"2D 检测到 {len(markers_2d)} 个编码圆")
@@ -269,13 +269,13 @@ class MarkerDetector:
             # 从 PLY 提取 3D（通过图像坐标映射）
             # 注意：PLY 点顺序与像素顺序一致（row-major: y*w + x）
             w, h = w_img, h_img  # 使用图像尺寸
-            logger.info(f"PLY 映射尺寸: {w}×{h}, 总点数: {len(points)}, 期望: {w*h}")
+            logger.debug(f"PLY 映射尺寸: {w}×{h}, 总点数: {len(points)}, 期望: {w*h}")
 
             # 调试：检查点云范围
             if len(points) > 0:
                 valid_pts = points[np.isfinite(points).all(axis=1)]
                 if len(valid_pts) > 0:
-                    logger.info(f"点云范围: X[{valid_pts[:,0].min():.1f}, {valid_pts[:,0].max():.1f}] Y[{valid_pts[:,1].min():.1f}, {valid_pts[:,1].max():.1f}] Z[{valid_pts[:,2].min():.1f}, {valid_pts[:,2].max():.1f}]")
+                    logger.debug(f"点云范围: X[{valid_pts[:,0].min():.1f}, {valid_pts[:,0].max():.1f}] Y[{valid_pts[:,1].min():.1f}, {valid_pts[:,1].max():.1f}] Z[{valid_pts[:,2].min():.1f}, {valid_pts[:,2].max():.1f}]")
 
             # 使用双线性插值提取 3D 坐标（与标定板检测器保持一致）
             centers_2d = np.array([[m['x'], m['y']] for m in markers_2d], dtype=np.float64)

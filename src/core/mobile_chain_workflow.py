@@ -408,6 +408,10 @@ class MobileChainWorkflow(WorkflowBase):
             return False, "机位不足，无法全局优化", 0.0, 0.0
         ref_id = self._chain_stitcher._reference_id
 
+        # Candidate matching alone retained only a spanning tree. Use all
+        # accepted shared-code pairs (including nonadjacent frames) for BA.
+        self._chain_stitcher.add_cross_frame_constraints()
+
         # 优化前：用当前 BFS/树状位姿计算边平移残差
         initial_poses = {sid: node.T_world for sid, node in
                          self._chain_stitcher.nodes.items()}

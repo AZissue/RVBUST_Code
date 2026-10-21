@@ -277,6 +277,28 @@ class ChainStitcher:
                 loops.append(sid)
         return loops
 
+    def add_cross_frame_constraints(self):
+        """Retain quality-gated non-tree edges for global pose optimization."""
+        existing = {frozenset((edge.from_id, edge.to_id)) for edge in self.edges}
+        nodes = list(self.nodes.values())
+        added = 0
+        for index, node in enumerate(nodes):
+            codes = {marker['code'] for marker in node.markers}
+            for previous in nodes[:index]:
+                pair = frozenset((node.station_id, previous.station_id))
+                if pair in existing or len(codes & {marker['code'] for marker in previous.markers}) < self.min_common_markers:
+                    continue
+                edge = self._try_register(node, previous)
+                if edge is None or not self._evaluate_edge(edge)[0]:
+                    continue
+                self.edges.append(edge)
+                self.pose_graph.add_edge(edge.from_id, edge.to_id, edge.T,
+                    rms_mm=edge.rms_mm, inlier_ratio=edge.inlier_ratio, common_markers=edge.common_markers)
+                existing.add(pair)
+                added += 1
+        logger.info(f'跨帧约束补充完成：新增 {added} 条，共 {len(self.edges)} 条有效约束')
+        return added
+
     def invalidate_cache(self):
         """清空增量合并缓存，强制下次 get_merged_pointcloud 全量重算。"""
         self._node_pcd_cache.clear()

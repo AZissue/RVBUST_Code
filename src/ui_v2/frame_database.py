@@ -44,6 +44,7 @@ class FrameBrowser(QWidget):
         layout.addLayout(bar)
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels(['单帧 / 对应数据', '点数'])
+        self.tree.headerItem().setToolTip(1, '原始帧：完整有序点云槽位数（含无效深度）；拼接结果：有效几何点数。显示采样不改变文件点数。')
         self.tree.setIndentation(14)
         self.tree.header().setStretchLastSection(False)
         self.tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
@@ -103,7 +104,7 @@ class FrameBrowser(QWidget):
                 groups[session_key].setData(0, Qt.UserRole + 1, session_key)
                 groups[session_key].setToolTip(0, session['created'])
                 groups[session_key].setIcon(0, icons.icon('folder_open', '#bbbbbb', 16))
-            title = record.logical_name if record.kind == 'result' else f'帧 {record.frame_id:04d}'
+            title = f'拼接帧 {record.frame_id:03d}' if record.kind == 'result' else f'帧 {record.frame_id:03d}'
             if self.database.mode == 'multi_cam' and record.kind == 'raw':
                 title += ' · ' + record.camera
             row = QTreeWidgetItem(groups[session_key], [title, f'{record.points:,}' if record.points is not None else '—'])
@@ -187,7 +188,7 @@ class FrameBrowser(QWidget):
     def show_frame(self, uid, frame):
         row = self.database.records[uid]
         if row.kind == 'result':
-            self.details.setText(f'{row.logical_name} · {row.points:,} 点\n来源 {len(row.source_ids)} 帧 · 独立结果，原始数据保留')
+            self.details.setText(f'拼接帧 {row.frame_id:03d} · {row.points:,} 个有效点\n来源 {len(row.source_ids)} 帧 · 独立结果，原始数据保留')
             return
         self.details.setText(f'{row.logical_name} · {row.status}\n原始PLY + 2D PNG · 在右侧联动查看')
 
@@ -286,7 +287,6 @@ class FrameDatabaseController(QObject):
                 return
             frame, cloud = result
             self.display_frame(mode, uid, frame, cloud)
-            bridge.shell.log('已显示DB选中数据。', 'info')
         bridge._run_background(lambda: self.databases[mode].load_frame(uid), done, name='db_frame_preview')
 
     def display_frame(self, mode, uid, frame, cloud):
@@ -304,6 +304,11 @@ class FrameDatabaseController(QObject):
         else:
             workspace._industrial.show_database_image(frame)
         viewer.reset_view()
+        record = self.databases[mode].records[uid]
+        hint = (f'正在查看：拼接帧 {record.frame_id:03d} · {record.points:,} 个有效点' if record.kind == 'result' else
+                f'正在查看：原始帧 {record.frame_id:03d} · {record.points:,} 个槽位（含无效深度）')
+        self.bridge.shell._st_hint.setText(hint)
+        self.bridge.shell._st_hint.setToolTip(hint)
 
     def remove(self, mode, identifiers):
         if not self.bridge.can_change_workspace() or mode != self.bridge._current_mode:

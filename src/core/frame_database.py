@@ -234,7 +234,7 @@ class FrameDatabase:
                     raise IOError('拼接结果写入失败')
                 number = 1 + sum(row.kind == 'result' for row in self.records.values())
                 self.records[uid] = FrameRecord(uid, self.session_id, '', number, '拼接结果',
-                    f'拼接帧 {number:04d}', datetime.now().isoformat(timespec='seconds'),
+                    f'拼接帧 {number:03d}', datetime.now().isoformat(timespec='seconds'),
                     len(cloud.points), [0, 0], status='已拼接', kind='result', source_ids=list(source_ids))
                 self._save_index()
             except Exception:

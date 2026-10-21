@@ -437,7 +437,7 @@ class CameraGrid(QScrollArea):
             self._database_card.deleteLater()
             self._database_card = None
         if frame is not None:
-            card = CameraCard(frame.camera_name, title=f'DB 原始帧 {frame.frame_id} · {frame.camera_name}',
+            card = CameraCard(frame.camera_name, title=f'DB 原始帧 {frame.frame_id:03d} · {frame.camera_name}',
                               preview_factory=self._preview_factory)
             card.set_overview(True)
             card.set_frame(frame)

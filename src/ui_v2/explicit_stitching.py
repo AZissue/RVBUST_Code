@@ -86,6 +86,10 @@ class ExplicitStitching:
                     manager._stations[sid] = frame
                     manager._station_seq = number
                     workflow._last_edge = edge
+                if len(chain.nodes) >= 3:
+                    ok, message, before_mm, after_mm = workflow.optimize_global()
+                    if not ok:
+                        raise ValueError(message)
                 merged = workflow._chain_stitcher.get_merged_pointcloud()
             elif mode == 'multi_cam':
                 sources = [frame.database_id for frame in bridge.fixed_workflow.frames_scan.values()]

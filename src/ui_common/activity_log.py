@@ -16,7 +16,7 @@ class _Relay(QObject):
 
 class _Handler(logging.Handler):
     def __init__(self, relay):
-        super().__init__()
+        super().__init__(level=logging.INFO)
         self.relay = relay
 
     def emit(self, record):

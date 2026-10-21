@@ -374,7 +374,7 @@ class IndustrialPresentation:
             self.set_multi_view('joint')
             return
         self.inspector.set_frame(frame.image_np, frame.markers_all or frame.markers,
-            frame_id=f'DB原始帧 {frame.frame_id}', current_visible=False)
+            frame_id=f'DB原始帧 {frame.frame_id:03d}', current_visible=False)
         self.inspector.show()
         self.inspector.raise_()
 
