@@ -84,15 +84,16 @@ QString kindTag(NodeKind kind)
 
 QString displayTitle(const NodePayload& payload)
 {
+    // 列表行已经用彩色标签显示了「移动 / 拍照 / 等待」，标题只写后缀，
+    // 否则会出现「移动 移动 · 笛卡尔」这种重复。
     if (const auto* move = std::get_if<MoveNode>(&payload)) {
         if (move->space == MoveNode::Space::Joint)
-            return QStringLiteral("移动 · 关节");
-        return QStringLiteral("移动 · 笛卡尔");
+            return QStringLiteral("关节");
+        return QStringLiteral("笛卡尔");
     }
     if (std::holds_alternative<PhotoNode>(payload))
-        return QStringLiteral("拍照采集");
-    const auto& wait = std::get<WaitNode>(payload);
-    return QStringLiteral("等待 %1 s").arg(number(wait.seconds));
+        return QStringLiteral("采集图像并处理");
+    return QStringLiteral("延时");
 }
 
 QString displayDetail(const NodePayload& payload)
@@ -113,7 +114,8 @@ QString displayDetail(const NodePayload& payload)
             ? QStringLiteral("读位姿 → 拍照 → 识别 → 保存")
             : QStringLiteral("读位姿 → 拍照 → 识别（不保存）");
     }
-    return QStringLiteral("保持当前位置");
+    const auto& wait = std::get<WaitNode>(payload);
+    return QStringLiteral("等待 %1 秒").arg(number(wait.seconds));
 }
 
 QString newNodeId()
