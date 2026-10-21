@@ -142,6 +142,11 @@ private:
     // annotations for the fitted plane and the measured region.
     void onMeasurementUpdated(const Measurement::Snapshot& snapshot);
 
+    // 3D 点云显示的唯一入口：上传并记住"当前显示的是哪一份"，
+    // 离线像素→3D 视图退出时据此恢复，而不是清空或留下离线点云。
+    void showCloud(const FrameBuffer::FloatBuf& pts,
+                   const FrameBuffer::FloatBuf& colors);
+
     // State helpers
     void setBusy(const QString& text, ActionButtons::BusyTarget target);
     void setConnectBusy(const QString& text);
@@ -189,6 +194,13 @@ private:
     // of the same frame (e.g. the marker-highlight pass after 识别) can restore
     // the colouring instead of silently dropping it.
     FrameBuffer::FloatBuf m_measureCloudColors;
+    // What the 3D viewport is showing right now (refcount only, no copy), so the
+    // offline pixel→3D cloud can be removed again without guessing — after a
+    // save the captured buffer is gone but the view still shows that frame.
+    FrameBuffer::FloatBuf m_displayedCloud;
+    FrameBuffer::FloatBuf m_displayedCloudColors;
+    bool m_offlineCloudShown = false;
+    int  m_offlineCloudGen = 0;   // stale async PLY loads are dropped
 
     // Current mode
     EyeHandMode m_eyeHandMode = EyeHandMode::EyeInHand;

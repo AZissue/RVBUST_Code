@@ -85,18 +85,27 @@ void CaptureFlow::onCaptureReady(const QString& pngPath, const QString& plyPath,
     // Refcount bump, not an 8 MB copy — and the previous frame's buffer is
     // released right here instead of lingering until the next capture.
     m_capturedPoints = points;
+    m_capturedColors = colors;
     m_capturedImage = image;
 
-    // A new frame invalidates any cached detection from the previous one.
+    // A new frame invalidates any cached detection from the previous one —
+    // including its quality numbers, which must not be persisted with a frame
+    // that was never detected.
     m_detectCacheKey.clear();
     m_detectCache = DetectResult{};
+    m_lastErrorPct = -1.0f;
+    m_lastMarkerCount = 0;
 
     emit imageCaptured(image);
     emit pointCloudReady(points, colors);
 
     setDetectEnabled(true);
-    setSaveEnabled(false);
-    emit tipRequested(QStringLiteral("采集完成，请点击识别检测标记物"), false);
+    // 识别只负责自动填「相机目标点」。操作员也完全可以手动在 2D/3D 视窗取点
+    // （或机器人戳点）后直接保存，所以保存不再以识别为前提：
+    // save() 自己会校验必填项，缺什么点保存时再提示。
+    setSaveEnabled(true);
+    emit tipRequested(QStringLiteral("采集完成：可识别检测标记物，或手动取点后直接保存"),
+                      false);
     emitLog(this, QStringLiteral("success"),
             QStringLiteral("第 %1 组数据采集完成").arg(m_data->count() + 1));
 
@@ -178,6 +187,8 @@ void CaptureFlow::detect()
         return;
     }
 
+    // 识别结果会覆盖相机目标点；识别期间先收起保存入口，避免用半截数据落盘。
+    setSaveEnabled(false);
     emit busyChanged(true, QStringLiteral("识别中..."));
     emit clearMarkersRequested();
 
@@ -347,8 +358,9 @@ void CaptureFlow::onDetectionTimeout()
                     QDateTime::currentMSecsSinceEpoch() - m_detectStartMs);
 
     emit busyChanged(false, {});
-    setSaveEnabled(false);
-    emit tipRequested(QStringLiteral("识别超时，请重新采集"), true);
+    // 帧还在：识别失败不等于不能保存（可手动取点/戳点后保存）。
+    setSaveEnabled(hasUnsavedCapture());
+    emit tipRequested(QStringLiteral("识别超时，请重新采集或手动取点后保存"), true);
     emit toastRequested(QStringLiteral("识别超时，请重试"), false);
     emitLog(this, QStringLiteral("error"),
             QStringLiteral("识别超时（%1 秒）").arg(DETECT_TIMEOUT_MS / 1000));
@@ -363,7 +375,8 @@ void CaptureFlow::applyDetectionResult(const DetectResult& result)
     const bool concentric = (m_mode.markerType == MarkerType::ConcentricCircle);
 
     if (result.status != DetectResult::Status::Ok) {
-        setSaveEnabled(false);
+        // 识别失败只说明"不能自动填点"，帧本身仍可手动取点后保存。
+        setSaveEnabled(hasUnsavedCapture());
         switch (result.status) {
         case DetectResult::Status::NoMarkers:
             if (concentric) {
@@ -561,6 +574,11 @@ const FrameBuffer::FloatBuf& CaptureFlow::capturedPoints() const
     return m_capturedPoints;
 }
 
+const FrameBuffer::FloatBuf& CaptureFlow::capturedColors() const
+{
+    return m_capturedColors;
+}
+
 void CaptureFlow::reset()
 {
     clearCapturedState();
@@ -587,6 +605,7 @@ void CaptureFlow::clearCapturedState()
     // Dropping the shared reference frees the ~8 MB point buffer as soon as no
     // other holder (Vis upload, pending signal) still needs it.
     m_capturedPoints.reset();
+    m_capturedColors.reset();
     m_capturedImage = QImage();
     m_lastErrorPct = -1.0f;
     m_lastMarkerCount = 0;

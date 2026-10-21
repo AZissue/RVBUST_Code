@@ -15,6 +15,7 @@
 #include "logic/GuidanceText.h"
 #include "logic/ToolInputParser.h"
 #include "logic/FrameBuffer.h"
+#include "logic/PlyPointReader.h"
 #include "logic/LogPresentation.h"
 #include "logic/RuntimeLog.h"
 #include "logic/AutoFlowPolicy.h"
@@ -53,6 +54,8 @@
 #include <QFileInfo>
 #include <QTimer>
 #include <QCursor>
+#include <QPointer>
+#include <QtConcurrent>
 #include <vector>
 #include <array>
 #include <tuple>
@@ -345,13 +348,16 @@ void MainWindow::wireSignals()
         m_view2d->clearMarkers();
     });
     connect(m_view2d, &Image2DView::pixelClicked, this, [this](int x, int y) {
-        // 既有行为（黄球 + 相机目标点卡片 + 提示）保持不变。
-        on2dPixelPicked(x, y);
-        // 离线工具打开期间，同一次点击再转发一份给「像素→3D」页。
+        // 离线「像素→3D」打开时，2D 视窗里显示的是**离线图**，点击只属于
+        // 离线反投影：不能再用当前相机帧查 3D，更不能填「相机目标点」卡片
+        // （那是在线采集流程的输入）。
         if (m_toolsPanel && m_toolsPanel->isVisible()
-            && m_toolsPanel->pixelTo3DOffline()) {
+            && m_toolsPanel->offlinePixelTo3DActive()) {
             m_toolsPanel->onMainViewPixelClicked(x, y);
+            return;
         }
+        // 在线：黄球 + 相机目标点卡片 + 提示（原有行为）。
+        on2dPixelPicked(x, y);
     });
     connect(m_camera, &CameraManager::cameraError, this,
             [this](const QString& msg) {
@@ -490,7 +496,7 @@ void MainWindow::wireSignals()
                 m_uploading3d = true;
                 beginHeavyOp(QStringLiteral("3D点云上传(%1点)")
                                  .arg(pts ? pts->size() / 3 : 0));
-                m_view3d->updatePointCloud(pts, cols);
+                showCloud(pts, cols);
                 endHeavyOp();
                 m_uploading3d = false;
             });
@@ -508,10 +514,19 @@ void MainWindow::wireSignals()
                 // this same cloud (same frame, same point count), so re-using
                 // them is both correct and cheaper than dropping them here.
                 const FrameBuffer::FloatBuf& pts = m_flow->capturedPoints();
-                const bool keepColors = m_measureCloudColors && pts
-                                        && m_measureCloudColors->size() == pts->size();
-                m_view3d->updatePointCloud(pts, keepColors ? m_measureCloudColors
-                                                           : FrameBuffer::FloatBuf{});
+                // 重传必须带上颜色：偏差着色在用时用偏差色，否则回到这帧自己的
+                // 原始颜色（CaptureFlow 保留了它）。此前这里传空，识别一次点云
+                // 就变成灰色且再也回不来。
+                FrameBuffer::FloatBuf colors;
+                if (m_measureCloudColors && pts
+                    && m_measureCloudColors->size() == pts->size()) {
+                    colors = m_measureCloudColors;
+                } else {
+                    colors = m_flow->capturedColors();
+                    if (colors && pts && colors->size() != pts->size())
+                        colors.reset();
+                }
+                showCloud(pts, colors);
                 endHeavyOp();
                 m_view3d->highlightPoints(highlights3d);
                 m_view3d->setSelectableMarkers(highlights3d, highlightIndices);
@@ -1068,11 +1083,67 @@ void MainWindow::onPixelTo3DOfflineImageRequested(const QString& imagePath)
         return;
     }
     m_view2d->setFrozenImage(img);
+
+    // 同名 .ply 是该帧的点云：离线时 3D 视窗也应显示这份数据，而不是上次
+    // 相机留下的点云。读取在后台线程完成（现场 PLY 可达上百 MB）；每次请求
+    // 递增代号，离开离线模式或换图后到达的旧结果直接丢弃。
+    const QFileInfo info(imagePath);
+    const QString plyPath = info.absolutePath() + QLatin1Char('/')
+        + info.completeBaseName() + QStringLiteral(".ply");
+    const int gen = ++m_offlineCloudGen;
+    m_offlineCloudShown = true;
+
+    if (!QFileInfo::exists(plyPath)) {
+        m_view3d->updatePointCloud(FrameBuffer::FloatBuf{});
+        m_logger->info(QStringLiteral("像素→3D：未找到同名点云 %1，3D 视窗暂不显示点云")
+                           .arg(QFileInfo(plyPath).fileName()));
+        return;
+    }
+
+    // 窗口可能在读取期间关闭：用 QPointer 而不是裸 this 投递回 UI 线程。
+    QPointer<MainWindow> self(this);
+    QtConcurrent::run([this, self, plyPath, gen]() {
+        // 工作线程只读文件，不碰窗口；算完再排队回 UI 线程上传。
+        const auto ply = PlyPointReader::read(plyPath.toStdString());
+        FrameBuffer::FloatBuf pts;
+        if (ply.ok && !ply.xyz.empty()) {
+            std::vector<float> flat;
+            flat.reserve(ply.xyz.size());
+            for (double v : ply.xyz)
+                flat.push_back(static_cast<float>(v));
+            pts = FrameBuffer::makeFloat(std::move(flat));
+        }
+        if (!self)
+            return;
+        const QString error = ply.ok ? QString() : QString::fromStdString(ply.error);
+        QMetaObject::invokeMethod(self.data(), [this, self, gen, pts, error, plyPath]() {
+            if (!self)
+                return;
+            if (gen != m_offlineCloudGen || !m_offlineCloudShown)
+                return;
+            if (!pts || pts->empty()) {
+                m_view3d->updatePointCloud(FrameBuffer::FloatBuf{});
+                m_logger->error(QStringLiteral("像素→3D：点云读取失败 %1 %2")
+                                    .arg(QFileInfo(plyPath).fileName(), error));
+                return;
+            }
+            beginHeavyOp(QStringLiteral("离线点云上传(%1点)").arg(pts->size() / 3));
+            m_view3d->updatePointCloud(pts);
+            endHeavyOp();
+        }, Qt::QueuedConnection);
+    });
 }
 
 void MainWindow::onPixelTo3DOfflineImageEnded()
 {
     m_view2d->clearFrozenImage();
+    ++m_offlineCloudGen;  // 丢弃仍在读取的旧点云
+    if (!m_offlineCloudShown)
+        return;
+    m_offlineCloudShown = false;
+    // 恢复离线前显示的那一份（保存后 capturedPoints 已清空，但 3D 视窗仍
+    // 留着刚才那一帧；清空会把它一起抹掉，所以按"最后显示过什么"恢复）。
+    showCloud(m_displayedCloud, m_displayedCloudColors);
 }
 
 void MainWindow::onCalibrate()
@@ -1477,6 +1548,14 @@ void MainWindow::refreshBoardOverlay()
 //      the 2D 偏差图 page uses;
 //   2. the fitted plane and the measured region are marked with a sphere, a
 //      normal arrow and a text label (尺寸总图 values).
+void MainWindow::showCloud(const FrameBuffer::FloatBuf& pts,
+                           const FrameBuffer::FloatBuf& colors)
+{
+    m_view3d->updatePointCloud(pts, colors);
+    m_displayedCloud = pts;
+    m_displayedCloudColors = colors;
+}
+
 void MainWindow::onMeasurementUpdated(const Measurement::Snapshot& snapshot)
 {
     const FrameBuffer::FloatBuf& pts = m_flow->capturedPoints();
@@ -1500,7 +1579,7 @@ void MainWindow::onMeasurementUpdated(const Measurement::Snapshot& snapshot)
         }
         beginHeavyOp(QStringLiteral("3D偏差着色(%1点)").arg(flat.size() / 3));
         m_measureCloudColors = FrameBuffer::makeFloat(std::move(flat));
-        m_view3d->updatePointCloud(pts, m_measureCloudColors);
+        showCloud(pts, m_measureCloudColors);
         endHeavyOp();
         m_cloudColored = true;
     } else if (m_cloudColored && pts) {
@@ -1508,7 +1587,11 @@ void MainWindow::onMeasurementUpdated(const Measurement::Snapshot& snapshot)
         // plain cloud, once.
         beginHeavyOp(QStringLiteral("3D点云重传(取消着色)"));
         m_measureCloudColors.reset();
-        m_view3d->updatePointCloud(pts);
+        // 关掉偏差着色 = 回到这帧的原始颜色，而不是灰色。
+        FrameBuffer::FloatBuf colors = m_flow->capturedColors();
+        if (colors && colors->size() != pts->size())
+            colors.reset();
+        showCloud(pts, colors);
         endHeavyOp();
         m_cloudColored = false;
     }

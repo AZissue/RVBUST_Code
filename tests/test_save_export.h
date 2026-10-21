@@ -14,6 +14,10 @@ class TestSaveExport : public QObject {
 private slots:
     void exportFailureIsReported();       // 导出失败 → 返回 false + 可读原因
     void exportSuccessStillWrites();      // 正常路径不回归
+    // 2026-10-21 现场反馈：手动取点也应能保存 —— 保存不以识别为前提，
+    // 且拍照后的颜色缓冲要留到后续重传（识别/离线视图恢复）。
+    void captureAloneEnablesSaveAndKeepsColors();
+    void saveAttemptWithoutRequiredFieldsDoesNotAddRecord();
     void captureFlowSurfacesExportFailure();   // save() 不能报"保存成功"
     void undoSurfacesExportFailure();          // undo() 同理
     void backupCarriesVersion();              // 备份有 version 字段

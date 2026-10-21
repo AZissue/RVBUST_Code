@@ -72,6 +72,13 @@ public:
 
     // 像素→3D 工具页的「在线/离线」开关状态（离线 = 用主 2D 视窗取点）。
     bool pixelTo3DOffline() const { return !m_p2dOnline; }
+    // 离线模式且当前工具页就是「像素→3D」：主窗口据此把主 2D 点击只交给
+    // 离线反投影，而**不再**顺带跑在线取点/填相机目标点卡片。
+    bool offlinePixelTo3DActive() const
+    {
+        return !m_p2dOnline && m_stack != nullptr && m_p2dPage != nullptr
+            && m_stack->currentWidget() == m_p2dPage;
+    }
     // 在线模式且当前工具页就是「像素→3D」：主窗口据此把点击/查询结果推给本页。
     bool onlinePixelTo3DActive() const
     {

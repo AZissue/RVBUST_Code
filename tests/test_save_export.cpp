@@ -71,6 +71,64 @@ void TestSaveExport::exportSuccessStillWrites()
     delete dm;
 }
 
+void TestSaveExport::captureAloneEnablesSaveAndKeepsColors()
+{
+    DataManager dm;
+    CaptureFlow flow(nullptr, &dm);
+    CalibrationMode mode;
+    mode.eyeHand = EyeHandMode::EyeInHand;
+    mode.calibType = CalibType::Marker;
+    flow.setMode(mode);
+
+    auto points = FrameBuffer::makeFloat(std::vector<float>{ 0, 0, 0, 1, 1, 1 });
+    auto colors = FrameBuffer::makeFloat(std::vector<float>{ 1, 0, 0, 0, 1, 0 });
+
+    QSignalSpy saveSpy(&flow, &CaptureFlow::saveEnabledChanged);
+    flow.onCaptureReady(QStringLiteral("capture.png"), QStringLiteral("capture.ply"),
+                        points, colors, QImage());
+
+    // 只拍照、未识别：保存入口必须已经可用（save() 自己校验必填项）。
+    QVERIFY(flow.hasUnsavedCapture());
+    QVERIFY(saveSpy.count() > 0);
+    QCOMPARE(saveSpy.last().at(0).toBool(), true);
+
+    // 颜色按引用保留（不拷贝），供识别后的重传和离线视图退出时恢复。
+    QCOMPARE(flow.capturedPoints().get(), points.get());
+    QCOMPARE(flow.capturedColors().get(), colors.get());
+
+    flow.reset();
+    QVERIFY(!flow.capturedColors());
+}
+
+void TestSaveExport::saveAttemptWithoutRequiredFieldsDoesNotAddRecord()
+{
+    QTemporaryDir base;
+    QTemporaryDir captured;
+    QVERIFY(base.isValid() && captured.isValid());
+    const QString png = captured.path() + QStringLiteral("/shot.png");
+    const QString ply = captured.path() + QStringLiteral("/shot.ply");
+    for (const QString& p : { png, ply }) {
+        QFile f(p);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("x");
+        f.close();
+    }
+
+    DataManager dm;
+    dm.newSession(base.path(), EyeHandMode::EyeInHand, CalibType::Marker);
+    CaptureFlow flow(nullptr, &dm);
+    CalibrationMode mode;
+    mode.eyeHand = EyeHandMode::EyeInHand;
+    mode.calibType = CalibType::Marker;
+    flow.setMode(mode);
+
+    flow.onCaptureReady(png, ply, {}, {}, QImage());
+    // 保存按钮是亮的，但必填项没填：save() 必须拒绝，不能落一条空记录。
+    flow.save(QString(), QString(), QString());
+    QCOMPARE(dm.count(), 0);
+    QVERIFY(flow.hasUnsavedCapture());   // 帧还在，补完数据可以再保存
+}
+
 void TestSaveExport::captureFlowSurfacesExportFailure()
 {
     QTemporaryDir base;

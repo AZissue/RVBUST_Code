@@ -65,6 +65,10 @@ public:
     bool hasUnsavedCapture() const;
     // Shared buffer — see FrameBuffer.h.  Callers must not assume it is non-null.
     const FrameBuffer::FloatBuf& capturedPoints() const;
+    // Per-point RGB of the same capture (3 floats per point; may be null).
+    // Kept so a later re-upload (marker overlay, restore after the offline
+    // pixel→3D view) can put the original colours back instead of grey.
+    const FrameBuffer::FloatBuf& capturedColors() const;
     void reset();                   // discard transient capture state
 
     // Programmatic action-state control (e.g. camera error disables buttons)
@@ -257,6 +261,7 @@ private:
     QString m_capturedPng;
     QString m_capturedPly;
     FrameBuffer::FloatBuf m_capturedPoints;
+    FrameBuffer::FloatBuf m_capturedColors;
     QImage  m_capturedImage;
 
     // Detection cache: same frame + same marker type/spec -> reuse the last

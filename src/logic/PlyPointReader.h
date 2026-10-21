@@ -44,7 +44,7 @@ struct Property {
     int num = 1;    // list not supported; always 1 here
 };
 
-int typeSize(const std::string& type)
+inline int typeSize(const std::string& type)
 {
     if (type == "char" || type == "int8" || type == "uchar"
             || type == "uint8")
@@ -63,7 +63,7 @@ int typeSize(const std::string& type)
 
 // Same string set as typeSize(); kept in lockstep so a property's declared
 // type and its byte width can never disagree.
-Scalar typeKind(const std::string& type)
+inline Scalar typeKind(const std::string& type)
 {
     if (type == "char" || type == "int8") return Scalar::Int8;
     if (type == "uchar" || type == "uint8") return Scalar::Uint8;
@@ -80,7 +80,7 @@ Scalar typeKind(const std::string& type)
 
 // Gather `size` bytes at b into a host-order unsigned integer, honouring the
 // file's endianness.
-std::uint64_t readRaw(const unsigned char* b, int size, Format fmt)
+inline std::uint64_t readRaw(const unsigned char* b, int size, Format fmt)
 {
     std::uint64_t raw = 0;
     if (fmt == Format::BinaryLittle) {
@@ -95,7 +95,7 @@ std::uint64_t readRaw(const unsigned char* b, int size, Format fmt)
 
 // Decode one scalar by its declared type.  Signed integers are reinterpreted
 // as two's complement via memcpy (the raw bits are already host-order).
-double readScalar(const unsigned char* b, Scalar kind, Format fmt)
+inline double readScalar(const unsigned char* b, Scalar kind, Format fmt)
 {
     if (fmt == Format::Ascii)
         return 0.0;   // handled separately
