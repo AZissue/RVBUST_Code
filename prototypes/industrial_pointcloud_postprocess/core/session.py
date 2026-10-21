@@ -34,6 +34,7 @@ class PostProcessSession:
     sequence: int = 0
     UNDO_LIMIT: int = 8
     _undo: list = field(default_factory=list)
+    removed: list = field(default_factory=list)
 
     def snapshot(self):
         self._undo.append(list(self.layers))

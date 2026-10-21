@@ -6,9 +6,9 @@ from PySide6.QtCore import Qt, QTimer, Signal, QSize, QSignalBlocker
 from PySide6.QtGui import QFont, QFontDatabase
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QToolButton,
-    QSplitter, QTreeWidget, QTreeWidgetItem, QGroupBox, QFormLayout,
+    QSplitter, QGroupBox, QFormLayout,
     QDoubleSpinBox, QSpinBox, QComboBox, QCheckBox, QFrame,
-    QFileDialog, QMessageBox, QScrollArea, QHeaderView,
+    QFileDialog, QMessageBox, QScrollArea,
 )
 from ui_common.symbols import icon
 from ui_common.worker_thread import WorkerThread
@@ -18,6 +18,7 @@ from ..core.session import CloudLayer, PostProcessSession, demo_cloud, read_clou
 from ..core.processing import polygon_crop_mask, voxel_downsample, random_downsample
 from .viewer_factory import create_canvas
 from .selection import PolygonSelectionOverlay
+from .db_tree import CloudTreePanel
 
 logger = logging.getLogger('industrial_pointcloud_postprocess')
 
@@ -106,7 +107,7 @@ class PostProcessWorkbench(QWidget):
         self._worker = None
         self._busy = False
         self._completion = None
-        self._rebuilding = False
+        self._current_index = None
         self._retired_canvases = []
         self._renderer = renderer
         self._build()
@@ -204,27 +205,13 @@ class PostProcessWorkbench(QWidget):
         side_column.setChildrenCollapsible(False)
         side_column.setMinimumWidth(290)
         side_column.setMaximumWidth(420)
-        tree_panel = QWidget()
-        tree_layout = QVBoxLayout(tree_panel)
-        tree_layout.setContentsMargins(0, 0, 0, 0)
-        tree_layout.setSpacing(6)
-        tree_title = QHBoxLayout()
-        tree_title.addWidget(QLabel('图层', objectName='viewTitle'))
-        tree_title.addStretch()
-        self.layer_count = QLabel('0 图层', objectName='mutedLabel')
-        tree_title.addWidget(self.layer_count)
-        tree_layout.addLayout(tree_title)
-        self.tree = QTreeWidget()
-        self.tree.setHeaderLabels(['名称', '点数'])
-        self.tree.setToolTip('勾选控制显隐；选中图层作为编辑对象')
-        self.tree.header().setStretchLastSection(False)
-        self.tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.tree.header().setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        self.tree.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.tree.setMinimumHeight(130)
-        self.tree.itemChanged.connect(self._visibility_changed)
-        tree_layout.addWidget(self.tree, 1)
-        side_column.addWidget(tree_panel)
+        self.panel = CloudTreePanel(self.session)
+        self.panel.remove_requested.connect(self._remove_with_confirm)
+        self.panel.clear_requested.connect(self._clear_with_confirm)
+        self.panel.restore_requested.connect(self.restore_last_removal)
+        self.panel.visibility_changed.connect(self._visibility_changed)
+        self.panel.current_changed.connect(self._current_changed)
+        side_column.addWidget(self.panel)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -384,7 +371,7 @@ class PostProcessWorkbench(QWidget):
         self.details_bar.setVisible(not (visible and self.height() < 800))
         if visible:
             self.canvas.setMinimumHeight(140)
-            self.tree.setMinimumHeight(80)
+            self.panel.setMinimumHeight(80)
             self.logs._render()
             self.logs.show()
             total = self.content_splitter.height()-self.content_splitter.handleWidth()
@@ -395,7 +382,7 @@ class PostProcessWorkbench(QWidget):
                 self._log_height = self.content_splitter.sizes()[1]
             self.logs.hide()
             self.canvas.setMinimumHeight(300)
-            self.tree.setMinimumHeight(130)
+            self.panel.setMinimumHeight(180)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -412,34 +399,27 @@ class PostProcessWorkbench(QWidget):
         self.log_message.emit(text, level)
 
     def _selected_index(self):
-        item = self.tree.currentItem()
-        return item.data(0, Qt.UserRole) if item is not None else None
+        return self._current_index
+
+    def _current_changed(self, index):
+        self._current_index = index
+        self._refresh_details()
+        self._refresh_controls()
 
     def _refresh(self, fit=False, select=None):
-        old = self._selected_index() if select is None else select
-        self._rebuilding = True
-        self.tree.clear()
-        for i, layer in enumerate(self.session.layers):
-            item = QTreeWidgetItem(self.tree, [layer.name, f'{len(layer.points):,}'])
-            item.setData(0, Qt.UserRole, i)
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            item.setCheckState(0, Qt.Checked if layer.visible else Qt.Unchecked)
-            item.setIcon(0, icon('layers', '#bbbbbb'))
-            item.setToolTip(0, layer.source)
-            if i == old or (old is None and i == 0):
-                self.tree.setCurrentItem(item)
-        self._rebuilding = False
-        self.layer_count.setText(f'{len(self.session.layers)} 图层')
         self.canvas.set_layers(self.session.layers, fit=fit)
+        self.panel.refresh(select=self._current_index if select is None else select)
+        current = self.panel.current_index()
+        if current != self._current_index:
+            self._current_index = current
         self._refresh_details()
         self._refresh_controls()
 
     def _refresh_details(self):
-        if self._rebuilding:
-            return
-        idx = self._selected_index()
+        idx = self._current_index
         if idx is None or idx >= len(self.session.layers):
             self.details.setText('选择图层查看点数和数据来源')
+            self.details.setToolTip('')
         else:
             layer = self.session.layers[idx]
             self.details.setText(f'{layer.name}  /  {len(layer.points):,} 点  /  {layer.source}')
@@ -448,7 +428,7 @@ class PostProcessWorkbench(QWidget):
 
     def _refresh_controls(self):
         available = not self._busy
-        selected = self._selected_index() is not None
+        selected = self._current_index is not None
         self._actions['open'].setEnabled(available)
         self._actions['export'].setEnabled(available and any(l.visible for l in self.session.layers))
         self._actions['select'].setEnabled(available and selected and not self.overlay.active)
@@ -456,7 +436,7 @@ class PostProcessWorkbench(QWidget):
             self._actions['select'].setChecked(False)
         self._actions['undo'].setEnabled(available and self.session.can_undo)
         self._actions['delete'].setEnabled(available and selected)
-        self.tree.setEnabled(available)
+        self.panel.set_enabled(available)
         self.voxel_button.setEnabled(available and selected)
         self.random_button.setEnabled(available and selected)
         self.voxel_size.setEnabled(available)
@@ -501,12 +481,9 @@ class PostProcessWorkbench(QWidget):
         self.log_toggle.setChecked(True)
         self._render_status()
 
-    def _visibility_changed(self, item, column):
-        if self._rebuilding:
-            return
-        idx = item.data(0, Qt.UserRole)
-        if idx is not None:
-            self.session.layers[idx].visible = item.checkState(0) == Qt.Checked
+    def _visibility_changed(self, index, visible):
+        if 0 <= index < len(self.session.layers):
+            self.session.layers[index].visible = visible
             self.canvas.set_layers(self.session.layers)
             self._refresh_controls()
 
@@ -599,12 +576,58 @@ class PostProcessWorkbench(QWidget):
             self.log('没有可撤销的编辑。', 'warn')
 
     def delete_layer(self):
-        idx = self._selected_index()
-        if idx is not None:
-            self.session.snapshot()
-            layer = self.session.layers.pop(idx)
-            self.log(f'已删除 {layer.name}；可撤销。')
-            self._refresh(select=0)
+        indices = self.panel.selected_indices()
+        if not indices and self._current_index is not None:
+            indices = [self._current_index]
+        if indices:
+            self._remove_with_confirm(indices)
+
+    def _remove_with_confirm(self, indices):
+        if self._busy or not indices:
+            return
+        answer = QMessageBox.question(self, '删除图层',
+            f'将选中的 {len(indices)} 个图层移入回收区？可通过右键"恢复上次删除"还原。',
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if answer == QMessageBox.Yes:
+            self.remove_layer_indices(indices)
+
+    def _clear_with_confirm(self):
+        if self._busy or not self.session.layers:
+            return
+        answer = QMessageBox.question(self, '清空项目',
+            f'清空项目：将全部 {len(self.session.layers)} 个图层移入回收区？'
+            '可通过右键"恢复上次删除"还原。',
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if answer == QMessageBox.Yes:
+            self.remove_layer_indices(list(range(len(self.session.layers))))
+
+    def remove_layer_indices(self, indices):
+        indices = sorted({int(i) for i in indices if isinstance(i, int) and 0 <= i < len(self.session.layers)})
+        if not indices:
+            return False
+        batch = []
+        for index in reversed(indices):
+            batch.append((index, self.session.layers.pop(index)))
+        batch.reverse()
+        self.session.removed.append(batch)
+        names = '、'.join(layer.name for _, layer in batch)
+        self.log(f'已移入回收区 {len(batch)} 个图层：{names}；可右键"恢复上次删除"。')
+        self._refresh(select=0)
+        return True
+
+    def restore_last_removal(self):
+        if self._busy:
+            return False
+        if not self.session.removed:
+            self.log('回收区为空，没有可恢复的删除。', 'warn')
+            return False
+        batch = self.session.removed.pop()
+        for index, layer in batch:
+            self.session.layers.insert(min(index, len(self.session.layers)), layer)
+        names = '、'.join(layer.name for _, layer in batch)
+        self.log(f'已恢复上次删除：{names}（{len(batch)} 个图层按原索引放回）。')
+        self._refresh(select=batch[0][0])
+        return True
 
     def _voxel_clicked(self):
         idx = self._selected_index()

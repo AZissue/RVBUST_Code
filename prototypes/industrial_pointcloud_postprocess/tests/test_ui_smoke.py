@@ -75,6 +75,23 @@ def main():
         assert count == total and len(back.points) == total, 'PLY roundtrip mismatch'
     print(f'[OK] PLY export/read roundtrip: {total:,} points')
 
+    extra = np.array([[1., 2., 3.], [4., 5., 6.], [7., 8., 9.]])
+    win.load_layer_from_arrays('附加 A', extra)
+    win.load_layer_from_arrays('附加 B', extra * 2)
+    assert [layer.name for layer in win.session.layers] == ['演示点云 01', '附加 A', '附加 B']
+    assert not win.session.can_undo, 'undo stack should be empty before recycle test'
+    assert win.remove_layer_indices([1, 2]), 'remove_layer_indices rejected'
+    assert len(win.session.layers) == 1, 'layers not removed'
+    assert len(win.session.removed) == 1 and sum(len(b) for b in win.session.removed) == 2
+    assert not win.session.can_undo, 'removal must not pollute the edit undo stack'
+    print('[OK] recycle bin: removed 2 layers, undo stack untouched')
+    assert win.restore_last_removal(), 'restore_last_removal rejected'
+    assert [layer.name for layer in win.session.layers] == ['演示点云 01', '附加 A', '附加 B'], \
+        'restore order or indices wrong'
+    assert not win.session.removed
+    assert not win.restore_last_removal(), 'empty recycle bin restore should fail'
+    print('[OK] recycle bin: restored last removal at original indices and order')
+
     win.shutdown()
     win.close()
     app.processEvents()

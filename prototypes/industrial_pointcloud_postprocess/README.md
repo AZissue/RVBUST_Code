@@ -9,7 +9,9 @@
 ## 功能
 
 - **加载点云**：ply / pcd / xyz / pts（open3d 读取，后台线程），源单位可选 mm / m，内部统一 mm。
-- **多图层管理**：图层树（名称 + 点数），勾选显隐，删除图层（可撤销）。
+- **多图层管理**：图层树面板（对齐主程序 FrameBrowser 结构：顶部条 + 计数 + 删除按钮、
+  项目根节点、两列、多选、右键菜单、底部摘要），勾选显隐；**删除移入会话级回收区，
+  右键"恢复上次删除"按原索引还原（不进撤销栈）**。
 - **多边形框选裁剪**：框选模式下左键加顶点、双击或右键闭合（≥3 点）、Esc 取消；
   按"保留框内 / 移除框内"沿当前视线方向正交投影裁剪选中图层（CloudCompare segment 语义），可撤销。
 - **下采样**：体素下采样（体素尺寸 mm，体素内坐标与颜色取均值）与随机抽样（保留百分比，
@@ -37,7 +39,8 @@ python prototypes/industrial_pointcloud_postprocess/run.py --self-test-io
 QT_QPA_PLATFORM=offscreen python prototypes/industrial_pointcloud_postprocess/tools/shot_selection_mode.py tmp_proto_shot_selection.png
 ```
 
-通过线：五条命令退出码均为 0；第 2、4 条打印 `[OK]` 标记；第 3 条生成非空截图
+通过线：五条命令退出码均为 0；第 2、4 条打印 `[OK]` 标记（第 2 条还覆盖回收区
+删除/恢复断言：删除不进撤销栈、恢复按原索引还原）；第 3 条生成非空截图
 （offscreen 下自动使用软件渲染，截图逻辑等待图层加载与画面稳定后再 grab）；
 第 5 条进入框选模式并截取激活态画面，用于回归验证框选提示横幅与画布 HUD 不重叠。
 
@@ -47,5 +50,6 @@ QT_QPA_PLATFORM=offscreen python prototypes/industrial_pointcloud_postprocess/to
 - 显示抽稀（显示质量档位 / 软件预览 18,000 点上限）只影响预览，**不影响原始数据与导出**。
 - GPU 不可用（offscreen、无 OpenGL 3.3 上下文）时自动降级为 18,000 点兼容软件预览，
   并在日志中明确提示，不冒称 GPU 渲染。
-- 撤销以整层快照实现，上限 8 步；加载 / 显隐切换不进撤销栈。
+- 撤销以整层快照实现，上限 8 步，只管编辑（裁剪 / 下采样）；加载与显隐切换不进撤销栈；
+  **删除走回收区恢复机制，与撤销栈并存且互不污染**。回收图层常驻内存（原型级回收，不释放）。
 - 合成演示点云仅用于界面演示，不代表任何测量精度。
