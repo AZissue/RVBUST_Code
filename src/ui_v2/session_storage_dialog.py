@@ -97,22 +97,32 @@ class SessionStorageDialog(QDialog):
         self.delete_button = QPushButton('删除选中会话')
         self.delete_button.clicked.connect(self.delete)
         bar.addWidget(self.delete_button)
-        self.folder_button = QPushButton('打开存储目录')
+        self.folder_button = QPushButton('打开数据目录')
         self.folder_button.clicked.connect(self.open_folder)
         bar.addWidget(self.folder_button)
         layout.addLayout(bar)
         self.refresh()
 
     def open_folder(self):
-        path = self.project.save_root.resolve()
+        selected = self.selected_rows()
+        path = self.rows[selected[0]][0].resolve() if selected else None
         try:
-            path.mkdir(parents=True, exist_ok=True)
+            if path is not None:
+                if not path.is_dir():
+                    raise FileNotFoundError('所选目录已不存在，请刷新列表后重试')
+            else:
+                # Historical captures are not stored in the new snapshot root.
+                legacy = (PROJECT_ROOT / 'offline_data').resolve()
+                has_saved = any(info['kind'] == 'project' for _, info, _ in self.rows)
+                path = legacy if not has_saved and legacy.is_dir() else self.project.save_root.resolve()
+                path.mkdir(parents=True, exist_ok=True)
             if os.name == 'nt':
                 os.startfile(str(path))
             elif not QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))):
                 raise OSError('系统未能打开文件管理器')
         except OSError as error:
             QMessageBox.warning(self, '打开存储目录失败', f'无法打开：{path}\n{error}')
+            self.refresh()
 
     def toggle_all(self):
         if self.select_all.checkState() == Qt.Unchecked:
@@ -146,11 +156,12 @@ class SessionStorageDialog(QDialog):
         self.selection_count.setText(f'已选 {len(selected)} / {total} 项；可勾选多项，或使用 Ctrl / Shift 多选')
         self.delete_button.setText(f'删除选中会话（{len(selected)}）')
         self.delete_button.setEnabled(not self._busy and bool(selected))
+        self.folder_button.setText('打开选中目录' if selected else '打开数据目录')
         self._syncing = False
 
     def busy(self, value):
         self._busy = value
-        for button in (self.refresh_button, self.purge_button, self.select_all, self.table):
+        for button in (self.refresh_button, self.purge_button, self.folder_button, self.select_all, self.table):
             button.setEnabled(not value)
         self.sync_selection()
 
@@ -196,7 +207,8 @@ class SessionStorageDialog(QDialog):
             self.rows, current, legacy = result
             self.summary.setText(f'当前工作区：{human_size(current["bytes"])}，回收区 {human_size(current["trash_bytes"])}\n'
                 f'已保存会话：{human_size(sum(row[2]["bytes"] for row in self.rows if row[1]["kind"] == "project"))}；'
-                f'历史 offline_data：{human_size(legacy["bytes"])}\n存储根目录：{root}')
+                f'历史 offline_data：{human_size(legacy["bytes"])}\n'
+                f'新格式会话目录：{root}\n历史数据目录：{PROJECT_ROOT / "offline_data"}')
             self._syncing = True
             self.table.clearSelection()
             self.table.setRowCount(len(self.rows))
@@ -271,24 +283,31 @@ class SessionStorageDialog(QDialog):
         root = self.project.save_root.resolve()
         expected = {path: info for path, info, usage in self.rows if path in targets}
         def work():
+            existing = []
             for path in targets:
                 entry = expected[path]
                 allowed = root if entry['kind'] == 'project' else Path(entry['root'])
                 if path.is_symlink() or path.resolve().parent != allowed:
                     raise ValueError('删除目标超出会话根目录')
+                if not path.exists():
+                    continue  # Removed since the statistics snapshot; do not recreate it.
                 if entry['kind'] == 'project':
                     info = json.loads((path / 'session.json').read_text(encoding='utf-8'))
                     if info.get('format') != 'MCC_SESSION' or info.get('id') != entry['id']:
                         raise ValueError('会话已变化，请刷新后重试')
                 elif path.stat().st_ctime_ns != entry['id'] or not allowed.is_relative_to((PROJECT_ROOT / 'offline_data').resolve()):
                     raise ValueError('历史目录已变化，请刷新后重试')
-            for path in targets:
-                shutil.rmtree(path)
+                existing.append(path)
+            for path in existing:
+                try:
+                    shutil.rmtree(path)
+                except FileNotFoundError:
+                    if path.exists():
+                        raise
         self.busy(True)
         def done(result, error):
             self.busy(False)
+            self.refresh()
             if error:
-                self.summary.setText('删除失败：' + str(error))
-            else:
-                self.refresh()
+                QMessageBox.warning(self, '删除会话失败', '部分目录可能已删除，列表已刷新。\n' + str(error))
         self.controller.bridge._run_background(work, done, name='project_delete', must_finish=True)

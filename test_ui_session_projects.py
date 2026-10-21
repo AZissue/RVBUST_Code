@@ -247,19 +247,119 @@ class SessionUiTests(unittest.TestCase):
     def test_storage_open_folder_creates_missing_root_and_reports_failure(self):
         from ui_v2.session_storage_dialog import SessionStorageDialog
         controller, project = self.mobile()
-        dialog = SessionStorageDialog(controller, 'mobile_chain', self.win)
-        self.wait(lambda: not dialog._busy)
-        self.assertFalse(project.save_root.exists())
-        with patch('ui_v2.session_storage_dialog.os.startfile') as launch:
-            dialog.folder_button.click()
-            launch.assert_called_once_with(str(project.save_root.resolve()))
-        self.assertTrue(project.save_root.is_dir())
-        with patch('ui_v2.session_storage_dialog.os.startfile', side_effect=OSError('launch failed')), \
-             patch('ui_v2.session_storage_dialog.QMessageBox.warning') as warning:
-            dialog.folder_button.click()
-            self.assertIn('launch failed', warning.call_args.args[2])
-            self.assertIn(str(project.save_root.resolve()), warning.call_args.args[2])
-        dialog.close()
+        with patch('ui_v2.session_storage_dialog.PROJECT_ROOT', Path(self.temp.name)):
+            dialog = SessionStorageDialog(controller, 'mobile_chain', self.win)
+            self.wait(lambda: not dialog._busy)
+            self.assertFalse(project.save_root.exists())
+            with patch('ui_v2.session_storage_dialog.os.startfile') as launch:
+                dialog.folder_button.click()
+                launch.assert_called_once_with(str(project.save_root.resolve()))
+            self.assertTrue(project.save_root.is_dir())
+            with patch('ui_v2.session_storage_dialog.os.startfile', side_effect=OSError('launch failed')), \
+                 patch('ui_v2.session_storage_dialog.QMessageBox.warning') as warning:
+                dialog.folder_button.click()
+                self.assertIn('launch failed', warning.call_args.args[2])
+                self.assertIn(str(project.save_root.resolve()), warning.call_args.args[2])
+            self.wait(lambda: not dialog._busy)
+            dialog.close()
+
+    def test_storage_opens_actual_legacy_data_and_selected_folder_without_recreating_stale_entry(self):
+        from ui_v2.session_storage_dialog import SessionStorageDialog
+        import shutil
+        controller, project = self.mobile()
+        root = Path(self.temp.name) / 'legacy_manager'
+        legacy = root / 'offline_data' / 'session_old'
+        legacy.mkdir(parents=True)
+        (legacy / 'meta.json').write_text('{}')
+        with patch('ui_v2.session_storage_dialog.PROJECT_ROOT', root):
+            dialog = SessionStorageDialog(controller, 'mobile_chain', self.win)
+            self.wait(lambda: not dialog._busy)
+            self.assertIn(str(root / 'offline_data'), dialog.summary.text())
+            self.assertIn('新格式会话目录', dialog.summary.text())
+            with patch('ui_v2.session_storage_dialog.os.startfile') as launch:
+                dialog.open_folder()
+                launch.assert_called_once_with(str(legacy.parent.resolve()))
+            self.assertFalse(project.save_root.exists())
+            dialog.table.selectRow(0)
+            with patch('ui_v2.session_storage_dialog.os.startfile') as launch:
+                dialog.open_folder()
+                launch.assert_called_once_with(str(legacy.resolve()))
+            shutil.rmtree(legacy)
+            with patch('ui_v2.session_storage_dialog.os.startfile') as launch, \
+                 patch('ui_v2.session_storage_dialog.QMessageBox.warning') as warning:
+                dialog.open_folder()
+                launch.assert_not_called()
+                self.assertIn('已不存在', warning.call_args.args[2])
+            self.wait(lambda: not dialog._busy)
+            self.assertEqual(dialog.rows, [])
+            self.assertFalse(legacy.exists())
+            dialog.close()
+
+    def test_storage_batch_delete_skips_disappeared_legacy_and_preserves_replaced_directory(self):
+        from ui_v2.session_storage_dialog import SessionStorageDialog
+        import shutil
+        controller, project = self.mobile()
+        root = Path(self.temp.name) / 'delete_manager'
+        targets = [root / 'offline_data' / f'session_{i}' for i in range(2)]
+        for path in targets:
+            path.mkdir(parents=True)
+            (path / 'meta.json').write_text('{}')
+        with patch('ui_v2.session_storage_dialog.PROJECT_ROOT', root):
+            dialog = SessionStorageDialog(controller, 'mobile_chain', self.win)
+            self.wait(lambda: not dialog._busy)
+            dialog.table.selectAll()
+            shutil.rmtree(targets[0])
+            with patch('ui_v2.session_storage_dialog.QMessageBox.question', return_value=QMessageBox.Yes), \
+                 patch('ui_v2.session_storage_dialog.QMessageBox.warning') as warning:
+                dialog.delete()
+                self.wait(lambda: not dialog._busy)
+                self.assertFalse(any(path.exists() for path in targets))
+                warning.assert_not_called()
+            self.assertEqual(dialog.rows, [])
+            # A directory changed since statistics must not be deleted.
+            targets[1].mkdir()
+            (targets[1] / 'meta.json').write_text('{}')
+            dialog.refresh()
+            self.wait(lambda: not dialog._busy)
+            dialog.rows[0][1]['id'] = -1
+            dialog.table.selectRow(0)
+            with patch('ui_v2.session_storage_dialog.QMessageBox.question', return_value=QMessageBox.Yes), \
+                 patch('ui_v2.session_storage_dialog.QMessageBox.warning') as warning:
+                dialog.delete()
+                self.wait(lambda: not dialog._busy)
+                self.assertTrue(targets[1].is_dir())
+                warning.assert_called_once()
+            dialog.close()
+
+    def test_storage_partial_delete_failure_refreshes_remaining_rows(self):
+        from ui_v2.session_storage_dialog import SessionStorageDialog
+        import shutil
+        controller, project = self.mobile()
+        root = Path(self.temp.name) / 'partial_delete'
+        for name in ('session_a', 'session_b'):
+            folder = root / 'offline_data' / name
+            folder.mkdir(parents=True)
+            (folder / 'meta.json').write_text('{}')
+        with patch('ui_v2.session_storage_dialog.PROJECT_ROOT', root):
+            dialog = SessionStorageDialog(controller, 'mobile_chain', self.win)
+            self.wait(lambda: not dialog._busy)
+            first, second = [row[0] for row in dialog.rows]
+            dialog.table.selectAll()
+            real_remove = shutil.rmtree
+            def remove(path):
+                if path == second:
+                    raise PermissionError('目录被占用')
+                real_remove(path)
+            with patch('ui_v2.session_storage_dialog.QMessageBox.question', return_value=QMessageBox.Yes), \
+                 patch('ui_v2.session_storage_dialog.shutil.rmtree', side_effect=remove), \
+                 patch('ui_v2.session_storage_dialog.QMessageBox.warning') as warning:
+                dialog.delete()
+                self.wait(lambda: not dialog._busy)
+                self.assertFalse(first.exists())
+                self.assertTrue(second.is_dir())
+                self.assertEqual([row[0] for row in dialog.rows], [second])
+                self.assertIn('目录被占用', warning.call_args.args[2])
+            dialog.close()
 
     def test_turntable_parameters_only_save_and_restore(self):
         controller = self.bridge.projects
