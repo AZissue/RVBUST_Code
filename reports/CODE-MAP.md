@@ -50,14 +50,16 @@ src/ui/                       → 控件与视图（不做自动化测试；改�
 src/sdk/                      → 唯一直接调第三方 DLL 的地方（HandEye / Vis / RVC）
 src/models/                   → CalibrationMode.h（三个枚举）、CaptureRecord.h（一帧记录）
 tests/                        → unit_tests（QtTest）+ measure_truth（已知真值测量比对）
-                                + circle_truth（圆环拟合/孔径 的已知真值点云+合成图）
+                                + circle_truth（3D 孔洞/外缘 的已知真值点云+合成图）
 ```
 
 `MainWindow` 之外的三个"住得比较远"的类：
 - `RobotWorker`（`MainWindow.h` 里定义）—— 机器人四协议 reader **整体住在 `m_robotThread` 上**（T-009）。
   任何新的机器人阻塞调用都必须加进它，不许在 UI 线程直调（防整机挂死）。
 - `ToolsPanel`（`src/ui/ToolsPanel.*`）——「工具」面板：像素→3D、手眼标定、坐标转换、
-  机器人数据格式推算、机器人通信、8 个测量方法页（`MeasurePage` 基类 + `MeasurePages.cpp`）。
+  机器人数据格式推算、机器人通信、机器人控制台（`RobotProgramPanel`）、
+  7 个测量方法页（`MeasurePage` 基类 + `MeasurePages.cpp`；「3D 孔洞」是
+  `Hole3DPage` 自绘整页）。
 - `HelpDialog`（`src/ui/HelpDialog.*` + `src/logic/HelpContent.h`）—— 使用说明窗。
   非模态、首次打开才创建。改说明文字只需动 `HelpContent.h`；改控件才动 `HelpDialog`。
 - `CaptureFlow`（`src/logic/CaptureFlow.*`）—— 拍照→识别→保存→撤销的状态机与校验。
@@ -80,8 +82,8 @@ tests/                        → unit_tests（QtTest）+ measure_truth（已知
 | **推算用户机器人是哪种欧拉约定** | `RobotDataFormats::inferEulerConventions()` + 界面 `ToolsPanel::updateFormatInference()`。判据：基轴 `D=R2·R1ᵀ`、工具轴 `D=R1ᵀ·R2`，必须绕 `PosePair::jogAxis`（≤2°），转角 5°~175°。**`jogAxis` 不能省**：只看轴对齐时分不开 sXYZ/sYZX/sZXY；单轴实验对 sXYZ/sYXZ 有本质歧义（界面提示再补一组不同轴）。方式 ③ 的「试算各格式」由同一页 `runTryAllPoseFormats()` 执行，数据来自 `useCurrentSession()` 或标定页路径框 |
 | 质检（数量/近重复/离群/分散度/相机目标点/标记点数） | `logic/DataQualityCheck.h`（header-only 纯逻辑）；UI 侧只负责组装 `Record` 与渲染 HTML |
 | 「当前位姿 vs 最近已采」引导 | `logic/PoseGuide.h`（判定）+ `MainWindow::updatePoseGuide()`（选卡片、写文案） |
-| 测量算法（8 个方法） | `logic/MeasureTools.*`（kernel）+ `logic/MeasureMethods.h`（方法目录/ROI 需求）+ `ui/MeasurePages.cpp`（每页的 `compute()`）。**改之前先读 `reports/阶段10-圆环拟合与孔径-真值回归结论.md`**（实测：主因是边缘选择）与 `reports/阶段10-测量功能优化方案.md`（含"真值回归测的 kernel 与界面在跑的 kernel 已脱节"这个坑） |
-| 圆环拟合 / 孔径 的**实测判据** | `tests/circle_truth.cpp`（已知真值点云+合成图，ctest 名 `circle_truth`）。改这两个工具前先跑它；`isKnownDefect()` 名单里的 8 个场景就是当前已确认的缺陷，修好会自动打印 `*** FIXED ***` |
+| 测量算法（7 个方法） | `logic/MeasureTools.*`（kernel）+ `logic/MeasureMethods.h`（方法目录/ROI 需求）+ `ui/MeasurePages.cpp`（每页的 `compute()`；「3D 孔洞」在 `ui/Hole3DPage.cpp`）。**改之前先读 `reports/阶段10-圆环拟合与孔径-真值回归结论.md`**（实测：主因是边缘选择）与 `reports/阶段10-测量功能优化方案.md`（含"真值回归测的 kernel 与界面在跑的 kernel 已脱节"这个坑） |
+| 3D 孔洞的**实测判据** | `tests/circle_truth.cpp`（已知真值点云+合成图，ctest 名 `circle_truth`）。改这个工具前先跑它；`isKnownDefect()` 名单里的 8 个场景就是当前已确认的缺陷，修好会自动打印 `*** FIXED ***` |
 | 测量精度的真机判据（T-012） | `reports/T-012/accuracy_probe.py`（判据）+ `reports/T-012/BASELINE.md`（基线与改判理由）。**界面在跑的是 `measureBoundaryCircle`，而 `measurement_truth` 测的是 `holeBoundary`** —— 别把 ctest 全绿当成精度达标 |
 | 像素→3D | `logic/PixelTo3DService.{h,cpp}`（共享服务）、`logic/PixelTo3DTools.h`（纯换算） |
 | 坐标转换 / 走点验证 | `logic/TransformTools.h`（4×4 / 走点 / 单位换算）；旋转格式与数学在 `logic/RobotDataFormats.*` |
