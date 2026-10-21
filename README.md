@@ -34,9 +34,19 @@ ctest --test-dir "D:/MyCode/MyHandEyeTools/build" -C Release --output-on-failure
 **绿色版**（免装 VC++ / RVC / HandEyeSDK，全部 DLL 内置）：
 
 ```powershell
-powershell -File pack_portable.ps1 -Version 2.0
+# 正式包：测量工具尚未通过现场验收，发布构建把它们从工具列表隐藏
+cmake -S . -B build-release -G "Visual Studio 18 2026" `
+      -DCMAKE_PREFIX_PATH="D:/Program Files/Qt/5.14.2/msvc2017_64" `
+      -DHANDEYE_HIDE_MEASUREMENT_TOOLS=ON
+cmake --build build-release --config Release
+
+powershell -File pack_portable.ps1 -SourceDir build-release\src\Release -Version 2.0
 # 产出 dist\HandEyeCalibrationTool_v2.0\ 与同名 .zip，拷到目标机解压双击即用
 ```
+
+不带 `-DHANDEYE_HIDE_MEASUREMENT_TOOLS=ON` 的普通构建/单测仍包含全部 7 个
+测量方法；只有正式包隐藏它们（帮助正文也会同步不列出）。运行日志第二行
+区会出现 `edition: release package (measurement tools hidden)`。
 
 ---
 
