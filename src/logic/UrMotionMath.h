@@ -185,6 +185,24 @@ inline double rotationDistanceDeg(const Vec3& aDeg, const Vec3& bDeg)
     return std::acos(c) * kRadToDeg;
 }
 
+// 速度滑杆（1–100%）→ URScript 的 v / a。
+//
+// 只调 v 是不够的：1 mm 的点动距离太短，梯形速度曲线根本到不了 v，全程由
+// 加速度 a 决定（t ≈ 2·sqrt(d/a)），所以滑杆看起来"没作用"。这里让 a 也随
+// 滑杆变化；100% 保持原来的 v（movel 0.50 m/s、movej 1.1 rad/s）。
+struct ScriptSpeeds {
+    double v = 0.0;   // m/s（笛卡尔）或 rad/s（关节）
+    double a = 0.0;   // m/s² 或 rad/s²
+};
+
+inline ScriptSpeeds scriptSpeedsFor(double speedPct, bool jointSpace)
+{
+    const double pct = std::clamp(speedPct, 1.0, 100.0) / 100.0;
+    if (jointSpace)
+        return ScriptSpeeds{ 0.1 + 1.0 * pct, 0.1 + 1.1 * pct };
+    return ScriptSpeeds{ 0.05 + 0.45 * pct, 0.08 + 0.72 * pct };
+}
+
 inline bool reachedCartesian(const Pose6& actual, const Pose6& target,
                              double toleranceMm, double toleranceDeg)
 {

@@ -23,6 +23,7 @@
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QSpinBox>
+#include <QSplitter>
 #include <QStackedWidget>
 #include <QTimer>
 #include <QToolButton>
@@ -305,6 +306,138 @@ private:
 };
 
 // 详情列在左卡变窄时省略号收尾，而不是把整行撑出横向滚动条。
+// 底部四个按钮在窄窗口里自动换行（宽时仍是一行，与 1.html 一致）。
+// 用流式布局而不是固定 2×2：默认窗口 820 宽时左侧只有约 280 px，
+// 一行放不下四个按钮，固定行会把按钮压到看不清字。
+class FlowLayout : public QLayout {
+public:
+    explicit FlowLayout(QWidget* parent = nullptr, int hSpacing = 8,
+                        int vSpacing = 8)
+        : QLayout(parent), m_hSpace(hSpacing), m_vSpace(vSpacing) {}
+    ~FlowLayout() override
+    {
+        while (QLayoutItem* item = takeAt(0))
+            delete item;
+    }
+
+    void addItem(QLayoutItem* item) override { m_items.append(item); }
+    int count() const override { return m_items.size(); }
+    QLayoutItem* itemAt(int index) const override
+    {
+        return m_items.value(index);
+    }
+    QLayoutItem* takeAt(int index) override
+    {
+        return index >= 0 && index < m_items.size() ? m_items.takeAt(index)
+                                                    : nullptr;
+    }
+    Qt::Orientations expandingDirections() const override { return {}; }
+    bool hasHeightForWidth() const override { return true; }
+    int heightForWidth(int width) const override
+    {
+        return doLayout(QRect(0, 0, width, 0), true);
+    }
+    void setGeometry(const QRect& rect) override
+    {
+        QLayout::setGeometry(rect);
+        doLayout(rect, false);
+    }
+    QSize sizeHint() const override
+    {
+        const QMargins m = contentsMargins();
+        int width = 0;
+        int height = 0;
+        for (QLayoutItem* item : m_items) {
+            const QSize hint = item->sizeHint();
+            width += (width > 0 ? m_hSpace : 0) + hint.width();
+            height = std::max(height, hint.height());
+        }
+        return QSize(width + m.left() + m.right(),
+                     height + m.top() + m.bottom());
+    }
+    QSize minimumSize() const override
+    {
+        QSize size;
+        for (QLayoutItem* item : m_items)
+            size = size.expandedTo(item->minimumSize());
+        const QMargins m = contentsMargins();
+        return size
+            + QSize(m.left() + m.right(), m.top() + m.bottom());
+    }
+
+private:
+    int doLayout(const QRect& rect, bool testOnly) const
+    {
+        const QMargins m = contentsMargins();
+        const QRect area = rect.adjusted(m.left(), m.top(), -m.right(),
+                                         -m.bottom());
+        int x = area.x();
+        int y = area.y();
+        int lineHeight = 0;
+        for (QLayoutItem* item : m_items) {
+            const QSize hint = item->sizeHint();
+            if (x + hint.width() > area.right() + 1 && lineHeight > 0) {
+                x = area.x();
+                y += lineHeight + m_vSpace;
+                lineHeight = 0;
+            }
+            if (!testOnly)
+                item->setGeometry(QRect(QPoint(x, y), hint));
+            x += hint.width() + m_hSpace;
+            lineHeight = std::max(lineHeight, hint.height());
+        }
+        return y + lineHeight - rect.y() + m.bottom();
+    }
+
+    QList<QLayoutItem*> m_items;
+    int m_hSpace = 8;
+    int m_vSpace = 8;
+};
+
+// 按住不放时连续点动：先立即走一步，按住 400 ms 后每 160 ms 再走一步。
+// 400 ms 的延迟保证普通单击仍然只走一步。
+class RepeatButton : public QPushButton {
+public:
+    explicit RepeatButton(QWidget* parent = nullptr) : QPushButton(parent)
+    {
+        m_delay.setSingleShot(true);
+        m_delay.setInterval(400);
+        m_repeat.setInterval(160);
+        connect(&m_delay, &QTimer::timeout, this, [this]() {
+            if (isEnabled())
+                m_repeat.start();
+        });
+        connect(&m_repeat, &QTimer::timeout, this, [this]() {
+            if (isEnabled())
+                emit clicked();
+        });
+    }
+
+protected:
+    void mousePressEvent(QMouseEvent* event) override
+    {
+        QPushButton::mousePressEvent(event);
+        if (event->button() == Qt::LeftButton && isEnabled())
+            m_delay.start();
+    }
+    void mouseReleaseEvent(QMouseEvent* event) override
+    {
+        m_delay.stop();
+        m_repeat.stop();
+        QPushButton::mouseReleaseEvent(event);
+    }
+    void leaveEvent(QEvent* event) override
+    {
+        m_delay.stop();
+        m_repeat.stop();
+        QPushButton::leaveEvent(event);
+    }
+
+private:
+    QTimer m_delay;
+    QTimer m_repeat;
+};
+
 class ElideLabel : public QLabel {
 public:
     explicit ElideLabel(QWidget* parent = nullptr) : QLabel(parent)
@@ -355,7 +488,10 @@ void RobotProgramPanel::buildUi()
     QPalette pal = palette();
     pal.setColor(QPalette::Window, QColor(kBg));
     setPalette(pal);
-    setMinimumWidth(780);
+    // 工具窗口默认只有 820×620，左侧列表占掉约 150 px 后，页面实际只有
+    // 约 610 px。这里按「最小可用」定宽（560），左右卡片用 splitter 分配，
+    // 宽窗口自动把多余空间给节点列表，窄窗口先压缩右侧控制卡。
+    setMinimumWidth(560);
 
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(15, 15, 15, 15);
@@ -363,11 +499,16 @@ void RobotProgramPanel::buildUi()
 
     root->addWidget(buildTopBar());
 
-    auto* main = new QHBoxLayout;
-    main->setSpacing(15);
-    main->addWidget(buildLeftCard(), 1);
-    main->addWidget(buildRightCard(), 0);
-    root->addLayout(main, 1);
+    auto* splitter = new QSplitter(Qt::Horizontal);
+    splitter->setChildrenCollapsible(false);
+    splitter->setHandleWidth(15);
+    splitter->setStyleSheet(QStringLiteral("QSplitter::handle { background:transparent; }"));
+    splitter->addWidget(buildLeftCard());
+    splitter->addWidget(buildRightCard());
+    splitter->setStretchFactor(0, 1);
+    splitter->setStretchFactor(1, 0);
+    splitter->setSizes({ 700, 420 });
+    root->addWidget(splitter, 1);
 
     m_toast = new QLabel(this);
     m_toast->setAlignment(Qt::AlignCenter);
@@ -404,7 +545,7 @@ QWidget* RobotProgramPanel::buildTopBar()
 
     m_connLabel = textLabel(QStringLiteral("通信未连接"), 14, "#666666", true);
     row->addWidget(m_connLabel);
-    row->addSpacing(20);
+    row->addSpacing(10);
 
     auto* speedTitle = textLabel(QStringLiteral("运行速度:"), 13, "#666666");
     row->addWidget(speedTitle);
@@ -413,7 +554,10 @@ QWidget* RobotProgramPanel::buildTopBar()
     m_speedSlider->setRange(static_cast<int>(JogPolicy::MIN_SPEED),
                             static_cast<int>(JogPolicy::MAX_SPEED));
     m_speedSlider->setValue(50);
-    m_speedSlider->setFixedWidth(110);
+    // 窗口窄时滑杆收缩到 60 px，给右侧使能/停止留位置。
+    m_speedSlider->setMinimumWidth(60);
+    m_speedSlider->setMaximumWidth(110);
+    m_speedSlider->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     m_speedSlider->setStyleSheet(sliderStyle());
     m_speedSlider->setToolTip(
         QStringLiteral("点动速度，也是新建移动节点的默认速度。"));
@@ -439,7 +583,7 @@ QWidget* RobotProgramPanel::buildTopBar()
     m_stopButton->setObjectName(QStringLiteral("robot_program_stop"));
     m_stopButton->setCursor(Qt::PointingHandCursor);
     m_stopButton->setMinimumHeight(34);
-    m_stopButton->setMinimumWidth(120);
+    m_stopButton->setMinimumWidth(100);
     m_stopButton->setStyleSheet(stopButtonStyle());
     m_stopButton->setToolTip(
         QStringLiteral("软件停止：终止当前程序并停下运动。"
@@ -465,7 +609,7 @@ QWidget* RobotProgramPanel::buildLeftCard()
     auto* card = new QFrame;
     card->setObjectName(QStringLiteral("rpCard"));
     card->setStyleSheet(cardStyle());
-    card->setMinimumWidth(340);
+    card->setMinimumWidth(240);
 
     auto* column = new QVBoxLayout(card);
     column->setContentsMargins(0, 0, 0, 0);
@@ -512,9 +656,9 @@ QWidget* RobotProgramPanel::buildLeftCard()
         "QFrame#rpListFooter { background:#fafafa; border:none;"
         " border-bottom-left-radius:8px; border-bottom-right-radius:8px;"
         " border-top:1px solid #eeeeee; }"));
-    auto* bottomRow = new QHBoxLayout(bottom);
-    bottomRow->setContentsMargins(15, 12, 15, 12);
-    bottomRow->setSpacing(10);
+    // 四个按钮用流式布局：宽时一行，窄时自动两行两列，不把文字挤掉。
+    auto* bottomRow = new FlowLayout(bottom, 8, 8);
+    bottomRow->setContentsMargins(12, 10, 12, 10);
 
     m_addMoveButton = new QPushButton(QStringLiteral("＋ 添加移动"));
     m_addMoveButton->setObjectName(QStringLiteral("robot_program_add_move"));
@@ -531,13 +675,13 @@ QWidget* RobotProgramPanel::buildLeftCard()
         button->setMinimumHeight(36);
         button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         button->setStyleSheet(outlineButtonStyle(false));
-        bottomRow->addWidget(button, 1);
+        bottomRow->addWidget(button);
     }
     m_deleteButton->setCursor(Qt::PointingHandCursor);
     m_deleteButton->setMinimumHeight(36);
     m_deleteButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     m_deleteButton->setStyleSheet(outlineButtonStyle(true));
-    bottomRow->addWidget(m_deleteButton, 1);
+    bottomRow->addWidget(m_deleteButton);
     column->addWidget(bottom);
 
     m_addPhotoButton->setToolTip(QStringLiteral(
@@ -653,7 +797,9 @@ QWidget* RobotProgramPanel::buildRightCard()
     auto* card = new QFrame;
     card->setObjectName(QStringLiteral("rpCard"));
     card->setStyleSheet(cardStyle());
-    card->setFixedWidth(420);
+    // 设计稿宽 420；窄窗口允许压到 280，宽窗口最多 460。
+    card->setMinimumWidth(280);
+    card->setMaximumWidth(460);
 
     auto* column = new QVBoxLayout(card);
     column->setContentsMargins(0, 0, 0, 0);
@@ -834,8 +980,10 @@ QWidget* RobotProgramPanel::buildCartPad()
         name->setFixedWidth(28);
         row->addWidget(name);
 
-        m_cartMinus[i] = new QPushButton(QStringLiteral("-"));
-        m_cartPlus[i] = new QPushButton(QStringLiteral("+"));
+        m_cartMinus[i] = new RepeatButton;
+        m_cartMinus[i]->setText(QStringLiteral("-"));
+        m_cartPlus[i] = new RepeatButton;
+        m_cartPlus[i]->setText(QStringLiteral("+"));
         for (auto* button : { m_cartMinus[i], m_cartPlus[i] }) {
             button->setFixedSize(55, 42);
             button->setCursor(Qt::PointingHandCursor);
@@ -885,8 +1033,10 @@ QWidget* RobotProgramPanel::buildJointPad()
         name->setFixedWidth(42);
         row->addWidget(name);
 
-        m_jointMinus[i] = new QPushButton(QStringLiteral("-"));
-        m_jointPlus[i] = new QPushButton(QStringLiteral("+"));
+        m_jointMinus[i] = new RepeatButton;
+        m_jointMinus[i]->setText(QStringLiteral("-"));
+        m_jointPlus[i] = new RepeatButton;
+        m_jointPlus[i]->setText(QStringLiteral("+"));
         for (auto* button : { m_jointMinus[i], m_jointPlus[i] }) {
             button->setFixedSize(32, 32);
             button->setCursor(Qt::PointingHandCursor);

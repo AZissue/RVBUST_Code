@@ -226,6 +226,7 @@ void RobotProgramController::setEnabled(bool enabled)
 
 void RobotProgramController::setJogSpeed(double speedPct)
 {
+    // 点动与程序执行共用这一档速度（见 startNode）。
     m_jogSpeedPct = JogPolicy::clampSpeed(speedPct);
 }
 
@@ -281,7 +282,10 @@ void RobotProgramController::startNode(const RobotProgram::NodePayload& payload)
             m_runner->notifyNodeFinished(false, QStringLiteral("未配置运动后端"));
             return;
         }
-        const double speed = JogPolicy::clampSpeed(move->speedPct);
+        // 顶部「运行速度」是全局速度：点动与列表执行都用它。节点里存的
+        // speedPct 只是创建时的快照（当前界面没有逐节点调速入口），不能再
+        // 覆盖用户刚拖动的滑杆——否则滑杆在运行列表时看起来"没用"。
+        const double speed = JogPolicy::clampSpeed(m_jogSpeedPct);
         emit statusMessage(
             QStringLiteral("移动至 %1（%2%）")
                 .arg(RobotProgram::displayDetail(payload))

@@ -25,6 +25,8 @@ private slots:
     void urMathNormalizesScriptRotation();
     void urMathRotatesAboutBaseAxis();
     void urMathRotationTolerance();
+    // 速度滑杆：v 与 a 都随百分比变化，100% 保持原上限。
+    void urMathSpeedSliderChangesAcceleration();
     // 可选的真机冒烟测试：默认 QSKIP，只有设置 HE_UR_HOST 才连接。
     void urBackendLiveMovesIfRequested();
     void runnerRunsAllInOrder();

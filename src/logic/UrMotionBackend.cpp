@@ -212,6 +212,8 @@ void UrMotionWorker::teardown(bool notify)
         emit motionFinished(false, QStringLiteral("连接已断开"));
     }
     m_pending = PendingMove{};
+    m_queuedActive = false;
+    m_queued = PendingMove{};
 
     auto drop = [](QTcpSocket*& socket) {
         if (!socket)
@@ -316,10 +318,9 @@ void UrMotionWorker::jogCartesian(int axis, double delta, double speedPct)
         return;
     }
 
-    // 连续点击时以上一条指令的目标为基准，否则每次都用反馈位置会把前一次
-    // 增量"吃掉"（反馈还没到，目标就已经被后一次覆盖）。
-    const RobotMotion::Pose base =
-        (m_pending.active && !m_pending.joint) ? m_pending.target : m_state.cart;
+    // 连续点击时以上一条指令（含排队中的那一步）的目标为基准，否则每次都用
+    // 反馈位置会把前一次增量"吃掉"（反馈还没到，目标就已经被后一次覆盖）。
+    const RobotMotion::Pose base = latestJogBase(false);
     RobotMotion::Pose target = base;
     if (axis < 3) {
         target[static_cast<std::size_t>(axis)] += delta;
@@ -353,8 +354,7 @@ void UrMotionWorker::jogJoint(int axis, double delta, double speedPct)
 
     // 与笛卡尔点动一样：连续点击时以上一条指令的目标为基准，避免界面
     // 缓存（50 ms 节流）把上一拍的增量吃掉。
-    const RobotMotion::Pose base =
-        (m_pending.active && m_pending.joint) ? m_pending.target : m_state.joint;
+    const RobotMotion::Pose base = latestJogBase(true);
     const RobotMotion::Pose target =
         JogPolicy::clampJoints(JogPolicy::jog(base, axis, delta));
     beginMove(target, speedPct, 2.0, 0.2, 10000, true, true);
@@ -377,11 +377,20 @@ void UrMotionWorker::moveJointAxisTo(int axis, double degrees,
         return;
     }
 
-    RobotMotion::Pose target =
-        (m_pending.active && m_pending.joint) ? m_pending.target : m_state.joint;
+    RobotMotion::Pose target = latestJogBase(true);
     target[static_cast<std::size_t>(axis)] = JogPolicy::clampJoint(degrees);
     beginMove(JogPolicy::clampJoints(target), speedPct, 2.0, 0.2, 10000,
               true, true);
+}
+
+RobotMotion::Pose UrMotionWorker::latestJogBase(bool joint) const
+{
+    // 排队中的那一步更新，长按累加必须从它出发，否则会丢掉中间的一步。
+    if (m_queuedActive && m_queued.joint == joint)
+        return m_queued.target;
+    if (m_pending.active && m_pending.joint == joint)
+        return m_pending.target;
+    return joint ? m_state.joint : m_state.cart;
 }
 
 void UrMotionWorker::beginMove(const RobotMotion::Pose& target,
@@ -389,26 +398,47 @@ void UrMotionWorker::beginMove(const RobotMotion::Pose& target,
                                double toleranceDeg, int timeoutMs, bool joint,
                                bool jog)
 {
-    const double speed = JogPolicy::clampSpeed(speedPct);
+    // 长按点动：上一条还在飞就只更新排队目标，等它到位再发。否则每按一次
+    // 都往 30001 写一条 movel，慢速时会积压，松手后机器人还会多走几步。
+    if (jog && m_pending.active && m_pending.jog
+        && m_pending.joint == joint) {
+        m_queued = PendingMove{};
+        m_queued.active = true;
+        m_queued.joint = joint;
+        m_queued.jog = true;
+        m_queued.target = target;
+        m_queued.speedPct = JogPolicy::clampSpeed(speedPct);
+        m_queued.toleranceMm = toleranceMm;
+        m_queued.toleranceDeg = toleranceDeg;
+        m_queued.timeoutMs = timeoutMs;
+        m_queuedActive = true;
+        return;
+    }
+    if (!jog) {
+        m_queuedActive = false;
+        m_queued = PendingMove{};
+    }
+
+    const UrMotionMath::ScriptSpeeds speeds =
+        UrMotionMath::scriptSpeedsFor(speedPct, joint);
     QString statement;
     if (joint) {
-        const double v = std::clamp(0.1 + 1.0 * speed / 100.0, 0.1, 1.1);
-        statement = QStringLiteral("movej([%1,%2,%3,%4,%5,%6], a=1.2, v=%7)\n")
+        statement = QStringLiteral("movej([%1,%2,%3,%4,%5,%6], a=%7, v=%8)\n")
                         .arg(num(target[0] * UrMotionMath::kDegToRad),
                              num(target[1] * UrMotionMath::kDegToRad),
                              num(target[2] * UrMotionMath::kDegToRad),
                              num(target[3] * UrMotionMath::kDegToRad),
                              num(target[4] * UrMotionMath::kDegToRad),
                              num(target[5] * UrMotionMath::kDegToRad),
-                             num(v));
+                             num(speeds.a), num(speeds.v));
     } else {
         const UrMotionMath::Pose6 script =
             UrMotionMath::stateToScriptPose(target);
-        const double v = std::clamp(0.05 + 0.45 * speed / 100.0, 0.05, 0.50);
         statement =
-            QStringLiteral("movel(p[%1,%2,%3,%4,%5,%6], a=0.8, v=%7)\n")
+            QStringLiteral("movel(p[%1,%2,%3,%4,%5,%6], a=%7, v=%8)\n")
                 .arg(num(script[0]), num(script[1]), num(script[2]),
-                     num(script[3]), num(script[4]), num(script[5]), num(v));
+                     num(script[3]), num(script[4]), num(script[5]),
+                     num(speeds.a), num(speeds.v));
     }
 
     // 新指令直接接管：程序运行中点动是禁用的，点动与程序节点不会互相
@@ -418,6 +448,7 @@ void UrMotionWorker::beginMove(const RobotMotion::Pose& target,
     m_pending.joint = joint;
     m_pending.jog = jog;
     m_pending.target = target;
+    m_pending.speedPct = JogPolicy::clampSpeed(speedPct);
     m_pending.toleranceMm = toleranceMm;
     m_pending.toleranceDeg = toleranceDeg;
     m_pending.timeoutMs = timeoutMs;
@@ -436,7 +467,23 @@ void UrMotionWorker::finishPending(bool ok, const QString& error)
 {
     m_pending.active = false;
     m_motionInFlight = false;
+    if (!ok) {
+        // 失败/超时/停止：排队中的那一步也不再执行。
+        m_queuedActive = false;
+        m_queued = PendingMove{};
+    }
+    const bool chain = ok && m_queuedActive && m_enabled;
+    PendingMove next;
+    if (chain) {
+        next = m_queued;
+        m_queuedActive = false;
+        m_queued = PendingMove{};
+    }
     emit motionFinished(ok, error);
+    if (chain) {
+        beginMove(next.target, next.speedPct, next.toleranceMm,
+                  next.toleranceDeg, next.timeoutMs, next.joint, next.jog);
+    }
 }
 
 bool UrMotionWorker::sendScript(const QString& statement)
@@ -464,6 +511,8 @@ void UrMotionWorker::stopMotion()
 {
     const bool inFlight = m_pending.active || m_motionInFlight;
     m_motionInFlight = false;
+    m_queuedActive = false;
+    m_queued = PendingMove{};
     if (m_pending.active) {
         m_pending.active = false;
         emit motionFinished(false, QStringLiteral("已停止"));

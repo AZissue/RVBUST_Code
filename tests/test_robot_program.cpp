@@ -295,6 +295,25 @@ void TestRobotProgram::urMathRotationTolerance()
     QVERIFY(!reachedCartesian(actual, target, 0.5, 2.5));
 }
 
+void TestRobotProgram::urMathSpeedSliderChangesAcceleration()
+{
+    using namespace UrMotionMath;
+    // 慢速不仅 v 更小，a 也得更小：1 mm 点动到不了 v，时间由 a 决定。
+    const ScriptSpeeds slow = scriptSpeedsFor(10.0, false);
+    const ScriptSpeeds fast = scriptSpeedsFor(100.0, false);
+    QVERIFY(slow.v < fast.v);
+    QVERIFY(slow.a < fast.a);
+    // 100% 保持改版前的上限：movel 0.50 m/s + 0.8 m/s²，movej 1.1 rad/s + 1.2。
+    QVERIFY(std::abs(fast.v - 0.50) < 1e-12);
+    QVERIFY(std::abs(fast.a - 0.80) < 1e-12);
+    const ScriptSpeeds joint = scriptSpeedsFor(100.0, true);
+    QVERIFY(std::abs(joint.v - 1.10) < 1e-12);
+    QVERIFY(std::abs(joint.a - 1.20) < 1e-12);
+    // 越界值按 1–100 收敛。
+    QCOMPARE(scriptSpeedsFor(-5.0, false).v, scriptSpeedsFor(1.0, false).v);
+    QCOMPARE(scriptSpeedsFor(900.0, false).a, scriptSpeedsFor(100.0, false).a);
+}
+
 void TestRobotProgram::urBackendLiveMovesIfRequested()
 {
     // 硬件在环冒烟测试：ctest 默认不跑（没有 HE_UR_HOST）。它验证的是

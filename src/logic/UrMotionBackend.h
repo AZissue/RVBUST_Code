@@ -62,11 +62,15 @@ private:
         bool joint = false;
         bool jog = false;
         RobotMotion::Pose target{};
+        double speedPct = 50.0;
         double toleranceMm = 2.0;
         double toleranceDeg = 1.0;
         int timeoutMs = 15000;
         QElapsedTimer elapsed;
     };
+    // 长按点动时上一条还没到位又来了新一步：不要往控制器里堆脚本，只记住
+    // 最新目标，等当前这条到位后再发。否则 UR 队列会积压，松手后还会多走。
+    RobotMotion::Pose latestJogBase(bool joint) const;
 
     void teardown(bool notify);
     bool ensureReady(const QString& action);
@@ -101,6 +105,8 @@ private:
     QElapsedTimer m_lastPacketAt;
     QElapsedTimer m_lastPublishAt;
     PendingMove m_pending;
+    PendingMove m_queued;
+    bool m_queuedActive = false;
 };
 
 class UrMotionBackend : public RobotMotionBackend {
