@@ -4,7 +4,7 @@ There is one set of controls, signals, data models and renderers per business mo
 Changing presentation never instantiates a camera service or connects an action.
 """
 from dataclasses import dataclass
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QPoint, QObject, QEvent, QTimer
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QStackedLayout, QSplitter, QScrollArea, QGroupBox, QLabel, QToolButton, QButtonGroup, QComboBox)
 
@@ -15,6 +15,41 @@ class _Viewport(QWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.view_changed.emit()
+
+
+class _PreviewAnchor(QObject):
+    """Follow the final canvas geometry, including renderer replacements."""
+    def __init__(self, presentation):
+        super().__init__(presentation.viewport)
+        self.presentation = presentation
+        self.canvas = None
+        self.timer = QTimer(self)
+        self.timer.setSingleShot(True)
+        self.timer.timeout.connect(self.position)
+
+    def bind(self, canvas):
+        if self.canvas is not None:
+            try:
+                self.canvas.removeEventFilter(self)
+            except RuntimeError:
+                pass  # The renderer may already have destroyed its old canvas.
+        self.canvas = canvas
+        if canvas is not None:
+            canvas.installEventFilter(self)
+            self.schedule()
+
+    def schedule(self):
+        if not self.timer.isActive():
+            self.timer.start(0)
+
+    def position(self):
+        if self.presentation.active:
+            self.presentation._size_preview()
+
+    def eventFilter(self, obj, event):
+        if event.type() in (QEvent.Resize, QEvent.Move, QEvent.Show):
+            self.schedule()
+        return False
 
 
 def _locate(layout, widget):
@@ -178,12 +213,9 @@ class IndustrialPresentation:
             workspace._gate_card.setObjectName('multiGateCard')
             workspace._result_card.setObjectName('multiResultCard')
             self.side_column.insertWidget(1, self.calibration_panel)
-            from .widgets.multi_camera_overview import MultiCameraOverview
-            self.device_overview = MultiCameraOverview(workspace)
-            self.side_column.insertWidget(0, self.device_overview)
-            self.frame_browser.setMinimumHeight(205)
-            self.frame_browser.tree.setMinimumHeight(75)
-            self.side_column.setSizes([190, 290, 220, 30])
+            from .widgets.multi_camera_status import MultiCameraStatus
+            self.camera_status = MultiCameraStatus(workspace)
+            self.side_column.setSizes([360, 300, 30])
             parameters = QGroupBox('标定参数')
             parameter_layout = QVBoxLayout(parameters)
             for label, widget in (('参考相机', workspace._ref_combo), ('检测方式', workspace._detect_combo)):
@@ -239,6 +271,7 @@ class IndustrialPresentation:
             self.grid.setHandleWidth(8)
             stage.addWidget(self.grid, 1)
             self.viewport = _Viewport()
+            self.viewport.view_changed.connect(self._size_preview)
             self.scene = QGridLayout(self.viewport)
             self.scene.setContentsMargins(0, 0, 0, 0)
             self.grid.addWidget(self.viewport)
@@ -284,16 +317,16 @@ class IndustrialPresentation:
             images_layout.setContentsMargins(0, 0, 0, 0)
             self._mount(workspace._camera_grid, images_layout)
             preview_layout.addWidget(self.preview_images, 1)
-            self.grid.addWidget(self.preview_panel)
+            self.preview_panel.setParent(self.viewport)
             self.grid.setStretchFactor(0, 1)
-            self.grid.setStretchFactor(1, 0)
-            self.grid.setSizes([820, 380])
             self.layout_choice = QComboBox()
             for text, columns in (('自动布局', 0), ('1 列', 1), ('2 列', 2), ('3 列', 3), ('4 列', 4)):
                 self.layout_choice.addItem(text, columns)
             self.layout_choice.setMaximumWidth(110)
             self.layout_choice.currentIndexChanged.connect(self._change_camera_layout)
             preview_layout.insertWidget(1, self.layout_choice)
+            self.preview_anchor = _PreviewAnchor(self)
+            self._preview_signal_sources = set()
             self.preview_panel.raise_()
         else:
             viewport = _Viewport()
@@ -351,7 +384,7 @@ class IndustrialPresentation:
         self.sidebar.setVisible(expanded)
         self.legacy_panel.setMaximumHeight(16777215 if expanded else 30)
         if expanded:
-            self.side_column.setSizes([150, 220, 180, 300] if self.mode == 'multi_cam' else
+            self.side_column.setSizes([260, 220, 300] if self.mode == 'multi_cam' else
                 [320, 210, 440] if getattr(self, 'calibration_panel', None) else [320, 440])
 
     def activate(self, enabled):
@@ -407,9 +440,18 @@ class IndustrialPresentation:
         self.active = enabled
         if self.mode == 'multi_cam' and enabled:
             self.workspace.refresh_marker_pair()
-            self.device_overview.refresh()
+        if self.mode == 'multi_cam':
+            self.camera_status.set_active(enabled)
+            if not enabled:
+                self.preview_anchor.bind(None)
         viewer = self.workspace.viewer if self.mode == 'turntable' else self.workspace._viewer
         viewer.set_industrial(enabled)
+        if self.mode == 'multi_cam' and enabled:
+            renderer = viewer.viewer()
+            self.preview_anchor.bind(renderer.canvas)
+            if hasattr(renderer, 'canvas_changed') and renderer not in self._preview_signal_sources:
+                renderer.canvas_changed.connect(self.preview_anchor.bind)
+                self._preview_signal_sources.add(renderer)
         if self.calibration_panel and enabled and self.mode == 'turntable':
             self.calibration_panel.refresh()
         if self.inspector and enabled:
@@ -446,35 +488,37 @@ class IndustrialPresentation:
         self._multi_view = view
         self.view_buttons[view].setChecked(True)
         if view == '2d':
+            if self.preview_panel.parentWidget() is not self.grid:
+                self.grid.insertWidget(0, self.preview_panel)
             self.preview_panel.setMaximumSize(16777215, 16777215)
             self.preview_panel.setMinimumSize(0, 0)
             self.viewport.hide()
         else:
+            if self.preview_panel.parentWidget() is not self.viewport:
+                self.preview_panel.setParent(self.viewport)
             self.viewport.show()
             self._size_preview()
-            if view == 'joint' and resize:
-                width = self.grid.width()
-                self.grid.setSizes([max(300, width-380), 380])
         self.preview_panel.setVisible(view != '3d')
         self.preview_images.setVisible(view == '2d' or self.preview_toggle.isChecked())
         self.layout_choice.setVisible(view == '2d' or self.preview_toggle.isChecked())
         self.fill_button.setVisible(view == '2d' or self.preview_toggle.isChecked())
+        self.preview_all.setVisible(view == '2d' or self.preview_toggle.isChecked())
+        self.preview_stop.setVisible(view == '2d' or self.preview_toggle.isChecked())
         self.workspace._camera_grid.setVisible(view != '3d')
         self.workspace._viewer.setVisible(view != '2d')
         self.preview_panel.raise_()
         self._fill_images(self.fill_button.isChecked())
 
     def _toggle_preview(self, expanded):
-        if not expanded:
-            self._expanded_preview_width = self.preview_panel.width()
+        if not expanded and self._multi_view == '2d':
+            self.set_multi_view('joint')
         self.preview_toggle.setArrowType(Qt.DownArrow if expanded else Qt.RightArrow)
         self.preview_images.setVisible(expanded or self._multi_view == '2d')
         self.layout_choice.setVisible(expanded or self._multi_view == '2d')
         self.fill_button.setVisible(expanded or self._multi_view == '2d')
+        self.preview_all.setVisible(expanded)
+        self.preview_stop.setVisible(expanded)
         self._size_preview()
-        if expanded and self._multi_view == 'joint':
-            width = getattr(self, '_expanded_preview_width', 380)
-            self.grid.setSizes([max(200, self.grid.width()-width), width])
 
     def _fill_images(self, enabled):
         grid = self.workspace._camera_grid
@@ -485,10 +529,20 @@ class IndustrialPresentation:
     def _size_preview(self):
         if not hasattr(self, 'preview_panel') or self._multi_view == '2d':
             return
-        self.preview_panel.setMinimumHeight(0)
-        self.preview_panel.setMaximumHeight(16777215)
-        self.preview_panel.setMinimumWidth(300 if self.preview_toggle.isChecked() else 190)
-        self.preview_panel.setMaximumWidth(16777215 if self.preview_toggle.isChecked() else 230)
+        canvas = getattr(self.workspace._viewer.viewer(), 'canvas', None)
+        top = canvas.mapTo(self.viewport, QPoint(0, 0)).y() + 12 if canvas else 46
+        width = min(380, max(240, self.viewport.width()-24))
+        grid = self.workspace._camera_grid
+        cards = [grid._database_card] if grid._database_card else list(grid._cards.values())
+        ratios = [card.current_frame().image_np.shape[1]/card.current_frame().image_np.shape[0]
+                  for card in cards if card.current_frame() is not None and card.current_frame().image_np is not None]
+        ratio = sum(ratios)/len(ratios) if ratios else 4/3
+        expanded = self.preview_toggle.isChecked()
+        height = min(620, max(40, self.viewport.height()-top-12),
+                     int(max(1, len(cards))*((width-24)/ratio+94)+78)) if expanded else self.preview_toggle.sizeHint().height()+12
+        self.preview_panel.setFixedSize(width, height)
+        self.preview_panel.move(max(8, self.viewport.width()-width-12), top)
+        self.preview_panel.raise_()
 
     def _change_camera_layout(self):
         columns = self.layout_choice.currentData()
@@ -519,7 +573,7 @@ class IndustrialPresentation:
 
     def _show_calibration(self):
         self.calibration_panel.show()
-        self.side_column.setSizes([160, 240, 330, 30])
+        self.side_column.setSizes([280, 330, 30])
         self.calibration_panel.ensureWidgetVisible(self.workspace._matrix_values)
 
     def _camera_focus_changed(self, camera_id):

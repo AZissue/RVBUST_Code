@@ -45,18 +45,22 @@ class MulticamViewTests(unittest.TestCase):
         self.win.deleteLater()
         self.app.processEvents()
 
-    def test_joint_sidebar_collapses_without_stopping_previews(self):
+    def test_joint_overlay_collapses_up_without_resizing_3d_or_stopping_previews(self):
         self.assertEqual(self.presentation._multi_view, 'joint')
         self.assertEqual(self.grid._last_cols, 1)
         cards = list(self.grid._cards.values())
         self.assertGreater(self.ws.viewer().width(), self.grid.width())
         self.presentation.preview_all.click()
+        viewport_size = self.presentation.viewport.size()
+        viewer_size = self.ws.viewer().size()
         self.assertTrue(all(c._btn_preview.isChecked() for c in cards))
         self.presentation.preview_toggle.click()
         self.flush()
         self.assertTrue(self.grid.isHidden() or self.presentation.preview_images.isHidden())
         self.assertTrue(all(c._btn_preview.isChecked() for c in cards))
-        self.assertLessEqual(self.presentation.preview_panel.width(), 230)
+        self.assertLessEqual(self.presentation.preview_panel.height(), 55)
+        self.assertEqual(self.presentation.viewport.size(), viewport_size)
+        self.assertEqual(self.ws.viewer().size(), viewer_size)
         self.presentation.preview_toggle.click()
         self.presentation.preview_stop.click()
         self.assertTrue(all(not c._btn_preview.isChecked() for c in cards))
@@ -66,6 +70,25 @@ class MulticamViewTests(unittest.TestCase):
             self.assertLess(card._marker_badge.y(), card._btn_capture.y())
             for button in (card._btn_preview, card._btn_capture, card._btn_detect):
                 self.assertGreaterEqual(button.width(), 48)
+
+    def test_overlay_tracks_canvas_top_after_resize_and_full_2d_collapse(self):
+        from PySide6.QtCore import QPoint
+        p = self.presentation
+        for width, height in ((1450, 900), (1600, 1000)):
+            self.win.resize(width, height)
+            self.flush()
+            canvas = self.ws.viewer().viewer().canvas
+            expected_top = canvas.mapTo(p.viewport, QPoint(0, 0)).y() + 12
+            self.assertEqual(p.preview_panel.y(), expected_top)
+            self.assertEqual(p.preview_panel.x()+p.preview_panel.width(), p.viewport.width()-12)
+        p.set_multi_view('2d')
+        self.flush()
+        p.preview_toggle.click()
+        self.flush()
+        self.assertEqual(p._multi_view, 'joint')
+        self.assertFalse(self.ws.viewer().isHidden())
+        self.assertIs(p.preview_panel.parentWidget(), p.viewport)
+        self.assertLessEqual(p.preview_panel.height(), 55)
 
     def test_calibration_panel_and_log_can_expand(self):
         ws = self.ws
@@ -118,28 +141,28 @@ class MulticamViewTests(unittest.TestCase):
         self.presentation.fill_button.click()
         self.assertTrue(all(c._thumb._fill for c in self.grid._cards.values()))
 
-    def test_device_switches_delegate_once_and_follow_backend_gates(self):
-        panel = self.presentation.device_overview
-        panel.refresh()
+    def test_db_tree_is_first_panel_and_preview_buttons_follow_backend_gates(self):
+        self.assertIs(self.presentation.side_column.widget(0), self.presentation.frame_browser)
+        self.assertFalse(hasattr(self.presentation, 'device_overview'))
         card = self.grid.card('cam0')
         spy = QSignalSpy(self.ws.card_preview_toggled)
-        switch = panel.rows['cam0'][2]
-        switch.click()
+        card._btn_preview.click()
         self.assertTrue(card._btn_preview.isChecked())
         self.assertEqual(spy.count(), 1)
         card.set_controls_enabled(False)
-        panel.refresh()
-        self.assertFalse(switch.isEnabled())
-        self.assertFalse(switch.isChecked())
+        self.presentation.camera_status.refresh()
+        self.assertFalse(card._btn_preview.isEnabled())
+        self.assertFalse(card._btn_preview.isChecked())
         self.assertIn('2/2', self.win._industrial_ribbon.camera_status.text())
 
-    def test_layout_presets_show_all_cameras_and_dock_never_overlays_3d(self):
+    def test_layout_presets_show_all_cameras_and_overlay_keeps_full_3d_viewport(self):
         for count in (1, 2, 3, 4, 6):
             self.grid.set_cameras([f'cam{i}' for i in range(count)])
             self.presentation.set_multi_view('joint')
             self.flush()
             self.assertEqual(self.grid._last_cols, 1)
-            self.assertLessEqual(self.presentation.viewport.geometry().right(), self.presentation.preview_panel.x())
+            self.assertIs(self.presentation.preview_panel.parentWidget(), self.presentation.viewport)
+            self.assertLessEqual(abs(self.presentation.viewport.width()-self.presentation.grid.width()), 2)
             for columns in range(1, 5):
                 self.presentation.set_multi_view('2d')
                 self.presentation.layout_choice.setCurrentIndex(columns)
@@ -182,13 +205,13 @@ class MulticamViewTests(unittest.TestCase):
         self.win.hide_loading()
         self.assertTrue(self.win._task_progress.isHidden())
 
-    def test_docked_history_preview_and_neutral_calibration_chrome(self):
+    def test_floating_history_preview_and_neutral_calibration_chrome(self):
         p = self.presentation
         p.show_database_image(FrameData(99, 'cam1', image_np=np.ones((204, 244, 3), np.uint8)))
         self.flush()
         self.assertLessEqual(p.preview_panel.width(), 380)
-        self.assertEqual(p.preview_panel.parentWidget(), p.grid)
-        self.assertLessEqual(p.viewport.geometry().right(), p.preview_panel.x())
+        self.assertEqual(p.preview_panel.parentWidget(), p.viewport)
+        self.assertLessEqual(abs(p.viewport.width()-p.grid.width()), 2)
         self.assertFalse(self.grid._database_card._thumb._fill)
         self.assertEqual(self.grid._database_card._kind.text(), '只读')
         self.assertEqual(self.presentation.preview_all.parentWidget(), p.preview_panel)
