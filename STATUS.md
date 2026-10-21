@@ -1,9 +1,42 @@
 # STATUS.md — 进度状态（每次会话结束必须更新）
 
-> 最后更新：2026-10-21（之二十五：控制台自适应/速度/长按；圆环+孔径合并为 3D 孔洞）
+> 最后更新：2026-10-21（之二十六：2.0 正式包已产出并推送；发布版隐藏测量工具）
 > 只保留「当前快照」，不积累历史；旧条目删除即可，git 历史里仍可追溯。
 
 ## ⏭ 交接块（新会话先读这里）
+
+- **2026-10-21（之二十六：v2.0.0 正式包 + 双仓库推送；发布版隐藏测量工具）**
+  - **版本**：`AppInfo::version()` 与 CMake `project(... VERSION 2.0.0)`
+    本来就是 2.0；本轮补建 **`v2.0.0` 标签**（annotated，指向 `634f1a6`）。
+  - **发布版隐藏测量工具**：新增 CMake 选项
+    `HANDEYE_HIDE_MEASUREMENT_TOOLS`（默认 OFF），只作用于应用目标。开启后
+    `ToolsPanel::buildMeasurePages()` 直接返回——7 个测量方法（平面度 /
+    高度段差 / 面面距离夹角 / 3D 孔洞 / 包围盒 / 截面轮廓 / 重复性）都不进
+    左侧工具列表；帮助正文同步去掉「测量方法」一章，工具章改为"本发布包
+    未开放测量工具"，不留死链。默认构建与单测仍编译/覆盖全部测量代码。
+    Runtime 日志会写 `edition: release package (measurement tools hidden)`，
+    现场日志一眼能认出包型。
+  - **打包**：用独立目录 `build-release` 配置（flag ON）→
+    `pack_portable.ps1 -SourceDir build-release\src\Release -Version 2.0`。
+    产出 `dist\HandEyeCalibrationTool_v2.0\`（128 个文件 / 231.5 MB）与
+    `dist\HandEyeCalibrationTool_v2.0.zip`（86.1 MB）。已解压到临时目录启动
+    验证：进程正常起来，日志含上述 edition 行；包内只有应用 exe（测试 exe
+    未混入）。
+  - **验证**：默认 `build` 与 `build-release` 均构建 0、`unit_tests`
+    **404 通过 / 0 失败 / 2 跳过**、`ctest` **3/3**（两个目录各跑一遍）。
+  - **推送**：`HandEyeTools` 分支 `b0c538c..634f1a6` 已推到
+    `AICode`（keybord317/AICode）与 `RVBUST_Code`（AZissue/RVBUST_Code），
+    两个远端分支都已快进到同一提交。**AICode 的 monorepo `main` 未动**
+    （按操作手册，分支是项目副本，`main` 同步是另一件事）。
+  - **网络坑（下个会话必看）**：`C:\Users\rvbust\.gitconfig` 里有
+    `http.https://github.com.proxy=http://127.0.0.1:10809`，但该代理当前
+    没在监听，所有 git 操作都会报 "over proxy 127.0.0.1"。可用
+    `git -c "http.https://github.com.proxy=" ...` 绕过（本轮即如此，且需
+    重试几次，直连 GitHub 偶发超时）。不要删用户的全局配置。
+  - **人工验收（发布包）**：解压后打开「工具」→ 左侧应只有 7 项（欧氏距离 /
+    像素→3D / 手眼标定 / 坐标转换 / 机器人数据格式推算 / 机器人通信 /
+    机器人控制台），没有任何测量方法；F1 帮助里没有「测量方法」章。
+  - **只本地提交 + 已推送；目标机（无 RVC/VC++ 的干净机）实测仍未做。**
 
 - **2026-10-21（之二十五：控制台自适应 + 速度 + 长按；3D 孔洞合并；D 工作区已构建/测试）**
   - **① 机器人控制台自适应**（`ui/RobotProgramPanel`）：最小宽 780→560；
