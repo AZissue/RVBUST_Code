@@ -194,6 +194,9 @@ class CameraCard(QFrame):
             if not hasattr(self, '_overview_original'):
                 self._overview_original = (self.minimumSize(), self.maximumSize(),
                     self._thumb.minimumSize(), [(b.text(), b.styleSheet()) for b in buttons])
+                self._overview_chrome = (self.styleSheet(), self._thumb.styleSheet())
+            self.setStyleSheet('CameraCard {background:#292929;border:0;border-radius:3px;}')
+            self._thumb.setStyleSheet('background:#202020;border:0;')
             self.setMinimumSize(230, 190)
             self._thumb.setMinimumSize(180, 80)
             if self._overview_meta.count() == 0:
@@ -221,6 +224,9 @@ class CameraCard(QFrame):
             self._bottom.insertWidget(0, self._marker_badge)
             self._bottom.insertWidget(2, self._covis_badge)
             self._thumb.setToolTip('')
+            self.setStyleSheet(self._overview_chrome[0])
+            self._thumb.setStyleSheet(self._overview_chrome[1])
+            del self._overview_chrome
             del self._overview_original
 
     def eventFilter(self, watched, event):
@@ -350,6 +356,7 @@ class CameraGrid(QScrollArea):
 
     card_clicked = Signal(str)
     focus_changed = Signal(str)
+    database_focus_requested = Signal()
     CARD_WIDTH = 300
     CARD_HEIGHT = 270
     H_SPACING = 8
@@ -437,13 +444,15 @@ class CameraGrid(QScrollArea):
             self._database_card.deleteLater()
             self._database_card = None
         if frame is not None:
-            card = CameraCard(frame.camera_name, title=f'DB 原始帧 {frame.frame_id:03d} · {frame.camera_name}',
+            card = CameraCard(frame.camera_name, title=f'{frame.camera_name} · DB 帧 {frame.frame_id:03d}',
                               preview_factory=self._preview_factory)
             card.set_overview(True)
+            card.focus_requested.connect(lambda _: self.database_focus_requested.emit())
             card.set_frame(frame)
             card.set_marker_count(len(frame.markers_all or frame.markers))
             card.set_frame_kind(None)
-            card._kind.setText('只读 · 返回工作视图恢复相机')
+            card._kind.setText('只读')
+            card._name.setToolTip('DB历史帧；点击“返回工作视图”恢复实时相机画面')
             card._thumb.setToolTip('DB历史帧预览；点击“返回工作视图”恢复实时相机画面')
             for button in (card._btn_preview, card._btn_capture, card._btn_detect):
                 button.hide()

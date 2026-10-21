@@ -62,7 +62,7 @@ class MulticamViewTests(unittest.TestCase):
         self.assertTrue(all(not c._btn_preview.isChecked() for c in cards))
         self.flush()
         for card in cards:
-            self.assertTrue(card._thumb._fill)
+            self.assertFalse(card._thumb._fill)
             self.assertLess(card._marker_badge.y(), card._btn_capture.y())
             for button in (card._btn_preview, card._btn_capture, card._btn_detect):
                 self.assertGreaterEqual(button.width(), 48)
@@ -116,7 +116,31 @@ class MulticamViewTests(unittest.TestCase):
             self.assertEqual(pairs[0]['level'], expected)
             np.testing.assert_array_equal(pairs[0]['T'], np.eye(4))
         self.presentation.fill_button.click()
-        self.assertTrue(all(not c._thumb._fill for c in self.grid._cards.values()))
+        self.assertTrue(all(c._thumb._fill for c in self.grid._cards.values()))
+
+    def test_compact_history_preview_and_neutral_calibration_chrome(self):
+        p = self.presentation
+        p.show_database_image(FrameData(99, 'cam1', image_np=np.ones((204, 244, 3), np.uint8)))
+        self.flush()
+        self.assertLessEqual(p.preview_panel.width(), 380)
+        self.assertLess(p.preview_panel.height(), 450)
+        self.assertFalse(self.grid._database_card._thumb._fill)
+        self.assertEqual(self.grid._database_card._kind.text(), '只读')
+        self.assertEqual(self.presentation.preview_all.parentWidget(), p.preview_panel)
+        self.assertIn('background:#292929', self.ws._gate_card.styleSheet())
+        self.assertIn('background:#222222', self.ws._matrix_values.styleSheet())
+        preview = self.grid._database_card
+        QTest.mouseDClick(preview._thumb, Qt.LeftButton)
+        self.flush()
+        self.assertEqual(p._multi_view, '2d')
+        self.assertIs(self.grid._database_card, preview)
+        QTest.mouseDClick(preview._thumb, Qt.LeftButton)
+        self.flush()
+        self.assertEqual(p._multi_view, 'joint')
+        self.assertLessEqual(p.preview_panel.width(), 380)
+        self.win.set_presentation('classic')
+        self.flush()
+        self.assertNotIn('QFrame#multiGateCard', self.ws._gate_card.styleSheet())
 
     def test_view_modes_and_double_click_focus_keep_exact_frames_and_actions(self):
         original = {cid: card.current_frame() for cid, card in self.grid._cards.items()}

@@ -345,6 +345,7 @@ class MultiCamWorkspace(QWidget):
         self._score_bar = QProgressBar()
         self._score_bar.setRange(0, 100)
         self._score_bar.setValue(0)
+        self._score_bar.setFormat('待标定')
         score_row.addWidget(self._score_bar, 1)
         gate_lo.addLayout(score_row)
 
@@ -600,6 +601,7 @@ class MultiCamWorkspace(QWidget):
         self._matrix_values.setPlainText('\n\n'.join(matrices))
         self._gate_card.setToolTip('业务门禁：所有所需相机可达参考相机，最大 RMS ≤ 2.0 mm，最小内点率 ≥ 50%。质量评分仅作参考。')
         self._score_bar.setValue(max(0, min(100, score)))
+        self._score_bar.setFormat('%p%' if pairs else '未通过')
         self._result_table.setRowCount(len(pairs))
         level_style = {
             "ok": (STATUS_OK, "● 优"), "warn": (STATUS_WARN, "● 良"),
@@ -626,6 +628,8 @@ class MultiCamWorkspace(QWidget):
                 "✗ 任一 pair 未达标，请重拍或重新检测（扫描已禁用）")
             self._gate_hint.setStyleSheet(
                 f"color: {STATUS_ERR}; font-size: 12px; font-weight: 600;")
+        if getattr(getattr(self, '_industrial', None), 'active', False):
+            self._result_table.setVisible(bool(pairs))
 
     def show_recalibration_warning(self):
         """相机断线重连后提示「外参可能失效，请重新标定」。"""
@@ -636,7 +640,10 @@ class MultiCamWorkspace(QWidget):
         self._quality_passed = False
         self._matrix_values.clear()
         self._score_bar.setValue(0)
+        self._score_bar.setFormat('待标定')
         self._result_table.setRowCount(0)
+        if getattr(getattr(self, '_industrial', None), 'active', False):
+            self._result_table.hide()
         self._gate_hint.setText("质量门禁：任一 pair 未达标时禁止进入扫描")
         self._gate_hint.setStyleSheet(
             f"color: {TEXT_MUTED}; font-size: 12px;")
