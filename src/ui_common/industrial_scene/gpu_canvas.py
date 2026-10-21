@@ -353,6 +353,7 @@ class GpuCloudCanvas(NavigationMixin, QOpenGLWidget):
             self.doneCurrent()
 
     def fit_view(self):
+        self._pivot_flash.stop()
         self._pivot_highlight = False
         if self.scene is not None and self.scene.bounds is not None:
             low, high = self.scene.bounds

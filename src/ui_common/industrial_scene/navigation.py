@@ -1,6 +1,6 @@
 """One mouse contract for GPU and software canvases; no drag-distance threshold."""
 import numpy as np
-from PySide6.QtCore import Qt, QEvent
+from PySide6.QtCore import Qt, QEvent, QTimer
 from PySide6.QtWidgets import QWidget
 from PySide6.QtGui import QPainter
 from .trackball import Trackball
@@ -35,11 +35,15 @@ class NavigationMixin:
         self._last = None
         self._navigation_enabled = True
         self._pivot_highlight = False
+        self._pivot_flash = QTimer(self)
+        self._pivot_flash.setSingleShot(True)
+        self._pivot_flash.setInterval(650)
+        self._pivot_flash.timeout.connect(self._hide_pivot_highlight)
         self.setFocusPolicy(Qt.StrongFocus)
 
     def _notify_view_changed(self):
         self._rotation_overlay.setVisible(self._rotation_geometry is not None or bool(self._cloud_markers)
-            or self._last is not None or self._pivot_highlight)
+            or self._navigation_pivot_visible())
         self._rotation_overlay.raise_()
         self._rotation_overlay.update()
         self.update()
@@ -53,7 +57,7 @@ class NavigationMixin:
             if axis.shape == (3,) and center.shape == (3,) and np.isfinite(axis).all() and np.isfinite(center).all() and np.linalg.norm(axis) > 1e-9:
                 self._rotation_geometry = (axis / np.linalg.norm(axis), center.copy())
         self._rotation_overlay.setVisible(self._rotation_geometry is not None or bool(self._cloud_markers)
-            or self._last is not None or self._pivot_highlight)
+            or self._navigation_pivot_visible())
         self._rotation_overlay.raise_()
         self._rotation_overlay.update()
         self.update()
@@ -61,7 +65,7 @@ class NavigationMixin:
     def set_cloud_markers(self, points):
         self._cloud_markers = list(points)
         self._rotation_overlay.setVisible(self._rotation_geometry is not None or bool(self._cloud_markers)
-            or self._last is not None or self._pivot_highlight)
+            or self._navigation_pivot_visible())
         self._rotation_overlay.raise_()
         self._rotation_overlay.update()
 
@@ -157,9 +161,9 @@ class NavigationMixin:
         return self.width()/2+self.pan[0], self.height()/2+self.pan[1]
 
     def _paint_navigation_pivot(self, painter):
-        if self._last is None and not self._pivot_highlight:
+        if not self._navigation_pivot_visible():
             return
-        from PySide6.QtCore import QPointF, QRectF
+        from PySide6.QtCore import QPointF
         from PySide6.QtGui import QColor, QPen
         x, y = self._pivot_pixel()
         if not np.isfinite([x, y]).all() or not self.rect().contains(QPointF(x, y).toPoint()):
@@ -167,30 +171,18 @@ class NavigationMixin:
         p = QPointF(x, y)
         painter.save()
         painter.setRenderHint(QPainter.Antialiasing)
-        painter.setBrush(Qt.NoBrush)
-        # Fixed screen size and a dark halo stay legible on dense/light clouds.
-        for color, width in (('#171a20', 6), ('#ffe45c', 2.5)):
-            painter.setPen(QPen(QColor(color), width))
-            painter.drawEllipse(p, 12, 12)
-            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-                painter.drawLine(p+QPointF(dx*7, dy*7), p+QPointF(dx*20, dy*20))
-        painter.setPen(QPen(QColor('#171a20'), 2))
+        painter.setPen(QPen(QColor('#171a20'), 1))
         painter.setBrush(QColor('#ffe45c'))
-        painter.drawEllipse(p, 3, 3)
-        font = painter.font()
-        font.setBold(True)
-        painter.setFont(font)
-        label = '旋转中心'
-        metrics = painter.fontMetrics()
-        w, h = metrics.horizontalAdvance(label)+16, metrics.height()+8
-        left = max(2, min(x+25, self.width()-w-2))
-        top = max(2, min(y-32, self.height()-h-2))
-        box = QRectF(left, top, w, h)
-        painter.setPen(QPen(QColor('#ffe45c'), 1))
-        painter.setBrush(QColor(23, 26, 32, 235))
-        painter.drawRoundedRect(box, 4, 4)
-        painter.drawText(box, Qt.AlignCenter, label)
+        painter.drawEllipse(p, 5, 5)
         painter.restore()
+
+    def _navigation_pivot_visible(self):
+        return self._pivot_highlight or (self._last is not None and self._drag_button == Qt.LeftButton)
+
+    def _hide_pivot_highlight(self):
+        self._pivot_flash.stop()
+        self._pivot_highlight = False
+        self._notify_view_changed()
 
     def set_pivot(self, point):
         """Change orbit centre without a jump in the projected scene."""
@@ -200,6 +192,7 @@ class NavigationMixin:
         self.pan += [shift[0]*scale, -shift[1]*scale]
         self.center = point.copy()
         self._pivot_highlight = True
+        self._pivot_flash.start()
         self._notify_view_changed()
 
     def set_view(self, name):
@@ -223,6 +216,8 @@ class NavigationMixin:
             event.accept()
             return
         self._drag_button = event.button()
+        self._pivot_flash.stop()
+        self._pivot_highlight = False
         self._last = event.position()
         self.setCursor(Qt.ClosedHandCursor)
         self._begin_interaction()
@@ -251,6 +246,7 @@ class NavigationMixin:
         self.setCursor(Qt.OpenHandCursor)
         if getattr(self, '_navigation_enabled', False):
             self._restore.start(220)
+            self._notify_view_changed()
 
     def mouseReleaseEvent(self, event):
         if event.button() == self._drag_button:
@@ -271,6 +267,8 @@ class NavigationMixin:
             yield label, color, origin, origin+32*np.array([axis[0], -axis[1]])
 
     def wheelEvent(self, event):
+        self._pivot_flash.stop()
+        self._pivot_highlight = False
         steps = event.angleDelta().y()/120
         if not steps and not event.pixelDelta().isNull():
             steps = event.pixelDelta().y()/60
@@ -301,4 +299,6 @@ class NavigationMixin:
     def _stop_navigation(self):
         self._navigation_enabled = False
         self._last = None
+        self._pivot_flash.stop()
+        self._pivot_highlight = False
         self._restore.stop()
