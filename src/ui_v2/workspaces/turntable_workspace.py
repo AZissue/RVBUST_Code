@@ -28,11 +28,12 @@ from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog,
-    QFrame, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
+    QFrame, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QScrollArea, QSizePolicy, QSpinBox, QSplitter,
     QTextEdit, QVBoxLayout, QWidget,
 )
 
+from ..dialogs import ChineseMessageBox as QMessageBox
 from ..theme import BG_CARD, STATUS_ERR, STATUS_OK, TEXT_MUTED, TEXT_SECONDARY
 from .. import icons as ui_icons
 from ..components import UiComponents

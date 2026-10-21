@@ -1,14 +1,15 @@
 """New-UI frame archive controller and hierarchical browser."""
-from PySide6.QtCore import QObject, Qt, Signal, Slot
+from PySide6.QtCore import QObject, Qt, Signal, Slot, QEvent, QSignalBlocker
 from PySide6.QtWidgets import (QFileDialog, QHBoxLayout, QHeaderView, QLabel,
     QPushButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
-    QAbstractItemView, QMenu, QMessageBox)
+    QAbstractItemView, QMenu)
 from dataclasses import replace
 from pathlib import Path
 
 from core.frame_database import DEFAULT_ROOT
 from core.frame_data import FrameData
 from . import icons
+from .dialogs import ChineseMessageBox as QMessageBox
 
 
 class FrameBrowser(QWidget):
@@ -44,6 +45,7 @@ class FrameBrowser(QWidget):
         bar.addWidget(self.delete_button)
         layout.addLayout(bar)
         self.tree = QTreeWidget()
+        self.tree.viewport().installEventFilter(self)
         self.tree.setHeaderLabels(['单帧 / 对应数据', '点数'])
         self.tree.headerItem().setToolTip(1, '原始帧：完整有序点云槽位数（含无效深度）；拼接结果：有效几何点数。显示采样不改变文件点数。')
         self.tree.setIndentation(14)
@@ -185,15 +187,28 @@ class FrameBrowser(QWidget):
         if identifiers:
             self.delete_requested.emit(identifiers)
 
-    def _context_menu(self, position):
+    def eventFilter(self, watched, event):
+        if watched is self.tree.viewport() and event.type() in (
+                QEvent.MouseButtonPress, QEvent.MouseButtonRelease):
+            if event.button() == Qt.RightButton:
+                if event.type() == QEvent.MouseButtonPress:
+                    self._select_context_target(event.position().toPoint())
+                # The view's default press changes the current item before the
+                # context menu signal, starting an unwanted frame/component read.
+                return True
+        return super().eventFilter(watched, event)
+
+    def _select_context_target(self, position):
         item = self.tree.itemAt(position)
         if item and not item.isSelected():
-            # A context click selects the deletion target without starting a
-            # large PLY preview that would immediately make deletion busy.
-            self.tree.blockSignals(True)
-            self.tree.setCurrentItem(item)
-            self.tree.blockSignals(False)
+            with QSignalBlocker(self.tree):
+                self.tree.setCurrentItem(item)
             self._update_delete_button()
+
+    def _context_menu(self, position):
+        # Also handles keyboard/programmatic context menu requests.
+        self._select_context_target(position)
+        item = self.tree.itemAt(position)
         menu = QMenu(self)
         if item and item.data(0, Qt.UserRole):
             label = {'cloud': '查看3D点云', 'image': '查看右侧2D图像'}.get(item.data(0, Qt.UserRole + 2), '查看2D / 3D')

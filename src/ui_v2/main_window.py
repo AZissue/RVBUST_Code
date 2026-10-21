@@ -21,11 +21,12 @@ from typing import List, Optional
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QApplication, QDialog, QFrame, QHBoxLayout, QLabel, QMainWindow,
-    QMessageBox, QPushButton, QStackedWidget, QToolButton, QVBoxLayout,
+    QPushButton, QStackedWidget, QToolButton, QVBoxLayout,
     QWidget, QSplitter, QSizePolicy,
 )
 
 from .launcher_dialog import LauncherDialog
+from .dialogs import ChineseMessageBox as QMessageBox
 from .theme import ACCENT, ACCENT_DIM, BG_CARD, BORDER, STATUS_ERR, STATUS_OK, STATUS_WARN, TEXT_MUTED, TEXT_SECONDARY
 from . import icons as ui_icons
 from .widgets import FloatingLogPanel, LoadingOverlay

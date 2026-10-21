@@ -32,3 +32,7 @@ class ChineseMessageBox(QtMessageBox):
     @staticmethod
     def information(parent, title, text, buttons=QtMessageBox.Ok, defaultButton=QtMessageBox.NoButton):
         return ChineseMessageBox._show(QtMessageBox.Information, parent, title, text, buttons, defaultButton)
+
+    @staticmethod
+    def critical(parent, title, text, buttons=QtMessageBox.Ok, defaultButton=QtMessageBox.NoButton):
+        return ChineseMessageBox._show(QtMessageBox.Critical, parent, title, text, buttons, defaultButton)

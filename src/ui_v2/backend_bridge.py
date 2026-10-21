@@ -26,7 +26,7 @@ import numpy as np
 
 from PySide6.QtCore import QObject, QThread, QTimer, Signal
 from PySide6.QtGui import QPixmap
-from PySide6.QtWidgets import QFileDialog, QMessageBox
+from PySide6.QtWidgets import QFileDialog
 
 from core.camera_manager import CameraManager
 from core.fixed_multi_cam_workflow import FixedMultiCamWorkflow
@@ -41,6 +41,7 @@ from core.utils import logger, write_json_atomic, write_point_cloud_atomic
 from ui_common.image_preview import numpy_to_qpixmap
 
 from .launcher_dialog import LauncherDialog
+from .dialogs import ChineseMessageBox as QMessageBox, localize_buttons
 from .main_window import MainWindowShell
 from .bindings import (MULTI_ACTIONS, MOBILE_ACTIONS, SHELL_ACTIONS,
                        connect_actions, validate_actions)
@@ -392,6 +393,7 @@ class BackendBridge(QObject):
         msg_box.setText(reason)
         msg_box.setInformativeText(details)
         msg_box.setStandardButtons(QMessageBox.Ok)
+        localize_buttons(msg_box)
         msg_box.exec()
 
     def _show_debug_mode_notice(
@@ -415,6 +417,7 @@ class BackendBridge(QObject):
             "如果刚用过「参数调试」打开 RVCManager，请关闭 RVCManager 后"
             "重新连接真实相机。")
         msg_box.setStandardButtons(QMessageBox.Ok)
+        localize_buttons(msg_box)
         msg_box.exec()
 
     # ------------------------------------------------------------------

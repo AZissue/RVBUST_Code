@@ -15,6 +15,9 @@ from ui_v2.widgets.device_table import DeviceInfo
 
 def main():
     app=QApplication([])
+    if app.platformName().lower() in ('offscreen', 'minimal'):
+        print('[GPU SKIPPED] Qt platform has no native OpenGL canvas: ' + app.platformName())
+        return
     QFontDatabase.addApplicationFont('C:/Windows/Fonts/msyh.ttc')
     app.setStyleSheet(GLOBAL_QSS)
     output=Path('D:/RVC_SRC/.verify_reports')
@@ -45,6 +48,8 @@ def main():
             panel=ws.viewer if mode=='turntable' else ws.viewer()
             panel.set_pointcloud_merged(cloud)
             renderer=panel.viewer()
+            from ui_common.industrial_scene.gpu_canvas import GpuCloudCanvas
+            assert isinstance(renderer.canvas, GpuCloudCanvas), 'Native GPU canvas unexpectedly fell back to software'
             wait(lambda: renderer.canvas._ready and not renderer.canvas.is_busy)
             canvas=renderer.canvas
             canvas.repaint();app.processEvents()

@@ -8,6 +8,20 @@
 
 ---
 
+## [1.12.22] - 2026-10-21
+
+### Fixed
+- 修复新版 DB 树右键未选中项时误触发大点云/图像预览：在 viewport 鼠标按下前静默选择目标，覆盖帧、点云/图像子项及分组；已选中行右键保留多选与当前项，左键预览及菜单查看动作保持。
+- 统一 4 个新版 UI 模块的中文弹窗，覆盖 17 处 question/warning 调用及 information/critical、2 处实例弹窗；DB 删除默认“否”，保留所有标准返回值和其他原有默认按钮。
+- 原生 GPU 测试仅在 offscreen/minimal 平台明确输出 [GPU SKIPPED] 并退出 0；原生平台意外回退软件仍失败，保留原有 GPU 检查与断言。
+- 更新新版 UI 问题修复提示词，纠正事件接收位置、子项覆盖、按钮常量和 GPU 跳过语义。
+
+### Validation
+- 使用 rvc Python、QT_QPA_PLATFORM=offscreen，test_ui_frame_database.py（15项）、test_ui_offline_preview.py（7项）、test_ui_industrial.py（8项）、test_ui_ribbon.py（8项）、test_ui_session_projects.py（16项）以及 python -m unittest test_turntable_presentation（3项）共57项通过，所有命令退出码0；在97afd9e的独立源码副本中仅应用本任务补丁验证，未混入并行标记显示改动。
+- 并行标记显示批次提交4eee18e后，当前工作树再运行 python -m unittest test_ui_frame_database test_turntable_presentation，19项通过，退出码0。
+- test_ui_industrial_gpu.py 在 offscreen 和 minimal 均输出 [GPU SKIPPED]、退出码0，属于环境跳过，不计为GPU渲染通过。
+- 额外运行原生GPU脚本，退出码1：退出最大化后的 sidebar.isVisible() 旧断言失败；未修复的97afd9e干净副本同样失败。本批不修改该既有侧栏断言、不掩盖失败；原生GPU完整回归未通过。未验证实体相机、客户显卡或安装包。
+
 ## [1.12.21] - 2026-10-21
 
 ### Added

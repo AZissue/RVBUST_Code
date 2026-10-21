@@ -13,8 +13,9 @@ import open3d as o3d
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 sys.path.insert(0, str(Path(__file__).parent / 'src'))
-from PySide6.QtGui import QFontDatabase
-from PySide6.QtCore import QTimer
+from PySide6.QtGui import QFontDatabase, QContextMenuEvent
+from PySide6.QtCore import QTimer, Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMessageBox
 from core.camera_manager import CameraManager
 from core.frame_data import FrameData
@@ -294,13 +295,117 @@ class FrameBrowserTests(unittest.TestCase):
         self.app.processEvents()
         position = self.browser.tree.visualItemRect(self.browser._items[first]).center()
         with patch('ui_v2.frame_database.QMessageBox.question', return_value=QMessageBox.No):
+            QTest.mouseClick(self.browser.tree.viewport(), Qt.RightButton, Qt.NoModifier, position)
             QTimer.singleShot(0, choose_clear)
-            self.browser._context_menu(position)
+            self.app.sendEvent(self.browser.tree.viewport(), QContextMenuEvent(
+                QContextMenuEvent.Mouse, position, self.browser.tree.viewport().mapToGlobal(position)))
         self.assertIn('删除选中数据', observed[0][0])
         self.assertFalse(observed[0][1])
         self.assertFalse(observed[0][2])
         self.assertEqual(requests, [[first, second]])
         self.assertEqual(self.browser.selected_ids(), [first])
+
+    def test_right_click_targets_never_request_frame_or_component_preview(self):
+        first = self.db.ingest(self.source())
+        second = self.db.ingest(self.source(2))
+        tree = self.browser.tree
+        frames, components = [], []
+        self.browser.frame_selected.connect(frames.append)
+        self.browser.component_selected.connect(lambda *args: components.append(args))
+        targets = [self.browser._items[second],
+                   self.browser._component_items[(second, 'cloud')],
+                   self.browser._component_items[(second, 'image')],
+                   self.browser._items[second].parent()]
+        with patch.object(self.bridge.frame_db, 'select') as preview:
+            for target in targets:
+                tree.setCurrentItem(self.browser._items[first])
+                preview.reset_mock()
+                frames.clear(); components.clear()
+                tree.scrollToItem(target)
+                self.app.processEvents()
+                position = tree.visualItemRect(target).center()
+                QTest.mousePress(tree.viewport(), Qt.RightButton, Qt.NoModifier, position)
+                self.assertIs(tree.currentItem(), target)
+                self.assertEqual(tree.selectedItems(), [target])
+                self.assertTrue(self.browser.delete_button.isEnabled())
+                QTest.mouseRelease(tree.viewport(), Qt.RightButton, Qt.NoModifier, position)
+                self.assertEqual(frames, [])
+                self.assertEqual(components, [])
+                preview.assert_not_called()
+
+    def test_right_click_selected_row_preserves_multi_selection_and_current_item(self):
+        first = self.db.ingest(self.source())
+        second = self.db.ingest(self.source(2))
+        tree = self.browser.tree
+        with patch.object(self.bridge.frame_db, 'select') as preview:
+            tree.setCurrentItem(self.browser._items[first])
+            self.browser._items[second].setSelected(True)
+            preview.reset_mock()
+            position = tree.visualItemRect(self.browser._items[second]).center()
+            QTest.mouseClick(tree.viewport(), Qt.RightButton, Qt.NoModifier, position)
+            self.assertIs(tree.currentItem(), self.browser._items[first])
+            self.assertEqual(self.browser.selected_ids(), [first, second])
+            preview.assert_not_called()
+
+    def test_left_click_still_requests_frame_and_component_previews(self):
+        uid = self.db.ingest(self.source())
+        tree = self.browser.tree
+        with patch.object(self.bridge.frame_db, 'select') as preview:
+            for target, component in [(self.browser._items[uid], None),
+                                     (self.browser._component_items[(uid, 'cloud')], 'cloud'),
+                                     (self.browser._component_items[(uid, 'image')], 'image')]:
+                tree.scrollToItem(target)
+                self.app.processEvents()
+                QTest.mouseClick(tree.viewport(), Qt.LeftButton, Qt.NoModifier,
+                                 tree.visualItemRect(target).center())
+                if component:
+                    preview.assert_called_once_with('multi_cam', uid, component)
+                else:
+                    preview.assert_called_once_with('multi_cam', uid)
+                preview.reset_mock()
+
+    def test_delete_confirmation_has_chinese_buttons_and_defaults_to_no(self):
+        uid = self.db.ingest(self.source())
+        observed = []
+        def dismiss():
+            box = self.app.activeModalWidget()
+            observed.append((box.button(QMessageBox.Yes).text(),
+                             box.button(QMessageBox.No).text(),
+                             box.defaultButton() is box.button(QMessageBox.No)))
+            box.button(QMessageBox.No).click()
+        QTimer.singleShot(0, dismiss)
+        self.bridge.frame_db.remove('multi_cam', [uid])
+        self.assertEqual(observed, [('是', '否', True)])
+        self.assertIn(uid, self.db.records)
+
+
+class LocalizedDialogTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_standard_dialogs_keep_button_results_and_default_focus(self):
+        from ui_v2.dialogs import ChineseMessageBox
+        cases = [
+            ('question', QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+             {QMessageBox.Yes: '是', QMessageBox.No: '否'}),
+            ('warning', QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel, QMessageBox.Save,
+             {QMessageBox.Save: '保存', QMessageBox.Discard: '放弃修改', QMessageBox.Cancel: '取消'}),
+            ('information', QMessageBox.Ok, QMessageBox.Ok, {QMessageBox.Ok: '确定'}),
+            ('critical', QMessageBox.Ok, QMessageBox.Ok, {QMessageBox.Ok: '确定'}),
+        ]
+        for method, buttons, default, expected in cases:
+            with self.subTest(method=method):
+                observed = []
+                def dismiss():
+                    box = self.app.activeModalWidget()
+                    observed.append(({flag: box.button(flag).text() for flag in expected},
+                                     box.defaultButton() is box.button(default)))
+                    box.button(default).click()
+                QTimer.singleShot(0, dismiss)
+                result = getattr(ChineseMessageBox, method)(None, '测试', '提示', buttons, default)
+                self.assertEqual(result, default)
+                self.assertEqual(observed, [(expected, True)])
 
 
 if __name__ == '__main__':
