@@ -95,6 +95,8 @@ class MulticamViewTests(unittest.TestCase):
         ws.on_calibrate_done([dict(pair='cam1→cam0', rms_mm=.2, inlier_ratio=.9,
                                   level='ok', T=np.eye(4))], 90, True)
         ws.set_state('calibrated')
+        browser = self.presentation.frame_browser
+        browser.tree.setCurrentItem(browser.tree.topLevelItem(0).child(0))
         self.flush()
         self.assertTrue(ws._result_card.isVisible())
         self.assertTrue(ws._gate_card.isVisible())
@@ -117,9 +119,8 @@ class MulticamViewTests(unittest.TestCase):
         self.assertGreaterEqual(self.win._log_panel._text.height(), 30)
         self.assertLessEqual(self.win._log_panel.body.geometry().bottom(), self.win._log_panel.height())
 
-    def test_sidebar_keeps_db_and_gate_separate_without_footer_when_logs_expand(self):
+    def test_sidebar_tree_and_properties_resize_without_separate_gate_when_logs_expand(self):
         from PySide6.QtWidgets import QTreeWidgetItem
-        from PySide6.QtCore import QPoint
         p = self.presentation
         browser = p.frame_browser
         for index in range(20):
@@ -133,16 +134,40 @@ class MulticamViewTests(unittest.TestCase):
             self.flush()
             self.assertTrue(browser.footer.isHidden())
             self.assertLessEqual(browser.tree.geometry().bottom(), browser.height())
-            self.assertLess(browser.geometry().bottom(), p.calibration_panel.y())
-            p.side_scroll.verticalScrollBar().setValue(p.side_scroll.verticalScrollBar().maximum())
+            self.assertEqual(p.side_column.count(), 2)
+            self.assertIs(p.side_column.widget(0), browser)
+            self.assertFalse(self.ws._gate_card.isVisible())
+            splitter = browser.property_splitter
+            splitter.moveSplitter(100, 1)
             self.flush()
-            gate_position = p.calibration_panel.mapTo(p.side_scroll.viewport(), QPoint(0, 0))
-            self.assertLess(gate_position.y(), p.side_scroll.viewport().height())
-            self.assertGreater(gate_position.y()+p.calibration_panel.height(), 0)
+            smaller = browser.tree.height()
+            splitter.moveSplitter(splitter.height()-110, 1)
+            self.flush()
+            if splitter.height() > 260:
+                self.assertGreater(browser.tree.height(), smaller+30)
+            else:
+                self.assertGreaterEqual(browser.tree.height(), smaller)
+            self.assertLessEqual(browser.properties.geometry().bottom(), splitter.height())
+        self.win._btn_log.setChecked(False)
+        self.flush()
+        splitter.moveSplitter(splitter.height()//2, 1)
+        self.flush()
+        smaller = browser.tree.height()
+        handle = splitter.handle(1)
+        start = handle.rect().center()
+        from PySide6.QtCore import QPoint
+        QTest.mousePress(handle, Qt.LeftButton, Qt.NoModifier, start)
+        QTest.mouseMove(handle, start+QPoint(0, 80))
+        QTest.mouseRelease(handle, Qt.LeftButton, Qt.NoModifier, start+QPoint(0, 80))
+        self.flush()
+        self.assertGreater(browser.tree.height(), smaller+40)
+        splitter.moveSplitter(splitter.height()-110, 1)
+        self.flush()
+        self.assertGreater(browser.tree.height(), splitter.height()*.7)
         p.maximize(True)
-        self.assertTrue(p.side_scroll.isHidden())
+        self.assertTrue(p.side_column.isHidden())
         p.maximize(False)
-        self.assertFalse(p.side_scroll.isHidden())
+        self.assertFalse(p.side_column.isHidden())
 
     def test_database_calibration_node_opens_new_panel_and_clear_removes_matrix(self):
         browser = self.presentation.frame_browser
@@ -152,14 +177,23 @@ class MulticamViewTests(unittest.TestCase):
         root = browser.tree.topLevelItem(0)
         parameters = root.child(0).child(0)
         self.assertEqual(parameters.text(0), '标定参数')
-        self.presentation.calibration_panel.hide()
+        sizes = browser.property_splitter.sizes()
         browser.tree.setCurrentItem(parameters)
         self.flush()
+        self.assertEqual(browser.property_splitter.sizes(), sizes)
         self.assertTrue(self.presentation.calibration_panel.isVisible())
+        self.assertTrue(self.ws._gate_card.isVisible())
+        self.assertTrue(self.ws._result_card.isVisible())
+        self.assertIs(browser.properties.object_pages.currentWidget(), browser.properties._object_pages['calibration'])
         self.ws.on_calibrate_done([dict(pair='cam1→cam0', rms_mm=.2, inlier_ratio=.9,
                                        T=np.eye(4))], 95, True)
         self.ws.clear_calibration_results()
         self.assertEqual(self.ws._matrix_values.toPlainText(), '')
+        browser.refresh()
+        self.assertEqual(browser.properties.values['类型'], '标定参数')
+        browser.tree.clearSelection()
+        self.assertIs(browser.properties.object_pages.currentWidget(), browser.properties.data_scroll)
+        self.assertFalse(self.ws._gate_card.isVisible())
 
     def test_fill_switch_and_quality_levels_use_business_limits(self):
         from types import SimpleNamespace

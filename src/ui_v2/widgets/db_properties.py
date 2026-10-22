@@ -1,7 +1,8 @@
 """Shared DB metadata inspector and controls for the current 3D renderer."""
 from PySide6.QtCore import Qt, QSignalBlocker
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QFormLayout, QLabel,
-    QTabWidget, QScrollArea, QComboBox, QSpinBox, QPushButton, QCheckBox, QLayout)
+    QTabWidget, QScrollArea, QComboBox, QSpinBox, QPushButton, QCheckBox, QLayout,
+    QStackedWidget, QSizePolicy)
 
 
 class DbProperties(QWidget):
@@ -22,14 +23,20 @@ class DbProperties(QWidget):
         root.setSpacing(4)
         root.addWidget(QLabel('属性'))
         self.tabs = QTabWidget()
-        root.addWidget(self.tabs)
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Ignored)
+        self.tabs.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Ignored)
+        root.addWidget(self.tabs, 1)
         self.data = QWidget()
         self.form = QFormLayout(self.data)
         self.form.setSizeConstraint(QLayout.SetMinimumSize)
         self.form.setContentsMargins(8, 6, 8, 6)
         self.form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         self.form.setLabelAlignment(Qt.AlignLeft | Qt.AlignTop)
-        self.data_scroll = self._page(self.data, '数据属性')
+        self.object_pages = QStackedWidget()
+        self.data_scroll = self._scroll(self.data)
+        self.object_pages.addWidget(self.data_scroll)
+        self._object_pages = {}
+        self.tabs.addTab(self.object_pages, '数据属性')
         self.display = QWidget()
         form = QFormLayout(self.display)
         form.setSizeConstraint(QLayout.SetMinimumSize)
@@ -71,15 +78,28 @@ class DbProperties(QWidget):
         self.show_values({'提示': '请选择 DB 树中的数据'})
 
     def _page(self, content, title):
+        scroll = self._scroll(content)
+        self.tabs.addTab(scroll, title)
+        return scroll
+
+    def _scroll(self, content):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll.setWidget(content)
-        self.tabs.addTab(scroll, title)
         return scroll
 
-    def show_values(self, values):
+    def register_object_page(self, kind, content):
+        page = self._scroll(content)
+        self._object_pages[kind] = page
+        self.object_pages.addWidget(page)
+
+    def show_values(self, values, *, object_type=None):
         self.values = dict(values)
+        page = self._object_pages.get(object_type, self.data_scroll)
+        self.object_pages.setCurrentWidget(page)
+        if page is not self.data_scroll:
+            self.tabs.setCurrentIndex(0)
         while self.form.rowCount():
             self.form.removeRow(0)
         for key, value in self.values.items():

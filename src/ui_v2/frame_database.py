@@ -68,7 +68,12 @@ class FrameBrowser(QWidget):
         self.property_splitter.setChildrenCollapsible(False)
         self.property_splitter.addWidget(self.tree)
         self.property_splitter.addWidget(self.properties)
-        self.properties.setMinimumHeight(220)
+        self.properties.setMinimumHeight(100)
+        self.property_splitter.setHandleWidth(7)
+        self.property_splitter.handle(1).setCursor(Qt.SplitVCursor)
+        self.property_splitter.setStyleSheet('QSplitter::handle:vertical {background:#414141;} QSplitter::handle:vertical:hover {background:#805052;}')
+        self.property_splitter.setStretchFactor(0, 1)
+        self.property_splitter.setStretchFactor(1, 1)
         self.property_splitter.setSizes([260, 210])
         layout.addWidget(self.property_splitter, 1)
         self.footer = QWidget()
@@ -167,10 +172,11 @@ class FrameBrowser(QWidget):
                 item.setData(0, Qt.UserRole + 2, component)
                 item.setToolTip(0, ('仅查看3D点云' if component == 'cloud' else '仅在右侧查看2D图像，不重载点云') + '\n删除操作针对所属完整帧，可在回收区恢复。')
                 self._component_items[(record.uid, component)] = item
-        if project_root is not None and getattr(self.database, 'has_calibration', False):
+        parameters = None
+        if self.database.mode == 'multi_cam' or (project_root is not None and getattr(self.database, 'has_calibration', False)):
             calibration_group = next((item for item in categories.values() if item.text(0) == '标定会话数据'), None)
             if calibration_group is None:
-                calibration_group = QTreeWidgetItem(project_root, ['标定会话数据', ''])
+                calibration_group = QTreeWidgetItem(project_root if project_root is not None else self.tree, ['标定会话数据', ''])
                 calibration_group.setIcon(0, icons.icon('folder_open', '#aaaaaa', 16))
                 categories[('parameters', 'calibration')] = calibration_group
             parameters = QTreeWidgetItem(calibration_group, ['标定参数', '多相机外参' if self.database.mode == 'multi_cam' else '转台轴心'])
@@ -191,7 +197,12 @@ class FrameBrowser(QWidget):
             restore(item)
             self._known_groups.add('/' + item.text(0))
         for uid, component in selected:
-            item = self._component_items.get((uid, component)) if component else self._items.get(uid)
+            if component == 'calibration':
+                item = parameters
+            elif component:
+                item = self._component_items.get((uid, component))
+            else:
+                item = self._items.get(uid)
             if item:
                 item.setSelected(True)
         self.tree.blockSignals(False)
@@ -233,7 +244,8 @@ class FrameBrowser(QWidget):
         if record is None:
             self.properties.show_values({'名称': item.text(0),
                 '类型': '标定参数' if component == 'calibration' else '数据分组',
-                '说明': item.text(1) or '—', '关联帧 / 结果': len(ids)})
+                '说明': item.text(1) or '—', '关联帧 / 结果': len(ids)},
+                object_type=component)
             return
         result = record.kind == 'result'
         values = {'名称': record.logical_name, '类型': '2D 图像' if component == 'image' else

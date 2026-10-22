@@ -6,7 +6,7 @@ Changing presentation never instantiates a camera service or connects an action.
 from dataclasses import dataclass
 from PySide6.QtCore import Qt, Signal, QPoint, QObject, QEvent, QTimer
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
-    QStackedLayout, QSplitter, QScrollArea, QGroupBox, QLabel, QToolButton, QButtonGroup, QComboBox, QSizePolicy)
+    QStackedLayout, QSplitter, QScrollArea, QGroupBox, QLabel, QToolButton, QButtonGroup, QComboBox, QSizePolicy, QLayout)
 
 
 class _Viewport(QWidget):
@@ -186,17 +186,8 @@ class IndustrialPresentation:
             self.calibration_panel = TurntableCalibrationPanel(workspace)
             self.side_column.insertWidget(1, self.calibration_panel)
             self.side_column.setSizes([400, 210, 30])
-        if mode == 'multi_cam':
-            self.side_scroll = QScrollArea()
-            self.side_scroll.setWidgetResizable(True)
-            self.side_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-            self.side_scroll.setMinimumWidth(310)
-            self.side_scroll.setMaximumWidth(420)
-            self.side_scroll.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Ignored)
-            self.side_scroll.setWidget(self.side_column)
-            self.body.addWidget(self.side_scroll)
-        else:
-            self.body.addWidget(self.side_column)
+        self.body.addWidget(self.side_column)
+        self.side_column.setStretchFactor(0, 1)
         self.stage = QWidget()
         stage = QVBoxLayout(self.stage)
         stage.setContentsMargins(0, 0, 0, 0)
@@ -214,24 +205,22 @@ class IndustrialPresentation:
         if mode == 'multi_cam':
             self._mount(workspace._left_widget, self.controls)
             self._mount(workspace._right_widget, self.controls)
-            self.calibration_panel = QScrollArea()
-            self.calibration_panel.setWidgetResizable(True)
-            self.calibration_panel.setMinimumHeight(140)
             result_content = QWidget()
+            self.calibration_panel = result_content
             result_layout = QVBoxLayout(result_content)
+            result_layout.setSizeConstraint(QLayout.SetMinimumSize)
             result_layout.setContentsMargins(0, 0, 0, 0)
             self._mount(workspace._gate_card, result_layout)
             self._mount(workspace._result_card, result_layout)
             result_layout.addStretch(1)
-            self.calibration_panel.setWidget(result_content)
+            self.frame_browser.properties.register_object_page('calibration', result_content)
             self._calibration_styles = {widget: widget.styleSheet() for widget in
                 (workspace._gate_card, workspace._result_card)}
             workspace._gate_card.setObjectName('multiGateCard')
             workspace._result_card.setObjectName('multiResultCard')
-            self.side_column.insertWidget(1, self.calibration_panel)
             from .widgets.multi_camera_status import MultiCameraStatus
             self.camera_status = MultiCameraStatus(workspace)
-            self.side_column.setSizes([360, 300, 30])
+            self.side_column.setSizes([700, 30])
             self.frame_browser.calibration_selected.connect(self._show_calibration)
             self.view_bar = QWidget()
             bar = QHBoxLayout(self.view_bar)
@@ -389,8 +378,7 @@ class IndustrialPresentation:
         self.sidebar.setVisible(expanded)
         self.legacy_panel.setMaximumHeight(16777215 if expanded else 30)
         if expanded:
-            self.side_column.setSizes([260, 220, 300] if self.mode == 'multi_cam' else
-                [320, 210, 440] if getattr(self, 'calibration_panel', None) else [320, 440])
+            self.side_column.setSizes([320, 210, 440] if self.mode == 'turntable' else [440, 300])
 
     def activate(self, enabled):
         if self.active == enabled:
@@ -469,8 +457,6 @@ class IndustrialPresentation:
             self.inspector.bind_viewport(canvas)
 
     def maximize(self, enabled):
-        if hasattr(self, 'side_scroll'):
-            self.side_scroll.setVisible(not enabled)
         self.side_column.setVisible(not enabled)
         self.sidebar.setVisible(not enabled and (self.legacy_panel is None or self.legacy_toggle.isChecked()))
         if self.overlay:
@@ -578,9 +564,7 @@ class IndustrialPresentation:
                 card._btn_preview.setChecked(enabled)
 
     def _show_calibration(self):
-        self.calibration_panel.show()
-        self.side_column.setSizes([280, 330, 30])
-        self.calibration_panel.ensureWidgetVisible(self.workspace._result_card)
+        self.frame_browser._update_properties()
 
     def _camera_focus_changed(self, camera_id):
         self.all_cameras_button.setEnabled(bool(camera_id))
