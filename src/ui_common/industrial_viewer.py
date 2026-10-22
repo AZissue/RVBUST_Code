@@ -39,7 +39,9 @@ class IndustrialViewer(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(3)
-        row = QHBoxLayout()
+        self.toolbar = QWidget()
+        row = QHBoxLayout(self.toolbar)
+        row.setContentsMargins(0, 0, 0, 0)
         self.mode = QComboBox()
         self.mode.addItem('全部相机', None)
         self.mode.addItem('拼接结果', '__merged__')
@@ -84,13 +86,16 @@ class IndustrialViewer(QWidget):
             action.toggled.connect(lambda value, attr=attribute: self._display_option(attr, value))
         self.options_button.setMenu(menu)
         row.addWidget(self.options_button)
-        root.addLayout(row)
+        root.addWidget(self.toolbar)
         self.canvas = self._create_canvas()
         root.addWidget(self.canvas, 1)
         self.status = QLabel()
         root.addWidget(self.status)
         self._bind_canvas()
         QTimer.singleShot(400, self._check_context)
+
+    def set_toolbar_visible(self, visible):
+        self.toolbar.setVisible(visible)
 
     def _create_canvas(self, software=False):
         if software or QApplication.platformName().lower() in ('offscreen','minimal'):

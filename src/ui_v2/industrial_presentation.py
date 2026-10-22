@@ -254,6 +254,7 @@ class IndustrialPresentation:
             hint.setStyleSheet('color:#aaaaaa;')
             bar.addWidget(hint)
             stage.addWidget(self.view_bar)
+            self.view_bar.hide()
             self.preview_all = QToolButton()
             self.preview_all.setText('全部预览')
             self.preview_all.setToolTip('开启全部已连接相机的2D取景')
@@ -446,6 +447,7 @@ class IndustrialPresentation:
         viewer.set_industrial(enabled)
         if self.mode == 'multi_cam' and enabled:
             renderer = viewer.viewer()
+            renderer.set_toolbar_visible(False)
             self.preview_anchor.bind(renderer.canvas)
             if hasattr(renderer, 'canvas_changed') and renderer not in self._preview_signal_sources:
                 renderer.canvas_changed.connect(self.preview_anchor.bind)
@@ -470,7 +472,7 @@ class IndustrialPresentation:
         if self.inspector:
             self.inspector.setVisible(not enabled and not self._database_result)
         if self.mode == 'multi_cam':
-            self.view_bar.setVisible(not enabled)
+            self.view_bar.hide()
             if enabled:
                 self.preview_panel.hide()
                 self.workspace._camera_grid.hide()
