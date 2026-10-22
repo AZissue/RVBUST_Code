@@ -28,7 +28,7 @@ QLabel#studioBadge[offline="true"] { color:#b5c2d6; background:#2c3340; }
 QFrame#ribbonGroup { background:transparent; border:0; border-right:1px solid #41444a; }
 QLabel#ribbonCaption { color:#8f97a4; font-size:11px; background:transparent; padding-top:2px; }
 QWidget#industrialRibbon QToolButton { color:#dddddd; background:transparent;
-    border:1px solid transparent; border-radius:5px; padding:3px; font-size:12px; }
+    border:1px solid transparent; border-radius:5px; padding:2px; font-size:12px; }
 QWidget#industrialRibbon QToolButton:hover { background:#3b3f46; border-color:#555b65; }
 QWidget#industrialRibbon QToolButton:pressed { background:#4d3030; border-color:#d32f2f; }
 QWidget#industrialRibbon QToolButton:checked { background:#573232; border-color:#d32f2f; color:#ffffff; }
@@ -44,7 +44,21 @@ QWidget#industrialRibbon QToolButton[primaryAction="true"]:hover { background:#8
 '''
 
 
-class CommandButton(QToolButton):
+class RibbonButton(QToolButton):
+    """Keep the complete title visible using Qt's current font/style metrics."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(55)
+        self.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
+
+    def sizeHint(self):
+        return super().sizeHint().expandedTo(QSize(64, 55))
+
+    def minimumSizeHint(self):
+        return self.sizeHint()
+
+
+class CommandButton(RibbonButton):
     """Mirror a production button, including asynchronous workflow state changes."""
     def __init__(self, source, title, glyph, parent=None, *, follow_text=False):
         super().__init__(parent)
@@ -54,7 +68,6 @@ class CommandButton(QToolButton):
         self.setIcon(icons.icon(glyph, '#d6d6d6', 23))
         self.setIconSize(QSize(23, 23))
         self.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
-        self.setFixedSize(64, 55)
         self.setToolTip(source.toolTip() or source.text().strip())
         self.setCheckable(source.isCheckable())
         self.clicked.connect(lambda _checked=False: source.click())
@@ -130,7 +143,7 @@ class IndustrialRibbon(QWidget):
             page = QWidget()
             row = QHBoxLayout(page)
             row.setContentsMargins(10, 5, 10, 4)
-            row.setSpacing(6)
+            row.setSpacing(4)
             self._pages[mode] = page
             self.pages.addWidget(page)
             self._build_mode(mode, row)
@@ -149,26 +162,21 @@ class IndustrialRibbon(QWidget):
     def _group(self, row, title, entries, mode):
         group = QFrame(objectName='ribbonGroup')
         col = QVBoxLayout(group)
-        col.setContentsMargins(3, 0, 8, 1)
+        col.setContentsMargins(2, 0, 5, 1)
         col.setSpacing(1)
         actions = QHBoxLayout()
         actions.setSpacing(2)
         for key, text, glyph, source in entries:
-            button = CommandButton(source, text, glyph, follow_text=mode == 'multi_cam' and key == 'capture') if hasattr(source, 'click') else QToolButton()
+            button = CommandButton(source, text, glyph, follow_text=mode == 'multi_cam' and key == 'capture') if hasattr(source, 'click') else RibbonButton()
             if not isinstance(button, CommandButton):
                 button.setText(text)
                 button.setIcon(icons.icon(glyph, '#d6d6d6', 23))
                 button.setIconSize(QSize(23, 23))
                 button.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
-                button.setFixedSize(64, 55)
                 button.clicked.connect(lambda _checked=False, action=source: action())
             if key == 'select':
                 button.setObjectName('workspaceSwitch')
                 button.setToolTip('返回启动窗口，选择工作区或切换离线预览')
-            elif key in ('frame0', 'frame1'):
-                button.setFixedWidth(72)
-            elif mode == 'multi_cam' and key in ('capture', 'scan'):
-                button.setFixedWidth(80)
             elif key == 'restore':
                 button.setToolTip('返回工作视图：退出DB历史帧预览，恢复当前工作区的2D / 3D显示')
             elif key == 'manage':
@@ -212,10 +220,10 @@ class IndustrialRibbon(QWidget):
                       ('机位编辑', [('undo', '撤销末帧', 'undo', mobile._btn_undo),
                                   ('delete', '删除机位', 'trash', mobile._btn_delete_node)])]
         else:
-            groups = [('转台标定', [('frame0', '拍摄 frame0', 'camera', turn.btn_capture_frame0),
-                                  ('frame1', '拍摄 frame1', 'camera', turn.btn_capture_frame1),
-                                  ('calibrate', '计算转台', 'calibrate', turn.btn_online_calib)]),
-                      ('步进采集', [('capture', '采集下一帧', 'camera', turn.btn_capture_step),
+            groups = [('转轴标定', [('frame0', '拍摄初始帧', 'camera', turn.btn_capture_frame0),
+                                  ('frame1', '拍摄旋转帧', 'camera', turn.btn_capture_frame1),
+                                  ('calibrate', '计算转轴', 'calibrate', turn.btn_online_calib)]),
+                      ('步进采集', [('capture', '拍摄当前步', 'camera', turn.btn_capture_step),
                                   ('auto', '自动采集', 'loop', turn.btn_auto_capture)])]
         for caption, entries in groups:
             self._group(row, caption, entries, mode)

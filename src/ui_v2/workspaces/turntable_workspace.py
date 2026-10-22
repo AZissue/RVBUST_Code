@@ -251,6 +251,7 @@ class TurntableWorkspace(QWidget):
         h.addWidget(self.btn_preview_2d)
 
         self.btn_capture_frame0 = QPushButton("拍摄 frame0")
+        self.btn_capture_frame0.setToolTip("拍摄初始位置的标定帧（frame0），作为转轴标定的参考")
         self.btn_capture_frame0.clicked.connect(self._on_capture_frame0)
         self.btn_capture_frame0.setEnabled(False)
         h.addWidget(self.btn_capture_frame0)
@@ -262,6 +263,7 @@ class TurntableWorkspace(QWidget):
 
         h = QHBoxLayout()
         self.btn_capture_frame1 = QPushButton("拍摄 frame1")
+        self.btn_capture_frame1.setToolTip("将转台旋转一个步进角度后拍摄标定帧（frame1），与初始帧配对计算转轴")
         self.btn_capture_frame1.clicked.connect(self._on_capture_frame1)
         self.btn_capture_frame1.setEnabled(False)
         h.addWidget(self.btn_capture_frame1)
@@ -272,6 +274,7 @@ class TurntableWorkspace(QWidget):
         v.addWidget(self.lbl_frame1)
 
         self.btn_online_calib = QPushButton("在线标定转台")
+        self.btn_online_calib.setToolTip("根据初始帧与旋转帧计算转台旋转轴、旋转中心和单步角度")
         self.btn_online_calib.setObjectName("primary")
         self.btn_online_calib.clicked.connect(self._on_online_calibrate)
         self.btn_online_calib.setEnabled(False)
@@ -293,6 +296,7 @@ class TurntableWorkspace(QWidget):
 
         h = QHBoxLayout()
         self.btn_capture_step = QPushButton("拍摄当前步")
+        self.btn_capture_step.setToolTip("拍摄当前转台位置的数据并加入拼接序列；拍摄前请将转台转到对应步进位置")
         self.btn_capture_step.clicked.connect(self._on_capture_step)
         self.btn_capture_step.setEnabled(False)
         h.addWidget(self.btn_capture_step)
