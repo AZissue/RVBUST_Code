@@ -21,9 +21,10 @@
     的自动检测（缺可靠证据）。
   - **行为差异**：`initWithDeviceSerial()` 以前忽略 `SystemInit()` 的返回值，
     现在与 `listDevices()` 一致，返回 false 也按 SDK 未就绪处理。
-  - **验证（D 工作区）**：构建 exit 0（exe 15:31 刷新）、`ctest` **3/3**、
-    `unit_tests` **425 通过 / 0 失败 / 2 跳过**（新增 19 个用例，
-    `test_camera_connect_diagnosis`）。AICode 同步后同样构建 + ctest。
+  - **验证**：D 构建 exit 0（exe 15:31 刷新）、`ctest` **3/3**、`unit_tests`
+    **425 通过 / 0 失败 / 2 跳过**（新增 19 个用例，
+    `test_camera_connect_diagnosis`）；AICode 同步后同样构建 exit 0、`ctest`
+    3/3（exe 15:33）。代码提交：D `bb618d2`、AICode `4fca022`。
   - **人工验收**：界面清单见 `reports/阶段20-3.0-E05-相机连接诊断.md` §6
     （未接相机 / 网段不可达 / 占用 / 正常连接 / F1 / 日志 DIAG 行）。
   - **M1 未变**：仍等 M-02 真件可重放会话（5 特征 × ≥3 次）；数据没到之前
