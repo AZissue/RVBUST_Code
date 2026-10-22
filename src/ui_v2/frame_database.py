@@ -2,7 +2,8 @@
 from PySide6.QtCore import QObject, Qt, Signal, Slot, QEvent, QSignalBlocker
 from PySide6.QtWidgets import (QFileDialog, QHBoxLayout, QHeaderView, QLabel,
     QPushButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
-    QAbstractItemView, QMenu, QLayout, QSizePolicy, QSplitter)
+    QAbstractItemView, QMenu, QLayout, QSizePolicy, QSplitter,
+    QStyledItemDelegate, QStyleOptionViewItem, QStyle)
 from dataclasses import replace
 from pathlib import Path
 from contextlib import contextmanager
@@ -14,7 +15,25 @@ from . import icons
 from .dialogs import ChineseMessageBox as QMessageBox
 
 
+class _ComponentCheckDelegate(QStyledItemDelegate):
+    """Use the active style's checkbox geometry, including DPI and indentation."""
+
+    def check_rect(self, index):
+        view = self.parent()
+        option = QStyleOptionViewItem()
+        option.initFrom(view)
+        self.initStyleOption(option, index)
+        option.rect = view.visualRect(index)
+        return view.style().subElementRect(QStyle.SE_ItemViewItemCheckIndicator, option, view)
+
+
 class FrameBrowser(QWidget):
+    """Shared DB tree; component checks are transient processing inputs.
+
+    checked_components(component=None) returns ordered (frame_uid, component)
+    references, separate from preview/highlight selection and persisted data.
+    Consumers can subscribe to checked_components_changed(list).
+    """
     calibration_selected = Signal()
     frame_selected = Signal(str)
     component_selected = Signal(str, str)
@@ -23,6 +42,7 @@ class FrameBrowser(QWidget):
     delete_requested = Signal(list)
     recover_requested = Signal()
     manage_requested = Signal()
+    checked_components_changed = Signal(list)
 
     def __init__(self, database, parent=None):
         super().__init__(parent)
@@ -48,6 +68,9 @@ class FrameBrowser(QWidget):
         bar.addWidget(self.count)
         layout.addLayout(bar)
         self.tree = QTreeWidget()
+        self._check_delegate = _ComponentCheckDelegate(self.tree)
+        self.tree.setItemDelegate(self._check_delegate)
+        self._check_pressed = None
         self.tree.viewport().installEventFilter(self)
         self.tree.setHeaderLabels(['单帧 / 对应数据', '数据信息'])
         self.tree.headerItem().setToolTip(1, '点云显示文件点数，2D图像显示像素分辨率，分组显示数据数量。')
@@ -58,6 +81,7 @@ class FrameBrowser(QWidget):
         self.tree.setMinimumHeight(100)
         self.tree.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.tree.currentItemChanged.connect(self._selected)
+        self.tree.itemChanged.connect(self._component_check_changed)
         self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.tree.itemSelectionChanged.connect(self._selection_changed)
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -101,9 +125,13 @@ class FrameBrowser(QWidget):
         layout.addWidget(self.footer)
         self._items = {}
         self._component_items = {}
+        self._checks_database = database
+        self._published_checks = []
         self.refresh()
 
     def refresh(self):
+        checked = set(self.checked_components())
+        self._check_pressed = None
         selected = {(item.data(0, Qt.UserRole), item.data(0, Qt.UserRole + 2)) for item in self.tree.selectedItems()}
         expanded = set()
         def remember(item, key=''):
@@ -170,7 +198,10 @@ class FrameBrowser(QWidget):
             for component, item in components:
                 item.setData(0, Qt.UserRole, record.uid)
                 item.setData(0, Qt.UserRole + 2, component)
-                item.setToolTip(0, ('仅查看3D点云' if component == 'cloud' else '仅在右侧查看2D图像，不重载点云') + '\n删除操作针对所属完整帧，可在回收区恢复。')
+                item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+                item.setCheckState(0, Qt.Checked if (record.uid, component) in checked else Qt.Unchecked)
+                item.setToolTip(0, ('仅查看3D点云' if component == 'cloud' else '仅在右侧查看2D图像，不重载点云') +
+                    '\n复选框：勾选待处理数据，与预览及多选删除独立。\n删除操作针对所属完整帧，可在回收区恢复。')
                 self._component_items[(record.uid, component)] = item
         parameters = None
         if self.database.mode == 'multi_cam' or (project_root is not None and getattr(self.database, 'has_calibration', False)):
@@ -205,9 +236,40 @@ class FrameBrowser(QWidget):
                 item = self._items.get(uid)
             if item:
                 item.setSelected(True)
+        self._checks_database = self.database
         self.tree.blockSignals(False)
         self.count.setText(count_text)
         self._selection_changed()
+        self._publish_checks()
+
+    def checked_components(self, component=None):
+        """Return checked cloud/image references without loading geometry.
+
+        Checks survive refresh within this database, but are dropped on removal
+        or a database switch. They are not saved into the project/session.
+        """
+        if component not in (None, 'cloud', 'image'):
+            raise ValueError('component must be cloud, image or None')
+        if self._checks_database is not self.database:
+            return []
+        return [key for key, item in self._component_items.items()
+                if key[0] in self.database.records
+                and (component is None or key[1] == component)
+                and item.checkState(0) == Qt.Checked]
+
+    def set_component_checked(self, uid, component, checked=True):
+        """Set one available component; unknown references raise KeyError."""
+        self._component_items[(uid, component)].setCheckState(0, Qt.Checked if checked else Qt.Unchecked)
+
+    def _component_check_changed(self, item, column):
+        if column == 0 and item.data(0, Qt.UserRole + 2) in ('cloud', 'image'):
+            self._publish_checks()
+
+    def _publish_checks(self):
+        checked = self.checked_components()
+        if checked != self._published_checks:
+            self._published_checks = checked
+            self.checked_components_changed.emit(list(checked))
 
     def selected_ids(self):
         identifiers = set()
@@ -273,7 +335,23 @@ class FrameBrowser(QWidget):
 
     def eventFilter(self, watched, event):
         if watched is self.tree.viewport() and event.type() in (
-                QEvent.MouseButtonPress, QEvent.MouseButtonRelease):
+                QEvent.MouseButtonPress, QEvent.MouseButtonRelease, QEvent.MouseButtonDblClick):
+            if event.button() == Qt.LeftButton:
+                index = self.tree.indexAt(event.position().toPoint())
+                key = (index.data(Qt.UserRole), index.data(Qt.UserRole + 2))
+                on_check = (index.column() == 0 and key in self._component_items
+                            and self._check_delegate.check_rect(index).contains(event.position().toPoint()))
+                if event.type() == QEvent.MouseButtonPress and on_check:
+                    self._check_pressed = key
+                    return True
+                if event.type() == QEvent.MouseButtonRelease and self._check_pressed is not None:
+                    pressed, self._check_pressed = self._check_pressed, None
+                    if on_check and key == pressed:
+                        item = self._component_items[key]
+                        self.set_component_checked(*key, item.checkState(0) != Qt.Checked)
+                    return True
+                if event.type() == QEvent.MouseButtonDblClick and on_check:
+                    return True
             if event.button() == Qt.RightButton:
                 if event.type() == QEvent.MouseButtonPress:
                     self._select_context_target(event.position().toPoint())

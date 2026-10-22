@@ -200,6 +200,10 @@ class FrameBrowserTests(unittest.TestCase):
         self.assertEqual(canvas._cloud_markers[0][0], 37)
         np.testing.assert_allclose(canvas._cloud_markers[0][1][0], [10, 20, 30])
         count = canvas.total_points
+        # Marker annotations are now off by default; explicitly enable them
+        # before testing their geometry and rendered colors.
+        action = next(a for a in viewer.viewer().options_button.menu().actions() if a.text() == '编码圆圆心与编号')
+        action.setChecked(True)
         canvas.center = np.array([10., 20., 30.])
         canvas._notify_view_changed()
         self.app.processEvents()
@@ -207,7 +211,6 @@ class FrameBrowserTests(unittest.TestCase):
         colors = {image.pixelColor(x, y).name() for x in range(image.width()//2-10, image.width()//2+11)
                   for y in range(image.height()//2-10, image.height()//2+11)}
         self.assertIn('#4ee887', colors)
-        action = next(a for a in viewer.viewer().options_button.menu().actions() if a.text() == '编码圆圆心与编号')
         action.setChecked(False)
         self.assertFalse(canvas.marker_centers)
         action.setChecked(True)
