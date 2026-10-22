@@ -184,6 +184,59 @@ class IndustrialTests(unittest.TestCase):
         win.set_presentation('industrial')
         self.assertFalse(win._st_quality.isVisible())
 
+    def test_mobile_live_preview_reopens_hidden_or_collapsed_inspector(self):
+        win = self.win
+        win.resize(1400, 900)
+        win.set_mode('mobile_chain', [DeviceInfo(serial='A', backend_ref=0)])
+        win.set_presentation('industrial')
+        win.show()
+        self.app.processEvents()
+        ws = win.workspace_mobile()
+        p = ws._industrial
+        inspector = p.inspector
+        command = win._industrial_ribbon.commands[('mobile_chain', 'preview')]
+        spy = QSignalSpy(ws.preview_toggled)
+        pixmap = QPixmap(320, 240)
+        pixmap.fill()
+        for _ in range(2):
+            inspector.collapse.setChecked(True)
+            p.show_database_result()
+            command.click()
+            ws.live_view().set_frame(pixmap)
+            self.app.processEvents()
+            self.assertTrue(inspector.isVisible())
+            self.assertTrue(inspector.body.isVisible())
+            self.assertFalse(inspector.collapse.isChecked())
+            self.assertFalse(p._database_result)
+            self.assertGreater(inspector.image_view.height(), 90)
+            # Subsequent frames respect a manual collapse during streaming.
+            inspector.collapse.click()
+            ws.live_view().set_frame(pixmap)
+            self.assertTrue(inspector.collapse.isChecked())
+            command.click()
+            ws.live_view().set_frame(None)
+        self.assertEqual(spy.count(), 4)
+        # A frame arriving after viewing a DB result restores the live image.
+        ws.set_preview_enabled(True)
+        p.show_database_result()
+        ws.live_view().set_frame(pixmap)
+        self.assertTrue(inspector.isVisible())
+        self.assertFalse(p._database_result)
+        # Entering industrial while streaming in classic also expands 2D.
+        win.set_presentation('classic')
+        ws.live_view().set_frame(pixmap)
+        self.assertTrue(inspector.isHidden())
+        win.set_presentation('industrial')
+        self.app.processEvents()
+        self.assertTrue(inspector.body.isVisible())
+        self.assertFalse(inspector.collapse.isChecked())
+        ws._viewer.set_maximized(True)
+        ws.set_preview_enabled(False)
+        ws.set_preview_enabled(True)
+        self.app.processEvents()
+        self.assertTrue(inspector.isVisible())
+        self.assertTrue(p.side_column.isVisible())
+
     def test_marker_inspector_live_preview_and_failed_pair(self):
         win=self.win
         win.set_mode('mobile_chain',[]);win.set_presentation('industrial')

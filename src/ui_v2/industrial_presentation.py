@@ -347,6 +347,7 @@ class IndustrialPresentation:
                 self._mount(workspace._live_view, self.controls)
                 workspace._live_view.frame_changed.connect(self._preview_frame)
                 workspace._live_view.marker_context_changed.connect(self._marker_context)
+                workspace.preview_toggled.connect(self._mobile_preview_toggled)
                 buttons = QGroupBox('采集与会话')
                 actions = QVBoxLayout(buttons)
                 self.controls.addWidget(buttons)
@@ -463,6 +464,8 @@ class IndustrialPresentation:
         if self.inspector and enabled:
             self.inspector.bind_viewport(viewer.viewer().canvas)
             viewer.viewer().canvas_changed.connect(self._bind_canvas)
+            if self.mode == 'mobile_chain':
+                self._mobile_preview_toggled(self.workspace.is_preview_enabled())
 
     def _bind_canvas(self, canvas):
         if self.active:
@@ -487,6 +490,19 @@ class IndustrialPresentation:
     def _preview_frame(self, pixmap):
         if self.inspector:
             self.set_marker_image(pixmap.toImage() if pixmap is not None else None, [])
+            if self.active and self.mode == 'mobile_chain' and pixmap is not None:
+                self._database_result = False
+                self.inspector.show()
+                self.inspector.raise_()
+
+    def _mobile_preview_toggled(self, enabled):
+        if not enabled or not self.active:
+            return
+        self._database_result = False
+        self.workspace._viewer.set_maximized(False)
+        self.inspector.collapse.setChecked(False)
+        self.inspector.show()
+        self.inspector.raise_()
 
     def set_multi_view(self, view, *, resize=True):
         if self.mode != 'multi_cam' or view not in ('2d', 'joint', '3d'):
