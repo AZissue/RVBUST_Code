@@ -10,7 +10,8 @@ from __future__ import annotations
 
 from typing import Any, Optional, TYPE_CHECKING
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Signal, Qt
+from PySide6.QtGui import QShortcut, QKeySequence
 from PySide6.QtWidgets import QFrame, QVBoxLayout
 
 if TYPE_CHECKING:
@@ -25,6 +26,7 @@ class ViewerPanel(QFrame):
     """
 
     viewer_message = Signal(str)
+    renderer_changed = Signal(object)
     collapse_toggled = Signal(bool)
     """3D 查看器折叠/展开信号（True=展开，False=折叠）。"""
     maximize_toggled = Signal(bool)
@@ -59,6 +61,15 @@ class ViewerPanel(QFrame):
         self._viewer.collapse_toggled.connect(self.collapse_toggled.emit)
         self._viewer.maximize_toggled.connect(self.maximize_toggled.emit)
         root.addWidget(self._viewer, 1)
+        self._restore_shortcut = QShortcut(QKeySequence('Esc'), self)
+        self._restore_shortcut.setContext(Qt.WindowShortcut)
+        self._restore_shortcut.setEnabled(False)
+        self._restore_shortcut.activated.connect(self._restore_maximized)
+        self.maximize_toggled.connect(lambda on: self._restore_shortcut.setEnabled(on and self._industrial_enabled))
+
+    def _restore_maximized(self):
+        if self._industrial_enabled:
+            self._viewer.set_maximized(False)
 
     def set_industrial(self, enabled):
         if self._industrial_enabled == enabled:
@@ -76,6 +87,8 @@ class ViewerPanel(QFrame):
         self.layout().replaceWidget(old, candidate)
         self._viewer = candidate
         self._industrial_enabled = enabled
+        self._restore_shortcut.setEnabled(False)
+        self.renderer_changed.emit(candidate)
         old.hide()
         if hasattr(old, 'shutdown'):
             old.shutdown()

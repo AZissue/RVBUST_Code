@@ -153,6 +153,9 @@ class IndustrialPresentation:
         if not hasattr(workspace, 'frame_database'):
             workspace.frame_database = FrameDatabase(mode)
         self.frame_browser = FrameBrowser(workspace.frame_database)
+        property_viewer = workspace.viewer if mode == 'turntable' else workspace._viewer
+        property_viewer.renderer_changed.connect(self.frame_browser.properties.bind_renderer)
+        self.frame_browser.properties.bind_renderer(property_viewer.viewer())
         # Session/view actions live in the ribbon; keep the source controls for
         # existing controller bindings and context-menu shortcuts.
         self.frame_browser.footer.hide()

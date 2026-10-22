@@ -233,7 +233,7 @@ class FrameBrowserTests(unittest.TestCase):
         session.setSelected(True)
         self.assertEqual(set(self.browser.selected_ids()), {uid, second})
         with patch('ui_v2.frame_database.QMessageBox.question', return_value=QMessageBox.Yes):
-            self.browser.delete_button.click()
+            self.browser.delete_selected()
             self.wait(lambda: '已删除' in self.win._st_hint.text())
             self.wait(lambda: not any(w.isRunning() for w in self.bridge._workers))
         self.assertEqual(self.browser.count.text(), '0 帧')
@@ -327,7 +327,7 @@ class FrameBrowserTests(unittest.TestCase):
                 QTest.mousePress(tree.viewport(), Qt.RightButton, Qt.NoModifier, position)
                 self.assertIs(tree.currentItem(), target)
                 self.assertEqual(tree.selectedItems(), [target])
-                self.assertTrue(self.browser.delete_button.isEnabled())
+                self.assertTrue(self.browser.selected_ids())
                 QTest.mouseRelease(tree.viewport(), Qt.RightButton, Qt.NoModifier, position)
                 self.assertEqual(frames, [])
                 self.assertEqual(components, [])

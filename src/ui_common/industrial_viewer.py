@@ -65,6 +65,7 @@ class IndustrialViewer(QWidget):
         self.color_mode.currentTextChanged.connect(self._color)
         row.addWidget(self.color_mode)
         size = QSpinBox()
+        self.point_size_control = size
         size.setRange(1, 10)
         size.setValue(2)
         size.setPrefix('点大小 ')
@@ -79,10 +80,12 @@ class IndustrialViewer(QWidget):
         self.options_button.setText('显示选项')
         self.options_button.setPopupMode(QToolButton.InstantPopup)
         menu = QMenu(self.options_button)
+        self.display_actions = {}
         for label, attribute in (('参考网格', 'grid'), ('坐标轴', 'axes'), ('编码圆圆心与编号', 'marker_centers')):
             action = menu.addAction(label)
             action.setCheckable(True)
             action.setChecked(True)
+            self.display_actions[attribute] = action
             action.toggled.connect(lambda value, attr=attribute: self._display_option(attr, value))
         self.options_button.setMenu(menu)
         row.addWidget(self.options_button)
@@ -129,6 +132,11 @@ class IndustrialViewer(QWidget):
         self.canvas.set_rotation_geometry(*(geometry or (None, None)))
         self.canvas.set_cloud_markers(getattr(old, '_cloud_markers', []))
         self.canvas.marker_centers = getattr(old, 'marker_centers', True)
+        self.canvas.set_policy(self.quality.currentText())
+        self.canvas.color_mode = self.color_mode.currentText()
+        self.canvas.point_size = self.point_size_control.value()
+        for name, action in self.display_actions.items():
+            setattr(self.canvas, name, action.isChecked())
         self.canvas_changed.emit(self.canvas)
         self.status_changed.emit(str(message) + '；已切换软件兼容预览，显示点数受限。')
 
@@ -227,9 +235,16 @@ class IndustrialViewer(QWidget):
         self._refresh(fit=True)
 
     def set_view_preset(self, name):
-        self.canvas.set_view({'iso':'等轴测','top':'顶视','front':'正视','side':'右视','right':'右视'}.get(name,name))
+        value = {'iso':'等轴测','top':'顶视','front':'正视','side':'右视','right':'右视'}.get(name,name)
+        if self.view_preset.findText(value) >= 0 and self.view_preset.currentText() != value:
+            self.view_preset.setCurrentText(value)
+        else:
+            self.canvas.set_view(value)
 
     def set_point_size(self, size):
+        if self.point_size_control.value() != size:
+            self.point_size_control.setValue(size)
+            return
         self.canvas.point_size = size
         self.canvas.update()
 

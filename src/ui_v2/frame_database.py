@@ -2,7 +2,7 @@
 from PySide6.QtCore import QObject, Qt, Signal, Slot, QEvent, QSignalBlocker
 from PySide6.QtWidgets import (QFileDialog, QHBoxLayout, QHeaderView, QLabel,
     QPushButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
-    QAbstractItemView, QMenu, QLayout, QSizePolicy)
+    QAbstractItemView, QMenu, QLayout, QSizePolicy, QSplitter)
 from dataclasses import replace
 from pathlib import Path
 from contextlib import contextmanager
@@ -46,10 +46,6 @@ class FrameBrowser(QWidget):
         bar.addStretch()
         self.count = QLabel('0 帧')
         bar.addWidget(self.count)
-        self.delete_button = QPushButton('删除')
-        self.delete_button.setToolTip('删除选中原始帧、拼接结果或整批数据（可在右键菜单恢复）')
-        self.delete_button.clicked.connect(self.delete_selected)
-        bar.addWidget(self.delete_button)
         layout.addLayout(bar)
         self.tree = QTreeWidget()
         self.tree.viewport().installEventFilter(self)
@@ -63,10 +59,18 @@ class FrameBrowser(QWidget):
         self.tree.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.tree.currentItemChanged.connect(self._selected)
         self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        self.tree.itemSelectionChanged.connect(self._update_delete_button)
+        self.tree.itemSelectionChanged.connect(self._selection_changed)
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._context_menu)
-        layout.addWidget(self.tree, 1)
+        from .widgets.db_properties import DbProperties
+        self.properties = DbProperties()
+        self.property_splitter = QSplitter(Qt.Vertical)
+        self.property_splitter.setChildrenCollapsible(False)
+        self.property_splitter.addWidget(self.tree)
+        self.property_splitter.addWidget(self.properties)
+        self.properties.setMinimumHeight(220)
+        self.property_splitter.setSizes([260, 210])
+        layout.addWidget(self.property_splitter, 1)
         self.footer = QWidget()
         self.footer.setObjectName('frameBrowserFooter')
         self.footer.setStyleSheet('QWidget#frameBrowserFooter {background:#292929;border-top:1px solid #414141;}')
@@ -192,7 +196,7 @@ class FrameBrowser(QWidget):
                 item.setSelected(True)
         self.tree.blockSignals(False)
         self.count.setText(count_text)
-        self._update_delete_button()
+        self._selection_changed()
 
     def selected_ids(self):
         identifiers = set()
@@ -207,11 +211,53 @@ class FrameBrowser(QWidget):
             visit(item)
         return [uid for uid in self.database.records if uid in identifiers]
 
-    def _update_delete_button(self):
-        self.delete_button.setEnabled(bool(self.selected_ids()))
+    def _selection_changed(self):
+        self._update_properties()
         changed = getattr(self, '_edit_selection_changed', None)
         if changed:
             changed()
+
+    def _update_properties(self):
+        items = self.tree.selectedItems()
+        if not items:
+            self.properties.show_values({'提示': '请选择 DB 树中的数据'})
+            return
+        ids = self.selected_ids()
+        if len(items) > 1:
+            self.properties.show_values({'类型': '多项选择', '选中项': len(items),
+                '关联帧 / 结果': len(ids), '操作': '右键管理选中数据；删除子项将删除所属完整帧。'})
+            return
+        item = items[0]
+        component = item.data(0, Qt.UserRole + 2)
+        record = self.database.records.get(item.data(0, Qt.UserRole))
+        if record is None:
+            self.properties.show_values({'名称': item.text(0),
+                '类型': '标定参数' if component == 'calibration' else '数据分组',
+                '说明': item.text(1) or '—', '关联帧 / 结果': len(ids)})
+            return
+        result = record.kind == 'result'
+        values = {'名称': record.logical_name, '类型': '2D 图像' if component == 'image' else
+                  ('拼接点云' if result else '原始点云') if component == 'cloud' else
+                  ('拼接结果' if result else '原始帧'),
+                  '状态': record.status, '帧编号': f'{record.frame_id:03d}',
+                  '相机': record.camera, '用途': record.purpose}
+        if component != 'image':
+            values['有效点数' if result else '文件点槽位'] = f'{record.points:,}' if record.points is not None else '—'
+            values['坐标单位'] = 'mm'
+            if not result:
+                values['点数说明'] = '含有序点云无效占位点，非有效几何点数。'
+        if not result and component != 'cloud':
+            values['图像分辨率'] = f'{record.image_size[0]} × {record.image_size[1]} px'
+        if result:
+            values['来源帧数'] = len(record.source_ids)
+        else:
+            values['标记物数量'] = len(record.markers)
+        values['创建时间'] = record.created
+        values['数据版本'] = record.revision
+        folder = self.database.directory / 'frames' / record.uid
+        values['数据路径'] = str(folder / ('image.png' if component == 'image' else 'pointmap.ply')) if component else str(folder)
+        values['操作'] = '右键管理；点云 / 图像子项的删除作用于所属完整帧。'
+        self.properties.show_values(values)
 
     def delete_selected(self):
         identifiers = self.selected_ids()
@@ -234,7 +280,7 @@ class FrameBrowser(QWidget):
         if item and not item.isSelected():
             with QSignalBlocker(self.tree):
                 self.tree.setCurrentItem(item)
-            self._update_delete_button()
+            self._selection_changed()
 
     def _context_menu(self, position):
         # Also handles keyboard/programmatic context menu requests.
@@ -379,7 +425,7 @@ class FrameDatabaseController(QObject):
             browser.tree.setCurrentItem(None)
             browser.tree.clearSelection()
             browser.tree.blockSignals(False)
-            browser._update_delete_button()
+            browser._selection_changed()
         if (had_preview or mode in self._preview_modes) and hasattr(workspace, '_industrial'):
             workspace._industrial.restore_business_image()
         self._preview_modes.discard(mode)
@@ -411,7 +457,7 @@ class FrameDatabaseController(QObject):
             browser.tree.blockSignals(True)
             browser.tree.setCurrentItem(browser._component_items.get((uid, component)) if component != 'frame' else browser._items.get(uid))
             browser.tree.blockSignals(False)
-            browser._update_delete_button()
+            browser._selection_changed()
         workspace = self.bridge.shell._stack.currentWidget()
         viewer = workspace.viewer() if callable(workspace.viewer) else workspace.viewer
         if component != 'image':
