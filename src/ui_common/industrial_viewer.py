@@ -28,6 +28,7 @@ class IndustrialViewer(QWidget):
         self._pcds = {}
         self._merged = None
         self._database_cloud = None
+        self._database_clouds = {}
         self._database_previous_mode = None
         self._reference = None
         self._highlights = {}
@@ -162,7 +163,7 @@ class IndustrialViewer(QWidget):
         selected = self.mode.currentData()
         clouds = {'__merged__':self._merged} if selected == '__merged__' else self._pcds
         if selected == '__db_frame__':
-            clouds = {'DB原始单帧 / 相机坐标': self._database_cloud}
+            clouds = self._database_clouds
         elif selected not in (None,'__merged__'):
             clouds = {selected:self._pcds.get(selected)}
         layers = []
@@ -205,6 +206,7 @@ class IndustrialViewer(QWidget):
         self._pcds.clear()
         self._merged = None
         self._database_cloud = None
+        self._database_clouds = {}
         self._highlights.clear()
         self.mode.blockSignals(True)
         while self.mode.count() > 2:
@@ -217,13 +219,18 @@ class IndustrialViewer(QWidget):
         self.canvas.fit_view()
 
     def show_database_frame(self, cloud):
+        self.show_database_clouds({'DB原始单帧 / 相机坐标': cloud} if cloud is not None else {})
+
+    def show_database_clouds(self, clouds):
+        """Overlay independent DB geometries in their stored coordinates."""
+        self._database_clouds = dict(clouds)
+        self._database_cloud = next(iter(self._database_clouds.values()), None)
         self.mode.blockSignals(True)
-        if cloud is not None:
+        if self._database_clouds:
             if self.mode.currentData() != '__db_frame__':
                 self._database_previous_mode = self.mode.currentData()
-            self._database_cloud = cloud
             if self.mode.findData('__db_frame__') < 0:
-                self.mode.addItem('DB原始单帧 / 相机坐标', '__db_frame__')
+                self.mode.addItem('DB点云 / 存储坐标', '__db_frame__')
             self.mode.setCurrentIndex(self.mode.findData('__db_frame__'))
         else:
             self._database_cloud = None

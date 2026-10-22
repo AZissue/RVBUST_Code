@@ -38,6 +38,7 @@ class ViewerPanel(QFrame):
         self._clouds = {}
         self._merged = None
         self._database_cloud = None
+        self._database_clouds = {}
         self._reference = None
         self._rotation_geometry = (None, None)
         self._cloud_markers = []
@@ -104,7 +105,7 @@ class ViewerPanel(QFrame):
             candidate.set_pointcloud_merged(self._merged)
         candidate.show()
         if enabled and self._database_cloud is not None:
-            candidate.show_database_frame(self._database_cloud)
+            candidate.show_database_clouds(self._database_clouds)
 
     def _release_retired(self):
         from PySide6.QtCore import QTimer
@@ -151,16 +152,25 @@ class ViewerPanel(QFrame):
         self._clouds.clear()
         self._merged = None
         self._database_cloud = None
+        self._database_clouds = {}
         self._viewer.clear_all()
 
     def reset_view(self):
         self._viewer.reset_view()
 
     def show_database_frame(self, cloud):
+        self._database_clouds = {'DB原始单帧 / 相机坐标': cloud} if cloud is not None else {}
         self.set_cloud_markers([])
         self._database_cloud = cloud
         if hasattr(self._viewer, 'show_database_frame'):
             self._viewer.show_database_frame(cloud)
+
+    def show_database_clouds(self, clouds):
+        self.set_cloud_markers([])
+        self._database_clouds = dict(clouds)
+        self._database_cloud = next(iter(self._database_clouds.values()), None)
+        if hasattr(self._viewer, 'show_database_clouds'):
+            self._viewer.show_database_clouds(self._database_clouds)
 
     def set_view_preset(self, name: str):
         self._viewer.set_view_preset(name)

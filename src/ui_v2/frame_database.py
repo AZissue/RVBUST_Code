@@ -28,7 +28,7 @@ class _ComponentCheckDelegate(QStyledItemDelegate):
 
 
 class FrameBrowser(QWidget):
-    """Shared DB tree; component checks are transient processing inputs.
+    """Shared DB tree; component checks are transient display/processing inputs.
 
     checked_components(component=None) returns ordered (frame_uid, component)
     references, separate from preview/highlight selection and persisted data.
@@ -201,7 +201,9 @@ class FrameBrowser(QWidget):
                 item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
                 item.setCheckState(0, Qt.Checked if (record.uid, component) in checked else Qt.Unchecked)
                 item.setToolTip(0, ('仅查看3D点云' if component == 'cloud' else '仅在右侧查看2D图像，不重载点云') +
-                    '\n复选框：勾选待处理数据，与预览及多选删除独立。\n删除操作针对所属完整帧，可在回收区恢复。')
+                    ('\n复选框：在3D画布叠加显示；原始帧不应用标定变换。' if component == 'cloud'
+                     else '\n复选框：勾选待处理图像，与预览及多选删除独立。') +
+                    '\n删除操作针对所属完整帧，可在回收区恢复。')
                 self._component_items[(record.uid, component)] = item
         parameters = None
         if self.database.mode == 'multi_cam' or (project_root is not None and getattr(self.database, 'has_calibration', False)):
@@ -422,6 +424,8 @@ class FrameDatabaseController(QObject):
         self._selection = 0
         self._preview_modes = set()
         self._capture_target = threading.local()
+        from .db_cloud_overlay import DbCloudOverlay
+        self.overlay = DbCloudOverlay(self)
         for mode, database in self.databases.items():
             database.on_changed = lambda key=mode: self.changed.emit(key)
         self.changed.connect(self._changed)
@@ -471,15 +475,20 @@ class FrameDatabaseController(QObject):
         browser = self.browsers.get(mode)
         if browser:
             browser.refresh()
+            self.overlay.changed(mode, refresh=True)
         if hasattr(self.bridge.shell, '_industrial_ribbon'):
             self.bridge.shell._industrial_ribbon.update_status()
 
     def bind(self, mode, browser):
+        for previous in list(self.overlay.requested):
+            if previous != mode:
+                self.overlay.drop_inactive(previous)
         if mode in self.browsers:
             return
         self.browsers[mode] = browser
         browser.frame_selected.connect(lambda uid: self.select(mode, uid))
         browser.component_selected.connect(lambda uid, component: self.select(mode, uid, component))
+        browser.checked_components_changed.connect(lambda _: self.overlay.changed(mode))
         if mode == 'mobile_chain':
             workspace = self.bridge.shell.workspace_mobile()
             workspace._db_edit_gate = self.bridge.stitching.update_mobile_actions
@@ -495,6 +504,7 @@ class FrameDatabaseController(QObject):
 
     def restore(self, mode):
         self._selection += 1
+        self.overlay.reset(mode)
         if self.bridge._current_mode != mode:
             return
         workspace = self.bridge.shell._stack.currentWidget()
@@ -517,6 +527,10 @@ class FrameDatabaseController(QObject):
 
     def select(self, mode, uid, component='frame'):
         bridge = self.bridge
+        if self.overlay.active(mode) and component != 'image':
+            if component == 'cloud' or self.databases[mode].records[uid].kind == 'result':
+                return
+            component = 'image'
         if not bridge.can_change_workspace():
             bridge.shell.log('正在处理数据，请完成后查看DB单帧。', 'warn')
             return

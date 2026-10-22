@@ -1,0 +1,184 @@
+"""Raw DB overlays remain isolated from calibration and workflow geometry."""
+import threading
+import unittest
+from unittest.mock import patch
+import numpy as np
+import test_ui_frame_database as fixtures
+
+
+class OverlayTests(unittest.TestCase):
+    setUpClass = classmethod(fixtures.FrameBrowserTests.setUpClass.__func__)
+    setUp = fixtures.FrameBrowserTests.setUp
+    tearDown = fixtures.FrameBrowserTests.tearDown
+    source = fixtures.FrameBrowserTests.source
+    wait = fixtures.FrameBrowserTests.wait
+
+    def panel(self):
+        return self.win.workspace_multi().viewer()
+
+    def test_two_checked_raw_clouds_use_original_coordinates_and_cache(self):
+        first = self.db.ingest(self.source())
+        second = self.db.ingest(self.source(2))
+        original = {uid: np.asarray(self.db.load_frame(uid, 'cloud')[1].points).copy() for uid in (first, second)}
+        self.panel().set_pointcloud('工作点云', self.db.load_frame(first, 'cloud')[1])
+        workflow = self.panel()._clouds.copy()
+        with patch.object(self.db, 'load_frame', wraps=self.db.load_frame) as load:
+            self.browser.set_component_checked(first, 'cloud')
+            self.browser.set_component_checked(second, 'cloud')
+            self.wait(lambda: len(self.panel()._database_clouds) == 2)
+            self.wait(lambda: not any(worker.isRunning() for worker in self.bridge._workers))
+            self.assertEqual(load.call_count, 2)
+            for uid in (first, second):
+                cloud = next(cloud for key, cloud in self.panel()._database_clouds.items() if uid in key)
+                np.testing.assert_array_equal(np.asarray(cloud.points), original[uid])
+            self.browser.tree.setCurrentItem(self.browser._component_items[first, 'cloud'])
+            self.assertEqual(len(self.panel()._database_clouds), 2)
+            self.browser.set_component_checked(first, 'cloud', False)
+            self.wait(lambda: len(self.panel()._database_clouds) == 1)
+            self.assertEqual(load.call_count, 2)
+        self.assertEqual(self.panel()._clouds, workflow)
+        self.assertEqual(len(self.panel().viewer()._layers), 1)
+        self.assertIn('未应用标定变换', self.win._st_hint.text())
+        self.browser.tree.setCurrentItem(self.browser._component_items[second, 'image'])
+        self.wait(lambda: '的2D图像' in self.win._st_hint.text())
+        self.assertEqual(len(self.panel()._database_clouds), 1)
+        self.browser.set_component_checked(second, 'cloud', False)
+        self.assertEqual(self.panel()._database_clouds, {})
+        self.assertFalse(self.browser.checked_components('cloud'))
+        self.assertEqual(self.panel().viewer().mode.currentData(), None)
+        self.assertEqual(len(self.panel().viewer()._layers), 1)
+        np.testing.assert_array_equal(self.panel().viewer()._layers[0].points, original[first])
+
+    def test_clear_checks_while_reading_drops_late_result(self):
+        uid = self.db.ingest(self.source())
+        entered, release = threading.Event(), threading.Event()
+        load = self.db.load_frame
+        def delayed(*args):
+            entered.set()
+            release.wait(5)
+            return load(*args)
+        try:
+            with patch.object(self.db, 'load_frame', delayed):
+                self.browser.set_component_checked(uid, 'cloud')
+                self.wait(entered.is_set)
+                self.browser.set_component_checked(uid, 'cloud', False)
+                release.set()
+                self.wait(lambda: not self.bridge.frame_db.overlay._running)
+                self.assertEqual(self.panel()._database_clouds, {})
+                self.assertEqual(self.browser.checked_components('cloud'), [])
+        finally:
+            release.set()
+
+    def test_fast_changes_coalesce_and_keep_only_latest_checked_frames(self):
+        first = self.db.ingest(self.source())
+        second = self.db.ingest(self.source(2))
+        entered, release = threading.Event(), threading.Event()
+        load = self.db.load_frame
+        def delayed(*args):
+            if args[0] == first:
+                entered.set()
+                release.wait(5)
+            return load(*args)
+        try:
+            with patch.object(self.db, 'load_frame', delayed):
+                self.browser.set_component_checked(first, 'cloud')
+                self.wait(entered.is_set)
+                self.browser.set_component_checked(second, 'cloud')
+                self.browser.set_component_checked(first, 'cloud', False)
+                release.set()
+                self.wait(lambda: any(second in key for key in self.panel()._database_clouds))
+                self.assertEqual(len(self.panel()._database_clouds), 1)
+                self.assertFalse(any(first in key for key in self.panel()._database_clouds))
+        finally:
+            release.set()
+
+    def test_missing_cloud_is_unchecked_and_other_cloud_remains(self):
+        first = self.db.ingest(self.source())
+        second = self.db.ingest(self.source(2))
+        load = self.db.load_frame
+        def fail_one(uid, component):
+            if uid == second:
+                raise IOError('missing test PLY')
+            return load(uid, component)
+        with patch.object(self.db, 'load_frame', fail_one):
+            self.browser.set_component_checked(first, 'cloud')
+            self.browser.set_component_checked(second, 'cloud')
+            self.wait(lambda: bool(self.panel()._database_clouds))
+            self.wait(lambda: not self.bridge.frame_db.overlay._running)
+            self.assertEqual(self.browser.checked_components('cloud'), [(first, 'cloud')])
+            self.assertEqual(len(self.panel()._database_clouds), 1)
+
+    def test_restore_and_presentation_switch_clear_overlay_checks(self):
+        uid = self.db.ingest(self.source())
+        self.browser.set_component_checked(uid, 'cloud')
+        self.wait(lambda: bool(self.panel()._database_clouds))
+        self.bridge.frame_db.restore('multi_cam')
+        self.assertEqual(self.browser.checked_components('cloud'), [])
+        self.assertEqual(self.panel()._database_clouds, {})
+        self.browser.set_component_checked(uid, 'cloud')
+        self.wait(lambda: bool(self.panel()._database_clouds))
+        self.win.set_presentation('classic')
+        self.assertEqual(self.browser.checked_components('cloud'), [])
+        self.win.set_presentation('industrial')
+        self.assertEqual(self.panel()._database_clouds, {})
+
+    def test_record_revision_refresh_reloads_checked_cloud(self):
+        uid = self.db.ingest(self.source())
+        with patch.object(self.db, 'load_frame', wraps=self.db.load_frame) as load:
+            self.browser.set_component_checked(uid, 'cloud')
+            self.wait(lambda: bool(self.panel()._database_clouds))
+            self.wait(lambda: not self.bridge.frame_db.overlay._running)
+            old = self.panel()._database_cloud
+            self.db.records[uid].revision += 1
+            self.bridge.frame_db._changed('multi_cam')
+            self.wait(lambda: self.panel()._database_cloud is not None and self.panel()._database_cloud is not old)
+            self.assertEqual(load.call_count, 2)
+            self.assertEqual(self.browser.checked_components('cloud'), [(uid, 'cloud')])
+
+    def test_mode_switch_during_read_cannot_write_into_new_workspace(self):
+        uid = self.db.ingest(self.source())
+        entered, release = threading.Event(), threading.Event()
+        load = self.db.load_frame
+        def delayed(*args):
+            entered.set()
+            release.wait(5)
+            return load(*args)
+        try:
+            with patch.object(self.db, 'load_frame', delayed):
+                self.browser.set_component_checked(uid, 'cloud')
+                self.wait(entered.is_set)
+                self.win.set_mode('mobile_chain', [])
+                release.set()
+                self.wait(lambda: not self.bridge.frame_db.overlay._running)
+                self.assertEqual(self.panel()._database_clouds, {})
+                self.assertEqual(self.win.workspace_mobile().viewer()._database_clouds, {})
+                self.assertEqual(self.browser.checked_components('cloud'), [])
+        finally:
+            release.set()
+
+    def test_shared_overlay_works_in_all_three_modes(self):
+        for mode in ('multi_cam', 'mobile_chain', 'turntable'):
+            self.bridge._current_mode = mode
+            self.win.set_mode(mode, [])
+            self.win.set_presentation('industrial')
+            workspace = self.win._stack.currentWidget()
+            panel = workspace.viewer() if callable(workspace.viewer) else workspace.viewer
+            browser = workspace._industrial.frame_browser
+            database = self.bridge.frame_db.databases[mode]
+            uid = database.ingest(self.source())
+            browser.set_component_checked(uid, 'cloud')
+            self.wait(lambda: any(uid in key for key in panel._database_clouds))
+            self.assertEqual(len(panel.viewer()._layers), 1)
+            self.bridge.frame_db.restore(mode)
+            self.assertEqual(panel._database_clouds, {})
+
+    def test_cleanup_before_debounce_does_not_start_a_new_worker(self):
+        from PySide6.QtTest import QTest
+        uid = self.db.ingest(self.source())
+        with patch.object(self.db, 'load_frame', wraps=self.db.load_frame) as load:
+            self.browser.set_component_checked(uid, 'cloud')
+            self.bridge.cleanup()
+            QTest.qWait(80)
+            self.app.processEvents()
+            load.assert_not_called()
+            self.assertFalse(self.bridge.frame_db.overlay._running)
