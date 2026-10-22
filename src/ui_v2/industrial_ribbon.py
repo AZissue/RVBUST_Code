@@ -167,6 +167,8 @@ class IndustrialRibbon(QWidget):
                 button.setToolTip('返回启动窗口，选择工作区或切换离线预览')
             elif key in ('frame0', 'frame1'):
                 button.setFixedWidth(72)
+            elif mode == 'multi_cam' and key in ('capture', 'scan'):
+                button.setFixedWidth(80)
             elif key == 'restore':
                 button.setToolTip('返回工作视图：退出DB历史帧预览，恢复当前工作区的2D / 3D显示')
             elif key == 'manage':
@@ -202,8 +204,7 @@ class IndustrialRibbon(QWidget):
                 ('capture', '拍摄标定帧', 'camera', multi._btn_capture),
                 ('detect', '检测标记', 'detect', multi._btn_detect),
                 ('calibrate', '计算外参', 'calibrate', multi._btn_calibrate)]),
-                ('扫描拼接', [('scan', '拍摄扫描帧', 'camera', multi._btn_scan_capture),
-                           ('batch', '批量拼接', 'stitch', multi._btn_batch)])]
+                ('扫描采集', [('scan', '拍摄扫描帧', 'camera', multi._btn_scan_capture)])]
         elif mode == 'mobile_chain':
             groups = [('采集', [('preview', '实时取景', 'video', mobile._btn_preview),
                               ('capture', '拍摄机位', 'camera', mobile._btn_capture),
@@ -258,6 +259,7 @@ class IndustrialRibbon(QWidget):
             if getattr(getattr(multi, '_industrial', None), 'active', False):
                 self._hide_section(multi._btn_calibrate.parentWidget())
                 self._hide_section(multi._btn_scan_capture.parentWidget())
+                self._hide_section(multi._btn_batch.parentWidget())
             self.pages.setCurrentWidget(self._pages[mode])
             for button in self.commands.values():
                 if isinstance(button, CommandButton):

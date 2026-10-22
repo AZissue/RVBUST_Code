@@ -56,6 +56,8 @@ class RibbonTests(unittest.TestCase):
 
     def test_multicam_gate_updates_without_rebinding_and_locked_text_follows(self):
         ws = self.enter('multi_cam')
+        self.assertNotIn(('multi_cam', 'batch'), self.ribbon.commands)
+        self.assertTrue(ws._btn_batch.parentWidget().isHidden())
         detect = self.ribbon.commands[('multi_cam', 'detect')]
         capture = self.ribbon.commands[('multi_cam', 'capture')]
         spy = QSignalSpy(ws.detect_requested)
