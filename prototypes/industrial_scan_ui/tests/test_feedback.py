@@ -4,7 +4,6 @@ os.environ.setdefault('QT_QPA_PLATFORM','offscreen')
 import logging
 from pathlib import Path
 import sys
-import tempfile
 import threading
 import unittest
 from unittest.mock import patch
@@ -25,7 +24,7 @@ class FeedbackTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app=QApplication.instance() or QApplication([])
 
-    def test_filter_copy_export_bounds_and_plain_text(self):
+    def test_filter_bounds_and_plain_text(self):
         panel=ActivityLogPanel(max_records=3)
         panel.append('discard')
         panel.append('<a>&识别', 'info', '01', '检测')
@@ -35,14 +34,8 @@ class FeedbackTests(unittest.TestCase):
         panel.search.setText('[帧 02]');panel._render()
         self.assertEqual(len(panel.visible_records()),1)
         self.assertIn('bad frame',panel._text.toPlainText())
-        panel.copy_visible()
-        self.assertIn('[帧 02]',self.app.clipboard().text())
-        with tempfile.TemporaryDirectory() as folder:
-            path=Path(folder)/'中文日志.txt';panel.export_to(path)
-            self.assertEqual(path.read_text(encoding='utf-8'),self.app.clipboard().text())
         panel.search.clear();panel.level_filter.setCurrentIndex(1);panel._render()
         self.assertIn('<a>&识别',panel._text.toPlainText())
-        panel.clear();self.assertFalse(panel.records);self.assertEqual(panel._text.toPlainText(),'')
         panel.deleteLater()
 
     def test_folding_shared_widget_and_thread_logger_no_duplicates(self):
@@ -64,15 +57,23 @@ class FeedbackTests(unittest.TestCase):
         panel.detach_loggers();self.assertFalse(logger.handlers)
         panel.close();panel.deleteLater()
 
-    def test_incremental_log_and_paused_scroll(self):
+    def test_incremental_log_follows_latest_and_reopen_scrolls_to_bottom(self):
         panel=ActivityLogPanel(max_records=100)
         panel.show()
         for i in range(80):panel.append(str(i))
-        panel._render();panel.auto_scroll.setChecked(False)
+        panel._render()
         bar=panel._text.verticalScrollBar();bar.setValue(3)
         panel.append('tail');panel._render()
-        self.assertEqual(bar.value(),3)
+        self.assertGreater(bar.maximum(), 3)
+        self.assertEqual(bar.value(),bar.maximum())
         self.assertEqual(len(panel._text.toPlainText().splitlines()),81)
+        bar.setValue(0)
+        panel.hide();panel.append('hidden tail');panel.show();self.app.processEvents()
+        self.assertEqual(bar.value(),bar.maximum())
+        self.assertTrue(panel._text.toPlainText().endswith('hidden tail'))
+        bar.setValue(0)
+        panel.hide();panel.show();self.app.processEvents()
+        self.assertEqual(bar.value(),bar.maximum())
         panel.close();panel.deleteLater()
 
     def test_frame_selection_failure_undo_and_metadata_without_cloud_rebuild(self):

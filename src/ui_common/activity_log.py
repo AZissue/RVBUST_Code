@@ -2,12 +2,10 @@
 from collections import deque
 from datetime import datetime
 import logging
-from pathlib import Path
 from PySide6.QtCore import Qt, Signal, QObject, QTimer
 from PySide6.QtGui import QColor, QTextCharFormat, QTextCursor
-from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QVBoxLayout,
-    QLabel, QPushButton, QComboBox, QLineEdit, QCheckBox, QPlainTextEdit,
-    QWidget, QFileDialog, QMessageBox)
+from PySide6.QtWidgets import (QFrame, QHBoxLayout, QVBoxLayout,
+    QLabel, QPushButton, QComboBox, QLineEdit, QPlainTextEdit, QWidget)
 
 
 class _Relay(QObject):
@@ -85,28 +83,19 @@ class ActivityLogPanel(QFrame):
         self.search.setPlaceholderText('搜索内容 / 帧 / 任务')
         self.search.setClearButtonEnabled(True)
         filters.addWidget(self.search, 1)
+        self.count = QLabel('0 条')
+        filters.addWidget(self.count)
         body.addLayout(filters)
         self._text = QPlainTextEdit()
         self._text.setReadOnly(True)
         if docked:
             self._text.setMinimumHeight(30)
         self._text.setMaximumBlockCount(max_records)
+        self._text.verticalScrollBar().rangeChanged.connect(self._scroll_to_latest)
         body.addWidget(self._text, 1)
-        footer = QHBoxLayout()
-        self.auto_scroll = QCheckBox('自动滚动')
-        self.auto_scroll.setChecked(True)
-        footer.addWidget(self.auto_scroll)
-        self.count = QLabel('0 条')
-        footer.addWidget(self.count, 1)
-        for label, callback in [('复制', self.copy_visible), ('导出', self.export_dialog), ('清空', self.clear)]:
-            button = QPushButton(label)
-            button.clicked.connect(callback)
-            footer.addWidget(button)
-        body.addLayout(footer)
         root.addWidget(self.body, 1)
         self.level_filter.currentIndexChanged.connect(self._schedule)
         self.search.textChanged.connect(self._schedule)
-        self.auto_scroll.toggled.connect(self._schedule)
         self.setMinimumWidth(340)
         self.resize(540, self._normal_height)
 
@@ -155,13 +144,16 @@ class ActivityLogPanel(QFrame):
 
     def showEvent(self, event):
         super().showEvent(event)
-        self._schedule()
+        self._render()
+        QTimer.singleShot(0, self._scroll_to_latest)
+
+    def _scroll_to_latest(self, *_):
+        bar = self._text.verticalScrollBar()
+        bar.setValue(bar.maximum())
 
     def _render(self):
         self._render_timer.stop()
         rows = self.visible_records()
-        bar = self._text.verticalScrollBar()
-        previous = bar.value()
         self._text.setUpdatesEnabled(False)
         old = self._rendered_rows
         incremental = len(rows) >= len(old) and all(a is b for a, b in zip(old, rows))
@@ -178,26 +170,8 @@ class ActivityLogPanel(QFrame):
             cursor.insertText(self._line(row), style)
         self._text.setUpdatesEnabled(True)
         self._rendered_rows = rows
-        bar.setValue(bar.maximum() if self.auto_scroll.isChecked() else previous)
+        self._scroll_to_latest()
         self.count.setText(f'{len(rows)} / {len(self.records)} 条')
-
-    def copy_visible(self):
-        QApplication.clipboard().setText('\n'.join(self._line(row) for row in self.visible_records()))
-
-    def export_to(self, path):
-        Path(path).write_text('\n'.join(self._line(row) for row in self.visible_records()), encoding='utf-8')
-
-    def export_dialog(self):
-        path, _ = QFileDialog.getSaveFileName(self, '导出当前筛选日志', 'scan_log.txt', '日志 (*.txt)')
-        if path:
-            try:
-                self.export_to(path)
-            except OSError as exc:
-                QMessageBox.warning(self, '导出失败', str(exc))
-
-    def clear(self):
-        self.records.clear()
-        self._render()
 
     def _toggle_collapse(self):
         if self._docked:
