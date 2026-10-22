@@ -21,10 +21,16 @@
     的自动检测（缺可靠证据）。
   - **行为差异**：`initWithDeviceSerial()` 以前忽略 `SystemInit()` 的返回值，
     现在与 `listDevices()` 一致，返回 false 也按 SDK 未就绪处理。
-  - **验证**：D 构建 exit 0（exe 15:31 刷新）、`ctest` **3/3**、`unit_tests`
+  - **文案定稿（16:40 追加）**：现场反馈按 RVCManager 操作更顺，把「网段不一致」
+    的建议改成先指 RVCManager「一键配置」（顺带调拍摄参数），手动改网卡降为
+    备选；「没枚举到任何相机」「IP 冲突」「F1 不可达」三处同步。**没有**在相机
+    列表加"一键配置 IP"：`AutoConfigureNetwork()` 会配置所有非 OK 设备（含
+    LightMachine、含别人正在用的相机）、自动挑地址也不符合现场固定 IP 约定，
+    理由见报告 §8。提交：D `341d7ce`、AICode `0585201`。
+  - **验证**：D 构建 exit 0（exe 16:40 刷新）、`ctest` **3/3**、`unit_tests`
     **425 通过 / 0 失败 / 2 跳过**（新增 19 个用例，
     `test_camera_connect_diagnosis`）；AICode 同步后同样构建 exit 0、`ctest`
-    3/3（exe 15:33）。代码提交：D `bb618d2`、AICode `4fca022`。
+    3/3（exe 16:43）。代码提交：D `bb618d2`、AICode `4fca022`。
   - **人工验收**：界面清单见 `reports/阶段20-3.0-E05-相机连接诊断.md` §6
     （未接相机 / 网段不可达 / 占用 / 正常连接 / F1 / 日志 DIAG 行）。
   - **M1 未变**：仍等 M-02 真件可重放会话（5 特征 × ≥3 次）；数据没到之前
