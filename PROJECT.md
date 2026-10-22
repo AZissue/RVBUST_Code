@@ -95,7 +95,9 @@
   已知问题表），与本条判据无关。
 - [ ] 交互：连拍中 2D/3D 视图连续拖拽 5 秒后 3 秒内恢复响应、停止按钮可用；
   除相机采集时间外，点击拍照到数据显示的额外耗时 ≤1.5s。
-- [ ] 绿色包：目标机免装 VC++/RVC/HandEyeSDK 启动通过；保存路径不可用自动回退。
+- [x] 绿色包：目标机免装 VC++/RVC/HandEyeSDK 启动通过；保存路径不可用自动回退。
+  → 2026-10-22 用户现场执行 `HandEyeCalibrationTool_v2.0.zip` 通过。
+  （该包按发布配置隐藏了 7 个未验收的测量工具；测量精度一条仍单列为未完成。）
 - [ ] 回归：单测 100% 通过、构建无错误；识别/保存/3D/日志全流程回归通过。
 - [ ] 收尾：`tools-panel` 分支合并回 main，README 状态更新为 v2.0，根索引同步。
 - [ ] 测量精度：**3D 孔洞**（原「孔径(孔洞边界法)」与「圆环拟合」已合并成一个工具，
@@ -174,3 +176,4 @@
 | 2026-10-19 | 「姿态格式 / 位姿格式」统一为**「机器人数据格式」**：新增 `RobotDataFormats.{h,cpp}` 作唯一目录（30 项：24 种欧拉约定 + 旋转矢量 + 2 四元数 + 4×4 矩阵 + 2 个 3×3 矩阵，常用 19 / 高级 11），`TransformTools` 只留通用数学，标定页与坐标转换页的下拉框都由目录生成；品牌移入三行提示。新增**「机器人数据格式推算」**页：基轴/工具轴点动实验（必须选点动轴，两组不同轴可唯一判定 24 种）+ 标定残差入口；判定唯一时可一键应用为全局预设 | `RobotDataFormats.*`、`TransformTools.h`、`CalibrationService.*`、`AppConfig.*`、`ToolsPanel.*`、`HelpContent.h`、`tests/test_robot_data_formats.*`、`tests/test_calibration_service.*`、`tests/test_transform_tools.*`、`reports/阶段15-机器人数据格式目录与推算.md` | AI/用户确认 |
 | 2026-10-19 | 用户跑过程序后的三处修正：①恢复 **4×4 姿态变换矩阵**（`Matrix4x4Row=29`，`poseType=3`，坐标转换页只收 16 个数、位置取第 4 列）②所有 `s*` 条目「静态 XYZ」改为**「外旋 XYZ」**，RPY 别名留在提示行 ③**「试算各格式」从标定页迁到推算页方式 ③**（用当前会话 / 选文件夹，标定参数仍共用标定页）。标定页格式提示补一行解释卡片固定 6 个数；另按方案 A 加 `CalibrationService::sdkPoseType()` 并在提示行写明最终交给 SDK 的 `poseType`（0 / 3 / 不发送） | `RobotDataFormats.*`、`ToolsPanel.*`、`HelpContent.h`、`CalibrationService.*`、`EfortPoseReader.h`、`tests/test_robot_data_formats.*`、`tests/test_calibration_service.*`、`reports/阶段15-机器人数据格式目录与推算.md` | AI/用户确认 |
 | 2026-10-19 | 第二轮现场反馈：①`EulerRzyz` 移入高级档（常用 18 / 高级 12，两档互斥）②标定页三个文件行加「浏览」并在选别的目录时同步改数据文件夹；推算页方式 ③ 自带「标定数据」输入组，与标定页双向同步，删掉两个冗余按钮 ③方式 ③ 隐藏「角度单位」与「推算 / 应用」整行 ④给出文件处理解耦的分阶段结论（先抽只读层，写入不动） | `RobotDataFormats.*`、`ToolsPanel.*`、`HelpContent.h`、`tests/test_robot_data_formats.cpp`、`reports/阶段15-机器人数据格式目录与推算.md` | AI/用户确认 |
+| 2026-10-22 | **2.0 现场验收通过并冻结**：用户现场执行 v2.0 发布包「没问题，已通过」；阶段 11 关闭；7 个测量工具按交付范围隐藏，转入 3.0 解禁目标；3.0 盘点见 `reports/3.0-规划.md` | `PLAN.md`、`STATUS.md`、`PROJECT.md`、`reports/3.0-规划.md` | AI/用户确认 |
