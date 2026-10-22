@@ -8,9 +8,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent / 'src'))
-from PySide6.QtCore import Qt, QPoint, QSignalBlocker, QItemSelectionModel
+from PySide6.QtCore import Qt, QPoint, QSignalBlocker, QItemSelectionModel, QRectF
 from PySide6.QtTest import QTest, QSignalSpy
-from PySide6.QtWidgets import QApplication, QStyleFactory
+from PySide6.QtWidgets import QApplication, QStyleFactory, QStyle, QStyleOptionViewItem
 from core.frame_database import FrameDatabase, FrameRecord
 from ui_v2.frame_database import FrameBrowser
 from ui_v2 import GLOBAL_QSS
@@ -144,6 +144,47 @@ class ComponentCheckTests(unittest.TestCase):
         tree.setCurrentItem(browser._items['raw'])
         tree.clearSelection()
         self.assertIsNone(tree.currentItem())
+
+    def test_checkbox_uses_actual_paint_alignment_for_text_and_icon(self):
+        browser = self.show_browser(self.database('mobile_chain'))
+        tree = browser.tree
+        delegate = browser._check_delegate
+        original = type(delegate).paint
+        observed = []
+
+        def capture(instance, painter, option, index):
+            if index.data(Qt.CheckStateRole) is not None:
+                actual = QStyleOptionViewItem(option)
+                instance.initStyleOption(actual, index)
+                style = tree.style()
+                expected = style.subElementRect(QStyle.SE_ItemViewItemCheckIndicator, actual, tree)
+                icon = style.subElementRect(QStyle.SE_ItemViewItemDecoration, actual, tree)
+                text = style.subElementRect(QStyle.SE_ItemViewItemText, actual, tree)
+                observed.append((instance.check_rect(index), expected, icon, text))
+            original(instance, painter, option, index)
+
+        class RecordingDelegate(type(delegate)):
+            def paint(self, painter, option, index):
+                capture(self, painter, option, index)
+
+        recording = RecordingDelegate(tree)
+        tree.setItemDelegate(recording)
+        try:
+            for name in QStyleFactory.keys():
+                with self.subTest(style=name):
+                    self.app.setStyle(QStyleFactory.create(name))
+                    self.app.processEvents()
+                    observed.clear()
+                    tree.viewport().repaint()
+                    tree.viewport().grab()
+                    self.assertGreaterEqual(len(observed), 2)
+                    for hit, expected, icon, text in observed:
+                        self.assertEqual(hit, expected)
+                        center = QRectF(hit).center().y()
+                        self.assertLessEqual(abs(center - QRectF(icon).center().y()), .5)
+                        self.assertLessEqual(abs(center - QRectF(text).center().y()), .5)
+        finally:
+            self.app.setStyle('Fusion')
 
     def test_focused_unselected_cell_has_no_red_pixels_in_windows_styles(self):
         from ui_v2.theme import LAUNCHER_QSS

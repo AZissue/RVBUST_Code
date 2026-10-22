@@ -23,7 +23,8 @@ def paint_component_check(painter, option, index, rect):
     border = '#E66A6D' if checked or hovered else '#777B84'
     if not enabled:
         fill, border = '#393B40', '#55585F'
-    box = QRectF(rect.center().x() - 7.5, rect.center().y() - 7.5, 16, 16)
+    center = QRectF(rect).center()
+    box = QRectF(center.x() - 8, center.y() - 8, 16, 16)
     painter.save()
     painter.setRenderHint(QPainter.Antialiasing)
     painter.setBrush(QColor(fill))

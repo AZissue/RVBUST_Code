@@ -29,7 +29,9 @@ class _ComponentCheckDelegate(QStyledItemDelegate):
     def check_rect(self, index):
         view = self.parent()
         option = QStyleOptionViewItem()
-        option.initFrom(view)
+        # Match the option used by the view's paint pass, including vertical
+        # text/icon alignment and decoration size (initFrom alone omits these).
+        view.initViewItemOption(option)
         self.initStyleOption(option, index)
         option.rect = view.visualRect(index)
         return view.style().subElementRect(QStyle.SE_ItemViewItemCheckIndicator, option, view)
