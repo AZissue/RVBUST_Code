@@ -120,6 +120,28 @@ class ComponentCheckTests(unittest.TestCase):
         self.assertEqual(components.count(), 1)
         self.assertEqual(browser.selected_ids(), ['raw'])
 
+    def test_blank_click_clears_current_cell_and_selection_but_keeps_checks(self):
+        browser = self.show_browser(self.database())
+        tree = browser.tree
+        browser.set_component_checked('raw', 'cloud')
+        browser.set_component_checked('raw', 'image')
+        tree.setCurrentItem(browser._component_items['raw', 'cloud'])
+        browser._items['result'].setSelected(True)
+        frames, components = QSignalSpy(browser.frame_selected), QSignalSpy(browser.component_selected)
+        checks = QSignalSpy(browser.checked_components_changed)
+        QTest.mouseClick(tree.viewport(), Qt.LeftButton,
+                         pos=QPoint(15, tree.viewport().height()-10))
+        self.app.processEvents()
+        self.assertEqual(tree.selectedItems(), [])
+        self.assertIsNone(tree.currentItem())
+        self.assertFalse(tree.currentIndex().isValid())
+        self.assertEqual(browser.checked_components(), [('raw', 'cloud'), ('raw', 'image')])
+        self.assertEqual(frames.count()+components.count()+checks.count(), 0)
+        self.assertIn('提示', browser.properties.values)
+        tree.setCurrentItem(browser._items['raw'])
+        tree.clearSelection()
+        self.assertIsNone(tree.currentItem())
+
 
 if __name__ == '__main__':
     unittest.main()

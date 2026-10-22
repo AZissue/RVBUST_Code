@@ -43,6 +43,7 @@ class FrameBrowser(QWidget):
     recover_requested = Signal()
     manage_requested = Signal()
     checked_components_changed = Signal(list)
+    selection_cleared = Signal()
 
     def __init__(self, database, parent=None):
         super().__init__(parent)
@@ -287,10 +288,27 @@ class FrameBrowser(QWidget):
         return [uid for uid in self.database.records if uid in identifiers]
 
     def _selection_changed(self):
+        if not self.tree.selectedItems():
+            self.tree.setToolTip('')
+        if not self.tree.selectedItems() and self.tree.currentItem() is not None:
+            with QSignalBlocker(self.tree):
+                self.tree.setCurrentItem(None)
+            self.selection_cleared.emit()
         self._update_properties()
         changed = getattr(self, '_edit_selection_changed', None)
         if changed:
             changed()
+
+    def clear_highlight(self):
+        """Clear row selection and its focus cell, keeping component checks."""
+        had_selection = bool(self.tree.selectedItems()) or self.tree.currentItem() is not None
+        with QSignalBlocker(self.tree):
+            self.tree.setCurrentItem(None)
+            self.tree.clearSelection()
+        self._selection_changed()
+        self.tree.viewport().update()
+        if had_selection:
+            self.selection_cleared.emit()
 
     def _update_properties(self):
         items = self.tree.selectedItems()
@@ -353,6 +371,10 @@ class FrameBrowser(QWidget):
                         self.set_component_checked(*key, item.checkState(0) != Qt.Checked)
                     return True
                 if event.type() == QEvent.MouseButtonDblClick and on_check:
+                    return True
+                if not index.isValid():
+                    if event.type() in (QEvent.MouseButtonPress, QEvent.MouseButtonDblClick):
+                        self.clear_highlight()
                     return True
             if event.button() == Qt.RightButton:
                 if event.type() == QEvent.MouseButtonPress:
@@ -489,6 +511,7 @@ class FrameDatabaseController(QObject):
         browser.frame_selected.connect(lambda uid: self.select(mode, uid))
         browser.component_selected.connect(lambda uid, component: self.select(mode, uid, component))
         browser.checked_components_changed.connect(lambda _: self.overlay.changed(mode))
+        browser.selection_cleared.connect(lambda: self._cancel_selection(mode))
         if mode == 'mobile_chain':
             workspace = self.bridge.shell.workspace_mobile()
             workspace._db_edit_gate = self.bridge.stitching.update_mobile_actions
@@ -501,6 +524,10 @@ class FrameDatabaseController(QObject):
         browser.delete_requested.connect(lambda identifiers: self.remove(mode, identifiers))
         browser.recover_requested.connect(lambda: self.recover(mode))
         browser.refresh()
+
+    def _cancel_selection(self, mode):
+        if mode == self.bridge._current_mode:
+            self._selection += 1
 
     def restore(self, mode):
         self._selection += 1

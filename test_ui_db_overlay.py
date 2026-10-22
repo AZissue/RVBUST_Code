@@ -42,6 +42,14 @@ class OverlayTests(unittest.TestCase):
         self.browser.tree.setCurrentItem(self.browser._component_items[second, 'image'])
         self.wait(lambda: '的2D图像' in self.win._st_hint.text())
         self.assertEqual(len(self.panel()._database_clouds), 1)
+        from PySide6.QtCore import QPoint, Qt
+        from PySide6.QtTest import QTest
+        tree = self.browser.tree
+        QTest.mouseClick(tree.viewport(), Qt.LeftButton,
+                         pos=QPoint(15, tree.viewport().height()-10))
+        self.assertIsNone(tree.currentItem())
+        self.assertEqual(len(self.panel()._database_clouds), 1)
+        self.assertEqual(self.browser.checked_components('cloud'), [(second, 'cloud')])
         self.browser.set_component_checked(second, 'cloud', False)
         self.assertEqual(self.panel()._database_clouds, {})
         self.assertFalse(self.browser.checked_components('cloud'))
@@ -182,3 +190,28 @@ class OverlayTests(unittest.TestCase):
             self.app.processEvents()
             load.assert_not_called()
             self.assertFalse(self.bridge.frame_db.overlay._running)
+
+    def test_blank_click_invalidates_late_single_preview_selection(self):
+        from PySide6.QtCore import QPoint, Qt
+        from PySide6.QtTest import QTest
+        uid = self.db.ingest(self.source())
+        entered, release = threading.Event(), threading.Event()
+        load = self.db.load_frame
+        def delayed(*args):
+            entered.set()
+            release.wait(5)
+            return load(*args)
+        try:
+            with patch.object(self.db, 'load_frame', delayed):
+                tree = self.browser.tree
+                tree.setCurrentItem(self.browser._component_items[uid, 'cloud'])
+                self.wait(entered.is_set)
+                QTest.mouseClick(tree.viewport(), Qt.LeftButton,
+                                 pos=QPoint(15, tree.viewport().height()-10))
+                release.set()
+                self.wait(lambda: not any(worker.isRunning() for worker in self.bridge._workers))
+                self.assertIsNone(tree.currentItem())
+                self.assertEqual(tree.selectedItems(), [])
+                self.assertIsNone(self.panel()._database_cloud)
+        finally:
+            release.set()
