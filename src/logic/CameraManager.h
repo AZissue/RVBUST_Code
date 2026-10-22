@@ -16,6 +16,8 @@
 #include "logic/FrameBuffer.h"
 #include "logic/CameraFrameCache.h"
 #include "logic/CameraHealthMonitor.h"
+// 连接失败的原因分类与现场提示（纯函数，见 CameraConnectDiagnosis.h）。
+#include "logic/CameraConnectDiagnosis.h"
 
 // Forward-declare RVC types to avoid leaking RVC headers into all consumers
 namespace RVC {
@@ -34,7 +36,9 @@ struct DeviceEntry {
     QString serial;
     bool isX1 = false;
     bool isX2 = false;
-    bool occupied = false;
+    // GigE 链路状态（USB 相机固定 Ok）。设备列表直接把它显示成
+    // 可用 / 占用 / 不可达 / IP 冲突——连之前就能看出是哪一类问题。
+    CameraConnect::NetworkStatus network = CameraConnect::NetworkStatus::Unknown;
 };
 
 class CameraManager : public QObject {
@@ -64,6 +68,11 @@ public:
         QString detail;            // error text when !released
     };
     ReleaseReport lastRelease() const { return m_lastRelease; }
+
+    // E-05: 上一次连接失败的**短标题**（"相机被占用" / "相机网络不可达"…）。
+    // 完整建议已经通过 cameraError 发到左侧提示；界面用它给 toast，避免
+    // 只剩一句"相机连接失败"。连接成功后清空。
+    QString lastConnectHeadline() const { return m_lastConnectHeadline; }
 
     // Crash path only (called from the SEH filter's release thread, never from
     // the normal workflow).  Drops the SDK-wide resources with no per-device
@@ -270,6 +279,9 @@ private:
     // *reconnect* still tears the new session down).
     bool m_released = false;
     ReleaseReport m_lastRelease;
+    // 上一次连接失败的短标题（E-05）。连接在 UI 线程同步执行，成功后清空，
+    // 所以调用方在 initWithDeviceSerial() 返回 false 后立刻读是安全的。
+    QString m_lastConnectHeadline;
     int m_connectRetryCount = 3;
     std::atomic<bool> m_previewBusy{false};
     int  m_previewGen = 0;
@@ -296,6 +308,10 @@ private:
     // read-only mirror).  Must be called with the device lock held; returns false
     // when the device reports nothing, in which case the previous mirror stands.
     bool loadCameraOptionsLocked(const char* who);
+
+    // E-05: 归类一次连接失败并发出「原因 + 处理顺序」的提示（cameraError），
+    // 同时记下短标题给界面。永远返回 false，方便调用点直接 `return`。
+    bool emitConnectFailure(CameraConnect::Evidence evidence, int retriesTried);
     // One runtime-log line naming the camera's own exposure/gain *and* the
     // options that decide the shape of a capture (mode / correspond2d / 2D 开关
     // / 投影 / 坐标系).  This is the only place those are visible to us now.

@@ -37,6 +37,7 @@
 #include "test_app_info.h"
 #include "test_help_content.h"
 #include "test_robot_program.h"
+#include "test_camera_connect_diagnosis.h"
 
 namespace {
 
@@ -237,6 +238,12 @@ int main(int argc, char** argv)
         // 第 17 阶段 P1：机器人程序节点 JSON / 点动规则 / 执行器 / 仿真后端。
         TestRobotProgram t31;
         status |= runClass(&t31, argc, argv, "robot_program");
+    }
+    {
+        // 3.0 E-05：相机连接失败的原因分类（驱动/枚举/掉线/占用/网段/IP 冲突）
+        // 与提示文案，纯函数，不连相机。
+        TestCameraConnectDiagnosis t32;
+        status |= runClass(&t32, argc, argv, "camera_connect_diagnosis");
     }
     return status;
 }

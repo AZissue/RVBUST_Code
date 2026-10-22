@@ -129,26 +129,40 @@ void DeviceListDialog::populateTable(const std::vector<DeviceEntry>& devices)
         // Serial
         auto* snItem = new QTableWidgetItem(dev.serial);
 
-        // Status
+        // Status.  E-05: 占用/不可达/IP 冲突在点「连接」之前就能看出来，
+        // 不用等一句笼统的"连接失败"再去查。
         QString statusText;
         QColor  statusColor;
-        if (dev.occupied) {
+        bool    blocked = false;   // 占用时禁止选中：连也连不上
+        switch (dev.network) {
+        case CameraConnect::NetworkStatus::InUse:
             statusText  = QStringLiteral("占用");
             statusColor = QColor(Theme::ERROR);
-        } else {
+            blocked     = true;
+            break;
+        case CameraConnect::NetworkStatus::NotReachable:
+            statusText  = QStringLiteral("不可达（查网段）");
+            statusColor = QColor(Theme::WARNING);
+            break;
+        case CameraConnect::NetworkStatus::Conflict:
+            statusText  = QStringLiteral("IP 冲突");
+            statusColor = QColor(Theme::WARNING);
+            break;
+        default:
             statusText  = QStringLiteral("可用");
             statusColor = QColor(Theme::SUCCESS);
+            break;
         }
         auto* statusItem = new QTableWidgetItem(statusText);
         statusItem->setForeground(statusColor);
-        statusItem->setData(Qt::UserRole, dev.occupied);
+        statusItem->setData(Qt::UserRole, static_cast<int>(dev.network));
 
         m_table->setItem(row, 0, nameItem);
         m_table->setItem(row, 1, snItem);
         m_table->setItem(row, 2, statusItem);
 
         // Occupied rows cannot be selected
-        if (dev.occupied) {
+        if (blocked) {
             for (int col = 0; col < 3; ++col) {
                 auto* item = m_table->item(row, col);
                 if (item) {

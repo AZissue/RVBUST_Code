@@ -1,4 +1,6 @@
 #include "logic/CameraManager.h"
+#include "logic/CameraConnectDiagnosis.h"
+#include "logic/CameraNetworkInventory.h"
 #include "logic/CameraRelease.h"
 #include "logic/CrashInject.h"
 #include "logic/DetectionEngine.h"
@@ -64,23 +66,53 @@ static void logMemoryTrace(const char* tag, std::size_t payloadBytes)
 static constexpr qint64 kPreviewSlowRoundMs = 500;
 static constexpr qint64 kPreviewLongGapMs   = 1000;
 
-// GigE "In Use" flag — the hard evidence for "上一次没释放干净 / 被别的程序占着",
-// which is what decides whether a connect retry can help (任务 3.3).
-static bool deviceInUse(RVC::Device& dev, const RVC::DeviceInfo& info)
+// GigE 链路状态：占用 / 不可达 / IP 冲突，外加读到的相机 IP。
+// 这既是重试策略的硬证据（任务 3.3），也是 E-05 连接失败原因分类里唯一
+// 能区分"网段问题"和"相机没电"的证据。
+struct LinkInfo {
+    CameraConnect::NetworkStatus status = CameraConnect::NetworkStatus::Unknown;
+    QString ip;
+    QString mask;
+};
+
+static CameraConnect::NetworkStatus mapNetworkStatus(int rvcStatus)
 {
-    if (info.type != RVC::PortType_GIGE)
-        return false;
+    switch (rvcStatus) {
+    case RVC::NetworkDeviceStatus_OK:
+        return CameraConnect::NetworkStatus::Ok;
+    case RVC::NetworkDeviceStatus_Not_Reachable:
+        return CameraConnect::NetworkStatus::NotReachable;
+    case RVC::NetworkDeviceStatus_In_Use:
+        return CameraConnect::NetworkStatus::InUse;
+    case RVC::NetworkDeviceStatus_Conflict:
+        return CameraConnect::NetworkStatus::Conflict;
+    default:
+        return CameraConnect::NetworkStatus::Unknown;
+    }
+}
+
+static LinkInfo readLink(RVC::Device& dev, const RVC::DeviceInfo& info)
+{
+    LinkInfo link;
+    if (info.type != RVC::PortType_GIGE) {
+        // USB 相机没有网络状态：不能把它判成"不可达"。
+        link.status = CameraConnect::NetworkStatus::Ok;
+        return link;
+    }
     try {
         int status = 0;
         RVC::NetworkType ntype;
         char ip[32] = {}, mask[32] = {}, gw[32] = {};
         if (dev.GetNetworkConfig(RVC::NetworkDevice_LeftCamera, &ntype,
-                                 ip, mask, gw, &status) == 0)
-            return status == RVC::NetworkDeviceStatus_In_Use;
+                                 ip, mask, gw, &status) == 0) {
+            link.status = mapNetworkStatus(status);
+            link.ip = QString::fromLocal8Bit(ip);
+            link.mask = QString::fromLocal8Bit(mask);
+        }
     } catch (...) {
-        // unknown — treat as not occupied rather than blocking a retry
+        // unknown — keep Unknown; the text-based rules still apply
     }
-    return false;
+    return link;
 }
 
 // ── PIMPL: hide RVC::X1 / RVC::X2 + CaptureOptions ──
@@ -251,6 +283,10 @@ bool CameraManager::connectFirstAvailable()
     // SDK calls can interfere with the SDK's own internal exception handling
     // and cause 0xC0000005 to propagate uncaught.
 
+    // E-05: the headline must describe *this* attempt; a failure that never
+    // reaches emitConnectFailure() must not leave the previous one on screen.
+    m_lastConnectHeadline.clear();
+
     // Enumerating and opening a device are RVC calls too: serialize them.
     DeviceLock lk(this, "connect-first");
     if (!lk.ok())
@@ -259,16 +295,21 @@ bool CameraManager::connectFirstAvailable()
     if (!m_impl->systemInited) {
         try {
             if (!RVC::SystemInit()) {
-                emit cameraError(QStringLiteral("RVC 系统初始化失败"));
-                return false;
+                CameraConnect::Evidence ev;
+                ev.sdkReady = false;
+                return emitConnectFailure(ev, 0);
             }
             m_impl->systemInited = true;
         } catch (const std::exception& e) {
-            emit cameraError(QStringLiteral("RVC 系统初始化异常: %1").arg(e.what()));
-            return false;
+            CameraConnect::Evidence ev;
+            ev.sdkReady = false;
+            ev.errorText = QString::fromLocal8Bit(e.what());
+            return emitConnectFailure(ev, 0);
         } catch (...) {
-            emit cameraError(QStringLiteral("RVC SDK 初始化时发生未知崩溃"));
-            return false;
+            CameraConnect::Evidence ev;
+            ev.sdkReady = false;
+            ev.errorText = QStringLiteral("RVC::SystemInit 发生未知崩溃");
+            return emitConnectFailure(ev, 0);
         }
     }
 
@@ -276,16 +317,27 @@ bool CameraManager::connectFirstAvailable()
     size_t count = 0;
     try {
         if (RVC::SystemListDevices(devices, 10, &count,
-                                    RVC::SystemListDeviceType::All) != 0 || count == 0) {
-            emit cameraError(QStringLiteral("未找到任何相机设备"));
-            return false;
+                                    RVC::SystemListDeviceType::All) != 0) {
+            CameraConnect::Evidence ev;
+            ev.enumerationOk = false;
+            return emitConnectFailure(ev, 0);
+        }
+        if (count == 0) {
+            // 枚举成功、只是没有任何设备：供电/线缆/网段/驱动。
+            CameraConnect::Evidence ev;
+            ev.enumeratedAny = false;
+            return emitConnectFailure(ev, 0);
         }
     } catch (const std::exception& e) {
-        emit cameraError(QStringLiteral("设备枚举异常: %1").arg(e.what()));
-        return false;
+        CameraConnect::Evidence ev;
+        ev.enumerationOk = false;
+        ev.errorText = QString::fromLocal8Bit(e.what());
+        return emitConnectFailure(ev, 0);
     } catch (...) {
-        emit cameraError(QStringLiteral("设备枚举时发生未知崩溃"));
-        return false;
+        CameraConnect::Evidence ev;
+        ev.enumerationOk = false;
+        ev.errorText = QStringLiteral("设备枚举时发生未知崩溃");
+        return emitConnectFailure(ev, 0);
     }
 
     // Collect device info with try/catch protection per device
@@ -306,6 +358,14 @@ bool CameraManager::connectFirstAvailable()
         }
     }
 
+    // 枚举到了设备，但一台都没能读出设备信息：这不是"没插相机"，
+    // 别让操作员去查电源。
+    if (nFound == 0) {
+        CameraConnect::Evidence ev;
+        ev.deviceInfoOk = false;
+        return emitConnectFailure(ev, 0);
+    }
+
     auto tryConnect = [this](const char* sn) -> bool {
         return initWithDeviceSerial(QString::fromLocal8Bit(sn));
     };
@@ -320,7 +380,8 @@ bool CameraManager::connectFirstAvailable()
             return true;
     }
 
-    emit cameraError(QStringLiteral("无法连接任何相机设备"));
+    // 每一次 initWithDeviceSerial() 失败都已经把具体原因发到界面了；
+    // 这里不再补一条笼统的"无法连接任何相机设备"把原因盖过去。
     return false;
 }
 
@@ -386,20 +447,10 @@ std::vector<DeviceEntry> CameraManager::listDevices()
             entry.isX1   = info.support_x1;
             entry.isX2   = info.support_x2;
 
-            // GigE "in use" check.  A failure here must NOT drop the device
-            // from the list — report it as available instead.
-            if (info.type == RVC::PortType_GIGE) {
-                try {
-                    int status = 0;
-                    RVC::NetworkType ntype;
-                    char ip[32] = {}, mask[32] = {}, gw[32] = {};
-                    if (devices[i].GetNetworkConfig(RVC::NetworkDevice_LeftCamera, &ntype,
-                                                    ip, mask, gw, &status) == 0)
-                        entry.occupied = (status == RVC::NetworkDeviceStatus_In_Use);
-                } catch (...) {
-                    // ignore — keep the device listed as available
-                }
-            }
+            // GigE link state (占用 / 不可达 / IP 冲突).  A failure here must
+            // NOT drop the device from the list — keep it listed as Unknown,
+            // which the dialog shows as 可用 rather than inventing a problem.
+            entry.network = readLink(devices[i], info).status;
             m_impl->scannedDevices.push_back(devices[i]);
             m_impl->scannedInfos.push_back(info);
             result.push_back(entry);
@@ -452,10 +503,36 @@ void CameraManager::onScanFinished()
     cb(devices);
 }
 
+// E-05: 连接失败的唯一出口。原因分类是纯函数（CameraConnectDiagnosis.h），
+// 这里只补上"要不要查本机网卡"这一项系统事实，然后把短标题留给界面、
+// 完整建议发到左侧提示与日志。
+bool CameraManager::emitConnectFailure(CameraConnect::Evidence ev, int retriesTried)
+{
+    const auto cause = CameraConnect::diagnose(ev);
+    // 这两类建议里要列出本机网卡；只在确实需要时做一次系统查询。
+    if (cause == CameraConnect::Cause::NoDevice
+            || cause == CameraConnect::Cause::NetworkUnreachable)
+        ev.hostSubnets = CameraConnect::hostIpv4Subnets();
+
+    m_lastConnectHeadline = CameraConnect::headline(cause);
+    RuntimeLog::log("connect DIAG: cause=%d sdk=%d enum=%d found=%d info=%d "
+                    "x1x2=%d net=%d retries=%d ip=%s",
+                    static_cast<int>(cause), ev.sdkReady, ev.enumerationOk,
+                    ev.deviceFound, ev.deviceInfoOk, ev.supportsX1X2,
+                    static_cast<int>(ev.network), retriesTried,
+                    qPrintable(ev.cameraIp));
+    emit cameraError(CameraConnect::advice(ev, cause, retriesTried));
+    return false;
+}
+
 bool CameraManager::initWithDeviceSerial(const QString& serial)
 {
     QElapsedTimer connectTimer;
     connectTimer.start();
+
+    // E-05: the headline must describe *this* attempt; a failure that never
+    // reaches emitConnectFailure() must not leave the previous one on screen.
+    m_lastConnectHeadline.clear();
 
     // Create/Open/Close/Destroy plus the intrinsic read are device calls.  The
     // lock is recursive because this function re-enters through shutdown()
@@ -466,19 +543,34 @@ bool CameraManager::initWithDeviceSerial(const QString& serial)
         return false;
     }
 
+    // E-05: one exit for every failure — classify what we observed, then emit
+    // the cause-specific advice (and remember the short headline for the toast).
+    auto fail = [this](CameraConnect::Evidence ev, int retriesTried) -> bool {
+        return emitConnectFailure(ev, retriesTried);
+    };
+
     if (!m_impl->systemInited) {
         try {
-            RVC::SystemInit();
+            if (!RVC::SystemInit()) {
+                RuntimeLog::log("RVC::SystemInit returned false");
+                CameraConnect::Evidence ev;
+                ev.sdkReady = false;
+                return fail(ev, 0);
+            }
             m_impl->systemInited = true;
             RuntimeLog::log("RVC::SystemInit OK (deferred)");
         } catch (const std::exception& e) {
             RuntimeLog::log("RVC::SystemInit failed: %s", e.what());
-            emit cameraError(QStringLiteral("RVC 系统初始化失败: %1").arg(e.what()));
-            return false;
+            CameraConnect::Evidence ev;
+            ev.sdkReady = false;
+            ev.errorText = QString::fromLocal8Bit(e.what());
+            return fail(ev, 0);
         } catch (...) {
             RuntimeLog::log("RVC::SystemInit crashed");
-            emit cameraError(QStringLiteral("RVC 系统初始化崩溃"));
-            return false;
+            CameraConnect::Evidence ev;
+            ev.sdkReady = false;
+            ev.errorText = QStringLiteral("RVC::SystemInit 发生未知崩溃");
+            return fail(ev, 0);
         }
     }
 
@@ -501,14 +593,17 @@ bool CameraManager::initWithDeviceSerial(const QString& serial)
         device = RVC::SystemFindDevice(snBytes.constData());
     }
     if (!device.IsValid()) {
-        emit cameraError(QStringLiteral("未找到指定设备: %1").arg(serial));
-        return false;
+        CameraConnect::Evidence ev;
+        ev.deviceFound = false;
+        ev.errorText = serial;
+        return fail(ev, 0);
     }
 
     RVC::DeviceInfo info;
     if (!device.GetDeviceInfo(&info)) {
-        emit cameraError(QStringLiteral("无法获取设备信息"));
-        return false;
+        CameraConnect::Evidence ev;
+        ev.deviceInfoOk = false;
+        return fail(ev, 0);
     }
     m_impl->devInfo = info;
 
@@ -518,8 +613,9 @@ bool CameraManager::initWithDeviceSerial(const QString& serial)
     bool canX2 = info.support_x2;
 
     if (!canX1 && !canX2) {
-        emit cameraError(QStringLiteral("设备不支持 X1 或 X2 接口"));
-        return false;
+        CameraConnect::Evidence ev;
+        ev.supportsX1X2 = false;
+        return fail(ev, 0);
     }
 
     // Buffer per-attempt failures and emit a single message at the end, so
@@ -608,6 +704,7 @@ bool CameraManager::initWithDeviceSerial(const QString& serial)
     auto finishConnect = [&](const char* model) -> bool {
         m_isConnected = true;
         m_released = false;            // a new session must be releasable again
+        m_lastConnectHeadline.clear();
         m_lastSerial = serial;
         m_health->noteConnected();
         logCameraOptions("connect");
@@ -632,22 +729,30 @@ bool CameraManager::initWithDeviceSerial(const QString& serial)
     int retriesTried = 0;
     const std::vector<int> retryDelays =
         CameraRelease::connectRetryDelaysMs(m_connectRetryCount);
+    // Read the link state once: 占用/不可达/IP 冲突 是硬证据，重试前后不会因为
+    // 我们的等待而改变判据（真被释放了，Open 会直接成功）。
+    const LinkInfo link = readLink(device, info);
     for (;;) {
         const char* model = nullptr;
         if (attemptConnect(model))
             return finishConnect(model);
 
-        const auto failure = CameraRelease::classify(
-            lastError, /*deviceFound=*/true, deviceInUse(device, info));
+        CameraConnect::Evidence ev;
+        ev.network = link.status;
+        ev.cameraIp = link.ip;
+        ev.cameraMask = link.mask;
+        ev.supportsX1X2 = canX1 || canX2;
+        ev.errorText = lastError;
+
+        const auto cause = CameraConnect::diagnose(ev);
         if (retriesTried >= static_cast<int>(retryDelays.size())
-                || !CameraRelease::shouldRetry(failure)) {
-            RuntimeLog::log("connect FAILED: %s (%lld ms, %d retr%s, failure=%d) lastError=%s",
+                || !CameraConnect::retryCanHelp(cause)) {
+            RuntimeLog::log("connect FAILED: %s (%lld ms, %d retr%s, cause=%d) lastError=%s",
                             qPrintable(serial), connectTimer.elapsed(),
                             retriesTried, retriesTried == 1 ? "y" : "ies",
-                            static_cast<int>(failure), qPrintable(lastError));
-            // Readable recovery advice instead of a bare SDK string.
-            emit cameraError(CameraRelease::operatorHint(failure, retriesTried, lastError));
-            return false;
+                            static_cast<int>(cause), qPrintable(lastError));
+            // Readable, cause-specific advice instead of a bare SDK string.
+            return fail(ev, retriesTried);
         }
 
         const int waitMs = retryDelays[retriesTried];

@@ -23,6 +23,8 @@
 #include "logic/RuntimeLog.h"
 #include "logic/AutoFlowPolicy.h"
 #include "logic/CameraRelease.h"
+#include "logic/CameraConnectDiagnosis.h"
+#include "logic/CameraNetworkInventory.h"
 #include "ui/TopNavBar.h"
 #include "ui/ModeSelector.h"
 #include "ui/Image2DView.h"
@@ -908,7 +910,18 @@ void MainWindow::onConnectCamera()
 void MainWindow::proceedWithDevices(const std::vector<DeviceEntry>& devices)
 {
     if (devices.empty()) {
-        m_toast->showMessage(QStringLiteral("未找到相机设备，请检查连接"), false);
+        // E-05：把"本机有哪些网段"直接摆出来。现场绝大多数"找不到相机"
+        // 是相机与网卡不在同一网段，只给一句"请检查连接"等于让人猜。
+        const QString subnets =
+            CameraConnect::hostSubnetText(CameraConnect::hostIpv4Subnets());
+        const QString msg = QStringLiteral(
+            "没有找到相机设备。本机网卡：%1。\n"
+            "请检查相机电源与网线/USB；若相机在别的网段，先把网卡改到与相机"
+            "同一网段。若左侧提示里有 SDK/枚举报错，先按那条处理。").arg(subnets);
+        m_logger->error(msg);
+        m_sidePanel->setTip(msg, true);
+        m_toast->showMessage(
+            CameraConnect::headline(CameraConnect::Cause::NoDevice), false);
         return;
     }
 
@@ -933,8 +946,13 @@ void MainWindow::proceedWithDevices(const std::vector<DeviceEntry>& devices)
     const bool ok = m_camera->initWithDeviceSerial(serial);
     endHeavyOp();
     clearBusy();
-    if (!ok)
-        m_toast->showMessage(QStringLiteral("相机连接失败"), false);
+    if (!ok) {
+        // E-05：完整原因与处理顺序已经由 cameraError 发到左侧提示；toast
+        // 至少要把"是哪一类失败"说出来（占用 / 网段 / 掉线 / SDK）。
+        const QString headline = m_camera->lastConnectHeadline();
+        m_toast->showMessage(headline.isEmpty() ? QStringLiteral("相机连接失败")
+                                                : headline, false);
+    }
 }
 
 void MainWindow::onDisconnectCamera()

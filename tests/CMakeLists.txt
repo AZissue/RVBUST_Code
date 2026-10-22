@@ -54,6 +54,8 @@ set(TEST_SOURCES
     test_help_content.cpp
     # 第 17 阶段 P1：机器人程序节点 / 执行器 / 点动规则 / 仿真后端。
     test_robot_program.cpp
+    # 3.0 E-05：相机连接失败的原因分类与提示文案（纯字符串，不连相机）。
+    test_camera_connect_diagnosis.cpp
 )
 
 add_executable(unit_tests ${TEST_SOURCES}
