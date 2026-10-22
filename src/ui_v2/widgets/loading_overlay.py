@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""耗时操作反馈：静态文案、连续旋转指示器与真实耗时。"""
+"""耗时操作反馈：静态文案与连续旋转指示器。"""
 
 from __future__ import annotations
 
@@ -56,10 +56,9 @@ class LoadingOverlay(QWidget):
             QWidget#loadingCard QWidget {{ background: transparent; border: 0; padding: 0; }}
             QLabel#loadingTitle {{ color: {TEXT_PRIMARY}; font-size: 15px; font-weight: 600; }}
             QLabel#loadingDetail {{ color: {TEXT_SECONDARY}; font-size: 12px; }}
-            QLabel#loadingElapsed {{ color: {TEXT_SECONDARY}; font-size: 12px; }}
         ''')
         content = QVBoxLayout(self._container)
-        content.setContentsMargins(22, 22, 22, 18)
+        content.setContentsMargins(22, 22, 22, 22)
         content.setSpacing(14)
 
         row = QHBoxLayout()
@@ -81,10 +80,6 @@ class LoadingOverlay(QWidget):
         text_column.addWidget(self._detail)
         row.addLayout(text_column, 1)
         content.addLayout(row)
-        self._elapsed_label = QLabel('已用时 00:00')
-        self._elapsed_label.setObjectName('loadingElapsed')
-        self._elapsed_label.setAlignment(Qt.AlignmentFlag.AlignRight)
-        content.addWidget(self._elapsed_label)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 16, 16, 16)
@@ -139,10 +134,6 @@ class LoadingOverlay(QWidget):
         milliseconds = self._clock.elapsed()
         self._spinner.phase = (milliseconds % 1400) / 1400.0
         self._spinner.update()
-        seconds = milliseconds // 1000
-        elapsed = f'已用时 {seconds // 60:02d}:{seconds % 60:02d}'
-        if self._elapsed_label.text() != elapsed:
-            self._elapsed_label.setText(elapsed)
 
     def show_message(self, text: str = '处理中...'):
         self._set_message(text)
@@ -154,7 +145,7 @@ class LoadingOverlay(QWidget):
         QApplication.processEvents()
 
     def update_message(self, text: str):
-        """更新任务文案，保留当前动画相位及真实耗时。"""
+        """更新任务文案，保留当前动画相位。"""
         self._set_message(text)
         QApplication.processEvents()
 
