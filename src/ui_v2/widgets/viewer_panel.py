@@ -67,6 +67,7 @@ class ViewerPanel(QFrame):
         if enabled:
             from ui_common.industrial_viewer import IndustrialViewer
             candidate = IndustrialViewer(parent=self)
+            candidate.set_toolbar_visible(False)
         else:
             candidate = self._renderer_factory(parent=self)
         candidate.status_changed.connect(self.viewer_message.emit)
