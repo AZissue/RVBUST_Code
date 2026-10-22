@@ -225,7 +225,7 @@ class FrameBrowser(QWidget):
         ids = self.selected_ids()
         if len(items) > 1:
             self.properties.show_values({'类型': '多项选择', '选中项': len(items),
-                '关联帧 / 结果': len(ids), '操作': '右键管理选中数据；删除子项将删除所属完整帧。'})
+                '关联帧 / 结果': len(ids)})
             return
         item = items[0]
         component = item.data(0, Qt.UserRole + 2)
@@ -252,11 +252,6 @@ class FrameBrowser(QWidget):
             values['来源帧数'] = len(record.source_ids)
         else:
             values['标记物数量'] = len(record.markers)
-        values['创建时间'] = record.created
-        values['数据版本'] = record.revision
-        folder = self.database.directory / 'frames' / record.uid
-        values['数据路径'] = str(folder / ('image.png' if component == 'image' else 'pointmap.ply')) if component else str(folder)
-        values['操作'] = '右键管理；点云 / 图像子项的删除作用于所属完整帧。'
         self.properties.show_values(values)
 
     def delete_selected(self):
