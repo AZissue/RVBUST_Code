@@ -86,6 +86,8 @@ class MainWindowShell(QMainWindow):
     def __init__(self, parent=None, *, components=None, workspace_factories=None,
                  launcher_factory=None):
         super().__init__(parent)
+        from ui_common.setting_wheel_guard import install_setting_wheel_guard
+        self._setting_wheel_guard = install_setting_wheel_guard(self)
         self._components = components or UiComponents()
         self._workspace_factories = workspace_factories or WorkspaceFactories()
         self._launcher_factory = launcher_factory or LauncherDialog
