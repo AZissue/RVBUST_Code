@@ -222,8 +222,9 @@ inline QString advice(const Evidence& e, Cause c, int retriesTried)
                    "② 本机网卡是否与相机同网段（本机网卡：%1）；\n"
                    "③ 设备管理器里能否看到相机——看不到通常是驱动没装；\n"
                    "④ 相机是否被其它程序占用（同一台相机只能被一个进程打开）。\n"
-                   "网段不一致是 GigE 相机最常见的连不上原因：用厂商工具或机身"
-                   "标签核对相机 IP，再看第 ② 条里的网卡。")
+                   "网段不一致是 GigE 相机最常见的连不上原因：先用机身标签或 "
+                   "RVCManager 核对相机 IP；确认后可在 RVCManager 里用「一键配置」"
+                   "把相机配到本机网段，拍摄参数也在那里调试。")
             .arg(hostSubnetText(e.hostSubnets));
 
     case Cause::EnumFailed:
@@ -258,8 +259,8 @@ inline QString advice(const Evidence& e, Cause c, int retriesTried)
             "这是网段/IP 问题，不是相机电源问题。\n");
         if (e.cameraIp.isEmpty()) {
             msg += QStringLiteral("没能读到相机 IP；本机网卡：%1。\n"
-                                  "先用厂商工具或机身标签核对相机 IP，再看网卡是否"
-                                  "在同一网段。")
+                                  "先用 RVCManager 或机身标签核对相机 IP，再看网卡"
+                                  "是否在同一网段。")
                        .arg(hostSubnetText(e.hostSubnets));
         } else {
             msg += QStringLiteral("相机 IP：%1/%2；本机网卡：%3。\n")
@@ -273,9 +274,11 @@ inline QString advice(const Evidence& e, Cause c, int retriesTried)
                     "是否与其它设备冲突，以及防火墙是否拦截了 GigE 发现。");
             else
                 msg += QStringLiteral(
-                    "本机没有与相机同网段的网卡：把网卡的 IPv4 地址/掩码改到与"
-                    "相机同网段（例如相机 192.168.0.10/255.255.255.0 → 网卡 "
-                    "192.168.0.100/255.255.255.0），或把相机改到网卡所在的网段。");
+                    "当前 RVC 相机与网卡不在同一网段：可以在 RVCManager（RVC "
+                    "厂商工具）里用「一键配置」把相机配到本机网段，拍摄参数也在"
+                    "那里调试。也可以手动把网卡 IPv4 改到与相机同网段（例如相机 "
+                    "192.168.0.10/255.255.255.0 → 网卡 "
+                    "192.168.0.100/255.255.255.0）。");
         }
         return msg;
     }
@@ -283,10 +286,11 @@ inline QString advice(const Evidence& e, Cause c, int retriesTried)
     case Cause::IpConflict:
         return e.cameraIp.isEmpty()
             ? QStringLiteral("相机 IP 与网络中的其它设备冲突（RVC 状态 Conflict）。"
-                             "请修改相机 IP 或找出占用同一 IP 的设备后重试。")
+                             "请在 RVCManager 里修改相机 IP，或找出占用同一 IP "
+                             "的设备后重试。")
             : QStringLiteral("相机 IP %1 与网络中的其它设备冲突（RVC 状态 "
-                             "Conflict）。请修改相机 IP 或找出占用同一 IP 的设备"
-                             "后重试。")
+                             "Conflict）。请在 RVCManager 里修改相机 IP，或找出"
+                             "占用同一 IP 的设备后重试。")
                   .arg(e.cameraIp);
 
     case Cause::OpenFailed:

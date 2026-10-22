@@ -165,6 +165,9 @@ void TestCameraConnectDiagnosis::noDeviceAdviceListsHostSubnets()
     QVERIFY(a.contains(QStringLiteral("以太网=192.168.0.10/255.255.255.0")));
     QVERIFY(a.contains(QStringLiteral("USB网卡=10.0.0.5/255.255.255.0")));
     QVERIFY(a.contains(QStringLiteral("网段")));
+    // 没有副作用的下一步：去 RVCManager 核对/配置，而不是在本程序里猜。
+    QVERIFY(a.contains(QStringLiteral("RVCManager")));
+    QVERIFY(a.contains(QStringLiteral("一键配置")));
 }
 
 void TestCameraConnectDiagnosis::unreachableAdviceNamesCameraAndMismatch()
@@ -178,8 +181,10 @@ void TestCameraConnectDiagnosis::unreachableAdviceNamesCameraAndMismatch()
     const QString a = advice(e, diagnose(e), 0);
     QVERIFY(a.contains(QStringLiteral("192.168.0.38")));
     QVERIFY(a.contains(QStringLiteral("192.168.1.10")));
-    // 主机没有同网段地址 —— 必须直接说"改网卡 IP"，而不是泛泛地"检查连接"。
-    QVERIFY(a.contains(QStringLiteral("没有与相机同网段的网卡")));
+    // 主机没有同网段地址 —— 必须直接给出改法，而不是泛泛地"检查连接"。
+    // 现场反馈：网段不匹配时先指到 RVCManager 的「一键配置」。
+    QVERIFY(a.contains(QStringLiteral("RVCManager")));
+    QVERIFY(a.contains(QStringLiteral("一键配置")));
     QVERIFY(!a.contains(QStringLiteral("同一网段仍不可达")));
 }
 
@@ -194,6 +199,8 @@ void TestCameraConnectDiagnosis::unreachableAdviceRecognisesSameSubnet()
     const QString a = advice(e, diagnose(e), 0);
     QVERIFY(a.contains(QStringLiteral("同一网段仍不可达")));
     QVERIFY(!a.contains(QStringLiteral("没有与相机同网段的网卡")));
+    // 同网段时不该再让人去改 IP —— 那是另一个问题的修法。
+    QVERIFY(!a.contains(QStringLiteral("一键配置")));
 }
 
 void TestCameraConnectDiagnosis::unreachableAdviceWithoutCameraIp()
@@ -206,7 +213,7 @@ void TestCameraConnectDiagnosis::unreachableAdviceWithoutCameraIp()
     // 没读到相机 IP 时不能断言"不同网段"，只能说先核对 IP。
     QVERIFY(a.contains(QStringLiteral("没能读到相机 IP")));
     QVERIFY(a.contains(QStringLiteral("192.168.0.10")));
-    QVERIFY(!a.contains(QStringLiteral("没有与相机同网段的网卡")));
+    QVERIFY(!a.contains(QStringLiteral("不在同一网段")));
 }
 
 void TestCameraConnectDiagnosis::conflictAdviceNamesTheIp()
@@ -218,6 +225,7 @@ void TestCameraConnectDiagnosis::conflictAdviceNamesTheIp()
     const QString a = advice(e, diagnose(e), 0);
     QVERIFY(a.contains(QStringLiteral("192.168.0.38")));
     QVERIFY(a.contains(QStringLiteral("冲突")));
+    QVERIFY(a.contains(QStringLiteral("RVCManager")));
 }
 
 void TestCameraConnectDiagnosis::busyAdviceStillCarriesRetryCount()
