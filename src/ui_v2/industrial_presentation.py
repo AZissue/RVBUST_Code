@@ -313,12 +313,6 @@ class IndustrialPresentation:
             preview_layout.addWidget(self.preview_images, 1)
             self.preview_panel.setParent(self.viewport)
             self.grid.setStretchFactor(0, 1)
-            self.layout_choice = QComboBox()
-            for text, columns in (('自动布局', 0), ('1 列', 1), ('2 列', 2), ('3 列', 3), ('4 列', 4)):
-                self.layout_choice.addItem(text, columns)
-            self.layout_choice.setMaximumWidth(110)
-            self.layout_choice.currentIndexChanged.connect(self._change_camera_layout)
-            preview_layout.insertWidget(1, self.layout_choice)
             self.preview_anchor = _PreviewAnchor(self)
             self._preview_signal_sources = set()
             self.preview_panel.raise_()
@@ -522,7 +516,6 @@ class IndustrialPresentation:
             self._size_preview()
         self.preview_panel.setVisible(view != '3d')
         self.preview_images.setVisible(view == '2d' or self.preview_toggle.isChecked())
-        self.layout_choice.setVisible(view == '2d' or self.preview_toggle.isChecked())
         self.fill_button.setVisible(view == '2d' or self.preview_toggle.isChecked())
         self.preview_all.setVisible(view == '2d' or self.preview_toggle.isChecked())
         self.preview_stop.setVisible(view == '2d' or self.preview_toggle.isChecked())
@@ -536,7 +529,6 @@ class IndustrialPresentation:
             self.set_multi_view('joint')
         self.preview_toggle.setArrowType(Qt.DownArrow if expanded else Qt.RightArrow)
         self.preview_images.setVisible(expanded or self._multi_view == '2d')
-        self.layout_choice.setVisible(expanded or self._multi_view == '2d')
         self.fill_button.setVisible(expanded or self._multi_view == '2d')
         self.preview_all.setVisible(expanded)
         self.preview_stop.setVisible(expanded)
@@ -565,12 +557,6 @@ class IndustrialPresentation:
         self.preview_panel.setFixedSize(width, height)
         self.preview_panel.move(max(8, self.viewport.width()-width-12), top)
         self.preview_panel.raise_()
-
-    def _change_camera_layout(self):
-        columns = self.layout_choice.currentData()
-        self.workspace._camera_grid.set_layout_columns(columns)
-        if columns > 1:
-            self.set_multi_view('2d')
 
     def _style_calibration(self, enabled):
         self.workspace._result_table.setVisible(not enabled or self.workspace._result_table.rowCount() > 0)

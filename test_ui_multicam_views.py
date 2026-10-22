@@ -220,7 +220,8 @@ class MulticamViewTests(unittest.TestCase):
         self.assertFalse(card._btn_preview.isChecked())
         self.assertIn('2/2', self.win._industrial_ribbon.camera_status.text())
 
-    def test_layout_presets_show_all_cameras_and_overlay_keeps_full_3d_viewport(self):
+    def test_automatic_layout_shows_all_cameras_and_keeps_full_3d_viewport(self):
+        self.assertFalse(hasattr(self.presentation, 'layout_choice'))
         for count in (1, 2, 3, 4, 6):
             self.grid.set_cameras([f'cam{i}' for i in range(count)])
             self.presentation.set_multi_view('joint')
@@ -228,15 +229,9 @@ class MulticamViewTests(unittest.TestCase):
             self.assertEqual(self.grid._last_cols, 1)
             self.assertIs(self.presentation.preview_panel.parentWidget(), self.presentation.viewport)
             self.assertLessEqual(abs(self.presentation.viewport.width()-self.presentation.grid.width()), 2)
-            for columns in range(1, 5):
-                self.presentation.set_multi_view('2d')
-                self.presentation.layout_choice.setCurrentIndex(columns)
-                self.presentation._change_camera_layout()
-                self.flush()
-                self.assertEqual(self.presentation._multi_view, '2d')
-                self.assertEqual(self.grid._last_cols, min(columns, count))
-                self.assertEqual(sum(not c.isHidden() for c in self.grid._cards.values()), count)
-            self.presentation.layout_choice.setCurrentIndex(0)
+            self.presentation.set_multi_view('2d')
+            self.flush()
+            self.assertEqual(sum(not c.isHidden() for c in self.grid._cards.values()), count)
 
     def test_freeze_preserves_display_but_keeps_latest_frame_for_unlock(self):
         card = self.grid.card('cam0')

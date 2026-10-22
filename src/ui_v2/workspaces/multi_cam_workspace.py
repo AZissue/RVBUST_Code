@@ -130,6 +130,8 @@ class MultiCamWorkspace(QWidget):
     calibrate_requested = Signal()
     """计算外参。# TODO(BACKEND): CalibrationEngine，完成后回 on_calibrate_done"""
 
+    calibration_visualization_requested = Signal()
+
     save_extrinsics_requested = Signal()
     load_extrinsics_requested = Signal()
     """保存/加载外参 JSON。# TODO(BACKEND): CalibrationEngine 序列化"""
@@ -318,7 +320,17 @@ class MultiCamWorkspace(QWidget):
         lo.addWidget(cal_card)
 
         # ---- 标定结果 ----
-        res_card, res_lo = self._section_card("标定结果")
+        res_card, res_lo = self._section_card("")
+        result_header = QHBoxLayout()
+        result_title = QLabel("标定结果")
+        result_title.setObjectName("sectionTitle")
+        result_header.addWidget(result_title, 1)
+        self._btn_visualize_calibration = QPushButton("可视化")
+        self._btn_visualize_calibration.setToolTip("查看标定点云重合情况与匹配点误差")
+        self._btn_visualize_calibration.setEnabled(False)
+        self._btn_visualize_calibration.clicked.connect(self.calibration_visualization_requested)
+        result_header.addWidget(self._btn_visualize_calibration)
+        res_lo.addLayout(result_header)
         self._result_card = res_card
         self._result_table = QTableWidget(0, 4)
         self._result_table.setHorizontalHeaderLabels(
@@ -603,6 +615,7 @@ class MultiCamWorkspace(QWidget):
         self._score_bar.setValue(max(0, min(100, score)))
         self._score_bar.setFormat('%p%' if pairs else '未通过')
         self._result_table.setRowCount(len(pairs))
+        self._btn_visualize_calibration.setEnabled(bool(pairs))
         level_style = {
             "ok": (STATUS_OK, "● 优"), "warn": (STATUS_WARN, "● 良"),
             "fail": (STATUS_ERR, "● 差"),
@@ -642,6 +655,7 @@ class MultiCamWorkspace(QWidget):
         self._score_bar.setValue(0)
         self._score_bar.setFormat('待标定')
         self._result_table.setRowCount(0)
+        self._btn_visualize_calibration.setEnabled(False)
         if getattr(getattr(self, '_industrial', None), 'active', False):
             self._result_table.hide()
         self._gate_hint.setText("质量门禁：任一 pair 未达标时禁止进入扫描")

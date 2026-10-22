@@ -843,6 +843,41 @@ class BackendBridge(QObject):
             self.shell.log(
                 f"标定结果已恢复但无法进入扫描阶段: {msg_scan}", "warn")
 
+    def _on_multi_visualize_calibration(self):
+        from copy import deepcopy
+        from .calibration_inspector import CalibrationInspector, load_calibration_clouds
+
+        if not self.can_change_workspace():
+            self.shell.log('请先等待当前任务完成，再查看标定可视化。', 'warn')
+            return
+        pairs = {key: deepcopy(value) for key, value in self.calibration_engine.pair_results.items()
+                 if value.get('success')}
+        if not pairs:
+            self.shell.log('尚无标定结果，请先计算外参或打开标定会话。', 'warn')
+            return
+        previous = getattr(self, '_calibration_inspector', None)
+        if previous is not None and previous.active:
+            previous.raise_()
+            previous.activateWindow()
+            return
+        dialog = CalibrationInspector(pairs, self.shell)
+        self._calibration_inspector = dialog
+        paths = {cid: frame.offline_pointmap_path
+                 for cid, frame in self.fixed_workflow.frames_calib.items()
+                 if any(cid in pair for pair in pairs)}
+        dialog.open()
+
+        def done(result, error):
+            if not dialog.active:
+                return
+            if error:
+                dialog.set_clouds({}, [f'读取失败：{error}'])
+            else:
+                dialog.set_clouds(*result)
+
+        self._run_background(lambda: load_calibration_clouds(paths), done,
+                             name='calibration_inspection')
+
     def _on_multi_calibrate(self):
         """计算外参。"""
         self.shell.show_loading("正在计算外参...")
@@ -2251,13 +2286,14 @@ class BackendBridge(QObject):
             import traceback
             name = traceback.extract_stack()[-2].name
         project_task = name.startswith('project_')
-        if self.shell._presentation == 'industrial' and not project_task:
+        inspection = name == 'calibration_inspection'
+        if self.shell._presentation == 'industrial' and not project_task and not inspection:
             self.projects.prepare(self._current_mode)
-        if name not in ('offline_preview', 'db_frame_preview', 'db_open_project', 'db_mutation') and not project_task and self.shell._presentation == 'industrial':
+        if name not in ('offline_preview', 'db_frame_preview', 'db_open_project', 'db_mutation') and not project_task and not inspection and self.shell._presentation == 'industrial':
             self.frame_db.restore(self._current_mode)
         def archive_work():
             result = work()
-            if name not in ('offline_preview', 'db_frame_preview', 'db_open_project', 'db_mutation') and not project_task:
+            if name not in ('offline_preview', 'db_frame_preview', 'db_open_project', 'db_mutation') and not project_task and not inspection:
                 self.frame_db.archive_context(result)
             return result
         worker = WorkerThread(archive_work)
@@ -2266,7 +2302,7 @@ class BackendBridge(QObject):
         self._workers.append(worker)
 
         def _wrapped_done(result, error):
-            update_metadata = name not in ('offline_preview', 'db_frame_preview', 'db_open_project', 'db_mutation') and not project_task
+            update_metadata = name not in ('offline_preview', 'db_frame_preview', 'db_open_project', 'db_mutation') and not project_task and not inspection
             if error is None and update_metadata:
                 try:
                     self.frame_db.synchronize(result)
