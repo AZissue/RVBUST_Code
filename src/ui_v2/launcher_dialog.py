@@ -10,7 +10,7 @@ from typing import List, Optional
 
 from PySide6.QtCore import Qt, QPropertyAnimation, Signal, QTimer
 from PySide6.QtWidgets import (
-    QApplication, QDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
+    QApplication, QDialog, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QVBoxLayout, QGroupBox, QScrollArea, QWidget,
 )
 
@@ -20,6 +20,7 @@ from .theme import (
 from . import icons as ui_icons
 from .widgets import DeviceInfo, DeviceTable, ModeCard
 from ui_common.log_summary import LogSummary
+from ui_common.loading import LoadingOverlay
 from core.utils import logger
 
 
@@ -200,43 +201,18 @@ class LauncherDialog(QDialog):
         self._fade_animation.setDuration(200)
         self._fade_animation.finished.connect(self.accept)
 
-    def _build_connection_overlay(self) -> QFrame:
-        overlay = QFrame(self)
-        overlay.setObjectName("connectionOverlay")
-        overlay.setStyleSheet(
-            "QFrame#connectionOverlay { background-color:rgba(35,35,35,235); border-radius:4px; }"
-            "QLabel { background:transparent; }")
-        lo = QVBoxLayout(overlay)
-        lo.setAlignment(Qt.AlignCenter)
-        lo.setSpacing(16)
-
-        icon = QLabel()
-        icon.setPixmap(ui_icons.pixmap("bolt", ACCENT, 40))
-        icon.setAlignment(Qt.AlignCenter)
-        lo.addWidget(icon)
-
-        self._overlay_label = QLabel("正在连接相机...")
-        self._overlay_label.setStyleSheet(
-            f"color: {TEXT_SECONDARY}; font-size: 16px; font-weight: 600;"
-        )
-        self._overlay_label.setAlignment(Qt.AlignCenter)
-        lo.addWidget(self._overlay_label)
-
-        overlay.hide()
-        return overlay
+    def _build_connection_overlay(self) -> LoadingOverlay:
+        return LoadingOverlay(self, block_input=True)
 
     def show_connection_overlay(self, text: str = "正在连接相机..."):
         """显示全屏连接遮罩。"""
         self._connecting = True
         self._update_busy_controls()
-        self._overlay_label.setText(text)
-        self._connection_overlay.setGeometry(self.rect())
-        self._connection_overlay.show()
-        self._connection_overlay.raise_()
+        self._connection_overlay.show_message(text)
 
     def hide_connection_overlay(self):
         """隐藏连接遮罩。"""
-        self._connection_overlay.hide()
+        self._connection_overlay.hide_overlay()
         self._connecting = False
         self._update_busy_controls()
 

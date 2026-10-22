@@ -3,6 +3,18 @@ from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
+class LoadingAppearance:
+    background: str = '#27272B'
+    border: str = '#4A4A50'
+    accent: str = '#D32F2F'
+    ring: str = '#404047'
+    text: str = '#E8EAED'
+    muted: str = '#9AA0A8'
+    scrim: str = 'rgba(35,35,35,235)'
+    card_width: int = 380
+
+
+@dataclass(frozen=True)
 class ImagePreviewAppearance:
     background: str = "#1A1A20"
     border: str = "#2A2A34"
