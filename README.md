@@ -7,10 +7,23 @@ N 相机固定外参标定与点云融合系统。从成熟的双相机项目
 离线会话与文件对拼接、机器人手眼配合拼接（core 与独立原型）。
 DualCameraFusion 保持不动，本项目为全新工程。
 
-当前版本：`v1.9.1+g<hash>`（运行时自动附加 Git commit 短 hash）。
+当前版本：`v1.12.44+g<hash>`（运行时自动附加 Git commit 短 hash）。
 版本变更详见 [`CHANGELOG.md`](CHANGELOG.md)。
 
-基础版本：**v1.9.1（2026-10-13）**。以下功能状态按当前分支代码整理。
+基础版本：**v1.12.44（2026-10-22）**。以下功能状态按当前分支代码整理。
+
+### 近期版本亮点（v1.10–v1.12）
+
+- **UI 架构迁移（v1.10）**：正式入口使用 `ui_v2 + ui_common`，旧 `src/ui` 已整体移除；
+  `UiComposition` / `WorkspaceFactories` / `UiComponents` 提供主窗口、工作区与 2D/3D 组件的可替换入口。
+  接入方法见 [UI 架构与替换指南](docs/UI架构与替换指南.md)。
+- **工业新版工作区（v1.11）**：启动器增加三个新版试用入口，与原有入口并行；
+  轨迹球、点云 GPU 缓冲与交互显示采样提升为公共显示组件（显示采样不改变导出数据）。
+- **离线预览 · 凳子数据（v1.12）**：无需相机即可体验三种模式，
+  `python main.py --offline-preview multi_cam`（亦支持 `mobile_chain` / `turntable`）；
+  SDK 延迟初始化，程序启动不再自动枚举设备。
+- **功能区整合（v1.12.x）**：打开会话/会话管理归入项目组、返回视图归入视图组；
+  新版三种工作区共用统一的功能区与画布呈现，新版移除批量拼接入口。
 
 ## 功能入口与交付状态
 
@@ -34,8 +47,8 @@ DualCameraFusion 保持不动，本项目为全新工程。
 
 - **N 相机支持**：任意数量相机统一管理（`camera_id` 字符串键），
   软触发同步/异步拍摄，卡片式 2D 预览网格自适应布局
-- **UI v2 重构**：`src/ui_v2/` 提供 LauncherDialog 模式选择 + 工作区 +
-  浮动日志/3D 查看器/评估卡片等现代化组件，逐步替代旧版 `src/ui/`
+- **正式 UI（ui_v2 + ui_common）**：装配根 + LauncherDialog 模式选择 + 工作区 +
+  工业功能区、帧数据库（DB）面板、日志摘要等现代化组件；旧 `src/ui` 已移除
 - **星型拓扑标定**：单块编码圆标定板全共视，所有非参考相机分别对标参考相机
 - **链式拓扑（BFS）**：相邻相机两两共视时，`pose_graph` 自动 BFS 复合变换链
 - **编码圆 2D+3D 检测**：RVC `DetectCodedCircleMarker` + PLY 像素级 3D 提取
@@ -74,7 +87,7 @@ python -m pip install -r requirements.txt
 
 python main.py                     # 启动 UI（默认进入 LauncherDialog 模式选择）
 python test_core.py                # core 模块测试（无需相机/GUI）
-python test_ui.py                  # UI 测试（offscreen）
+python test_ui.py                  # 历史 UI / 公共组件兼容回归（offscreen）
 python test_integration.py         # 端到端集成测试（offscreen + 合成数据）
 python test_station.py             # 单相机多站位模式测试（offscreen + 合成数据）
 python test_chain_stitcher.py      # 链式拓扑与 N 路拼接测试
@@ -83,6 +96,8 @@ python test_robot_stitch.py        # 机器人拼接工作流测试（mock 机�
 python test_turntable.py           # 转台标定器合成数据测试（转台 360° 拼接算法）
 python test_generate_coded_circle.py  # 编码圆标定板生成器测试
 python test_ui_overlay.py         # 2D 标记叠加回归（offscreen）
+python test_ui_architecture.py    # v2 依赖边界、组件替换、信号接线回归
+python src/ui_v2/smoke_test.py     # v2 工作区门控冒烟
 ```
 
 ### Windows 离线测试环境
@@ -202,7 +217,7 @@ python prototypes/offline_stitch/app/simple_ui.py
 
 ```
 MultiCameraCalibration/
-├── main.py                         # 启动入口（LauncherDialog → 模式工作区）
+├── main.py                         # 启动入口（UiComposition → LauncherDialog → 工作区）
 ├── CHANGELOG.md                    # 版本更新日志
 ├── requirements.txt                # 核心依赖（PyPI 可装）
 ├── src/
@@ -223,18 +238,16 @@ MultiCameraCalibration/
 │   │   ├── robot_stitch_workflow.py# 机器人扫描站位队列 + 拼接（模式 E）
 │   │   ├── mobile_chain_workflow.py# 单相机移动链式拼接工作流
 │   │   ├── fixed_multi_cam_workflow.py # 多相机外参标定工作流
+│   │   ├── frame_database.py       # 帧数据库（DB）：原始帧管理与预览
+│   │   ├── session_manager.py      # 项目会话快照保存/载入
 │   │   └── utils.py                # 日志 + 安全资源释放
-│   ├── ui/                         # 旧版 PySide6 UI（逐步迁移中）
-│   │   ├── main_window.py
-│   │   ├── camera_card.py
-│   │   ├── viewer_3d.py
-│   │   └── panels/
-│   ├── ui_v2/                      # 新版 UI（LauncherDialog + 工作区）
-│   │   ├── launcher_dialog.py
-│   │   ├── main_window.py
-│   │   ├── backend_bridge.py
-│   │   ├── theme.py
-│   │   ├── icons.py
+│   ├── ui_common/                  # 预览/3D 渲染/线程/图标等公共实现
+│   ├── ui_v2/                      # 正式 UI（装配根 + LauncherDialog + 工作区）
+│   │   ├── launcher_dialog.py      # 模式选择（A/B/C + 新版试用入口）
+│   │   ├── main_window.py          # 工作区容器
+│   │   ├── composition.py          # UiComposition 装配根
+│   │   ├── industrial_ribbon.py    # 工业功能区
+│   │   ├── backend_bridge.py       # UI 信号 ↔ core 业务线程桥接
 │   │   ├── widgets/                # camera_grid、viewer_panel、log_panel 等
 │   │   └── workspaces/             # multi_cam / mobile_chain / turntable
 │   └── version.py                  # 版本号管理（自动附加 Git commit hash）
@@ -259,8 +272,6 @@ MultiCameraCalibration/
 │   backend_bridge     UI 信号 ↔ core 业务线程桥接        │
 │   widgets/           camera_grid、viewer_panel 等        │
 │   workspaces/        multi_cam / mobile_chain / turntable│
-├─────────────────────────────────────────────────────┤
-│ ui/  (PySide6，旧版，逐步迁移)                       │
 ├─────────────────────────────────────────────────────┤
 │ core/  (标定、采集、工作流与点云处理)                │
 │   camera_manager        N 相机管理（软触发）          │
@@ -316,7 +327,7 @@ MultiCameraCalibration/
 | 3 | PySide6 UI（连接/拍摄/标定/拼接预览）、test_ui | ✅ 完成 |
 | 4 | 离线会话、UI 离线集成、test_integration、文档 | ✅ 完成 |
 | 5 | 单相机多站位模式（StationManager + 站位面板）、test_station | ✅ 完成 |
-| 6 | UI v2（LauncherDialog + 工作区 + 浮动面板） | 主界面已切换，旧 ui 依赖仍存在 |
+| 6 | UI v2（装配根 + 工作区 + 公共组件） | ✅ 完成；旧 `src/ui` 已移除（v1.10） |
 | 7 | 转台 360° 拼接（模式 C）并入主程序 | ✅ 完成 |
 | 8 | 离线会话与独立文件对工具 | 入口见上文；B 通用会话时间线恢复、原型测试签名仍有缺口 |
 | 9 | 编码圆标定板生成器 | 已有工具；主程序测试仍反向依赖原型生成逻辑 |
@@ -352,7 +363,7 @@ MultiCameraCalibration/
 ## 版本与变更日志
 
 - 版本号规则：`v1.0.x` 小修复、`v1.x.0` 中等规模、`v2.0.0` 大型重构/功能
-- 运行时版本号自动附加 Git commit 短 hash：`v1.9.1+g<hash>`
+- 运行时版本号自动附加 Git commit 短 hash：`v1.12.44+g<hash>`
 - 完整版本变更记录见 [`CHANGELOG.md`](CHANGELOG.md)
 
 ## 环境
