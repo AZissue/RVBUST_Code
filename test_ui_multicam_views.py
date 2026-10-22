@@ -117,6 +117,35 @@ class MulticamViewTests(unittest.TestCase):
         self.assertGreaterEqual(self.win._log_panel._text.height(), 30)
         self.assertLessEqual(self.win._log_panel.body.geometry().bottom(), self.win._log_panel.height())
 
+    def test_sidebar_scrolls_without_db_footer_or_gate_overlap_when_logs_expand(self):
+        from PySide6.QtWidgets import QTreeWidgetItem
+        from PySide6.QtCore import QPoint
+        p = self.presentation
+        browser = p.frame_browser
+        for index in range(20):
+            QTreeWidgetItem(browser.tree, [f'帧 {index:03d} · cam0', '5,013,504'])
+        browser.details.setText('cam0 · 已入库\n原始PLY + 2D PNG · 联动查看')
+        self.ws.on_calibrate_done([dict(pair='cam1→cam0', rms_mm=.61,
+                                       inlier_ratio=.74, level='warn')], 73, True)
+        self.win._btn_log.setChecked(True)
+        for sizes in ([380, 380], [210, 600]):
+            self.win._content_split.setSizes(sizes)
+            self.flush()
+            self.assertLess(browser.tree.geometry().bottom(), browser.footer.y())
+            self.assertLess(browser.details.geometry().bottom(), browser.open_button.y())
+            self.assertLess(browser.open_button.geometry().bottom(), browser.manage_button.y())
+            self.assertLess(browser.geometry().bottom(), p.calibration_panel.y())
+            self.assertGreater(p.side_scroll.verticalScrollBar().maximum(), 0)
+            p.side_scroll.verticalScrollBar().setValue(p.side_scroll.verticalScrollBar().maximum())
+            self.flush()
+            gate_position = p.calibration_panel.mapTo(p.side_scroll.viewport(), QPoint(0, 0))
+            self.assertLess(gate_position.y(), p.side_scroll.viewport().height())
+            self.assertGreater(gate_position.y()+p.calibration_panel.height(), 0)
+        p.maximize(True)
+        self.assertTrue(p.side_scroll.isHidden())
+        p.maximize(False)
+        self.assertFalse(p.side_scroll.isHidden())
+
     def test_database_calibration_node_opens_new_panel_and_clear_removes_matrix(self):
         browser = self.presentation.frame_browser
         browser.database.project_title = '测试项目'

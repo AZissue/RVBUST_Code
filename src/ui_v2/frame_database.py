@@ -2,7 +2,7 @@
 from PySide6.QtCore import QObject, Qt, Signal, Slot, QEvent, QSignalBlocker
 from PySide6.QtWidgets import (QFileDialog, QHBoxLayout, QHeaderView, QLabel,
     QPushButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
-    QAbstractItemView, QMenu)
+    QAbstractItemView, QMenu, QLayout, QSizePolicy)
 from dataclasses import replace
 from pathlib import Path
 from contextlib import contextmanager
@@ -36,8 +36,9 @@ class FrameBrowser(QWidget):
             QWidget#frameDatabaseBrowser QTreeWidget::item:selected { background:#573232; color:#ffffff; }
             QWidget#frameDatabaseBrowser QTreeWidget::item:selected:!active { background:#453435; color:#e3dada; }
         ''')
-        self.setMinimumHeight(280)
         layout = QVBoxLayout(self)
+        # Keep the tree and footer minima additive when the workspace shrinks.
+        layout.setSizeConstraint(QLayout.SetMinimumSize)
         layout.setContentsMargins(2, 0, 2, 0)
         layout.setSpacing(5)
         bar = QHBoxLayout()
@@ -58,7 +59,7 @@ class FrameBrowser(QWidget):
         self.tree.header().setStretchLastSection(False)
         self.tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
         self.tree.header().setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        self.tree.setMinimumHeight(180)
+        self.tree.setMinimumHeight(100)
         self.tree.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.tree.currentItemChanged.connect(self._selected)
         self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
@@ -66,9 +67,17 @@ class FrameBrowser(QWidget):
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._context_menu)
         layout.addWidget(self.tree, 1)
+        self.footer = QWidget()
+        self.footer.setObjectName('frameBrowserFooter')
+        self.footer.setStyleSheet('QWidget#frameBrowserFooter {background:#292929;border-top:1px solid #414141;}')
+        self.footer.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
+        footer_layout = QVBoxLayout(self.footer)
+        footer_layout.setContentsMargins(4, 6, 4, 4)
+        footer_layout.setSpacing(5)
+        footer_layout.setSizeConstraint(QLayout.SetMinimumSize)
         self.details = QLabel('临时工作区 · 请主动保存会话')
         self.details.setWordWrap(True)
-        layout.addWidget(self.details)
+        footer_layout.addWidget(self.details)
         actions = QHBoxLayout()
         self.open_button = QPushButton('打开 DB 项目')
         self.open_button.clicked.connect(self.open_requested)
@@ -76,10 +85,11 @@ class FrameBrowser(QWidget):
         self.restore_button = QPushButton('返回工作视图')
         self.restore_button.clicked.connect(self.restore_requested)
         actions.addWidget(self.restore_button)
-        layout.addLayout(actions)
+        footer_layout.addLayout(actions)
         self.manage_button = QPushButton('会话占用 / 管理')
         self.manage_button.clicked.connect(self.manage_requested)
-        layout.addWidget(self.manage_button)
+        footer_layout.addWidget(self.manage_button)
+        layout.addWidget(self.footer)
         self._items = {}
         self._component_items = {}
         self.refresh()

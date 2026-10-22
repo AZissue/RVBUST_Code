@@ -6,7 +6,7 @@ Changing presentation never instantiates a camera service or connects an action.
 from dataclasses import dataclass
 from PySide6.QtCore import Qt, Signal, QPoint, QObject, QEvent, QTimer
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
-    QStackedLayout, QSplitter, QScrollArea, QGroupBox, QLabel, QToolButton, QButtonGroup, QComboBox)
+    QStackedLayout, QSplitter, QScrollArea, QGroupBox, QLabel, QToolButton, QButtonGroup, QComboBox, QSizePolicy)
 
 
 class _Viewport(QWidget):
@@ -180,7 +180,17 @@ class IndustrialPresentation:
             self.calibration_panel = TurntableCalibrationPanel(workspace)
             self.side_column.insertWidget(1, self.calibration_panel)
             self.side_column.setSizes([400, 210, 30])
-        self.body.addWidget(self.side_column)
+        if mode == 'multi_cam':
+            self.side_scroll = QScrollArea()
+            self.side_scroll.setWidgetResizable(True)
+            self.side_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            self.side_scroll.setMinimumWidth(310)
+            self.side_scroll.setMaximumWidth(420)
+            self.side_scroll.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Ignored)
+            self.side_scroll.setWidget(self.side_column)
+            self.body.addWidget(self.side_scroll)
+        else:
+            self.body.addWidget(self.side_column)
         self.stage = QWidget()
         stage = QVBoxLayout(self.stage)
         stage.setContentsMargins(0, 0, 0, 0)
@@ -451,6 +461,8 @@ class IndustrialPresentation:
             self.inspector.bind_viewport(canvas)
 
     def maximize(self, enabled):
+        if hasattr(self, 'side_scroll'):
+            self.side_scroll.setVisible(not enabled)
         self.side_column.setVisible(not enabled)
         self.sidebar.setVisible(not enabled and (self.legacy_panel is None or self.legacy_toggle.isChecked()))
         if self.overlay:
