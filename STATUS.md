@@ -21,6 +21,12 @@
     协议取证、阶段 5/6/10 剩余项不默认纳入。
   - **工作区基准已确认：D 工作区为真源**。3.0 工作分支 `HandEyeTools-3.0`
     从 2.0 冻结提交拉出；AICode/handeye-tools 按 D 同步（M0）。
+  - **M0 已完成（2026-10-22）**：AICode 新建分支 `handeye-tools-3.0-sync`
+    （monorepo `main` 未动），整树同步 D 的 `3d6507b`，提交 `5f30ddb`
+    （753 文件）；补本地 `third_party/EfortSDK`。AICode 构建 exit 0、
+    `ctest` 3/3、`unit_tests` 404 通过 / 0 失败 / 2 跳过。
+  - **下一步（M1）**：先扩 `circle_truth` 的非均匀背景场景（纯测试，不动算法）；
+    同时等现场提供 5 个特征的可重放会话（`reports/3.0-规划.md` §5.2）。
 
 - **2026-10-21（之二十六：v2.0.0 正式包 + 双仓库推送；发布版隐藏测量工具）**
   - **版本**：`AppInfo::version()` 与 CMake `project(... VERSION 2.0.0)`
