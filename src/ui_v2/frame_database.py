@@ -272,10 +272,12 @@ class FrameBrowser(QWidget):
         row = self.database.records[uid]
         if row.kind == 'result':
             self.details.setText(f'拼接帧 {row.frame_id:03d} · {row.points:,} 个有效点\n来源 {len(row.source_ids)} 帧 · 独立结果，原始数据保留')
+            self.tree.setToolTip(self.details.text())
             return
         description = {'frame': '原始PLY + 2D PNG · 联动查看', 'cloud': '仅查看原始点云 · 相机坐标系 / mm',
                        'image': '仅查看2D图像 · 保留当前3D视图'}[component]
         self.details.setText(f'{row.logical_name} · {row.status}\n{description}')
+        self.tree.setToolTip(self.details.text())
 
 
 class FrameDatabaseController(QObject):
@@ -372,6 +374,7 @@ class FrameDatabaseController(QObject):
         browser = self.browsers.get(mode)
         if browser:
             browser.details.setText('临时工作区 · 请主动保存会话')
+            browser.tree.setToolTip(browser.details.text())
             browser.tree.blockSignals(True)
             browser.tree.setCurrentItem(None)
             browser.tree.clearSelection()

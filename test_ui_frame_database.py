@@ -92,7 +92,7 @@ class FrameBrowserTests(unittest.TestCase):
         self.assertEqual(grid._database_card.current_frame().image_np.shape[1], 2)
         self.assertTrue(grid._database_card.isVisible())
         self.assertIsNone(self.win.workspace_multi()._industrial.inspector)
-        self.browser.restore_button.click()
+        self.win._industrial_ribbon.commands[('multi_cam', 'restore')].click()
         self.assertIsNone(viewer._database_cloud)
         self.assertIsNone(grid._database_card)
         self.assertEqual(viewer.viewer().mode.currentData(), '__merged__')

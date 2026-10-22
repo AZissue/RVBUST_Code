@@ -153,6 +153,9 @@ class IndustrialPresentation:
         if not hasattr(workspace, 'frame_database'):
             workspace.frame_database = FrameDatabase(mode)
         self.frame_browser = FrameBrowser(workspace.frame_database)
+        # Session/view actions live in the ribbon; keep the source controls for
+        # existing controller bindings and context-menu shortcuts.
+        self.frame_browser.footer.hide()
         self.side_column.addWidget(self.frame_browser)
         self.legacy_panel = None
         if mode in ('multi_cam', 'mobile_chain', 'turntable'):

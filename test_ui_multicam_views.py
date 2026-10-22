@@ -117,7 +117,7 @@ class MulticamViewTests(unittest.TestCase):
         self.assertGreaterEqual(self.win._log_panel._text.height(), 30)
         self.assertLessEqual(self.win._log_panel.body.geometry().bottom(), self.win._log_panel.height())
 
-    def test_sidebar_scrolls_without_db_footer_or_gate_overlap_when_logs_expand(self):
+    def test_sidebar_keeps_db_and_gate_separate_without_footer_when_logs_expand(self):
         from PySide6.QtWidgets import QTreeWidgetItem
         from PySide6.QtCore import QPoint
         p = self.presentation
@@ -131,11 +131,9 @@ class MulticamViewTests(unittest.TestCase):
         for sizes in ([380, 380], [210, 600]):
             self.win._content_split.setSizes(sizes)
             self.flush()
-            self.assertLess(browser.tree.geometry().bottom(), browser.footer.y())
-            self.assertLess(browser.details.geometry().bottom(), browser.open_button.y())
-            self.assertLess(browser.open_button.geometry().bottom(), browser.manage_button.y())
+            self.assertTrue(browser.footer.isHidden())
+            self.assertLessEqual(browser.tree.geometry().bottom(), browser.height())
             self.assertLess(browser.geometry().bottom(), p.calibration_panel.y())
-            self.assertGreater(p.side_scroll.verticalScrollBar().maximum(), 0)
             p.side_scroll.verticalScrollBar().setValue(p.side_scroll.verticalScrollBar().maximum())
             self.flush()
             gate_position = p.calibration_panel.mapTo(p.side_scroll.viewport(), QPoint(0, 0))

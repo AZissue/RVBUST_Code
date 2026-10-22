@@ -3,6 +3,7 @@ import os
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
@@ -86,6 +87,32 @@ class RibbonTests(unittest.TestCase):
         button.click()
         self.assertEqual(undo.count(), 1)
         self.assertTrue(ws._btn_capture.isHidden())
+
+    def test_session_actions_move_to_ribbon_once_and_restore_current_mode(self):
+        manage = Mock()
+        self.win._backend_bridge = SimpleNamespace(projects=SimpleNamespace(manage=manage))
+        try:
+            for mode in ('multi_cam', 'mobile_chain', 'turntable'):
+                # Create presentations without backend setup; the production
+                # bindings are covered by the frame-database integration tests.
+                self.win._backend_bridge = None
+                ws = self.enter(mode)
+                self.win.set_presentation('classic')
+                self.win.set_presentation('industrial')
+                self.win._backend_bridge = SimpleNamespace(projects=SimpleNamespace(manage=manage))
+                browser = ws._industrial.frame_browser
+                self.assertTrue(browser.footer.isHidden())
+                restore = QSignalSpy(browser.restore_requested)
+                opened = QSignalSpy(self.win.open_session_requested)
+                self.ribbon.commands[(mode, 'restore')].click()
+                self.assertEqual(restore.count(), 1)
+                self.ribbon.commands[(mode, 'open')].click()
+                self.assertEqual(opened.count(), 1)
+                manage.reset_mock()
+                self.ribbon.commands[(mode, 'manage')].click()
+                manage.assert_called_once_with()
+        finally:
+            self.win._backend_bridge = None
 
     def test_turntable_save_uses_workspace_gate_and_shell_signal_once(self):
         ws = self.enter('turntable')

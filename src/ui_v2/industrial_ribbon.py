@@ -54,7 +54,7 @@ class CommandButton(QToolButton):
         self.setIcon(icons.icon(glyph, '#d6d6d6', 23))
         self.setIconSize(QSize(23, 23))
         self.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
-        self.setFixedSize(72, 55)
+        self.setFixedSize(64, 55)
         self.setToolTip(source.toolTip() or source.text().strip())
         self.setCheckable(source.isCheckable())
         self.clicked.connect(lambda _checked=False: source.click())
@@ -160,13 +160,17 @@ class IndustrialRibbon(QWidget):
                 button.setIcon(icons.icon(glyph, '#d6d6d6', 23))
                 button.setIconSize(QSize(23, 23))
                 button.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
-                button.setFixedSize(72, 55)
+                button.setFixedSize(64, 55)
                 button.clicked.connect(lambda _checked=False, action=source: action())
             if key == 'select':
                 button.setObjectName('workspaceSwitch')
                 button.setToolTip('返回启动窗口，选择工作区或切换离线预览')
             elif key in ('frame0', 'frame1'):
-                button.setFixedWidth(84)
+                button.setFixedWidth(72)
+            elif key == 'restore':
+                button.setToolTip('返回工作视图：退出DB历史帧预览，恢复当前工作区的2D / 3D显示')
+            elif key == 'manage':
+                button.setToolTip('会话占用 / 管理：查看磁盘占用、管理已保存会话与回收数据')
             elif key == 'stitch':
                 button.setProperty('primaryAction', True)
             self.commands[(mode, key)] = button
@@ -186,6 +190,7 @@ class IndustrialRibbon(QWidget):
             ('new', '新建会话', 'folder_open', lambda: self._project_action('new_dialog')),
             ('open', '打开会话', 'folder_open', shell.open_session_requested.emit),
             ('save', '保存会话', 'save', turn.btn_save_session if mode == 'turntable' else shell.save_session_requested.emit),
+            ('manage', '会话管理', 'folder_open', lambda: self._project_action('manage')),
             ('export', '导出点云', 'layers', lambda: self._stitch_action('export')),
         ], mode)
         self._group(row, '设备', [
@@ -214,7 +219,8 @@ class IndustrialRibbon(QWidget):
         for caption, entries in groups:
             self._group(row, caption, entries, mode)
         self._group(row, '拼接', [('stitch', '执行拼接', 'stitch', lambda: self._stitch_action('execute'))], mode)
-        self._group(row, '视图', [('fit', '适配视图', 'reset_view', self.fit_view),
+        self._group(row, '视图', [('restore', '返回视图', 'undo', self.restore_view),
+                                 ('fit', '适配视图', 'reset_view', self.fit_view),
                                  ('screenshot', '视图截图', 'video', self.screenshot)], mode)
         # Keep existing controls for business logic; hide only their duplicates
         # in the new presentation. Classic visibility is restored on exit.
@@ -295,6 +301,12 @@ class IndustrialRibbon(QWidget):
 
     def fit_view(self):
         self._viewer().reset_view()
+
+    def restore_view(self):
+        workspace = self.shell._stack.currentWidget()
+        presentation = getattr(workspace, '_industrial', None)
+        if presentation is not None:
+            presentation.frame_browser.restore_requested.emit()
 
     def screenshot(self):
         canvas = getattr(self._viewer().viewer(), 'canvas', None)
