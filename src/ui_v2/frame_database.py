@@ -19,6 +19,13 @@ from .widgets.db_check_style import DB_CHECK_QSS, paint_component_check
 class _ComponentCheckDelegate(QStyledItemDelegate):
     """Use the active style's checkbox geometry, including DPI and indentation."""
 
+    def initStyleOption(self, option, index):
+        super().initStyleOption(option, index)
+        # Native item views can supply a focused/current cell after deselection.
+        # The DB highlight represents model selection, never keyboard focus.
+        if not self.parent().selectionModel().isSelected(index):
+            option.state &= ~(QStyle.State_Selected | QStyle.State_HasFocus)
+
     def check_rect(self, index):
         view = self.parent()
         option = QStyleOptionViewItem()
@@ -59,6 +66,7 @@ class FrameBrowser(QWidget):
             QWidget#frameDatabaseBrowser QTreeWidget:focus { border-color:#805052; }
             QWidget#frameDatabaseBrowser QTreeWidget::item { min-height:22px; }
             QWidget#frameDatabaseBrowser QTreeWidget::item:hover { background:#353030; }
+            QWidget#frameDatabaseBrowser QTreeWidget::item:focus:!selected { background:#252525; }
             QWidget#frameDatabaseBrowser QTreeWidget::item:selected { background:#573232; color:#ffffff; }
             QWidget#frameDatabaseBrowser QTreeWidget::item:selected:!active { background:#453435; color:#e3dada; }
         ''' + DB_CHECK_QSS)
@@ -89,6 +97,7 @@ class FrameBrowser(QWidget):
         self.tree.currentItemChanged.connect(self._selected)
         self.tree.itemChanged.connect(self._component_check_changed)
         self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.tree.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.tree.itemSelectionChanged.connect(self._selection_changed)
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._context_menu)
@@ -300,6 +309,7 @@ class FrameBrowser(QWidget):
                 self.tree.setCurrentItem(None)
             self.selection_cleared.emit()
         self._update_properties()
+        self.tree.viewport().update()
         changed = getattr(self, '_edit_selection_changed', None)
         if changed:
             changed()

@@ -8,9 +8,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent / 'src'))
-from PySide6.QtCore import Qt, QPoint
+from PySide6.QtCore import Qt, QPoint, QSignalBlocker, QItemSelectionModel
 from PySide6.QtTest import QTest, QSignalSpy
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QStyleFactory
 from core.frame_database import FrameDatabase, FrameRecord
 from ui_v2.frame_database import FrameBrowser
 from ui_v2 import GLOBAL_QSS
@@ -144,6 +144,44 @@ class ComponentCheckTests(unittest.TestCase):
         tree.setCurrentItem(browser._items['raw'])
         tree.clearSelection()
         self.assertIsNone(tree.currentItem())
+
+    def test_focused_unselected_cell_has_no_red_pixels_in_windows_styles(self):
+        from ui_v2.theme import LAUNCHER_QSS
+        browser = self.show_browser(self.database('mobile_chain'))
+        tree = browser.tree
+        item = browser._component_items['result', 'cloud']
+        browser.set_component_checked('result', 'cloud')
+        red_colors = {0xff573232, 0xff453435, 0xff694044}
+        def red_pixels():
+            image = tree.viewport().grab().toImage()
+            rect = tree.visualItemRect(item)
+            return sum(image.pixel(x, y) in red_colors
+                       for y in range(rect.top()+2, rect.bottom()-1)
+                       for x in range(2, image.width()-2))
+        try:
+            for name in QStyleFactory.keys():
+                for sheet in (GLOBAL_QSS, LAUNCHER_QSS):
+                    with self.subTest(style=name, industrial=sheet == LAUNCHER_QSS):
+                        self.app.setStyle(QStyleFactory.create(name))
+                        self.app.setStyleSheet(sheet)
+                        tree.setCurrentItem(item)
+                        tree.scrollToItem(item)
+                        tree.setFocus()
+                        self.app.processEvents()
+                        self.assertGreater(red_pixels(), 100, 'Real selection must stay visible')
+                        browser.clear_highlight()
+                        # Reproduce a native current/focus cell with no selection.
+                        with QSignalBlocker(tree):
+                            tree.setCurrentItem(item, 0, QItemSelectionModel.NoUpdate)
+                        tree.setFocus()
+                        self.app.processEvents()
+                        self.assertEqual(tree.selectedItems(), [])
+                        self.assertEqual(red_pixels(), 0, 'Focus must not look selected')
+                        self.assertIn('提示', browser.properties.values)
+                        self.assertEqual(browser.checked_components(), [('result', 'cloud')])
+        finally:
+            self.app.setStyle('Fusion')
+            self.app.setStyleSheet(GLOBAL_QSS)
 
 
 if __name__ == '__main__':
