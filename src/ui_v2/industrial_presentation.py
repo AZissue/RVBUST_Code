@@ -177,7 +177,7 @@ class IndustrialPresentation:
             self.set_legacy_expanded(False)
         else:
             self.side_column.addWidget(self.sidebar)
-        self.side_column.setSizes([320, 440])
+        self.side_column.setSizes([700, 30])
         self.calibration_panel = None
         if mode == 'turntable':
             from .widgets.turntable_calibration_panel import TurntableCalibrationPanel
@@ -376,9 +376,21 @@ class IndustrialPresentation:
         self.legacy_toggle.setText('旧版操作栏 · 收起' if expanded else '旧版操作栏 · 展开')
         self.legacy_toggle.setArrowType(Qt.DownArrow if expanded else Qt.RightArrow)
         self.sidebar.setVisible(expanded)
-        self.legacy_panel.setMaximumHeight(16777215 if expanded else 30)
+        index = self.side_column.indexOf(self.legacy_panel)
+        self.side_column.setStretchFactor(index, 1 if expanded else 0)
         if expanded:
+            self.legacy_panel.setMinimumHeight(0)
+            self.legacy_panel.setMaximumHeight(16777215)
             self.side_column.setSizes([320, 210, 440] if self.mode == 'turntable' else [440, 300])
+        else:
+            height = self.legacy_toggle.minimumHeight()
+            self.legacy_panel.setFixedHeight(height)
+            # A widget's maximum height alone does not release the splitter's
+            # cached allocation. Give that space back to the DB / properties.
+            sizes = self.side_column.sizes()
+            sizes[0] += max(0, sizes[index] - height)
+            sizes[index] = height
+            self.side_column.setSizes(sizes)
 
     def activate(self, enabled):
         if self.active == enabled:
