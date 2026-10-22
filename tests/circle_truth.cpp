@@ -60,6 +60,17 @@ struct Scene {
                                   //   This is the Ø26 case — a real part has more
                                   //   than one transition near the edge, and the
                                   //   edge picker has to choose the right one.
+    // Non-uniform background (2026-10-22).  The reverted P1 change assumed the
+    // world outside the part was a constant level; on the real machine the
+    // table has a gradient, texture and other bright objects, so the outward
+    // search chained onto a far transition (Ø26 -> 42.66 mm).  These knobs let
+    // the regression express that failure before the algorithm is touched.
+    double bgLevel = 30.0;        // background radiance away from the part
+    double bgGradient = 0.0;      // added linearly across the image, levels
+    double bgTexture = 0.0;       // low-frequency sinusoidal texture, levels
+    double bgRingR = 0.0;         // a bright/dark annulus in the plane (0 = none)
+    double bgRingWidth = 0.0;     //   its radial width, mm
+    double bgRingLevel = 0.0;     //   its radiance; overrides material/background
 };
 
 // ── pinhole camera looking down +Z at a plane tilted about Y ───────────
@@ -256,20 +267,36 @@ Data build(const Scene& s)
         const double imageR = s.materialInside ? s.radius : s.radius + s.chamferMm;
         // Radiance, not a mask: background 30, top level 200, stepped-down
         // level 140 — so the step shows up as a brightness transition too.
-        std::vector<float> lum(static_cast<std::size_t>(hw) * hh, 30.0f);
+        std::vector<float> lum(static_cast<std::size_t>(hw) * hh, 0.0f);
         for (int y = 0; y < hh; ++y)
             for (int x = 0; x < hw; ++x) {
                 Vec3 hit{};
                 double xi = 0.0, eta = 0.0;
                 const double u = (x + 0.5) / S, v = (y + 0.5) / S;
-                if (!cam.trace(u, v, true, hit, xi, eta))
+                // background is not a constant: a gradient plus low-frequency
+                // texture is what the reverted P1 search mistook for edges.
+                double value = s.bgLevel + s.bgGradient * (x / double(hw - 1));
+                if (s.bgTexture != 0.0)
+                    value += 0.5 * s.bgTexture *
+                             (std::sin(0.11 * x) + std::sin(0.07 * y));
+                if (!cam.trace(u, v, true, hit, xi, eta)) {
+                    lum[static_cast<std::size_t>(y) * hw + x] =
+                        static_cast<float>(value);
                     continue;
-                if (!cam.material(xi, eta, s.materialInside, imageR))
-                    continue;
+                }
                 const double r = cam.radiusAt(xi, eta);
-                const bool onStep = s.stepDepth > 0.0 &&
-                    (s.materialInside ? (r > s.stepR) : (r < s.stepR));
-                lum[static_cast<std::size_t>(y) * hw + x] = onStep ? 140.0f : 200.0f;
+                if (cam.material(xi, eta, s.materialInside, imageR)) {
+                    const bool onStep = s.stepDepth > 0.0 &&
+                        (s.materialInside ? (r > s.stepR) : (r < s.stepR));
+                    value = onStep ? 140.0 : 200.0;
+                }
+                // A bright annulus outside (disc) or on (hole) the part: a
+                // second, stronger edge that an outward chain can latch onto.
+                if (s.bgRingWidth > 0.0 && r >= s.bgRingR &&
+                    r <= s.bgRingR + s.bgRingWidth)
+                    value = s.bgRingLevel;
+                lum[static_cast<std::size_t>(y) * hw + x] =
+                    static_cast<float>(value);
             }
         blurInPlace(lum, hw, hh, s.blurPx * S);
         for (int y = 0; y < d.imageH; ++y)
@@ -456,6 +483,43 @@ int main(int argc, char** argv)
     // 圆环拟合 —— 无图像（走 3D 兜底）
     add("disc_d26  3D tilt15",    true,  13.0, 15, p, 0.0, 0.0, 500, 2, false);
     add("disc_d26  3D tilt0",     true,  13.0,  0, p, 0.0, 0.0, 500, 2, false);
+
+    // Non-uniform background: the failure mode the reverted P1 hit on the real
+    // machine.  The true edge is unchanged; the scene now has a gradient, table
+    // texture and a strong bright ring just outside the edge.  Current code
+    // (stops at the first transition) passes; an outward-chain algorithm must
+    // stop at the material boundary, not at these rings.
+    //
+    // Validated 2026-10-22 against the failed P1 commit 866fcd3 in a temporary
+    // worktree: the two disc scenes read 32.0000 mm (+23.08%) there — the same
+    // failure shape as the real Ø26 -> 42.6615 mm (+64%).  The hole scenes are
+    // unaffected because the ring lies outside the bore edge.  Without these
+    // scenes that commit passed every synthetic case.
+    auto addBg = [&](const char* name, bool inside, double r, int cells,
+                     double ringR, double ringW, double ringLevel,
+                     double gradient, double texture) {
+        Scene s;
+        s.name = name;
+        s.materialInside = inside;
+        s.radius = r;
+        s.tiltDeg = 15.0;
+        s.pitch = p;
+        s.blurPx = 1.0;
+        s.imageNoise = 2.0;
+        s.cells = cells;
+        s.scale = 2;
+        s.useImage = true;
+        s.bgRingR = ringR;
+        s.bgRingWidth = ringW;
+        s.bgRingLevel = ringLevel;
+        s.bgGradient = gradient;
+        s.bgTexture = texture;
+        scenes.push_back(s);
+    };
+    addBg("disc_d26  bg ring15 grad", true,  13.0, 700, 15.0, 1.0, 250.0, 50.0, 0.0);
+    addBg("disc_d26  bg ring15 tex",  true,  13.0, 700, 15.0, 1.0, 250.0,  0.0, 20.0);
+    addBg("hole_d9   bg ring6.5 grad", false, 4.50, 400,  6.5, 0.8, 250.0, 50.0, 0.0);
+    addBg("hole_d5   bg ring3.8 tex",  false, 2.50, 300,  3.8, 0.6, 250.0,  0.0, 20.0);
 
     std::printf("%-26s %-4s %-4s %-4s %8s %8s %8s %8s %7s %8s %7s %6s  %s\n",
                 "scene", "ok", "sub", "rel", "outer", "inner", "meas", "err_mm",
