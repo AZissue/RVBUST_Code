@@ -84,7 +84,7 @@ class IndustrialViewer(QWidget):
         for label, attribute in (('参考网格', 'grid'), ('坐标轴', 'axes'), ('编码圆圆心与编号', 'marker_centers')):
             action = menu.addAction(label)
             action.setCheckable(True)
-            action.setChecked(True)
+            action.setChecked(attribute == 'axes')
             self.display_actions[attribute] = action
             action.toggled.connect(lambda value, attr=attribute: self._display_option(attr, value))
         self.options_button.setMenu(menu)
@@ -108,6 +108,8 @@ class IndustrialViewer(QWidget):
         return GpuCloudCanvas(self)
 
     def _bind_canvas(self):
+        for name, action in self.display_actions.items():
+            setattr(self.canvas, name, action.isChecked())
         self.canvas.status_changed.connect(self._status)
         if hasattr(self.canvas, 'render_failed'):
             self.canvas.render_failed.connect(self._fallback)
