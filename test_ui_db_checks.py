@@ -129,6 +129,9 @@ class ComponentCheckTests(unittest.TestCase):
         browser._items['result'].setSelected(True)
         frames, components = QSignalSpy(browser.frame_selected), QSignalSpy(browser.component_selected)
         checks = QSignalSpy(browser.checked_components_changed)
+        # Keep a real blank area regardless of checkbox/row sizing.
+        tree.collapseAll()
+        self.app.processEvents()
         QTest.mouseClick(tree.viewport(), Qt.LeftButton,
                          pos=QPoint(15, tree.viewport().height()-10))
         self.app.processEvents()

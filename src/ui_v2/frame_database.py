@@ -13,6 +13,7 @@ from core.frame_database import DEFAULT_ROOT, STALE_RESULT
 from core.frame_data import FrameData
 from . import icons
 from .dialogs import ChineseMessageBox as QMessageBox
+from .widgets.db_check_style import DB_CHECK_QSS, paint_component_check
 
 
 class _ComponentCheckDelegate(QStyledItemDelegate):
@@ -25,6 +26,10 @@ class _ComponentCheckDelegate(QStyledItemDelegate):
         self.initStyleOption(option, index)
         option.rect = view.visualRect(index)
         return view.style().subElementRect(QStyle.SE_ItemViewItemCheckIndicator, option, view)
+
+    def paint(self, painter, option, index):
+        super().paint(painter, option, index)
+        paint_component_check(painter, option, index, self.check_rect(index))
 
 
 class FrameBrowser(QWidget):
@@ -56,7 +61,7 @@ class FrameBrowser(QWidget):
             QWidget#frameDatabaseBrowser QTreeWidget::item:hover { background:#353030; }
             QWidget#frameDatabaseBrowser QTreeWidget::item:selected { background:#573232; color:#ffffff; }
             QWidget#frameDatabaseBrowser QTreeWidget::item:selected:!active { background:#453435; color:#e3dada; }
-        ''')
+        ''' + DB_CHECK_QSS)
         layout = QVBoxLayout(self)
         # Keep the tree and footer minima additive when the workspace shrinks.
         layout.setSizeConstraint(QLayout.SetMinimumSize)
