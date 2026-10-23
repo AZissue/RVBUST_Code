@@ -154,7 +154,7 @@ class ServiceTests(unittest.TestCase):
         from core.capture_parameters import read, apply
         values = read(camera)['values']
         for changes in ({'gain_2d': float('nan')}, {'exposure_time_3d': 2},
-                        {'exposure_time_2d': 11.5}, {'projector_brightness': 256}):
+                        {'exposure_time_2d': 11.5}, {'projector_brightness': 241}, {'projector_brightness': -1}):
             with self.assertRaises(ValueError):
                 apply(camera, dict(values, **changes))
         camera.camera.GetGainRange.return_value = (False, 0, 0)
@@ -227,18 +227,16 @@ class PageTests(unittest.TestCase):
         self.assertNotIn('gamma_3d', page.controls)
         self.assertNotIn('scan_times', page.controls)
         page.controls['exposure_time_2d'].setValue(21)
-        page.apply_button.click()
-        self.wait(lambda: not page._pending and not self.bridge._workers)
+        self.wait(lambda: not page._dirty and not page._pending and not self.bridge._workers)
         self.assertEqual(states['cam0']['exposure_time_2d'], 21)
         cameras['cam1'].camera.SaveCaptureOptionParameters.assert_not_called()
         page.camera.setCurrentText('cam1')
         page.refresh()
         self.wait(lambda: page._loaded == 'cam1' and not self.bridge._workers)
         self.assertEqual(page.controls['exposure_time_2d'].value(), 33)
-        self.assertEqual(page.apply_button.text(), '应用到 cam1')
+        self.assertFalse(hasattr(page, 'apply_button'))
         page.controls['exposure_time_2d'].setValue(44)
-        page.apply_button.click()
-        self.wait(lambda: not page._pending and not self.bridge._workers)
+        self.wait(lambda: not page._dirty and not page._pending and not self.bridge._workers)
         self.assertEqual(states['cam1']['exposure_time_2d'], 44)
         self.assertEqual(states['cam0']['exposure_time_2d'], 21)
         self.assertEqual(cameras['cam0'].camera.SaveCaptureOptionParameters.call_count, 1)
@@ -294,7 +292,7 @@ class PageTests(unittest.TestCase):
         self.page().refresh()
         self.assertEqual(camera.camera.LoadCaptureOptionParameters.call_count, 1)
         self.assertIn('failed', self.page().status.text())
-        self.assertFalse(self.page().apply_button.isEnabled())
+        self.assertFalse(self.page().controls['exposure_time_2d'].isEnabled())
         self.bridge.camera_manager._cameras.clear()
 
     def test_sliders_exact_input_and_wheel_protection_do_not_write(self):
@@ -321,7 +319,7 @@ class PageTests(unittest.TestCase):
         camera.camera.SaveCaptureOptionParameters.assert_not_called()
         self.bridge.camera_manager._cameras.clear()
 
-    def test_stale_callback_is_discarded_and_apply_stays_visible_when_scrolled(self):
+    def test_stale_callback_is_discarded_and_status_stays_visible_when_scrolled(self):
         manager = self.bridge.camera_manager
         manager._cameras['cam0'] = rich_camera()
         replies = []
@@ -344,8 +342,8 @@ class PageTests(unittest.TestCase):
             self.app.processEvents()
             self.assertGreater(page.scroll.verticalScrollBar().maximum(), 0)
             page.scroll.verticalScrollBar().setValue(page.scroll.verticalScrollBar().maximum())
-            self.assertLessEqual(page.apply_button.geometry().bottom(), page.height())
-            self.assertTrue(page.apply_button.isVisible())
+            self.assertLessEqual(page.status.geometry().bottom(), page.height())
+            self.assertTrue(page.status.isVisible())
         manager._cameras.clear()
 
     def test_all_modes_have_shared_offline_page_and_no_sdk_access(self):
@@ -356,7 +354,7 @@ class PageTests(unittest.TestCase):
             properties = self.win._stack.currentWidget()._industrial.frame_browser.properties
             self.assertEqual(properties.tabs.tabText(2), '拍摄参数')
             self.assertFalse(page.read_button.isEnabled())
-            self.assertFalse(page.apply_button.isEnabled())
+            self.assertFalse(page.controls['exposure_time_2d'].isEnabled())
             self.assertFalse(page.camera.isEnabled())
             for group, _ in page.groups.values():
                 self.assertFalse(group.isHidden())
@@ -403,31 +401,30 @@ class PageTests(unittest.TestCase):
         self.bridge.camera_manager._cameras['cam0'] = camera
         page = self.page()
         page.refresh()
-        self.assertFalse(page.apply_button.isEnabled())
+        self.assertFalse(page.controls['exposure_time_2d'].isEnabled())
         with patch.object(self.bridge.projects, 'prepare', side_effect=AssertionError('project mutated')), \
                 patch.object(self.bridge.frame_db, 'restore', side_effect=AssertionError('DB restored')), \
                 patch.object(self.bridge.frame_db, 'archive_context', side_effect=AssertionError('DB archived')), \
                 patch.object(self.bridge.frame_db, 'synchronize', side_effect=AssertionError('DB synchronized')):
             page.read_button.click()
-            self.wait(lambda: not page._pending and not self.bridge._workers)
+            self.wait(lambda: not page._dirty and not page._pending and not self.bridge._workers)
             page.refresh()
             self.assertEqual(page.controls['exposure_time_2d'].value(), 11)
-            self.assertTrue(page.apply_button.isEnabled())
+            self.assertTrue(page.controls['exposure_time_2d'].isEnabled())
             self.assertIn('HDR', page.status.text())
             page.controls['exposure_time_2d'].setValue(25)
-            page.apply_button.click()
-            self.wait(lambda: not page._pending and not self.bridge._workers)
+            self.wait(lambda: not page._dirty and not page._pending and not self.bridge._workers)
             self.assertEqual(camera.current_options.exposure_time_2d, 25)
             self.assertEqual(camera.current_options.gain_2d, 0.1234567)
             camera.camera.SaveCaptureOptionParameters.return_value = False
             page.refresh()
-            page.apply_button.click()
-            self.wait(lambda: not page._pending and not self.bridge._workers)
+            page.controls['exposure_time_2d'].setValue(26)
+            self.wait(lambda: not page._dirty and not page._pending and not self.bridge._workers)
             self.assertIn('拒绝', page.status.text())
             self.assertEqual(camera.current_options.exposure_time_2d, 25)
         with patch.object(self.bridge, 'can_change_workspace', return_value=False):
             page.refresh()
-            self.assertFalse(page.apply_button.isEnabled())
+            self.assertFalse(page.controls['exposure_time_2d'].isEnabled())
             result = Mock()
             self.bridge.capture_parameters('cam0', None, result)
             self.assertIn('进行中', result.call_args.args[1])
@@ -443,20 +440,146 @@ class PageTests(unittest.TestCase):
         page = self.page()
         page.refresh()
         page.read_button.click()
-        self.wait(lambda: not page._pending and not self.bridge._workers)
+        self.wait(lambda: not page._dirty and not page._pending and not self.bridge._workers)
         page.camera.setCurrentText('cam1')
         self.assertIsNone(page._loaded)
-        self.assertFalse(page.apply_button.isEnabled())
+        self.assertFalse(page.controls['exposure_time_2d'].isEnabled())
         manager._cameras['cam1'].camera.LoadCaptureOptionParameters.side_effect = RuntimeError('read failed')
         page.refresh()
         page.read_button.click()
-        self.wait(lambda: not page._pending and not self.bridge._workers)
+        self.wait(lambda: not page._dirty and not page._pending and not self.bridge._workers)
         page.refresh()
         self.assertIn('read failed', page.status.text())
         self.assertTrue(page.read_button.isEnabled())
-        self.assertFalse(page.apply_button.isEnabled())
+        self.assertFalse(page.controls['exposure_time_2d'].isEnabled())
         manager._cameras['cam1'].camera.SaveCaptureOptionParameters.assert_not_called()
         manager._cameras.clear()
+
+    def test_auto_changes_coalesce_and_next_preview_uses_latest_options(self):
+        camera = rich_camera()
+        camera.camera.GetImage.return_value = fixture.np.zeros((2, 2, 3), fixture.np.uint8)
+        self.bridge.camera_manager._cameras['cam0'] = camera
+        self.open_page()
+        page = self.page()
+        self.wait(lambda: page._loaded == 'cam0' and not self.bridge._workers)
+        for exposure in (20, 21, 22, 23):
+            page.controls['exposure_time_2d'].setValue(exposure)
+        self.assertFalse(hasattr(page, 'apply_button'))
+        camera.camera.SaveCaptureOptionParameters.assert_not_called()
+        self.wait(lambda: not page._dirty and not page._pending and not self.bridge._workers)
+        self.assertEqual(camera.camera.SaveCaptureOptionParameters.call_count, 1)
+        _, message = camera.capture_2d()
+        self.assertEqual(message, 'success')
+        options = camera.camera.Capture2D.call_args.args[0]
+        self.assertEqual(options.exposure_time_2d, 23)
+        self.assertIn('实时生效', page.status.text())
+        self.bridge.camera_manager._cameras.clear()
+
+    def test_edits_during_inflight_write_keep_latest_values_and_follow_up_once(self):
+        camera = rich_camera()
+        self.bridge.camera_manager._cameras['cam0'] = camera
+        self.open_page()
+        page = self.page()
+        self.wait(lambda: page._loaded == 'cam0' and not self.bridge._workers)
+        replies = []
+        def queued(camera_id, values, done):
+            snapshot = dict(values=dict(values), ranges=dict(page._ranges), choices={}, hdr=0)
+            replies.append((snapshot, done))
+        with patch.object(self.bridge, 'capture_parameters', side_effect=queued):
+            page.controls['exposure_time_2d'].setValue(20)
+            self.wait(lambda: len(replies) == 1)
+            self.assertTrue(page.controls['exposure_time_2d'].isEnabled())
+            page.controls['exposure_time_2d'].setValue(31)
+            page.controls['exposure_time_2d'].setValue(32)
+            snapshot, done = replies[0]
+            done(snapshot, None)
+            self.assertEqual(page.controls['exposure_time_2d'].value(), 32)
+            self.wait(lambda: len(replies) == 2)
+            snapshot, done = replies[1]
+            self.assertEqual(snapshot['values']['exposure_time_2d'], 32)
+            done(snapshot, None)
+            QTest.qWait(350)
+            self.assertEqual(len(replies), 2)
+            self.assertFalse(page._dirty)
+        self.bridge.camera_manager._cameras.clear()
+
+    def test_failed_auto_write_does_not_loop_and_new_edit_can_retry(self):
+        camera = rich_camera()
+        self.bridge.camera_manager._cameras['cam0'] = camera
+        self.open_page()
+        page = self.page()
+        self.wait(lambda: page._loaded == 'cam0' and not self.bridge._workers)
+        camera.camera.SaveCaptureOptionParameters.return_value = False
+        page.controls['exposure_time_2d'].setValue(20)
+        self.wait(lambda: not page._dirty and not page._pending and not self.bridge._workers)
+        QTest.qWait(650)
+        self.assertEqual(camera.camera.SaveCaptureOptionParameters.call_count, 1)
+        self.assertEqual(camera.current_options.exposure_time_2d, 11)
+        camera.camera.SaveCaptureOptionParameters.return_value = True
+        page.controls['exposure_time_2d'].setValue(21)
+        self.wait(lambda: not page._dirty and not page._pending and not self.bridge._workers)
+        self.assertEqual(camera.current_options.exposure_time_2d, 21)
+        self.bridge.camera_manager._cameras.clear()
+
+    def test_pending_edit_is_cancelled_on_target_change_and_brightness_is_limited(self):
+        manager = self.bridge.camera_manager
+        first, second = rich_camera(), rich_camera('X2')
+        manager._cameras.update(cam0=first, cam1=second)
+        self.open_page()
+        page = self.page()
+        self.wait(lambda: page._loaded == 'cam0' and not self.bridge._workers)
+        page.controls['exposure_time_2d'].setValue(50)
+        page.camera.setCurrentText('cam1')
+        page.refresh()
+        self.wait(lambda: page._loaded == 'cam1' and not self.bridge._workers)
+        QTest.qWait(350)
+        first.camera.SaveCaptureOptionParameters.assert_not_called()
+        second.camera.SaveCaptureOptionParameters.assert_not_called()
+        control = page.controls['projector_brightness']
+        self.assertEqual((control.minimum(), control.maximum()), (0, 240))
+        control.setValue(255)
+        self.assertEqual(control.value(), 240)
+        control.setValue(0)
+        self.wait(lambda: not page._dirty and not page._pending and not self.bridge._workers)
+        self.assertEqual(second.current_options.projector_brightness, 0)
+        manager._cameras.clear()
+
+    def test_outdated_saved_brightness_is_corrected_on_next_edit_without_resending_255(self):
+        camera = fake_camera()
+        original = camera.camera.LoadCaptureOptionParameters.side_effect
+        def load():
+            ok, options = original()
+            options.projector_brightness = 255
+            return ok, options
+        camera.camera.LoadCaptureOptionParameters.side_effect = load
+        self.bridge.camera_manager._cameras['cam0'] = camera
+        self.open_page()
+        page = self.page()
+        self.wait(lambda: page._loaded == 'cam0' and not self.bridge._workers)
+        self.assertEqual(page.controls['projector_brightness'].value(), 240)
+        camera.camera.SaveCaptureOptionParameters.assert_not_called()
+        page.controls['exposure_time_2d'].setValue(20)
+        self.wait(lambda: not page._dirty and not page._pending and not self.bridge._workers)
+        self.assertEqual(camera.current_options.projector_brightness, 240)
+        self.bridge.camera_manager._cameras.clear()
+
+    def test_fractional_sdk_bounds_are_rounded_inward_and_busy_edits_wait(self):
+        camera = rich_camera()
+        camera.camera.GetGainRange.return_value = (True, .123456, .987654)
+        self.bridge.camera_manager._cameras['cam0'] = camera
+        self.open_page()
+        page = self.page()
+        self.wait(lambda: page._loaded == 'cam0' and not self.bridge._workers)
+        gain = page.controls['gain_2d']
+        self.assertGreaterEqual(gain.minimum(), .123456)
+        self.assertLessEqual(gain.maximum(), .987654)
+        gain.setValue(gain.maximum())
+        with patch.object(self.bridge, 'can_change_workspace', return_value=False):
+            QTest.qWait(600)
+            camera.camera.SaveCaptureOptionParameters.assert_not_called()
+        self.wait(lambda: not page._dirty and not page._pending and not self.bridge._workers)
+        self.assertEqual(camera.current_options.gain_2d, .987)
+        self.bridge.camera_manager._cameras.clear()
 
 
 if __name__ == '__main__':

@@ -47,7 +47,8 @@ def _load(controller):
             raise RuntimeError('无法获取相机参数范围，请检查连接或使用参数调试')
         for field in fields:
             ranges[field] = (low, high)
-    ranges['projector_brightness'] = (0, 255)
+    # Installed RVCSDK/examples/Python/AdjustCaptureParameter.py caps brightness at 240.
+    ranges['projector_brightness'] = (0, 240)
     if hasattr(options, 'gamma_2d'):
         ok, low, high = controller.camera.GetGammaRange()
         if ok and all(math.isfinite(x) for x in (low, high)) and low <= high:

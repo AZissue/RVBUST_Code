@@ -1,4 +1,5 @@
 """Numeric setting with synchronized progress slider and precise input."""
+from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
 from PySide6.QtCore import Qt, QSignalBlocker
 from PySide6.QtWidgets import QWidget, QHBoxLayout, QSlider, QSpinBox, QDoubleSpinBox
 
@@ -42,8 +43,23 @@ class ParameterSlider(QWidget):
         self.spin.valueChanged.connect(self._sync)
 
     def set_range(self, low, high):
-        self.spin.setRange(low, high)
-        self.slider.setRange(0, min(100000, max(0, round((high-low)*10**self._decimals))))
+        # Qt rounds double-spin endpoints to display precision. Round inward
+        # instead, so the editor cannot offer a value outside the SDK bounds.
+        for precision in range(self._decimals, 16) if self._decimals else (0,):
+            scale = Decimal(10) ** precision
+            lower = (Decimal(str(low)) * scale).to_integral_value(rounding=ROUND_CEILING) / scale
+            upper = (Decimal(str(high)) * scale).to_integral_value(rounding=ROUND_FLOOR) / scale
+            if lower <= upper:
+                break
+        else:
+            raise ValueError('No editable value within the parameter range')
+        if self._decimals:
+            self.spin.setDecimals(precision)
+            self.spin.setRange(float(lower), float(upper))
+        else:
+            self.spin.setRange(int(lower), int(upper))
+        span = self.spin.maximum() - self.spin.minimum()
+        self.slider.setRange(0, min(100000, max(0, round(span * 10**precision))))
         self._sync(self.spin.value())
 
     def value(self):

@@ -17,6 +17,15 @@ class CaptureParameters(QWidget):
         self._auto_needed = True
         self._generation = 0
         self._source = None
+        self._populating = False
+        self._writing = False
+        self._dirty = False
+        self._edit_revision = 0
+        self._ranges = {}
+        self.apply_timer = QTimer(self)
+        self.apply_timer.setSingleShot(True)
+        self.apply_timer.setInterval(250)
+        self.apply_timer.timeout.connect(self._flush)
         root = QVBoxLayout(self)
         root.setContentsMargins(8, 6, 8, 6)
         root.setSpacing(6)
@@ -45,14 +54,10 @@ class CaptureParameters(QWidget):
         self.controls, self.sliders, self.rows, self.groups = {}, {}, {}, {}
         self._build_groups(body_layout)
         body_layout.addStretch(1)
-        self.apply_button = QPushButton('应用到当前相机')
-        self.apply_button.clicked.connect(lambda: self._request(True))
-        root.addWidget(self.apply_button)
         self.status = QLabel('未连接相机；连接后自动读取机内参数。')
         self.status.setWordWrap(True)
         self.status.setTextFormat(Qt.PlainText)
         root.addWidget(self.status)
-        self.apply_button.setToolTip('拖动滑块或输入数值后点击应用，仅影响后续拍摄。\n更多型号专用参数可在顶部“参数调试”中设置。')
         self.timer = QTimer(self)
         self.timer.setInterval(500)
         self.timer.timeout.connect(self.refresh)
@@ -89,6 +94,8 @@ class CaptureParameters(QWidget):
                     control = row.spin
                     self.sliders[key] = row
                 self.controls[key] = control
+                signal = control.currentIndexChanged if isinstance(control, QComboBox) else control.valueChanged
+                signal.connect(self._changed)
                 self.rows[key] = (form, row)
                 self.groups[title][1].append(key)
                 form.addRow(label, row)
@@ -112,16 +119,19 @@ class CaptureParameters(QWidget):
         QTimer.singleShot(0, self.refresh)
 
     def _invalidate(self):
+        self.apply_timer.stop()
+        self._dirty = False
         self._generation += 1
         self._loaded = None
         self._read_values = {}
+        self._ranges = {}
         self._auto_needed = True
         self._show_unloaded()
         self.status.setText('等待自动读取相机参数…')
         self._enable()
 
     def refresh(self, allow_auto=True):
-        manager = self.bridge.camera_manager if self.bridge else None
+        manager = self.bridge.camera_manager if self.bridge and not getattr(self.bridge, '_cleaned', False) else None
         ids = manager.get_connected_ids() if manager else []
         previous = [self.camera.itemText(i) for i in range(self.camera.count())]
         current = self.camera.currentText()
@@ -143,6 +153,22 @@ class CaptureParameters(QWidget):
         self._enable()
         if allow_auto and self.isVisible() and self._auto_needed and self.read_button.isEnabled():
             self._request(False)
+        if self._dirty and not self._pending and not self.apply_timer.isActive():
+            self.apply_timer.start()
+
+    def _changed(self, *_):
+        if self._populating or self._loaded != self.camera.currentText() or not self._read_values:
+            return
+        self._dirty = True
+        self._edit_revision += 1
+        self.status.setText('正在等待参数生效…')
+        if not self.apply_timer.isActive():
+            self.apply_timer.start()
+
+    def _flush(self):
+        if not self._dirty or self._pending:
+            return
+        self._request(True)
 
     def _show_fields(self, keys):
         for key, (form, row) in self.rows.items():
@@ -161,14 +187,14 @@ class CaptureParameters(QWidget):
         self._show_fields(set(self.controls))
 
     def _enable(self):
-        ready = bool(self.bridge and self.camera.count() and not self._pending
-                     and self.bridge.can_change_workspace())
-        self.camera.setEnabled(bool(self.camera.count()) and not self._pending)
-        self.read_button.setEnabled(ready)
-        self.apply_button.setEnabled(ready and self._loaded == self.camera.currentText())
-        self.apply_button.setText('应用到 ' + self.camera.currentText() if self.camera.count() else '应用到当前相机')
+        connected = bool(self.bridge and not getattr(self.bridge, '_cleaned', False) and self.camera.count())
+        idle = connected and self.bridge.can_change_workspace()
+        self.camera.setEnabled(connected and not self._pending)
+        self.read_button.setEnabled(idle and not self._pending)
+        editable = idle or connected and self._pending and self._writing
         for key, (_, row) in self.rows.items():
-            row.setEnabled(ready and key in self._read_values and self._loaded == self.camera.currentText())
+            row.setEnabled(bool(editable and key in self._read_values
+                                and self._loaded == self.camera.currentText()))
 
     def _value(self, key):
         if key in self.sliders:
@@ -180,15 +206,26 @@ class CaptureParameters(QWidget):
         values = {}
         for key, (original, shown) in self._read_values.items():
             current = self._value(key)
-            values[key] = original if current == shown else current
+            valid_original = key not in self._ranges or self._ranges[key][0] <= original <= self._ranges[key][1]
+            values[key] = original if current == shown and valid_original else current
         return values
 
     def _display_result(self, result):
         """Populate supported controls without reading or writing a device."""
+        self._populating = True
+        try:
+            self._populate(result)
+        finally:
+            self._populating = False
+
+    def _populate(self, result):
+        self._ranges = dict(result['ranges'])
         for key, value in result['values'].items():
             if key in self.sliders:
                 editor = self.sliders[key]
                 editor.set_range(*result['ranges'][key])
+                low, high = result['ranges'][key]
+                editor.setToolTip(f'相机允许范围：{low:g}～{high:g}；调整后自动生效')
                 editor.set_value(value)
             else:
                 control = self.controls[key]
@@ -203,30 +240,47 @@ class CaptureParameters(QWidget):
 
     def _request(self, apply):
         self.refresh(False)
-        if not self.read_button.isEnabled() or (apply and not self.apply_button.isEnabled()):
+        if self._pending or not self.bridge or getattr(self.bridge, '_cleaned', False) or not self.bridge.can_change_workspace() or not self.camera.count():
             return
+        if apply and self._loaded != self.camera.currentText():
+            return
+        self.apply_timer.stop()
         self._auto_needed = False
         generation = self._generation
+        revision = self._edit_revision
         camera_id = self.camera.currentText()
         values = self._values_to_apply() if apply else None
+        shown = {key: self._value(key) for key in self._read_values} if apply else {}
         self._pending = True
+        self._writing = apply
         self._enable()
-        self.status.setText('正在应用参数…' if apply else '正在读取机内参数…')
+        self.status.setText('正在更新拍摄参数…' if apply else '正在读取机内参数…')
 
         def done(result, error):
             self._pending = False
+            self._writing = False
             self.refresh(False)
             if generation != self._generation or camera_id != self.camera.currentText():
                 return
+            newer_edits = apply and self._edit_revision != revision
+            self._dirty = newer_edits
             if error:
-                self.status.setText(str(error) + '\n可点击“重新读取”重试。')
+                self.status.setText(str(error) + '\n可修改参数或点击“重新读取”重试。')
+                if not newer_edits:
+                    self.apply_timer.stop()
             else:
-                self._display_result(result)
+                if newer_edits:
+                    # Retain the newer controls; acknowledge only the values sent.
+                    self._read_values = {key: (value, shown[key]) for key, value in result['values'].items()}
+                else:
+                    self._display_result(result)
                 self._loaded = camera_id
-                text = '已应用，后续拍摄生效。' if apply else '已读取相机内保存的参数。'
+                text = '已实时生效，取景中可查看效果。' if apply else '已读取机内参数，调整后自动生效。'
                 if result['hdr']:
                     text += '\nHDR 已开启，3D 曝光与亮度还受分档参数控制。'
-                self.status.setText(text)
+                self.status.setText('正在等待最新参数生效…' if newer_edits else text)
             self._enable()
+            if self._dirty:
+                self.apply_timer.start()
 
         self.bridge.capture_parameters(camera_id, values, done)
