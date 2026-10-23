@@ -11,6 +11,26 @@ sys.path.insert(0, str(Path(__file__).parent / 'src'))
 from core.camera_manager import CameraManager, SingleCameraController
 from core.capture_parameters import FIELDS
 import test_ui_frame_database as fixture
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
+from test_ui_setting_wheel import wheel
+
+
+def rich_camera(kind='X1'):
+    from core.camera_manager import RVC
+    controller = fake_camera(kind)
+    controller.device_info = SimpleNamespace(support_capture_mode=63, support_color=15)
+    controller.camera.GetGammaRange.return_value = (True, .1, 4.)
+    def load():
+        values = dict(exposure_time_2d=11, exposure_time_3d=20, gain_2d=.25, gain_3d=1.5,
+                      gamma_2d=1., gamma_3d=1.2, scan_times=2, projector_brightness=240,
+                      use_projector_capturing_2d_image=True, hdr_exposure_times=0,
+                      capture_mode=RVC.CaptureMode_Normal, custom_filter=42)
+        if kind == 'X2':
+            values.update(projector_color=RVC.ProjectorColor_Blue, correspond2d=True)
+        return True, SimpleNamespace(**values)
+    controller.camera.LoadCaptureOptionParameters.side_effect = load
+    return controller
 
 
 def fake_camera(kind='X1'):
@@ -30,6 +50,43 @@ def fake_camera(kind='X1'):
 
 
 class ServiceTests(unittest.TestCase):
+    def test_extended_fields_and_supported_choices_are_model_specific(self):
+        from core.capture_parameters import read, apply
+        from core.camera_manager import RVC
+        for kind in ('X1', 'X2'):
+            camera = rich_camera(kind)
+            snapshot = read(camera)
+            self.assertIn('gamma_2d', snapshot['values'])
+            self.assertEqual(snapshot['ranges']['scan_times'], (1, 8))
+            self.assertEqual('projector_color' in snapshot['choices'], kind == 'X2')
+            values = dict(snapshot['values'], gamma_2d=2.5, scan_times=3,
+                          use_projector_capturing_2d_image=False,
+                          capture_mode=int(RVC.CaptureMode_SwingLineScan))
+            apply(camera, values)
+            self.assertTrue(camera.line_scan_detected)
+            self.assertEqual(camera.current_options.gamma_2d, 2.5)
+            self.assertEqual(camera.current_options.custom_filter, 42)
+            self.assertIs(camera.current_options.use_projector_capturing_2d_image, False)
+            for changes in ({'scan_times': 9}, {'gamma_2d': 5},
+                            {'use_projector_capturing_2d_image': 1}, {'capture_mode': 64}):
+                with self.assertRaises(ValueError):
+                    apply(camera, dict(values, **changes))
+            camera.camera.GetGammaRange.return_value = (False, 0, 0)
+            self.assertNotIn('gamma_2d', read(camera)['values'])
+
+    def test_installed_sdk_option_types_without_initializing_hardware(self):
+        from core.camera_manager import RVC
+        from core.capture_parameters import read, apply
+        with patch.object(RVC, 'SystemInit', side_effect=AssertionError('hardware init forbidden')):
+            for kind in ('X1', 'X2'):
+                camera = rich_camera(kind)
+                factory = getattr(RVC, kind + '_CaptureOptions')
+                camera.camera.LoadCaptureOptionParameters.side_effect = lambda: (True, factory())
+                snapshot = read(camera)
+                apply(camera, dict(snapshot['values'], gamma_2d=1.125, scan_times=3))
+                self.assertIsInstance(camera.current_options, factory)
+                self.assertEqual(camera.current_options.scan_times, 3)
+                self.assertEqual(camera.current_options.gamma_2d, 1.125)
     def test_disconnect_waits_for_parameter_sdk_operation(self):
         camera = fake_camera()
         entered, release = threading.Event(), threading.Event()
@@ -117,6 +174,16 @@ class ServiceTests(unittest.TestCase):
             manager.common_capture_parameters('cam0')
         camera.camera.SaveCaptureOptionParameters.assert_not_called()
 
+    def test_replaced_target_is_rejected_before_any_sdk_access(self):
+        manager = CameraManager()
+        manager._cameras['cam0'] = fake_camera()
+        source = manager.capture_parameter_source('cam0')
+        replacement = fake_camera()
+        manager._cameras['cam0'] = replacement
+        with self.assertRaisesRegex(RuntimeError, '更换'):
+            manager.common_capture_parameters('cam0', expected_source=source)
+        replacement.camera.LoadCaptureOptionParameters.assert_not_called()
+
 
 class PageTests(unittest.TestCase):
     setUpClass = classmethod(fixture.FrameBrowserTests.setUpClass.__func__)
@@ -127,6 +194,110 @@ class PageTests(unittest.TestCase):
     def page(self):
         return self.win._stack.currentWidget()._industrial.frame_browser.properties.capture
 
+    def open_page(self):
+        self.win._stack.currentWidget()._industrial.frame_browser.properties.tabs.setCurrentIndex(2)
+        self.page().refresh()
+
+    def test_automatically_read_on_open_switch_and_reconnect_but_never_write(self):
+        manager = self.bridge.camera_manager
+        camera = rich_camera()
+        manager._cameras['cam0'] = camera
+        self.open_page()
+        page = self.page()
+        self.wait(lambda: page._loaded == 'cam0' and not self.bridge._workers)
+        self.assertEqual(page.controls['exposure_time_2d'].value(), 11)
+        self.assertEqual(page.controls['gamma_2d'].value(), 1.)
+        self.assertTrue(page.rows['gamma_2d'][0].isRowVisible(page.rows['gamma_2d'][1]))
+        self.assertFalse(page.rows['correspond2d'][0].isRowVisible(page.rows['correspond2d'][1]))
+        page.controls['exposure_time_2d'].setValue(30)
+        count = camera.camera.LoadCaptureOptionParameters.call_count
+        page.refresh()
+        self.assertEqual(camera.camera.LoadCaptureOptionParameters.call_count, count)
+        self.assertEqual(page.controls['exposure_time_2d'].value(), 30)
+        manager._cameras['cam1'] = rich_camera('X2')
+        page.refresh()
+        self.assertEqual(page.controls['exposure_time_2d'].value(), 30)
+        page.camera.setCurrentText('cam1')
+        page.refresh()
+        self.wait(lambda: page._loaded == 'cam1' and not self.bridge._workers)
+        self.assertTrue(page.rows['correspond2d'][0].isRowVisible(page.rows['correspond2d'][1]))
+        replacement = rich_camera('X2')
+        manager._cameras['cam1'] = replacement
+        page.refresh()
+        self.wait(lambda: page._loaded == 'cam1' and not self.bridge._workers)
+        self.assertEqual(replacement.camera.LoadCaptureOptionParameters.call_count, 1)
+        for controller in manager._cameras.values():
+            controller.camera.SaveCaptureOptionParameters.assert_not_called()
+        manager._cameras.clear()
+
+    def test_auto_read_waits_for_idle_and_does_not_retry_failure_continuously(self):
+        camera = rich_camera()
+        self.bridge.camera_manager._cameras['cam0'] = camera
+        camera.camera.LoadCaptureOptionParameters.side_effect = RuntimeError('failed')
+        with patch.object(self.bridge, 'can_change_workspace', return_value=False):
+            self.open_page()
+            self.assertTrue(self.page()._auto_needed)
+            camera.camera.LoadCaptureOptionParameters.assert_not_called()
+        self.page().refresh()
+        self.wait(lambda: not self.page()._pending and not self.bridge._workers)
+        self.page().refresh()
+        self.page().refresh()
+        self.assertEqual(camera.camera.LoadCaptureOptionParameters.call_count, 1)
+        self.assertIn('failed', self.page().status.text())
+        self.assertFalse(self.page().apply_button.isEnabled())
+        self.bridge.camera_manager._cameras.clear()
+
+    def test_sliders_exact_input_and_wheel_protection_do_not_write(self):
+        camera = rich_camera()
+        self.bridge.camera_manager._cameras['cam0'] = camera
+        self.open_page()
+        page = self.page()
+        self.wait(lambda: page._loaded == 'cam0' and not self.bridge._workers)
+        exposure = page.sliders['exposure_time_2d']
+        exposure.slider.setValue(exposure.slider.maximum())
+        self.assertEqual(exposure.spin.value(), 100)
+        exposure.spin.setValue(11)
+        expected = round((11-3)/97 * exposure.slider.maximum())
+        self.assertEqual(exposure.slider.value(), expected)
+        gamma = page.sliders['gamma_2d']
+        gamma.spin.setValue(1.375)
+        self.assertAlmostEqual(gamma.spin.value(), 1.375)
+        QTest.keyClick(exposure.slider, Qt.Key_Right)
+        self.assertEqual(exposure.spin.value(), 12)
+        for control in (exposure.slider, exposure.spin, gamma.slider):
+            before = exposure.spin.value(), gamma.spin.value()
+            wheel(control)
+            self.assertEqual((exposure.spin.value(), gamma.spin.value()), before)
+        camera.camera.SaveCaptureOptionParameters.assert_not_called()
+        self.bridge.camera_manager._cameras.clear()
+
+    def test_stale_callback_is_discarded_and_apply_stays_visible_when_scrolled(self):
+        manager = self.bridge.camera_manager
+        manager._cameras['cam0'] = rich_camera()
+        replies = []
+        def queued(camera_id, values, done):
+            replies.append((manager.common_capture_parameters(camera_id), done))
+        with patch.object(self.bridge, 'capture_parameters', side_effect=queued):
+            self.open_page()
+            page = self.page()
+            self.assertEqual(len(replies), 1)
+            manager._cameras['cam0'] = rich_camera('X2')
+            page.refresh()
+            snapshot, done = replies[0]
+            done(snapshot, None)
+            self.assertIsNone(page._loaded)
+            page.refresh()
+            self.assertEqual(len(replies), 2)
+            snapshot, done = replies[1]
+            done(snapshot, None)
+            self.assertEqual(page._loaded, 'cam0')
+            self.app.processEvents()
+            self.assertGreater(page.scroll.verticalScrollBar().maximum(), 0)
+            page.scroll.verticalScrollBar().setValue(page.scroll.verticalScrollBar().maximum())
+            self.assertLessEqual(page.apply_button.geometry().bottom(), page.height())
+            self.assertTrue(page.apply_button.isVisible())
+        manager._cameras.clear()
+
     def test_all_modes_have_shared_offline_page_and_no_sdk_access(self):
         for mode in ('multi_cam', 'mobile_chain', 'turntable'):
             self.win.set_mode(mode, [])
@@ -136,6 +307,9 @@ class PageTests(unittest.TestCase):
             self.assertEqual(properties.tabs.tabText(2), '拍摄参数')
             self.assertFalse(page.read_button.isEnabled())
             self.assertFalse(page.apply_button.isEnabled())
+        reply = Mock()
+        self.bridge.capture_parameters('cam0', None, reply)
+        self.assertIn('断开', reply.call_args.args[1])
 
     def test_read_apply_fail_disconnect_and_busy_without_db_side_effects(self):
         camera = fake_camera()

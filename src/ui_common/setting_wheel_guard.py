@@ -1,7 +1,7 @@
 """Keep scrolling over settings from changing combo/spin box values."""
 from PySide6.QtCore import QObject, QEvent, QPointF
 from PySide6.QtGui import QWheelEvent
-from PySide6.QtWidgets import QApplication, QWidget, QComboBox, QAbstractSpinBox, QAbstractScrollArea
+from PySide6.QtWidgets import QApplication, QWidget, QComboBox, QAbstractSpinBox, QAbstractScrollArea, QSlider
 
 
 def install_setting_wheel_guard(root):
@@ -28,7 +28,8 @@ class _SettingWheelGuard(QObject):
         control, protected = None, False
         ancestor = watched
         while ancestor is not None:
-            if control is None and isinstance(ancestor, (QComboBox, QAbstractSpinBox)):
+            if control is None and (isinstance(ancestor, (QComboBox, QAbstractSpinBox)) or
+                                    isinstance(ancestor, QSlider) and ancestor.property('mccSettingSlider')):
                 control = ancestor
             if ancestor.property('mccSettingWheelGuard'):
                 protected = True

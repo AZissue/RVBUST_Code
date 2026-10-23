@@ -716,14 +716,21 @@ class CameraManager:
     # ------------------------------------------------------------------
     # 参数
     # ------------------------------------------------------------------
-    def common_capture_parameters(self, camera_id, values=None):
+    def common_capture_parameters(self, camera_id, values=None, *, expected_source=None):
         """Read/apply common settings without exposing SDK handles to the UI."""
         from . import capture_parameters
         cam = self._cameras.get(camera_id)
         if cam is None:
             raise RuntimeError('相机不存在或已断开')
+        if expected_source is not None and expected_source != (camera_id, id(cam), cam.sn):
+            raise RuntimeError('目标相机已更换，请重新读取拍摄参数')
         return (capture_parameters.read(cam) if values is None
                 else capture_parameters.apply(cam, values))
+
+    def capture_parameter_source(self, camera_id):
+        """Plain identity token to invalidate displayed settings after reconnect."""
+        cam = self._cameras.get(camera_id)
+        return (camera_id, id(cam), cam.sn) if cam and cam.is_connected else None
 
     def set_options(self, camera_id: str, options) -> bool:
         """设置指定相机的拍摄参数。"""

@@ -237,13 +237,17 @@ class BackendBridge(QObject):
         if not self.can_change_workspace():
             done(None, '当前任务进行中，请稍后再试')
             return
+        source = self.camera_manager.capture_parameter_source(camera_id)
+        if source is None:
+            done(None, '相机已断开，请重新连接后读取参数')
+            return
         def completed(result, error):
             if values is not None:
                 self.shell.log(f'{camera_id} 拍摄参数' + ('应用失败：' + str(error) if error else '已应用'),
                                'error' if error else 'success')
             done(result, error)
         self._run_background(
-            lambda: self.camera_manager.common_capture_parameters(camera_id, values),
+            lambda: self.camera_manager.common_capture_parameters(camera_id, values, expected_source=source),
             completed, must_finish=values is not None, name='capture_parameters')
 
     # ------------------------------------------------------------------
