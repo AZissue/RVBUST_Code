@@ -232,6 +232,20 @@ class BackendBridge(QObject):
                 and not self.shell.workspace_turntable().btn_auto_capture.isChecked()
                 and not self.shell.workspace_turntable()._busy)
 
+    def capture_parameters(self, camera_id, values, done):
+        """Serialize parameter I/O with capture, without touching project/DB state."""
+        if not self.can_change_workspace():
+            done(None, '当前任务进行中，请稍后再试')
+            return
+        def completed(result, error):
+            if values is not None:
+                self.shell.log(f'{camera_id} 拍摄参数' + ('应用失败：' + str(error) if error else '已应用'),
+                               'error' if error else 'success')
+            done(result, error)
+        self._run_background(
+            lambda: self.camera_manager.common_capture_parameters(camera_id, values),
+            completed, must_finish=values is not None, name='capture_parameters')
+
     # ------------------------------------------------------------------
     # 参数调试：打开官方 RVCManager
     # ------------------------------------------------------------------
@@ -2286,7 +2300,7 @@ class BackendBridge(QObject):
             import traceback
             name = traceback.extract_stack()[-2].name
         project_task = name.startswith('project_')
-        inspection = name == 'calibration_inspection'
+        inspection = name in ('calibration_inspection', 'capture_parameters')
         if self.shell._presentation == 'industrial' and not project_task and not inspection:
             self.projects.prepare(self._current_mode)
         if name not in ('offline_preview', 'db_frame_preview', 'db_open_project', 'db_mutation') and not project_task and not inspection and self.shell._presentation == 'industrial':

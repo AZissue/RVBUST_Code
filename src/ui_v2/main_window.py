@@ -380,6 +380,8 @@ class MainWindowShell(QMainWindow):
         if not industrial and self._backend_bridge is not None and hasattr(self._backend_bridge, 'frame_db'):
             self._backend_bridge.frame_db.restore(self._mode)
         set_presentation(self._stack.currentWidget(), self._mode, industrial)
+        if industrial and self._backend_bridge is not None:
+            self._stack.currentWidget()._industrial.frame_browser.properties.capture.bind(self._backend_bridge)
         if industrial and self._backend_bridge is not None and hasattr(self._backend_bridge, 'frame_db'):
             self._backend_bridge.frame_db.bind(self._mode, self._stack.currentWidget()._industrial.frame_browser)
         from .theme import LAUNCHER_QSS
@@ -422,6 +424,7 @@ class MainWindowShell(QMainWindow):
         for mode, workspace in zip(LauncherDialog.MODE_NAMES, (self._ws_multi, self._ws_mobile, self._ws_turntable)):
             if hasattr(workspace, '_industrial') and hasattr(bridge, 'frame_db'):
                 bridge.frame_db.bind(mode, workspace._industrial.frame_browser)
+                workspace._industrial.frame_browser.properties.capture.bind(bridge)
 
     # ------------------------------------------------------------ 参数调试（打开 RVCManager）
     def open_param_debug(self):

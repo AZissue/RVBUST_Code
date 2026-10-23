@@ -170,6 +170,12 @@ class SingleCameraController:
             logger.warning(f"读取参数失败: {e}")
 
     def disconnect(self):
+        # Parameter reads/writes also use these locks. Never close a handle
+        # while a capture or settings operation still owns it.
+        with rvc_sdk_lock, self._capture_lock:
+            self._disconnect()
+
+    def _disconnect(self):
         if self.camera:
             try:
                 self.camera.Close()
@@ -710,6 +716,15 @@ class CameraManager:
     # ------------------------------------------------------------------
     # 参数
     # ------------------------------------------------------------------
+    def common_capture_parameters(self, camera_id, values=None):
+        """Read/apply common settings without exposing SDK handles to the UI."""
+        from . import capture_parameters
+        cam = self._cameras.get(camera_id)
+        if cam is None:
+            raise RuntimeError('相机不存在或已断开')
+        return (capture_parameters.read(cam) if values is None
+                else capture_parameters.apply(cam, values))
+
     def set_options(self, camera_id: str, options) -> bool:
         """设置指定相机的拍摄参数。"""
         cam = self._cameras.get(camera_id)
