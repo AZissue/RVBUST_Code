@@ -274,15 +274,54 @@ class BackgroundTests(unittest.TestCase):
         ws.cam_mgr = self.bridge.camera_manager
         ws.marker_detector = self.bridge.marker_detector
         frame = self.source()
+        marker = dict(code=5, x_2d=1, y_2d=1, valid_3d=True, x_3d=1, y_3d=2, z_3d=3)
+        self.detector.side_effect = lambda frame, config: result(config, [marker])
         with patch.object(ws, '_is_connected', return_value=True), \
                 patch.object(self.bridge.camera_manager, 'capture', return_value=frame), \
-                patch.object(self.bridge.marker_detector, 'detect_3d', side_effect=AssertionError('capture waited for detection')):
+                patch.object(self.bridge.marker_detector, 'detect_3d', side_effect=AssertionError('capture waited for detection')), \
+                patch.object(self.win, 'log', wraps=self.win.log) as log:
             ws._on_capture_frame0()
             self.wait(lambda: not self.bridge._workers)
+            messages = [call.args[0] for call in log.call_args_list]
+            self.assertEqual(self.detector.call_count, 0)
+            self.assertTrue(any('拍摄完成' in text and '等待后台标记识别' in text for text in messages))
+            self.assertFalse(any('检测到 0' in text for text in messages))
+            self.settle()
+            completed = [call.args[0] for call in log.call_args_list if '后台标记识别完成' in call.args[0]]
+            self.assertEqual(len(completed), 1)
+            self.assertIn('原始帧 001', completed[0])
+            self.assertIn('2D 检出 1 个，3D 有效 1 个', completed[0])
+            for _ in range(3):
+                self.recognition.tick()
+            self.assertEqual(sum('后台标记识别完成' in call.args[0] for call in log.call_args_list), 1)
         self.assertIs(ws.current_frame0, frame)
-        self.assertEqual(self.detector.call_count, 0)
-        self.settle()
         self.assertEqual(self.detector.call_count, 1)
+
+    def test_turntable_step_reports_pending_then_actual_empty_or_failed_recognition(self):
+        self.win.set_mode('turntable', [])
+        self.bridge._current_mode = 'turntable'
+        ws = self.win.workspace_turntable()
+        ws.cam_mgr = self.bridge.camera_manager
+        ws.marker_detector = self.bridge.marker_detector
+        ws.session.apply_calibration([0, 0, 1], [0, 0, 0], 90, 4)
+        frame = self.source()
+        with patch.object(ws, '_is_connected', return_value=True), \
+                patch.object(self.bridge.camera_manager, 'capture', return_value=frame), \
+                patch.object(self.win, 'log', wraps=self.win.log) as log:
+            ws._capture_sequence_step()
+            self.wait(lambda: not self.bridge._workers)
+            messages = [call.args[0] for call in log.call_args_list]
+            self.assertTrue(any('第 1 步采集完成' in text and '等待后台标记识别' in text for text in messages))
+            self.assertFalse(any('检出 0' in text for text in messages))
+            self.settle()
+            self.assertTrue(any('2D 检出 0 个，3D 有效 0 个' in call.args[0] for call in log.call_args_list))
+            self.detector.side_effect = RuntimeError('test recognition error')
+            self.recognition.retry('turntable', [frame.database_id])
+            self.settle()
+            errors = [call for call in log.call_args_list if '后台标记识别失败' in call.args[0]]
+            self.assertEqual(len(errors), 1)
+            self.assertIn('原始帧 001', errors[0].args[0])
+            self.assertEqual(errors[0].args[1], 'error')
 
     def test_cached_metadata_refresh_does_not_reload_cloud_or_reset_view(self):
         uid = self.db.ingest(self.source())

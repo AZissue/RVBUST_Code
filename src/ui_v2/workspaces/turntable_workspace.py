@@ -636,6 +636,7 @@ class TurntableWorkspace(QWidget):
         if not self._is_connected() or self._busy:
             return
         label = "frame0" if is_frame0 else "frame1"
+        background = self._recognition_in_background()
 
         # 释放旧帧占用的 RVC 资源，避免 SDK 缓冲被占满导致下一次拍摄阻塞
         old_frame = self.current_frame0 if is_frame0 else self.current_frame1
@@ -658,7 +659,7 @@ class TurntableWorkspace(QWidget):
                 frame.image_np, frame.pointmap, frame.rvc_image,
                 offline_ply_path=frame.offline_pointmap_path,
                 include_invalid=True,
-            ) if self.marker_detector and not self._recognition_in_background() else []
+            ) if self.marker_detector and not background else []
             markers_valid = [m for m in markers if m.get('valid_3d', True)]
             frame.markers_all = markers
             frame.markers = markers_valid
@@ -667,8 +668,9 @@ class TurntableWorkspace(QWidget):
         def _done(result):
             frame, pcd, markers, markers_valid = result
             n_valid = len(markers_valid)
-            self.log(f"{label} 拍摄完成: {len(pcd.points)} 点, "
-                     f"检测到 {len(markers)} 个标记（3D 有效 {n_valid} 个）")
+            summary = ('等待后台标记识别' if background else
+                       f'检测到 {len(markers)} 个标记（3D 有效 {n_valid} 个）')
+            self.log(f"{label} 拍摄完成: {len(pcd.points)} 点，{summary}")
             # 2D 预览叠加红/绿圈（markers 为全量，含 3D 无效）
             self._display_2d(frame.image_np, markers,
                              reference_markers=self.current_markers0 if not is_frame0 else None)
@@ -835,6 +837,7 @@ class TurntableWorkspace(QWidget):
             self.log("360° 采集已完成，无需继续拍摄", "success")
             return
         step = self.session.current_step + 1
+        background = self._recognition_in_background()
         self.log(f"拍摄第 {step} 步...")
 
         def _capture():
@@ -848,7 +851,7 @@ class TurntableWorkspace(QWidget):
             # 手工步进角度不均匀时这是拼准的关键）
             markers = []
             markers_all = []
-            if self.marker_detector is not None and not self._recognition_in_background():
+            if self.marker_detector is not None and not background:
                 markers_all = self.marker_detector.detect_3d(
                     frame.image_np, frame.pointmap, frame.rvc_image,
                     offline_ply_path=frame.offline_pointmap_path,
@@ -865,7 +868,8 @@ class TurntableWorkspace(QWidget):
             step_idx = self.session.current_step
             total = self.session.total_steps_needed()
             n_valid = len(markers)
-            extra = f"，检出 {len(markers_all)} 个标记（3D 有效 {n_valid}）" if self.marker_detector else ""
+            extra = ('，等待后台标记识别' if background else
+                     f"，检出 {len(markers_all)} 个标记（3D 有效 {n_valid}）" if self.marker_detector else "")
             self.log(
                 f"第 {step_idx} 步采集完成: {len(pcd.points)} 点{extra} "
                 f"(current_step={self.session.current_step}, 序列 {len(self.session.sequence)}/{total})"

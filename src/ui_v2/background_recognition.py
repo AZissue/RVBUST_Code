@@ -116,6 +116,16 @@ class BackgroundRecognition(QObject):
             try:
                 if db.set_recognition(uid, revision, directory, result):
                     self._publish(mode, uid, result)
+                    if mode == 'turntable' and bridge._current_mode == mode:
+                        row = db.records[uid]
+                        title = f'DB 原始帧 {row.frame_id:03d}（{row.purpose}）'
+                        if result['state'] == 'done':
+                            from ui_common.industrial_scene.marker_display import classify_markers
+                            display = classify_markers(result.get('markers', []))
+                            valid = sum(marker.xyz is not None for marker in display.rows)
+                            bridge.shell.log(f'{title} 后台标记识别完成：2D 检出 {len(display.rows)} 个，3D 有效 {valid} 个。', 'info')
+                        elif result['state'] == 'error':
+                            bridge.shell.log(f'{title} 后台标记识别失败：' + result.get('error', '未知错误'), 'error')
             except Exception as exc:
                 self.commit_errors.add(token)
                 bridge.shell.log('保存帧识别结果失败：' + str(exc), 'error')
