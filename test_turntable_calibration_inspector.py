@@ -126,6 +126,66 @@ class TurntableInspectorTests(unittest.TestCase):
         callbacks[0](({'初始帧': np.ones((4,3))}, []), None)
         self.assertEqual(dialog.clouds, {})
 
+    def test_animation_follows_axis_arc_preserves_inputs_and_stops_on_close(self):
+        from PySide6.QtWidgets import QPushButton
+        from core.turntable_calibrator import transform_matrix
+        ws, database, points, moved = self.calibrate()
+        self.assertIsInstance(ws._industrial.calibration_panel.visualize, QPushButton)
+        original = copy.deepcopy(ws.session.calibration_result)
+        dialog = self.open(ws)
+        self.assertTrue(dialog.animation_bar.isEnabled())
+        raw = dialog.clouds['旋转帧'].copy()
+        reference = np.asarray(dialog.viewer._pcds['初始帧'].points).copy()
+        canvas = dialog.viewer.canvas
+        center, zoom = canvas.center.copy(), canvas.zoom
+        for progress in (0, 500, 1000):
+            dialog.progress.setValue(progress)
+            calib = ws.session.calib
+            transform = transform_matrix(calib.axis, -calib.angle_rad*progress/1000, calib.center)
+            expected = raw @ transform[:3,:3].T + transform[:3,3]
+            np.testing.assert_allclose(np.asarray(dialog.viewer._pcds['旋转帧'].points), expected, atol=1e-8)
+            np.testing.assert_allclose(dialog.viewer._pcds['初始帧'].points, reference)
+            np.testing.assert_allclose(canvas.center, center)
+            self.assertEqual(canvas.zoom, zoom)
+        dialog.play_button.click()
+        self.assertTrue(dialog.animation_timer.isActive())
+        self.wait(lambda: dialog.progress.value() > 0)
+        dialog.play_button.click()
+        self.assertFalse(dialog.animation_timer.isActive())
+        paused = dialog.progress.value()
+        self.assertGreater(paused, 0)
+        dialog.replay_button.click()
+        self.assertEqual(dialog.progress.value(), 0)
+        self.assertTrue(dialog.animation_timer.isActive())
+        dialog.progress.setValue(500)
+        self.assertFalse(dialog.animation_timer.isActive())
+        dialog.error_filter.setCurrentIndex(1)
+        dialog.table.selectRow(0)
+        self.assertEqual(dialog.progress.value(), 1000)
+        dialog.view_choice.setCurrentIndex(1)
+        self.assertFalse(dialog.animation_bar.isEnabled())
+        dialog.view_choice.setCurrentIndex(0)
+        self.assertTrue(dialog.animation_bar.isEnabled())
+        dialog.replay_button.click()
+        self.wait(lambda: dialog.progress.value() == 1000 and not dialog.animation_timer.isActive())
+        np.testing.assert_allclose(dialog.viewer._pcds['旋转帧'].points, points, atol=1e-5)
+        dialog.replay_button.click()
+        dialog.reject()
+        self.assertFalse(dialog.animation_timer.isActive())
+        self.assertEqual(ws.session.calibration_result, original)
+        np.testing.assert_array_equal(dialog.clouds['旋转帧'], raw)
+
+    def test_animation_disabled_with_missing_source_and_recovers_on_load(self):
+        ws, _, _, _ = self.calibrate()
+        dialog = self.open(ws)
+        clouds = dict(dialog.clouds)
+        dialog.set_clouds({'初始帧': clouds['初始帧']})
+        self.assertFalse(dialog.animation_bar.isEnabled())
+        dialog._toggle_play()
+        self.assertFalse(dialog.animation_timer.isActive())
+        dialog.set_clouds(clouds)
+        self.assertTrue(dialog.animation_bar.isEnabled())
+
 
 if __name__ == '__main__':
     unittest.main()

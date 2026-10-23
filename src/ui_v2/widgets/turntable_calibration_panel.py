@@ -1,7 +1,7 @@
 """Turntable calibration properties and non-destructive 3D annotations."""
 import numpy as np
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QCheckBox, QGroupBox, QHBoxLayout, QLabel, QToolButton, QVBoxLayout, QLayout
+from PySide6.QtWidgets import QCheckBox, QGroupBox, QHBoxLayout, QLabel, QPushButton, QToolButton, QVBoxLayout, QLayout
 
 
 class TurntableCalibrationPanel(QGroupBox):
@@ -17,8 +17,12 @@ class TurntableCalibrationPanel(QGroupBox):
         self.status = QLabel('未标定')
         self.status.setMaximumHeight(self.status.sizeHint().height())
         layout.addWidget(self.status)
-        self.visualize = QToolButton()
+        self.visualize = QPushButton()
         self.visualize.setText('标定结果可视化')
+        self.visualize.setMinimumHeight(30)
+        self.visualize.setStyleSheet('QPushButton {background:#3b4048;border:1px solid #687484;border-radius:4px;padding:5px 10px;color:#eeeeee;}'
+            'QPushButton:hover {background:#4a5260;border-color:#8c9caf;}'
+            'QPushButton:disabled {background:#303238;border-color:#444950;color:#777777;}')
         self.visualize.setToolTip('查看两帧标定点云、转轴模型对齐误差、旋转轴与中心')
         self.visualize.clicked.connect(workspace.calibration_visualization_requested)
         layout.addWidget(self.visualize)
