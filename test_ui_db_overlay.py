@@ -173,12 +173,61 @@ class OverlayTests(unittest.TestCase):
             panel = workspace.viewer() if callable(workspace.viewer) else workspace.viewer
             browser = workspace._industrial.frame_browser
             database = self.bridge.frame_db.databases[mode]
-            uid = database.ingest(self.source())
+            frame = self.source()
+            frame.markers = [dict(code=17, x_2d=1, y_2d=1, x_3d=10, y_3d=20, z_3d=30)]
+            uid = database.ingest(frame)
             browser.set_component_checked(uid, 'cloud')
             self.wait(lambda: any(uid in key for key in panel._database_clouds))
             self.assertEqual(len(panel.viewer()._layers), 1)
+            self.assertEqual(panel.viewer().canvas._cloud_markers, [(17, ((10., 20., 30.), '#4ee887'))])
             self.bridge.frame_db.restore(mode)
             self.assertEqual(panel._database_clouds, {})
+            self.assertEqual(panel.viewer().canvas._cloud_markers, [])
+
+    def test_turntable_checked_markers_follow_clouds_not_image_selection(self):
+        self.bridge._current_mode = 'turntable'
+        self.win.set_mode('turntable', [])
+        workspace = self.win.workspace_turntable()
+        panel = workspace.viewer
+        browser = workspace._industrial.frame_browser
+        database = self.bridge.frame_db.databases['turntable']
+        first, second = self.source(), self.source(2)
+        def marker(code, xyz, **extra):
+            return dict(code=code, x_2d=1, y_2d=1,
+                        x_3d=xyz[0], y_3d=xyz[1], z_3d=xyz[2], **extra)
+        first.markers_all = [marker(17, (10, 20, 30)), marker(21, (0, 0, 0)),
+                             marker(25, (1, 2, 3), valid_3d=False), marker(29, (1, 2, float('nan')))]
+        second.markers_all = [marker(17, (40, 50, 60))]
+        first_id, second_id = database.ingest(first), database.ingest(second)
+        browser.tree.setCurrentItem(browser._component_items[first_id, 'cloud'])
+        self.wait(lambda: panel._database_cloud is not None)
+        expected = [(17, ((10., 20., 30.), '#4ee887'))]
+        self.assertEqual(panel._cloud_markers, expected)
+        browser.set_component_checked(first_id, 'cloud')
+        self.wait(lambda: any(first_id in key for key in panel._database_clouds))
+        self.assertEqual(panel._cloud_markers, expected)
+        browser.tree.setCurrentItem(browser._component_items[second_id, 'image'])
+        self.wait(lambda: '的2D图像' in self.win._st_hint.text())
+        self.assertEqual(panel._cloud_markers, expected)
+        browser.set_component_checked(second_id, 'cloud')
+        self.wait(lambda: len(panel._database_clouds) == 2)
+        self.assertEqual(panel._cloud_markers, expected + [(17, ((40., 50., 60.), '#4ee887'))])
+        browser.set_component_checked(first_id, 'cloud', False)
+        self.assertEqual(panel._cloud_markers, [(17, ((40., 50., 60.), '#4ee887'))])
+        database.records[second_id].markers = [marker(31, (70, 80, 90))]
+        database.records[second_id].revision += 1
+        self.bridge.frame_db._changed('turntable')
+        self.wait(lambda: panel._cloud_markers == [(31, ((70., 80., 90.), '#4ee887'))])
+        browser.properties.options['marker_centers'].setChecked(False)
+        self.assertFalse(panel.viewer().canvas.marker_centers)
+        browser.properties.options['marker_centers'].setChecked(True)
+        self.assertTrue(panel.viewer().canvas.marker_centers)
+        database.records[second_id].kind = 'result'
+        database.records[second_id].revision += 1
+        self.bridge.frame_db._changed('turntable')
+        self.wait(lambda: bool(panel._database_clouds) and not panel._cloud_markers)
+        browser.set_component_checked(second_id, 'cloud', False)
+        self.assertEqual(panel._cloud_markers, [])
 
     def test_cleanup_before_debounce_does_not_start_a_new_worker(self):
         from PySide6.QtTest import QTest

@@ -108,7 +108,7 @@ class FrameBrowserTests(unittest.TestCase):
         pm.SaveWithImage.side_effect = save
         fake_sdk = SimpleNamespace(PointMapUnitEnum=SimpleNamespace(Millimeter=1),
             PointMap=SimpleNamespace(Destroy=Mock()), Image=SimpleNamespace(Destroy=Mock()))
-        self.bridge.camera_manager._cameras = {'cam0': SimpleNamespace(is_connected=True,
+        self.bridge.camera_manager._cameras = {'cam0': SimpleNamespace(is_connected=True, sn='MOCK',
             capture_3d=lambda options: (np.zeros((2, 2, 3), np.uint8), pm, object(), 'ok'))}
         self.bridge.fixed_workflow.start_calibration('cam0')
         ws = self.win.workspace_multi()

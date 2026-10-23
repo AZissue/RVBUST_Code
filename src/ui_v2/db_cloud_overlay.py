@@ -1,5 +1,6 @@
 """Transient checkbox-driven DB layers; no registration or geometry mutation."""
 from PySide6.QtCore import QObject, QSignalBlocker, QTimer
+from ui_common.industrial_scene.marker_display import classify_markers
 
 
 class DbCloudOverlay(QObject):
@@ -96,6 +97,7 @@ class DbCloudOverlay(QObject):
             return
         database = self.owner.databases[mode]
         clouds = {}
+        markers = []
         raw = 0
         for uid in self.requested.get(mode, []):
             record = database.records.get(uid)
@@ -105,11 +107,18 @@ class DbCloudOverlay(QObject):
             if cloud is not None:
                 clouds[f'{record.camera} / 帧 {record.frame_id:03d} / {uid}'] = cloud
                 raw += record.kind == 'raw'
+                if record.kind == 'raw':
+                    display = classify_markers(record.markers)
+                    # Each frame keeps its stored camera coordinates, including
+                    # repeated codes at different positions across raw frames.
+                    markers.extend((row.code, (row.xyz, row.color)) for row in display.rows
+                                   if row.xyz is not None and row.code is not None)
         if not clouds:
             if self._viewer(mode)._database_clouds:
                 self._viewer(mode).show_database_clouds({})
             return
         self._viewer(mode).show_database_clouds(clouds)
+        self._viewer(mode).set_cloud_markers(markers)
         self._workspace(mode)._industrial.show_database_result()
         text = f'DB叠加预览：{len(clouds)} 帧点云'
         if raw:
