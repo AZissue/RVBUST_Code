@@ -2589,6 +2589,15 @@ void ToolsPanel::setRobotProgramController(RobotProgramController* controller)
         m_robotProgramPage->setController(controller);
 }
 
+void ToolsPanel::showRobotProgramPage()
+{
+    if (!m_stack || !m_robotProgramPage || !m_toolList)
+        return;
+    const int index = m_stack->indexOf(m_robotProgramPage);
+    if (index >= 0)
+        m_toolList->setCurrentRow(index);   // 列表 → 页面，二者保持同步
+}
+
 // ══════════════════════════════════════════════════════════════════════
 // Measurement tools — parity with the Python 3D 测量一体化工具
 //

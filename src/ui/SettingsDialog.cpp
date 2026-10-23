@@ -16,6 +16,7 @@
 #include <QSpinBox>
 #include <QDialogButtonBox>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QDoubleSpinBox>
 #include <QMessageBox>
 
@@ -170,6 +171,23 @@ SettingsDialog::SettingsDialog(AppConfig& config, DataManager* data, QWidget* pa
     connect(restoreBtn, &QPushButton::clicked, this, &SettingsDialog::onRestoreBackup);
     contentLayout->addWidget(restoreGroup);
 
+    // ── Robot program import ──
+    // 机器人流程现在是独立文件（*.program.json）：控制台上「保存流程」写出，
+    // 这里导入。导入立即生效（与"从备份恢复"一致），不等确定按钮。
+    auto* programGroup = new QGroupBox(QStringLiteral("机器人流程"), content);
+    auto* programLayout = new QVBoxLayout(programGroup);
+    auto* importBtn = new QPushButton(QStringLiteral("导入流程..."), programGroup);
+    programLayout->addWidget(importBtn);
+    m_programStatus = new QLabel(
+        QStringLiteral("从 *.program.json 导入机器人控制台的流程节点；"
+                       "保存请用控制台节点列表下方的「保存流程」。"),
+        programGroup);
+    m_programStatus->setStyleSheet(hintStyle());
+    m_programStatus->setWordWrap(true);
+    programLayout->addWidget(m_programStatus);
+    connect(importBtn, &QPushButton::clicked, this, &SettingsDialog::onImportProgram);
+    contentLayout->addWidget(programGroup);
+
     contentLayout->addStretch();
 
     // ── Buttons (outside the scroll area, so they can never be scrolled away) ──
@@ -246,4 +264,41 @@ void SettingsDialog::onRestoreBackup()
     m_restoredBackupPath = path;
     m_restoreStatus->setText(QStringLiteral("已恢复 %1 条记录，关闭对话框后生效。")
                              .arg(m_data->count()));
+}
+
+void SettingsDialog::onImportProgram()
+{
+    if (!m_importProgram) {
+        m_programStatus->setText(QStringLiteral("控制端未接入，无法导入流程。"));
+        return;
+    }
+
+    QString dir = m_lastProgramDir;
+    if (dir.isEmpty())
+        dir = m_saveBaseDir;
+    const QString path = QFileDialog::getOpenFileName(
+        this, QStringLiteral("导入机器人流程"), dir,
+        QStringLiteral("机器人程序 (*.program.json);;所有文件 (*.*)"));
+    if (path.isEmpty())
+        return;
+    m_lastProgramDir = QFileInfo(path).absolutePath();
+
+    const auto reply = QMessageBox::question(
+        this, QStringLiteral("导入流程"),
+        QStringLiteral("导入「%1」将替换当前流程，是否继续？")
+            .arg(QFileInfo(path).fileName()));
+    if (reply != QMessageBox::Yes)
+        return;
+
+    QString detail;
+    QString error;
+    if (!m_importProgram(path, &detail, &error)) {
+        m_programStatus->setText(
+            QStringLiteral("导入失败：%1").arg(
+                error.isEmpty() ? QStringLiteral("未知错误") : error));
+        return;
+    }
+    m_programStatus->setText(
+        QStringLiteral("已导入：%1").arg(
+            detail.isEmpty() ? QFileInfo(path).fileName() : detail));
 }

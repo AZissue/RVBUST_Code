@@ -2092,6 +2092,32 @@ void MainWindow::showSettingsDialog()
                          QStringLiteral("手动释放相机"));
     });
 
+    // 机器人流程导入：解析与"替换当前流程"都在这里（controller 归主窗口），
+    // 对话框只负责选文件、确认和显示结果。
+    dlg.setProgramImporter(
+        [this](const QString& path, QString* detail, QString* error) {
+            const auto parsed = RobotProgram::loadFromFile(path);
+            if (!parsed.ok) {
+                if (error) *error = parsed.error;
+                return false;
+            }
+            QString err;
+            if (!m_programController->setProgram(parsed.program, &err)) {
+                if (error) *error = err;
+                return false;
+            }
+            if (detail) {
+                *detail = QStringLiteral("「%1」：%2 个节点")
+                              .arg(parsed.program.name)
+                              .arg(static_cast<int>(parsed.program.nodes.size()));
+            }
+            RuntimeLog::log("robot program imported: %s (%d nodes)",
+                            qPrintable(path),
+                            static_cast<int>(parsed.program.nodes.size()));
+            m_toolsPanel->showRobotProgramPage();
+            return true;
+        });
+
     const int dlgResult = dlg.exec();
     m_watchdog.reset();   // modal think-time is not a UI stall
     if (dlgResult != QDialog::Accepted)

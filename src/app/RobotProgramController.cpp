@@ -103,6 +103,18 @@ quint16 RobotProgramController::defaultPort(BackendKind kind)
     return 30003;
 }
 
+bool RobotProgramController::setProgram(const RobotProgram::Program& program,
+                                        QString* error)
+{
+    if (m_runner->isRunning()) {
+        if (error)
+            *error = QStringLiteral("机器人程序正在运行，请先停止后再导入。");
+        return false;
+    }
+    m_runner->setProgram(program);   // emits programChanged
+    return true;
+}
+
 void RobotProgramController::addNode(const RobotProgram::NodePayload& payload)
 {
     if (m_runner->isRunning()) {

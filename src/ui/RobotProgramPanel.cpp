@@ -7,6 +7,11 @@
 #include <QButtonGroup>
 #include <QComboBox>
 #include <QDialog>
+#include <QDir>
+#include <QFileDialog>
+#include <QFileInfo>
+#include <QRegularExpression>
+#include <QStandardPaths>
 #include <QDoubleSpinBox>
 #include <QFontMetrics>
 #include <QFrame>
@@ -656,7 +661,7 @@ QWidget* RobotProgramPanel::buildLeftCard()
         "QFrame#rpListFooter { background:#fafafa; border:none;"
         " border-bottom-left-radius:8px; border-bottom-right-radius:8px;"
         " border-top:1px solid #eeeeee; }"));
-    // 四个按钮用流式布局：宽时一行，窄时自动两行两列，不把文字挤掉。
+    // 五个按钮用流式布局：宽时一行，窄时自动换行，不把文字挤掉。
     auto* bottomRow = new FlowLayout(bottom, 8, 8);
     bottomRow->setContentsMargins(12, 10, 12, 10);
 
@@ -668,6 +673,11 @@ QWidget* RobotProgramPanel::buildLeftCard()
     m_addWaitButton->setObjectName(QStringLiteral("robot_program_add_wait"));
     m_deleteButton = new QPushButton(QStringLiteral("🗑 删除选中"));
     m_deleteButton->setObjectName(QStringLiteral("robot_program_delete"));
+    m_saveProgramButton = new QPushButton(QStringLiteral("💾 保存流程"));
+    m_saveProgramButton->setObjectName(QStringLiteral("robot_program_save"));
+    m_saveProgramButton->setToolTip(QStringLiteral(
+        "把当前流程保存为独立文件（*.program.json），换会话/换机器都能导入。"
+        "导入在「设置 → 机器人流程」。"));
 
     for (auto* button : { m_addMoveButton, m_addPhotoButton,
                           m_addWaitButton }) {
@@ -682,6 +692,14 @@ QWidget* RobotProgramPanel::buildLeftCard()
     m_deleteButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     m_deleteButton->setStyleSheet(outlineButtonStyle(true));
     bottomRow->addWidget(m_deleteButton);
+
+    // 与「删除选中」同一套按钮样式/尺寸，但用普通（非危险）配色——保存不是
+    // 破坏性动作，红色描边会让人以为点下去会删东西。
+    m_saveProgramButton->setCursor(Qt::PointingHandCursor);
+    m_saveProgramButton->setMinimumHeight(36);
+    m_saveProgramButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    m_saveProgramButton->setStyleSheet(outlineButtonStyle(false));
+    bottomRow->addWidget(m_saveProgramButton);
     column->addWidget(bottom);
 
     m_addPhotoButton->setToolTip(QStringLiteral(
@@ -695,6 +713,8 @@ QWidget* RobotProgramPanel::buildLeftCard()
             &RobotProgramPanel::onAddWait);
     connect(m_deleteButton, &QPushButton::clicked, this,
             &RobotProgramPanel::onDeleteNode);
+    connect(m_saveProgramButton, &QPushButton::clicked, this,
+            &RobotProgramPanel::onSaveProgram);
 
     applyCardShadow(card);
     return card;
@@ -903,7 +923,7 @@ QWidget* RobotProgramPanel::buildRightCard()
     footerColumn->setSpacing(10);
 
     m_saveButton = new QPushButton(QStringLiteral("💾 保存当前节点修改"));
-    m_saveButton->setObjectName(QStringLiteral("robot_program_save"));
+    m_saveButton->setObjectName(QStringLiteral("robot_program_save_node"));
     m_saveButton->setCursor(Qt::PointingHandCursor);
     m_saveButton->setMinimumHeight(42);
     m_saveButton->setStyleSheet(QStringLiteral(
@@ -1986,6 +2006,52 @@ void RobotProgramPanel::onDeleteNode()
         showToast(QStringLiteral("已删除节点"));
     refreshRowStyles();
     applyEditMode();
+}
+
+void RobotProgramPanel::onSaveProgram()
+{
+    if (!m_controller) {
+        showToast(QStringLiteral("控制端未接入，无法保存流程"), true);
+        return;
+    }
+    const auto& program = m_controller->program();
+    if (program.nodes.empty()) {
+        showToast(QStringLiteral("流程为空，没有可保存的内容"), true);
+        return;
+    }
+
+    // 默认目录：上次用过的；否则 Documents。文件名用流程名 + 固定后缀，
+    // 与备份（calibration_data_*.json）区分开。
+    QString dir = m_lastProgramDir;
+    if (dir.isEmpty())
+        dir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    QString suggested = program.name.trimmed();
+    if (suggested.isEmpty())
+        suggested = QStringLiteral("机器人流程");
+    suggested.replace(QRegularExpression(QStringLiteral("[\\\\/:*?\"<>|]")),
+                      QStringLiteral("_"));
+    const QString defaultPath =
+        QDir(dir).filePath(suggested + QStringLiteral(".program.json"));
+
+    QString path = QFileDialog::getSaveFileName(
+        this, QStringLiteral("保存机器人流程"), defaultPath,
+        QStringLiteral("机器人程序 (*.program.json);;所有文件 (*.*)"));
+    if (path.isEmpty())
+        return;
+    // 用户手输不带后缀时补上；导入端的过滤器按这个后缀认文件。
+    if (QFileInfo(path).suffix().isEmpty())
+        path += QStringLiteral(".program.json");
+
+    QString error;
+    if (!RobotProgram::saveToFile(program, path, &error)) {
+        showToast(QStringLiteral("保存失败：%1").arg(error), true);
+        log(QStringLiteral("保存流程失败：%1").arg(error), true);
+        return;
+    }
+    m_lastProgramDir = QFileInfo(path).absolutePath();
+    showToast(QStringLiteral("流程已保存：%1").arg(QFileInfo(path).fileName()));
+    log(QStringLiteral("流程已保存：%1（%2 个节点）")
+            .arg(path).arg(static_cast<int>(program.nodes.size())));
 }
 
 void RobotProgramPanel::onRunSelected()

@@ -46,6 +46,9 @@ public:
     int currentIndex() const { return m_runner->currentIndex(); }
 
     // ── 程序编辑（运行时拒绝，界面也会禁用）──
+    // 用一份完整程序替换当前流程（导入文件用）。运行中拒绝：执行器的下标
+    // 指向旧表，换掉会执行到别的节点。成功时发 programChanged，界面自己刷新。
+    bool setProgram(const RobotProgram::Program& program, QString* error = nullptr);
     void addNode(const RobotProgram::NodePayload& payload);
     bool removeNode(int index);
     // 把选中移动节点的目标改成当前位姿（space 沿用节点自己的）。

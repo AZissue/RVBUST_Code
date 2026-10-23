@@ -6,6 +6,8 @@
 #include <QStringList>
 #include <QVariantMap>
 
+#include <functional>
+
 class AppConfig;
 class DataManager;
 class QCheckBox;
@@ -33,6 +35,12 @@ public:
     float errorThreshold() const { return m_errorThreshold; }
     QString restoredBackupPath() const { return m_restoredBackupPath; }
 
+    // 机器人流程导入：真正的解析/应用在 MainWindow（它持有 controller）。
+    // detail 是成功后给用户看的一句话，error 是失败原因。
+    using ProgramImportFn =
+        std::function<bool(const QString& path, QString* detail, QString* error)>;
+    void setProgramImporter(ProgramImportFn fn) { m_importProgram = std::move(fn); }
+
     bool autoDetectAfterCapture() const;
     bool autoSaveAfterDetect() const;
     bool autoReadRobotPose() const;
@@ -46,6 +54,7 @@ signals:
 
 private:
     void onRestoreBackup();
+    void onImportProgram();
 
     AppConfig* m_config = nullptr;
     DataManager* m_data = nullptr;
@@ -57,6 +66,9 @@ private:
     QLineEdit* m_pathEdit = nullptr;
     QDoubleSpinBox* m_thresholdSpin = nullptr;
     QLabel* m_restoreStatus = nullptr;
+    QLabel* m_programStatus = nullptr;
+    ProgramImportFn m_importProgram;
+    QString m_lastProgramDir;   // 记住上次导入目录，仅本对话框内
 
     QCheckBox* m_autoDetectCheck = nullptr;
     QCheckBox* m_autoSaveCheck = nullptr;

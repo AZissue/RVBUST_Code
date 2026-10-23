@@ -48,6 +48,8 @@ public:
 
     // 机器人控制台的控制端由主窗口创建后晚绑定（ToolsPanel 构造时它还不存在）。
     void setRobotProgramController(RobotProgramController* controller);
+    // 切到「机器人控制台」页（导入流程后让用户立刻看到结果）。
+    void showRobotProgramPage();
 
     void setRobotStatus(const QString& text, bool ok);
     void setRobotConnected(bool connected);

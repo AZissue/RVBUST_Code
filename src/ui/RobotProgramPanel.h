@@ -98,6 +98,7 @@ private:
     void onAddPhoto();
     void onAddWait();
     void onDeleteNode();
+    void onSaveProgram();
     void onRunSelected();
     void onRunAll();
     void onCartStep(int axis, int direction);
@@ -144,6 +145,9 @@ private:
     QPushButton* m_addPhotoButton = nullptr;
     QPushButton* m_addWaitButton = nullptr;
     QPushButton* m_deleteButton = nullptr;
+    // 保存流程：把当前节点表写成独立的 *.program.json（导入在「设置」里）。
+    QPushButton* m_saveProgramButton = nullptr;
+    QString m_lastProgramDir;   // 上次保存/导入的目录，仅本会话内记住
 
     // ── 右卡：通信配置 ──
     QWidget* m_commSection = nullptr;
