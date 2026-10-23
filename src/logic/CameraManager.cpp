@@ -257,21 +257,40 @@ CameraManager::~CameraManager()
     if (m_workerToken)
         m_workerToken->cancelRequested = true;
 
-    // Then wait out the preview round that may already be in flight.  A preview
-    // worker that passed its token check is inside capturePreviewFrameX1()/X2()
-    // driving `this` / `m_impl`; tearing `m_impl` down (or letting shutdown()
-    // close the device) underneath it is the use-after-free T-011 is about.
-    // Waiting here closes that window.  Only the preview future is waited on:
-    // a worker whose round was *queued but not started* sees the token above and
-    // returns immediately, and a capture worker's lifetime is already covered by
-    // shutdown()'s bounded device-lock wait.  Stopping the timer first also
-    // keeps a queued tick from starting a fresh round while we wait (the timer
-    // cannot fire anyway — we never pump the event loop here).
+    // Then wait out the workers that may already be in flight.  A worker that
+    // passed its token check is inside capturePreviewFrameX1()/X2(),
+    // captureFrameX1()/X2() or listDevices() driving `this` / `m_impl`;
+    // tearing those down underneath it is the use-after-free T-011 / 3.0
+    // 安全项 2 is about.  The waits are bounded (the close path must stay
+    // bounded); stopping the timers first keeps a queued tick from starting a
+    // fresh round while we wait (they cannot fire anyway — we never pump the
+    // event loop here).
     m_previewTimer->stop();
-    if (m_previewFuture.isRunning())
-        m_previewFuture.waitForFinished();
+    m_captureWatchdog->stop();
+    if (m_previewFuture.isRunning()) {
+        QElapsedTimer t;
+        t.start();
+        while (m_previewFuture.isRunning() && t.elapsed() < SHUTDOWN_DEVICE_WAIT_MS)
+            QThread::msleep(10);
+    }
+    waitForCaptureIdle(SHUTDOWN_DEVICE_WAIT_MS);
+    waitForScanIdle(SHUTDOWN_DEVICE_WAIT_MS);
 
     shutdown();
+
+    // A truly hung SDK call cannot be cancelled.  If a worker is still inside
+    // it after the bounded waits, leaking the SDK objects is the only safe
+    // option: resetting m_impl would hand the worker freed device handles.
+    // Callers that can (MainWindow) also detach the whole manager for the same
+    // reason; see hasRunningWorkers().
+    if (hasRunningWorkers()) {
+        RuntimeLog::log("[CAM] destructor: worker(s) still running after %d ms — "
+                        "leaking SDK objects instead of destroying them under a "
+                        "live worker (process exit reclaims them)",
+                        SHUTDOWN_DEVICE_WAIT_MS);
+        (void)m_impl.release();
+        return;
+    }
     m_impl.reset();
 }
 
@@ -463,10 +482,29 @@ std::vector<DeviceEntry> CameraManager::listDevices()
 
 void CameraManager::scanDevicesAsync(std::function<void(std::vector<DeviceEntry>)> onDone)
 {
+    if (m_shuttingDown) {
+        RuntimeLog::log("scan skipped: camera manager is shutting down");
+        return;
+    }
+    if (m_scanWatcher->isRunning()) {
+        // A second setFuture() would drop the live watcher and leave the first
+        // listDevices() worker unsupervised (same defect class as capture).
+        // Queue this request instead; onScanFinished() runs it next.
+        m_scanPending = std::move(onDone);
+        RuntimeLog::log("scan queued: previous scan still running");
+        return;
+    }
     m_scanDone = std::move(onDone);
     m_scanBusy = true;
     m_scanStartMs = QDateTime::currentMSecsSinceEpoch();
-    m_scanWatcher->setFuture(QtConcurrent::run([this]() { return listDevices(); }));
+    // The token is checked before listDevices() touches `this` / the SDK, so a
+    // scan that starts after ~CameraManager() is a no-op.
+    auto token = m_workerToken;
+    m_scanWatcher->setFuture(QtConcurrent::run([this, token]() {
+        if (token && token->cancelRequested.load())
+            return std::vector<DeviceEntry>{};
+        return listDevices();
+    }));
 }
 
 void CameraManager::prewarmSystem()
@@ -497,10 +535,17 @@ void CameraManager::onScanFinished()
     RuntimeLog::log("scan finished: %zu device(s) in %lld ms",
                     devices.size(),
                     QDateTime::currentMSecsSinceEpoch() - m_scanStartMs);
-    if (!m_scanDone) return;
-    auto cb = std::move(m_scanDone);
-    m_scanDone = {};
-    cb(devices);
+    if (m_scanDone) {
+        auto cb = std::move(m_scanDone);
+        m_scanDone = {};
+        cb(devices);
+    }
+    // A request that arrived while this scan was running runs now.
+    if (m_scanPending) {
+        auto next = std::move(m_scanPending);
+        m_scanPending = {};
+        scanDevicesAsync(std::move(next));
+    }
 }
 
 // E-05: 连接失败的唯一出口。原因分类是纯函数（CameraConnectDiagnosis.h），
@@ -828,7 +873,11 @@ int CameraManager::healthCheckInterval() const
 
 bool CameraManager::waitForCaptureIdle(int timeoutMs)
 {
-    if (!m_captureInProgress || !m_captureWatcher->isRunning())
+    // The real question is whether the worker left the device, not whether the
+    // UI is still waiting.  A timed-out capture clears the "UI waiting" state
+    // while the SDK thread stays blocked in Capture(); using that flag here made
+    // the close path return "idle" precisely when it was not (3.0 安全项 2).
+    if (!m_captureWatcher->isRunning())
         return true;
 
     QElapsedTimer t;
@@ -837,7 +886,8 @@ bool CameraManager::waitForCaptureIdle(int timeoutMs)
     // would let the capture-completion slot re-enter the window while it is
     // already closing.  isRunning() flips as soon as the worker leaves the
     // device, which is all the teardown below needs — the queued `finished`
-    // delivery stays queued and is discarded by shutdown()'s timeout flag.
+    // delivery stays queued and is discarded by onCaptureFinished()'s
+    // lifecycle check.
     while (m_captureWatcher->isRunning() && t.elapsed() < timeoutMs)
         QThread::msleep(10);
 
@@ -847,6 +897,33 @@ bool CameraManager::waitForCaptureIdle(int timeoutMs)
                         "teardown will run anyway", timeoutMs);
     }
     return idle;
+}
+
+bool CameraManager::waitForScanIdle(int timeoutMs)
+{
+    if (!m_scanWatcher->isRunning())
+        return true;
+
+    QElapsedTimer t;
+    t.start();
+    while (m_scanWatcher->isRunning() && t.elapsed() < timeoutMs)
+        QThread::msleep(10);
+
+    const bool idle = !m_scanWatcher->isRunning();
+    if (!idle) {
+        RuntimeLog::log("[CAM] scan worker still inside the SDK after %d ms — "
+                        "teardown will run anyway", timeoutMs);
+    }
+    return idle;
+}
+
+bool CameraManager::hasRunningWorkers() const
+{
+    return CaptureLifecycle::hasWorkerRunning(m_captureState)
+        || m_captureWatcher->isRunning()
+        || m_scanWatcher->isRunning()
+        || m_previewFuture.isRunning()
+        || m_healthBusy.load();
 }
 
 void CameraManager::shutdown(int deviceWaitMs)
@@ -894,9 +971,9 @@ void CameraManager::shutdown(int deviceWaitMs)
     m_impl->scannedInfos.clear();
 
     // A capture worker may still be inside the SDK.  Its result must not be
-    // applied after teardown.
-    if (m_captureInProgress)
-        m_captureTimedOut = true;
+    // applied after teardown; workerRunning stays true until the future really
+    // finishes (onCaptureFinished), so the close path can tell the difference.
+    CaptureLifecycle::onShutdown(m_captureState);
 
     // 3. Deterministically wait for the worker to leave the device.  This is a
     //    plain lock wait — no nested processEvents, so no slot can re-enter
@@ -960,6 +1037,11 @@ void CameraManager::shutdown(int deviceWaitMs)
     m_isConnected = false;
     m_released = true;
     m_shuttingDown = false;
+    // The manager can be used again (reconnect).  Only the shutdown flag is
+    // cleared: a capture worker that is still inside the SDK keeps
+    // workerRunning/timedOut set, so a new capture stays rejected until
+    // onCaptureFinished() reports that it really exited.
+    CaptureLifecycle::onReleased(m_captureState);
     if (m_workerToken && !m_impl->destroying)
         m_workerToken->cancelRequested = false;
     if (act.emitDisconnected)
@@ -1363,12 +1445,19 @@ void CameraManager::captureFullFrame(const QString& saveDir, int index)
         emit cameraError(QStringLiteral("相机未连接"));
         return;
     }
-    if (m_captureInProgress)
+    if (!CaptureLifecycle::canSubmit(m_captureState)) {
+        // Never silently drop the click: the operator needs to know why the
+        // camera did not shoot.  After a timeout the old worker can still be
+        // inside the SDK, and setFuture() would overwrite its watcher.
+        emit cameraError(
+            m_captureState.workerRunning
+                ? QStringLiteral("上一次采集仍未结束（可能已超时），请稍候再拍")
+                : QStringLiteral("相机正在释放，无法采集"));
         return;
+    }
 
     stopPreview();
-    m_captureInProgress = true;
-    m_captureTimedOut = false;
+    CaptureLifecycle::onSubmit(m_captureState);
     m_captureStartMs = QDateTime::currentMSecsSinceEpoch();
     m_captureWatchdog->start(CAPTURE_TIMEOUT_MS);
 
@@ -1387,6 +1476,12 @@ void CameraManager::captureFullFrame(const QString& saveDir, int index)
                 return CaptureResult{};
             return captureFrameX2(saveDir, index);
         }));
+    } else {
+        // No worker was started; release the lifecycle state or every later
+        // capture would be rejected as "still running".
+        m_captureWatchdog->stop();
+        CaptureLifecycle::onFinished(m_captureState);
+        emit cameraError(QStringLiteral("相机型号未知，无法采集"));
     }
 }
 
@@ -1523,7 +1618,10 @@ CameraManager::CaptureResult CameraManager::captureFrameX2(const QString& saveDi
 void CameraManager::onCaptureFinished()
 {
     m_captureWatchdog->stop();
-    m_captureInProgress = false;
+    // The worker has really left the device now (the watcher only emits after
+    // the future completed).  This is the only place that clears "workerRunning"
+    // — a timeout deliberately keeps it set.
+    const auto fin = CaptureLifecycle::onFinished(m_captureState);
 
     // The worker's CaptureResult stays inside the QFuture until the next capture
     // replaces it — see captureFullFrame(), which calls setFuture() with the new
@@ -1536,9 +1634,12 @@ void CameraManager::onCaptureFinished()
     // "setFuture returned").  One retained CaptureResult costs a few refcounts
     // plus the frame's QImage; the heavy blocks are already shared with
     // m_frameCache and are freed by BufferSlot::publish().
-    if (m_captureTimedOut) {
-        m_captureTimedOut = false;
-        return;  // timeout already reported; late result ignored
+    if (!fin.apply) {
+        // Either the timeout already reported this capture, or teardown has
+        // started — the late result must not reach the UI.
+        RuntimeLog::log("capture finished late (timedOut=%d); result discarded",
+                        fin.wasTimedOut ? 1 : 0);
+        return;
     }
 
     // QFutureWatcher<T>::result() returns T by value; CaptureResult is cheap to
@@ -1586,14 +1687,18 @@ void CameraManager::onCaptureFinished()
 
 void CameraManager::onCaptureTimeout()
 {
-    if (!m_captureInProgress) return;
-    m_captureInProgress = false;
-    m_captureTimedOut = true;
-    RuntimeLog::log("capture TIMEOUT after %lld ms (SDK may be hung)",
-                    QDateTime::currentMSecsSinceEpoch() - m_captureStartMs);
+    const auto t = CaptureLifecycle::onTimeout(m_captureState);
+    if (!t.report)
+        return;
+    RuntimeLog::log("capture TIMEOUT after %lld ms (SDK may be hung, "
+                    "worker still running=%d)",
+                    QDateTime::currentMSecsSinceEpoch() - m_captureStartMs,
+                    CaptureLifecycle::hasWorkerRunning(m_captureState) ? 1 : 0);
     // NOTE: a truly hung SDK call cannot be killed; the pool thread stays
-    // blocked.  The UI recovers and late results are ignored.
-    emit cameraError(QStringLiteral("采集超时（%1 秒），请检查相机状态")
+    // blocked.  The UI recovers and late results are ignored — but a new
+    // capture stays blocked until onCaptureFinished() reports the worker out.
+    emit cameraError(QStringLiteral("采集超时（%1 秒），请检查相机状态；"
+                                    "在后台采集退出前不能再次拍摄")
                          .arg(CAPTURE_TIMEOUT_MS / 1000));
 }
 
@@ -1647,7 +1752,8 @@ void CameraManager::onHealthTick()
     // SystemFindDevice re-scans the bus and can block for seconds; skip it
     // while the preview or a capture is running (a lost camera then shows up
     // as preview/capture failures), and never run it on the UI thread.
-    if (m_previewTimer->isActive() || m_previewBusy || m_captureInProgress)
+    if (m_previewTimer->isActive() || m_previewBusy
+            || CaptureLifecycle::hasWorkerRunning(m_captureState))
         return;
     if (m_healthBusy.load())
         return;

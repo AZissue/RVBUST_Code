@@ -13,6 +13,7 @@ private slots:
     void acceptsValidInputs();
     void caliboardQualityGates();
     void caliboardQualityThresholdConfigurable();
+    void detectionRequiresBoth2dAnd3d();
     void detectsCjkFormatChars();
     void acceptsEnglishCommaSeparatedValues();
     void rejectsChineseFormatOnSave();

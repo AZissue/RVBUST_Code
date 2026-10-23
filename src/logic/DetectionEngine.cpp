@@ -357,7 +357,7 @@ void DetectionEngine::extractColors(const RVC::Image& img, std::vector<float>& r
 std::string DetectionEngine::formatXyzForCard(const std::vector<Vec3f>& pts3d)
 {
     for (const auto& p : pts3d) {
-        if (std::isnan(p[0]) || std::isnan(p[1]) || std::isnan(p[2]))
+        if (!isValidPoint3d(p))
             continue;
 
         std::ostringstream oss;
@@ -368,10 +368,20 @@ std::string DetectionEngine::formatXyzForCard(const std::vector<Vec3f>& pts3d)
     return {};
 }
 
+int DetectionEngine::countValidPoints3d(const std::vector<Vec3f>& pts3d)
+{
+    int count = 0;
+    for (const auto& p : pts3d) {
+        if (isValidPoint3d(p))
+            ++count;
+    }
+    return count;
+}
+
 std::vector<float> DetectionEngine::firstValidPoint3d(const std::vector<Vec3f>& pts3d)
 {
     for (const auto& p : pts3d) {
-        if (std::isnan(p[0]) || std::isnan(p[1]) || std::isnan(p[2]))
+        if (!isValidPoint3d(p))
             continue;
         return { p[0], p[1], p[2] };
     }

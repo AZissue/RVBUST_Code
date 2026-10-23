@@ -85,6 +85,33 @@ void TestDetectionEngine::firstValidPoint3dReturnsEmpty()
     QVERIFY(DetectionEngine::firstValidPoint3d(allNan).empty());
 }
 
+void TestDetectionEngine::isValidPoint3dRejectsZeroPlaceholderAndNonFinite()
+{
+    QVERIFY(DetectionEngine::isValidPoint3d({{ 1.0f, 2.0f, 3.0f }}));
+    // A single zero axis is a real point (target on an axis plane).
+    QVERIFY(DetectionEngine::isValidPoint3d({{ 0.0f, 2.0f, 3.0f }}));
+    // The SDK's "no 3D coverage" placeholder.
+    QVERIFY(!DetectionEngine::isValidPoint3d({{ 0.0f, 0.0f, 0.0f }}));
+    QVERIFY(!DetectionEngine::isValidPoint3d({{ NAN, 2.0f, 3.0f }}));
+    QVERIFY(!DetectionEngine::isValidPoint3d({{ 1.0f, INFINITY, 3.0f }}));
+}
+
+void TestDetectionEngine::countValidPoints3dCountsUsablePoints()
+{
+    const std::vector<Vec3f> pts = {
+        {{ 0.0f, 0.0f, 0.0f }},   // placeholder, not usable
+        {{ NAN, 1.0f, 2.0f }},    // not usable
+        {{ 3.0f, 4.0f, 5.0f }},   // usable
+        {{ 6.0f, 7.0f, 8.0f }}    // usable
+    };
+    QCOMPARE(DetectionEngine::countValidPoints3d(pts), 2);
+    QCOMPARE(DetectionEngine::countValidPoints3d({}), 0);
+    // firstValidPoint3d must skip the zero placeholder, not return 0 0 0.
+    const auto origin = DetectionEngine::firstValidPoint3d(pts);
+    QCOMPARE(static_cast<int>(origin.size()), 3);
+    QVERIFY(std::abs(origin[0] - 3.0f) < 1e-4f);
+}
+
 void TestDetectionEngine::countValidPoints2DCountsLeadingValid()
 {
     // Flat [x,y,...] pairs; the detection API zero-pads the tail.

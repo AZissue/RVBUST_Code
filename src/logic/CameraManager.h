@@ -16,6 +16,7 @@
 #include "logic/FrameBuffer.h"
 #include "logic/CameraFrameCache.h"
 #include "logic/CameraHealthMonitor.h"
+#include "logic/CaptureLifecycle.h"
 // 连接失败的原因分类与现场提示（纯函数，见 CameraConnectDiagnosis.h）。
 #include "logic/CameraConnectDiagnosis.h"
 
@@ -87,6 +88,16 @@ public:
     // path so the teardown below it does not race a live worker; it does NOT
     // pump the event loop, so no slot can re-enter the window mid-close.
     bool waitForCaptureIdle(int timeoutMs);
+
+    // Same bounded wait for the device scan worker (its lambda captures `this`,
+    // so it must have left before the object is destroyed).
+    bool waitForScanIdle(int timeoutMs);
+
+    // True when any thread-pool worker may still be inside this object or the
+    // SDK (capture / preview / scan / health).  A capture that timed out counts
+    // as running: the UI stopped waiting, the SDK thread did not.  The close
+    // path uses this to decide whether the object may be destroyed at all.
+    bool hasRunningWorkers() const;
 
     // ── Capture parameters (第 12 回合 任务 1) ──
     //
@@ -272,8 +283,9 @@ private:
     bool m_isConnected = false;
     bool m_previewPaused = false;
     bool m_shuttingDown = false;
-    bool m_captureInProgress = false;
-    bool m_captureTimedOut = false;
+    // 采集任务状态：timedOut（界面不再等）与 workerRunning（线程池任务真的
+    // 还在跑）是两件事，超时不能当作已退出。规则见 CaptureLifecycle.h。
+    CaptureLifecycle::State m_captureState;
     // 任务 3: set once a teardown has completed, cleared by a successful
     // connect, so a repeat shutdown() is a no-op (and a shutdown after a
     // *reconnect* still tears the new session down).
@@ -295,6 +307,9 @@ private:
     qint64 m_captureStartMs = 0;
 
     std::function<void(std::vector<DeviceEntry>)> m_scanDone;
+    // Scan requested while another one was running: run it when the current
+    // one finishes instead of overwriting the live watcher.
+    std::function<void(std::vector<DeviceEntry>)> m_scanPending;
 
     std::vector<float> m_intrinsicMatrix;   // 9 elements
     std::vector<float> m_distortion;        // 5 elements

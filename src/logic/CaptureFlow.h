@@ -207,17 +207,37 @@ public:
     };
 
     struct DetectResult {
-        enum class Status { Ok, EngineError, EngineCrash, NoMarkers, TooFewPoints, PoorAccuracy };
+        // No3d is not a quality warning: 2D found the target but no usable 3D
+        // point exists (out of the 3D working range / no 3D coverage), so the
+        // record would have no camera target.  It is reported as a failed
+        // detection (no "识别成功", auto-save skipped); a manual save stays
+        // possible because the frame itself is still valid.
+        enum class Status {
+            Ok, EngineError, EngineCrash, NoMarkers, TooFewPoints, PoorAccuracy, No3d
+        };
         Status status = Status::EngineError;
         std::vector<std::pair<float, float>> pts2d;
         std::vector<std::array<float, 3>> pts3d;
         std::vector<float> xyzForCard;   // first valid 3D point, empty when none
         int detectedCount = 0;
+        int valid3dCount = 0;   // usable 3D points (finite, not 0,0,0)
         int expectedCount = 0;
         float errorPercentage = 0.0f;
         QString errorDetail;
         QString warning;   // non-blocking advisory (partial / high error)
     };
+
+    // Status rules shared by every detection path (native cache, Caliboard,
+    // file fallback).  2D-only is *not* a success.  Pure so it is unit-tested.
+    static DetectResult::Status classifyDetection(int detectedCount,
+                                                  int valid3dCount)
+    {
+        if (detectedCount <= 0)
+            return DetectResult::Status::NoMarkers;
+        if (valid3dCount <= 0)
+            return DetectResult::Status::No3d;
+        return DetectResult::Status::Ok;
+    }
 
 signals:
     void busyChanged(bool busy, const QString& text);

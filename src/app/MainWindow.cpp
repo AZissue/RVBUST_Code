@@ -2354,6 +2354,21 @@ void MainWindow::closeEvent(QCloseEvent* event)
             // *next* start look like "相机被占用".
             RuntimeLog::log("[CAM] release on close FAILED: %s", qPrintable(report.detail));
         }
+        // 3.0 安全项 2: a timed-out capture can leave the SDK thread blocked
+        // inside Capture().  The bounded waits above do not kill it, and
+        // destroying the manager afterwards would free `this` and `m_impl`
+        // underneath it.  Keep the whole object alive until process exit
+        // instead — MainWindow is going away anyway, and a small leak on an
+        // abnormal close is strictly better than a use-after-free on the
+        // camera thread.
+        if (m_camera->hasRunningWorkers()) {
+            RuntimeLog::log("[CAM] close: worker(s) still inside the SDK after %d ms; "
+                            "keeping CameraManager alive (deliberate leak) so the "
+                            "worker never dereferences freed memory",
+                            kCloseWorkerWaitMs);
+            m_camera->setParent(nullptr);
+            m_camera = nullptr;   // ~MainWindow / aboutToQuit null-check this
+        }
         // The pointer deliberately stays valid: the aboutToQuit fallback and
         // ~MainWindow below re-enter the (now idempotent) shutdown(), which
         // logs a no-op line instead of being skipped behind a null check.

@@ -109,6 +109,17 @@ void CaptureFlow::onCaptureReady(const QString& pngPath, const QString& plyPath,
     emitLog(this, QStringLiteral("success"),
             QStringLiteral("第 %1 组数据采集完成").arg(m_data->count() + 1));
 
+    // 3D 点云整帧为空：2D 仍然可能识别到标记物，但拿不到任何 3D 坐标。
+    // 这里先把事实说出来（I3360 现场：目标超出 3D 工作范围时就是这种表现），
+    // 不拦截保存——手动取点/戳点流程照常可用。
+    if (!points || points->empty()) {
+        emit tipRequested(QStringLiteral("采集完成，但 3D 点云为空（目标可能不在 3D 工作范围"
+                                         "内）；本次识别只能得到 2D 结果"), true);
+        emitLog(this, QStringLiteral("warning"),
+                QStringLiteral("3D 点云为空：请确认目标在 3D 工作范围内（距离/视野），"
+                               "否则识别不会得到 3D 坐标"));
+    }
+
     // 任务 2: 拍照成功 → 自动识别.  Queued so the capture's own UI updates (frame
     // painted, busy cleared, tip shown) land before the detection turns the
     // busy state back on — the operator sees the same sequence as a manual
@@ -124,7 +135,9 @@ void CaptureFlow::onCaptureReady(const QString& pngPath, const QString& plyPath,
 
 bool CaptureFlow::waitForIdle(int timeoutMs)
 {
-    if (!m_detecting || !m_detectWatcher->isRunning())
+    // Same rule as the camera capture: a detection timeout clears m_detecting
+    // while the worker may still be running, so only the future tells the truth.
+    if (!m_detectWatcher->isRunning())
         return true;
 
     QElapsedTimer t;
@@ -202,23 +215,30 @@ void CaptureFlow::detect()
         auto [nativePixels, nativePoints] = m_camera->nativeMarkerResult();
         if (!nativePixels.empty() && !nativePoints.empty()) {
             DetectResult r;
-            r.status = DetectResult::Status::Ok;
             const int num = static_cast<int>(nativePixels.size()) / 2;
             r.detectedCount = num;
             r.pts2d.reserve(num);
             r.pts3d.reserve(num);
+            const int available3d = static_cast<int>(nativePoints.size()) / 3;
             for (int i = 0; i < num; ++i) {
                 r.pts2d.emplace_back(nativePixels[i * 2], nativePixels[i * 2 + 1]);
+                if (i >= available3d)
+                    continue;
                 r.pts3d.push_back({{
                     nativePoints[i * 3], nativePoints[i * 3 + 1], nativePoints[i * 3 + 2]
                 }});
             }
+            r.valid3dCount = DetectionEngine::countValidPoints3d(r.pts3d);
+            r.status = classifyDetection(r.detectedCount, r.valid3dCount);
             // SDK convention: first returned point == calibration reference origin
             r.xyzForCard = DetectionEngine::firstValidPoint3d(r.pts3d);
             emitLog(this, QStringLiteral("info"),
-                    QStringLiteral("使用采集时缓存的原生检测结果 (%1 点)").arg(num));
-            RuntimeLog::log("detect OK (cached native): %d markers in %lld ms",
-                            num, QDateTime::currentMSecsSinceEpoch() - detectStartMs);
+                    QStringLiteral("使用采集时缓存的原生检测结果 (%1 点，其中 %2 点有 3D)")
+                        .arg(num).arg(r.valid3dCount));
+            RuntimeLog::log("detect %s (cached native): %d markers, %d with 3D in %lld ms",
+                            r.status == DetectResult::Status::Ok ? "OK" : "NO-3D",
+                            num, r.valid3dCount,
+                            QDateTime::currentMSecsSinceEpoch() - detectStartMs);
             applyDetectionResult(r);
             emit busyChanged(false, {});
             return;
@@ -280,18 +300,29 @@ CaptureFlow::DetectResult CaptureFlow::runDetectJob(const DetectJob& job)
                         res.pointXyz[i * 3 + 1],
                         res.pointXyz[i * 3 + 2]
                     }};
-                    if (!std::isnan(p3[0]) && !std::isnan(p3[1]) && !std::isnan(p3[2]))
+                    if (DetectionEngine::isValidPoint3d(p3))
                         r.pts3d.push_back(p3);
                 }
             }
+            r.valid3dCount = static_cast<int>(r.pts3d.size());
 
             // SDK convention: first returned point == calibration reference origin
             // (the origin corner of the asymmetric board).
             r.xyzForCard = DetectionEngine::firstValidPoint3d(r.pts3d);
-            r.warning = caliboardQualityMessage(
-                r.detectedCount, r.expectedCount, res.errorPercentage,
-                job.errorThreshold);
-            r.status = DetectResult::Status::Ok;
+            r.status = classifyDetection(r.detectedCount, r.valid3dCount);
+            if (r.status == DetectResult::Status::Ok) {
+                r.warning = caliboardQualityMessage(
+                    r.detectedCount, r.expectedCount, res.errorPercentage,
+                    job.errorThreshold);
+                // Not every 2D circle necessarily landed on the 3D map (parts of
+                // the board can sit outside the 3D working range).  Advisory
+                // only — the detection stays Ok and saving is not blocked.
+                if (r.warning.isEmpty() && r.valid3dCount < r.detectedCount) {
+                    r.warning = QStringLiteral(
+                        "仅 %1/%2 个圆点有有效 3D 坐标（部分点可能在 3D 工作范围外），请确认后保存")
+                        .arg(r.valid3dCount).arg(r.detectedCount);
+                }
+            }
         } catch (const std::exception& e) {
             r.status = DetectResult::Status::EngineError;
             r.errorDetail = QString::fromUtf8(e.what());
@@ -312,10 +343,11 @@ CaptureFlow::DetectResult CaptureFlow::runDetectJob(const DetectJob& job)
         r.detectedCount = static_cast<int>(res.first.size());
         r.pts2d = std::move(res.first);
         r.pts3d = std::move(res.second);
+        r.valid3dCount = DetectionEngine::countValidPoints3d(r.pts3d);
+        r.status = classifyDetection(r.detectedCount, r.valid3dCount);
         // SDK convention: first returned point == calibration reference origin
         // (the shared center of the concentric marker).
         r.xyzForCard = DetectionEngine::firstValidPoint3d(r.pts3d);
-        r.status = DetectResult::Status::Ok;
     } catch (const std::exception& e) {
         r.status = DetectResult::Status::EngineError;
         r.errorDetail = QString::fromUtf8(e.what());
@@ -374,9 +406,26 @@ void CaptureFlow::applyDetectionResult(const DetectResult& result)
 {
     const bool concentric = (m_mode.markerType == MarkerType::ConcentricCircle);
 
+    // 2D 点位在「有 2D、没 3D」时也要画出来：现场要能看见标记物确实找到了，
+    // 只是 3D 没覆盖到，而不是什么都看不到。
+    if ((result.status == DetectResult::Status::Ok
+         || result.status == DetectResult::Status::No3d)
+            && !result.pts2d.empty()) {
+        const auto overlay = DetectionEngine::formatMarkersForOverlay(
+            result.pts2d, result.pts3d);
+        emit markersDisplayReady(overlay.overlay2d, overlay.highlights3d,
+                                 overlay.highlightIndices);
+    }
+
     if (result.status != DetectResult::Status::Ok) {
         // 识别失败只说明"不能自动填点"，帧本身仍可手动取点后保存。
         setSaveEnabled(hasUnsavedCapture());
+        if (result.status == DetectResult::Status::No3d) {
+            // 2D 确实检测到了：记录里如实写标记数与误差，方便事后追溯
+            // （3D 缺失不在记录字段里，靠操作日志）。
+            m_lastMarkerCount = result.detectedCount;
+            m_lastErrorPct = concentric ? -1.0f : result.errorPercentage;
+        }
         switch (result.status) {
         case DetectResult::Status::NoMarkers:
             if (concentric) {
@@ -389,6 +438,30 @@ void CaptureFlow::applyDetectionResult(const DetectResult& result)
                 emitLog(this, QStringLiteral("warning"), QStringLiteral("黑底白圆检测: 未找到标定板"));
                 emit toastRequested(QStringLiteral("未检测到标定板，请重新采集"), false);
             }
+            break;
+        case DetectResult::Status::No3d:
+            // 2D 找到、3D 没有：不是"质量告警"（那种不拦截），而是关键数据
+            // 缺失。按识别失败处理，不提"识别成功"，自动保存也不会落盘。
+            if (concentric) {
+                emit tipRequested(
+                    QStringLiteral("识别到 %1 个同心圆，但未获取到 3D 点云；"
+                                   "请把标记物移入 3D 工作范围（距离/视野）后重新采集")
+                        .arg(result.detectedCount), true);
+                emitLog(this, QStringLiteral("warning"),
+                        QStringLiteral("同心圆检测: 2D 找到 %1 个标记物，但 3D 点云为空或无效"
+                                       "（可能超出 3D 工作范围），本次不视为识别成功")
+                            .arg(result.detectedCount));
+            } else {
+                emit tipRequested(
+                    QStringLiteral("识别到 %1 个圆点，但未获取到有效 3D 坐标；"
+                                   "请调整标定板距离/位置，确保落在 3D 工作范围内后重新采集")
+                        .arg(result.detectedCount), true);
+                emitLog(this, QStringLiteral("warning"),
+                        QStringLiteral("黑底白圆检测: 2D 找到 %1 个圆点，但 3D 点云为空或无效"
+                                       "（可能超出 3D 工作范围），本次不视为识别成功")
+                            .arg(result.detectedCount));
+            }
+            emit toastRequested(QStringLiteral("识别不完整：未获取到 3D 点云"), false);
             break;
         case DetectResult::Status::EngineError:
             emit tipRequested(QStringLiteral("检测引擎异常，请重新采集"), true);
@@ -411,10 +484,6 @@ void CaptureFlow::applyDetectionResult(const DetectResult& result)
         emit detectionFinished(false);
         return;
     }
-
-    const auto overlay = DetectionEngine::formatMarkersForOverlay(result.pts2d, result.pts3d);
-    emit markersDisplayReady(overlay.overlay2d, overlay.highlights3d,
-                             overlay.highlightIndices);
 
     if (result.xyzForCard.size() >= 3) {
         emit autoFillCardRequested("camera_target_xyz",

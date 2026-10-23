@@ -28,6 +28,8 @@ set(TEST_SOURCES
     test_auto_flow_policy.cpp
     test_camera_recovery.cpp
     test_camera_manager_release.cpp
+    # 3.0 安全项 2：采集任务生命周期（超时 ≠ worker 退出）纯策略。
+    test_capture_lifecycle.cpp
     # 第 7 回合 P3/P4：方法目录（src/logic/MeasureMethods.h，header-only）的
     # ROI 需求 / 拖框策略 / 说明与结果文案。
     test_measure_methods.cpp

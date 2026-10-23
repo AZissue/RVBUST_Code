@@ -127,6 +127,25 @@ void TestCaptureFlowValidation::caliboardQualityThresholdConfigurable()
     QVERIFY(tooFew.contains(QStringLiteral("20/44")));
 }
 
+void TestCaptureFlowValidation::detectionRequiresBoth2dAnd3d()
+{
+    using Status = CaptureFlow::DetectResult::Status;
+
+    // 2D found, usable 3D exists -> success.
+    QCOMPARE(CaptureFlow::classifyDetection(44, 44), Status::Ok);
+    // Partially covered 3D is still a success (advisory only).
+    QCOMPARE(CaptureFlow::classifyDetection(44, 3), Status::Ok);
+
+    // 2D found, no usable 3D -> No3d, never Ok.  This is the I3360 field case:
+    // 2D circles detected but the 3D point cloud has no coverage.
+    QCOMPARE(CaptureFlow::classifyDetection(44, 0), Status::No3d);
+    QCOMPARE(CaptureFlow::classifyDetection(12, 0), Status::No3d);
+    QVERIFY(CaptureFlow::classifyDetection(44, 0) != Status::Ok);
+
+    // Nothing found at all stays NoMarkers (not No3d).
+    QCOMPARE(CaptureFlow::classifyDetection(0, 0), Status::NoMarkers);
+}
+
 void TestCaptureFlowValidation::detectsCjkFormatChars()
 {
     // Full-width comma ，(U+FF0C), ideographic comma 、, CJK brackets, and

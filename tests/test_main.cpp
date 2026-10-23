@@ -29,6 +29,7 @@
 #include "test_auto_flow_policy.h"
 #include "test_camera_recovery.h"
 #include "test_camera_manager_release.h"
+#include "test_capture_lifecycle.h"
 #include "test_measure_methods.h"
 #include "test_log_presentation.h"
 #include "test_pixel_to_3d_service.h"
@@ -177,6 +178,11 @@ int main(int argc, char** argv)
     {
         TestCameraManagerRelease t20;
         status |= runClass(&t20, argc, argv, "camera_manager_release");
+    }
+    {
+        // 3.0 安全项 2：采集超时与 worker 退出的分离、迟到结果丢弃。
+        TestCaptureLifecycle t20b;
+        status |= runClass(&t20b, argc, argv, "capture_lifecycle");
     }
     {
         // 第 7 回合 P3/P4：方法目录的 ROI 需求与说明文案（纯逻辑，无界面）。

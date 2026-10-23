@@ -1,4 +1,6 @@
 #pragma once
+#include <array>
+#include <cmath>
 #include <vector>
 #include <string>
 #include <tuple>
@@ -54,6 +56,20 @@ public:
     formatMarkersForOverlay(const std::vector<std::pair<float, float>>& pts2d,
                             const std::vector<std::array<float, 3>>& pts3d);
 
+    // A 3D point is usable only when every coordinate is finite and it is not
+    // the (0,0,0) "no data" marker the SDK / point map leaves when the target
+    // has no 3D coverage (e.g. outside the 3D working range).  A single zero
+    // axis is legitimate — the target can lie on an axis plane.
+    static bool isValidPoint3d(const std::array<float, 3>& p)
+    {
+        return std::isfinite(p[0]) && std::isfinite(p[1]) && std::isfinite(p[2])
+            && !(p[0] == 0.0f && p[1] == 0.0f && p[2] == 0.0f);
+    }
+
+    // Number of usable 3D points (see isValidPoint3d).  Used to decide whether
+    // a 2D detection actually has 3D data behind it.
+    static int countValidPoints3d(const std::vector<std::array<float, 3>>& pts3d);
+
     // Reference origin for the calibration target.
     //
     // Both RVC's DetectConcentricCircleMarker3d / TestAccuracy and the
@@ -61,7 +77,8 @@ public:
     // the calibration reference origin (first point == origin).  For a
     // concentric-circle marker the first point is the shared marker center;
     // for the asymmetric board it is the origin corner.  Returns {x,y,z} of
-    // the first valid (non-NaN) point, or an empty vector when none exists.
+    // the first usable point (finite, not the zero placeholder), or an empty
+    // vector when none exists.
     static std::vector<float> firstValidPoint3d(
         const std::vector<std::array<float, 3>>& pts3d);
 
