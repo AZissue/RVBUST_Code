@@ -529,6 +529,11 @@ class BackendBridge(QObject):
         if not self._ensure_sdk():
             self.connection_finished.emit(False, '相机 SDK 初始化失败，请查看日志')
             return
+        # Connecting devices changes live capture availability, not the archived
+        # calibration inputs already loaded in this workspace.
+        calibration_frames = (dict(self.fixed_workflow.frames_calib)
+                              if mode == LauncherDialog.MODE_MULTI_CAM
+                              and self.shell._presentation == 'industrial' else {})
         self.offline_preview = False
         self.shell._offline_preview = False
         self._offline_clouds = {}
@@ -625,10 +630,13 @@ class BackendBridge(QObject):
                 # 参考相机选第一台真实连接成功的相机，fallback 到 cam0
                 reference_id = next(
                     (cid for cid, ok, _ in results if ok), "cam0")
-                ok, msg = self.fixed_workflow.start_calibration(reference_id)
-                self.shell.log(msg, "success" if ok else "warn")
-                self._on_multi_reference_changed(reference_id)
-                self.shell.workspace_multi().set_state("connected")
+                if calibration_frames:
+                    self._on_multi_reference_changed(reference_id, calibration_frames=calibration_frames)
+                else:
+                    ok, msg = self.fixed_workflow.start_calibration(reference_id)
+                    self.shell.log(msg, "success" if ok else "warn")
+                    self._on_multi_reference_changed(reference_id)
+                    self.shell.workspace_multi().set_state("connected")
                 # 崩溃兜底：上次标定成功时已自动落盘，相机组合未变则直接
                 # 恢复到扫描阶段，无需重新拍摄标定帧/计算外参
                 self._try_restore_autosaved_calibration(reference_id)
@@ -1117,15 +1125,18 @@ class BackendBridge(QObject):
 
         self._run_background(_work, _done, must_finish=True, name="批量扫描保存")
 
-    def _on_multi_reference_changed(self, camera_id: str):
+    def _on_multi_reference_changed(self, camera_id: str, *, calibration_frames=None):
         """参考相机变更。
 
         若已标定/扫描阶段切换参考相机，历史标定/扫描数据会失效，需要重置
-        工作流并清空 UI 结果，提示用户重新拍摄。
+        工作流并清空 UI 结果。离线预览或设备重连提供已有标定输入时，
+        保留输入供重新求解；普通在线参考相机切换仍要求重新拍摄。
         """
         ws = self.shell.workspace_multi()
-        if self.offline_preview:
-            frames = dict(self.fixed_workflow.frames_calib)
+        if self.offline_preview or calibration_frames:
+            frames = dict(calibration_frames or self.fixed_workflow.frames_calib)
+            if camera_id not in frames and frames:
+                camera_id = next(iter(frames))
             self.fixed_workflow.reset()
             self.fixed_workflow.start_calibration(camera_id)
             for frame in frames.values():
@@ -1133,7 +1144,11 @@ class BackendBridge(QObject):
             ws.clear_calibration_results()
             for cid, cloud in self._offline_clouds.items():
                 ws.viewer().set_pointcloud(cid, cloud)
-            ws.set_state('detected' if frames and all(f.markers for f in frames.values()) else 'captured')
+            ready = len(frames) >= 2 and all(len(f.markers) >= 3 for f in frames.values())
+            ws.set_state('detected' if ready else 'captured')
+            if calibration_frames:
+                self.shell.log(f'设备已连接，保留 {len(frames)} 路标定帧，'
+                               + ('可直接计算外参。' if ready else '请先检测标记再计算外参。'), 'info')
             ws.viewer().set_reference(camera_id)
             self.shell._refresh_statusbar()
             return
