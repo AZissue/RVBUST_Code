@@ -233,6 +233,7 @@ class SessionProjects(QObject):
             calibration = dict(axis=session.calib.axis, center=session.calib.center,
                 angle_deg=float(np.degrees(session.calib.angle_rad)), step_count=session.step_count())
         return dict(calibration=calibration, frame0=desc(ws.current_frame0), frame1=desc(ws.current_frame1),
+            calibration_result=session.calibration_result,
             sequence=[desc(f) for f in session.sequence] if include_raw else [], current_step=session.current_step if include_raw else 0)
 
     def save(self, mode=None, callback=None):
@@ -441,6 +442,7 @@ class SessionProjects(QObject):
                     not np.isfinite(float(calibration['angle_deg'])) or int(calibration['step_count']) <= 0):
                 raise ValueError('转台标定参数无效')
             session.apply_calibration(**data['calibration'])
+            session.calibration_result = data.get('calibration_result')
         first = [read_frame(project, data.get(key)) for key in ('frame0', 'frame1')]
         if first[0][0]:
             session.set_frame0(first[0][0], first[0][0].markers, first[0][1])

@@ -207,6 +207,7 @@ class BackendBridge(QObject):
         self._wire_main_window()
         # 1.0.10 池合并：给转台工作区注入统一 runner，全工程只留一个引用池
         self.shell.workspace_turntable().set_background_runner(self._run_background)
+        self.shell.workspace_turntable().calibration_visualization_requested.connect(self._on_turntable_visualize_calibration)
         if hasattr(self, 'stitching'):
             self.shell.workspace_turntable()._explicit_stitch = self.stitching.execute
         self._wired = True
@@ -884,6 +885,10 @@ class BackendBridge(QObject):
         else:
             self.shell.log(
                 f"标定结果已恢复但无法进入扫描阶段: {msg_scan}", "warn")
+
+    def _on_turntable_visualize_calibration(self):
+        from .turntable_calibration_inspector import open_inspector
+        open_inspector(self)
 
     def _on_multi_visualize_calibration(self):
         from copy import deepcopy

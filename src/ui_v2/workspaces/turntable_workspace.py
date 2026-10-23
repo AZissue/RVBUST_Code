@@ -96,6 +96,7 @@ class TurntableWorkspace(QWidget):
 
     dirty_changed = Signal(bool)
     calibration_changed = Signal()
+    calibration_visualization_requested = Signal()
     """工作区数据脏标记变化（例如拍摄/标定/拼接后应设为 True）。"""
 
     save_session_requested = Signal()
@@ -726,6 +727,11 @@ class TurntableWorkspace(QWidget):
             ok, msg, info = result
             self.log(f"在线标定: {msg}", "success" if ok else "error")
             if ok:
+                snapshot = self.session.calibration_result
+                database = getattr(self, 'frame_database', None)
+                if snapshot and database:
+                    snapshot['source_revisions'] = {uid: database.records[uid].revision
+                        for uid in snapshot['source_ids'] if uid in database.records}
                 # 标记对数警示：3 对是 Kabsch 解轴/中心的下限，深度噪声会
                 # 直接变成拼接残差（实测 3 对场景帧间残差达 4.8°/30mm）
                 codes0 = {m.get('code') for m in (self.current_markers0 or [])}

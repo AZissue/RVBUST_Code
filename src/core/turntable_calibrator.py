@@ -24,6 +24,22 @@ import numpy as np
 import open3d as o3d
 
 
+def rotation_direction(axis, angle_rad):
+    """Screen handedness from camera toward +Z; independent of axis sign gauge."""
+    axis = np.asarray(axis, dtype=float)
+    if axis.shape != (3,) or not np.isfinite(axis).all() or not np.isfinite(angle_rad):
+        return '无法判定'
+    norm = np.linalg.norm(axis)
+    if norm < 1e-9 or abs(angle_rad) < 1e-8:
+        return '无法判定'
+    if abs(abs(angle_rad) - np.pi) < 1e-6:
+        return '接近180°，无法稳定判定顺逆时针'
+    projected = axis[2] / norm
+    if abs(projected) < .05:
+        return '近侧视，无法稳定判定顺逆时针'
+    return '顺时针' if projected * angle_rad > 0 else '逆时针'
+
+
 def kabsch_rigid_transform(
     src: np.ndarray, dst: np.ndarray
 ) -> Tuple[np.ndarray, np.ndarray]:
@@ -354,6 +370,7 @@ class OnlineTurntableSession:
         self.current_step: int = 0                    # 0=未开始采集；标定后表示已采集的序列帧数
         self.calib = TurntableCalibrator()
         self.calibrated: bool = False
+        self.calibration_result = None
         self.frame0_pcd: Optional[o3d.geometry.PointCloud] = None
         self.frame1_pcd: Optional[o3d.geometry.PointCloud] = None
         self.sequence_pcds: List[o3d.geometry.PointCloud] = []
@@ -381,7 +398,19 @@ class OnlineTurntableSession:
             return False, match_msg, {}
         ok, msg, info = self.calib.calibrate_from_markers(pts0, pts1)
         self.calibrated = ok
+        self.calibration_result = None
         if ok:
+            transform = self.calib.get_transform_for_step(1)
+            transformed = pts1 @ transform[:3, :3].T + transform[:3, 3]
+            ids0 = {i if marker_key == 'index' else m.get(marker_key, m.get('code', i)) for i, m in enumerate(self.markers0)}
+            ids1 = {i if marker_key == 'index' else m.get(marker_key, m.get('code', i)) for i, m in enumerate(self.markers1)}
+            codes = sorted(ids0 & ids1)
+            self.calibration_result = dict(
+                source_ids=[getattr(frame, 'database_id', None) for frame in (self.frame0, self.frame1)],
+                result=dict(success=True, T=transform.tolist(),
+                    rms_all_mm=float(np.sqrt(np.mean(np.sum((transformed-pts0)**2, axis=1)))),
+                    details=[dict(code=code, pt_ref=p0.tolist(), pt_cam_transformed=p1.tolist())
+                             for code, p0, p1 in zip(codes, pts0, transformed)]))
             # 标定帧仅用于计算角度，不进入最终拼接；清空后重新采集
             self.frame0 = None
             self.frame1 = None
@@ -407,6 +436,7 @@ class OnlineTurntableSession:
         """从会话恢复的标定参数直接建立标定状态（清空 frame0/1 与序列）。"""
         self.calib.set_calibration(axis, center, angle_deg, step_count)
         self.calibrated = self.calib.is_calibrated()
+        self.calibration_result = None
         self.frame0 = None
         self.frame1 = None
         self.markers0 = []
@@ -497,6 +527,7 @@ class OnlineTurntableSession:
         self.current_step = 0
         self.calib = TurntableCalibrator()
         self.calibrated = False
+        self.calibration_result = None
 
 
 class SyntheticTurntableData:

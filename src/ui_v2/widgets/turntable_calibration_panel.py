@@ -17,12 +17,17 @@ class TurntableCalibrationPanel(QGroupBox):
         self.status = QLabel('未标定')
         self.status.setMaximumHeight(self.status.sizeHint().height())
         layout.addWidget(self.status)
-        self.values = QLabel('旋转轴：—\n旋转中心 / mm：—\n单步角度：—\n360°步数：—')
+        self.visualize = QToolButton()
+        self.visualize.setText('标定结果可视化')
+        self.visualize.setToolTip('查看两帧标定点云、转轴模型对齐误差、旋转轴与中心')
+        self.visualize.clicked.connect(workspace.calibration_visualization_requested)
+        layout.addWidget(self.visualize)
+        self.values = QLabel('旋转轴：—\n旋转中心 / mm：—\n单步角度：—\n旋转方向：—\n360°步数：—')
         self.values.setTextFormat(Qt.PlainText)
         self.values.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.values.setWordWrap(True)
         self.values.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-        self.values.setToolTip('相机坐标系，单位mm。旋转中心是轴上一点；沿轴方向不唯一，新标定选择标记重心高度附近的轴点。')
+        self.values.setToolTip('相机坐标系，单位mm。旋转中心是轴上一点；沿轴方向不唯一，新标定选择标记重心高度附近的轴点。\n旋转方向从相机沿 +Z 看向场景判断，图像 X 向右、Y 向下；两帧求解按小于180°的单步旋转解释，不代表从转台上方观察的方向。')
         layout.addWidget(self.values)
         self.warning = QLabel()
         self.warning.setWordWrap(True)
@@ -47,13 +52,14 @@ class TurntableCalibrationPanel(QGroupBox):
         warning = ''
         if not session.is_calibrated():
             self.status.setText('未标定 · 拍摄两帧后计算转台')
-            self.values.setText('旋转轴：—\n旋转中心 / mm：—\n单步角度：—\n360°步数：—')
+            self.values.setText('旋转轴：—\n旋转中心 / mm：—\n单步角度：—\n旋转方向：—\n360°步数：—')
         else:
             calib = session.calib
             axis, center = np.asarray(calib.axis), np.asarray(calib.center)
             angle = float(np.degrees(calib.angle_rad))
             vector = lambda values: '[' + ', '.join(f'{value:.6g}' for value in values) + ']' if values.shape == (3,) else '无效'
-            self.values.setText(f'旋转轴：{vector(axis)}\n旋转中心 / mm：{vector(center)}\n单步角度：{angle:.4f}°\n360°步数：{calib.step_count}')
+            from core.turntable_calibrator import rotation_direction
+            self.values.setText(f'旋转轴：{vector(axis)}\n旋转中心 / mm：{vector(center)}\n单步角度：{angle:.4f}°\n旋转方向：{rotation_direction(axis, calib.angle_rad)}\n观察方向：相机沿 +Z 看向场景（初始帧 → 旋转帧）\n360°步数：{calib.step_count}')
             valid = (axis.shape == (3,) and center.shape == (3,) and np.isfinite(axis).all() and
                      np.isfinite(center).all() and np.linalg.norm(axis) > 1e-9 and np.linalg.norm(center) < 1e9)
             if valid:
@@ -67,6 +73,7 @@ class TurntableCalibrationPanel(QGroupBox):
         self.warning.setVisible(bool(warning))
         self.show_geometry.setEnabled(self._geometry is not None)
         self.locate.setEnabled(self._geometry is not None)
+        self.visualize.setEnabled(self._geometry is not None)
         self._update_geometry()
 
     def _update_geometry(self):
