@@ -307,9 +307,43 @@ class PageTests(unittest.TestCase):
             self.assertEqual(properties.tabs.tabText(2), '拍摄参数')
             self.assertFalse(page.read_button.isEnabled())
             self.assertFalse(page.apply_button.isEnabled())
+            self.assertFalse(page.camera.isEnabled())
+            for group, _ in page.groups.values():
+                self.assertFalse(group.isHidden())
+            for key, (form, row) in page.rows.items():
+                self.assertTrue(form.isRowVisible(row))
+                self.assertFalse(row.isEnabled())
+                if key in page.sliders:
+                    self.assertEqual(page.controls[key].text(), '—')
+                else:
+                    self.assertEqual(page.controls[key].currentText(), '待读取')
         reply = Mock()
         self.bridge.capture_parameters('cam0', None, reply)
         self.assertIn('断开', reply.call_args.args[1])
+
+    def test_disconnect_restores_visible_disabled_placeholders_and_reconnect_reads(self):
+        manager = self.bridge.camera_manager
+        camera = rich_camera('X2')
+        manager._cameras['cam0'] = camera
+        self.open_page()
+        page = self.page()
+        self.wait(lambda: page._loaded == 'cam0' and not self.bridge._workers)
+        self.assertEqual(page.controls['exposure_time_2d'].text(), '11 ms')
+        self.assertEqual(page.controls['use_projector_capturing_2d_image'].currentData(), True)
+        manager._cameras.clear()
+        page.refresh()
+        for key, (form, row) in page.rows.items():
+            self.assertTrue(form.isRowVisible(row))
+            self.assertFalse(row.isEnabled())
+        self.assertEqual(page.controls['exposure_time_2d'].text(), '—')
+        self.assertFalse(page.camera.isEnabled())
+        manager._cameras['cam0'] = camera
+        page.refresh()
+        self.wait(lambda: page._loaded == 'cam0' and not self.bridge._workers)
+        self.assertEqual(page.controls['exposure_time_2d'].text(), '11 ms')
+        self.assertEqual(page.controls['use_projector_capturing_2d_image'].currentData(), True)
+        camera.camera.SaveCaptureOptionParameters.assert_not_called()
+        manager._cameras.clear()
 
     def test_read_apply_fail_disconnect_and_busy_without_db_side_effects(self):
         camera = fake_camera()

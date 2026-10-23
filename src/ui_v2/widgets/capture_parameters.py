@@ -18,6 +18,8 @@ class CaptureParameters(QWidget):
             QWidget#captureParameters QSlider::handle:horizontal {
                 background:#d94a4d; width:10px; margin:-4px 0; border-radius:3px;
             }
+            QWidget#captureParameters QSlider::sub-page:horizontal:disabled { background:#555555; }
+            QWidget#captureParameters QSlider::handle:horizontal:disabled { background:#666666; }
         ''')
         self.bridge = None
         self._pending = False
@@ -31,6 +33,7 @@ class CaptureParameters(QWidget):
         root.setSpacing(6)
         header = QHBoxLayout()
         self.camera = QComboBox()
+        self.camera.setPlaceholderText('未连接相机')
         self.camera.currentIndexChanged.connect(self._invalidate)
         self.read_button = QPushButton('重新读取')
         self.read_button.clicked.connect(lambda: self._request(False))
@@ -96,7 +99,7 @@ class CaptureParameters(QWidget):
         self.timer = QTimer(self)
         self.timer.setInterval(500)
         self.timer.timeout.connect(self.refresh)
-        self._show_fields(set())
+        self._show_unloaded()
         self.refresh()
 
     def bind(self, bridge):
@@ -120,7 +123,7 @@ class CaptureParameters(QWidget):
         self._loaded = None
         self._read_values = {}
         self._auto_needed = True
-        self._show_fields(set())
+        self._show_unloaded()
         self.status.setText('等待自动读取相机参数…')
         self._enable()
 
@@ -135,6 +138,8 @@ class CaptureParameters(QWidget):
                 self.camera.addItems(ids)
                 if current in ids:
                     self.camera.setCurrentText(current)
+                elif ids:
+                    self.camera.setCurrentIndex(0)
         source = (manager.capture_parameter_source(self.camera.currentText())
                   if manager and self.camera.count() else None)
         if source != self._source:
@@ -152,10 +157,22 @@ class CaptureParameters(QWidget):
         for group, members in self.groups.values():
             group.setVisible(any(key in keys for key in members))
 
+    def _show_unloaded(self):
+        """Keep the settings discoverable without presenting invented values."""
+        for key, control in self.controls.items():
+            if key in self.sliders:
+                self.sliders[key].set_range(0, 0)
+                control.setSpecialValueText('—')
+                control.setValue(0)
+            else:
+                control.clear()
+                control.addItem('待读取', None)
+        self._show_fields(set(self.controls))
+
     def _enable(self):
         ready = bool(self.bridge and self.camera.count() and not self._pending
                      and self.bridge.can_change_workspace())
-        self.camera.setEnabled(not self._pending)
+        self.camera.setEnabled(bool(self.camera.count()) and not self._pending)
         self.read_button.setEnabled(ready)
         self.apply_button.setEnabled(ready and self._loaded == self.camera.currentText())
         for key, (_, row) in self.rows.items():
@@ -189,6 +206,7 @@ class CaptureParameters(QWidget):
                 for key, value in result['values'].items():
                     control = self.controls[key]
                     if key in result['ranges']:
+                        control.setSpecialValueText('')
                         self.sliders[key].set_range(*result['ranges'][key])
                         control.setValue(value)
                     else:
@@ -196,6 +214,10 @@ class CaptureParameters(QWidget):
                             control.clear()
                             for label, option in result['choices'][key]:
                                 control.addItem(label, option)
+                        else:
+                            control.clear()
+                            control.addItem('否', False)
+                            control.addItem('是', True)
                         control.setCurrentIndex(control.findData(value))
                 self._show_fields(set(result['values']))
                 self._read_values = {key: (value, self._value(key)) for key, value in result['values'].items()}
