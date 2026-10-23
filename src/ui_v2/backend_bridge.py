@@ -546,6 +546,7 @@ class BackendBridge(QObject):
         self._pause_card_preview()
         # 清空旧相机注册表（避免多次进入设备管理后 camera_id 递增错乱）
         self.camera_manager.clear()
+        self.shell.workspace_mobile().live_view().set_frame(None)
 
         # 区分真实设备与测试/虚拟设备
         real_devices = [d for d in devices if isinstance(d.backend_ref, int)]
@@ -1442,7 +1443,7 @@ class BackendBridge(QObject):
     def _on_mobile_preview_toggled(self, enabled: bool):
         """实时取景开关。"""
         if not enabled:
-            self._stop_preview_thread()
+            self._stop_preview_thread(clear_frame=False)
             self.shell.log("已停止实时取景", "info")
             return
         # 找到已连接的物理相机（模式 B 只有一台）
@@ -1465,17 +1466,19 @@ class BackendBridge(QObject):
         self._preview_thread.start()
         self.shell.log(f"开始实时取景: {camera_id}", "info")
 
-    def _stop_preview_thread(self):
-        """停止实时取景采集线程并清空画面。"""
+    def _stop_preview_thread(self, *, clear_frame=True):
+        """Stop acquisition; user stop/pause retains the last displayed frame."""
         if self._preview_thread is not None:
             self._preview_thread.stop()  # 等待在飞采集完成（带超时）
             self._preview_thread = None
         self._preview_camera_id = None
-        self.shell.workspace_mobile().live_view().set_frame(None)
+        if clear_frame:
+            self.shell.workspace_mobile().live_view().set_frame(None)
 
-    def _on_preview_frame(self, pixmap):
+    def _on_preview_frame(self, pixmap, *, source=None):
         """预览帧到达（UI 线程）：仅做显示，采集/转换已在线程内完成。"""
-        if self._preview_thread is None:
+        source = source or self.sender()
+        if self._preview_thread is None or (source is not None and source is not self._preview_thread):
             return
         self.shell.workspace_mobile().live_view().set_frame(pixmap)
 
@@ -1489,7 +1492,7 @@ class BackendBridge(QObject):
         if self._preview_thread is None:
             return None
         camera_id = self._preview_camera_id
-        self._stop_preview_thread()
+        self._stop_preview_thread(clear_frame=False)
         # 同步 UI 按钮状态（避免用户以为预览仍在运行）
         ws = self.shell.workspace_mobile()
         if ws.is_preview_enabled():
