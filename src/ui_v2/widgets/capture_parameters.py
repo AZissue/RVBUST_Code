@@ -10,17 +10,6 @@ class CaptureParameters(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName('captureParameters')
-        self.setStyleSheet('''
-            QWidget#captureParameters QSlider::groove:horizontal {
-                height:4px; background:#454545; border-radius:2px;
-            }
-            QWidget#captureParameters QSlider::sub-page:horizontal { background:#bb3438; border-radius:2px; }
-            QWidget#captureParameters QSlider::handle:horizontal {
-                background:#d94a4d; width:10px; margin:-4px 0; border-radius:3px;
-            }
-            QWidget#captureParameters QSlider::sub-page:horizontal:disabled { background:#555555; }
-            QWidget#captureParameters QSlider::handle:horizontal:disabled { background:#666666; }
-        ''')
         self.bridge = None
         self._pending = False
         self._loaded = None

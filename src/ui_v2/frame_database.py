@@ -575,6 +575,7 @@ class FrameDatabaseController(QObject):
         if mode in self.browsers:
             return
         self.browsers[mode] = browser
+        browser.properties.recognition.bind(self.bridge, mode)
         browser.frame_selected.connect(lambda uid: self.select(mode, uid))
         browser.component_selected.connect(lambda uid, component: self.select(mode, uid, component))
         browser.checked_components_changed.connect(lambda _: self.overlay.changed(mode))

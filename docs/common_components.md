@@ -18,6 +18,7 @@
 | DB 多帧显示 | `src/ui_v2/db_cloud_overlay.py` | 勾选帧的异步读取、显示缓存和叠加；不修改几何或应用标定变换 |
 | 对象属性 | `src/ui_v2/widgets/db_properties.py` | 按选中数据展示属性，连接公共 3D 控制和拍摄参数页 |
 | 拍摄参数页 | `src/ui_v2/widgets/capture_parameters.py` | 参数分组、相机切换、读写请求与失效回调保护 |
+| 识别参数页 | `src/ui_v2/widgets/recognition_parameters.py` | 当前识别类型、标定板规格及 Gamma；离线可用，应用后更新后台识别配置 |
 | 相机参数服务 | `src/core/capture_parameters.py` | SDK 能力与范围查询、参数读写、锁及失败处理 |
 | 后台识别 | `src/ui_v2/background_recognition.py`、`src/core/frame_recognition.py` | UI 调度与结果回填、独立检测配置和缓存；生命周期见 `background_recognition.md` |
 

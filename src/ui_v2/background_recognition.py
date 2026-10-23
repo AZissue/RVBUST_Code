@@ -30,6 +30,41 @@ class BackgroundRecognition(QObject):
             marker_type = bridge.shell.workspace_turntable().combo_marker_type.currentData()
         return frame_recognition.configuration(bridge.marker_detector, marker_type)
 
+    def configure(self, mode, marker_type, boards, gamma):
+        """Apply UI settings between foreground tasks; running jobs own copies."""
+        import math
+        from core.marker_detector import SUPPORTED_MARKER_TYPES
+        bridge = self.bridge
+        if mode != bridge._current_mode or not bridge.can_change_workspace():
+            raise ValueError('当前任务进行中或工作区已切换，请稍后再试。')
+        if marker_type not in SUPPORTED_MARKER_TYPES:
+            raise ValueError('不支持的识别类型。')
+        if not math.isfinite(gamma) or not .1 <= gamma <= 10:
+            raise ValueError('Gamma 必须在 0.1～10 之间。')
+        if not boards or any(not isinstance(spec.get('cols'), int) or not isinstance(spec.get('rows'), int)
+                             or spec['cols'] < 2 or spec['rows'] < 2
+                             or not math.isfinite(spec.get('spacing_mm', 0))
+                             or spec.get('spacing_mm', 0) <= 0 for spec in boards):
+            raise ValueError('标定板规格或圆心间距无效。')
+        if not bridge._detect_lock.acquire(blocking=False):
+            raise ValueError('识别器正在使用，请稍后再试。')
+        try:
+            bridge.marker_detector.set_board_specs(copy.deepcopy(boards))
+            bridge.marker_detector.set_board_gamma(gamma)
+            bridge.marker_detector.set_marker_type(marker_type)
+            if mode == 'multi_cam':
+                combo = bridge.shell.workspace_multi()._detect_combo
+                combo.setCurrentIndex(combo.findData('calib_board' if marker_type == 'asymmetric_grid' else marker_type))
+            elif mode == 'turntable':
+                combo = bridge.shell.workspace_turntable().combo_marker_type
+                # Its legacy handler mutates the same detector and logs the change.
+                from PySide6.QtCore import QSignalBlocker
+                with QSignalBlocker(combo):
+                    combo.setCurrentIndex(combo.findData(marker_type))
+        finally:
+            bridge._detect_lock.release()
+        bridge.shell.log('识别参数已应用；后台识别将按新参数更新原始帧。', 'info')
+
     def ensure(self, mode, identifiers, callback):
         """Continue an explicit action once only its input frames are ready."""
         if not self.enabled:

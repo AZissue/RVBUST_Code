@@ -11,6 +11,17 @@ class ParameterSlider(QWidget):
     """
     def __init__(self, *, decimals=0, suffix='', parent=None):
         super().__init__(parent)
+        self.setStyleSheet('''
+            QSlider::groove:horizontal {
+                height:4px; background:#454545; border-radius:2px;
+            }
+            QSlider::sub-page:horizontal { background:#bb3438; border-radius:2px; }
+            QSlider::handle:horizontal {
+                background:#d94a4d; width:10px; margin:-4px 0; border-radius:3px;
+            }
+            QSlider::sub-page:horizontal:disabled { background:#555555; }
+            QSlider::handle:horizontal:disabled { background:#666666; }
+        ''')
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)

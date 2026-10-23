@@ -75,6 +75,9 @@ class DbProperties(QWidget):
         from .capture_parameters import CaptureParameters
         self.capture = CaptureParameters()
         self.tabs.addTab(self.capture, '拍摄参数')
+        from .recognition_parameters import RecognitionParameters
+        self.recognition = RecognitionParameters()
+        self.tabs.addTab(self.recognition, '识别参数')
         for control, name in [(self.view_preset, 'view_preset'), (self.quality, 'quality'), (self.color_mode, 'color_mode')]:
             control.currentTextChanged.connect(lambda value, key=name: self._combo(key, value))
         self.point_size.valueChanged.connect(lambda value: self._renderer and self._renderer.point_size_control.setValue(value))
