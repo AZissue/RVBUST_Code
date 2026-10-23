@@ -117,8 +117,11 @@ class DbCloudOverlay(QObject):
             if self._viewer(mode)._database_clouds:
                 self._viewer(mode).show_database_clouds({})
             return
-        self._viewer(mode).show_database_clouds(clouds)
-        self._viewer(mode).set_cloud_markers(markers)
+        viewer = self._viewer(mode)
+        displayed = viewer._database_clouds
+        if displayed.keys() != clouds.keys() or any(displayed[key] is not cloud for key, cloud in clouds.items()):
+            viewer.show_database_clouds(clouds)
+        viewer.set_cloud_markers(markers)
         self._workspace(mode)._industrial.show_database_result()
         text = f'DB叠加预览：{len(clouds)} 帧点云'
         if raw:

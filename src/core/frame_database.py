@@ -66,6 +66,7 @@ class FrameRecord:
     kind: str = 'raw'
     source_ids: list = field(default_factory=list)
     revision: int = 0
+    recognition: dict = field(default_factory=dict)
 
 
 class FrameDatabase:
@@ -87,9 +88,18 @@ class FrameDatabase:
 
     def _save_index(self):
         self.directory.mkdir(parents=True, exist_ok=True)
+        # Keep the schema-1 record shape readable by older MCC versions. The
+        # optional top-level cache can be ignored without losing raw assets.
+        records = [{key: value for key, value in vars(row).items() if key != 'recognition'}
+                   for row in self.records.values()]
+        removed = {uid: {**entry, 'record': {key: value for key, value in entry['record'].items()
+                                            if key != 'recognition'}} for uid, entry in self.removed.items()}
+        recognition = {uid: row.recognition for uid, row in self.records.items() if row.recognition}
+        recognition.update({uid: entry['record']['recognition'] for uid, entry in self.removed.items()
+                            if entry['record'].get('recognition')})
         write_json_atomic(str(self.directory / 'index.json'), _json_value(dict(
             schema=1, mode=self.mode, sessions=self.sessions,
-            records=[vars(row) for row in self.records.values()], removed=self.removed)), ensure_ascii=False, indent=2)
+            records=records, removed=removed, recognition=recognition)), ensure_ascii=False, indent=2)
 
     def _notify(self):
         if self.on_changed:
@@ -177,7 +187,7 @@ class FrameDatabase:
             staging.directory = directory / ('.replacing_' + uuid.uuid4().hex)
             backup = staging.directory / 'previous'
             committed = False
-            candidate = replace(frame, database_id=None, markers=[], markers_all=None,
+            candidate = replace(frame, database_id=None, recognition_key=None, markers=[], markers_all=None,
                                 board_pose=None, board_pattern=None, board_pattern_name=None, board_rms_mm=0)
             try:
                 staged_uid = staging.ingest(candidate)
@@ -211,6 +221,7 @@ class FrameDatabase:
                 frame.frame_id = original.frame_id
                 frame.markers = []
                 frame.markers_all = None
+                frame.recognition_key = None
                 frame.board_pose = None
                 frame.board_pattern = None
                 frame.board_pattern_name = None
@@ -235,7 +246,8 @@ class FrameDatabase:
             if record is None:
                 return
             before = copy.deepcopy(vars(record))
-            record.markers = _json_value(frame.markers_all if frame.markers_all is not None else frame.markers)
+            if not record.recognition or frame.recognition_key == record.recognition.get('key'):
+                record.markers = _json_value(frame.markers_all if frame.markers_all is not None else frame.markers)
             record.logical_name = logical_name or frame.camera_name
             if purpose:
                 record.purpose = purpose
@@ -253,6 +265,23 @@ class FrameDatabase:
     def snapshot(self):
         with self._lock:
             return copy.deepcopy(self.sessions), copy.deepcopy(list(self.records.values()))
+
+    def set_recognition(self, uid, revision, directory, result):
+        """Commit metadata only if the exact captured data still exists."""
+        with self._lock:
+            row = self.records.get(uid)
+            if self.directory != directory or row is None or row.kind != 'raw' or row.revision != revision:
+                return False
+            before = copy.deepcopy(vars(row))
+            row.recognition = _json_value(result)
+            row.markers = copy.deepcopy(row.recognition.get('markers', []))
+            try:
+                self._save_index()
+            except Exception:
+                row.__dict__.update(before)
+                raise
+        self._notify()
+        return True
 
     def set_status(self, uid, status):
         with self._lock:
@@ -292,6 +321,9 @@ class FrameDatabase:
             markers=[m for m in record.markers if m.get('valid_3d', True)], markers_all=record.markers,
             is_offline=True, offline_image_path=str(folder / 'image.png'),
             offline_pointmap_path=str(folder / 'pointmap.ply'), database_id=uid)
+        if record.recognition.get('state') == 'done':
+            from .frame_recognition import apply
+            apply(frame, record.recognition)
         if component == 'image':
             return frame, None
         cloud = frame.load_pointcloud_o3d()
@@ -453,7 +485,11 @@ class FrameDatabase:
             raise ValueError('DB项目版本或工作区类型不匹配')
         records = {}
         removed = data.get('removed', {})
+        recognition = data.get('recognition', {})
+        if not isinstance(recognition, dict) or not all(isinstance(value, dict) for value in recognition.values()):
+            raise ValueError('DB识别缓存格式无效')
         for uid, entry in removed.items():
+            entry['record']['recognition'] = recognition.get(uid, entry['record'].get('recognition', {}))
             batch = entry['batch']
             if (len(uid) != 32 or len(batch) != 32 or
                     any(c not in '0123456789abcdef' for c in uid + batch) or
@@ -461,6 +497,7 @@ class FrameDatabase:
                 raise ValueError('DB回收区索引无效')
         for values in data['records']:
             row = FrameRecord(**values)
+            row.recognition = recognition.get(row.uid, row.recognition)
             if len(row.uid) != 32 or any(c not in '0123456789abcdef' for c in row.uid):
                 raise ValueError('DB帧标识无效')
             if row.uid in records or row.session_id not in data['sessions']:
@@ -474,6 +511,7 @@ class FrameDatabase:
                     not isinstance(row.source_ids, list) or any(not isinstance(v, str) or len(v) != 32 or
                         any(c not in '0123456789abcdef' for c in v) for v in row.source_ids) or
                     not isinstance(row.markers, list) or not all(isinstance(v, dict) for v in row.markers) or
+                    not isinstance(row.recognition, dict) or
                     not all(isinstance(v, str) for v in (row.camera, row.purpose, row.logical_name, row.status, session['title'], session['created']))):
                 raise ValueError('DB帧元数据无效')
             for name in (('image.png', 'pointmap.ply') if row.kind == 'raw' else ('pointmap.ply',)):

@@ -41,6 +41,8 @@ class FrameBrowserTests(unittest.TestCase):
             self.bridge = BackendBridge(self.win)
             self.bridge.wire_all()
         self.win.set_backend_bridge(self.bridge)
+        # Ordinary DB tests isolate recognition; its own tests opt in with a mock detector.
+        self.bridge.recognition.enabled = False
         self.win.set_mode('multi_cam', [DeviceInfo(serial='MOCK', backend_ref=0)])
         self.win.set_presentation('industrial')
         self.browser = self.win.workspace_multi()._industrial.frame_browser

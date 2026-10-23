@@ -203,7 +203,7 @@ class ExplicitStitchingTests(unittest.TestCase):
             Path(path).write_bytes(PLY.replace(b'1 2 3', b'7 8 9'))
             return True
         pm.SaveWithImage.side_effect = save
-        self.bridge.camera_manager._cameras = {'cam0': SimpleNamespace(is_connected=True,
+        self.bridge.camera_manager._cameras = {'cam0': SimpleNamespace(is_connected=True, sn='MOCK',
             capture_3d=lambda options: (np.full((2,2,3),value,np.uint8), pm, object(), 'ok'))}
         self.bridge.stitching.update_mobile_actions()
         with patch('core.frame_database._import_rvc', return_value=sdk), \
@@ -368,7 +368,7 @@ class ExplicitStitchingTests(unittest.TestCase):
             PointMap=SimpleNamespace(Destroy=Mock()), Image=SimpleNamespace(Destroy=Mock()))
         pm = Mock()
         pm.SaveWithImage.side_effect = lambda path, *args: Path(path).write_bytes(Path(frame.offline_pointmap_path).read_bytes()) or True
-        self.bridge.camera_manager._cameras = {'cam0': SimpleNamespace(is_connected=True,
+        self.bridge.camera_manager._cameras = {'cam0': SimpleNamespace(is_connected=True, sn='MOCK',
             capture_3d=lambda options: (frame.image_np, pm, object(), 'ok'))}
         with patch('core.frame_database._import_rvc', return_value=fake_sdk), \
              patch('core.frame_data._import_rvc', return_value=fake_sdk), \

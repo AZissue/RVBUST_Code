@@ -45,6 +45,8 @@ class MarkerDetector:
     """统一标记物检测器（编码圆 / 非对称圆标定板）。"""
 
     def __init__(self, marker_type: str = MARKER_TYPE_CODED_CIRCLE):
+        self.save_debug_images = True
+        self.raise_errors = False
         self._marker_type = marker_type
         self._coded_marker_type = None
         if RVC is not None:
@@ -112,6 +114,8 @@ class MarkerDetector:
             return []
         if self._coded_marker_type is None:
             logger.warning("detect: PyRVC 未安装，无法检测")
+            if self.raise_errors:
+                raise RuntimeError('PyRVC 未安装，无法识别编码圆')
             return []
         try:
             logger.debug(f"detect 输入: shape={image.shape}, dtype={image.dtype}, min={image.min()}, max={image.max()}")
@@ -153,6 +157,8 @@ class MarkerDetector:
             return []
         except Exception as e:
             logger.error(f"detect 异常: {e}")
+            if self.raise_errors:
+                raise
             import traceback
             logger.error(traceback.format_exc())
             return []
@@ -245,6 +251,8 @@ class MarkerDetector:
                 logger.debug(f"PLY 读取成功: {len(points)} 点")
             except Exception as e:
                 logger.error(f"读取 PLY 失败: {e}")
+                if self.raise_errors:
+                    raise
                 return []
 
             # 2D 图像检测编码圆（直接用 numpy 图像，不转换 RVC.Image）
@@ -257,6 +265,8 @@ class MarkerDetector:
             markers_2d = self.detect(image_np)
             logger.info(f"2D 检测到 {len(markers_2d)} 个编码圆")
             if not markers_2d:
+                if not self.save_debug_images:
+                    return []
                 # 保存调试图像供用户检查
                 try:
                     debug_path = f"debug_detect_{w_img}x{h_img}_{image_np.dtype}.png"
@@ -308,6 +318,8 @@ class MarkerDetector:
             return markers_3d
         except Exception as e:
             logger.error(f"detect_3d 异常: {e}")
+            if self.raise_errors:
+                raise
             import traceback
             logger.error(traceback.format_exc())
             return []

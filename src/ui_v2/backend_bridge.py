@@ -176,6 +176,9 @@ class BackendBridge(QObject):
         self.projects = SessionProjects(self)
         from .explicit_stitching import ExplicitStitching
         self.stitching = ExplicitStitching(self)
+        from .background_recognition import BackgroundRecognition
+        self.recognition = BackgroundRecognition(self)
+        self.shell.workspace_turntable().background_recognition = self.recognition
 
     def _ensure_sdk(self):
         if not getattr(self, '_sdk_initialized', False):
@@ -709,8 +712,14 @@ class BackendBridge(QObject):
         active_cards = self._pause_card_preview()
         self.shell.show_loading("正在拍摄标定帧...")
         def _work():
-            return self.camera_manager.capture_all(sync=sync)
+            frames = self.camera_manager.capture_all(sync=sync)
+            if self.shell._presentation == 'industrial':
+                return frames, {cid: frame.load_pointcloud_o3d() for cid, frame in frames.items()}
+            return frames
         def _done(frames, error):
+            clouds = {}
+            if isinstance(frames, tuple):
+                frames, clouds = frames
             self.shell.hide_loading()
             self._resume_2d_preview(preview_cam)
             self._resume_card_preview(active_cards)
@@ -734,6 +743,8 @@ class BackendBridge(QObject):
             # 更新各相机卡片预览
             for cid, frame in frames.items():
                 ws.camera_grid().set_frame(cid, frame)
+                if clouds.get(cid) is not None:
+                    ws.viewer().set_pointcloud(cid, clouds[cid])
             ws.on_capture_done()
             ws.set_state("captured")
             self.shell.set_dirty(True)
@@ -742,6 +753,9 @@ class BackendBridge(QObject):
 
     def _on_multi_detect(self, method: str):
         """检测标记物（串行执行，避免共享 MarkerDetector 线程竞态）。"""
+        if self.shell._presentation == 'industrial' and self.recognition.enabled:
+            self.recognition.retry('multi_cam', [frame.database_id for frame in self.fixed_workflow.frames_calib.values()])
+            return
         marker_type = self._map_detect_method(method)
         self.shell.show_loading("正在检测标记物...")
 
@@ -898,6 +912,9 @@ class BackendBridge(QObject):
 
     def _on_multi_calibrate(self):
         """计算外参。"""
+        if self.shell._presentation == 'industrial' and not self.recognition.ensure('multi_cam',
+                [frame.database_id for frame in self.fixed_workflow.frames_calib.values()], self._on_multi_calibrate):
+            return
         self.shell.show_loading("正在计算外参...")
         def _work():
             ok, msg = self.fixed_workflow.calibrate()
@@ -1245,9 +1262,15 @@ class BackendBridge(QObject):
         self.shell.show_loading(f"正在拍摄 {camera_id}...")
 
         def _work():
-            return self.camera_manager.capture(camera_id)
+            frame = self.camera_manager.capture(camera_id)
+            if self.shell._presentation == 'industrial':
+                return frame, frame.load_pointcloud_o3d() if frame is not None else None
+            return frame
 
         def _done(frame, error):
+            cloud = None
+            if isinstance(frame, tuple):
+                frame, cloud = frame
             self.shell.hide_loading()
             # 恢复移动工作站预览
             self._resume_2d_preview(mobile_preview_cam)
@@ -1274,7 +1297,7 @@ class BackendBridge(QObject):
             ws.camera_grid().set_frame_kind(camera_id, "标定帧")
             # 把单相机点云刷新到 3D 查看器（叠加显示）
             try:
-                pcd = frame.load_pointcloud_o3d()
+                pcd = cloud if self.shell._presentation == 'industrial' else frame.load_pointcloud_o3d()
                 if pcd is not None and len(pcd.points) > 0:
                     pts_arr = np.asarray(pcd.points)
                     n_total = len(pts_arr)
@@ -1305,7 +1328,7 @@ class BackendBridge(QObject):
         frame = card.current_frame()
 
         # 若当前只有 2D 预览帧（无点云），先拍摄 3D 帧再检测
-        if frame is None or frame.pointmap is None:
+        if frame is None or not frame.has_pointcloud:
             self.shell.log(f"{camera_id} 无 3D 帧，先执行 3D 拍摄再检测", "info")
             self._capture_then_detect(camera_id)
             return
@@ -1352,6 +1375,9 @@ class BackendBridge(QObject):
 
     def _run_detect_on_frame(self, camera_id: str, frame: FrameData):
         """对已有 3D 帧执行标记物检测并回填 UI。"""
+        if self.shell._presentation == 'industrial' and self.recognition.enabled and frame.database_id:
+            self.recognition.retry('multi_cam', [frame.database_id])
+            return
         ws = self.shell.workspace_multi()
         method = ws.current_detect_method()
         self.marker_detector.set_marker_type(self._map_detect_method(method))
@@ -2331,6 +2357,11 @@ class BackendBridge(QObject):
                 except Exception as exc:
                     self.shell.log('DB元数据更新失败：' + str(exc), 'error')
             on_done(result, error)
+            if error is None and self.shell._presentation == 'industrial':
+                database = self.frame_db.databases[self._current_mode]
+                self.recognition.available.update((self._current_mode, database.directory, frame.database_id,
+                    database.records[frame.database_id].revision) for frame in self.frame_db._frames(result)
+                    if frame.database_id in database.records)
             if error is None and update_metadata:
                 try:
                     self.frame_db.synchronize()
@@ -2368,6 +2399,7 @@ class BackendBridge(QObject):
             self._preview_thread = None
         self._card_preview_timer.stop()
         self._card_preview_active.clear()
+        self.recognition.close()
         # 任务分级等待（E5：SDK 无法加超时，改为语义分级）：
         #   B 类 must_finish：无超时等待，禁止进 pending→os._exit 名单（数据完整性优先）；
         #   A 类：有界等待 3s，超时保留引用并记 warning（os._exit 安全网名单）。

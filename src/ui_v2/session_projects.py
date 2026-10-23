@@ -33,7 +33,7 @@ def frame_description(database, frame):
     if frame.database_id not in database.records and frame.database_id not in database.removed:
         database.ingest(frame)
     return _json_value(dict(uid=frame.database_id, frame_id=frame.frame_id, camera=frame.camera_name,
-        markers=frame.markers, markers_all=frame.markers_all, kind=frame.kind,
+        markers=frame.markers, markers_all=frame.markers_all, kind=frame.kind, recognition_key=frame.recognition_key,
         board_pose=frame.board_pose, board_pattern=frame.board_pattern,
         board_pattern_name=frame.board_pattern_name, board_rms_mm=frame.board_rms_mm))
 
@@ -56,10 +56,14 @@ def read_frame(project, entry):
     frame = FrameData(int(entry['frame_id']), str(entry['camera']), database_id=uid,
         image_np=image, is_offline=True, offline_image_path=str(folder / 'image.png'),
         offline_pointmap_path=str(folder / 'pointmap.ply'), markers=entry['markers'],
-        markers_all=entry.get('markers_all'), kind=entry.get('kind'),
+        markers_all=entry.get('markers_all'), kind=entry.get('kind'), recognition_key=entry.get('recognition_key'),
         board_pose=np.asarray(entry['board_pose']) if entry.get('board_pose') is not None else None,
         board_pattern=tuple(entry['board_pattern']) if entry.get('board_pattern') else None,
         board_pattern_name=entry.get('board_pattern_name'), board_rms_mm=entry.get('board_rms_mm', 0))
+    record = db.records.get(uid)
+    if record and record.recognition.get('state') == 'done':
+        from core.frame_recognition import apply
+        apply(frame, record.recognition)
     cloud = frame.load_pointcloud_o3d()
     points = np.asarray(cloud.points)
     valid = np.isfinite(points).all(axis=1) & np.any(points != 0, axis=1)

@@ -59,6 +59,7 @@ class FrameBrowser(QWidget):
     checked_components_changed = Signal(list)
     selection_cleared = Signal()
     export_requested = Signal(str)
+    recognize_requested = Signal(list)
 
     def __init__(self, database, parent=None):
         super().__init__(parent)
@@ -392,6 +393,17 @@ class FrameBrowser(QWidget):
             values['来源帧数'] = len(record.source_ids)
         else:
             values['标记物数量'] = len(record.markers)
+            values['后台识别'] = {'running': '识别中', 'done': '已完成', 'error': '失败，可右键重新识别'}.get(
+                record.recognition.get('state'), '等待后台识别')
+            if record.recognition.get('state') == 'done':
+                values['有效三维标记'] = sum(row.get('valid_3d', True) for row in record.markers)
+                values['识别类型'] = {'coded_circle': '编码圆', 'asymmetric_grid': '非对称圆标定板'}.get(
+                    record.recognition.get('marker_type'), record.recognition.get('marker_type', '—'))
+            if record.recognition.get('error'):
+                values['识别错误'] = record.recognition['error']
+            if record.recognition.get('board_pattern_name'):
+                values['标定板规格'] = record.recognition['board_pattern_name']
+                values['标定板拟合 RMS'] = f"{record.recognition.get('board_rms_mm', 0):.3f} mm"
         self.properties.show_values(values)
 
     def delete_selected(self):
@@ -451,6 +463,9 @@ class FrameBrowser(QWidget):
                 record = self.database.records.get(uid)
                 export.setEnabled(record is not None and record.status != STALE_RESULT)
         action = menu.addAction('删除选中数据', self.delete_selected)
+        raw_ids = [uid for uid in self.selected_ids() if self.database.records[uid].kind == 'raw']
+        recognize = menu.addAction('重新识别标记物', lambda: self.recognize_requested.emit(raw_ids))
+        recognize.setEnabled(bool(raw_ids))
         action.setEnabled(bool(self.selected_ids()))
         action = menu.addAction('清空当前 DB', lambda: self.delete_requested.emit(list(self.database.records)))
         action.setEnabled(bool(self.database.records))
@@ -496,6 +511,7 @@ class FrameDatabaseController(QObject):
         self.browsers = {}
         self._selection = 0
         self._preview_modes = set()
+        self._displayed = {}
         self._capture_target = threading.local()
         from .db_cloud_overlay import DbCloudOverlay
         self.overlay = DbCloudOverlay(self)
@@ -565,6 +581,7 @@ class FrameDatabaseController(QObject):
         browser._export_selection_changed = self.bridge.shell._industrial_ribbon.update_status
         browser.checked_components_changed.connect(lambda _: browser._export_selection_changed())
         browser.export_requested.connect(self.bridge.stitching.export)
+        browser.recognize_requested.connect(lambda ids: self.bridge.recognition.retry(mode, ids))
         browser.selection_cleared.connect(lambda: self._cancel_selection(mode))
         if mode == 'mobile_chain':
             workspace = self.bridge.shell.workspace_mobile()
@@ -584,6 +601,7 @@ class FrameDatabaseController(QObject):
             self._selection += 1
 
     def restore(self, mode):
+        self._displayed.pop(mode, None)
         self._selection += 1
         self.overlay.reset(mode)
         if self.bridge._current_mode != mode:
@@ -630,6 +648,7 @@ class FrameDatabaseController(QObject):
         bridge._run_background(lambda: self.databases[mode].load_frame(uid, component), done, name='db_frame_preview')
 
     def display_frame(self, mode, uid, frame, cloud, component='frame'):
+        self._displayed[mode] = (uid, frame, component)
         self._preview_modes.add(mode)
         browser = self.browsers.get(mode)
         if browser:

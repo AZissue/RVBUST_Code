@@ -185,7 +185,7 @@ class ExplicitStitching:
             bridge.shell._refresh_statusbar()
         bridge._run_background(work, done, must_finish=True, name='raw_capture')
 
-    def execute(self):
+    def execute(self, prepared=None):
         bridge = self.bridge
         if not bridge.can_change_workspace():
             bridge.shell.log('请等待当前任务完成后再执行拼接。', 'warn')
@@ -197,10 +197,20 @@ class ExplicitStitching:
         selected = [uid for uid in selected if uid in raw_ids]
         if mode == 'mobile_chain' and len(selected) >= 2:
             raw_ids = selected
+        if prepared is not None:
+            if prepared[0] != mode:
+                return
+            raw_ids = prepared[1]
         if len(raw_ids) < 2:
             bridge.shell.log('执行拼接至少需要两帧原始数据。', 'warn')
             return
         turn = bridge.shell.workspace_turntable()
+        recognition_inputs = [frame.database_id for frame in turn.session.get_all_frames()] if mode == 'turntable' else raw_ids
+        # Fixed-camera scans already have calibrated extrinsics; their markers
+        # remain useful for inspection but are not an input to this stitch.
+        if mode != 'multi_cam' and not bridge.recognition.ensure(mode, recognition_inputs,
+                lambda: self.execute((mode, raw_ids))):
+            return
         voxel = turn.spin_voxel.value() or None
         refine = turn.chk_icp_refine.isChecked()
         preview = bridge._pause_2d_preview()
@@ -220,7 +230,7 @@ class ExplicitStitching:
                     frame.camera_name = sid = f'station_{number}'
                     chain = workflow._chain_stitcher
                     ok, message, edge = chain.add_frame(frame,
-                        detect_markers=not bool(frame.markers_all or frame.markers))
+                        detect_markers=not bool(frame.recognition_key or frame.markers_all or frame.markers))
                     if not ok:
                         raise ValueError(f'原始帧 {number}：{message}；未生成结果，请移除质量不佳的帧后重试')
                     cached = chain._node_pcd_cache.get(sid)

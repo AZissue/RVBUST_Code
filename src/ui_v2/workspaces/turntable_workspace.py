@@ -658,7 +658,7 @@ class TurntableWorkspace(QWidget):
                 frame.image_np, frame.pointmap, frame.rvc_image,
                 offline_ply_path=frame.offline_pointmap_path,
                 include_invalid=True,
-            ) if self.marker_detector else []
+            ) if self.marker_detector and not self._recognition_in_background() else []
             markers_valid = [m for m in markers if m.get('valid_3d', True)]
             frame.markers_all = markers
             frame.markers = markers_valid
@@ -677,7 +677,7 @@ class TurntableWorkspace(QWidget):
                 self.current_markers0 = markers_valid
                 self.session.set_frame0(frame, markers_valid, pcd)
                 self.viewer.set_pointcloud("frame0", pcd)
-                if n_valid < 3:
+                if n_valid < 3 and not self._recognition_in_background():
                     QMessageBox.warning(
                         self, "标记点不足",
                         f"frame0 检出 {len(markers)} 个标记，但仅 {n_valid} 个 3D 有效"
@@ -689,7 +689,7 @@ class TurntableWorkspace(QWidget):
                 self.current_markers1 = markers_valid
                 self.session.set_frame1(frame, markers_valid, pcd)
                 self.viewer.set_pointcloud("frame1", pcd)
-                if n_valid < 3:
+                if n_valid < 3 and not self._recognition_in_background():
                     QMessageBox.warning(
                         self, "标记点不足",
                         f"frame1 检出 {len(markers)} 个标记，但仅 {n_valid} 个 3D 有效"
@@ -704,7 +704,15 @@ class TurntableWorkspace(QWidget):
         self._run_busy_worker(_capture, _done)
 
     # ------------------------------------------------------------------ 在线标定
+    def _recognition_in_background(self):
+        service = getattr(self, 'background_recognition', None)
+        return bool(service and service.enabled and getattr(getattr(self, '_industrial', None), 'active', False))
+
     def _on_online_calibrate(self):
+        if self._recognition_in_background() and not self.background_recognition.ensure('turntable',
+                [frame.database_id for frame in (self.current_frame0, self.current_frame1) if frame],
+                self._on_online_calibrate):
+            return
         mtype = self.combo_marker_type.currentData()
         key = "index" if mtype == MARKER_TYPE_ASYMMETRIC_GRID else "code"
         self.log("在线标定中...")
@@ -840,7 +848,7 @@ class TurntableWorkspace(QWidget):
             # 手工步进角度不均匀时这是拼准的关键）
             markers = []
             markers_all = []
-            if self.marker_detector is not None:
+            if self.marker_detector is not None and not self._recognition_in_background():
                 markers_all = self.marker_detector.detect_3d(
                     frame.image_np, frame.pointmap, frame.rvc_image,
                     offline_ply_path=frame.offline_pointmap_path,
