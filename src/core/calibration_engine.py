@@ -33,7 +33,9 @@ from .utils import logger, write_json_atomic
 class CalibrationEngine:
     """基于编码圆对应点的 N 相机外参标定（星型拓扑）。"""
 
-    def __init__(self):
+    def __init__(self, *, display_names=None):
+        # Presentation-only aliases; graph keys and serialized IDs stay stable.
+        self.display_names = dict(display_names or {})
         # pair 结果：{(ref_id, cam_id): {T, rms_mm, mean_mm, inlier_count, inlier_ratio,
         #   details, outlier_count, outlier_codes, rms_all_mm, ...}}
         # rms_mm 等误差统计只按内点计算；rms_all_mm 为含离群点的全量 RMS（参考）
@@ -52,11 +54,14 @@ class CalibrationEngine:
         """显式指定参考相机。"""
         self.reference_id = camera_id
 
+    def display_name(self, camera_id: str) -> str:
+        return self.display_names.get(camera_id, camera_id)
+
     def _ensure_reference(self, ref_id: str):
         """首次标定时自动把 ref_id 设为参考相机。"""
         if self.reference_id is None:
             self.reference_id = ref_id
-            logger.info(f"参考相机自动设为: {ref_id}")
+            logger.info(f"参考相机自动设为: {self.display_name(ref_id)}")
 
     # ------------------------------------------------------------------
     # 算法核心：SVD Kabsch 求解（与相机数量无关）
@@ -219,7 +224,7 @@ class CalibrationEngine:
             'details': details,
         }
         self.pair_results[(ref_id, cam_id)] = result
-        logger.info(f"标定 {cam_id}→{ref_id}: 匹配 {n_pairs} 对, 内点 {result['inlier_count']}, "
+        logger.info(f"标定 {self.display_name(cam_id)}→{self.display_name(ref_id)}: 匹配 {n_pairs} 对, 内点 {result['inlier_count']}, "
                     f"RMS {result['rms_mm']:.4f}")
         return result
 
@@ -285,7 +290,7 @@ class CalibrationEngine:
             'method': 'board_pose',
         }
         self.pair_results[(ref_id, cam_id)] = result
-        logger.info(f"标定板位姿法 {cam_id}→{ref_id}: 规格 {pattern_name}, "
+        logger.info(f"标定板位姿法 {self.display_name(cam_id)}→{self.display_name(ref_id)}: 规格 {pattern_name}, "
                     f"RMS {rms_mm:.4f}")
         return result
 
@@ -421,7 +426,7 @@ class CalibrationEngine:
                         f"{min(all_rms):.4f} ~ {max(all_rms):.4f}"),
         }
         self.pair_results[key] = result
-        logger.info(f"多帧标定 {cam_id}→{ref_id}: 有效帧 {len(Ts)}/{len(frames)}, "
+        logger.info(f"多帧标定 {self.display_name(cam_id)}→{self.display_name(ref_id)}: 有效帧 {len(Ts)}/{len(frames)}, "
                     f"RMS {result['rms_mm']:.4f}")
         return result
 

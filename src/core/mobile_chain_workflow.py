@@ -442,9 +442,9 @@ class MobileChainWorkflow(WorkflowBase):
         # 清空拼接缓存，确保 get_merged_pointcloud 使用优化后的新位姿
         self._chain_stitcher.invalidate_cache()
 
-        logger.info(f"全局 BA 优化完成，锚点 {ref_id}, "
+        logger.info(f"全局 BA 优化完成，锚点 {self.calibration_engine.display_name(ref_id)}, "
                     f"全局标记 RMS {before_mm:.6f}mm -> {after_mm:.6f}mm")
-        return True, f"全局优化完成，锚点 {ref_id}", before_mm, after_mm
+        return True, f"全局优化完成，锚点 {self.calibration_engine.display_name(ref_id)}", before_mm, after_mm
 
     def _marker_constraints(self):
         """Freeze pair inliers using measured edges, never candidate world poses."""

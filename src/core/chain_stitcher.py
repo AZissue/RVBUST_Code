@@ -131,8 +131,8 @@ class ChainStitcher:
             self.pose_graph.add_node(station_id, T=np.eye(4, dtype=np.float64))
             self._cache_node_pcd(node)
             self._add_node_to_merged(station_id)
-            logger.info(f"链式拼接：机位 {station_id} 设为参考系")
-            return True, f"机位 {station_id} 设为参考系，{len(markers)} 个标记", None
+            logger.info(f"链式拼接：机位 {self.calibration_engine.display_name(station_id)} 设为参考系")
+            return True, f"机位 {self.calibration_engine.display_name(station_id)} 设为参考系，{len(markers)} 个标记", None
 
         # 3. 与已有节点匹配共有标记（最近 N 个 + 参考节点）
         best_edge = None
@@ -167,7 +167,7 @@ class ChainStitcher:
             node.T_world = self.pose_graph.get_transform(station_id, self._reference_id)
         except ValueError as e:
             # 防御性处理：加入边后仍无法到达参考系，说明图已不连通
-            logger.error(f"add_frame: 机位 {station_id} 无法到达参考系: {e}")
+            logger.error(f"add_frame: 机位 {self.calibration_engine.display_name(station_id)} 无法到达参考系: {e}")
             self.remove_node(station_id)
             return False, "位姿图不连通，请检查链式结构", None
 
@@ -178,7 +178,7 @@ class ChainStitcher:
         # 7. 更新累计误差
         node.cum_rms_mm = self._compute_cumulative_rms(station_id)
 
-        msg = (f"机位 {station_id} 配准成功: {best_edge.common_markers} 个共有标记, "
+        msg = (f"机位 {self.calibration_engine.display_name(station_id)} 配准成功: {best_edge.common_markers} 个共有标记, "
                f"RMS {best_edge.rms_mm:.3f}mm, 内点率 {best_edge.inlier_ratio:.1%}, "
                f"累计误差 {node.cum_rms_mm:.3f}mm")
         logger.info(msg)
@@ -404,7 +404,7 @@ class ChainStitcher:
                 try:
                     node.T_world = self.pose_graph.get_transform(sid, self._reference_id)
                 except ValueError as e:
-                    logger.warning(f"remove_node: 机位 {sid} 变换重算失败: {e}")
+                    logger.warning(f"remove_node: 机位 {self.calibration_engine.display_name(sid)} 变换重算失败: {e}")
                     node.T_world = None
 
         # 位姿图结构变化，清空缓存
@@ -421,7 +421,7 @@ class ChainStitcher:
         try:
             pcd = node.frame.load_pointcloud_o3d()
         except Exception as e:
-            logger.warning(f"链式拼接: 机位 '{sid}' 点云加载失败，跳过缓存: {e}")
+            logger.warning(f"链式拼接: 机位 '{self.calibration_engine.display_name(sid)}' 点云加载失败，跳过缓存: {e}")
             return None
         if pcd is None or len(pcd.points) == 0:
             self._node_pcd_cache.pop(sid, None)

@@ -239,13 +239,17 @@ class ExplicitStitching:
         refine = turn.chk_icp_refine.isChecked()
         preview = bridge._pause_2d_preview()
         cards = bridge._pause_card_preview()
+        frame_names = {f'station_{number}': f'帧{database.records[uid].frame_id:03d}'
+                       for number, uid in enumerate(raw_ids, 1)}
+        if use_chain:
+            bridge.shell.log('参与拼接的原始点云：' + '、'.join(frame_names.values()), 'info')
         bridge.shell.show_loading('正在执行拼接；原始帧保持独立...')
         def work():
             workflow = None
             sources = raw_ids
             if use_chain:
                 workflow = MobileChainWorkflow(bridge.camera_manager, bridge.marker_detector,
-                    CalibrationEngine(), bridge.stitch_engine, bridge.processor)
+                    CalibrationEngine(display_names=frame_names), bridge.stitch_engine, bridge.processor)
                 workflow.start_chaining()
                 manager = workflow.station_manager
                 manager.managed_frames = True
@@ -256,10 +260,10 @@ class ExplicitStitching:
                     ok, message, edge = chain.add_frame(frame,
                         detect_markers=not bool(frame.recognition_key or frame.markers_all or frame.markers))
                     if not ok:
-                        raise ValueError(f'原始帧 {number}：{message}；未生成结果，请移除质量不佳的帧后重试')
+                        raise ValueError(f'{frame_names[sid]}：{message}；未生成结果，请移除质量不佳的帧后重试')
                     cached = chain._node_pcd_cache.get(sid)
                     if cached is None or not len(cached.points):
-                        raise ValueError(f'原始帧 {number} 没有有效3D点，未生成拼接结果')
+                        raise ValueError(f'{frame_names[sid]} 没有有效3D点，未生成拼接结果')
                     manager._stations[sid] = frame
                     manager._station_seq = number
                     workflow._last_edge = edge

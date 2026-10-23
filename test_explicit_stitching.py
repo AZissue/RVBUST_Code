@@ -4,7 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from contextlib import contextmanager
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QSignalBlocker
 import unittest
 
 import numpy as np
@@ -203,7 +203,7 @@ class ExplicitStitchingTests(unittest.TestCase):
             Path(path).write_bytes(PLY.replace(b'1 2 3', b'7 8 9'))
             return True
         pm.SaveWithImage.side_effect = save
-        self.bridge.camera_manager._cameras = {'cam0': SimpleNamespace(is_connected=True, sn='MOCK',
+        self.bridge.camera_manager._cameras = {'cam0': SimpleNamespace(is_connected=True, sn='MOCK', device_info=SimpleNamespace(name='Mock camera'),
             capture_3d=lambda options: (np.full((2,2,3),value,np.uint8), pm, object(), 'ok'))}
         self.bridge.stitching.update_mobile_actions()
         with patch('core.frame_database._import_rvc', return_value=sdk), \
@@ -368,7 +368,7 @@ class ExplicitStitchingTests(unittest.TestCase):
             PointMap=SimpleNamespace(Destroy=Mock()), Image=SimpleNamespace(Destroy=Mock()))
         pm = Mock()
         pm.SaveWithImage.side_effect = lambda path, *args: Path(path).write_bytes(Path(frame.offline_pointmap_path).read_bytes()) or True
-        self.bridge.camera_manager._cameras = {'cam0': SimpleNamespace(is_connected=True, sn='MOCK',
+        self.bridge.camera_manager._cameras = {'cam0': SimpleNamespace(is_connected=True, sn='MOCK', device_info=SimpleNamespace(name='Mock camera'),
             capture_3d=lambda options: (frame.image_np, pm, object(), 'ok'))}
         with patch('core.frame_database._import_rvc', return_value=fake_sdk), \
              patch('core.frame_data._import_rvc', return_value=fake_sdk), \
@@ -438,7 +438,23 @@ class ExplicitStitchingTests(unittest.TestCase):
         last = self.db.ingest(third)
         self.select_raw(second)
         self.check_clouds('mobile_chain', [first, last])
-        self.run_mode('mobile_chain')
+        with self.assertLogs('core.utils', level='INFO') as captured:
+            self.run_mode('mobile_chain')
+        messages = '\n'.join(captured.output)
+        self.assertIn('参与拼接的原始点云：帧001、帧003', messages)
+        self.assertIn('标定 帧003→帧001', messages)
+        self.assertIn('参考相机自动设为: 帧001', messages)
+        self.assertIn('机位 帧003 配准成功', messages)
+        self.assertNotIn('station_2', messages)
+        chain = self.bridge.mobile_workflow._chain_stitcher
+        self.assertEqual(list(chain.nodes), ['station_1', 'station_2'])
+        self.assertEqual(chain.edges[0].from_id, 'station_2')
+        self.assertEqual(chain.edges[0].to_id, 'station_1')
+        self.assertIn(('station_1', 'station_2'), chain.calibration_engine.pair_results)
+        saved_calibration = chain.calibration_engine.to_dict()
+        self.assertEqual(saved_calibration['reference_id'], 'station_1')
+        self.assertIn('station_1|station_2', saved_calibration['pairs'])
+        self.assertEqual(type(chain.calibration_engine)().display_name('cam0'), 'cam0')
         result = next(row for row in self.db.records.values() if row.kind == 'result')
         self.assertEqual(result.source_ids, [first, last])
         self.assertEqual(len(self.bridge.mobile_workflow.get_station_evaluations()), 2)
@@ -447,6 +463,30 @@ class ExplicitStitchingTests(unittest.TestCase):
         self.run_mode('mobile_chain')
         self.assertEqual(sum(row.kind == 'result' for row in self.db.records.values()), 1)
         self.assertIn('仅勾选原始点云', self.win._st_hint.text())
+
+    def test_selected_nonconsecutive_frame_failure_uses_db_number(self):
+        self.mobile()
+        first = next(iter(self.db.records))
+        third = self.source(3)
+        third.markers = self.db.records[first].markers
+        third.markers_all = third.markers
+        last = self.db.ingest(third)
+        browser = self.bridge.frame_db.browsers['mobile_chain']
+        with QSignalBlocker(browser.tree):
+            browser.tree.clearSelection()
+            browser._items[first].setSelected(True)
+            browser._items[last].setSelected(True)
+        from core.chain_stitcher import ChainStitcher
+        original = ChainStitcher.add_frame
+        def reject_third(chain, frame, **kwargs):
+            if frame.camera_name == 'station_2':
+                return False, '共有标记不足', None
+            return original(chain, frame, **kwargs)
+        with patch.object(ChainStitcher, 'add_frame', reject_third):
+            self.run_mode('mobile_chain')
+        self.assertIn('帧003：共有标记不足', self.win._st_hint.text())
+        self.assertNotIn('原始帧 2', self.win._st_hint.text())
+        self.assertFalse(any(row.kind == 'result' for row in self.db.records.values()))
 
     def test_checked_turntable_db_frames_register_without_internal_sequence(self):
         self.mobile()
