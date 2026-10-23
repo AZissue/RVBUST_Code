@@ -1183,6 +1183,8 @@ class BackendBridge(QObject):
                     ws.camera_grid().set_frame(camera_id, frame)
             except Exception as e:
                 logger.warning(f"2D 预览刷新异常 ({camera_id}): {e}")
+        if not self._card_preview_active:
+            self._card_preview_timer.stop()
 
     def _set_card_preview_checked(self, camera_id: str, checked: bool):
         """同步卡片上 2D 预览按钮的勾选状态。"""
@@ -1190,6 +1192,7 @@ class BackendBridge(QObject):
         card = ws.camera_grid().card(camera_id)
         if card is not None:
             card.set_preview_checked(checked)
+        ws._sync_scan_preview()
 
     def _pause_card_preview(self) -> Set[str]:
         """暂停所有卡片 2D 预览，返回之前处于预览状态的 camera_id 集合。"""

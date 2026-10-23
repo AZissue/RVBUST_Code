@@ -407,6 +407,11 @@ class MultiCamWorkspace(QWidget):
 
         # ---- 扫描拍摄 ----
         scan_card, scan_lo = self._section_card("扫描拍摄")
+        self._btn_scan_preview = QPushButton("2D实时预览")
+        self._btn_scan_preview.setCheckable(True)
+        self._btn_scan_preview.setToolTip("开启 / 停止全部可用相机的2D实时预览；预览不保存为扫描帧")
+        self._btn_scan_preview.toggled.connect(self._toggle_scan_preview)
+        scan_lo.addWidget(self._btn_scan_preview)
         self._btn_scan_capture = QPushButton("  拍摄扫描帧")
         self._btn_scan_capture.setObjectName("primary")
         self._btn_scan_capture.setMinimumHeight(36)
@@ -496,6 +501,7 @@ class MultiCamWorkspace(QWidget):
             for button in (self._btn_capture, self._btn_scan_capture, self._btn_batch):
                 button.setEnabled(False)
         self._lock_banner.setVisible(locked)
+        self._sync_scan_preview()
         self.refresh_marker_pair()
 
     def refresh_marker_pair(self):
@@ -559,6 +565,31 @@ class MultiCamWorkspace(QWidget):
             card.capture_requested.connect(self.card_capture_requested)
             card.detect_requested.connect(self.card_detect_requested)
             card.set_controls_enabled(enable_controls and cid not in disabled_controls)
+            card.preview_toggled.connect(self._sync_scan_preview)
+        self._sync_scan_preview()
+
+    def _toggle_scan_preview(self, enabled):
+        if getattr(self, '_syncing_scan_preview', False):
+            return
+        presentation = getattr(self, '_industrial', None)
+        if enabled and presentation is not None and presentation.active:
+            presentation.restore_business_image()
+            if presentation._multi_view == '3d':
+                presentation.set_multi_view('joint')
+            presentation.preview_toggle.setChecked(True)
+        for card in self._camera_grid._cards.values():
+            if card._btn_preview.isEnabled():
+                card._btn_preview.setChecked(enabled)
+        self._sync_scan_preview()
+
+    def _sync_scan_preview(self, *_):
+        cards = list(self._camera_grid._cards.values())
+        self._btn_scan_preview.setEnabled(any(card._btn_preview.isEnabled() for card in cards))
+        self._syncing_scan_preview = True
+        try:
+            self._btn_scan_preview.setChecked(any(card._btn_preview.isChecked() for card in cards))
+        finally:
+            self._syncing_scan_preview = False
 
     def current_detect_method(self) -> str:
         """返回当前标定 Tab 选中的检测方式（'coded_circle' | 'calib_board'）。"""
