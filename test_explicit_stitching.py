@@ -416,6 +416,107 @@ class ExplicitStitchingTests(unittest.TestCase):
             self.assertEqual(len(results), 1, self.win._st_hint.text())
             self.assertEqual(results[0].source_ids, [frame.database_id for frame in frames])
 
+    def check_clouds(self, mode, ids):
+        browser = self.bridge.frame_db.browsers[mode]
+        for uid in ids:
+            browser.set_component_checked(uid, 'cloud')
+        viewer = self.win._stack.currentWidget().viewer
+        panel = viewer() if callable(viewer) else viewer
+        self.wait(lambda: len(panel._database_clouds) == len(ids) and
+                  not any(w.isRunning() for w in self.bridge._workers))
+
+    def run_mode(self, mode):
+        self.win._industrial_ribbon.commands[(mode, 'stitch')].click()
+        self.wait(lambda: not any(w.isRunning() for w in self.bridge._workers))
+
+    def test_checked_mobile_subset_overrides_row_selection_and_publishes_only_inputs(self):
+        self.mobile()
+        first, second = list(self.db.records)
+        third = self.source(3)
+        third.markers = [dict(m, x_3d=m['x_3d']+20) for m in self.db.records[first].markers]
+        third.markers_all = third.markers
+        last = self.db.ingest(third)
+        self.select_raw(second)
+        self.check_clouds('mobile_chain', [first, last])
+        self.run_mode('mobile_chain')
+        result = next(row for row in self.db.records.values() if row.kind == 'result')
+        self.assertEqual(result.source_ids, [first, last])
+        self.assertEqual(len(self.bridge.mobile_workflow.get_station_evaluations()), 2)
+        self.assertEqual(self.bridge.frame_db.browsers['mobile_chain'].checked_components('cloud'), [])
+        self.check_clouds('mobile_chain', [first, result.uid])
+        self.run_mode('mobile_chain')
+        self.assertEqual(sum(row.kind == 'result' for row in self.db.records.values()), 1)
+        self.assertIn('仅勾选原始点云', self.win._st_hint.text())
+
+    def test_checked_turntable_db_frames_register_without_internal_sequence(self):
+        self.mobile()
+        frames = [self.db.load_frame(uid)[0] for uid in self.db.records]
+        self.win.set_mode('turntable', [])
+        self.bridge._current_mode = 'turntable'
+        database = self.bridge.frame_db.databases['turntable']
+        ids = [database.ingest(frame) for frame in frames]
+        session = self.win.workspace_turntable().session
+        self.assertEqual(session.get_all_frames(), [])
+        self.check_clouds('turntable', ids)
+        self.run_mode('turntable')
+        results = [row for row in database.records.values() if row.kind == 'result']
+        self.assertEqual(len(results), 1, self.win._st_hint.text())
+        self.assertEqual(results[0].source_ids, ids)
+        self.assertEqual(session.get_all_frames(), [])
+
+    def test_checked_turntable_nonconsecutive_steps_use_original_angles(self):
+        self.win.set_mode('turntable', [])
+        self.bridge._current_mode = 'turntable'
+        ws = self.win.workspace_turntable()
+        ws.spin_voxel.setValue(0)
+        ws.chk_icp_refine.setChecked(False)
+        ws.session.apply_calibration([0,0,1], [0,0,0], 90, 4)
+        database = self.bridge.frame_db.databases['turntable']
+        frames = [self.source(i) for i in (1,2,3)]
+        ids = [database.ingest(frame) for frame in frames]
+        ws.session.sequence = frames
+        self.check_clouds('turntable', [ids[0], ids[2]])
+        self.run_mode('turntable')
+        result = next(row for row in database.records.values() if row.kind == 'result')
+        self.assertEqual(result.source_ids, [ids[0], ids[2]])
+        merged = np.asarray(database.load_frame(result.uid)[1].points)
+        from core.point_cloud_processor import PointCloudProcessor
+        raw = np.asarray(PointCloudProcessor._filter_valid(frames[0].load_pointcloud_o3d())[0].points)
+        expected = np.vstack([raw, raw * [-1,-1,1]])
+        np.testing.assert_allclose(merged, expected, atol=1e-5)
+        self.assertEqual(ws.session.sequence, frames)
+
+    def test_checked_multicam_uses_db_frames_and_extrinsics_not_scan_cache(self):
+        database = self.bridge.frame_db.databases['multi_cam']
+        ids = [database.ingest(self.source(i+1), camera=f'cam{i}') for i in range(3)]
+        self.check_clouds('multi_cam', ids[:2])
+        self.run_mode('multi_cam')
+        self.assertTrue(all(row.kind == 'raw' for row in database.records.values()))
+        self.assertIn('有效外参标定', self.win._st_hint.text())
+        transform = np.eye(4)
+        transform[0,3] = 10
+        self.bridge.calibration_engine.pair_results[('cam0','cam1')] = dict(
+            success=True, T=transform, rms_mm=.1, inlier_ratio=1.)
+        self.bridge.fixed_workflow._reference_id = 'cam0'
+        self.assertEqual(self.bridge.fixed_workflow.frames_scan, {})
+        self.check_clouds('multi_cam', ids[:2])
+        self.run_mode('multi_cam')
+        result = next(row for row in database.records.values() if row.kind == 'result')
+        self.assertEqual(result.source_ids, ids[:2])
+        self.assertEqual(self.bridge.fixed_workflow.frames_scan, {})
+        from core.point_cloud_processor import PointCloudProcessor
+        source = database.load_frame(ids[0])[1]
+        raw = np.asarray(PointCloudProcessor._filter_valid(source)[0].points)
+        merged = np.asarray(database.load_frame(result.uid)[1].points)
+        np.testing.assert_allclose(merged, np.vstack([raw, raw+[10,0,0]]), atol=1e-5)
+
+    def test_single_checked_frame_does_not_silently_stitch_all(self):
+        self.mobile()
+        self.check_clouds('mobile_chain', [next(iter(self.db.records))])
+        self.run_mode('mobile_chain')
+        self.assertTrue(all(row.kind == 'raw' for row in self.db.records.values()))
+        self.assertIn('至少需要两帧', self.win._st_hint.text())
+
 
 if __name__ == '__main__':
     unittest.main()

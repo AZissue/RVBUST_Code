@@ -1,5 +1,6 @@
 """Industrial raw acquisition and explicit, independently archived stitching."""
 from pathlib import Path
+import copy
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QFileDialog
@@ -193,23 +194,46 @@ class ExplicitStitching:
         mode = bridge._current_mode
         database = bridge.frame_db.databases[mode]
         raw_ids = [uid for uid, row in database.records.items() if row.kind == 'raw']
-        selected = bridge.frame_db.browsers[mode].selected_ids()
+        browser = bridge.frame_db.browsers[mode]
+        checked = [uid for uid, _ in browser.checked_components('cloud')]
+        explicit = bool(checked)
+        selected = browser.selected_ids()
         selected = [uid for uid in selected if uid in raw_ids]
         if mode == 'mobile_chain' and len(selected) >= 2:
             raw_ids = selected
+        if checked:
+            raw_ids = checked
         if prepared is not None:
             if prepared[0] != mode:
                 return
             raw_ids = prepared[1]
+            explicit = prepared[2]
+        if any(uid not in database.records or database.records[uid].kind != 'raw' for uid in raw_ids):
+            bridge.shell.log('请仅勾选原始点云执行拼接；拼接结果不能作为原始帧输入。', 'warn')
+            return
         if len(raw_ids) < 2:
             bridge.shell.log('执行拼接至少需要两帧原始数据。', 'warn')
             return
         turn = bridge.shell.workspace_turntable()
-        recognition_inputs = [frame.database_id for frame in turn.session.get_all_frames()] if mode == 'turntable' else raw_ids
+        step_indices = None
+        if explicit and mode == 'turntable' and turn.session.is_calibrated():
+            steps = {frame.database_id: i for i, frame in enumerate(turn.session.sequence)}
+            for i, frame in enumerate((turn.session.frame0, turn.session.frame1)):
+                if frame is not None:
+                    steps[frame.database_id] = i
+            for uid in raw_ids:
+                purpose = database.records[uid].purpose
+                if purpose in ('转台标定 frame0', '转台标定 frame1'):
+                    steps[uid] = int(purpose[-1])
+            if all(uid in steps for uid in raw_ids):
+                raw_ids = sorted(raw_ids, key=steps.get)
+                step_indices = [steps[uid] for uid in raw_ids]
+        use_chain = mode == 'mobile_chain' or (explicit and mode == 'turntable' and step_indices is None)
+        recognition_inputs = raw_ids if explicit else ([frame.database_id for frame in turn.session.get_all_frames()] if mode == 'turntable' else raw_ids)
         # Fixed-camera scans already have calibrated extrinsics; their markers
         # remain useful for inspection but are not an input to this stitch.
-        if mode != 'multi_cam' and not bridge.recognition.ensure(mode, recognition_inputs,
-                lambda: self.execute((mode, raw_ids))):
+        if mode != 'multi_cam' and (not explicit or use_chain) and not bridge.recognition.ensure(mode, recognition_inputs,
+                lambda: self.execute((mode, raw_ids, explicit))):
             return
         voxel = turn.spin_voxel.value() or None
         refine = turn.chk_icp_refine.isChecked()
@@ -219,7 +243,7 @@ class ExplicitStitching:
         def work():
             workflow = None
             sources = raw_ids
-            if mode == 'mobile_chain':
+            if use_chain:
                 workflow = MobileChainWorkflow(bridge.camera_manager, bridge.marker_detector,
                     CalibrationEngine(), bridge.stitch_engine, bridge.processor)
                 workflow.start_chaining()
@@ -244,6 +268,46 @@ class ExplicitStitching:
                     if not ok:
                         raise ValueError(message)
                 merged = workflow._chain_stitcher.get_merged_pointcloud()
+                if mode != 'mobile_chain':
+                    workflow = None
+            elif explicit and mode == 'multi_cam':
+                import open3d as o3d
+                from core.point_cloud_processor import PointCloudProcessor
+                from core.pcd_utils import merge_pointclouds
+                frames = {}
+                ok, message = bridge.fixed_workflow._check_calibration_quality()
+                if not ok:
+                    raise ValueError('请先完成有效外参标定：' + message)
+                for uid in raw_ids:
+                    frame, cloud = database.load_frame(uid)
+                    camera = database.records[uid].camera
+                    if camera in frames:
+                        raise ValueError('同一相机勾选了多帧，请每台相机仅勾选一帧')
+                    cloud, _ = PointCloudProcessor._filter_valid(cloud)
+                    if not len(cloud.points):
+                        raise ValueError('勾选帧没有有效点云：' + camera)
+                    frames[camera] = cloud
+                reference = bridge.fixed_workflow.reference_id
+                if not reference or not bridge.calibration_engine.pair_results:
+                    raise ValueError('请先完成多相机外参标定')
+                merged = o3d.geometry.PointCloud()
+                for camera, cloud in frames.items():
+                    transform = bridge.calibration_engine.get_transform(camera, reference)
+                    cloud.transform(transform)
+                    merge_pointclouds(merged, cloud)
+                merged, _ = bridge.processor.process(merged)
+            elif explicit and mode == 'turntable':
+                frames_clouds = [database.load_frame(uid) for uid in raw_ids]
+                from core.point_cloud_processor import PointCloudProcessor
+                clouds = [PointCloudProcessor._filter_valid(cloud)[0] for _, cloud in frames_clouds]
+                if any(not len(cloud.points) for cloud in clouds):
+                    raise ValueError('勾选帧没有有效点云')
+                from ui_common.industrial_scene.marker_display import valid_xyz
+                markers = [[m for m in frame.markers if valid_xyz(m) is not None] for frame, _ in frames_clouds]
+                merged, message = copy.deepcopy(turn.session.calib).stitch_pointclouds(clouds,
+                    downsample_voxel=voxel, icp_refine=refine, markers=markers, step_indices=step_indices)
+                if merged is None:
+                    raise ValueError(message)
             elif mode == 'multi_cam':
                 sources = [frame.database_id for frame in bridge.fixed_workflow.frames_scan.values()]
                 if len(sources) < 2:
@@ -270,6 +334,7 @@ class ExplicitStitching:
                 bridge.shell.log('拼接失败：' + str(error), 'error')
                 return
             uid, cloud, workflow = result
+            bridge.frame_db.overlay.reset(mode)
             bridge.projects.projects[mode].include_raw = True
             if workflow is not None:
                 bridge.mobile_workflow = workflow

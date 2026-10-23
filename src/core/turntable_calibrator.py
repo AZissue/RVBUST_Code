@@ -193,6 +193,7 @@ class TurntableCalibrator:
         icp_max_distance: float = 10.0,
         markers: Optional[List[List[Dict]]] = None,
         marker_chain: bool = True,
+        step_indices: Optional[List[int]] = None,
     ) -> Tuple[Optional[o3d.geometry.PointCloud], str]:
         """按标定角度把多帧点云变换到参考系并合并。
 
@@ -208,11 +209,16 @@ class TurntableCalibrator:
                 共有标记 Kabsch 逐帧链式配准（与模式 B 链式拼接同一思路），
                 无共有标记（大步进）的帧回退标定变换。
             marker_chain: 是否启用标记链式配准（需 markers 非空）
+            step_indices: 原始步序；选择间隔帧时保留真实角度差，默认连续步序。
         """
         if not self.is_calibrated():
             return None, "转台尚未标定"
         if len(pcds) < 2:
             return None, "至少需要 2 帧点云"
+        if step_indices is None:
+            step_indices = list(range(len(pcds)))
+        if len(step_indices) != len(pcds) or any(b <= a for a, b in zip(step_indices, step_indices[1:])):
+            return None, "转台步序必须与点云一一对应且严格递增"
 
         # 逐帧世界变换：标记链式（优先）/ 标定等角变换（兜底）
         T_worlds = [np.eye(4, dtype=np.float64)]
@@ -234,7 +240,7 @@ class TurntableCalibrator:
                     chain_msgs.append(f"帧{i}=标记链(与帧{j}共有{len(pts_j)}对)")
                     break
             if T_world is None:
-                T_world = self.get_transform_for_step(i)
+                T_world = self.get_transform_for_step(step_indices[i] - step_indices[0])
                 chain_msgs.append(f"帧{i}=标定等角变换")
             T_worlds.append(T_world)
 

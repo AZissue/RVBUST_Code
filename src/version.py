@@ -12,7 +12,7 @@
   v1.0.1+g<hash>
 """
 
-__VERSION__ = "1.12.73"
+__VERSION__ = "1.12.74"
 __VERSION_FILE__ = __file__
 
 
