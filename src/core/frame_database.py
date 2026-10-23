@@ -13,6 +13,8 @@ import json
 import shutil
 import threading
 import uuid
+import os
+import tempfile
 
 import cv2
 import numpy as np
@@ -296,6 +298,36 @@ class FrameDatabase:
         if cloud is None or not len(cloud.points):
             raise IOError('DB中原始点云读取失败')
         return frame, cloud
+
+    def export_cloud(self, uid, destination):
+        """Atomically export one complete stored PLY, including derived records.
+
+        Copy the file rather than the rendered/filtered Open3D geometry, keeping
+        organized slots, colors and additional PLY fields exactly as stored.
+        """
+        target = Path(destination).expanduser().resolve()
+        if target.suffix.lower() != '.ply':
+            raise ValueError('单帧点云请导出为 PLY 文件')
+        if target.is_relative_to(self.directory.resolve()):
+            raise ValueError('不能导出到当前 DB 内部，请选择其他目录')
+        temporary = None
+        with self._lock:
+            record = self.records[uid]
+            if record.status == STALE_RESULT:
+                raise ValueError('所选点云来源已变化，请重新生成后导出')
+            source = self.directory / 'frames' / uid / 'pointmap.ply'
+            try:
+                with source.open('rb') as incoming:
+                    with tempfile.NamedTemporaryFile(dir=target.parent,
+                            prefix='.'+target.name+'.', suffix='.tmp', delete=False) as output:
+                        temporary = Path(output.name)
+                        shutil.copyfileobj(incoming, output)
+                os.replace(temporary, target)
+                temporary = None
+            finally:
+                if temporary is not None:
+                    temporary.unlink(missing_ok=True)
+        return str(target)
 
     def publish_result(self, cloud, source_ids):
         """Commit a separate immutable result; never change raw frame geometry."""

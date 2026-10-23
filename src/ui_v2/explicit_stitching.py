@@ -7,7 +7,6 @@ from .dialogs import ChineseMessageBox as QMessageBox
 from core.frame_database import STALE_RESULT
 from core.calibration_engine import CalibrationEngine
 from core.mobile_chain_workflow import MobileChainWorkflow
-from core.utils import write_point_cloud_atomic
 
 
 class ExplicitStitching:
@@ -46,8 +45,9 @@ class ExplicitStitching:
         ws._btn_delete_node.setToolTip('删除DB中选中的原始帧（含PLY和2D图像，可从回收区恢复），需重新执行拼接')
         ws._btn_undo.setToolTip('撤销DB中的最后一帧原始数据（与当前选择无关，可从回收区恢复）')
         ribbon = bridge.shell._industrial_ribbon
-        available = any(row.kind == 'result' and row.status != STALE_RESULT for row in database.records.values())
-        ribbon.commands[('mobile_chain', 'export')].setEnabled(available)
+        browser = bridge.frame_db.browsers.get('mobile_chain')
+        available = browser is not None and browser.export_uid() is not None
+        ribbon.commands[('mobile_chain', 'export')].setEnabled(not busy and available)
 
     def _reset_mobile_registration(self):
         bridge = self.bridge
@@ -291,29 +291,25 @@ class ExplicitStitching:
             bridge.shell._refresh_statusbar()
         bridge._run_background(work, done, must_finish=True, name='explicit_stitch')
 
-    def export(self):
+    def export(self, uid=None):
         bridge = self.bridge
         if not bridge.can_change_workspace():
+            bridge.shell.log('正在处理数据，请完成后导出点云。', 'warn')
             return
         mode = bridge._current_mode
         database = bridge.frame_db.databases[mode]
-        results = [uid for uid, row in database.records.items() if row.kind == 'result' and row.status != STALE_RESULT]
-        selected = [uid for uid in bridge.frame_db.browsers[mode].selected_ids() if uid in results]
-        if not results:
-            bridge.shell.log('请先执行拼接，再导出DB中的拼接结果。', 'warn')
+        if uid is None:
+            uid = bridge.frame_db.browsers[mode].export_uid()
+        if uid not in database.records or database.records[uid].status == STALE_RESULT:
+            bridge.shell.log('请单独选中或勾选一帧有效DB点云；来源已变化的结果需重新生成。', 'warn')
             return
-        browser_selected = bridge.frame_db.browsers[mode].selected_ids()
-        if any(database.records[key].kind == 'result' and database.records[key].status == STALE_RESULT for key in browser_selected):
-            bridge.shell.log('所选拼接结果来源已变化，请重新执行拼接后导出。', 'warn')
-            return
-        uid = selected[-1] if selected else results[-1]
-        path, _ = QFileDialog.getSaveFileName(bridge.shell, '导出拼接结果', database.records[uid].logical_name + '.ply', 'PLY 点云 (*.ply)')
+        path, _ = QFileDialog.getSaveFileName(bridge.shell, '导出单帧点云', database.records[uid].logical_name + '.ply', 'PLY 点云 (*.ply)')
         if not path:
             return
+        if not Path(path).suffix:
+            path += '.ply'
         def work():
-            _, cloud = database.load_frame(uid)
-            if not write_point_cloud_atomic(str(Path(path)), cloud):
-                raise IOError('点云导出失败')
+            return database.export_cloud(uid, path)
         def done(result, error):
             bridge.shell.log('导出失败：' + str(error) if error else '点云已导出：' + path, 'error' if error else 'success')
-        bridge._run_background(work, done, name='project_export_result', must_finish=True)
+        bridge._run_background(work, done, name='project_export_cloud', must_finish=True)

@@ -58,6 +58,7 @@ class FrameBrowser(QWidget):
     manage_requested = Signal()
     checked_components_changed = Signal(list)
     selection_cleared = Signal()
+    export_requested = Signal(str)
 
     def __init__(self, database, parent=None):
         super().__init__(parent)
@@ -303,6 +304,31 @@ class FrameBrowser(QWidget):
             visit(item)
         return [uid for uid in self.database.records if uid in identifiers]
 
+    def export_uid(self):
+        """Resolve one explicit row, then one checked cloud, then latest result.
+
+        Ambiguous cloud selections never fall back to a different file.
+        Record kind is unrestricted so derived DB branches use the same path.
+        """
+        items = self.tree.selectedItems()
+        cloud_items = [item for item in items if item.data(0, Qt.UserRole)
+                       and item.data(0, Qt.UserRole+2) != 'image']
+        if cloud_items:
+            identifiers = list(dict.fromkeys(item.data(0, Qt.UserRole) for item in cloud_items))
+        else:
+            identifiers = [uid for uid, _ in self.checked_components('cloud')]
+            if not identifiers:
+                if items:
+                    return None
+                results = [uid for uid, row in self.database.records.items()
+                           if row.kind == 'result' and row.status != STALE_RESULT]
+                identifiers = results[-1:]
+        if len(identifiers) != 1:
+            return None
+        uid = identifiers[0]
+        record = self.database.records.get(uid)
+        return uid if record is not None and record.status != STALE_RESULT else None
+
     def _selection_changed(self):
         if not self.tree.selectedItems():
             self.tree.setToolTip('')
@@ -315,6 +341,9 @@ class FrameBrowser(QWidget):
         changed = getattr(self, '_edit_selection_changed', None)
         if changed:
             changed()
+        export_changed = getattr(self, '_export_selection_changed', None)
+        if export_changed:
+            export_changed()
 
     def clear_highlight(self):
         """Clear row selection and its focus cell, keeping component checks."""
@@ -416,6 +445,11 @@ class FrameBrowser(QWidget):
         if item and item.data(0, Qt.UserRole):
             label = {'cloud': '查看3D点云', 'image': '查看右侧2D图像'}.get(item.data(0, Qt.UserRole + 2), '查看2D / 3D')
             menu.addAction(label, lambda: self._selected(item, None))
+            if item.data(0, Qt.UserRole+2) != 'image':
+                uid = item.data(0, Qt.UserRole)
+                export = menu.addAction('导出此点云…', lambda: self.export_requested.emit(uid))
+                record = self.database.records.get(uid)
+                export.setEnabled(record is not None and record.status != STALE_RESULT)
         action = menu.addAction('删除选中数据', self.delete_selected)
         action.setEnabled(bool(self.selected_ids()))
         action = menu.addAction('清空当前 DB', lambda: self.delete_requested.emit(list(self.database.records)))
@@ -528,6 +562,9 @@ class FrameDatabaseController(QObject):
         browser.frame_selected.connect(lambda uid: self.select(mode, uid))
         browser.component_selected.connect(lambda uid, component: self.select(mode, uid, component))
         browser.checked_components_changed.connect(lambda _: self.overlay.changed(mode))
+        browser._export_selection_changed = self.bridge.shell._industrial_ribbon.update_status
+        browser.checked_components_changed.connect(lambda _: browser._export_selection_changed())
+        browser.export_requested.connect(self.bridge.stitching.export)
         browser.selection_cleared.connect(lambda: self._cancel_selection(mode))
         if mode == 'mobile_chain':
             workspace = self.bridge.shell.workspace_mobile()

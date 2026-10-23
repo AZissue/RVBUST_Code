@@ -32,7 +32,7 @@ class DbCloudOverlay(QObject):
     def _busy(self):
         turntable = self.bridge.shell.workspace_turntable()
         return (turntable.btn_auto_capture.isChecked() or turntable._busy or
-                any(worker.isRunning() and getattr(worker, '_task_name', '') != 'db_frame_preview'
+                any(worker.isRunning() and getattr(worker, '_task_name', '') not in ('db_frame_preview', 'project_export_cloud')
                     for worker in self.bridge._workers))
 
     def _set_checks(self, mode, ids):

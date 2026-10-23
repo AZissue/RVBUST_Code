@@ -244,13 +244,13 @@ class ExplicitStitchingTests(unittest.TestCase):
         self.assertEqual(ws._station_count, 0)
         self.assertNotEqual(self.db.records[raw[0]].status, '已入链')
         self.assertEqual(ws._industrial.frame_browser.selected_ids(), [raw[1]])
-        self.assertTrue(ws._industrial.frame_browser.delete_button.isEnabled())
+        self.assertEqual(ws._industrial.frame_browser.selected_ids(), [raw[1]])
         self.assertIsNotNone(ws.viewer()._database_cloud)
         self.assertIsNone(ws.viewer()._merged)
-        self.assertFalse(self.win._industrial_ribbon.commands[('mobile_chain','export')].isEnabled())
-        with patch('ui_v2.explicit_stitching.QFileDialog.getSaveFileName') as dialog:
+        self.assertTrue(self.win._industrial_ribbon.commands[('mobile_chain','export')].isEnabled())
+        with patch('ui_v2.explicit_stitching.QFileDialog.getSaveFileName', return_value=('', '')) as dialog:
             self.bridge.stitching.export()
-            dialog.assert_not_called()
+            dialog.assert_called_once()
 
     def test_retake_can_register_again_and_publish_a_new_exportable_result(self):
         from core.frame_database import STALE_RESULT

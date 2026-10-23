@@ -297,11 +297,14 @@ class IndustrialRibbon(QWidget):
         self.badge.style().polish(self.badge)
         database = shell._frame_databases[shell.current_mode()]
         raw = sum(row.kind == 'raw' for row in database.records.values())
-        results = any(row.kind == 'result' for row in database.records.values())
         self.commands[(shell.current_mode(), 'stitch')].setEnabled(raw >= 2)
         self.commands[(shell.current_mode(), 'stitch')].setToolTip('至少两帧原始数据；多角度选择两帧以上时拼接选中帧，否则使用全部原始帧')
-        self.commands[(shell.current_mode(), 'export')].setEnabled(results)
         bridge = shell._backend_bridge
+        presentation = getattr(shell._stack.currentWidget(), '_industrial', None)
+        browser = presentation.frame_browser if presentation is not None else None
+        self.commands[(shell.current_mode(), 'export')].setEnabled(
+            browser is not None and browser.export_uid() is not None and (bridge is None or bridge.can_change_workspace()))
+        self.commands[(shell.current_mode(), 'export')].setToolTip('导出选中或单独勾选的DB点云完整PLY；无选择时导出最新有效拼接结果')
         if bridge and hasattr(bridge, 'stitching'):
             bridge.stitching.update_mobile_actions()
 
