@@ -37,6 +37,7 @@ class CaptureParameters(QWidget):
         self.camera.currentIndexChanged.connect(self._invalidate)
         self.read_button = QPushButton('重新读取')
         self.read_button.clicked.connect(lambda: self._request(False))
+        header.addWidget(QLabel('目标相机'))
         header.addWidget(self.camera, 1)
         header.addWidget(self.read_button)
         root.addLayout(header)
@@ -59,8 +60,7 @@ class CaptureParameters(QWidget):
                          ('Gamma', 'gamma_2d', 'float'),
                          ('使用光机', 'use_projector_capturing_2d_image', 'bool'),
                          ('点云对应 2D', 'correspond2d', 'bool')]),
-            ('3D 点云', [('曝光', 'exposure_time_3d', 'int'), ('增益', 'gain_3d', 'float'),
-                         ('Gamma', 'gamma_3d', 'float'), ('扫描次数', 'scan_times', 'int')]),
+            ('3D 点云', [('曝光', 'exposure_time_3d', 'int'), ('增益', 'gain_3d', 'float')]),
             ('投影', [('亮度', 'projector_brightness', 'int'), ('颜色', 'projector_color', 'choice')]))
         for title, fields in specs:
             group = QGroupBox(title)
@@ -175,6 +175,7 @@ class CaptureParameters(QWidget):
         self.camera.setEnabled(bool(self.camera.count()) and not self._pending)
         self.read_button.setEnabled(ready)
         self.apply_button.setEnabled(ready and self._loaded == self.camera.currentText())
+        self.apply_button.setText('应用到 ' + self.camera.currentText() if self.camera.count() else '应用到当前相机')
         for key, (_, row) in self.rows.items():
             row.setEnabled(ready and key in self._read_values and self._loaded == self.camera.currentText())
 

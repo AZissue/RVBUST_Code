@@ -4,7 +4,7 @@ import math
 FIELDS = ('exposure_time_2d', 'exposure_time_3d', 'gain_2d', 'gain_3d',
           'projector_brightness')
 BOOL_FIELDS = ('use_projector_capturing_2d_image', 'correspond2d')
-FLOAT_FIELDS = ('gain_2d', 'gain_3d', 'gamma_2d', 'gamma_3d')
+FLOAT_FIELDS = ('gain_2d', 'gain_3d', 'gamma_2d')
 
 
 def _choices(controller, options):
@@ -48,14 +48,10 @@ def _load(controller):
         for field in fields:
             ranges[field] = (low, high)
     ranges['projector_brightness'] = (0, 255)
-    if hasattr(options, 'gamma_2d') or hasattr(options, 'gamma_3d'):
+    if hasattr(options, 'gamma_2d'):
         ok, low, high = controller.camera.GetGammaRange()
         if ok and all(math.isfinite(x) for x in (low, high)) and low <= high:
-            for key in ('gamma_2d', 'gamma_3d'):
-                if hasattr(options, key):
-                    ranges[key] = (low, high)
-    if hasattr(options, 'scan_times'):
-        ranges['scan_times'] = (1, 8)
+            ranges['gamma_2d'] = (low, high)
     return options, ranges, _choices(controller, options)
 
 

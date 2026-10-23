@@ -57,17 +57,20 @@ class ServiceTests(unittest.TestCase):
             camera = rich_camera(kind)
             snapshot = read(camera)
             self.assertIn('gamma_2d', snapshot['values'])
-            self.assertEqual(snapshot['ranges']['scan_times'], (1, 8))
+            self.assertNotIn('scan_times', snapshot['values'])
+            self.assertNotIn('gamma_3d', snapshot['values'])
             self.assertEqual('projector_color' in snapshot['choices'], kind == 'X2')
-            values = dict(snapshot['values'], gamma_2d=2.5, scan_times=3,
+            values = dict(snapshot['values'], gamma_2d=2.5,
                           use_projector_capturing_2d_image=False,
                           capture_mode=int(RVC.CaptureMode_SwingLineScan))
             apply(camera, values)
             self.assertTrue(camera.line_scan_detected)
             self.assertEqual(camera.current_options.gamma_2d, 2.5)
+            self.assertEqual(camera.current_options.gamma_3d, 1.2)
+            self.assertEqual(camera.current_options.scan_times, 2)
             self.assertEqual(camera.current_options.custom_filter, 42)
             self.assertIs(camera.current_options.use_projector_capturing_2d_image, False)
-            for changes in ({'scan_times': 9}, {'gamma_2d': 5},
+            for changes in ({'gamma_2d': 5},
                             {'use_projector_capturing_2d_image': 1}, {'capture_mode': 64}):
                 with self.assertRaises(ValueError):
                     apply(camera, dict(values, **changes))
@@ -83,9 +86,12 @@ class ServiceTests(unittest.TestCase):
                 factory = getattr(RVC, kind + '_CaptureOptions')
                 camera.camera.LoadCaptureOptionParameters.side_effect = lambda: (True, factory())
                 snapshot = read(camera)
-                apply(camera, dict(snapshot['values'], gamma_2d=1.125, scan_times=3))
+                original_scan_times = factory().scan_times
+                original_gamma_3d = factory().gamma_3d
+                apply(camera, dict(snapshot['values'], gamma_2d=1.125))
                 self.assertIsInstance(camera.current_options, factory)
-                self.assertEqual(camera.current_options.scan_times, 3)
+                self.assertEqual(camera.current_options.scan_times, original_scan_times)
+                self.assertEqual(camera.current_options.gamma_3d, original_gamma_3d)
                 self.assertEqual(camera.current_options.gamma_2d, 1.125)
     def test_disconnect_waits_for_parameter_sdk_operation(self):
         camera = fake_camera()
@@ -197,6 +203,50 @@ class PageTests(unittest.TestCase):
     def open_page(self):
         self.win._stack.currentWidget()._industrial.frame_browser.properties.tabs.setCurrentIndex(2)
         self.page().refresh()
+
+    def test_multicam_selected_target_reads_and_writes_independently(self):
+        manager = self.bridge.camera_manager
+        states, cameras = {}, {}
+        for camera_id, exposure in (('cam0', 11), ('cam1', 33)):
+            camera = rich_camera('X2')
+            _, options = camera.camera.LoadCaptureOptionParameters()
+            state = vars(options).copy()
+            state['exposure_time_2d'] = exposure
+            def save(options, state=state):
+                state.update(vars(options))
+                return True
+            camera.camera.LoadCaptureOptionParameters.side_effect = lambda state=state: (True, SimpleNamespace(**state))
+            camera.camera.SaveCaptureOptionParameters.side_effect = save
+            states[camera_id], cameras[camera_id] = state, camera
+            manager._cameras[camera_id] = camera
+        self.open_page()
+        page = self.page()
+        self.wait(lambda: page._loaded == 'cam0' and not self.bridge._workers)
+        self.assertEqual(page.camera.count(), 2)
+        self.assertTrue(page.camera.isEnabled())
+        self.assertNotIn('gamma_3d', page.controls)
+        self.assertNotIn('scan_times', page.controls)
+        page.controls['exposure_time_2d'].setValue(21)
+        page.apply_button.click()
+        self.wait(lambda: not page._pending and not self.bridge._workers)
+        self.assertEqual(states['cam0']['exposure_time_2d'], 21)
+        cameras['cam1'].camera.SaveCaptureOptionParameters.assert_not_called()
+        page.camera.setCurrentText('cam1')
+        page.refresh()
+        self.wait(lambda: page._loaded == 'cam1' and not self.bridge._workers)
+        self.assertEqual(page.controls['exposure_time_2d'].value(), 33)
+        self.assertEqual(page.apply_button.text(), '应用到 cam1')
+        page.controls['exposure_time_2d'].setValue(44)
+        page.apply_button.click()
+        self.wait(lambda: not page._pending and not self.bridge._workers)
+        self.assertEqual(states['cam1']['exposure_time_2d'], 44)
+        self.assertEqual(states['cam0']['exposure_time_2d'], 21)
+        self.assertEqual(cameras['cam0'].camera.SaveCaptureOptionParameters.call_count, 1)
+        page.camera.setCurrentText('cam0')
+        page.refresh()
+        self.wait(lambda: page._loaded == 'cam0' and not self.bridge._workers)
+        self.assertEqual(page.controls['exposure_time_2d'].value(), 21)
+        manager._cameras.clear()
 
     def test_automatically_read_on_open_switch_and_reconnect_but_never_write(self):
         manager = self.bridge.camera_manager
