@@ -224,7 +224,7 @@ class FrameBrowser(QWidget):
                     '\n删除操作针对所属完整帧，可在回收区恢复。')
                 self._component_items[(record.uid, component)] = item
         parameters = None
-        if self.database.mode == 'multi_cam' or (project_root is not None and getattr(self.database, 'has_calibration', False)):
+        if self.database.mode in ('multi_cam', 'turntable') or (project_root is not None and getattr(self.database, 'has_calibration', False)):
             calibration_group = next((item for item in categories.values() if item.text(0) == '标定会话数据'), None)
             if calibration_group is None:
                 calibration_group = QTreeWidgetItem(project_root if project_root is not None else self.tree, ['标定会话数据', ''])

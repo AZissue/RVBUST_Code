@@ -3,6 +3,7 @@ import unittest
 from dataclasses import replace
 import numpy as np
 from scipy.spatial.transform import Rotation
+from PySide6.QtCore import Qt
 import test_ui_frame_database as fixtures
 from core.turntable_calibrator import estimate_rotation_center
 
@@ -34,7 +35,24 @@ class TurntablePresentationTests(unittest.TestCase):
         self.win.set_mode('turntable', [])
         workspace = self.win.workspace_turntable()
         panel = workspace._industrial.calibration_panel
+        browser = workspace._industrial.frame_browser
+        self.assertFalse(panel.isVisible())
+        self.assertEqual(workspace._industrial.side_column.count(), 2)
+        def find_parameters():
+            from PySide6.QtWidgets import QTreeWidgetItemIterator
+            iterator = QTreeWidgetItemIterator(browser.tree)
+            while iterator.value():
+                item = iterator.value()
+                if item.data(0, Qt.UserRole + 2) == 'calibration':
+                    return item
+                iterator += 1
+            self.fail('missing turntable calibration node')
+        browser.properties.tabs.setCurrentIndex(1)
+        browser.tree.setCurrentItem(find_parameters())
         self.assertTrue(panel.isVisible())
+        self.assertEqual(browser.properties.tabs.currentIndex(), 0)
+        self.assertIn('未标定', panel.status.text())
+        self.assertFalse(panel.locate.isEnabled())
         self.assertTrue(workspace._industrial.sidebar.isHidden())
         workspace.session.calib.set_calibration([0, 0, 1], [10, 20, 30], 30., 12)
         workspace.session.calibrated = True
@@ -49,6 +67,13 @@ class TurntablePresentationTests(unittest.TestCase):
         panel.locate.click()
         np.testing.assert_allclose(canvas.center, [10, 20, 30])
         self.assertEqual(count, canvas.total_points)
+        browser.refresh()
+        self.assertTrue(panel.isVisible())
+        self.assertIn('30.0000°', panel.values.text())
+        browser.clear_highlight()
+        self.assertFalse(panel.isVisible())
+        np.testing.assert_allclose(canvas._rotation_geometry[1], [10, 20, 30])
+        browser.tree.setCurrentItem(find_parameters())
         self.app.processEvents()
         image = canvas._rotation_overlay.grab().toImage()
         colors = {image.pixelColor(x, y).name() for x in range(image.width()//2-12, image.width()//2+13)
@@ -65,6 +90,8 @@ class TurntablePresentationTests(unittest.TestCase):
         self.assertIn('未标定', panel.status.text())
         self.assertIsNone(canvas._rotation_geometry)
         self.assertEqual(workspace.lbl_online_calib.text(), '未标定')
+        self.assertTrue(panel.isVisible())
+        self.assertFalse(panel.show_geometry.isEnabled())
 
     def test_categories_select_only_their_frames_and_remain_collapsed(self):
         first = self.source(1)

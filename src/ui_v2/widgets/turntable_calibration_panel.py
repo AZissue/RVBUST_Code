@@ -1,7 +1,7 @@
-"""Persistent industrial turntable data and non-destructive 3D annotations."""
+"""Turntable calibration properties and non-destructive 3D annotations."""
 import numpy as np
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QCheckBox, QGroupBox, QHBoxLayout, QLabel, QToolButton, QVBoxLayout
+from PySide6.QtWidgets import QCheckBox, QGroupBox, QHBoxLayout, QLabel, QToolButton, QVBoxLayout, QLayout
 
 
 class TurntableCalibrationPanel(QGroupBox):
@@ -9,9 +9,8 @@ class TurntableCalibrationPanel(QGroupBox):
         super().__init__('转台标定数据')
         self.workspace = workspace
         self._geometry = None
-        self.setMinimumHeight(160)
-        self.setMaximumHeight(220)
         layout = QVBoxLayout(self)
+        layout.setSizeConstraint(QLayout.SetMinimumSize)
         layout.setContentsMargins(10, 18, 10, 8)
         layout.setSpacing(5)
         layout.setAlignment(Qt.AlignTop)
