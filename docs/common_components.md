@@ -13,6 +13,7 @@
 | 2D 预览 | `src/ui_common/image_preview.py` | 图像呈现与交互 |
 | 3D 视窗 | `src/ui_common/industrial_viewer.py`、`industrial_scene/` | 渲染、导航、标记检查；不负责标定和拼接求解 |
 | 标记显示语义 | `src/ui_common/industrial_scene/marker_display.py` | 标记有效性、配对颜色、相机坐标点和历史世界坐标点的转换 |
+| 标定结果窗口 | `src/ui_common/calibration_result.py` | 独立结果快照、3D 对齐、误差图表与矩阵；不读取文件或调用设备，接入见 `calibration_result_component.md` |
 | 后台 Qt 任务 | `src/ui_common/worker_thread.py` | 工作线程及结果信号；业务回填由调用层处理 |
 | DB 树与选择 | `src/ui_v2/frame_database.py` | 数据树、右键操作、选中对象与预览的业务接线 |
 | DB 多帧显示 | `src/ui_v2/db_cloud_overlay.py` | 勾选帧的异步读取、显示缓存和叠加；不修改几何或应用标定变换 |
