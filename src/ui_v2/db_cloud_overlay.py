@@ -111,8 +111,7 @@ class DbCloudOverlay(QObject):
                     display = classify_markers(record.markers)
                     # Each frame keeps its stored camera coordinates, including
                     # repeated codes at different positions across raw frames.
-                    markers.extend((row.code, (row.xyz, row.color)) for row in display.rows
-                                   if row.xyz is not None and row.code is not None)
+                    markers.extend(display.cloud_points())
         if not clouds:
             if self._viewer(mode)._database_clouds:
                 self._viewer(mode).show_database_clouds({})

@@ -4,6 +4,11 @@ from PySide6.QtWidgets import QWidget, QHBoxLayout, QSlider, QSpinBox, QDoubleSp
 
 
 class ParameterSlider(QWidget):
+    """Numeric editor; owns range, placeholder and slider/input synchronization.
+
+    Consumers use value(), set_value(), set_range() and set_unloaded().
+    The child widgets remain available for Qt signal wiring and focus handling.
+    """
     def __init__(self, *, decimals=0, suffix='', parent=None):
         super().__init__(parent)
         layout = QHBoxLayout(self)
@@ -29,6 +34,19 @@ class ParameterSlider(QWidget):
         self.spin.setRange(low, high)
         self.slider.setRange(0, min(100000, max(0, round((high-low)*10**self._decimals))))
         self._sync(self.spin.value())
+
+    def value(self):
+        return self.spin.value()
+
+    def set_value(self, value):
+        self.spin.setSpecialValueText('')
+        self.spin.setValue(value)
+
+    def set_unloaded(self):
+        """Show an unknown value; the page controls whether editing is enabled."""
+        self.set_range(0, 0)
+        self.spin.setSpecialValueText('—')
+        self.spin.setValue(0)
 
     def _sync(self, value):
         span = self.spin.maximum()-self.spin.minimum()

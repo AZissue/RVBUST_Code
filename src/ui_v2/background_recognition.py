@@ -199,8 +199,7 @@ class BackgroundRecognition(QObject):
             if component != 'image' and not owner.overlay.active(mode):
                 from ui_common.industrial_scene.marker_display import classify_markers
                 viewer = owner.overlay._viewer(mode)
-                viewer.set_cloud_markers([(row.code, (row.xyz, row.color)) for row in classify_markers(frame.markers_all).rows
-                                          if row.xyz is not None and row.code is not None])
+                viewer.set_cloud_markers(classify_markers(frame.markers_all).cloud_points())
         if owner.overlay.active(mode):
             owner.overlay._apply(mode)
 

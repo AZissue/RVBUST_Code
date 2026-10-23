@@ -1,0 +1,38 @@
+# 公共组件维护说明
+
+本说明对应正式程序的工业工作区。整理代码时保持现有工业风格、操作门禁及会话格式；公共能力按职责复用，不把整个业务工作区搬入通用控件层。
+
+## 组件索引
+
+| 能力 | 入口 | 职责与边界 |
+|---|---|---|
+| 加载动画 | `src/ui_common/loading.py` | 动画、提示卡、随父窗口定位的遮罩；只负责展示与计时器生命周期 |
+| 运行日志 | `src/ui_common/activity_log.py` | 有界日志、等级筛选、搜索和自动滚动 |
+| 参数滑块 | `src/ui_common/parameter_slider.py` | 数值输入、范围、未知值占位及滑块同步；不读写相机 |
+| 防误滚轮 | `src/ui_common/setting_wheel_guard.py` | 保护设置控件，滚轮交给外层滚动区 |
+| 2D 预览 | `src/ui_common/image_preview.py` | 图像呈现与交互 |
+| 3D 视窗 | `src/ui_common/industrial_viewer.py`、`industrial_scene/` | 渲染、导航、标记检查；不负责标定和拼接求解 |
+| 标记显示语义 | `src/ui_common/industrial_scene/marker_display.py` | 标记有效性、配对颜色、相机坐标点和历史世界坐标点的转换 |
+| 后台 Qt 任务 | `src/ui_common/worker_thread.py` | 工作线程及结果信号；业务回填由调用层处理 |
+| DB 树与选择 | `src/ui_v2/frame_database.py` | 数据树、右键操作、选中对象与预览的业务接线 |
+| DB 多帧显示 | `src/ui_v2/db_cloud_overlay.py` | 勾选帧的异步读取、显示缓存和叠加；不修改几何或应用标定变换 |
+| 对象属性 | `src/ui_v2/widgets/db_properties.py` | 按选中数据展示属性，连接公共 3D 控制和拍摄参数页 |
+| 拍摄参数页 | `src/ui_v2/widgets/capture_parameters.py` | 参数分组、相机切换、读写请求与失效回调保护 |
+| 相机参数服务 | `src/core/capture_parameters.py` | SDK 能力与范围查询、参数读写、锁及失败处理 |
+| 后台识别 | `src/ui_v2/background_recognition.py`、`src/core/frame_recognition.py` | UI 调度与结果回填、独立检测配置和缓存；生命周期见 `background_recognition.md` |
+
+表中 `ui_v2` 模块是三种工作模式共用的业务组件；`ui_common` 是可独立复用的展示组件。二者不要互相循环引用。
+
+## 本次统一的接口
+
+- 数值控件通过 `ParameterSlider.set_range()`、`set_value()`、`value()` 和 `set_unloaded()` 使用。未知值不显示虚构的相机参数；启用状态由业务页决定。内部 `spin`、`slider` 保留供 Qt 信号和焦点接线兼容。
+- 拍摄参数页将字段构建、结果展示、待应用值收集分开。界面没有修改的字段继续使用 SDK 原始精度，点击应用时才写入目标相机。
+- 单帧 DB、勾选叠加和后台识别刷新统一调用 `classify_markers(...).cloud_points()`。排除无编码或无有效深度的行，保留相机实测坐标、颜色、顺序及跨帧重复编码。历史世界坐标显示继续使用 `cumulative_world_markers()`，不能混用。
+
+## 后续维护约束
+
+1. UI 公共控件不持有设备句柄，不初始化 SDK，不执行磁盘点云读取或识别计算。
+2. 模式差异通过业务接线处理；通用显示规则只保留一份实现。
+3. 异步结果回填校验相机或项目身份与数据版本，关闭时停止定时器并等待必要任务；不让旧回调覆盖新对象。
+4. 复用现有颜色、图标和控件样式；不因内部整理调整按钮布局、视角或用户设置。
+5. 使用现有针对性回归验证参数精度、离线占位、切换失效、防误滚轮、DB 预览及后台回填。离屏结果不等同实机与 GPU 验收。

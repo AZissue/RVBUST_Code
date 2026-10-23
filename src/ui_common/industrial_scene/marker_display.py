@@ -59,6 +59,15 @@ class MarkerDisplay:
     paired_codes: frozenset
     has_solver_result: bool
 
+    def cloud_points(self):
+        """Renderer points in this frame's measured coordinates, in row order.
+
+        Keep repeated codes across frames; exclude unidentified or 2D-only rows.
+        No registration transform or historical/world deduplication is applied.
+        """
+        return [(row.code, (row.xyz, row.color)) for row in self.rows
+                if row.xyz is not None and row.code is not None]
+
     @property
     def green_count(self):
         return sum(row.color == GREEN for row in self.rows)
