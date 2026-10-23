@@ -464,11 +464,15 @@ class MainWindowShell(QMainWindow):
             return
         dialog = self._launcher_factory(parent=self)
 
-        # 如有 backend_bridge，先真实枚举设备，再恢复当前勾选状态
+        dialog.restore_state(self._mode, self._devices, self._presentation)
+        # Keep fresh SDK indices; restore checks by identity, never replace the
+        # fresh enumeration with the previous connection's stale device list.
         if self._backend_bridge is not None and not getattr(self, '_offline_preview', False):
             devices = self._backend_bridge.enumerate_devices()
+            selected = {device.serial for device in self._devices if device.serial}
+            for device in devices:
+                device.checked = bool(device.serial and device.serial in selected)
             dialog.set_devices(devices)
-        dialog.restore_state(self._mode, self._devices, self._presentation)
 
         # 小窗内操作转发给后端
         def _do_refresh():

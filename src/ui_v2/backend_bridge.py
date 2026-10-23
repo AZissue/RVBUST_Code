@@ -563,7 +563,8 @@ class BackendBridge(QObject):
                     results.append((camera_id, False, "测试设备（仅布局）"))
                     continue
                 idx = dev.backend_ref  # type: ignore[union-attr]
-                ok, msg = self.camera_manager.connect(camera_id, idx)
+                ok, msg = self.camera_manager.connect(camera_id, idx,
+                                                      expected_sn=dev.serial or '', expected_model=dev.model)
                 results.append((camera_id, ok, msg))
             return results
 

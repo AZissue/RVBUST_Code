@@ -30,6 +30,13 @@ except ImportError:
     RVC = None  # 无 SDK 环境：连接/拍摄一律返回失败
 
 
+def _device_text(value):
+    if isinstance(value, bytes):
+        value = value.decode('utf-8', errors='replace')
+    text = str(value or '').split('\x00')[0].strip()
+    return '' if text.lower() in ('none', 'null') else text
+
+
 def _decode_network_bytes(b):
     """把 GetNetworkConfig 返回的 bytes 解码为字符串（去除尾空）。"""
     if b is None:
@@ -73,13 +80,25 @@ class SingleCameraController:
         ret, devices = RVC.SystemListDevices(opt)
         return devices if devices else []
 
-    def connect(self, device_index=0) -> Tuple[bool, str]:
+    def connect(self, device_index=0, *, expected_sn=None, expected_model=None) -> Tuple[bool, str]:
         if RVC is None:
             return False, "PyRVC 未安装（无 SDK 环境）"
         devices = self.find_devices()
         if len(devices) == 0:
             return False, "未找到任何设备"
-        if device_index >= len(devices):
+        if expected_sn is not None:
+            serial = _device_text(expected_sn)
+            if not serial:
+                return False, '选中设备缺少有效序列号，请刷新设备列表'
+            matches = []
+            for index, device in enumerate(devices):
+                ok, info = device.GetDeviceInfo()
+                if ok and _device_text(info.sn) == serial:
+                    matches.append(index)
+            if len(matches) != 1:
+                return False, f'选中设备 SN:{serial} 当前匹配 {len(matches)} 台，请刷新设备列表后重试'
+            device_index = matches[0]
+        if device_index < 0 or device_index >= len(devices):
             return False, f"索引 {device_index} 越界"
 
         self.device = devices[device_index]
@@ -90,6 +109,11 @@ class SingleCameraController:
         if not ret:
             return False, "获取设备信息失败"
         self.device_info = info
+        if expected_sn is not None and (
+                _device_text(info.sn) != _device_text(expected_sn) or
+                (expected_model and _device_text(info.name) != _device_text(expected_model))):
+            self.device = self.device_info = None
+            return False, '打开前设备身份不一致，已取消连接，请刷新设备列表'
 
         # 占用提示（Open 失败的常见原因）
         busy_hint = "（可能被 RVCManager / 其他程序占用，或已被本软件其他相机连接）"
@@ -126,6 +150,13 @@ class SingleCameraController:
             except Exception as e:
                 return False, f"X1 失败: {e}"
 
+        if expected_sn is not None:
+            ret, opened_info = self.device.GetDeviceInfo()
+            if not ret or _device_text(opened_info.sn) != _device_text(expected_sn) or (
+                    expected_model and _device_text(opened_info.name) != _device_text(expected_model)):
+                self.disconnect()
+                return False, '打开后设备身份核验失败，已断开连接，请刷新设备列表'
+            self.device_info = info = opened_info
         self.device_index = device_index
         self.sn = getattr(info, "sn", None)
         self._load_options()
@@ -423,7 +454,7 @@ class CameraManager:
         实机发现部分 X1 相机的 info.sn 为字符串 "None"（而非 None），
         两台这样的相机会被 SN 去重误判为同一台，必须视为无 SN。
         """
-        return bool(sn) and str(sn) != "None"
+        return bool(_device_text(sn))
 
     def find_by_sn(self, sn: str, exclude_id: str = None) -> Optional[str]:
         """按 SN 查找已连接的相机，返回 camera_id 或 None。"""
@@ -432,26 +463,42 @@ class CameraManager:
         for cid, cam in self._cameras.items():
             if cid == exclude_id:
                 continue
-            if cam.is_connected and self._valid_sn(cam.sn) and cam.sn == sn:
+            if cam.is_connected and self._valid_sn(cam.sn) and _device_text(cam.sn) == _device_text(sn):
                 return cid
         return None
 
-    def connect(self, camera_id: str, device_index: int) -> Tuple[bool, str]:
-        """连接指定相机到指定设备索引（防重复占用：索引 + SN 双重检查）。"""
+    def connect(self, camera_id: str, device_index: int, *, expected_sn=None,
+                expected_model=None) -> Tuple[bool, str]:
+        """UI connections resolve by expected SN; index-only callers retain legacy behavior."""
         cam = self._cameras.get(camera_id)
         if cam is None:
             return False, f"相机 {camera_id} 未注册（先 add_camera）"
         # 前置检查：同一设备索引不能被两台相机占用
-        holder = self.is_device_index_connected(device_index, exclude_id=camera_id)
+        holder = (self.find_by_sn(expected_sn, exclude_id=camera_id) if expected_sn is not None
+                  else self.is_device_index_connected(device_index, exclude_id=camera_id))
         if holder is not None:
-            return False, f"设备 [{device_index}] 已被相机 {holder} 连接，不能重复占用"
+            identity = f'SN:{_device_text(expected_sn)}' if expected_sn is not None else f'索引:{device_index}'
+            return False, f"设备 [{identity}] 已被相机 {holder} 连接，不能重复占用"
         try:
-            ok, msg = cam.connect(device_index)
+            with rvc_sdk_lock:
+                if expected_sn is None:
+                    ok, msg = cam.connect(device_index)
+                else:
+                    ok, msg = cam.connect(device_index, expected_sn=expected_sn, expected_model=expected_model)
         except Exception as e:
+            try:
+                cam.disconnect()
+            except Exception:
+                pass
             logger.error(f"连接 {camera_id} 异常: {e}")
             return False, f"异常: {e}"
         # 后置检查：SN 去重（设备索引可能因枚举顺序变化而错位）
         if ok:
+            if expected_sn is not None and (
+                    _device_text(cam.sn) != _device_text(expected_sn) or
+                    (expected_model and _device_text(getattr(cam.device_info, 'name', '')) != _device_text(expected_model))):
+                cam.disconnect()
+                return False, '连接设备与选中设备的序列号 / 型号不一致，已断开连接'
             holder = self.find_by_sn(cam.sn, exclude_id=camera_id)
             if holder is not None:
                 cam.disconnect()
