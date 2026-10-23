@@ -100,6 +100,17 @@ inline Cause diagnose(const Evidence& e)
     }
 }
 
+// 设备列表里这一行能不能连：只有"被占用"禁止——占用是真的连不上，而且
+// 强行打开会抢别的程序的相机。不可达 / IP 冲突仍然允许尝试（操作员可能刚
+// 在 RVCManager 里改好，或状态读取得不准），未知状态一律按可连接处理。
+//
+// 单击选中、双击连接、确定按钮必须共用这一条判定，否则同一行会出现
+// "能选中但双击被拒"（或反过来）的矛盾行为。
+inline bool connectable(NetworkStatus s)
+{
+    return s != NetworkStatus::InUse;
+}
+
 // 重试能否帮上忙：占用和一般性 Open 失败值得等 1+2+3 秒；网段/IP/掉线/驱动
 // 这类问题等 3 秒不会自己好，重试只会推迟操作员该看到的那条提示。
 inline bool retryCanHelp(Cause c)

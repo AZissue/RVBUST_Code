@@ -234,8 +234,12 @@ void SettingsDialog::onRestoreBackup()
         return;
 
     if (!m_data->loadBackup(path)) {
-        QMessageBox::warning(this, QStringLiteral("恢复失败"),
-                             QStringLiteral("无法读取备份文件，请确认文件格式正确。"));
+        QString reason = m_data->lastLoadError();
+        if (reason.isEmpty())
+            reason = QStringLiteral("无法读取备份文件，请确认文件格式正确。");
+        QMessageBox::warning(
+            this, QStringLiteral("恢复失败"),
+            QStringLiteral("%1\n\n当前会话未被修改。").arg(reason));
         return;
     }
 

@@ -1,4 +1,5 @@
 #include "logic/DataManager.h"
+#include "logic/BackupDocument.h"
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -95,10 +96,8 @@ bool DataManager::removeLast()
         return false;
 
     auto& rec = m_records.back();
-    if (!QFile::remove(rec.pngPath))
-        qWarning("DataManager: failed to remove %s", qPrintable(rec.pngPath));
-    if (!QFile::remove(rec.plyPath))
-        qWarning("DataManager: failed to remove %s", qPrintable(rec.plyPath));
+    removeRecordFile(rec.pngPath);
+    removeRecordFile(rec.plyPath);
     m_records.pop_back();
 
     m_currentIndex = static_cast<int>(m_records.size()) - 1;
@@ -111,10 +110,8 @@ bool DataManager::removeLast()
 void DataManager::clearAll()
 {
     for (auto& rec : m_records) {
-        if (!QFile::remove(rec.pngPath))
-            qWarning("DataManager: failed to remove %s", qPrintable(rec.pngPath));
-        if (!QFile::remove(rec.plyPath))
-            qWarning("DataManager: failed to remove %s", qPrintable(rec.plyPath));
+        removeRecordFile(rec.pngPath);
+        removeRecordFile(rec.plyPath);
     }
     m_records.clear();
     m_currentIndex = -1;
@@ -301,46 +298,83 @@ void DataManager::cleanupBackups()
 
 bool DataManager::loadBackup(const QString& path)
 {
+    m_lastLoadError.clear();
+
     QFile file(path);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        m_lastLoadError = QStringLiteral("无法打开备份文件：%1").arg(file.errorString());
         return false;
-
-    auto doc = QJsonDocument::fromJson(file.readAll());
-    if (doc.isNull()) return false;
-
-    auto root = doc.object();
-    m_eyeHand = root["eye_in_hand"].toBool() ? EyeHandMode::EyeInHand : EyeHandMode::EyeToHand;
-    m_calibType = root["marker_type"].toBool() ? CalibType::Marker : CalibType::TcpTouch;
+    }
+    const QByteArray bytes = file.readAll();
+    file.close();
 
     // The backup lives at <sessionDir>/backup/xxx.json.  Paths inside the JSON
-    // are stored relative to the session dir (legacy absolute paths still work).
+    // are stored relative to the session dir (legacy absolute paths still work,
+    // but must point inside it as well).
     QDir sessionDir(QFileInfo(path).absoluteDir());
     if (sessionDir.dirName() == QStringLiteral("backup"))
         sessionDir.cdUp();
-    m_saveDir = sessionDir.path();
-    m_backupDir = m_saveDir + QStringLiteral("/backup");
+    const QString sessionPath = sessionDir.path();
 
-    auto resolve = [&sessionDir](const QString& p) {
-        return QFileInfo(p).isAbsolute() ? p : sessionDir.filePath(p);
-    };
-
-    m_records.clear();
-    for (const auto& val : root["records"].toArray()) {
-        auto obj = val.toObject();
-        CaptureRecord rec;
-        rec.index = obj["index"].toInt();
-        rec.pngPath = resolve(obj["png_path"].toString());
-        rec.plyPath = resolve(obj["ply_path"].toString());
-        rec.cameraTargetXyz = obj["camera_target_xyz"].toString();
-        rec.robotCapturePose = obj["robot_capture_pose"].toString();
-        rec.robotTargetXyz = obj["robot_target_xyz"].toString();
-        rec.cameraErrorPct = static_cast<float>(obj["camera_error_pct"].toDouble(-1.0));
-        rec.markerCount = obj["marker_count"].toInt(0);
-        m_records.push_back(rec);
+    // Validate the whole document — structure, version, every path — before
+    // touching any member.  A rejected backup must leave the current session
+    // exactly as it was; before this, a JSON object without "records" was
+    // accepted as a successful restore of zero records.
+    const BackupDocument::ParseResult parsed =
+        BackupDocument::parseForSession(bytes, sessionPath);
+    if (!parsed.ok) {
+        m_lastLoadError = parsed.error;
+        qWarning("DataManager: rejected backup %s: %s",
+                 qPrintable(path), qPrintable(parsed.error));
+        return false;
     }
+
+    std::vector<CaptureRecord> records;
+    records.reserve(parsed.records.size());
+    for (const auto& src : parsed.records) {
+        CaptureRecord rec;
+        rec.index = src.index;
+        rec.pngPath = src.pngPath;
+        rec.plyPath = src.plyPath;
+        rec.cameraTargetXyz = src.cameraTargetXyz;
+        rec.robotCapturePose = src.robotCapturePose;
+        rec.robotTargetXyz = src.robotTargetXyz;
+        rec.cameraErrorPct = src.cameraErrorPct;
+        rec.markerCount = src.markerCount;
+        records.push_back(rec);
+    }
+
+    // Commit point.
+    m_eyeHand = parsed.eyeInHand ? EyeHandMode::EyeInHand : EyeHandMode::EyeToHand;
+    m_calibType = parsed.markerType ? CalibType::Marker : CalibType::TcpTouch;
+    m_saveDir = sessionPath;
+    m_backupDir = sessionPath + QStringLiteral("/backup");
+    m_records = std::move(records);
     m_currentIndex = static_cast<int>(m_records.size()) - 1;
     emit dataChanged();
     emit progressUpdated(static_cast<int>(m_records.size()), -1);
+    return true;
+}
+
+QString DataManager::lastLoadError() const
+{
+    return m_lastLoadError;
+}
+
+bool DataManager::removeRecordFile(const QString& path)
+{
+    // Defense in depth: loadBackup() already rejects outside paths, but a
+    // delete must not trust that alone — it is the one operation that destroys
+    // data outside this program's own state.
+    if (!BackupDocument::isWithinDir(m_saveDir, path)) {
+        qWarning("DataManager: refused to remove file outside session: %s",
+                 qPrintable(path));
+        return false;
+    }
+    if (!QFile::remove(path)) {
+        qWarning("DataManager: failed to remove %s", qPrintable(path));
+        return false;
+    }
     return true;
 }
 
@@ -355,15 +389,20 @@ QString DataManager::findLatestBackup(const QString& baseDir)
     if (candidates.isEmpty())
         return {};
 
-    // Only consider backups whose content is a complete, valid backup document.
-    // The mtime is used to pick the newest *of those* — a newer truncated
-    // (half-written) file must never win over an older intact one.
+    // Only consider backups that parseForSession() would actually accept — the
+    // same validator loadBackup() uses, so "newest intact" cannot name a file
+    // the restore path is going to reject.  The mtime is used to pick the
+    // newest *of those*: a newer truncated (half-written) file must never win
+    // over an older intact one.
     auto isIntactBackup = [](const QString& p) {
         QFile file(p);
         if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
             return false;
-        const auto doc = QJsonDocument::fromJson(file.readAll());
-        return doc.isObject() && doc.object().value("records").isArray();
+        const QByteArray bytes = file.readAll();
+        QDir sessionDir(QFileInfo(p).absoluteDir());
+        if (sessionDir.dirName() == QStringLiteral("backup"))
+            sessionDir.cdUp();
+        return BackupDocument::parseForSession(bytes, sessionDir.path()).ok;
     };
 
     QFileInfo latest;

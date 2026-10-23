@@ -26,9 +26,18 @@ DataManager* makeSavedSession(QTemporaryDir& base, int records = 2)
 {
     auto* dm = new DataManager;
     dm->newSession(base.path(), EyeHandMode::EyeInHand, CalibType::Marker);
+    // Record files live inside the session dir, like a real capture: backups
+    // store them relative to it and the restore/deletion path only accepts
+    // paths inside the session.
     for (int i = 0; i < records; ++i) {
-        dm->addRecord(QStringLiteral("/tmp/%1.png").arg(i + 1),
-                      QStringLiteral("/tmp/%1.ply").arg(i + 1),
+        const QString png = dm->saveDir() + QStringLiteral("/%1.png").arg(i + 1);
+        const QString ply = dm->saveDir() + QStringLiteral("/%1.ply").arg(i + 1);
+        for (const QString& p : { png, ply }) {
+            QFile f(p);
+            f.open(QIODevice::WriteOnly);
+            f.write("x");
+        }
+        dm->addRecord(png, ply,
                       QStringLiteral("1.0 2.0 3.0"),
                       QStringLiteral("10 20 30 0.1 0.2 0.3"),
                       QStringLiteral("4.0 5.0 6.0"));
@@ -252,7 +261,10 @@ void TestSaveExport::findLatestBackupSkipsCorrupt()
     {
         QFile f(good);
         QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Text));
-        f.write("{\"version\":1,\"records\":[]}");
+        // A complete document (mode fields included) with zero records — the
+        // only shape findLatestBackup() accepts as "intact".
+        f.write("{\"version\":1,\"eye_in_hand\":true,\"marker_type\":true,"
+                "\"records\":[]}");
     }
 
     // Written second, so it is the newest by mtime — and it is truncated.

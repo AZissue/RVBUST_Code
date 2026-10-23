@@ -45,6 +45,9 @@ public:
     void saveBackup(bool force = false);
     bool loadBackup(const QString& path);
     static QString findLatestBackup(const QString& baseDir);
+    // Why the most recent loadBackup() failed (empty after a successful one).
+    // A rejected backup never changes the current session.
+    QString lastLoadError() const;
 
 signals:
     void progressUpdated(int current, int total);
@@ -58,6 +61,10 @@ private:
     bool writeTcpOutput();
     void cleanupBackups();
     void writeBackupNow();
+    // Delete one record file, but only when it is inside the current session
+    // directory.  The second check (after load/record creation) is deliberate:
+    // a delete must not rely on the import-time validation alone.
+    bool removeRecordFile(const QString& path);
 
     std::vector<CaptureRecord> m_records;
     QString m_saveDir;
@@ -68,4 +75,5 @@ private:
     QTimer* m_backupTimer = nullptr;
     bool m_backupPending = false;
     QString m_lastExportError;
+    QString m_lastLoadError;
 };

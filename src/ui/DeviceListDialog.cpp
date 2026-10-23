@@ -133,12 +133,13 @@ void DeviceListDialog::populateTable(const std::vector<DeviceEntry>& devices)
         // 不用等一句笼统的"连接失败"再去查。
         QString statusText;
         QColor  statusColor;
-        bool    blocked = false;   // 占用时禁止选中：连也连不上
+        // 可连接判定只有一处（CameraConnect::connectable）：单击、双击、
+        // 确定按钮都问它，不再各自判断状态值。
+        const bool blocked = !CameraConnect::connectable(dev.network);
         switch (dev.network) {
         case CameraConnect::NetworkStatus::InUse:
             statusText  = QStringLiteral("占用");
             statusColor = QColor(Theme::ERROR);
-            blocked     = true;
             break;
         case CameraConnect::NetworkStatus::NotReachable:
             statusText  = QStringLiteral("不可达（查网段）");
@@ -190,7 +191,14 @@ void DeviceListDialog::onSelectionChanged()
 
     int row = selected.first()->row();
     auto* snItem = m_table->item(row, 1);
-    m_selectedSerial = snItem ? snItem->text() : QString();
+    auto* statusItem = m_table->item(row, 2);
+    const auto network = static_cast<CameraConnect::NetworkStatus>(
+        statusItem ? statusItem->data(Qt::UserRole).toInt()
+                   : static_cast<int>(CameraConnect::NetworkStatus::Unknown));
+    // Item flags already keep blocked rows unselectable; this is the same
+    // predicate again for the programmatic-selection path.
+    m_selectedSerial = (snItem && CameraConnect::connectable(network))
+        ? snItem->text() : QString();
     m_btnOk->setEnabled(!m_selectedSerial.isEmpty());
 }
 
@@ -242,10 +250,14 @@ void DeviceListDialog::onRefreshFinished()
 
 void DeviceListDialog::onDoubleClicked(int row, int /*col*/)
 {
-    // Occupied devices are blocked from single-click selection via item flags,
-    // but double-click bypasses selection — guard it explicitly.
+    // Double-click bypasses the item-selection flags, so it asks the same
+    // connectable() predicate as single-click — previously it treated every
+    // non-OK status (including "不可达" / "IP 冲突") as blocked.
     auto* statusItem = m_table->item(row, 2);
-    if (statusItem && statusItem->data(Qt::UserRole).toBool())
+    const auto network = static_cast<CameraConnect::NetworkStatus>(
+        statusItem ? statusItem->data(Qt::UserRole).toInt()
+                   : static_cast<int>(CameraConnect::NetworkStatus::Unknown));
+    if (!CameraConnect::connectable(network))
         return;
 
     auto* snItem = m_table->item(row, 1);

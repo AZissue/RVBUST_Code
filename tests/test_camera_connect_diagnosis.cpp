@@ -265,3 +265,14 @@ void TestCameraConnectDiagnosis::hostSubnetMatching()
     QVERIFY(!anyHostOnSubnet(QStringLiteral("192.168.0.38"),
                              QStringLiteral("255.255.255.0"), {}));
 }
+
+void TestCameraConnectDiagnosis::connectableOnlyExcludesBusy()
+{
+    // 设备列表的单击/双击/确定共用这一条。占用是真连不上，其余状态允许试：
+    // 操作员可能刚在 RVCManager 里改好网段，或状态读取得不准。
+    QVERIFY(!connectable(NetworkStatus::InUse));
+    QVERIFY(connectable(NetworkStatus::Ok));
+    QVERIFY(connectable(NetworkStatus::NotReachable));
+    QVERIFY(connectable(NetworkStatus::Conflict));
+    QVERIFY(connectable(NetworkStatus::Unknown));
+}

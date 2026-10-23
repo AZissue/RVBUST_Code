@@ -31,4 +31,5 @@ private slots:
     void conflictAdviceNamesTheIp();
     void busyAdviceStillCarriesRetryCount();
     void hostSubnetMatching();
+    void connectableOnlyExcludesBusy();
 };
