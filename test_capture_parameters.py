@@ -190,6 +190,58 @@ class ServiceTests(unittest.TestCase):
             manager.common_capture_parameters('cam0', expected_source=source)
         replacement.camera.LoadCaptureOptionParameters.assert_not_called()
 
+    def test_line_scan_uses_microsecond_field_preserves_area_exposure_and_switches_schema(self):
+        from core.camera_manager import RVC
+        from core.capture_parameters import read, apply, LINE_EXPOSURE
+        for mode in (RVC.CaptureMode_SwingLineScan, RVC.CaptureMode_FixedLineScan):
+            camera = rich_camera('X2')
+            state = RVC.X2_CaptureOptions()
+            state.capture_mode = mode
+            state.line_scanner_exposure_time_us = 300
+            state.exposure_time_3d = 11
+            # SDK types cannot be deep-copied; create each fresh snapshot explicitly.
+            def load():
+                options = RVC.X2_CaptureOptions()
+                options.capture_mode = state.capture_mode
+                options.line_scanner_exposure_time_us = state.line_scanner_exposure_time_us
+                options.exposure_time_3d = state.exposure_time_3d
+                return True, options
+            camera.camera.LoadCaptureOptionParameters.side_effect = load
+            snapshot = read(camera)
+            self.assertNotIn('exposure_time_3d', snapshot['values'])
+            self.assertEqual(snapshot['values'][LINE_EXPOSURE], 300)
+            result = apply(camera, dict(snapshot['values'], **{LINE_EXPOSURE: 450}))
+            saved = camera.camera.SaveCaptureOptionParameters.call_args.args[0]
+            self.assertEqual(saved.line_scanner_exposure_time_us, 450)
+            self.assertEqual(saved.exposure_time_3d, 11)
+            self.assertEqual(result['values'][LINE_EXPOSURE], 450)
+            result = apply(camera, dict(snapshot['values'], capture_mode=int(RVC.CaptureMode_Normal)))
+            self.assertIn('exposure_time_3d', result['values'])
+            self.assertNotIn(LINE_EXPOSURE, result['values'])
+
+    def test_line_sdk_rejection_reports_details_learns_bounds_and_keeps_cache(self):
+        from core.camera_manager import RVC
+        from core.capture_parameters import read, apply, LINE_EXPOSURE
+        camera = rich_camera('X2')
+        def load():
+            options = RVC.X2_CaptureOptions()
+            options.capture_mode = RVC.CaptureMode_SwingLineScan
+            return True, options
+        camera.camera.LoadCaptureOptionParameters.side_effect = load
+        snapshot = read(camera)
+        original = camera.current_options
+        camera.camera.SaveCaptureOptionParameters.return_value = False
+        with patch.object(RVC, 'GetLastErrorMessage', return_value=
+                          'line_scanner_exposure_time_us out of range, current is 9999[20, 2000]'):
+            with self.assertRaisesRegex(RuntimeError, '20, 2000'):
+                apply(camera, dict(snapshot['values'], **{LINE_EXPOSURE: 9999}))
+        self.assertIs(camera.current_options, original)
+        self.assertEqual(read(camera)['ranges'][LINE_EXPOSURE], (20, 2000))
+        count = camera.camera.SaveCaptureOptionParameters.call_count
+        with self.assertRaises(ValueError):
+            apply(camera, dict(snapshot['values'], **{LINE_EXPOSURE: 2001}))
+        self.assertEqual(camera.camera.SaveCaptureOptionParameters.call_count, count)
+
 
 class PageTests(unittest.TestCase):
     setUpClass = classmethod(fixture.FrameBrowserTests.setUpClass.__func__)
@@ -230,7 +282,7 @@ class PageTests(unittest.TestCase):
         self.wait(lambda: not page._dirty and not page._pending and not self.bridge._workers)
         self.assertEqual(states['cam0']['exposure_time_2d'], 21)
         cameras['cam1'].camera.SaveCaptureOptionParameters.assert_not_called()
-        page.camera.setCurrentText('cam1')
+        page.camera.setCurrentIndex(page.camera.findData('cam1'))
         page.refresh()
         self.wait(lambda: page._loaded == 'cam1' and not self.bridge._workers)
         self.assertEqual(page.controls['exposure_time_2d'].value(), 33)
@@ -240,7 +292,7 @@ class PageTests(unittest.TestCase):
         self.assertEqual(states['cam1']['exposure_time_2d'], 44)
         self.assertEqual(states['cam0']['exposure_time_2d'], 21)
         self.assertEqual(cameras['cam0'].camera.SaveCaptureOptionParameters.call_count, 1)
-        page.camera.setCurrentText('cam0')
+        page.camera.setCurrentIndex(page.camera.findData('cam0'))
         page.refresh()
         self.wait(lambda: page._loaded == 'cam0' and not self.bridge._workers)
         self.assertEqual(page.controls['exposure_time_2d'].value(), 21)
@@ -265,7 +317,7 @@ class PageTests(unittest.TestCase):
         manager._cameras['cam1'] = rich_camera('X2')
         page.refresh()
         self.assertEqual(page.controls['exposure_time_2d'].value(), 30)
-        page.camera.setCurrentText('cam1')
+        page.camera.setCurrentIndex(page.camera.findData('cam1'))
         page.refresh()
         self.wait(lambda: page._loaded == 'cam1' and not self.bridge._workers)
         self.assertTrue(page.rows['correspond2d'][0].isRowVisible(page.rows['correspond2d'][1]))
@@ -441,7 +493,7 @@ class PageTests(unittest.TestCase):
         page.refresh()
         page.read_button.click()
         self.wait(lambda: not page._dirty and not page._pending and not self.bridge._workers)
-        page.camera.setCurrentText('cam1')
+        page.camera.setCurrentIndex(page.camera.findData('cam1'))
         self.assertIsNone(page._loaded)
         self.assertFalse(page.controls['exposure_time_2d'].isEnabled())
         manager._cameras['cam1'].camera.LoadCaptureOptionParameters.side_effect = RuntimeError('read failed')
@@ -529,7 +581,7 @@ class PageTests(unittest.TestCase):
         page = self.page()
         self.wait(lambda: page._loaded == 'cam0' and not self.bridge._workers)
         page.controls['exposure_time_2d'].setValue(50)
-        page.camera.setCurrentText('cam1')
+        page.camera.setCurrentIndex(page.camera.findData('cam1'))
         page.refresh()
         self.wait(lambda: page._loaded == 'cam1' and not self.bridge._workers)
         QTest.qWait(350)
@@ -579,6 +631,83 @@ class PageTests(unittest.TestCase):
             camera.camera.SaveCaptureOptionParameters.assert_not_called()
         self.wait(lambda: not page._dirty and not page._pending and not self.bridge._workers)
         self.assertEqual(camera.current_options.gain_2d, .987)
+        self.bridge.camera_manager._cameras.clear()
+
+    def test_camera_identity_refresh_icon_tabs_and_line_mode_controls(self):
+        from core.camera_manager import RVC
+        from ui_v2 import GLOBAL_QSS
+        camera = rich_camera('X2')
+        camera.device_info.name = 'M2600C-V2'
+        camera.sn = 'RVC12345678'
+        def load():
+            options = RVC.X2_CaptureOptions()
+            options.capture_mode = RVC.CaptureMode_SwingLineScan
+            return True, options
+        camera.camera.LoadCaptureOptionParameters.side_effect = load
+        self.bridge.camera_manager._cameras['cam0'] = camera
+        self.open_page()
+        page = self.page()
+        self.wait(lambda: page._loaded == 'cam0' and not self.bridge._workers)
+        self.assertIn('M2600C-V2', page.camera.currentText())
+        self.assertIn('RVC12345678', page.camera.currentText())
+        self.assertEqual(page.camera.currentData(), 'cam0')
+        self.assertEqual(page.read_button.text(), '')
+        self.assertFalse(page.read_button.icon().isNull())
+        line = 'line_scanner_exposure_time_us'
+        self.assertFalse(page.rows['exposure_time_3d'][0].isRowVisible(page.rows['exposure_time_3d'][1]))
+        self.assertTrue(page.rows[line][0].isRowVisible(page.rows[line][1]))
+        self.assertEqual(page.controls[line].value(), 300)
+        self.assertEqual(page.controls[line].suffix(), ' µs')
+        page.controls[line].setValue(450)
+        self.wait(lambda: not page._dirty and not page._pending and not self.bridge._workers)
+        self.assertEqual(camera.current_options.line_scanner_exposure_time_us, 450)
+        self.assertEqual(camera.current_options.exposure_time_3d, 11)
+        props = self.browser.properties
+        props.setFixedWidth(290)
+        original_style = self.app.styleSheet()
+        try:
+            self.app.setStyleSheet(GLOBAL_QSS)
+            self.app.processEvents()
+            bar = props.tabs.tabBar()
+            self.assertLessEqual(bar.tabRect(3).right(), props.tabs.width())
+            self.assertEqual([bar.tabText(i) for i in range(4)], ['数据属性', '3D 显示', '拍摄参数', '识别参数'])
+            self.assertLessEqual(page.read_button.geometry().right(), page.width())
+        finally:
+            self.app.setStyleSheet(original_style)
+        self.bridge.camera_manager._cameras.clear()
+
+    def test_mode_switch_refreshes_exposure_fields_and_continues_auto_updates(self):
+        from core.camera_manager import RVC
+        camera = rich_camera('X2')
+        state = dict(capture_mode=RVC.CaptureMode_Normal,
+                     line_scanner_exposure_time_us=300, exposure_time_3d=11)
+        def load():
+            options = RVC.X2_CaptureOptions()
+            for key, value in state.items():
+                setattr(options, key, value)
+            return True, options
+        def save(options):
+            state.update({key: getattr(options, key) for key in state})
+            return True
+        camera.camera.LoadCaptureOptionParameters.side_effect = load
+        camera.camera.SaveCaptureOptionParameters.side_effect = save
+        self.bridge.camera_manager._cameras['cam0'] = camera
+        self.open_page()
+        page = self.page()
+        self.wait(lambda: page._loaded == 'cam0' and not self.bridge._workers)
+        page.controls['capture_mode'].setCurrentIndex(page.controls['capture_mode'].findData(int(RVC.CaptureMode_SwingLineScan)))
+        self.wait(lambda: not page._dirty and not page._pending and not self.bridge._workers)
+        line = 'line_scanner_exposure_time_us'
+        self.assertIn(line, page._read_values)
+        self.assertNotIn('exposure_time_3d', page._read_values)
+        page.controls[line].setValue(500)
+        self.wait(lambda: not page._dirty and not page._pending and not self.bridge._workers)
+        self.assertEqual(state[line], 500)
+        self.assertEqual(state['exposure_time_3d'], 11)
+        page.controls['capture_mode'].setCurrentIndex(page.controls['capture_mode'].findData(int(RVC.CaptureMode_Normal)))
+        self.wait(lambda: not page._dirty and not page._pending and not self.bridge._workers)
+        self.assertNotIn(line, page._read_values)
+        self.assertIn('exposure_time_3d', page._read_values)
         self.bridge.camera_manager._cameras.clear()
 
 

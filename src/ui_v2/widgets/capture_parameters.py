@@ -2,7 +2,7 @@
 from PySide6.QtCore import Qt, QTimer, QSignalBlocker
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QFormLayout, QComboBox,
                               QGroupBox, QLabel, QPushButton, QHBoxLayout,
-                              QScrollArea, QLayout)
+                              QScrollArea, QLayout, QToolButton, QSizePolicy)
 from ui_common.parameter_slider import ParameterSlider
 
 
@@ -33,9 +33,18 @@ class CaptureParameters(QWidget):
         self.camera = QComboBox()
         self.camera.setPlaceholderText('未连接相机')
         self.camera.currentIndexChanged.connect(self._invalidate)
-        self.read_button = QPushButton('重新读取')
+        self.camera.setMinimumWidth(0)
+        self.camera.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        self.camera.setStyleSheet('font-size:11px;')
+        self.camera.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.read_button = QToolButton()
+        from ui_common.symbols import apply
+        apply(self.read_button, 'refresh', size=16)
+        self.read_button.setFixedSize(28, 28)
+        self.read_button.setStyleSheet('QToolButton {padding:2px;border:1px solid #414141;} QToolButton:hover {background:#414141;}')
+        self.read_button.setToolTip('重新读取相机参数')
+        self.read_button.setAccessibleName('重新读取相机参数')
         self.read_button.clicked.connect(lambda: self._request(False))
-        header.addWidget(QLabel('目标相机'))
         header.addWidget(self.camera, 1)
         header.addWidget(self.read_button)
         root.addLayout(header)
@@ -72,7 +81,8 @@ class CaptureParameters(QWidget):
                          ('Gamma', 'gamma_2d', 'float'),
                          ('使用光机', 'use_projector_capturing_2d_image', 'bool'),
                          ('点云对应 2D', 'correspond2d', 'bool')]),
-            ('3D 点云', [('曝光', 'exposure_time_3d', 'int'), ('增益', 'gain_3d', 'float')]),
+            ('3D 点云', [('曝光', 'exposure_time_3d', 'int'),
+                         ('单行曝光', 'line_scanner_exposure_time_us', 'int'), ('增益', 'gain_3d', 'float')]),
             ('投影', [('亮度', 'projector_brightness', 'int'), ('颜色', 'projector_color', 'choice')]))
         for title, fields in specs:
             group = QGroupBox(title)
@@ -90,7 +100,7 @@ class CaptureParameters(QWidget):
                         control.addItem('是', True)
                 else:
                     row = ParameterSlider(decimals=3 if kind == 'float' else 0,
-                                          suffix=' ms' if key.startswith('exposure') else '')
+                                          suffix=' µs' if key == 'line_scanner_exposure_time_us' else ' ms' if key.startswith('exposure') else '')
                     control = row.spin
                     self.sliders[key] = row
                 self.controls[key] = control
@@ -133,17 +143,27 @@ class CaptureParameters(QWidget):
     def refresh(self, allow_auto=True):
         manager = self.bridge.camera_manager if self.bridge and not getattr(self.bridge, '_cleaned', False) else None
         ids = manager.get_connected_ids() if manager else []
-        previous = [self.camera.itemText(i) for i in range(self.camera.count())]
-        current = self.camera.currentText()
+        previous = [self.camera.itemData(i) for i in range(self.camera.count())]
+        current = self.camera.currentData()
         if ids != previous:
             with QSignalBlocker(self.camera):
                 self.camera.clear()
-                self.camera.addItems(ids)
+                labels = manager.capture_parameter_labels() if manager else {}
+                for cid in ids:
+                    self.camera.addItem(labels.get(cid, cid), cid)
+                    self.camera.setItemData(self.camera.count() - 1, labels.get(cid, cid), Qt.ToolTipRole)
                 if current in ids:
-                    self.camera.setCurrentText(current)
+                    self.camera.setCurrentIndex(self.camera.findData(current))
                 elif ids:
                     self.camera.setCurrentIndex(0)
-        source = (manager.capture_parameter_source(self.camera.currentText())
+        if manager:
+            for cid, label in manager.capture_parameter_labels().items():
+                index = self.camera.findData(cid)
+                with QSignalBlocker(self.camera):
+                    self.camera.setItemText(index, label)
+                    self.camera.setItemData(index, label, Qt.ToolTipRole)
+            self.camera.setToolTip(self.camera.currentText())
+        source = (manager.capture_parameter_source(self.camera.currentData())
                   if manager and self.camera.count() else None)
         if source != self._source:
             self._source = source
@@ -157,7 +177,7 @@ class CaptureParameters(QWidget):
             self.apply_timer.start()
 
     def _changed(self, *_):
-        if self._populating or self._loaded != self.camera.currentText() or not self._read_values:
+        if self._populating or self._loaded != self.camera.currentData() or not self._read_values:
             return
         self._dirty = True
         self._edit_revision += 1
@@ -194,7 +214,7 @@ class CaptureParameters(QWidget):
         editable = idle or connected and self._pending and self._writing
         for key, (_, row) in self.rows.items():
             row.setEnabled(bool(editable and key in self._read_values
-                                and self._loaded == self.camera.currentText()))
+                                and self._loaded == self.camera.currentData()))
 
     def _value(self, key):
         if key in self.sliders:
@@ -225,7 +245,11 @@ class CaptureParameters(QWidget):
                 editor = self.sliders[key]
                 editor.set_range(*result['ranges'][key])
                 low, high = result['ranges'][key]
-                editor.setToolTip(f'相机允许范围：{low:g}～{high:g}；调整后自动生效')
+                unqueried = key in result.get('unqueried_ranges', [])
+                editor.slider.setVisible(not unqueried)
+                editor.spin.setFixedWidth(145 if unqueried else 91)
+                editor.setToolTip('单行曝光，单位微秒；SDK 未提供独立范围查询，以设备校验为准'
+                                  if unqueried else f'相机允许范围：{low:g}～{high:g}；调整后自动生效')
                 editor.set_value(value)
             else:
                 control = self.controls[key]
@@ -242,13 +266,13 @@ class CaptureParameters(QWidget):
         self.refresh(False)
         if self._pending or not self.bridge or getattr(self.bridge, '_cleaned', False) or not self.bridge.can_change_workspace() or not self.camera.count():
             return
-        if apply and self._loaded != self.camera.currentText():
+        if apply and self._loaded != self.camera.currentData():
             return
         self.apply_timer.stop()
         self._auto_needed = False
         generation = self._generation
         revision = self._edit_revision
-        camera_id = self.camera.currentText()
+        camera_id = self.camera.currentData()
         values = self._values_to_apply() if apply else None
         shown = {key: self._value(key) for key in self._read_values} if apply else {}
         self._pending = True
@@ -260,12 +284,14 @@ class CaptureParameters(QWidget):
             self._pending = False
             self._writing = False
             self.refresh(False)
-            if generation != self._generation or camera_id != self.camera.currentText():
+            if generation != self._generation or camera_id != self.camera.currentData():
                 return
             newer_edits = apply and self._edit_revision != revision
+            if result and set(result['values']) != set(self._read_values):
+                newer_edits = False
             self._dirty = newer_edits
             if error:
-                self.status.setText(str(error) + '\n可修改参数或点击“重新读取”重试。')
+                self.status.setText(str(error) + '\n可修改参数或点击刷新按钮重试。')
                 if not newer_edits:
                     self.apply_timer.stop()
             else:

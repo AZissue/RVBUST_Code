@@ -33,12 +33,17 @@ def _choices(controller, options):
     return choices
 
 
-def _load(controller):
-    if not controller.is_connected:
-        raise RuntimeError('相机已断开，请重新连接')
-    ok, options = controller.camera.LoadCaptureOptionParameters()
-    if not ok or options is None:
-        raise RuntimeError('读取相机拍摄参数失败')
+LINE_EXPOSURE = 'line_scanner_exposure_time_us'
+
+
+def _line_scan(options):
+    from .camera_manager import RVC
+    return RVC is not None and getattr(options, 'capture_mode', None) in (
+        getattr(RVC, 'CaptureMode_SwingLineScan', object()),
+        getattr(RVC, 'CaptureMode_FixedLineScan', object()))
+
+
+def _ranges(controller, options):
     ranges = {}
     for method, fields in (
             ('GetExposureTimeRange', FIELDS[:2]), ('GetGainRange', FIELDS[2:4])):
@@ -47,20 +52,35 @@ def _load(controller):
             raise RuntimeError('无法获取相机参数范围，请检查连接或使用参数调试')
         for field in fields:
             ranges[field] = (low, high)
-    # Installed RVCSDK/examples/Python/AdjustCaptureParameter.py caps brightness at 240.
     ranges['projector_brightness'] = (0, 240)
     if hasattr(options, 'gamma_2d'):
         ok, low, high = controller.camera.GetGammaRange()
         if ok and all(math.isfinite(x) for x in (low, high)) and low <= high:
             ranges['gamma_2d'] = (low, high)
-    return options, ranges, _choices(controller, options)
+    if _line_scan(options):
+        ranges.pop('exposure_time_3d', None)
+        if hasattr(options, LINE_EXPOSURE):
+            # RVC.h exposes no line-exposure range query. This is an integer
+            # input bound, NOT a claimed device range; SDK validates the value.
+            ranges[LINE_EXPOSURE] = getattr(controller, '_line_exposure_range', (1, 2147483647))
+    return ranges
+
+
+def _load(controller):
+    if not controller.is_connected:
+        raise RuntimeError('相机已断开，请重新连接')
+    ok, options = controller.camera.LoadCaptureOptionParameters()
+    if not ok or options is None:
+        raise RuntimeError('读取相机拍摄参数失败')
+    return options, _ranges(controller, options), _choices(controller, options)
 
 
 def _snapshot(controller, options, ranges, choices):
     keys = set(ranges) | set(choices) | {key for key in BOOL_FIELDS if hasattr(options, key)}
     return {'values': {key: (int(getattr(options, key)) if key in choices else getattr(options, key)) for key in keys},
             'ranges': ranges, 'camera_type': controller.camera_type,
-            'hdr': int(getattr(options, 'hdr_exposure_times', 0)), 'choices': choices}
+            'hdr': int(getattr(options, 'hdr_exposure_times', 0)), 'choices': choices,
+            'unqueried_ranges': [LINE_EXPOSURE] if LINE_EXPOSURE in ranges and not hasattr(controller, '_line_exposure_range') else []}
 
 
 def read(controller):
@@ -104,7 +124,14 @@ def apply(controller, values):
                 value = int(value)
             setattr(options, field, value)
         if not controller.camera.SaveCaptureOptionParameters(options):
-            raise RuntimeError('相机拒绝参数，请检查曝光范围、HDR模式或使用参数调试')
+            from .camera_manager import RVC
+            detail = str(RVC.GetLastErrorMessage()) if RVC is not None else ''
+            # Learn explicit device bounds when this SDK reports them on failure.
+            import re
+            match = re.search(r'line_scanner_exposure_time_us[^\[]*\[\s*(\d+)\s*,\s*(\d+)\s*\]', detail)
+            if match and int(match[1]) <= int(match[2]):
+                controller._line_exposure_range = (int(match[1]), int(match[2]))
+            raise RuntimeError('相机拒绝参数：' + (detail or '请检查曝光范围、HDR模式或使用参数调试'))
         controller.current_options = options
         controller._check_capture_mode()
-        return _snapshot(controller, options, ranges, choices)
+        return _snapshot(controller, options, _ranges(controller, options), _choices(controller, options))

@@ -224,6 +224,7 @@ class SingleCameraController:
         self.sn = None
         self.line_scan_detected = False
         self.current_options = None
+        self.__dict__.pop('_line_exposure_range', None)
 
     def capture_2d(self) -> Tuple[Optional[np.ndarray], str]:
         """仅拍摄 2D 图像，不生成点云，用于取景预览/位置调整。
@@ -773,6 +774,11 @@ class CameraManager:
             raise RuntimeError('目标相机已更换，请重新读取拍摄参数')
         return (capture_parameters.read(cam) if values is None
                 else capture_parameters.apply(cam, values))
+
+    def capture_parameter_labels(self):
+        """Connected identities as plain display data; never expose SDK objects."""
+        return {cid: f"{_device_text(getattr(cam.device_info, 'name', '')) or cid} · SN: {_device_text(cam.sn) or '—'}"
+                for cid, cam in self._cameras.items() if cam.is_connected}
 
     def capture_parameter_source(self, camera_id):
         """Plain identity token to invalidate displayed settings after reconnect."""
