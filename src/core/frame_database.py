@@ -236,9 +236,16 @@ class FrameDatabase:
 
     def _invalidate_results(self, identifiers):
         changed = set(identifiers)
-        for row in self.records.values():
-            if row.kind == 'result' and changed.intersection(row.source_ids):
-                row.status = STALE_RESULT
+        # Propagate to derived postprocess branches as well as direct stitches.
+        while True:
+            descendants = {row.uid for row in self.records.values()
+                           if row.kind == 'result' and row.uid not in changed
+                           and changed.intersection(row.source_ids)}
+            if not descendants:
+                break
+            for uid in descendants:
+                self.records[uid].status = STALE_RESULT
+            changed.update(descendants)
 
     def annotate(self, frame, *, purpose=None, status=None, logical_name=None):
         with self._lock:
@@ -361,24 +368,28 @@ class FrameDatabase:
                     temporary.unlink(missing_ok=True)
         return str(target)
 
-    def publish_result(self, cloud, source_ids):
+    def publish_result(self, cloud, source_ids, *, postprocess=False, name=None):
         """Commit a separate immutable result; never change raw frame geometry."""
         from .utils import write_point_cloud_atomic
         uid = uuid.uuid4().hex
         with self._lock:
-            if not source_ids or any(key not in self.records or self.records[key].kind != 'raw' for key in source_ids):
-                raise ValueError('拼接来源帧已变化，请重新执行')
+            if (not postprocess and not source_ids) or any(
+                    key not in self.records or (not postprocess and self.records[key].kind != 'raw')
+                    or self.records[key].status == STALE_RESULT for key in source_ids):
+                raise ValueError(('后处理' if postprocess else '拼接') + '来源帧已变化，请重新执行')
             if self.session_id is None:
                 self.begin_session()
             folder = self.directory / 'frames' / uid
             folder.mkdir(parents=True)
             try:
                 if cloud is None or not len(cloud.points) or not write_point_cloud_atomic(str(folder / 'pointmap.ply'), cloud):
-                    raise IOError('拼接结果写入失败')
+                    raise IOError(('后处理' if postprocess else '拼接') + '结果写入失败')
                 number = 1 + sum(row.kind == 'result' for row in self.records.values())
-                self.records[uid] = FrameRecord(uid, self.session_id, '', number, '拼接结果',
-                    f'拼接帧 {number:03d}', datetime.now().isoformat(timespec='seconds'),
-                    len(cloud.points), [0, 0], status='已拼接', kind='result', source_ids=list(source_ids))
+                role = '后处理结果' if postprocess else '拼接结果'
+                title = name or (f'后处理点云 {number:03d}' if postprocess else f'拼接帧 {number:03d}')
+                self.records[uid] = FrameRecord(uid, self.session_id, '', number, role,
+                    title, datetime.now().isoformat(timespec='seconds'),
+                    len(cloud.points), [0, 0], status='已处理' if postprocess else '已拼接', kind='result', source_ids=list(source_ids))
                 self._save_index()
             except Exception:
                 self.records.pop(uid, None)

@@ -182,16 +182,16 @@ class FrameBrowser(QWidget):
                 groups[session_key].setData(0, Qt.UserRole + 1, session_key)
                 groups[session_key].setToolTip(0, session['created'])
                 groups[session_key].setIcon(0, icons.icon('folder_open', '#bbbbbb', 16))
-            category = ('拼接结果' if record.kind == 'result' else '标定会话数据'
+            category = (('后处理结果' if record.purpose == '后处理结果' else '拼接结果') if record.kind == 'result' else '标定会话数据'
                 if self.database.mode != 'mobile_chain' and ('标定' in record.purpose or record.purpose == 'calib') else '扫描原始帧')
             category_key = (id(groups[session_key]), category)
             if category_key not in categories:
                 categories[category_key] = QTreeWidgetItem(groups[session_key], [category, ''])
                 categories[category_key].setIcon(0, icons.icon('folder_open', '#aaaaaa', 16))
             parent = categories[category_key]
-            title = f'拼接帧 {record.frame_id:03d}' if record.kind == 'result' else f'帧 {record.frame_id:03d}'
+            title = (record.logical_name if record.purpose == '后处理结果' else f'拼接帧 {record.frame_id:03d}') if record.kind == 'result' else f'帧 {record.frame_id:03d}'
             if record.kind == 'result' and record.status == STALE_RESULT:
-                title += ' · 需重新拼接'
+                title += ' · 来源已变化' if record.purpose == '后处理结果' else ' · 需重新拼接'
             if self.database.mode == 'multi_cam' and record.kind == 'raw':
                 title += ' · ' + record.camera
             row = QTreeWidgetItem(parent, [title, ''])
@@ -202,11 +202,11 @@ class FrameBrowser(QWidget):
             row.setIcon(0, icons.icon('layers', '#bbbbbb', 16))
             if record.kind == 'result':
                 row.setIcon(0, icons.icon('stitch', '#d65050', 16))
-                row.setToolTip(0, '独立拼接结果 · mm\n' + record.status + '\n来源帧：' + '\n'.join(record.source_ids) + '\n' + record.created)
+                row.setToolTip(0, '独立' + ('后处理结果' if record.purpose == '后处理结果' else '拼接结果') + ' · mm\n' + record.status + '\n来源帧：' + '\n'.join(record.source_ids) + '\n' + record.created)
             self._items[record.uid] = row
             cloud_item = QTreeWidgetItem(row, ['点云 · PLY', f'{record.points:,}' if record.points is not None else '—'])
             cloud_item.setIcon(0, icons.icon('layers', '#bbbbbb', 16))
-            cloud_item.setToolTip(1, '拼接结果有效几何点数；原始帧保持独立。' if record.kind == 'result'
+            cloud_item.setToolTip(1, '结果有效几何点数；原始帧保持独立。' if record.kind == 'result'
                 else '原始点槽位数，包含有序点云中的无效占位点；文件不下采样。')
             components = [('cloud', cloud_item)]
             if record.kind != 'result':
@@ -378,8 +378,8 @@ class FrameBrowser(QWidget):
             return
         result = record.kind == 'result'
         values = {'名称': record.logical_name, '类型': '2D 图像' if component == 'image' else
-                  ('拼接点云' if result else '原始点云') if component == 'cloud' else
-                  ('拼接结果' if result else '原始帧'),
+                  (('后处理点云' if record.purpose == '后处理结果' else '拼接点云') if result else '原始点云') if component == 'cloud' else
+                  (('后处理结果' if record.purpose == '后处理结果' else '拼接结果') if result else '原始帧'),
                   '状态': record.status, '帧编号': f'{record.frame_id:03d}',
                   '相机': record.camera, '用途': record.purpose}
         if component != 'image':
@@ -492,7 +492,7 @@ class FrameBrowser(QWidget):
     def show_frame(self, uid, frame, component='frame'):
         row = self.database.records[uid]
         if row.kind == 'result':
-            self.details.setText(f'拼接帧 {row.frame_id:03d} · {row.points:,} 个有效点\n来源 {len(row.source_ids)} 帧 · 独立结果，原始数据保留')
+            self.details.setText(f'{row.logical_name} · {row.points:,} 个有效点\n来源 {len(row.source_ids)} 帧 · 独立结果，原始数据保留')
             self.tree.setToolTip(self.details.text())
             return
         description = {'frame': '原始PLY + 2D PNG · 联动查看', 'cloud': '仅查看原始点云 · 相机坐标系 / mm',
@@ -672,7 +672,7 @@ class FrameDatabaseController(QObject):
         else:
             workspace._industrial.show_database_image(frame)
         record = self.databases[mode].records[uid]
-        hint = (f'正在查看：拼接帧 {record.frame_id:03d} · {record.points:,} 个有效点' if record.kind == 'result' else
+        hint = (f'正在查看：{record.logical_name} · {record.points:,} 个有效点' if record.kind == 'result' else
                 f'正在查看：原始帧 {record.frame_id:03d} · {record.points:,} 个槽位（含无效深度）')
         if component == 'image':
             hint = f'正在查看：帧 {record.frame_id:03d} 的2D图像 · {record.image_size[0]} × {record.image_size[1]}'

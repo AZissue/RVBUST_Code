@@ -130,6 +130,9 @@ class IndustrialRibbon(QWidget):
         line.addWidget(self.workflow_status)
         self.badge = QLabel(objectName='studioBadge')
         line.addWidget(self.badge)
+        self.postprocess_button = self._header_button('点云后处理', 'layers',
+            lambda: shell._backend_bridge and shell._backend_bridge.open_postprocess())
+        line.addWidget(self.postprocess_button)
         self.log_button = self._header_button('运行日志', 'terminal', shell._btn_log.click)
         self.log_button.setCheckable(True)
         shell._btn_log.toggled.connect(self.log_button.setChecked)
@@ -301,6 +304,7 @@ class IndustrialRibbon(QWidget):
         self.commands[(shell.current_mode(), 'stitch')].setEnabled(raw >= 2)
         self.commands[(shell.current_mode(), 'stitch')].setToolTip('优先拼接DB勾选的至少两帧原始点云；按当前模式使用标记配准或标定参数，生成独立拼接帧。未勾选时沿用当前工作流。')
         bridge = shell._backend_bridge
+        self.postprocess_button.setEnabled(bool(bridge and bridge.can_change_workspace()))
         presentation = getattr(shell._stack.currentWidget(), '_industrial', None)
         browser = presentation.frame_browser if presentation is not None else None
         self.commands[(shell.current_mode(), 'export')].setEnabled(

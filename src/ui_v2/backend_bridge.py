@@ -180,6 +180,30 @@ class BackendBridge(QObject):
         self.recognition = BackgroundRecognition(self)
         self.shell.workspace_turntable().background_recognition = self.recognition
 
+    def open_postprocess(self):
+        """Open the offline editor on this DB; no camera or workflow reset."""
+        previous = getattr(self, '_postprocess_window', None)
+        if previous is not None and not previous._closed:
+            previous.raise_()
+            previous.activateWindow()
+            return previous
+        if not self.can_change_workspace():
+            self.shell.log('请等待当前任务完成后再进入点云后处理。', 'warn')
+            return None
+        from .postprocess.window import PostprocessWindow
+        mode = self.shell.current_mode()
+        browser = self.frame_db.browsers.get(mode)
+        identifiers = ([uid for uid, _ in browser.checked_components('cloud')]
+                       or browser.selected_ids()) if browser else []
+        if not identifiers and mode in self.frame_db._displayed:
+            identifiers = [self.frame_db._displayed[mode][0]]
+        window = PostprocessWindow(self, mode)
+        self._postprocess_window = window
+        window.show()
+        if identifiers:
+            window.load_selected(identifiers)
+        return window
+
     def _ensure_sdk(self):
         if not getattr(self, '_sdk_initialized', False):
             ok, msg = self.camera_manager.initialize()
@@ -2417,6 +2441,9 @@ class BackendBridge(QObject):
         if getattr(self, "_cleaned", False):
             return getattr(self, "_pending_workers", [])
         self._cleaned = True
+        editor = getattr(self, '_postprocess_window', None)
+        if editor is not None and not editor._closed:
+            editor.shutdown()
         # 停止实时取景（线程 stop 会等待在飞采集完成，带超时）
         if self._preview_thread is not None:
             self._preview_thread.stop()

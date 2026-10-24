@@ -193,6 +193,26 @@ class IndustrialViewer(QWidget):
                 self.mode.addItem(camera_id, camera_id)
         self._refresh()
 
+    def replace_pointclouds(self, clouds, *, fit=False):
+        """Replace geometry in one refresh, retaining navigation unless fit=True.
+
+        Values expose points, colors and has_colors(), as Open3D clouds do.
+        Arrays can be read-only; display sampling never mutates source data.
+        """
+        self._pcds = dict(clouds)
+        self._merged = self._database_cloud = None
+        self._database_clouds = {}
+        self._highlights.clear()
+        self.canvas.set_cloud_markers([])
+        self.mode.blockSignals(True)
+        while self.mode.count() > 2:
+            self.mode.removeItem(2)
+        for key in self._pcds:
+            self.mode.addItem(key, key)
+        self.mode.setCurrentIndex(0)
+        self.mode.blockSignals(False)
+        self._refresh(fit=fit)
+
     def set_pointcloud_merged(self, pcd):
         self._merged = pcd
         self.mode.setCurrentIndex(1)
