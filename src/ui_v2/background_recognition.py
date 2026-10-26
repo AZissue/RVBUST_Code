@@ -30,15 +30,18 @@ class BackgroundRecognition(QObject):
             marker_type = bridge.shell.workspace_turntable().combo_marker_type.currentData()
         return frame_recognition.configuration(bridge.marker_detector, marker_type)
 
-    def configure(self, mode, marker_type, boards, gamma):
+    def configure(self, mode, marker_type, boards, gamma, circle=None):
         """Apply UI settings between foreground tasks; running jobs own copies."""
         import math
         from core.marker_detector import SUPPORTED_MARKER_TYPES
+        from core.marker_detector import MarkerDetector
         bridge = self.bridge
         if mode != bridge._current_mode or not bridge.can_change_workspace():
             raise ValueError('当前任务进行中或工作区已切换，请稍后再试。')
         if marker_type not in SUPPORTED_MARKER_TYPES:
             raise ValueError('不支持的识别类型。')
+        if circle is not None:
+            MarkerDetector.validate_params(circle)
         if not math.isfinite(gamma) or not .1 <= gamma <= 10:
             raise ValueError('Gamma 必须在 0.1～10 之间。')
         if not boards or any(not isinstance(spec.get('cols'), int) or not isinstance(spec.get('rows'), int)
@@ -49,6 +52,8 @@ class BackgroundRecognition(QObject):
         if not bridge._detect_lock.acquire(blocking=False):
             raise ValueError('识别器正在使用，请稍后再试。')
         try:
+            if circle is not None:
+                bridge.marker_detector.set_params(*circle)
             bridge.marker_detector.set_board_specs(copy.deepcopy(boards))
             bridge.marker_detector.set_board_gamma(gamma)
             bridge.marker_detector.set_marker_type(marker_type)
@@ -64,6 +69,70 @@ class BackgroundRecognition(QObject):
         finally:
             bridge._detect_lock.release()
         bridge.shell.log('识别参数已应用；后台识别将按新参数更新原始帧。', 'info')
+
+    def _search_source(self, mode):
+        """Use the displayed raw frame, otherwise the active business image."""
+        bridge = self.bridge
+        if mode != bridge._current_mode:
+            raise ValueError('工作区已切换，自动识别结果已放弃。')
+        presentation = bridge.shell._stack.currentWidget()._industrial
+        if presentation._database_result:
+            raise ValueError('请选择当前视野的原始帧图像，不能对拼接结果自动识别。')
+        shown = bridge.frame_db._displayed.get(mode)
+        if shown:
+            frame = shown[1]
+        elif mode == 'multi_cam':
+            grid = bridge.shell.workspace_multi().camera_grid()
+            cards = list(grid._cards.values())
+            focused = grid._focused_id
+            frames = [card.current_frame() for card in cards if card.current_frame() is not None]
+            if not focused and len(frames) > 1:
+                raise ValueError('请先聚焦一个相机视野，或在 DB 选择原始帧。')
+            frame = grid.card(focused).current_frame() if focused else next(iter(frames), None)
+        else:
+            frames = bridge.frame_db._frames()
+            context = presentation._business_marker_image
+            image = context[0][0] if context else None
+            frame = next((item for item in frames if item.image_np is image and image is not None), None)
+        if frame is None or frame.image_np is None:
+            raise ValueError('当前视野没有原始图像；请先采集或在 DB 选择原始帧。')
+        db = bridge.frame_db.databases[mode]
+        row = db.records.get(frame.database_id)
+        if frame.database_id and (row is None or row.kind != 'raw'):
+            raise ValueError('原始帧已删除或变化，请重新选择。')
+        return frame, (mode, db.directory, frame.database_id or id(frame),
+                       row.revision if row else 0, id(frame.image_np))
+
+    def search_current(self, mode, callback):
+        import threading
+        from core.marker_detector import MarkerDetector
+        bridge = self.bridge
+        if not bridge.can_change_workspace():
+            raise ValueError('当前任务进行中，请稍后自动识别。')
+        frame, source = self._search_source(mode)
+        image = frame.image_np.copy()
+        config = copy.deepcopy(self.config(mode))
+        cancel = threading.Event()
+        self.search_cancel = cancel
+        def work():
+            if not bridge._detect_lock.acquire(blocking=False):
+                raise ValueError('识别器正在使用，请稍后自动识别。')
+            try:
+                return MarkerDetector.search_params(image, config['circle'], cancelled=cancel)
+            finally:
+                bridge._detect_lock.release()
+        def done(result, error):
+            if getattr(bridge, '_cleaned', False):
+                return
+            if error is None:
+                try:
+                    if cancel.is_set() or self.config(mode) != config or self._search_source(mode)[1] != source:
+                        raise ValueError('原始帧或识别配置已变化，自动识别结果已放弃。')
+                except ValueError as exc:
+                    error = exc
+            callback(result, error)
+        bridge._run_background(work, done, name='recognition_parameters')
+        return cancel
 
     def ensure(self, mode, identifiers, callback):
         """Continue an explicit action once only its input frames are ready."""
@@ -250,6 +319,8 @@ class BackgroundRecognition(QObject):
 
     def close(self):
         self.timer.stop()
+        if getattr(self, 'search_cancel', None) is not None:
+            self.search_cancel.set()
         self.waiters.clear()
         self.pool.shutdown(wait=True, cancel_futures=True)
         self.jobs.clear()

@@ -7,10 +7,8 @@ from .marker_detector import MarkerDetector
 
 
 def configuration(source, marker_type):
-    coded = source._coded_marker_type
     return dict(algorithm=2, marker_type=marker_type,
-        circle=[getattr(coded, 'N', 8), getattr(coded, 'r1_to_r0_ratio', 2.),
-                getattr(coded, 'r2_to_r0_ratio', 3.)],
+        circle=source.get_params(),
         boards=copy.deepcopy(source.get_board_specs()), gamma=source._board_detector.gamma)
 
 

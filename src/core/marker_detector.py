@@ -49,6 +49,7 @@ class MarkerDetector:
         self.raise_errors = False
         self._marker_type = marker_type
         self._coded_marker_type = None
+        self._circle_params = (8, 2., 3.)
         if RVC is not None:
             self._coded_marker_type = RVC.CodedCircleMarkerType()
             self._coded_marker_type.N = 8
@@ -81,11 +82,85 @@ class MarkerDetector:
     # 编码圆参数
     # ------------------------------------------------------------------
     def set_params(self, n: int, r1_ratio: float, r2_ratio: float):
+        self.validate_params((n, r1_ratio, r2_ratio))
+        self._circle_params = (n, float(r1_ratio), float(r2_ratio))
         if self._coded_marker_type is None:
             return
         self._coded_marker_type.N = n
         self._coded_marker_type.r1_to_r0_ratio = r1_ratio
         self._coded_marker_type.r2_to_r0_ratio = r2_ratio
+
+    @staticmethod
+    def validate_params(circle):
+        import math
+        if not isinstance(circle, (list, tuple)) or len(circle) != 3:
+            raise ValueError('编码圆参数必须包含 N、r1/r0、r2/r0。')
+        n, r1, r2 = circle
+        if isinstance(n, bool) or not isinstance(n, int) or not 1 <= n <= 32:
+            raise ValueError('编码圆 N 必须为 1～32 的整数。')
+        if any(isinstance(r, bool) or not isinstance(r, (int, float)) or not math.isfinite(r)
+               or not 0 < r <= 20 for r in (r1, r2)) or r2 <= r1:
+            raise ValueError('半径比例必须为有限正数（≤20），且 r2/r0 必须大于 r1/r0。')
+
+    def get_params(self):
+        coded = self._coded_marker_type
+        return list(self._circle_params) if coded is None else [
+            coded.N, coded.r1_to_r0_ratio, coded.r2_to_r0_ratio]
+
+    @staticmethod
+    def search_params(image, current, *, cancelled=None, time_limit=20.):
+        """Bounded integer search on a private detector, stable across brightness.
+
+        Score unique codes whose centers agree on the original and a slightly
+        darker image. No camera handles, depth writes or shared detector state.
+        """
+        import time
+        from collections import Counter
+        MarkerDetector.validate_params(current)
+        n, r1, r2 = current
+        integer_r1 = min(19, max(1, round(r1)))
+        rounded = (n, integer_r1, min(20, max(integer_r1+1, round(r2))))
+        candidates = list(dict.fromkeys([rounded] + [
+            (bits, a, b) for bits in (6, 8, 10, 12, 16)
+            for a, b in ((2, 3), (2, 4), (3, 4), (3, 5))]))
+        detector = MarkerDetector()
+        detector.raise_errors = True
+        detector.save_debug_images = False
+        base = detector._preprocess(image)
+        darker = np.clip(base.astype(np.float32)*.9, 0, 255).astype(np.uint8)
+        started = time.monotonic()
+        best = None
+        evaluated = 0
+        def stopped():
+            return cancelled is not None and cancelled.is_set() or time.monotonic()-started >= time_limit
+        def unique(markers):
+            counts = Counter(m['code'] for m in markers)
+            return {m['code']: np.array([m['x'], m['y']]) for m in markers
+                    if counts[m['code']] == 1 and np.isfinite([m['x'], m['y']]).all()}
+        for params in candidates:
+            if stopped():
+                break
+            detector.set_params(*params)
+            first = unique(detector.detect(base))
+            if stopped():
+                break
+            second = unique(detector.detect(darker)) if first else {}
+            stable = sum(np.linalg.norm(first[code]-second[code]) <= 3.
+                         for code in first.keys() & second.keys())
+            evaluated += 1
+            # Stable unique detections dominate. Ties retain the nearest/current
+            # integer parameters rather than arbitrarily changing configuration.
+            distance = sum(abs(a-b) for a, b in zip(params, current))
+            score = (stable, -distance)
+            if stable and (best is None or score > best['score']):
+                best = dict(circle=list(params), stable_count=int(stable), score=score)
+        if cancelled is not None and cancelled.is_set():
+            raise ValueError('自动识别已取消，手动参数保持不变。')
+        if best is None:
+            raise ValueError('候选范围内未稳定检出编码圆，手动参数保持不变；请检查当前原始帧与曝光。')
+        best.pop('score')
+        best['evaluated'] = evaluated
+        return best
 
     # ------------------------------------------------------------------
     # 标定板参数转发
