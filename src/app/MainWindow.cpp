@@ -464,15 +464,6 @@ void MainWindow::wireSignals()
             this, &MainWindow::onRobotConnect);
     connect(m_toolsPanel, &ToolsPanel::robotDisconnectRequested,
             this, &MainWindow::onRobotDisconnect);
-    connect(m_toolsPanel, &ToolsPanel::robotSimulateConnectRequested,
-            this, &MainWindow::onRobotSimulateConnect);
-    connect(m_toolsPanel, &ToolsPanel::robotAutoReadToggled, this,
-            [this](bool on) {
-                m_robot->setAutoRead(on);
-                // 任务 2: the checkbox is a view of AppConfig's single key, so a
-                // change here is persisted and shows up in 设置 next time.
-                m_config.setAutoReadRobotPose(on);
-            });
     // 任务 2: 识别成功 → 自动保存（走既有必填项校验）.
     connect(m_flow, &CaptureFlow::detectionFinished,
             this, &MainWindow::onDetectionFinished);
@@ -488,13 +479,42 @@ void MainWindow::wireSignals()
     // 控制台位姿缓存：通信工具未连接时，拍照节点用这一份（按品牌约定写卡）。
     // 只在 UI 线程读写；backend 发来的 poseUpdated 已经由控制器转到本线程。
     connect(m_programController, &RobotProgramController::poseUpdated, this,
-            [this](const RobotMotion::State&) { rememberConsolePose(); });
+            [this](const RobotMotion::State&) {
+                rememberConsolePose();
+                const bool ready = RobotPoseSource::choose(consolePoseInputs())
+                    == RobotPoseSource::Source::Console;
+                if (ready != m_consoleReadBarReady) {
+                    m_consoleReadBarReady = ready;
+                    updateRobotReadBar();
+                }
+            });
     connect(m_programController, &RobotProgramController::backendChanged,
-            this, [this]() { invalidateConsolePose(); });
+            this, [this]() {
+                invalidateConsolePose();
+                m_consoleReadBarReady = false;
+                updateRobotReadBar();
+            });
     connect(m_programController, &RobotProgramController::connectedChanged,
             this, [this](bool connected) {
-                if (!connected)
+                if (!connected) {
                     invalidateConsolePose();
+                    m_consoleReadBarReady = false;
+                    updateRobotReadBar();
+                    return;
+                }
+                // 一台机器人一条连接：控制台连上真机后，通信工具那条旧连接
+                // 必须让位（否则位姿来源有两个，现场不知道看哪个）。
+                RobotMotionBackend* console =
+                    m_programController ? m_programController->backend() : nullptr;
+                if (console && !console->isSimulated() && m_robot->isConnected()) {
+                    m_robot->disconnectRobot();
+                    m_toolsPanel->setRobotConnected(false);
+                    m_toolsPanel->setRobotStatus(QStringLiteral("未连接"), false);
+                    m_logger->info(QStringLiteral(
+                        "机器人控制台已连接（%1），机器人通信的旧连接已断开")
+                        .arg(console->name()));
+                    updateRobotReadBar();
+                }
             });
     // Robot read buttons live in the ActionButtons row (visible while connected)
     connect(m_actionButtons, &ActionButtons::readCapturePoseClicked,
@@ -1292,6 +1312,18 @@ void MainWindow::onRobotConnect(const QString& host, quint16 port,
                                 int protocol, int format, double scale,
                                 quint8 unitId, quint16 startAddress)
 {
+    // 一台机器人只保留一条连接：控制台已经连着真机时，再从这里连就是同一个
+    // 控制器上的第二路 socket（UR 上还会抢脚本口），先让操作员明确断开。
+    RobotMotionBackend* console = m_programController
+        ? m_programController->backend() : nullptr;
+    if (console && console->isConnected() && !console->isSimulated()) {
+        m_sidePanel->setTip(
+            QStringLiteral("机器人已由「机器人控制台」连接（%1）。同一台机器人只保留"
+                           "一条连接：请先在控制台断开，再在这里连接。")
+                .arg(console->name()), true);
+        m_toolsPanel->setRobotStatus(QStringLiteral("控制台已连接"), true);
+        return;
+    }
     // 结果经 onRobotConnectFinished() 回来；UI 线程不阻塞。
     m_robot->connectToRobot(host, port, protocol, format, scale, unitId,
                             startAddress);
@@ -1325,33 +1357,28 @@ void MainWindow::onRobotDisconnect()
     updateRobotReadBar();
 }
 
-void MainWindow::onRobotSimulateConnect()
-{
-    m_robot->simulateConnect();
-    m_toolsPanel->setRobotConnected(true);
-    m_toolsPanel->setRobotStatus(QStringLiteral("已连接（模拟）"), false);
-    m_sidePanel->setTip(QStringLiteral("机器人已模拟连接（无真机）"), false);
-    m_logger->success(QStringLiteral("机器人模拟连接成功"));
-    updateRobotReadBar();
-}
-
 void MainWindow::onRobotRead()
 {
-    if (!m_robot->isConnected()) {
-        m_sidePanel->setTip(QStringLiteral("请先连接机器人"), true);
+    if (m_robot->isConnected()) {
+        // 读位姿是阻塞调用：交给 worker，结果经 onRobotPoseReady() 回来。
+        m_robot->readPose(RobotReadCapturePose);
         return;
     }
-    // 读位姿是阻塞调用：交给 worker，结果经 onRobotPoseReady() 回来。
-    m_robot->readPose(RobotReadCapturePose);
+    // 控制台已连真机时直接用它的最新位姿：现场只连一次。
+    if (tryConsolePose(RobotReadCapturePose))
+        return;
+    m_sidePanel->setTip(QStringLiteral("请先连接机器人"), true);
 }
 
 void MainWindow::onRobotReadTouch()
 {
-    if (!m_robot->isConnected()) {
-        m_sidePanel->setTip(QStringLiteral("请先连接机器人"), true);
+    if (m_robot->isConnected()) {
+        m_robot->readPose(RobotReadTouchPose);
         return;
     }
-    m_robot->readPose(RobotReadTouchPose);
+    if (tryConsolePose(RobotReadTouchPose))
+        return;
+    m_sidePanel->setTip(QStringLiteral("请先连接机器人"), true);
 }
 
 void MainWindow::onRobotPoseReady(int kind, bool ok, const QStringList& fields,
@@ -1417,9 +1444,12 @@ void MainWindow::updateRobotReadBar()
     // 机器人一连上它就冒出来 —— 判据走 needsCapturePose()，与卡片显隐同源。
     const bool poseCol = needsCapturePose(m_eyeHandMode, m_calibType);
     const bool tcpCol  = needsRobotTarget(m_calibType);
+    // 通信工具或控制台任一可用即可：这是"只连一次"的界面表现。
+    const bool robotReady = m_robot->isConnected()
+        || RobotPoseSource::choose(consolePoseInputs()) == RobotPoseSource::Source::Console;
     if (m_actionButtons) {
-        m_actionButtons->setReadCapturePoseVisible(m_robot->isConnected() && poseCol);
-        m_actionButtons->setReadTouchPoseVisible(m_robot->isConnected() && tcpCol);
+        m_actionButtons->setReadCapturePoseVisible(robotReady && poseCol);
+        m_actionButtons->setReadTouchPoseVisible(robotReady && tcpCol);
     }
 }
 
@@ -1823,8 +1853,8 @@ void MainWindow::applyAutoFlowSettings()
     m_robot->setAutoRead(autoReadPose);
 
     m_flow->setAutoDetectAfterCapture(m_autoDetectAfterCapture);
-    // One config key, two views: 设置 checkbox and the tools-panel checkbox.
-    m_toolsPanel->setRobotAutoRead(autoReadPose);
+    // 设置对话框是「拍照时自动读取机器人位姿」的唯一开关；工具页不再重复
+    // 放一个勾选框（同一键两处勾选会互相覆盖）。
     RuntimeLog::log("[FLOW] automation: auto_detect=%d auto_save=%d auto_read_pose=%d",
                     m_autoDetectAfterCapture ? 1 : 0, m_autoSaveAfterDetect ? 1 : 0,
                     autoReadPose ? 1 : 0);
@@ -1879,6 +1909,33 @@ void MainWindow::onDetectionFinished(bool ok)
 // 程序执行器推进。任何一步失败都停止整个节点（执行器随后会停下整张表），
 // 不会带着旧位姿/旧图像继续保存。
 
+RobotPoseSource::Inputs MainWindow::consolePoseInputs() const
+{
+    RobotPoseSource::Inputs in;
+    RobotMotionBackend* backend =
+        m_programController ? m_programController->backend() : nullptr;
+    in.consoleConnected = backend && backend->isConnected();
+    // 只有控制台的「仿真」后端是仿真；Modbus/NRC/Efort 将来接入后同样按真机。
+    in.consoleSimulated = !m_programController
+        || m_programController->backendKind()
+            == RobotProgramController::BackendKind::Simulated;
+    const qint64 ageMs = m_consolePoseAtMs > 0
+        ? QDateTime::currentMSecsSinceEpoch() - m_consolePoseAtMs
+        : -1;
+    in.consolePoseFresh = m_consolePoseValid && ageMs >= 0
+        && ageMs <= RobotPoseSource::kConsolePoseFreshMs;
+    in.consoleMoving = false;
+    return in;
+}
+
+bool MainWindow::tryConsolePose(int kind)
+{
+    if (RobotPoseSource::choose(consolePoseInputs()) != RobotPoseSource::Source::Console)
+        return false;
+    onRobotPoseReady(kind, true, RobotPose::formatFields(m_consoleCardPose), QString());
+    return true;
+}
+
 void MainWindow::rememberConsolePose()
 {
     if (!m_programController || !m_programController->backend())
@@ -1919,19 +1976,11 @@ bool MainWindow::beginProgramPhoto(QString* error)
     RobotPoseSource::Source poseSource = RobotPoseSource::Source::Communication;
     qint64 consoleAgeMs = -1;
     if (needPose) {
-        RobotMotionBackend* consoleBackend =
-            m_programController ? m_programController->backend() : nullptr;
         if (m_consolePoseAtMs > 0)
             consoleAgeMs = QDateTime::currentMSecsSinceEpoch() - m_consolePoseAtMs;
 
-        RobotPoseSource::Inputs in;
+        RobotPoseSource::Inputs in = consolePoseInputs();
         in.communicationConnected = m_robot && m_robot->isConnected();
-        in.consoleConnected = consoleBackend && consoleBackend->isConnected();
-        in.consoleSimulated = !m_programController
-            || m_programController->backendKind()
-                == RobotProgramController::BackendKind::Simulated;
-        in.consolePoseFresh = m_consolePoseValid && consoleAgeMs >= 0
-            && consoleAgeMs <= RobotPoseSource::kConsolePoseFreshMs;
         // P0：程序列表里 Move 节点本身按"到位"结束，拍照节点由执行器顺序
         // 保证机器人已停；后端的在途运动状态在 P1 统一对象时接入。
         in.consoleMoving = false;

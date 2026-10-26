@@ -11,6 +11,7 @@
 #include "logic/BoardPoseFit.h"
 #include "app/RobotController.h"
 #include "logic/FrameBuffer.h"
+#include "logic/RobotPoseSource.h"
 #include "logic/UiStallWatchdog.h"
 #include "ui/ActionButtons.h"
 #include "ui/MeasurementSnapshot.h"
@@ -115,7 +116,6 @@ private:
     void onRobotDisconnect();
     void onRobotRead();
     void onRobotReadTouch();
-    void onRobotSimulateConnect();
     // T-009: answers from the robot worker thread (queued into this thread).
     void onRobotConnectFinished(bool ok, const QString& label, const QString& error);
     void onRobotPoseReady(int kind, bool ok, const QStringList& fields,
@@ -136,6 +136,12 @@ private:
     // 供拍照节点在通信工具未连接时使用。只缓存，不代表此刻仍新鲜。
     void rememberConsolePose();
     void invalidateConsolePose();
+    // 控制台这一侧的位姿可用性（真机、新鲜、未在运动）。通信工具的连接状态
+    // 不参与：choosing 时由调用方把它填进 Inputs。
+    RobotPoseSource::Inputs consolePoseInputs() const;
+    // 通信工具没连、但控制台可用时，主界面的「拍照位姿 / 戳点位姿」按钮
+    // 直接消费控制台缓存的位姿；返回 true 表示已经处理。
+    bool tryConsolePose(int kind);
 
     // ── 机器人协议分派：在 RobotController/RobotWorker 里（worker 线程）──
     // MainWindow 不再持有 reader，也不再直接调用它们的阻塞方法。
@@ -288,6 +294,8 @@ private:
     QString m_consoleCardPoseUnit;
     qint64 m_consolePoseAtMs = 0;
     bool m_consolePoseValid = false;
+    // 上次刷「拍照位姿 / 戳点位姿」按钮可见性时的控制台可用性，避免每帧重排。
+    bool m_consoleReadBarReady = false;
 
     // Window centering (restore/clamp once on first show)
     bool m_windowPositioned = false;

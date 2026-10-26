@@ -9,7 +9,6 @@
 #include "logic/NrcJsonReader.h"
 #include "logic/RobotPose.h"
 #include "logic/URRealtimeReader.h"
-#include "logic/URRtdeReader.h"
 
 class QThread;
 
@@ -42,7 +41,6 @@ public slots:
     void connectRobot(const QString& host, quint16 port, int protocol, int format,
                       double scale, quint8 unitId, quint16 startAddress);
     void disconnectRobot();
-    void simulateConnect();
     void readPose(int kind);
 
 signals:
@@ -59,13 +57,10 @@ private:
     // must only ever be touched from this worker's thread.
     RobotPose::ModbusTcpReader   m_robotReader;
     RobotPose::URRealtimeReader  m_urReader;
-    RobotPose::URRtdeReader      m_rtdeReader;
     RobotPose::NrcJsonReader     m_nrcReader;
     EfortPoseReader::EfortReader m_eftReader;
     FairinoPoseReader            m_fairinoReader;
     int  m_protocol    = 0;
-    bool m_simulated   = false;
-    int  m_simCounter  = 0;   // 模拟位姿每次 +10
 };
 
 // RobotController owns the robot thread and the single copy of the logical
@@ -88,13 +83,11 @@ public:
     void connectToRobot(const QString& host, quint16 port, int protocol, int format,
                         double scale, quint8 unitId, quint16 startAddress);
     void disconnectRobot();
-    void simulateConnect();
     // No-op when not connected (the UI guards this too; kept here so a stray
     // call cannot queue a pointless blocking read).
     void readPose(int kind);
 
     bool isConnected() const { return m_connected; }
-    bool isSimulated() const { return m_simulated; }
     void setAutoRead(bool on) { m_autoRead = on; }
     bool autoRead() const { return m_autoRead; }
 
@@ -111,7 +104,6 @@ private:
     QThread*     m_thread = nullptr;
     RobotWorker* m_worker = nullptr;
 
-    bool m_connected = false;   // logical connection (real or simulated)
-    bool m_simulated = false;   // "模拟连接成功" — no real socket
+    bool m_connected = false;   // logical connection (real)
     bool m_autoRead  = false;   // pre-capture automatic pose read
 };

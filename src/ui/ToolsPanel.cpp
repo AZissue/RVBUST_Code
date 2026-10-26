@@ -2353,9 +2353,9 @@ void ToolsPanel::buildRobotCommPage(QStackedWidget* stack)
     m_robotProtocol->addItem(QStringLiteral("博纳斯(纳博特) JSON/TCP"));
     // 用户反馈 7：埃夫特走 EfortSDK（第四种协议，index 3 固定不变）。
     m_robotProtocol->addItem(QStringLiteral("埃夫特（EfortSDK）"));
-    // 2026-10-10：UR 的新口（RTDE, 30004）。追加在末尾，前面的 index 不动。
-    m_robotProtocol->addItem(QStringLiteral("UR RTDE (30004)"));
-    // 2026-10-26：法奥（FAIRINO）20004 实时状态流（index 5，同样只追加）。
+    // 2026-10-26：法奥（FAIRINO）20004 实时状态流（index 4）。
+    // UR RTDE (30004) 已移除：同一台 UR 只允许一个 RTDE 客户端，现场用
+    // 30003 一路就够，保留两套读法只会让"连哪个口"变成新的现场问题。
     m_robotProtocol->addItem(QStringLiteral("法奥实时 (20004)"));
     m_robotProtocol->setStyleSheet(Theme::comboBoxStyle());
     protoRow->addWidget(m_robotProtocol, 1);
@@ -2429,11 +2429,8 @@ void ToolsPanel::buildRobotCommPage(QStackedWidget* stack)
 
     form->addRow(QString(), m_modbusFieldsWidget);
 
-    // Auto-read on capture (kept here in the tools panel, not on the main UI)
-    m_robotAutoReadCheck = new QCheckBox(
-        QStringLiteral("拍照时自动读取机器人位姿"), group);
-    m_robotAutoReadCheck->setChecked(false);
-    form->addRow(QString(), m_robotAutoReadCheck);
+    // 「拍照时自动读取机器人位姿」不再在这里重复一份：设置对话框是唯一
+    // 开关（同一个 AppConfig 键），两处勾选只会互相打架。
 
     // Action buttons
     auto* btnRow = new QHBoxLayout();
@@ -2441,9 +2438,6 @@ void ToolsPanel::buildRobotCommPage(QStackedWidget* stack)
     m_btnRobotConnect = new QPushButton(QStringLiteral("连接"), group);
     m_btnRobotConnect->setStyleSheet(Theme::primaryButtonStyle());
     btnRow->addWidget(m_btnRobotConnect);
-    m_btnRobotSimulate = new QPushButton(QStringLiteral("模拟连接成功"), group);
-    m_btnRobotSimulate->setStyleSheet(Theme::secondaryButtonStyle());
-    btnRow->addWidget(m_btnRobotSimulate);
     btnRow->addStretch();
     form->addRow(QString(), btnRow);
 
@@ -2455,8 +2449,6 @@ void ToolsPanel::buildRobotCommPage(QStackedWidget* stack)
     hint->setText(QStringLiteral(
         "连接成功后，主界面会显示「拍照位姿」与「戳点位姿」按钮。"
         "UR Realtime 协议下机器人主动推流，读取到的姿态分量为轴角(弧度)而非欧拉角度数。"
-        "UR RTDE (30004) 是 UR 推荐的新接口（30003 已废弃），同样返回轴角(弧度)，"
-        "但字段按名称索取，不存在偏移错位问题；机器人同时只允许一个 RTDE 客户端。"
         "博纳斯(纳博特) JSON/TCP 协议读取当前 TCP 位姿（x y z rx ry rz，mm/度），"
         "应答字段名未知时会自动尝试常见字段并把原始应答写进运行日志。"
         "法奥实时 (20004) 读取控制器主动推送的状态包里的 TCP 位姿（mm/度，"
@@ -2466,8 +2458,8 @@ void ToolsPanel::buildRobotCommPage(QStackedWidget* stack)
         "客户自己开的用户 socket（例如 8003）不用于这条链路。"
         "若把「IP:端口」整串粘进来，程序会只取 IP 并把端口部分标注出来"
         "（整串交给 SDK 会被它解析成另一个 IP，且不报错）。"
-        "读取基坐标下的 TCP 位姿。"
-        "无真机时可点击「模拟连接成功」验证按钮显示与样式。"));
+        "读取基坐标下的 TCP 位姿。无真机时请用「机器人控制」页的仿真后端，"
+        "仿真位姿不会写入标定卡片。"));
     form->addRow(QString(), hint);
 
     pageLayout->addWidget(group);
@@ -2481,11 +2473,10 @@ void ToolsPanel::buildRobotCommPage(QStackedWidget* stack)
         // 所以把端口框收起来（留空），避免给用户一个"填了就有用"的错觉。
         m_robotPort->setVisible(index != 3);
         // Default ports: Modbus TCP 502, UR realtime 30003, 博纳斯/纳博特 6001,
-        // UR RTDE 30004, 法奥实时 20004.
+        // 法奥实时 20004.
         m_robotPort->setValue(index == 1 ? 30003
                              : index == 2 ? 6001
-                             : index == 4 ? 30004
-                             : index == 5 ? 20004
+                             : index == 4 ? 20004
                                           : 502);
         // 端口提示只对埃夫特有意义，切走协议就撤掉（IP 框里的文字不动）。
         if (m_robotHostNote) {
@@ -2541,20 +2532,6 @@ void ToolsPanel::buildRobotCommPage(QStackedWidget* stack)
             emit robotDisconnectRequested();
         }
     });
-    connect(m_btnRobotSimulate, &QPushButton::clicked, this,
-            [this]() { emit robotSimulateConnectRequested(); });
-    connect(m_robotAutoReadCheck, &QCheckBox::toggled, this,
-            [this](bool on) { emit robotAutoReadToggled(on); });
-}
-
-void ToolsPanel::setRobotAutoRead(bool on)
-{
-    if (!m_robotAutoReadCheck || m_robotAutoReadCheck->isChecked() == on)
-        return;
-    // Keep the panel's checkbox and AppConfig "auto_read_robot_pose" one single
-    // state: the settings dialog and this checkbox are views of the same key.
-    const QSignalBlocker block(m_robotAutoReadCheck);
-    m_robotAutoReadCheck->setChecked(on);
 }
 
 void ToolsPanel::setRobotStatus(const QString& text, bool ok)

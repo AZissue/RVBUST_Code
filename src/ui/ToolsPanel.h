@@ -53,9 +53,6 @@ public:
 
     void setRobotStatus(const QString& text, bool ok);
     void setRobotConnected(bool connected);
-    // Mirror of AppConfig "auto_read_robot_pose".  Programmatic, so it does not
-    // re-emit robotAutoReadToggled (MainWindow is the single writer of the key).
-    void setRobotAutoRead(bool on);
 
     // ── Measurement tools (aligned with the Python 3D 测量一体化工具) ──
     // Each method is its own entry in the left list and its own MeasurePage in
@@ -105,8 +102,6 @@ signals:
                                int protocol, int format, double scale,
                                quint8 unitId, quint16 startAddress);
     void robotDisconnectRequested();
-    void robotSimulateConnectRequested();
-    void robotAutoReadToggled(bool on);
     // Measurement explanation / result lines (P4).  MainWindow writes them into
     // the operation log; the panel itself never touches the logger.
     void logMessage(const QString& line);
@@ -360,9 +355,7 @@ private:
     QLineEdit* m_robotScale = nullptr;
     QSpinBox* m_robotUnitId = nullptr;
     QPushButton* m_btnRobotConnect = nullptr;
-    QPushButton* m_btnRobotSimulate = nullptr;
     QLabel* m_robotStatus = nullptr;
-    QCheckBox* m_robotAutoReadCheck = nullptr;
 
     // ── Measurement tools (3D 测量一体化工具 parity) ──
     // 7 个方法页，左侧列表里各占一项。面板只留三样共享状态：点云、ROI 矩形、

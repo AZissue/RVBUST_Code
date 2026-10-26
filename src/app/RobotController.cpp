@@ -34,8 +34,7 @@ RobotWorker::~RobotWorker() = default;
 RobotPose::Reader* RobotWorker::readerFor(int protocol)
 {
     switch (protocol) {
-    case 5:  return &m_fairinoReader;
-    case 4:  return &m_rtdeReader;
+    case 4:  return &m_fairinoReader;
     case 3:  return &m_eftReader;
     case 2:  return &m_nrcReader;
     case 1:  return &m_urReader;
@@ -48,11 +47,10 @@ void RobotWorker::connectRobot(const QString& host, quint16 port, int protocol,
                                quint16 startAddress)
 {
     m_protocol = protocol;
-    m_simulated = false;   // 一次真实连接尝试离开「模拟」态
 
     // 协议特有的「连接前设置」+ 已连接文案里的协议标签，集中在这里一处。
     QString label;
-    if (protocol == 5) {
+    if (protocol == 4) {
         // 法奥：20004 实时状态流。没有寄存器格式/系数要配，端口就是实时口。
         m_fairinoReader.setTimeoutMs(1500);
         label = QStringLiteral("%1:%2，法奥 20004").arg(host).arg(port);
@@ -65,12 +63,6 @@ void RobotWorker::connectRobot(const QString& host, quint16 port, int protocol,
         // configure — the adapter owns the framing and the JSON payload.
         m_nrcReader.setTimeoutMs(1500);
         label = QStringLiteral("%1:%2，博纳斯 JSON/TCP").arg(host).arg(port);
-    } else if (protocol == 4) {
-        // UR RTDE (30004): like the 30003 port there is no register
-        // format/scale to configure -- the adapter owns the handshake and the
-        // recipe. The timeout also bounds each handshake step.
-        m_rtdeReader.setTimeoutMs(1500);
-        label = QStringLiteral("%1:%2，UR RTDE").arg(host).arg(port);
     } else if (protocol == 1) {
         // UR Realtime interface: no register format/scale to configure.
         m_urReader.setTimeoutMs(1500);
@@ -103,32 +95,12 @@ void RobotWorker::connectRobot(const QString& host, quint16 port, int protocol,
 
 void RobotWorker::disconnectRobot()
 {
-    for (int p = 0; p <= 5; ++p)
+    for (int p = 0; p <= 4; ++p)
         readerFor(p)->disconnect();
-    m_simulated = false;
-}
-
-void RobotWorker::simulateConnect()
-{
-    // "模拟连接成功" — no real socket; only sets the logical connected
-    // state so the read buttons / cards can be exercised in the UI.
-    for (int p = 0; p <= 5; ++p)
-        readerFor(p)->disconnect();
-    m_simulated = true;
 }
 
 void RobotWorker::readPose(int kind)
 {
-    if (m_simulated) {
-        // Deterministic dummy pose so the read buttons / cards can be verified
-        // without real Modbus hardware.
-        const double base = 100.0 + (m_simCounter++ % 50) * 10.0;
-        RobotPose::Pose pose;
-        pose.xyz = { base, base + 1.0, base + 2.0 };
-        pose.rpy = { 0.0, 0.0, 0.0 };
-        emit poseReady(kind, true, robotPoseFields(pose), QString());
-        return;
-    }
     RobotPose::Pose pose;
     RobotPose::Reader* reader = readerFor(m_protocol);
     if (reader->readPose(pose) != RobotPose::Status::Ok) {
@@ -180,21 +152,8 @@ void RobotController::connectToRobot(const QString& host, quint16 port,
 void RobotController::disconnectRobot()
 {
     m_connected = false;
-    m_simulated = false;
     if (RobotWorker* worker = m_worker) {
         QMetaObject::invokeMethod(worker, [worker]() { worker->disconnectRobot(); },
-                                  Qt::QueuedConnection);
-    }
-}
-
-void RobotController::simulateConnect()
-{
-    // Logical state changes immediately, exactly as the old UI slot did; the
-    // worker call itself only drops stale sockets.
-    m_connected = true;
-    m_simulated = true;
-    if (RobotWorker* worker = m_worker) {
-        QMetaObject::invokeMethod(worker, [worker]() { worker->simulateConnect(); },
                                   Qt::QueuedConnection);
     }
 }
@@ -212,7 +171,6 @@ void RobotController::readPose(int kind)
 void RobotController::onConnectFinished(bool ok, const QString& label,
                                         const QString& error)
 {
-    m_simulated = false;
     m_connected = ok;
     emit connectFinished(ok, label, error);
 }
@@ -244,5 +202,4 @@ void RobotController::shutdown()
     m_thread = nullptr;
 
     m_connected = false;
-    m_simulated = false;
 }
