@@ -1,7 +1,6 @@
 """No SDK or Qt imports: all editing geometry is in millimetres."""
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from uuid import uuid4
 import numpy as np
 
 
@@ -12,7 +11,6 @@ class CloudLayer:
     colors: np.ndarray | None = None
     visible: bool = True
     source: str = '点云数据'
-    token: str = field(default_factory=lambda: uuid4().hex, init=False)
 
     origins: tuple = ()  # (DB UID, geometry revision) provenance
 
@@ -36,28 +34,6 @@ class CloudLayer:
     def has_colors(self):
         """Read-only XYZ/RGB geometry interface accepted by IndustrialViewer."""
         return self.colors is not None
-
-
-@dataclass
-class PostProcessSession:
-    layers: list = field(default_factory=list)
-    UNDO_LIMIT: int = 8
-    _undo: list = field(default_factory=list)
-    removed: list = field(default_factory=list)
-
-    def snapshot(self):
-        self._undo.append(list(self.layers))
-        self._undo = self._undo[-self.UNDO_LIMIT:]
-
-    @property
-    def can_undo(self):
-        return bool(self._undo)
-
-    def undo(self):
-        if not self._undo:
-            return False
-        self.layers = self._undo.pop()
-        return True
 
 
 def read_cloud(path, unit='mm'):

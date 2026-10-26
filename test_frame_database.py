@@ -33,6 +33,21 @@ class FrameDatabaseTests(unittest.TestCase):
         return FrameData(1, camera, image_np=self.image.copy(), is_offline=True,
                          offline_pointmap_path=str(self.source))
 
+    def test_failed_external_batch_restores_empty_session_and_cleans_geometry(self):
+        import open3d as o3d
+        cloud = o3d.geometry.PointCloud()
+        cloud.points = o3d.utility.Vector3dVector([[1., 2., 3.]])
+        changed = Mock()
+        self.db.on_changed = changed
+        with patch.object(self.db, '_save_index', side_effect=OSError('index failure')):
+            with self.assertRaises(OSError):
+                self.db.publish_results([(cloud, [], 'one'), (cloud, [], 'two')], postprocess=True)
+        self.assertFalse(self.db.records)
+        self.assertFalse(self.db.sessions)
+        self.assertIsNone(self.db.session_id)
+        self.assertFalse(list((self.db.directory/'frames').iterdir()))
+        changed.assert_not_called()
+
     def test_archive_owns_pair_after_source_mutation_and_deletion(self):
         frame = self.frame()
         uid = self.db.ingest(frame)

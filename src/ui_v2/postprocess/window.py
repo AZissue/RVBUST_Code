@@ -1,7 +1,7 @@
 """Industrial postprocess workspace: DB snapshots in, immutable result branches out."""
 from pathlib import Path
 import numpy as np
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt, QSize, QSignalBlocker, QItemSelectionModel
 from PySide6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QSplitter, QTabWidget, QGroupBox, QFormLayout, QDoubleSpinBox, QPushButton,
     QToolButton, QFileDialog, QMenu, QScrollArea, QComboBox)
@@ -9,14 +9,12 @@ from ui_common.industrial_viewer import IndustrialViewer
 from ui_common.worker_thread import WorkerThread
 from ui_common.symbols import icon
 from core.frame_database import STALE_RESULT
-from core.postprocess.session import CloudLayer, PostProcessSession, read_cloud, write_cloud
+from core.postprocess.session import CloudLayer, read_cloud, write_cloud
 from core.postprocess.processing import polygon_crop_mask, voxel_downsample, random_downsample
-from ..dialogs import ChineseMessageBox as QMessageBox
 from ..frame_database import FrameBrowser
 from ..widgets.db_properties import DbProperties
 from ..industrial_ribbon import STYLE
 from .selection import PolygonSelectionOverlay
-from .layer_tree import CloudTreePanel
 
 
 class PostprocessWindow(QDialog):
@@ -25,10 +23,17 @@ class PostprocessWindow(QDialog):
         self.bridge, self.mode = bridge, mode
         self.database = bridge.frame_db.databases[mode]
         self.directory = self.database.directory
-        self.session = PostProcessSession()
+        self._clouds = {}
+        self._display_ids = []
+        self._active_uid = None
+        self._undo = []
+        self._syncing = False
+        self._load_version = 0
+        self._pending_load = None
+        self._busy_kind = None
+        self._loading_ids = None
         self._worker = None
         self._segment = None
-        self._saved = set()
         self._closed = False
         self.setWindowTitle('MCC · 点云后处理')
         self.setWindowModality(Qt.WindowModal)
@@ -50,12 +55,10 @@ class PostprocessWindow(QDialog):
         actions = QHBoxLayout()
         self.actions = {}
         for key, text, glyph, callback in (
-            ('db', '从DB载入', 'layers', self.load_selected),
-            ('open', '打开点云', 'folder_open', self.open_file),
+            ('open', '导入点云', 'folder_open', self.open_file),
             ('select', '多边形框选', 'detect', self.start_polygon),
-            ('merge', '合并图层', 'stitch', self.merge_selected),
-            ('undo', '撤销', 'undo', self.undo),
-            ('publish', '写回DB', 'save', self.publish_selected),
+            ('merge', '合并点云', 'stitch', self.merge_selected),
+            ('undo', '撤销处理', 'undo', self.undo),
             ('export', '导出选中', 'save', self.export_selected),
             ('fit', '适配视图', 'reset_view', lambda: self.viewer.reset_view())):
             button = QToolButton()
@@ -67,7 +70,6 @@ class PostprocessWindow(QDialog):
             button.clicked.connect(callback)
             actions.addWidget(button)
             self.actions[key] = button
-        self.actions['publish'].setProperty('primaryAction', True)
         actions.addStretch()
         root.addLayout(actions)
         body = QSplitter(Qt.Horizontal)
@@ -76,22 +78,15 @@ class PostprocessWindow(QDialog):
         left = QSplitter(Qt.Vertical)
         left.setChildrenCollapsible(False)
         left.setMinimumWidth(300)
-        self.tree_tabs = QTabWidget()
         self.source_browser = FrameBrowser(self.database)
         self.source_browser.properties.hide()
         self.source_browser.footer.hide()
         self.source_browser.tree.customContextMenuRequested.disconnect()
         self.source_browser.tree.customContextMenuRequested.connect(self._source_menu)
-        self.source_browser.tree.itemDoubleClicked.connect(lambda *_: self.load_selected())
-        self.tree_tabs.addTab(self.source_browser, '项目 DB')
-        self.panel = CloudTreePanel(self.session)
-        self.panel.visibility_changed.connect(self._visibility)
-        self.panel.remove_requested.connect(self.remove_layers)
-        self.panel.restore_requested.connect(self.restore_removed)
-        self.panel.clear_requested.connect(lambda: self.remove_layers(list(range(len(self.session.layers)))))
-        self.panel.current_changed.connect(lambda *_: self._invalidate_polygon())
-        self.tree_tabs.addTab(self.panel, '处理图层')
-        left.addWidget(self.tree_tabs)
+        self.source_browser.tree.itemSelectionChanged.connect(self._selection_requested)
+        self.source_browser.tree.itemClicked.connect(self._selection_requested)
+        self.source_browser.checked_components_changed.connect(self._checks_requested)
+        left.addWidget(self.source_browser)
         params = QTabWidget()
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -135,7 +130,7 @@ class PostprocessWindow(QDialog):
         self.file_unit.addItem('米 m（载入后转为 mm）', 'm')
         rows.addRow('源文件单位', self.file_unit)
         form.addWidget(group)
-        hint = QLabel('分割沿当前视线投影，不区分前后深度。舍去部分保留为分支。\n原始 DB 数据不变，写回时生成独立后处理结果。')
+        hint = QLabel('分割沿当前视线投影，不区分前后深度。舍去部分保留为分支。\n处理完成自动新增 DB 后处理结果，原始数据保留。')
         hint.setWordWrap(True)
         form.addWidget(hint)
         form.addStretch()
@@ -161,11 +156,11 @@ class PostprocessWindow(QDialog):
         self.overlay.polygon_confirmed.connect(self.stage_polygon)
         self.overlay.cancelled.connect(self._invalidate_polygon)
         self.viewer.canvas_changed.connect(self._renderer_changed)
-        self.status = QLabel('从当前项目 DB 载入点云，或打开外部点云文件。')
+        self.status = QLabel('在 DB 树中选择或勾选点云；处理完成后自动生成 DB 结果。')
         self.status.setWordWrap(True)
         self.status.setTextFormat(Qt.PlainText)
         root.addWidget(self.status)
-        self._refresh()
+        self._refresh_controls()
 
     def _renderer_changed(self, *_):
         self._invalidate_polygon()
@@ -179,18 +174,34 @@ class PostprocessWindow(QDialog):
     def _source_menu(self, pos):
         self.source_browser._select_context_target(pos)
         menu = QMenu(self)
-        menu.addAction('载入选中点云到处理区', self.load_selected)
+        menu.addAction('显示选中点云', self.load_selected)
+        menu.addAction('导出选中点云…', self.export_selected)
         menu.exec(self.source_browser.tree.viewport().mapToGlobal(pos))
 
-    def _run(self, work, done):
+    def _selection_requested(self, *_):
+        if self._syncing or self._closed:
+            return
+        items = self.source_browser.tree.selectedItems()
+        if items and all(item.data(0, Qt.UserRole + 2) == 'image' for item in items):
+            return
+        identifiers = self.source_browser.selected_ids()
+        if identifiers:
+            self.load_selected(identifiers)
+
+    def _checks_requested(self, checked):
+        if not self._syncing and not self._closed:
+            self.load_selected([uid for uid, component in checked if component == 'cloud'])
+
+    def _run(self, work, done, *, kind='edit'):
         if self._worker is not None or self._closed:
             return False
         self._invalidate_polygon()
         worker = WorkerThread(work)
-        self._worker = worker
+        self._worker, self._busy_kind = worker, kind
         worker._task_name = 'postprocess'
         worker._must_finish = True
         self.bridge._workers.append(worker)
+
         def completed(result, error):
             if self._closed:
                 return
@@ -202,18 +213,22 @@ class PostprocessWindow(QDialog):
                     done(result)
                 except Exception as exc:
                     self.status.setText('更新结果失败：' + str(exc))
+
         def finished():
             if worker in self.bridge._workers:
                 self.bridge._workers.remove(worker)
-            self._worker = None
+            self._worker, self._busy_kind = None, None
             worker.deleteLater()
             if not self._closed:
                 self._refresh_controls()
                 self.bridge.shell._industrial_ribbon.update_status()
+                if self._pending_load is not None:
+                    pending, self._pending_load = self._pending_load, None
+                    self.load_selected(pending)
         worker.result_ready.connect(completed)
         worker.finished.connect(finished)
         self._refresh_controls()
-        self.status.setText('正在后台处理点云…')
+        self.status.setText('正在后台读取点云…' if kind == 'load' else '正在处理并更新 DB…')
         worker.start()
         return True
 
@@ -221,62 +236,47 @@ class PostprocessWindow(QDialog):
         ready = self._worker is None
         for button in self.actions.values():
             button.setEnabled(ready)
+        self.source_browser.setEnabled(ready)
         self.params.setEnabled(ready)
-        self.tree_tabs.setEnabled(ready)
-        self.actions['undo'].setEnabled(ready and self.session.can_undo)
-
-    def _refresh(self, select=None, fit=False):
-        self._invalidate_polygon()
-        self.panel.refresh(select=select)
-        self._refresh_display(fit=fit)
-        self._refresh_controls()
+        self.actions['undo'].setEnabled(ready and bool(self._undo))
+        self.actions['merge'].setEnabled(ready and len(self._display_ids) > 1)
+        self.actions['select'].setEnabled(ready and self._active_uid in self._clouds)
 
     def _refresh_display(self, *, fit=False):
-        # The renderer consumes array views; do not duplicate full geometry on the UI thread.
-        clouds = {str(index): layer for index, layer in enumerate(self.session.layers) if layer.visible}
-        self.viewer.replace_pointclouds(clouds, fit=fit)
+        self.viewer.replace_pointclouds(
+            {uid: self._clouds[uid] for uid in self._display_ids if uid in self._clouds}, fit=fit)
 
-    def _visibility(self, index, visible):
-        self.session.layers[index].visible = visible
+    def _show_records(self, layers, *, refresh=False, fit=False, select=True):
+        """GUI-only completion: model rebuilds never run in itemChanged handlers."""
         self._invalidate_polygon()
-        # Called synchronously inside QTreeWidgetItem.setData(). Rebuilding the
-        # tree here destroys the emitting item before Qt finishes updating it.
-        self._refresh_display()
-        self.panel._update_details()
-
-    def load_selected(self, identifiers=None):
-        if isinstance(identifiers, bool):
-            identifiers = None
-        if identifiers is None:
-            identifiers = [uid for uid, _ in self.source_browser.checked_components('cloud')] or self.source_browser.selected_ids()
-        identifiers = list(dict.fromkeys(identifiers))
-        if not identifiers:
-            self.status.setText('请在项目 DB 中勾选或选中点云。')
-            return
-        directory = self.directory
-        with self.database._lock:
-            tokens = [(uid, self.database.records[uid].revision) for uid in identifiers if uid in self.database.records]
-        if len(tokens) != len(identifiers):
-            self.status.setText('来源数据已变化，请重新选择点云。')
-            return
-        def work():
-            layers = []
-            for uid, revision in tokens:
-                with self.database._lock:
-                    self._validate_source(directory, [(uid, revision)])
-                    record = self.database.records[uid]
-                    _, cloud = self.database.load_frame(uid, 'cloud')
-                    layers.append(CloudLayer(record.logical_name, np.asarray(cloud.points),
-                        np.asarray(cloud.colors) if cloud.has_colors() else None,
-                        source=f'DB · {record.logical_name}', origins=((uid, revision),)))
-            return layers
-        def done(layers):
-            self.session.layers.extend(layers)
-            self._saved.update(layer.token for layer in layers)
-            self._refresh(select=len(self.session.layers)-1, fit=True)
-            self.tree_tabs.setCurrentIndex(1)
-            self.status.setText(f'已从 DB 载入 {len(layers)} 帧点云；原数据保持独立。')
-        self._run(work, done)
+        self._clouds = {layer.origins[0][0]: layer for layer in layers}
+        self._display_ids = list(self._clouds)
+        if self._active_uid not in self._clouds:
+            self._active_uid = next(iter(self._clouds), None)
+        self._syncing = True
+        try:
+            if refresh:
+                self.source_browser.refresh()
+            with QSignalBlocker(self.source_browser.tree):
+                for (uid, component), item in self.source_browser._component_items.items():
+                    if component == 'cloud':
+                        item.setCheckState(0, Qt.Checked if uid in self._clouds else Qt.Unchecked)
+                if select:
+                    self.source_browser.tree.clearSelection()
+                    for uid in self._display_ids:
+                        item = self.source_browser._component_items.get((uid, 'cloud'))
+                        if item is not None:
+                            item.setSelected(True)
+                    current = self.source_browser._component_items.get((self._active_uid, 'cloud'))
+                    self.source_browser.tree.setCurrentItem(current, 0, QItemSelectionModel.NoUpdate)
+                    if current is not None:
+                        self.source_browser.tree.scrollToItem(current)
+            self.source_browser._selection_changed()
+            self.source_browser._publish_checks()
+        finally:
+            self._syncing = False
+        self._refresh_display(fit=fit)
+        self._refresh_controls()
 
     def _validate_source(self, directory, tokens):
         if self.database.directory != directory:
@@ -284,61 +284,129 @@ class PostprocessWindow(QDialog):
         for uid, revision in tokens:
             record = self.database.records.get(uid)
             if record is None or record.revision != revision or record.status == STALE_RESULT:
-                raise ValueError('来源数据已删除、替换或失效，请重新载入。')
+                raise ValueError('来源数据已删除、替换或失效，请重新选择。')
+
+    def _read_records(self, directory, tokens):
+        layers = []
+        with self.database._lock:
+            self._validate_source(directory, tokens)
+            for uid, revision in tokens:
+                record = self.database.records[uid]
+                _, cloud = self.database.load_frame(uid, 'cloud')
+                layers.append(CloudLayer(record.logical_name, np.asarray(cloud.points),
+                    np.asarray(cloud.colors) if cloud.has_colors() else None,
+                    source=f'DB · {record.logical_name}', origins=((uid, revision),)))
+        return layers
+
+    def load_selected(self, identifiers=None):
+        if isinstance(identifiers, bool) or identifiers is None:
+            identifiers = self.source_browser.selected_ids() or [
+                uid for uid, _ in self.source_browser.checked_components('cloud')]
+        identifiers = list(dict.fromkeys(identifiers))
+        if self._closed:
+            return
+        if self._worker is not None:
+            if self._busy_kind == 'load':
+                if self._pending_load == identifiers or (self._pending_load is None and self._loading_ids == identifiers):
+                    return
+                self._load_version += 1
+                self._pending_load = identifiers
+            return
+        self._load_version += 1
+        version = self._load_version
+        if not identifiers:
+            self._show_records([], select=False)
+            self.status.setText('请选择或勾选 DB 点云。')
+            return
+        directory = self.directory
+        current = self.source_browser.tree.currentItem()
+        active = current.data(0, Qt.UserRole) if current is not None else None
+        self._loading_ids = identifiers
+        with self.database._lock:
+            if any(uid not in self.database.records for uid in identifiers):
+                self.status.setText('来源数据已变化，请重新选择。')
+                return
+            tokens = [(uid, self.database.records[uid].revision) for uid in identifiers]
+        def done(layers):
+            if version != self._load_version:
+                return
+            self._active_uid = active if active in identifiers else identifiers[0]
+            self._show_records(layers, fit=True)
+            self.status.setText(f'已显示 {len(layers)} 项 DB 点云；处理完成后自动新增结果。')
+        self._run(lambda: self._read_records(directory, tokens), done, kind='load')
+
+    def _publish_layers(self, layers, directory):
+        """Worker-only: validate provenance and atomically publish all outputs."""
+        import open3d as o3d
+        entries = []
+        for layer in layers:
+            cloud = o3d.geometry.PointCloud()
+            cloud.points = o3d.utility.Vector3dVector(layer.points.copy())
+            if layer.colors is not None:
+                cloud.colors = o3d.utility.Vector3dVector(layer.colors.copy())
+            entries.append((cloud, [uid for uid, _ in layer.origins], layer.name))
+        with self.database._lock:
+            self._validate_source(directory, [token for layer in layers for token in layer.origins])
+            identifiers = self.database.publish_results(entries, postprocess=True)
+            for uid, layer in zip(identifiers, layers):
+                layer.origins = ((uid, self.database.records[uid].revision),)
+        return layers
+
+    def _commit_operation(self, work):
+        if self._worker is not None:
+            return
+        directory = self.directory
+        before = tuple(self._clouds[uid].origins[0] for uid in self._display_ids)
+        def run():
+            return self._publish_layers(work(), directory)
+        def done(layers):
+            self._undo.append((tuple(layer.origins[0] for layer in layers), before))
+            self._undo = self._undo[-8:]
+            self._active_uid = None
+            # Keep the retained split visible; the discard branch remains in DB.
+            self._show_records(layers[:1], refresh=True)
+            self.bridge.shell.set_dirty(True)
+            self.status.setText(f'已自动新增 {len(layers)} 项 DB 后处理结果；请在主程序保存会话。')
+        self._run(run, done)
 
     def open_file(self):
-        path, _ = QFileDialog.getOpenFileName(self, '打开点云（请先确认左侧源文件单位）', '', '点云 (*.ply *.pcd *.xyz *.pts)')
+        path, _ = QFileDialog.getOpenFileName(self, '导入点云（请先确认源文件单位）', '', '点云 (*.ply *.pcd *.xyz *.pts)')
         if path:
             unit = self.file_unit.currentData()
-            def done(layer):
-                self.session.layers.append(layer)
-                self._refresh(select=len(self.session.layers)-1, fit=True)
-                self.tree_tabs.setCurrentIndex(1)
-            self._run(lambda: read_cloud(path, unit), done)
+            self._commit_operation(lambda: [read_cloud(path, unit)])
 
     def _selected_layer(self):
-        index = self.panel.current_index()
-        if index is None:
-            self.status.setText('请先选择处理图层。')
+        uid = self._active_uid
+        if uid not in self._clouds:
+            self.status.setText('请先在 DB 树中选择点云。')
             return None, None
-        return index, self.session.layers[index]
-
-    def _replace(self, index, layer):
-        self.session.snapshot()
-        self.session.layers[index] = layer
-        self._refresh(select=index)
+        return uid, self._clouds[uid]
 
     def downsample(self, method):
-        index, source = self._selected_layer()
+        _, source = self._selected_layer()
         if source is None:
             return
         value = self.voxel.value() if method == 'voxel' else self.ratio.value()/100
         def work():
             data = voxel_downsample(source.points, source.colors, value) if method == 'voxel' else random_downsample(source.points, source.colors, value)
-            return CloudLayer(source.name, data[0], data[1], source.visible,
-                              source.source + f' | {method}({value:g})', origins=source.origins)
-        self._run(work, lambda layer: self._replace(index, layer))
+            title = '体素下采样' if method == 'voxel' else '随机抽样'
+            return [CloudLayer(source.name+' · '+title, data[0], data[1],
+                               source=source.source, origins=source.origins)]
+        self._commit_operation(work)
 
     def merge_selected(self):
-        indices = self.panel.selected_indices()
-        if len(indices) < 2:
-            self.status.setText('请在处理图层树中选择至少两层。')
+        layers = [self._clouds[uid] for uid in self._display_ids]
+        if len(layers) < 2:
+            self.status.setText('请在 DB 树中勾选或多选至少两项点云。')
             return
-        layers = [self.session.layers[i] for i in indices]
         def work():
             colors = (np.vstack([layer.colors if layer.colors is not None else
                                  np.tile([.66, .81, .91], (len(layer.points), 1)) for layer in layers])
                       if any(layer.colors is not None for layer in layers) else None)
-            return CloudLayer(f'合并点云 ({len(layers)} 层)', np.vstack([layer.points for layer in layers]), colors,
-                              source='合并：' + '、'.join(layer.name for layer in layers),
-                              origins=tuple(dict.fromkeys(token for layer in layers for token in layer.origins)))
-        def done(layer):
-            self.session.snapshot()
-            for index in reversed(indices):
-                self.session.layers.pop(index)
-            self.session.layers.insert(indices[0], layer)
-            self._refresh(select=indices[0], fit=True)
-        self._run(work, done)
+            return [CloudLayer(f'合并点云 ({len(layers)} 帧)', np.vstack([layer.points for layer in layers]), colors,
+                               source='DB 合并', origins=tuple(dict.fromkeys(
+                                   token for layer in layers for token in layer.origins)))]
+        self._commit_operation(work)
 
     def _view(self):
         canvas = self.viewer.canvas
@@ -347,18 +415,17 @@ class PostprocessWindow(QDialog):
                     width=max(1, canvas.width()), height=max(1, canvas.height()))
 
     def start_polygon(self):
-        if self._selected_layer()[1] is None:
-            return
-        self._segment = None
-        self.overlay.activate()
+        if self._selected_layer()[1] is not None:
+            self._segment = None
+            self.overlay.activate()
 
     def stage_polygon(self, polygon):
-        index, layer = self._selected_layer()
+        uid, layer = self._selected_layer()
         if layer is None:
             return
         view = self._view()
         def done(mask):
-            self._segment = (index, layer, mask, view)
+            self._segment = (uid, layer, mask, view)
             self.overlay._confirmed_polygon = list(polygon)
             self.overlay._vertices = list(polygon)
             self.overlay.setAttribute(Qt.WA_TransparentForMouseEvents, True)
@@ -371,13 +438,12 @@ class PostprocessWindow(QDialog):
         if self._segment is None:
             self.status.setText('请先完成多边形框选。')
             return
-        index, source, mask, view = self._segment
-        current = self._view()
-        if any(not np.allclose(current[key], value) for key, value in view.items()):
+        uid, source, mask, view = self._segment
+        if any(not np.allclose(self._view()[key], value) for key, value in view.items()):
             self._invalidate_polygon()
             self.status.setText('视角或视区尺寸已变化，请重新框选。')
             return
-        if self.session.layers[index] is not source:
+        if self._clouds.get(uid) is not source:
             self._invalidate_polygon()
             return
         keep = mask if keep_inside else ~mask
@@ -385,18 +451,15 @@ class PostprocessWindow(QDialog):
             self.status.setText('保留部分为空，已拒绝分割。')
             return
         def work():
-            def build(name, selected):
-                return CloudLayer(name, source.points[selected], None if source.colors is None else source.colors[selected],
-                                  source.visible, source.source + ' | 多边形分割', origins=source.origins)
-            return build(source.name, keep), build(source.name+' · 分割分支', ~keep) if (~keep).any() else None
-        def done(result):
-            kept, branch = result
-            self.session.snapshot()
-            self.session.layers[index] = kept
-            if branch is not None:
-                self.session.layers.insert(index+1, branch)
-            self._refresh(select=index)
-        self._run(work, done)
+            def build(selected, inside):
+                return CloudLayer(source.name + (' · 框内' if inside else ' · 框外'),
+                    source.points[selected], None if source.colors is None else source.colors[selected],
+                    source=source.source, origins=source.origins)
+            layers = [build(keep, keep_inside)]
+            if (~keep).any():
+                layers.append(build(~keep, not keep_inside))
+            return layers
+        self._commit_operation(work)
 
     def _invalidate_polygon(self, *_):
         self._segment = None
@@ -406,71 +469,58 @@ class PostprocessWindow(QDialog):
             self.segment_label.setText('左键添加顶点，Alt+左键撤点；右键封闭，Esc取消。')
 
     def undo(self):
-        if self._worker is not None:
+        if self._worker is not None or not self._undo:
             return
-        if self.session.undo():
-            self._refresh()
-
-    def remove_layers(self, indices):
-        if self._worker is not None or not indices:
-            return
-        indices = sorted(set(indices))
-        self.session.removed.append([(index, self.session.layers[index]) for index in indices])
-        # Recycle operations use their own restoration history.
-        for index in reversed(indices):
-            self.session.layers.pop(index)
-        self.session._undo.clear()  # Prevent old edits resurrecting recycled layers twice.
-        self._refresh()
-
-    def restore_removed(self):
-        if self._worker is not None:
-            return
-        if self.session.removed:
-            for index, layer in self.session.removed.pop():
-                self.session.layers.insert(min(index,len(self.session.layers)), layer)
-            self._refresh()
-
-    def publish_selected(self):
-        indices = self.panel.selected_indices()
-        if len(indices) != 1:
-            self.status.setText('请选择一个处理图层写回 DB；多层请先合并或分别写回。')
-            return
-        layer = self.session.layers[indices[0]]
+        outputs, before = self._undo[-1]
         directory = self.directory
         def work():
-            import open3d as o3d
-            cloud = o3d.geometry.PointCloud()
-            cloud.points = o3d.utility.Vector3dVector(layer.points.copy())
-            if layer.colors is not None:
-                cloud.colors = o3d.utility.Vector3dVector(layer.colors.copy())
-            with self.database._lock:
-                self._validate_source(directory, layer.origins)
-                return self.database.publish_result(cloud, [uid for uid,_ in layer.origins],
-                    postprocess=True, name=layer.name + ' · 后处理')
-        def done(uid):
-            self._saved.add(layer.token)
-            self.source_browser.refresh()
+            from core.utils import rvc_sdk_lock
+            with rvc_sdk_lock, self.database._lock:
+                self._validate_source(directory, outputs)
+                identifiers = {uid for uid, _ in outputs}
+                if any(identifiers.intersection(record.source_ids) for uid, record in self.database.records.items()
+                       if uid not in identifiers):
+                    raise ValueError('此结果已有派生数据，不能撤销。')
+                layers = self._read_records(directory, before)
+                self.database.remove(identifiers)
+                return layers
+        def done(layers):
+            self._undo.pop()
+            self._active_uid = None
+            self._show_records(layers, refresh=True)
             self.bridge.shell.set_dirty(True)
-            self.status.setText(f'已写回 DB：{self.database.records[uid].logical_name}；请在主程序保存会话。')
+            self.status.setText('已撤销处理；生成结果已移入 DB 回收区，来源数据保留。')
         self._run(work, done)
 
     def export_selected(self):
-        indices = self.panel.selected_indices()
-        if not indices:
-            self.status.setText('请选择要导出的处理图层。')
+        identifiers = self.source_browser.selected_ids() or list(self._display_ids)
+        if not identifiers:
+            self.status.setText('请选择 DB 点云。')
             return
-        path, _ = QFileDialog.getSaveFileName(self, '导出选中图层（mm）', 'postprocess.ply', 'PLY (*.ply)')
-        if path:
-            layers = [self.session.layers[i] for i in indices]
-            # Export selection is independent of viewport visibility.
-            def done(count):
-                self._saved.update(layer.token for layer in layers)
-                self.status.setText(f'已导出 {count:,} 点。')
-            self._run(lambda: write_cloud(str(Path(path).with_suffix('.ply')),
-                [CloudLayer(layer.name, layer.points, layer.colors) for layer in layers]), done)
+        path, _ = QFileDialog.getSaveFileName(self, '导出选中 DB 点云（mm）', 'postprocess.ply', 'PLY (*.ply)')
+        if not path:
+            return
+        path = str(Path(path).with_suffix('.ply'))
+        directory = self.directory
+        with self.database._lock:
+            tokens = [(uid, self.database.records[uid].revision) for uid in identifiers if uid in self.database.records]
+        def work():
+            if len(tokens) != len(identifiers):
+                raise ValueError('来源数据已变化')
+            with self.database._lock:
+                self._validate_source(directory, tokens)
+                if Path(path).resolve().is_relative_to(directory.resolve()):
+                    raise ValueError('不能导出到当前 DB 内部，请选择其他目录')
+                if len(identifiers) == 1:
+                    self.database.export_cloud(identifiers[0], path)
+                    return self.database.records[identifiers[0]].points
+                layers = self._read_records(directory, tokens)
+            return write_cloud(path, layers)
+        self._run(work, lambda count: self.status.setText(f'已导出 {count:,} 点。'))
 
     def shutdown(self):
         self._closed = True
+        self._pending_load = None
         if self._worker is not None:
             self._worker.wait()
         self.viewer.shutdown()
@@ -483,12 +533,6 @@ class PostprocessWindow(QDialog):
     def closeEvent(self, event):
         if self._worker is not None:
             self.status.setText('正在处理或写入数据，请等待任务完成后关闭。')
-            event.ignore()
-            return
-        pending = any(layer.token not in self._saved for layer in self.session.layers)
-        if pending and QMessageBox.question(self, '关闭后处理',
-                '处理区有未写回 DB 或导出的图层。关闭将丢弃这些临时图层，是否关闭？',
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
             event.ignore()
             return
         self.shutdown()

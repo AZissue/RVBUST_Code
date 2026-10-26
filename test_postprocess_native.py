@@ -17,11 +17,10 @@ from shiboken6 import isValid
 from core.camera_manager import CameraManager
 from ui_common.industrial_scene.gpu_canvas import GpuCloudCanvas
 from ui_v2 import GLOBAL_QSS
-from ui_v2.dialogs import ChineseMessageBox as QMessageBox
 
 
 def main():
-    case = fixture.PostprocessTests('test_entry_reuses_window_and_shared_db_without_reset')
+    case = fixture.PostprocessTests('test_single_db_entry_in_each_mode_and_busy_gate')
     case.setUpClass()
     if case.app.platformName().lower() in ('offscreen', 'minimal'):
         print('[SKIPPED] Native OpenGL platform required', flush=True)
@@ -61,32 +60,36 @@ def main():
                 canvas = editor.viewer.canvas
                 assert isinstance(canvas, GpuCloudCanvas), 'Unexpected software fallback'
                 assert canvas._ready, canvas._failure
-                assert len(editor.session.layers[0].points) == len(points)
-                item = editor.panel._items[0]
+                assert len(editor._clouds[result].points) == len(points)
+                item = editor.source_browser._component_items[result, 'cloud']
                 for visible in (False, True, False, True, False, True):
                     item.setCheckState(0, Qt.Checked if visible else Qt.Unchecked)
                     settle()
-                    assert isValid(item) and editor.panel._items[0] is item
-                    assert editor.session.layers[0].visible == visible
+                    assert isValid(item) and editor.source_browser._component_items[result, 'cloud'] is item
+                    assert bool(editor._display_ids) == visible
                 # Exercise Qt's event-driven checkbox path as well as direct setData.
-                editor.panel.tree.setFocus()
+                editor.source_browser.tree.setFocus()
                 for visible in (False, True):
-                    QTest.keyClick(editor.panel.tree, Qt.Key_Space)
+                    QTest.keyClick(editor.source_browser.tree, Qt.Key_Space)
                     settle()
-                    assert isValid(item) and editor.panel._items[0] is item
-                    assert editor.session.layers[0].visible == visible
+                    assert isValid(item) and editor.source_browser._component_items[result, 'cloud'] is item
+                    assert bool(editor._display_ids) == visible
                 w, h = canvas.width(), canvas.height()
                 editor.stage_polygon([(w*.2, h*.2), (w*.8, h*.2), (w*.8, h*.8), (w*.2, h*.8)])
                 settle()
                 editor.apply_segment(True)
                 settle()
-                assert sum(len(layer.points) for layer in editor.session.layers) == len(points)
+                assert sum(case.db.records[uid].points for uid, _ in editor._undo[-1][0]) == len(points)
                 editor.undo()
                 settle()
                 editor.downsample('random')
                 settle()
-                with patch.object(QMessageBox, 'question', return_value=QMessageBox.Yes):
-                    editor.close()
+                generated = editor._display_ids[0]
+                assert generated in case.db.records
+                editor.undo()
+                settle()
+                assert generated in case.db.removed
+                editor.close()
                 case.app.processEvents()
                 print(f'CLOSE DB {cycle + 1}', flush=True)
             assert len(case.db.records) == 2, 'DB sources must not change'
@@ -97,7 +100,7 @@ def main():
             QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
             case.app.processEvents()
             case.doCleanups()
-    print('PASS: 5 DB reopens; 40 checkbox transitions; 1.4M points; native OpenGL; split/undo/downsample; no SDK', flush=True)
+    print('PASS: 5 DB reopens; 40 checkbox transitions; 1.4M points; native OpenGL; automatic DB split/downsample and undo; no SDK', flush=True)
 
 
 if __name__ == '__main__':

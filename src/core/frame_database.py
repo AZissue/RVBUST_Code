@@ -370,33 +370,57 @@ class FrameDatabase:
 
     def publish_result(self, cloud, source_ids, *, postprocess=False, name=None):
         """Commit a separate immutable result; never change raw frame geometry."""
+        return self.publish_results([(cloud, source_ids, name)], postprocess=postprocess)[0]
+
+    def publish_results(self, results, *, postprocess=False):
+        """Atomically commit related (cloud, source_ids, name) result branches.
+
+        In particular, polygon keep/discard branches must both succeed or neither
+        may appear in the DB. Notify observers only after the whole index commits.
+        """
         from .utils import write_point_cloud_atomic
-        uid = uuid.uuid4().hex
+        results = [(cloud, list(sources), name) for cloud, sources, name in results]
+        if not results:
+            raise ValueError('没有结果可写入')
+        role = '后处理' if postprocess else '拼接'
+        identifiers, folders, staged = [], [], {}
         with self._lock:
-            if (not postprocess and not source_ids) or any(
-                    key not in self.records or (not postprocess and self.records[key].kind != 'raw')
-                    or self.records[key].status == STALE_RESULT for key in source_ids):
-                raise ValueError(('后处理' if postprocess else '拼接') + '来源帧已变化，请重新执行')
+            for cloud, sources, _ in results:
+                if (not postprocess and not sources) or any(
+                        key not in self.records or (not postprocess and self.records[key].kind != 'raw')
+                        or self.records[key].status == STALE_RESULT for key in sources):
+                    raise ValueError(role + '来源帧已变化，请重新执行')
+                if cloud is None or not len(cloud.points):
+                    raise IOError(role + '结果写入失败')
+            previous_session, previous_sessions = self.session_id, self.sessions.copy()
             if self.session_id is None:
                 self.begin_session()
-            folder = self.directory / 'frames' / uid
-            folder.mkdir(parents=True)
+            number = 1 + sum(row.kind == 'result' for row in self.records.values())
             try:
-                if cloud is None or not len(cloud.points) or not write_point_cloud_atomic(str(folder / 'pointmap.ply'), cloud):
-                    raise IOError(('后处理' if postprocess else '拼接') + '结果写入失败')
-                number = 1 + sum(row.kind == 'result' for row in self.records.values())
-                role = '后处理结果' if postprocess else '拼接结果'
-                title = name or (f'后处理点云 {number:03d}' if postprocess else f'拼接帧 {number:03d}')
-                self.records[uid] = FrameRecord(uid, self.session_id, '', number, role,
-                    title, datetime.now().isoformat(timespec='seconds'),
-                    len(cloud.points), [0, 0], status='已处理' if postprocess else '已拼接', kind='result', source_ids=list(source_ids))
+                for cloud, sources, name in results:
+                    uid = uuid.uuid4().hex
+                    folder = self.directory / 'frames' / uid
+                    folders.append(folder)
+                    folder.mkdir(parents=True)
+                    if not write_point_cloud_atomic(str(folder / 'pointmap.ply'), cloud):
+                        raise IOError(role + '结果写入失败')
+                    title = name or (f'后处理点云 {number:03d}' if postprocess else f'拼接帧 {number:03d}')
+                    staged[uid] = FrameRecord(uid, self.session_id, '', number, role + '结果',
+                        title, datetime.now().isoformat(timespec='seconds'), len(cloud.points), [0, 0],
+                        status='已处理' if postprocess else '已拼接', kind='result', source_ids=sources)
+                    identifiers.append(uid)
+                    number += 1
+                self.records.update(staged)
                 self._save_index()
             except Exception:
-                self.records.pop(uid, None)
-                shutil.rmtree(folder, ignore_errors=True)
+                for uid in identifiers:
+                    self.records.pop(uid, None)
+                for folder in folders:
+                    shutil.rmtree(folder, ignore_errors=True)
+                self.session_id, self.sessions = previous_session, previous_sessions
                 raise
         self._notify()
-        return uid
+        return identifiers
 
     def remove(self, identifiers, *, invalidate_results=False):
         """Move owned pairs into a recoverable batch, committing the index last.
