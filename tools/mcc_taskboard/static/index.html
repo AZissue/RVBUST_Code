@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>MCC 评估与 Agent 任务看板</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="logo">MCC</span><div><h1>评估与 Agent 任务看板</h1><p id="project-meta">正在读取项目状态…</p></div></div>
+    <div class="actions">
+      <button id="refresh" class="secondary">刷新状态</button>
+      <button id="evaluate" class="primary">运行项目评估</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="kpis" aria-label="关键指标">
+      <article class="kpi"><span>测试通过率</span><strong id="pass-rate">—</strong><small id="test-total">尚未运行评估</small></article>
+      <article class="kpi"><span>待接取</span><strong id="open-count">0</strong><small>其他 Agent 可接取</small></article>
+      <article class="kpi"><span>进行中</span><strong id="active-count">0</strong><small>已接取 / 修复中 / 待复核</small></article>
+      <article class="kpi"><span>已完成</span><strong id="done-count">0</strong><small>验收通过并归档</small></article>
+    </section>
+
+    <section class="panel evaluation-panel">
+      <div class="panel-heading"><div><span class="eyebrow">VERIFICATION</span><h2>项目评估</h2></div><span id="evaluation-state" class="status idle">未运行</span></div>
+      <p class="muted">脚本式离线回归；失败项自动生成正式任务。通过不等于实机或硬件 GPU 验收。</p>
+      <div class="table-wrap">
+        <table><thead><tr><th>测试</th><th>退出码</th><th>耗时</th><th>结果</th></tr></thead><tbody id="evaluation-rows"><tr><td colspan="4" class="empty">点击“运行项目评估”获取当前代码的真实结果。</td></tr></tbody></table>
+      </div>
+    </section>
+
+    <section class="panel tasks-panel">
+      <div class="panel-heading"><div><span class="eyebrow">FORMAL TASKS</span><h2>正式修复任务</h2></div><span id="task-count" class="muted"></span></div>
+      <div class="toolbar">
+        <label>状态筛选 <select id="status-filter"><option value="">全部状态</option><option value="open">待接取</option><option value="claimed">已接取</option><option value="in_progress">修复中</option><option value="review">待复核</option><option value="done">已完成</option></select></label>
+        <label class="agent-field">当前 Agent <input id="agent-name" value="kimi-code" maxlength="60" autocomplete="off" placeholder="输入接取名称"></label>
+      </div>
+      <div id="task-list" class="task-list" aria-live="polite"></div>
+    </section>
+  </main>
+
+  <dialog id="task-dialog" aria-labelledby="dialog-title">
+    <div class="dialog-heading"><div><span id="dialog-priority" class="priority"></span><h2 id="dialog-title"></h2></div><button id="dialog-close" class="icon-button" aria-label="关闭任务详情">×</button></div>
+    <div id="dialog-body"></div>
+    <div class="dialog-actions">
+      <select id="next-status" aria-label="更新任务状态"></select>
+      <button id="update-status" class="primary">更新状态</button>
+      <button id="release-task" class="secondary">释放任务</button>
+      <button id="claim-task" class="primary">接取任务</button>
+    </div>
+  </dialog>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script src="/app.js"></script>
+</body>
+</html>

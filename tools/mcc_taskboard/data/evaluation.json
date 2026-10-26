@@ -1,0 +1,147 @@
+{
+  "state": "complete",
+  "started_at": "2026-10-26T17:30:37+08:00",
+  "finished_at": "2026-10-26T17:33:25+08:00",
+  "results": [
+    {
+      "name": "test_chain_stitcher.py",
+      "command": [
+        "D:\\Program Files\\Anaconda\\envs\\rvc\\python.exe",
+        "test_chain_stitcher.py"
+      ],
+      "returncode": 0,
+      "duration_sec": 4.636,
+      "log": "============================================================\nChainStitcher 合成数据测试\n============================================================\n\n[1] 单链 5 机位拼接精度测试\n  station_1: 机位 station_1 设为参考系，10 个标记\n  station_2: 机位 station_2 配准成功: 10 个共有标记, RMS 0.000mm, 内点率 100.0%, 累计误差 0.000mm\n  station_3: 机位 station_3 配准成功: 10 个共有标记, RMS 0.000mm, 内点率 100.0%, 累计误差 0.000mm\n  station_4: 机位 station_4 配准成功: 10 个共有标记, RMS 0.000mm, 内点率 100.0%, 累计误差 0.000mm\n  station_5: 机位 station_5 配准成功: 10 个共有标记, RMS 0.000mm, 内点率 100.0%, 累计误差 0.000mm\n  station_2→station_1 变换误差: 0.000000\n  station_3→station_1 变换误差: 0.000000\n  station_4→station_1 变换误差: 0.000000\n  station_5→station_1 变换误差: 0.000000\n  [OK] 单链 5 机位拼接精度达标\n\n[2] 链式累积误差与全局 BA 测试\n  机位 | BFS 误差 | BA 误差 | 理论值\n  station_2 | 0.497036 | 0.497036\n  station_3 | 0.863685 | 0.863685\n  station_4 | 6.461776 | 6.461776\n  station_5 | 16.027621 | 16.027621\n  [OK] 全局 BA 优化完成，误差可控\n\n[3] 闭环检测提示测试\n  检测到闭环机位: ['station_1', 'station_2', 'station_3']\n  [OK] 闭环检测提示正常\n\n[4] 配准质量门限测试\n  标记不足: 共有标记不足: 5 < 8\n  [OK] 配准质量门限生效\n\n[5] 配准失败残留节点清理 + 重拍成功测试\n  失败清理后重拍成功，station_2→station_1 变换误差: 0.000000\n  [OK] 配准失败节点已清理，重拍不崩溃且结果正确\n\n[6] PoseGraph 增量边添加与变换查询测试\n  B→A 平移: [10.  0.  0.]\n  C→A 平移: [19.84807753  1.73648178  0.        ]\n  C→B 平移: [10.  0.  0.]\n  复合关系误差: 0.000000\n  [OK] PoseGraph 增量边添加与变换查询正常\n\n[7] 删除中间机位后继续拍摄回归测试\n  删除 station_2 后节点: ['station_1', 'station_3', 'station_4', 'station_5']\n  继续拍摄 station_5 后节点: ['station_1', 'station_3', 'station_4', 'station_5']\n  [OK] 删除中间机位后继续拍摄不崩溃，位姿图保持连通\n\n============================================================\n[OK] 全部 ChainStitcher 测试通过\n============================================================\n"
+    },
+    {
+      "name": "test_workflows.py",
+      "command": [
+        "D:\\Program Files\\Anaconda\\envs\\rvc\\python.exe",
+        "test_workflows.py"
+      ],
+      "returncode": 0,
+      "duration_sec": 3.703,
+      "log": "============================================================\n工作流测试（无相机、无 GUI）\n============================================================\n\n[1] FixedMultiCamWorkflow 标定→扫描状态机测试\n  拼接点数: 6\n  标定保存/加载: C:\\Users\\jingz\\AppData\\Local\\Temp\\tmp0hcsljr0\\calibration.json\n  [OK] FixedMultiCamWorkflow 标定→扫描→保存链路正常\n\n[2] MobileChainWorkflow 链式拼接流程测试\n  机位列表: ['station_1', 'station_2', 'station_3']\n  误差报告: 3 节点, 2 边\n  [OK] MobileChainWorkflow 链式拼接流程正常\n\n[2b] 模式 B 状态一致性回归测试\n  全局优化残差: 0.000000mm -> 0.000000mm\n  删除机位 2 后列表: ['station_1', 'station_3']\n  重拍 station_3 后列表: ['station_1', 'station_4']\n  [OK] 模式 B 状态一致性回归通过\n\n[3] SessionManager 统一会话创建与加载测试\n  [OK] SessionManager 统一会话创建与加载正常\n\n============================================================\n[OK] 全部工作流测试通过\n============================================================\n"
+    },
+    {
+      "name": "test_station.py",
+      "command": [
+        "D:\\Program Files\\Anaconda\\envs\\rvc\\python.exe",
+        "test_station.py"
+      ],
+      "returncode": 0,
+      "duration_sec": 4.946,
+      "log": "============================================================\nMultiCameraCalibration 站位模式测试（offscreen + 合成数据）\n============================================================\n\n[1] StationManager：mock 物理相机拍摄 3 个站位\n  站位 ID: ['station_1', 'station_2', 'station_3'] | 会话目录: C:\\Users\\jingz\\AppData\\Local\\Temp\\mcc_station_5sbefox7\\stations\\session_20261026_173050\n  每站位目录含 station_1.png/.ply/meta.json，get_frames 返回 3 个离线帧\n  [OK] StationManager 拍摄存盘通过\n\n[2] 站位帧持久性（后续拍摄不覆盖先拍站位）\n  3 次连续拍摄后，站位 1 的 PNG/PLY 均完好且内容与原始一致\n  [OK] 站位帧持久性通过\nStation persistence, UIv2 mapping, deletion and session reset: ALL OK\n"
+    },
+    {
+      "name": "test_handeye.py",
+      "command": [
+        "D:\\Program Files\\Anaconda\\envs\\rvc\\python.exe",
+        "test_handeye.py"
+      ],
+      "returncode": 0,
+      "duration_sec": 1.307,
+      "log": "============================================================\nHandEyeCalibrator 测试\n============================================================\n\n[1] Eye-in-Hand 合成数据标定（15 组样本，无噪声）\n  样本数: 15\n  平移一致性 RMS: 0.0000 mm\n  旋转一致性 RMS: 0.0000°\n  相对真值平移误差: 0.0000 mm，旋转误差: 0.0000°\n  [OK] Eye-in-Hand 标定精度满足要求\n\n[2] Eye-in-Hand 带 0.1mm/0.05° 噪声\n  相对真值平移误差: 0.0931 mm，旋转误差: 0.0208°\n  [OK] 带噪声标定仍满足亚毫米/亚度级精度\n\n[3] 样本不足应返回失败\n  失败提示: 手眼标定至少需要 3 组样本\n  [OK] 样本不足正确失败\n\n[4] 手眼结果 JSON 保存/加载\n  加载后相对真值平移误差: 0.0000 mm，旋转误差: 0.0000°\n  [OK] 保存/加载一致\n\n[5] Eye-to-Hand 合成数据标定\n  样本数: 15\n  平移一致性 RMS: 0.0000 mm\n  旋转一致性 RMS: 0.0000°\n  相对真值平移误差: 0.0000 mm，旋转误差: 0.0000°\n  [OK] Eye-to-Hand 标定精度满足要求\n\n============================================================\n[OK] 所有 HandEye 测试通过\n============================================================\n"
+    },
+    {
+      "name": "test_robot_stitch.py",
+      "command": [
+        "D:\\Program Files\\Anaconda\\envs\\rvc\\python.exe",
+        "test_robot_stitch.py"
+      ],
+      "returncode": 0,
+      "duration_sec": 3.407,
+      "log": "============================================================\nRobotStitchWorkflow 合成数据测试\n============================================================\n\n[1] Eye-in-Hand 机器人拼接测试\n  合并点数: 15000\n  物体中心估计: [400.89 200.04 100.31]\n  中心误差: 0.941 mm\n  [OK] Eye-in-Hand 拼接精度满足要求\n\n[2] Eye-to-Hand 机器人拼接测试\n  合并点数: 15000\n  物体中心估计: [401.   199.82 100.29]\n  中心误差: 1.052 mm\n  [OK] Eye-to-Hand 拼接精度满足要求\n\n============================================================\n[OK] 所有机器人拼接测试通过\n============================================================\n"
+    },
+    {
+      "name": "test_robot_handeye_core.py",
+      "command": [
+        "D:\\Program Files\\Anaconda\\envs\\rvc\\python.exe",
+        "test_robot_handeye_core.py"
+      ],
+      "returncode": 0,
+      "duration_sec": 5.206,
+      "log": "..........\n----------------------------------------------------------------------\nRan 10 tests in 0.953s\n\nOK\n"
+    },
+    {
+      "name": "test_robot_handeye_file.py",
+      "command": [
+        "D:\\Program Files\\Anaconda\\envs\\rvc\\python.exe",
+        "test_robot_handeye_file.py"
+      ],
+      "returncode": 0,
+      "duration_sec": 0.882,
+      "log": "..\n----------------------------------------------------------------------\nRan 2 tests in 0.193s\n\nOK\n"
+    },
+    {
+      "name": "test_robot_workspace.py",
+      "command": [
+        "D:\\Program Files\\Anaconda\\envs\\rvc\\python.exe",
+        "test_robot_workspace.py"
+      ],
+      "returncode": 0,
+      "duration_sec": 11.879,
+      "log": ".....\n----------------------------------------------------------------------\nRan 5 tests in 5.528s\n\nOK\n"
+    },
+    {
+      "name": "test_robot_session.py",
+      "command": [
+        "D:\\Program Files\\Anaconda\\envs\\rvc\\python.exe",
+        "test_robot_session.py"
+      ],
+      "returncode": 1,
+      "duration_sec": 53.21,
+      "log": "..F...\n======================================================================\nFAIL: test_offline_capture_reuses_db_frames_and_publishes_sources (__main__.RobotSessionTests)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"D:\\RVC_SRC\\Python\\MultiCameraCalibration\\test_robot_session.py\", line 36, in test_offline_capture_reuses_db_frames_and_publishes_sources\n    self.wait(lambda: getattr(self.win, '_offline_preview', False) and\n  File \"D:\\RVC_SRC\\Python\\MultiCameraCalibration\\test_ui_frame_database.py\", line 58, in wait\n    self.fail('DB operation timed out')\nAssertionError: DB operation timed out\n\n----------------------------------------------------------------------\nRan 6 tests in 47.104s\n\nFAILED (failures=1)\n"
+    },
+    {
+      "name": "smoke_test.py",
+      "command": [
+        "D:\\Program Files\\Anaconda\\envs\\rvc\\python.exe",
+        "src/ui_v2/smoke_test.py"
+      ],
+      "returncode": 0,
+      "duration_sec": 22.857,
+      "log": "  ok: 默认模式为多相机\n  ok: 未选设备时连接禁用\n  ok: 多相机选 2 台可连接\n  ok: 切模式清空多选\n  ok: 单相机选 2 台禁止连接\n  ok: 单相机选 1 台可连接\n  ok: 搜索过滤生效（X1 被隐藏）\n  ok: 模式 B 工作区切换\n  ok: 模式 D 机器人工作区切换\n  ok: 模式 D 新版布局\n  ok: 模式 A 工作区切换\n  ok: A 初始 connected\n  ok: A 拍摄可用\n  ok: A 检测禁用（未拍摄）\n  ok: A 检测可用\n  ok: A 计算外参可用\n  ok: A 质量门禁通过但扫描仍待锁定\n  ok: A 锁定后扫描可用\n  ok: A 撤板横幅显示\n  ok: A 门禁失败禁扫描\n  ok: B 初始 connected\n  ok: B 拍摄可用\n  ok: B 撤销禁用（无机位）\n  ok: B 评估通过入链 1 机位\n  ok: B 评估失败拒绝入链\n  ok: B 撤销可用\n  ok: B 撤销后链清空\n  ok: B 闭环提示显示\n  ok: B 优化后闭环提示隐藏\n  ok: 模式 B 文案无标定术语\n  ok: 日志面板写入\n\n全部冒烟检查通过 [PASS]\n"
+    },
+    {
+      "name": "test_offline_workflow.py",
+      "command": [
+        "D:\\Program Files\\Anaconda\\envs\\rvc\\python.exe",
+        "prototypes/industrial_offline_stitch/tests/test_offline_workflow.py"
+      ],
+      "returncode": 0,
+      "duration_sec": 18.897,
+      "log": "..........\n----------------------------------------------------------------------\nRan 10 tests in 14.973s\n\nOK\n"
+    },
+    {
+      "name": "test_ui_smoke.py",
+      "command": [
+        "D:\\Program Files\\Anaconda\\envs\\rvc\\python.exe",
+        "prototypes/industrial_offline_stitch/tests/test_ui_smoke.py"
+      ],
+      "returncode": 0,
+      "duration_sec": 30.001,
+      "log": "..RPly: Wrong magic number. Expected 'ply'\n..\n----------------------------------------------------------------------\nRan 4 tests in 20.909s\n\nOK\n[Open3D WARNING] Read PLY failed: unable to parse header.\n"
+    },
+    {
+      "name": "test_store.py",
+      "command": [
+        "D:\\Program Files\\Anaconda\\envs\\rvc\\python.exe",
+        "tools/mcc_taskboard/tests/test_store.py"
+      ],
+      "returncode": 0,
+      "duration_sec": 2.619,
+      "log": ".......\n----------------------------------------------------------------------\nRan 7 tests in 2.126s\n\nOK\n"
+    },
+    {
+      "name": "test_server.py",
+      "command": [
+        "D:\\Program Files\\Anaconda\\envs\\rvc\\python.exe",
+        "tools/mcc_taskboard/tests/test_server.py"
+      ],
+      "returncode": 0,
+      "duration_sec": 4.157,
+      "log": "......\n----------------------------------------------------------------------\nRan 6 tests in 3.753s\n\nOK\n"
+    }
+  ]
+}
