@@ -130,9 +130,6 @@ class IndustrialRibbon(QWidget):
         line.addWidget(self.workflow_status)
         self.badge = QLabel(objectName='studioBadge')
         line.addWidget(self.badge)
-        self.postprocess_button = self._header_button('点云后处理', 'layers',
-            lambda: shell._backend_bridge and shell._backend_bridge.open_postprocess())
-        line.addWidget(self.postprocess_button)
         self.log_button = self._header_button('运行日志', 'terminal', shell._btn_log.click)
         self.log_button.setCheckable(True)
         shell._btn_log.toggled.connect(self.log_button.setChecked)
@@ -146,7 +143,7 @@ class IndustrialRibbon(QWidget):
             page = QWidget()
             row = QHBoxLayout(page)
             row.setContentsMargins(10, 5, 10, 4)
-            row.setSpacing(4)
+            row.setSpacing(2)
             self._pages[mode] = page
             self.pages.addWidget(page)
             self._build_mode(mode, row)
@@ -165,10 +162,10 @@ class IndustrialRibbon(QWidget):
     def _group(self, row, title, entries, mode):
         group = QFrame(objectName='ribbonGroup')
         col = QVBoxLayout(group)
-        col.setContentsMargins(2, 0, 5, 1)
+        col.setContentsMargins(1, 0, 3, 1)
         col.setSpacing(1)
         actions = QHBoxLayout()
-        actions.setSpacing(2)
+        actions.setSpacing(1)
         for key, text, glyph, source in entries:
             button = CommandButton(source, text, glyph, follow_text=mode == 'multi_cam' and key == 'capture') if hasattr(source, 'click') else RibbonButton()
             if not isinstance(button, CommandButton):
@@ -184,6 +181,10 @@ class IndustrialRibbon(QWidget):
                 button.setToolTip('返回工作视图：退出DB历史帧预览，恢复当前工作区的2D / 3D显示')
             elif key == 'manage':
                 button.setToolTip('会话占用 / 管理：查看磁盘占用、管理已保存会话与回收数据')
+            elif key == 'disconnect':
+                button.setToolTip('停止实时预览并断开当前所有已连接相机，保留DB、标定和采集结果')
+            elif key == 'postprocess':
+                button.setToolTip('打开点云后处理，直接使用当前项目DB数据')
             elif key == 'stitch':
                 button.setProperty('primaryAction', True)
             self.commands[(mode, key)] = button
@@ -210,6 +211,7 @@ class IndustrialRibbon(QWidget):
         ], mode)
         self._group(row, '设备', [
             ('devices', '设备管理', 'camera_multi', shell.open_device_manager),
+            ('disconnect', '断开连接', 'disconnect', lambda: shell._backend_bridge and shell._backend_bridge.disconnect_devices()),
             ('parameters', '参数调试', 'sliders', shell.open_param_debug),
         ], mode)
         if mode == 'multi_cam':
@@ -246,6 +248,8 @@ class IndustrialRibbon(QWidget):
         self._group(row, '视图', [('restore', '返回视图', 'undo', self.restore_view),
                                  ('fit', '适配视图', 'reset_view', self.fit_view),
                                  ('screenshot', '视图截图', 'video', self.screenshot)], mode)
+        self._group(row, '后处理', [('postprocess', '点云后处理', 'layers',
+            lambda: shell._backend_bridge and shell._backend_bridge.open_postprocess())], mode)
         # Keep existing controls for business logic; hide only their duplicates
         # in the new presentation. Classic visibility is restored on exit.
         self._sources.append(exports[mode])
@@ -305,7 +309,8 @@ class IndustrialRibbon(QWidget):
         self.camera_status.setVisible(multi)
         self.workflow_status.setVisible(multi)
         self.badge.setVisible(not multi or getattr(shell, '_offline_preview', False))
-        self.badge.setText('离线预览' if getattr(shell, '_offline_preview', False) else
+        self.badge.setText('正在断开连接…' if getattr(shell._backend_bridge, '_disconnecting', False) else
+                           '离线预览' if getattr(shell, '_offline_preview', False) else
                            f'已连接 {len(shell._devices)} 台设备' if shell._devices else '未连接相机')
         self.badge.setProperty('offline', bool(getattr(shell, '_offline_preview', False) or not shell._devices))
         self.badge.style().unpolish(self.badge)
@@ -319,7 +324,17 @@ class IndustrialRibbon(QWidget):
             '将当前基座系合并点云发布为独立DB结果，保留原始帧及来源关系。' if robot else
             '优先拼接DB勾选的至少两帧原始点云；按当前模式使用标记配准或标定参数，生成独立拼接帧。未勾选时沿用当前工作流。')
         bridge = shell._backend_bridge
-        self.postprocess_button.setEnabled(bool(bridge and bridge.can_change_workspace()))
+        ready = bool(bridge and bridge.can_change_workspace())
+        for mode in self._pages:
+            self.commands[(mode, 'postprocess')].setEnabled(ready)
+            self.commands[(mode, 'disconnect')].setEnabled(
+                bool(ready and bridge.camera_manager.get_connected_ids()))
+            if getattr(bridge, '_disconnecting', False):
+                self.commands[(mode, 'devices')].setEnabled(False)
+                self.commands[(mode, 'parameters')].setEnabled(False)
+            else:
+                self.commands[(mode, 'devices')].setEnabled(True)
+                self.commands[(mode, 'parameters')].setEnabled(True)
         presentation = getattr(shell._stack.currentWidget(), '_industrial', None)
         browser = presentation.frame_browser if presentation is not None else None
         self.commands[(shell.current_mode(), 'export')].setEnabled(

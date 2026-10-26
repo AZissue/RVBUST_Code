@@ -106,9 +106,13 @@ class PreviewCaptureThread(QThread):
             elapsed_ms = (time.perf_counter() - t0) * 1000.0
             self.msleep(max(10, int(self._interval_ms - elapsed_ms)))
 
+    def request_stop(self):
+        """Signal cancellation without blocking the GUI thread."""
+        self._stop_flag = True
+
     def stop(self):
         """请求退出并等待在飞采集完成（最多 3s）。"""
-        self._stop_flag = True
+        self.request_stop()
         if not self.wait(3000):
             logger.warning("预览采集线程退出超时（在飞 SDK 采集超过 3s）")
 
@@ -175,6 +179,7 @@ class BackendBridge(QObject):
         # Offline preview never initializes the SDK. Hardware entry points opt in.
         self._sdk_initialized = False
         self.offline_preview = False
+        self._disconnecting = False
         from .frame_database import FrameDatabaseController
         self.frame_db = FrameDatabaseController(self)
         self.camera_manager.capture_sink = self.frame_db.capture
@@ -265,9 +270,86 @@ class BackendBridge(QObject):
         return self._on_device_manager_reopened(mode, devices, show_loading=show_loading)
 
     def can_change_workspace(self):
-        return (not any(worker.isRunning() for worker in self._workers)
+        return (not self._disconnecting and not any(worker.isRunning() for worker in self._workers)
                 and not self.shell.workspace_turntable().btn_auto_capture.isChecked()
                 and not self.shell.workspace_turntable()._busy)
+
+    def disconnect_devices(self, on_finished=None):
+        """Release connected devices after previews finish; keep all project data."""
+        if getattr(self, '_cleaned', False):
+            return False
+        if not self.can_change_workspace():
+            self.shell.log('当前任务进行中，请等待完成后再断开相机。', 'warn')
+            return False
+        connected = self.camera_manager.get_connected_ids()
+        if not connected:
+            self.shell.log('当前没有已连接的相机。', 'info')
+            return False
+        self._disconnecting = True
+        # Detach first so queued preview frames cannot update the retained image.
+        preview, self._preview_thread = self._preview_thread, None
+        self._preview_camera_id = None
+        if preview is not None:
+            preview.request_stop()
+        self._pause_card_preview()
+        self._card_preview_timer.stop()
+        self.shell.workspace_mobile().set_preview_enabled(False)
+        self._refresh_device_controls(force_off=True)
+        self.shell.log(f'正在断开 {len(connected)} 台相机，等待在飞预览结束…', 'info')
+
+        def work():
+            if preview is not None:
+                preview.wait()  # Must finish before releasing any SDK handles.
+            self.camera_manager.disconnect_all()
+
+        def done(_, error):
+            if preview is not None and not preview.isRunning():
+                preview.deleteLater()
+            self._disconnecting = False
+            if getattr(self, '_cleaned', False):
+                return
+            remaining = self.camera_manager.get_connected_ids()
+            self._refresh_device_controls()
+            success = error is None and not remaining
+            if success:
+                self.shell.log(f'已断开 {len(connected)} 台相机；DB、标定和采集数据已保留。', 'success')
+            else:
+                self.shell.log(f'断开连接未完成：{error or "仍有相机在线"}；剩余 {len(remaining)} 台在线，可重试。', 'error')
+            if on_finished is not None:
+                on_finished(success)
+        self._run_background(work, done, must_finish=True, name='device_disconnect')
+        return True
+
+    def _refresh_device_controls(self, *, force_off=False):
+        """Change capture availability without set_devices() resetting sessions."""
+        from dataclasses import replace
+        remaining = [] if force_off else self.camera_manager.get_connected_ids()
+        serials = {self.camera_manager._cameras[cid].sn for cid in remaining}
+        multi, mobile = self.shell.workspace_multi(), self.shell.workspace_mobile()
+        turn, robot = self.shell.workspace_turntable(), self.shell.workspace_robot()
+        for workspace in (multi, mobile, turn):
+            workspace._devices = [replace(device, online=device.serial in serials)
+                                  for device in workspace._devices]
+        # Reuse the existing read-only capture gates; this is not a simulated
+        # offline data provider and does not change the backend workflow.
+        multi.offline_preview = mobile.offline_preview = not bool(remaining)
+        for cid, card in multi._camera_grid._cards.items():
+            card.set_controls_enabled(cid in remaining)
+            if cid not in remaining:
+                card._btn_detect.setEnabled(card.current_frame() is not None)
+        for workspace in (multi, mobile, turn):
+            state = workspace.current_state()
+            workspace.set_state('idle' if not force_off and not remaining and state == 'connected' else state)
+        devices = [device for device in self.shell._devices if device.serial in serials]
+        robot.set_devices(devices)
+        if not force_off:
+            self.shell._devices = devices
+        for browser in self.frame_db.browsers.values():
+            browser.properties.capture.refresh(allow_auto=False)
+        status = getattr(getattr(multi, '_industrial', None), 'camera_status', None)
+        if status is not None:
+            status.refresh()
+        self.shell._refresh_statusbar()
 
     def capture_parameters(self, camera_id, values, done):
         """Serialize parameter I/O with capture, without touching project/DB state."""
@@ -296,18 +378,16 @@ class BackendBridge(QObject):
         自动按默认安装路径查找 D/C 盘；找不到时弹窗提示并允许用户
         自定义选择 RVCManager.exe 路径。
         """
-        # 1. 断开当前已连接相机
-        try:
-            connected_ids = self.camera_manager.get_connected_ids()
-            if connected_ids:
-                self.camera_manager.disconnect_all()
-                self.shell.log(
-                    f"已断开 {len(connected_ids)} 台相机，准备打开 RVCManager", "info")
-            else:
-                self.shell.log("当前无在线相机，直接打开 RVCManager", "info")
-        except Exception as e:
-            self.shell.log(f"断开相机时出错: {e}", "warn")
+        if not self.can_change_workspace():
+            self.shell.log('当前任务进行中，请等待完成后再打开参数调试。', 'warn')
+            return
+        if self.camera_manager.get_connected_ids():
+            self.disconnect_devices(lambda success: self._launch_param_debug() if success else None)
+        else:
+            self._launch_param_debug()
 
+    def _launch_param_debug(self):
+        """Launch RVCManager only after all device handles have been released."""
         # 2. 查找默认安装路径
         candidates = [
             r"D:\Program Files\RVBUST\RVC\RVCManager\RVCManager.exe",
@@ -560,6 +640,9 @@ class BackendBridge(QObject):
                           主程序新流程会在 launcher 小窗上先显示遮罩，
                           因此调用时传入 False。
         """
+        if self._disconnecting:
+            self.connection_finished.emit(False, '正在断开相机，请等待完成后再连接')
+            return
         if not self._ensure_sdk():
             self.connection_finished.emit(False, '相机 SDK 初始化失败，请查看日志')
             return
@@ -2430,7 +2513,7 @@ class BackendBridge(QObject):
             import traceback
             name = traceback.extract_stack()[-2].name
         project_task = name.startswith('project_')
-        inspection = name in ('calibration_inspection', 'capture_parameters')
+        inspection = name in ('calibration_inspection', 'capture_parameters', 'device_disconnect')
         if self.shell._presentation == 'industrial' and not project_task and not inspection:
             self.projects.prepare(self._current_mode)
         if name not in ('offline_preview', 'db_frame_preview', 'db_open_project', 'db_mutation') and not project_task and not inspection and self.shell._presentation == 'industrial':
