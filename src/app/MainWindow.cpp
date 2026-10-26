@@ -186,7 +186,9 @@ MainWindow::MainWindow(QWidget* parent)
 
     // 第 17 阶段 P1：控制台先接仿真运动后端，把连接/使能/点动/程序运行整条
     // 交互跑通；UR 真机后端按 RobotMotionBackend 接口接入后替换这一行即可。
-    m_programController = new RobotProgramController(new SimulatedMotionBackend, this);
+    m_programController = new RobotProgramController(
+        new SimulatedMotionBackend,
+        RobotProgramController::BackendKind::Simulated, this);
     m_programPhotoTimer = new QTimer(this);
     m_programPhotoTimer->setSingleShot(true);
     connect(m_programPhotoTimer, &QTimer::timeout, this, [this]() {

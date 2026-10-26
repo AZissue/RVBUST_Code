@@ -39,6 +39,7 @@
 #include "test_help_content.h"
 #include "test_robot_program.h"
 #include "test_camera_connect_diagnosis.h"
+#include "test_fairino.h"
 
 namespace {
 
@@ -250,6 +251,12 @@ int main(int argc, char** argv)
         // 与提示文案，纯函数，不连相机。
         TestCameraConnectDiagnosis t32;
         status |= runClass(&t32, argc, argv, "camera_connect_diagnosis");
+    }
+    {
+        // 法奥（FAIRINO）：20003 XML-RPC + 20004 状态包。假控制器在本进程内，
+        // 覆盖分帧/校验/重同步/最新帧，以及 MoveL/MoveJ 的参数布局。
+        TestFairino t33;
+        status |= runClass(&t33, argc, argv, "fairino");
     }
     return status;
 }

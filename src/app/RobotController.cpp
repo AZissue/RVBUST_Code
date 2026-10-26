@@ -34,6 +34,7 @@ RobotWorker::~RobotWorker() = default;
 RobotPose::Reader* RobotWorker::readerFor(int protocol)
 {
     switch (protocol) {
+    case 5:  return &m_fairinoReader;
     case 4:  return &m_rtdeReader;
     case 3:  return &m_eftReader;
     case 2:  return &m_nrcReader;
@@ -51,7 +52,11 @@ void RobotWorker::connectRobot(const QString& host, quint16 port, int protocol,
 
     // 协议特有的「连接前设置」+ 已连接文案里的协议标签，集中在这里一处。
     QString label;
-    if (protocol == 3) {
+    if (protocol == 5) {
+        // 法奥：20004 实时状态流。没有寄存器格式/系数要配，端口就是实时口。
+        m_fairinoReader.setTimeoutMs(1500);
+        label = QStringLiteral("%1:%2，法奥 20004").arg(host).arg(port);
+    } else if (protocol == 3) {
         // 埃夫特：走厂商 EfortSDK（EftSdk.dll）。地址串与端口由适配器决定，
         // 与 UR/NRC 一样没有寄存器格式/系数要配。
         label = QStringLiteral("%1，埃夫特 EfortSDK").arg(host);
@@ -98,16 +103,16 @@ void RobotWorker::connectRobot(const QString& host, quint16 port, int protocol,
 
 void RobotWorker::disconnectRobot()
 {
-    for (int p = 0; p <= 4; ++p)
+    for (int p = 0; p <= 5; ++p)
         readerFor(p)->disconnect();
     m_simulated = false;
 }
 
 void RobotWorker::simulateConnect()
 {
-    // "模拟连接成功" — no real Modbus socket; only sets the logical connected
+    // "模拟连接成功" — no real socket; only sets the logical connected
     // state so the read buttons / cards can be exercised in the UI.
-    for (int p = 0; p <= 4; ++p)
+    for (int p = 0; p <= 5; ++p)
         readerFor(p)->disconnect();
     m_simulated = true;
 }

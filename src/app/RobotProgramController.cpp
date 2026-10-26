@@ -1,5 +1,6 @@
 #include "app/RobotProgramController.h"
 
+#include "logic/FairinoMotionBackend.h"
 #include "logic/JogPolicy.h"
 #include "logic/SimulatedMotionBackend.h"
 #include "logic/UrMotionBackend.h"
@@ -7,6 +8,7 @@
 #include <algorithm>
 
 RobotProgramController::RobotProgramController(RobotMotionBackend* backend,
+                                               BackendKind kind,
                                                QObject* parent)
     : QObject(parent)
 {
@@ -19,7 +21,7 @@ RobotProgramController::RobotProgramController(RobotMotionBackend* backend,
         m_runner->notifyNodeFinished(true);
     });
 
-    attachBackend(backend);
+    attachBackend(backend, kind);
 
     connect(m_runner, &ProgramRunner::programChanged,
             this, &RobotProgramController::programChanged);
@@ -35,15 +37,15 @@ RobotProgramController::RobotProgramController(RobotMotionBackend* backend,
 
 RobotProgramController::~RobotProgramController() = default;
 
-void RobotProgramController::attachBackend(RobotMotionBackend* backend)
+void RobotProgramController::attachBackend(RobotMotionBackend* backend,
+                                           BackendKind kind)
 {
     m_backend = backend;
+    m_backendKind = kind;
     if (!backend)
         return;
     if (!backend->parent())
         backend->setParent(this);
-    m_backendKind = backend->isSimulated() ? BackendKind::Simulated
-                                            : BackendKind::Ur;
 
     connect(m_backend, &RobotMotionBackend::connectedChanged,
             this, &RobotProgramController::connectedChanged);
@@ -83,24 +85,35 @@ void RobotProgramController::setBackendKind(BackendKind kind)
         detachBackend();
     }
 
-    RobotMotionBackend* next = kind == BackendKind::Simulated
-        ? static_cast<RobotMotionBackend*>(new SimulatedMotionBackend(this))
-        : static_cast<RobotMotionBackend*>(new UrMotionBackend(this));
-    attachBackend(next);
+    RobotMotionBackend* next = nullptr;
+    switch (kind) {
+    case BackendKind::Ur:
+        next = new UrMotionBackend(this);
+        break;
+    case BackendKind::Fairino:
+        next = new FairinoMotionBackend(this);
+        break;
+    case BackendKind::Simulated:
+        next = new SimulatedMotionBackend(this);
+        break;
+    }
+    attachBackend(next, kind);
     emit backendChanged();
 }
 
 QString RobotProgramController::defaultHost(BackendKind kind)
 {
-    Q_UNUSED(kind);
-    return QStringLiteral("192.168.0.38");
+    // 法奥控制器的出厂/常见网段是 192.168.58.2（SDK 示例同此）；UR 沿用现场
+    // 一直用的 192.168.0.38。仿真不访问网络，给一个看起来正常的地址即可。
+    return kind == BackendKind::Fairino ? QStringLiteral("192.168.58.2")
+                                        : QStringLiteral("192.168.0.38");
 }
 
 quint16 RobotProgramController::defaultPort(BackendKind kind)
 {
-    // UR 实时反馈端口；仿真不访问网络，填同一个值只为界面一致。
-    Q_UNUSED(kind);
-    return 30003;
+    // 法奥控制台连的是 20003 命令口（20004 实时口由后端固定使用）；
+    // UR 是 30003 实时反馈。仿真填同一个值只为界面一致。
+    return kind == BackendKind::Fairino ? 20003 : 30003;
 }
 
 bool RobotProgramController::setProgram(const RobotProgram::Program& program,

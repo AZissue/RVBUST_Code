@@ -2355,6 +2355,8 @@ void ToolsPanel::buildRobotCommPage(QStackedWidget* stack)
     m_robotProtocol->addItem(QStringLiteral("埃夫特（EfortSDK）"));
     // 2026-10-10：UR 的新口（RTDE, 30004）。追加在末尾，前面的 index 不动。
     m_robotProtocol->addItem(QStringLiteral("UR RTDE (30004)"));
+    // 2026-10-26：法奥（FAIRINO）20004 实时状态流（index 5，同样只追加）。
+    m_robotProtocol->addItem(QStringLiteral("法奥实时 (20004)"));
     m_robotProtocol->setStyleSheet(Theme::comboBoxStyle());
     protoRow->addWidget(m_robotProtocol, 1);
     m_robotStatus = new QLabel(QStringLiteral("未连接"), group);
@@ -2457,6 +2459,8 @@ void ToolsPanel::buildRobotCommPage(QStackedWidget* stack)
         "但字段按名称索取，不存在偏移错位问题；机器人同时只允许一个 RTDE 客户端。"
         "博纳斯(纳博特) JSON/TCP 协议读取当前 TCP 位姿（x y z rx ry rz，mm/度），"
         "应答字段名未知时会自动尝试常见字段并把原始应答写进运行日志。"
+        "法奥实时 (20004) 读取控制器主动推送的状态包里的 TCP 位姿（mm/度，"
+        "静态 XYZ 欧拉角，与卡片格式一致）；20003 命令口只在机器人控制台里使用。"
         "埃夫特走 EfortSDK，IP 必填、端口不填：厂商 SDK 的端口在库里写死 8100"
         "（厂商手册把 8000/8100 这段留作示教器/SDK 内部服务），本页端口输入框在该协议下隐藏；"
         "客户自己开的用户 socket（例如 8003）不用于这条链路。"
@@ -2477,10 +2481,11 @@ void ToolsPanel::buildRobotCommPage(QStackedWidget* stack)
         // 所以把端口框收起来（留空），避免给用户一个"填了就有用"的错觉。
         m_robotPort->setVisible(index != 3);
         // Default ports: Modbus TCP 502, UR realtime 30003, 博纳斯/纳博特 6001,
-        // UR RTDE 30004.
+        // UR RTDE 30004, 法奥实时 20004.
         m_robotPort->setValue(index == 1 ? 30003
                              : index == 2 ? 6001
                              : index == 4 ? 30004
+                             : index == 5 ? 20004
                                           : 502);
         // 端口提示只对埃夫特有意义，切走协议就撤掉（IP 框里的文字不动）。
         if (m_robotHostNote) {

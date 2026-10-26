@@ -5,6 +5,7 @@
 #include <QStringList>
 
 #include "logic/EfortPoseReader.h"
+#include "logic/FairinoPoseReader.h"
 #include "logic/NrcJsonReader.h"
 #include "logic/RobotPose.h"
 #include "logic/URRealtimeReader.h"
@@ -23,7 +24,7 @@ enum RobotReadKind {
 // ── Robot channel worker ──
 // Every robot operation is a *blocking* network call (waitForConnected /
 // waitForReadyRead, up to 1.5 s).  QTcpSocket is thread-affine, so the whole
-// channel — the four readers and every call on them — lives on one dedicated
+// channel — every reader and every call on them — lives on one dedicated
 // thread (moveToThread); the UI thread only talks to it through queued
 // signals/slots.  That is what keeps a connect / read / capture-time read from
 // freezing the window (and the UI stall watchdog from firing).
@@ -54,13 +55,14 @@ signals:
 private:
     RobotPose::Reader* readerFor(int protocol);
 
-    // The four readers live here, not in MainWindow: they own the QTcpSocket and
+    // The readers live here, not in MainWindow: they own the QTcpSocket and
     // must only ever be touched from this worker's thread.
     RobotPose::ModbusTcpReader   m_robotReader;
     RobotPose::URRealtimeReader  m_urReader;
     RobotPose::URRtdeReader      m_rtdeReader;
     RobotPose::NrcJsonReader     m_nrcReader;
     EfortPoseReader::EfortReader m_eftReader;
+    FairinoPoseReader            m_fairinoReader;
     int  m_protocol    = 0;
     bool m_simulated   = false;
     int  m_simCounter  = 0;   // 模拟位姿每次 +10

@@ -1,9 +1,40 @@
 # STATUS.md — 进度状态（每次会话结束必须更新）
 
-> 最后更新：2026-10-23（之三十一：采集生命周期 + 3D 缺失判定）
+> 最后更新：2026-10-26（之三十二：法奥机器人集成）
 > 只保留「当前快照」，不积累历史；旧条目删除即可，git 历史里仍可追溯。
 
 ## ⏭ 交接块（新会话先读这里）
+
+- **2026-10-26（之三十二：法奥 FAIRINO 集成 = 通信工具 + 控制台）**
+  - **证据来源**：官方 SDK `fairino-v2.1.7.1`（Python）的 `Robot.py` 实际
+    调用 + 通讯协议手册；状态包字段偏移用 ctypes 对 `RobotStatePkg`
+    （`_pack_=1`）实测，**没有猜偏移**，也不在 C++ 里带 Python 运行时。
+  - **通信工具**：协议下拉新增索引 5「法奥实时 (20004)」；只读 20004 推流，
+    持续排空、只留最新帧（防 stage-10 的"永远第一帧"）；用 tl_cur_pos
+    （mm + 度，static XYZ）；坏校验/失去新鲜度报 ProtocolError/Timeout，
+    不显示坏数据。20003 只由控制台使用。
+  - **控制台**：`BackendKind::Fairino` + 后端下拉「法奥真机」，默认
+    192.168.58.2:20003。worker 独占线程：连接探测（GetControllerIP）→
+    20004 首帧 → 上/下使能（RobotEnable）→ 点动/MoveL/MoveJ → 到位轮询。
+    MoveL 是**一个 33 元素数组**（blendMode 在内）；关节全 0 时先
+    GetInverseKin（与 SDK 一致）。MoveJ 是 11 个参数。到位看 20004 的
+    `motion_done + mc_queue_len` + 容差，400 ms 稳定兜底；RPC 超时但
+    robot_state/motion_done 显示已动时保留在途，不误判失败。
+    使能 = 软件许可 + `rbtEnableState`；只在自家运动在途时发 StopMotion。
+  - **过程中单测抓到并修掉两个真缺陷**：① `readNextStartElement()` 遇任意
+    EndElement 返回 false，原 XML 解析只读到数组第一个元素 / 丢失
+    faultString（Qt 5.14 无 `depth()`，改为显式 token 遍历 + 自维护层级）；
+    ② `eulerDegToMatrix` 第 2 行第 3 元素笔误，破坏正交性（万向锁/最短角全错）。
+  - **验证**：D 构建 exit 0、ctest 3/3、unit_tests **478 通过 / 0 失败 /
+    2 跳过**（`TestFairino` 31 例，含真实本机 TCP 假控制器）；AICode 同步后
+    同构建/测试。报告：`reports/阶段23-3.0-法奥机器人集成.md`。
+  - **现场验证（无真机，必须做）**：报告 §10 两个清单（通信工具 6 条、
+    控制台 13 条）；重点记录固件版本 vs `blendMode` 33 参数兼容、
+    MoveL 是否阻塞、motion_done 时机、使能是否要求手动模式。
+  - **回退**：全部是新增文件 + 开关式接入（协议索引 5 / BackendKind），
+    去掉分支即可，不影响相机与测量链路。
+  - **剩余并行项**：E-04、E-07。M1 仍等 M-02 真件会话。
+    **只本地提交，未推送、未打包。**
 
 - **2026-10-23（之三十一：安全项 2 采集生命周期 + I3360 的 3D 缺失判定）**
   - **采集超时 ≠ worker 退出**：新增纯策略 `logic/CaptureLifecycle.h`

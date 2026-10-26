@@ -55,6 +55,14 @@ set(SOURCES
     logic/NrcJsonReader.cpp
     # 埃夫特（EFORT）机器人通信适配器（用户反馈 7，第四种协议）
     logic/EfortPoseReader.cpp
+    # 法奥（FAIRINO）：20003 XML-RPC 命令 + 20004 实时状态包
+    # （通信工具的位姿 Reader + 控制台的运动后端共用同一套解析）
+    logic/FairinoXmlRpc.cpp
+    logic/FairinoRealtime.cpp
+    logic/FairinoXmlRpcClient.cpp
+    logic/FairinoPoseReader.cpp
+    logic/FairinoMotionBackend.cpp
+    logic/FairinoMotionBackend.h
     logic/MeasureTools.cpp
     logic/PixelTo3DService.cpp
     # 测量方法目录（P3 ROI 需求 / P4 说明）— 纯数据，无 Qt 依赖

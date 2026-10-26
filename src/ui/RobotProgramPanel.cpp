@@ -41,6 +41,39 @@
 
 namespace {
 
+using BackendKind = RobotProgramController::BackendKind;
+
+// 后端组合框只有三项，但映射集中在一处：添第四种后端时不会漏改某个
+// `== 1` 的判断。
+int backendComboIndex(BackendKind kind)
+{
+    switch (kind) {
+    case BackendKind::Ur:
+        return 1;
+    case BackendKind::Fairino:
+        return 2;
+    case BackendKind::Simulated:
+        break;
+    }
+    return 0;
+}
+
+BackendKind backendKindForIndex(int index)
+{
+    return index == 1 ? BackendKind::Ur
+         : index == 2 ? BackendKind::Fairino
+                      : BackendKind::Simulated;
+}
+
+QString backendPortTooltip(BackendKind kind)
+{
+    return kind == BackendKind::Fairino
+        ? QStringLiteral("法奥 XML-RPC 命令端口（默认 20003）；20004 实时状态口"
+                         "由后端固定使用，不需要填写。")
+        : QStringLiteral("UR 实时反馈端口。脚本 30001 与 Dashboard 29999 固定，"
+                         "自动使用。");
+}
+
 // ── 设计变量：逐项对应 MyUIdesign/1.html 的 :root ─────────────────────
 constexpr const char* kPrimary = "#1890ff";
 constexpr const char* kSuccess = "#52c41a";
@@ -579,8 +612,9 @@ QWidget* RobotProgramPanel::buildTopBar()
     m_enableButton->setCursor(Qt::PointingHandCursor);
     m_enableButton->setMinimumHeight(34);
     m_enableButton->setStyleSheet(enableButtonStyle());
-    m_enableButton->setToolTip(
-        QStringLiteral("软件运动许可；UR 真机还要求控制器处于 RUNNING。"));
+    m_enableButton->setToolTip(QStringLiteral(
+        "软件运动许可；真机还要求控制器本身可运动：UR 处于 RUNNING，"
+        "法奥处于自动模式且上使能、无故障码。"));
     row->addWidget(m_enableButton);
     row->addSpacing(5);
 
@@ -759,6 +793,7 @@ QWidget* RobotProgramPanel::buildCommSection()
     m_backendCombo->setObjectName(QStringLiteral("robot_program_backend"));
     m_backendCombo->addItem(QStringLiteral("仿真"));
     m_backendCombo->addItem(QStringLiteral("UR 真机"));
+    m_backendCombo->addItem(QStringLiteral("法奥真机"));
     m_backendCombo->setStyleSheet(comboStyle());
     m_backendCombo->setMinimumHeight(30);
     backendRow->addWidget(m_backendCombo, 1);
@@ -779,8 +814,7 @@ QWidget* RobotProgramPanel::buildCommSection()
     m_portSpin->setFixedWidth(76);
     m_portSpin->setMinimumHeight(30);
     m_portSpin->setStyleSheet(smallInputStyle());
-    m_portSpin->setToolTip(QStringLiteral(
-        "UR 实时反馈端口。脚本 30001 与 Dashboard 29999 固定，自动使用。"));
+    m_portSpin->setToolTip(backendPortTooltip(BackendKind::Ur));
     addressRow->addWidget(m_portSpin);
     body->addLayout(addressRow);
 
@@ -1236,9 +1270,7 @@ void RobotProgramPanel::bindController()
     {
         const QSignalBlocker blocker(m_backendCombo);
         m_backendCombo->setCurrentIndex(
-            m_controller->backendKind()
-                    == RobotProgramController::BackendKind::Ur
-                ? 1 : 0);
+            backendComboIndex(m_controller->backendKind()));
     }
     syncAddressFields();
     m_controller->setJogSpeed(m_speedSlider->value());
@@ -1249,9 +1281,7 @@ void RobotProgramPanel::bindController()
                     return;
                 const QSignalBlocker blocker(m_backendCombo);
                 m_backendCombo->setCurrentIndex(
-                    m_controller->backendKind()
-                            == RobotProgramController::BackendKind::Ur
-                        ? 1 : 0);
+                    backendComboIndex(m_controller->backendKind()));
                 syncAddressFields();
                 m_selectedIndex = -1;
                 m_selectedId.clear();
@@ -1706,7 +1736,8 @@ void RobotProgramPanel::refreshActions()
         && m_draftSpace == RobotProgram::MoveNode::Space::Joint;
     const bool padCart = canControl || editCart;
     const bool padJoint = canControl || editJoint;
-    const bool urBackend = m_backendCombo && m_backendCombo->currentIndex() == 1;
+    // 仿真不需要地址；UR 和法奥都需要 IP/端口（法奥的地址是命令口 20003）。
+    const bool realBackend = m_backendCombo && m_backendCombo->currentIndex() != 0;
 
     m_addMoveButton->setEnabled(canControl);
     m_addPhotoButton->setEnabled(canControl);
@@ -1735,7 +1766,7 @@ void RobotProgramPanel::refreshActions()
     m_connectButton->setText(m_connected ? QStringLiteral("🔌 断开连接")
                                          : QStringLiteral("🔌 连接"));
     m_backendCombo->setEnabled(bound && !running);
-    const bool addressEditable = urBackend && !m_connected && !running;
+    const bool addressEditable = realBackend && !m_connected && !running;
     m_hostEdit->setEnabled(addressEditable);
     m_portSpin->setEnabled(addressEditable);
 
@@ -1830,25 +1861,31 @@ void RobotProgramPanel::syncAddressFields()
 {
     if (!m_backendCombo)
         return;
-    const bool ur = m_backendCombo->currentIndex() == 1;
-    const bool editable = ur && !m_connected && !m_running;
+    const BackendKind kind = backendKindForIndex(m_backendCombo->currentIndex());
+    const bool editable =
+        kind != BackendKind::Simulated && !m_connected && !m_running;
     if (m_hostEdit)
         m_hostEdit->setEnabled(editable);
-    if (m_portSpin)
+    if (m_portSpin) {
         m_portSpin->setEnabled(editable);
+        m_portSpin->setToolTip(backendPortTooltip(kind));
+    }
 }
 
 // ── 动作 ─────────────────────────────────────────────────────────────
 
 void RobotProgramPanel::onBackendKindChanged(int index)
 {
-    const auto kind = index == 1
-        ? RobotProgramController::BackendKind::Ur
-        : RobotProgramController::BackendKind::Simulated;
+    const BackendKind kind = backendKindForIndex(index);
     if (m_controller && m_controller->backendKind() != kind) {
+        const BackendKind previous = m_controller->backendKind();
         m_controller->setBackendKind(kind);
         m_portSpin->setValue(RobotProgramController::defaultPort(kind));
-        if (m_hostEdit->text().trimmed().isEmpty()) {
+        // 只有"空地址"或"还是上一个后端的默认地址"才替换：用户手填的 IP
+        // 在来回切后端时不能被悄悄改掉。
+        const QString host = m_hostEdit->text().trimmed();
+        if (host.isEmpty()
+            || host == RobotProgramController::defaultHost(previous)) {
             m_hostEdit->setText(RobotProgramController::defaultHost(kind));
         }
     }

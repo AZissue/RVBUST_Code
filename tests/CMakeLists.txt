@@ -58,6 +58,9 @@ set(TEST_SOURCES
     test_robot_program.cpp
     # 3.0 E-05：相机连接失败的原因分类与提示文案（纯字符串，不连相机）。
     test_camera_connect_diagnosis.cpp
+    # 法奥（FAIRINO）：XML-RPC / HTTP 分帧 / 20004 状态包 / 命令参数 / 姿态数学，
+    # 以及对着本进程内的假控制器跑一遍位姿 Reader 与 20003 客户端。
+    test_fairino.cpp
 )
 
 add_executable(unit_tests ${TEST_SOURCES}
@@ -104,6 +107,14 @@ add_executable(unit_tests ${TEST_SOURCES}
     # UR 真机后端也列进来：单测不连接设备，只保证它随每次构建编译通过。
     ${CMAKE_SOURCE_DIR}/src/logic/UrMotionBackend.cpp
     ${CMAKE_SOURCE_DIR}/src/logic/UrMotionBackend.h
+    # 法奥（FAIRINO）：XML-RPC 报文/HTTP 分帧是纯函数；20004 解析与 Reader
+    # 用本进程内的假控制器验证；运动后端也编译进来（不连接任何设备）。
+    ${CMAKE_SOURCE_DIR}/src/logic/FairinoXmlRpc.cpp
+    ${CMAKE_SOURCE_DIR}/src/logic/FairinoRealtime.cpp
+    ${CMAKE_SOURCE_DIR}/src/logic/FairinoXmlRpcClient.cpp
+    ${CMAKE_SOURCE_DIR}/src/logic/FairinoPoseReader.cpp
+    ${CMAKE_SOURCE_DIR}/src/logic/FairinoMotionBackend.cpp
+    ${CMAKE_SOURCE_DIR}/src/logic/FairinoMotionBackend.h
 )
 
 target_include_directories(unit_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
