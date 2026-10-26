@@ -716,23 +716,28 @@ class FrameDatabaseController(QObject):
             if error:
                 bridge.shell.log(f'DB{verb}失败：{error}', 'error')
                 return
-            for frame in frames:
-                pair = moves.get(frame.database_id)
-                if not pair:
-                    continue
-                old, new = pair
-                for attribute in ('offline_dir', 'offline_image_path', 'offline_pointmap_path'):
-                    value = getattr(frame, attribute)
-                    if value and Path(value).resolve().is_relative_to(old.resolve()):
-                        setattr(frame, attribute, str(new / Path(value).resolve().relative_to(old.resolve())))
-            self.browsers[mode].refresh()
-            if previous_results - set(self.databases[mode].records):
-                workspace = bridge.shell._stack.currentWidget()
-                viewer = workspace.viewer() if callable(workspace.viewer) else workspace.viewer
-                viewer.clear_all()
-                workspace._industrial.restore_business_image()
+            self._finish_mutation(mode, moves, previous_results, frames)
             bridge.shell.log(f'已{verb} {len(moves)} 项DB数据。', 'success')
         bridge._run_background(work, done, name='db_mutation', must_finish=True)
+
+    def _finish_mutation(self, mode, moves, previous_results, frames):
+        """GUI completion shared by the main DB and the postprocess editor."""
+        bridge = self.bridge
+        for frame in frames:
+            pair = moves.get(frame.database_id)
+            if not pair:
+                continue
+            old, new = pair
+            for attribute in ('offline_dir', 'offline_image_path', 'offline_pointmap_path'):
+                value = getattr(frame, attribute)
+                if value and Path(value).resolve().is_relative_to(old.resolve()):
+                    setattr(frame, attribute, str(new / Path(value).resolve().relative_to(old.resolve())))
+        self.browsers[mode].refresh()
+        if previous_results - set(self.databases[mode].records):
+            workspace = bridge.shell._stack.currentWidget()
+            viewer = workspace.viewer() if callable(workspace.viewer) else workspace.viewer
+            viewer.clear_all()
+            workspace._industrial.restore_business_image()
 
     def open_project(self, mode):
         if not self.bridge.can_change_workspace():

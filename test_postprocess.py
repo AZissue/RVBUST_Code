@@ -7,7 +7,8 @@ from unittest.mock import patch
 import numpy as np
 import open3d as o3d
 import test_ui_frame_database as fixture
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QSignalBlocker
+from PySide6.QtWidgets import QMenu
 from ui_v2.dialogs import ChineseMessageBox as QMessageBox
 from core.postprocess.processing import voxel_downsample, random_downsample, polygon_crop_mask
 from core.postprocess.session import CloudLayer, write_cloud
@@ -100,6 +101,100 @@ class PostprocessTests(unittest.TestCase):
         self.finish()
         self.assertEqual(self.editor._display_ids, [result])
         return uid, result, points
+
+    def test_context_delete_moves_result_to_trash_and_recovers_in_both_trees(self):
+        raw, source, _ = self.load_grid()
+        self.editor.downsample('voxel'); self.finish()
+        result = self.editor._display_ids[0]
+        browser = self.editor.source_browser
+        position = browser.tree.visualItemRect(browser._component_items[result, 'cloud']).center()
+        def choose_delete(menu, *_):
+            action = next(a for a in menu.actions() if a.text() == '删除选中点云')
+            self.assertTrue(action.isEnabled())
+            action.trigger()
+        class TestMenu(QMenu):
+            def exec(self, *_):
+                choose_delete(self)
+        with patch('ui_v2.postprocess.window.QMenu', TestMenu), patch(
+                'ui_v2.postprocess.window.QMessageBox.question', return_value=QMessageBox.Yes):
+            self.editor._source_menu(position)
+            self.assertFalse(self.editor.actions['open'].isEnabled())
+            self.finish()
+        self.assertIn(result, self.db.removed)
+        self.assertNotIn(result, browser._items)
+        self.assertNotIn(result, self.bridge.frame_db.browsers[self.editor.mode]._items)
+        self.assertEqual(self.editor._display_ids, [])
+        self.assertEqual(self.editor._undo, [])
+        self.assertIn(raw, self.db.records)
+        self.assertIn(source, self.db.records)
+        self.editor._mutate_database(recover=True); self.finish()
+        self.assertIn(result, self.db.records)
+        self.assertIn(result, browser._items)
+        self.assertIn(result, self.bridge.frame_db.browsers[self.editor.mode]._items)
+
+    def test_delete_uses_highlight_not_checks_and_deduplicates_parent_child(self):
+        raw, first, points = self.load_grid()
+        second = self.db.publish_result(cloud(points), [raw])
+        self.editor.source_browser.refresh()
+        self.editor.load_selected([raw, first, second]); self.finish()
+        browser = self.editor.source_browser
+        with QSignalBlocker(browser.tree):
+            browser.tree.clearSelection()
+            for item in (browser._items[first], browser._items[second], browser._component_items[second, 'cloud']):
+                item.setSelected(True)
+        with patch('ui_v2.postprocess.window.QMessageBox.question', return_value=QMessageBox.Yes) as question:
+            self.editor.delete_selected(); self.finish()
+        self.assertIn('2 项点云', question.call_args.args[2])
+        self.assertEqual(set(self.db.removed), {first, second})
+        self.assertEqual(self.editor._display_ids, [raw])
+        self.assertTrue((self.db.directory/'frames'/raw/'image.png').is_file())
+
+    def test_raw_delete_warns_for_image_pair_and_retargets_workflow_paths(self):
+        raw, result, _ = self.load_grid()
+        frame, _ = self.db.load_frame(raw)
+        self.bridge.fixed_workflow.frames_calib['cam0'] = frame
+        browser = self.editor.source_browser
+        with QSignalBlocker(browser.tree):
+            browser.tree.clearSelection()
+            browser._items[raw].setSelected(True)
+        with patch('ui_v2.postprocess.window.QMessageBox.question', return_value=QMessageBox.Yes) as question:
+            self.editor.delete_selected(); self.finish()
+        self.assertIn('2D图像一并移除', question.call_args.args[2])
+        self.assertIn(raw, self.db.removed)
+        self.assertIn(result, self.db.records)
+        self.assertIn('.trash', frame.offline_pointmap_path)
+        self.assertTrue(Path(frame.offline_pointmap_path).is_file())
+        self.assertTrue(Path(frame.offline_image_path).is_file())
+        self.editor._mutate_database(recover=True); self.finish()
+        self.assertIn(raw, self.db.records)
+        self.assertNotIn('.trash', frame.offline_pointmap_path)
+        self.assertTrue(Path(frame.offline_image_path).is_file())
+
+    def test_delete_cancel_image_only_busy_and_failure_leave_data_intact(self):
+        raw, result, _ = self.load_grid()
+        with patch('ui_v2.postprocess.window.QMessageBox.question', return_value=QMessageBox.No):
+            self.editor.delete_selected()
+        self.assertIn(result, self.db.records)
+        self.assertIsNone(self.editor._worker)
+        with patch.object(self.bridge, 'can_change_workspace', return_value=False), patch(
+                'ui_v2.postprocess.window.QMessageBox.question') as question:
+            self.editor.delete_selected()
+            question.assert_not_called()
+        browser = self.editor.source_browser
+        with QSignalBlocker(browser.tree):
+            browser.tree.clearSelection()
+            browser._component_items[raw, 'image'].setSelected(True)
+        self.assertEqual(self.editor._selected_cloud_ids(), [])
+        with QSignalBlocker(browser.tree):
+            browser.tree.clearSelection()
+            browser._items[result].setSelected(True)
+        with patch('ui_v2.postprocess.window.QMessageBox.question', return_value=QMessageBox.Yes), patch.object(
+                self.db, 'remove', side_effect=OSError('disk failure')):
+            self.editor.delete_selected()
+            self.wait(lambda: self.editor._worker is None)
+        self.assertIn('disk failure', self.editor.status.text())
+        self.assertIn(result, self.db.records)
+        self.assertEqual(self.editor._display_ids, [result])
 
     def test_single_db_entry_in_each_mode_and_busy_gate(self):
         self.assertIs(self.bridge.open_postprocess(), self.editor)

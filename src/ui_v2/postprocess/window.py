@@ -14,6 +14,7 @@ from core.postprocess.processing import polygon_crop_mask, voxel_downsample, ran
 from ..frame_database import FrameBrowser
 from ..widgets.db_properties import DbProperties
 from ..industrial_ribbon import STYLE
+from ..dialogs import ChineseMessageBox as QMessageBox
 from .selection import PolygonSelectionOverlay
 
 
@@ -176,7 +177,70 @@ class PostprocessWindow(QDialog):
         menu = QMenu(self)
         menu.addAction('显示选中点云', self.load_selected)
         menu.addAction('导出选中点云…', self.export_selected)
+        menu.addSeparator()
+        ready = self._worker is None and not self._closed and self.bridge.can_change_workspace()
+        action = menu.addAction('删除选中点云', self.delete_selected)
+        action.setEnabled(ready and bool(self._selected_cloud_ids()))
+        action = menu.addAction('恢复上次删除', lambda: self._mutate_database(recover=True))
+        action.setEnabled(ready and bool(self.database.removed))
         menu.exec(self.source_browser.tree.viewport().mapToGlobal(pos))
+
+    def _selected_cloud_ids(self):
+        identifiers = set()
+        def visit(item):
+            if item.data(0, Qt.UserRole + 2) == 'image':
+                return
+            uid = item.data(0, Qt.UserRole)
+            if uid in self.database.records:
+                identifiers.add(uid)
+            else:
+                for index in range(item.childCount()):
+                    visit(item.child(index))
+        for item in self.source_browser.tree.selectedItems():
+            visit(item)
+        return [uid for uid in self.database.records if uid in identifiers]
+
+    def delete_selected(self):
+        self._mutate_database()
+
+    def _mutate_database(self, *, recover=False):
+        if self._closed or self._worker is not None or not self.bridge.can_change_workspace():
+            return
+        if (self.database is not self.bridge.frame_db.databases[self.mode]
+                or self.database.directory != self.directory):
+            self.status.setText('项目已切换，请重新打开后处理窗口。')
+            return
+        identifiers = self._selected_cloud_ids()
+        if not recover:
+            if not identifiers:
+                return
+            text = f'从DB移除选中的 {len(identifiers)} 项点云？数据移至项目回收区，可恢复。'
+            if any(self.database.records[uid].kind == 'raw' for uid in identifiers):
+                text += '\n选中的原始帧会连同对应2D图像一并移除。'
+            if QMessageBox.question(self, '删除选中点云', text,
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+                return
+        elif not self.database.removed:
+            return
+        controller = self.bridge.frame_db
+        previous_results = {uid for uid, row in self.database.records.items() if row.kind == 'result'}
+        frames = controller._frames()
+        self._pending_load = None
+        self._load_version += 1
+        controller.restore(self.mode)
+        def done(moves):
+            controller._finish_mutation(self.mode, moves, previous_results, frames)
+            self._undo = [entry for entry in self._undo
+                          if all(uid in self.database.records for tokens in entry for uid, _ in tokens)]
+            remaining = [self._clouds[uid] for uid in self._display_ids if uid in self.database.records]
+            self._show_records(remaining, refresh=True)
+            self.bridge.shell.set_dirty(True)
+            verb = '恢复' if recover else '删除'
+            message = f'已{verb} {len(moves)} 项DB点云。'
+            self.status.setText(message)
+            self.bridge.shell.log(message, 'success')
+        work = self.database.restore_last_removal if recover else lambda: self.database.remove(identifiers)
+        self._run(work, done)
 
     def _selection_requested(self, *_):
         if self._syncing or self._closed:
