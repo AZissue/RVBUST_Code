@@ -7,7 +7,9 @@ from unittest.mock import patch
 import numpy as np
 import open3d as o3d
 import test_ui_frame_database as fixture
-from PySide6.QtCore import Qt, QSignalBlocker
+from PySide6.QtCore import Qt, QSignalBlocker, QEvent, QPoint, QPointF
+from PySide6.QtGui import QMouseEvent, QWheelEvent
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QMenu
 from ui_v2.dialogs import ChineseMessageBox as QMessageBox
 from core.postprocess.processing import voxel_downsample, random_downsample, polygon_crop_mask
@@ -385,6 +387,89 @@ class PostprocessTests(unittest.TestCase):
         self.assertIn(output, self.db.records)
         self.assertTrue(self.editor._undo)
 
+    def test_confirmed_polygon_locks_navigation_until_cancel(self):
+        self.load_grid()
+        editor = self.editor
+        canvas = editor.viewer.canvas
+        w, h = canvas.width(), canvas.height()
+        editor.stage_polygon([(0, 0), (w, 0), (w, h), (0, h)])
+        self.finish()
+        view = editor._view()
+        segment = editor._segment
+        self.assertTrue(editor.overlay.view_locked)
+        self.assertFalse(editor.overlay.testAttribute(Qt.WA_TransparentForMouseEvents))
+        self.assertFalse(editor.actions['fit'].isEnabled())
+        self.assertFalse(editor.properties.isEnabled())
+        for target in (canvas, editor.overlay):
+            for button in (Qt.LeftButton, Qt.RightButton, Qt.MiddleButton):
+                QTest.mousePress(target, button, pos=QPoint(100, 100))
+                move = QMouseEvent(QEvent.MouseMove, QPointF(140, 130), QPointF(140, 130),
+                                   Qt.NoButton, button, Qt.NoModifier)
+                self.app.sendEvent(target, move)
+                QTest.mouseRelease(target, button, pos=QPoint(140, 130))
+            wheel = QWheelEvent(QPointF(100, 100), QPointF(100, 100), QPoint(), QPoint(0, 120),
+                                Qt.NoButton, Qt.NoModifier, Qt.NoScrollPhase, False)
+            self.app.sendEvent(target, wheel)
+            QTest.keyClick(target, Qt.Key_F)
+            QTest.keyClick(target, Qt.Key_Z)
+        self.app.processEvents()
+        for key, value in view.items():
+            np.testing.assert_array_equal(editor._view()[key], value)
+        self.assertIs(editor._segment, segment)
+        QTest.keyClick(editor.overlay, Qt.Key_Escape)
+        self.assertIsNone(editor._segment)
+        self.assertFalse(editor.overlay.view_locked)
+        self.assertTrue(editor.actions['fit'].isEnabled())
+        self.assertTrue(editor.properties.isEnabled())
+        self.app.sendEvent(canvas, wheel)
+        self.assertGreater(canvas.zoom, view['zoom'])
+        editor.stage_polygon([(0, 0), (w, 0), (w, h), (0, h)])
+        self.finish()
+        editor.start_polygon()
+        self.assertFalse(editor.overlay.view_locked)
+        self.assertTrue(editor.actions['fit'].isEnabled())
+        editor.overlay.cancel()
+
+    def test_cancel_during_mask_computation_does_not_restore_old_selection(self):
+        self.load_grid()
+        gate = threading.Event()
+        started = threading.Event()
+        def slow_mask(*args, **kwargs):
+            started.set()
+            gate.wait(3)
+            return polygon_crop_mask(*args, **kwargs)
+        w, h = self.editor.viewer.canvas.width(), self.editor.viewer.canvas.height()
+        polygon = [(0, 0), (w, 0), (w, h), (0, h)]
+        with patch('ui_v2.postprocess.window.polygon_crop_mask', slow_mask):
+            self.editor.stage_polygon(polygon)
+            try:
+                self.wait(started.is_set)
+                self.assertTrue(self.editor.overlay.view_locked)
+                self.editor.overlay.cancel()
+            finally:
+                gate.set()
+            self.finish()
+        self.assertIsNone(self.editor._segment)
+        self.assertFalse(self.editor.overlay.view_locked)
+        with patch('ui_v2.postprocess.window.polygon_crop_mask', side_effect=ValueError('mask failure')):
+            self.editor.stage_polygon(polygon)
+            self.wait(lambda: self.editor._worker is None)
+        self.assertIn('mask failure', self.editor.status.text())
+        self.assertFalse(self.editor.overlay.view_locked)
+        self.assertTrue(self.editor.actions['fit'].isEnabled())
+
+    def test_applying_confirmed_polygon_releases_navigation(self):
+        self.load_grid()
+        canvas = self.editor.viewer.canvas
+        w, h = canvas.width(), canvas.height()
+        self.editor.stage_polygon([(0, 0), (w, 0), (w, h), (0, h)])
+        self.finish()
+        self.editor.apply_segment(True)
+        self.finish()
+        self.assertFalse(self.editor.overlay.view_locked)
+        self.assertFalse(self.editor.overlay.active)
+        self.assertTrue(self.editor.actions['fit'].isEnabled())
+
     def test_stage_view_and_resize_guards(self):
         _, source, _ = self.load_grid()
         layer = self.editor._clouds[source]
@@ -398,6 +483,7 @@ class PostprocessTests(unittest.TestCase):
         self.assertEqual(int(self.editor._segment[2].sum()), 100)
         self.editor.resize(1300,800); self.app.processEvents()
         self.assertIsNone(self.editor._segment)
+        self.assertFalse(self.editor.overlay.view_locked)
         self.assertEqual(len(self.db.records), 2)
 
     def test_stale_source_and_project_change_refuse_automatic_commit(self):

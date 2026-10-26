@@ -15,6 +15,7 @@ class PolygonSelectionOverlay(QWidget):
         self._cursor = None
         self._confirmed_polygon = None
         self._confirmed_info = ''
+        self._view_locked = False
         self.setMouseTracking(True)
         self.setCursor(Qt.CrossCursor)
         canvas.installEventFilter(self)
@@ -22,6 +23,17 @@ class PolygonSelectionOverlay(QWidget):
         self.clear()
 
     def eventFilter(self, obj, event):
+        if obj is self._canvas and self._view_locked:
+            if event.type() in (QEvent.MouseButtonPress, QEvent.MouseButtonRelease,
+                    QEvent.MouseButtonDblClick, QEvent.MouseMove, QEvent.Wheel,
+                    QEvent.NativeGesture, QEvent.Gesture):
+                event.accept()
+                return True
+            if event.type() in (QEvent.KeyPress, QEvent.ShortcutOverride):
+                if event.type() == QEvent.KeyPress and event.key() == Qt.Key_Escape:
+                    self.cancelled.emit()
+                event.accept()
+                return True
         if obj is self._canvas and event.type() == QEvent.Resize:
             self.setGeometry(self._canvas.rect())
             if self._vertices or self._confirmed_polygon is not None:
@@ -41,10 +53,30 @@ class PolygonSelectionOverlay(QWidget):
         return self._confirmed_polygon
 
     @property
+    def view_locked(self):
+        return self._view_locked
+
+    def set_confirmed(self, polygon):
+        """Keep the staged screen-space polygon attached to its frozen view."""
+        self._vertices = list(polygon)
+        self._confirmed_polygon = list(polygon)
+        self._view_locked = True
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, False)
+        # Run before other canvas filters, including middle-button navigation.
+        self._canvas.removeEventFilter(self)
+        self._canvas.installEventFilter(self)
+        self.setGeometry(self._canvas.rect())
+        self.show()
+        self.raise_()
+        self.setFocus(Qt.OtherFocusReason)
+        self.update()
+
+    @property
     def vertex_count(self):
         return len(self._vertices)
 
     def activate(self):
+        self._view_locked = False
         self._vertices = []
         self._cursor = None
         self._confirmed_polygon = None
@@ -57,6 +89,7 @@ class PolygonSelectionOverlay(QWidget):
         self.update()
 
     def clear(self):
+        self._view_locked = False
         self._vertices = []
         self._cursor = None
         self._confirmed_polygon = None

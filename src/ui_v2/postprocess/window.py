@@ -29,6 +29,7 @@ class PostprocessWindow(QDialog):
         self._active_uid = None
         self._undo = []
         self._syncing = False
+        self._selection_generation = 0
         self._load_version = 0
         self._pending_load = None
         self._busy_kind = None
@@ -256,10 +257,11 @@ class PostprocessWindow(QDialog):
         if not self._syncing and not self._closed:
             self.load_selected([uid for uid, component in checked if component == 'cloud'])
 
-    def _run(self, work, done, *, kind='edit'):
+    def _run(self, work, done, *, kind='edit', preserve_selection=False):
         if self._worker is not None or self._closed:
             return False
-        self._invalidate_polygon()
+        if not preserve_selection:
+            self._invalidate_polygon()
         worker = WorkerThread(work)
         self._worker, self._busy_kind = worker, kind
         worker._task_name = 'postprocess'
@@ -270,12 +272,16 @@ class PostprocessWindow(QDialog):
             if self._closed:
                 return
             if error:
+                if preserve_selection:
+                    self._invalidate_polygon()
                 self.status.setText('处理失败：' + str(error))
             else:
                 self.status.setText('处理完成。')
                 try:
                     done(result)
                 except Exception as exc:
+                    if preserve_selection:
+                        self._invalidate_polygon()
                     self.status.setText('更新结果失败：' + str(exc))
 
         def finished():
@@ -305,6 +311,9 @@ class PostprocessWindow(QDialog):
         self.actions['undo'].setEnabled(ready and bool(self._undo))
         self.actions['merge'].setEnabled(ready and len(self._display_ids) > 1)
         self.actions['select'].setEnabled(ready and self._active_uid in self._clouds)
+        locked = self.overlay.view_locked
+        self.actions['fit'].setEnabled(ready and not locked)
+        self.properties.setEnabled(ready and not locked)
 
     def _refresh_display(self, *, fit=False):
         self.viewer.replace_pointclouds(
@@ -480,23 +489,28 @@ class PostprocessWindow(QDialog):
 
     def start_polygon(self):
         if self._selected_layer()[1] is not None:
-            self._segment = None
+            self._invalidate_polygon()
             self.overlay.activate()
 
     def stage_polygon(self, polygon):
+        if self._worker is not None or self._closed:
+            return
         uid, layer = self._selected_layer()
         if layer is None:
             return
+        self._invalidate_polygon()
+        self.overlay.set_confirmed(polygon)
+        generation = self._selection_generation
         view = self._view()
         def done(mask):
+            if generation != self._selection_generation:
+                return
             self._segment = (uid, layer, mask, view)
-            self.overlay._confirmed_polygon = list(polygon)
-            self.overlay._vertices = list(polygon)
-            self.overlay.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-            self.overlay.show()
+            self.overlay.set_confirmed(polygon)
             self.overlay.show_confirmed(f'框内 {int(mask.sum()):,} 点 / 框外 {int((~mask).sum()):,} 点')
             self.segment_label.setText(f'框内 {int(mask.sum()):,} 点 / 框外 {int((~mask).sum()):,} 点；请选择保留范围。')
-        self._run(lambda: polygon_crop_mask(layer.points, polygon, **view), done)
+        self._run(lambda: polygon_crop_mask(layer.points, polygon, **view), done,
+                  preserve_selection=True)
 
     def apply_segment(self, keep_inside):
         if self._segment is None:
@@ -526,9 +540,14 @@ class PostprocessWindow(QDialog):
         self._commit_operation(work)
 
     def _invalidate_polygon(self, *_):
+        self._selection_generation += 1
         self._segment = None
         if hasattr(self, 'overlay'):
             self.overlay.clear()
+        if hasattr(self, 'properties'):
+            ready = self._worker is None
+            self.actions['fit'].setEnabled(ready)
+            self.properties.setEnabled(ready)
         if hasattr(self, 'segment_label'):
             self.segment_label.setText('左键添加顶点，Alt+左键撤点；右键封闭，Esc取消。')
 
