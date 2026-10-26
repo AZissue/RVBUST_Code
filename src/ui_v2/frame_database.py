@@ -536,8 +536,9 @@ class FrameDatabaseController(QObject):
                 self.bridge._current_mode == 'mobile_chain' and manager and manager.managed_frames):
             return
         mode = self.bridge._current_mode
-        purpose = '移动机位' if mode == 'mobile_chain' else '转台采集' if mode == 'turntable' else (
-            '扫描数据' if self.bridge.fixed_workflow.is_calibration_locked else '标定数据')
+        purpose = ('移动机位' if mode == 'mobile_chain' else '转台采集' if mode == 'turntable'
+            else '机器人原始帧' if mode == 'robot_stitch'
+            else '扫描数据' if self.bridge.fixed_workflow.is_calibration_locked else '标定数据')
         target = getattr(self._capture_target, 'value', None)
         if target is not None:
             if target[0] != mode:
@@ -769,6 +770,8 @@ class FrameDatabaseController(QObject):
             manager = bridge.mobile_workflow.station_manager
             if manager:
                 found.extend(manager.get_frames().values())
+        elif mode == 'robot_stitch':
+            found.extend(bridge.robot_workflow.frames)
         else:
             ws = bridge.shell.workspace_turntable()
             found.extend(f for f in (ws.current_frame0, ws.current_frame1, *ws.session.sequence) if f is not None)
@@ -798,7 +801,8 @@ class FrameDatabaseController(QObject):
             if uid in seen or uid not in database.records:
                 continue
             seen.add(uid)
-            purpose = {'calib': '标定数据', 'scan': '扫描数据'}.get(frame.kind, frame.kind)
+            purpose = (database.records[uid].purpose if mode == 'robot_stitch'
+                else {'calib': '标定数据', 'scan': '扫描数据'}.get(frame.kind, frame.kind))
             status = None
             if mode == 'mobile_chain':
                 status = '已入链' if frame.camera_name in active else '未入链 / 原始帧已保留'

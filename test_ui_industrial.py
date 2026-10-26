@@ -34,9 +34,9 @@ class IndustrialTests(unittest.TestCase):
         self.win._dirty=False
         self.win.close(); self.win.deleteLater(); self.app.processEvents()
 
-    def test_six_entries_keep_business_modes_and_restore_presentation(self):
+    def test_eight_entries_keep_business_modes_and_restore_presentation(self):
         dlg=LauncherDialog()
-        self.assertEqual(len(dlg._industrial_cards),3)
+        self.assertEqual(len(dlg._industrial_cards),4)
         spy=QSignalSpy(dlg.connect_requested)
         for mode in dlg.MODE_NAMES:
             dlg._industrial_cards[mode].clicked.emit()

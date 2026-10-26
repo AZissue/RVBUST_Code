@@ -195,7 +195,9 @@ class IndustrialRibbon(QWidget):
     def _build_mode(self, mode, row):
         shell = self.shell
         multi, mobile, turn = shell.workspace_multi(), shell.workspace_mobile(), shell.workspace_turntable()
-        exports = dict(multi_cam=multi._btn_stitch_save, mobile_chain=mobile._btn_save, turntable=turn.btn_save)
+        robot = shell.workspace_robot()
+        exports = dict(multi_cam=multi._btn_stitch_save, mobile_chain=mobile._btn_save,
+            turntable=turn.btn_save, robot_stitch=robot.panel.btn_save_ply)
         self._group(row, '工作区', [
             ('select', '选择功能', 'layers', lambda: shell.open_device_manager()),
         ], mode)
@@ -223,6 +225,14 @@ class IndustrialRibbon(QWidget):
                               ('recapture', '重拍当前', 'refresh', mobile._btn_recapture)]),
                       ('机位编辑', [('undo', '撤销末帧', 'undo', mobile._btn_undo),
                                   ('delete', '删除机位', 'trash', mobile._btn_delete_node)])]
+        elif mode == 'robot_stitch':
+            groups = [('手眼矩阵', [
+                ('import_he', '导入矩阵', 'folder_open', robot.panel.btn_import_he_file),
+                ('export_he', '导出矩阵', 'save', robot.panel.btn_export_he_file)]),
+                      ('位姿与采集', [('capture', '拍摄并变换', 'camera', robot.panel.btn_capture),
+                                  ('clear', '清空采集', 'trash', robot.panel.btn_clear)]),
+                      ('戳点验证', [('tip', '记录戳点', 'detect', robot.panel.btn_tip_record),
+                                  ('verify', '运行门禁', 'calibrate', robot.panel.btn_tip_check)])]
         else:
             groups = [('转轴标定', [('frame0', '拍摄初始帧', 'camera', turn.btn_capture_frame0),
                                   ('frame1', '拍摄旋转帧', 'camera', turn.btn_capture_frame1),
@@ -231,7 +241,8 @@ class IndustrialRibbon(QWidget):
                                   ('auto', '自动采集', 'loop', turn.btn_auto_capture)])]
         for caption, entries in groups:
             self._group(row, caption, entries, mode)
-        self._group(row, '拼接', [('stitch', '执行拼接', 'stitch', lambda: self._stitch_action('execute'))], mode)
+        stitch_source = robot.panel.btn_publish if mode == 'robot_stitch' else lambda: self._stitch_action('execute')
+        self._group(row, '拼接', [('stitch', '执行拼接', 'stitch', stitch_source)], mode)
         self._group(row, '视图', [('restore', '返回视图', 'undo', self.restore_view),
                                  ('fit', '适配视图', 'reset_view', self.fit_view),
                                  ('screenshot', '视图截图', 'video', self.screenshot)], mode)
@@ -301,8 +312,12 @@ class IndustrialRibbon(QWidget):
         self.badge.style().polish(self.badge)
         database = shell._frame_databases[shell.current_mode()]
         raw = sum(row.kind == 'raw' for row in database.records.values())
-        self.commands[(shell.current_mode(), 'stitch')].setEnabled(raw >= 2)
-        self.commands[(shell.current_mode(), 'stitch')].setToolTip('优先拼接DB勾选的至少两帧原始点云；按当前模式使用标记配准或标定参数，生成独立拼接帧。未勾选时沿用当前工作流。')
+        robot = shell.current_mode() == 'robot_stitch'
+        if not robot:
+            self.commands[(shell.current_mode(), 'stitch')].setEnabled(raw >= 2)
+        self.commands[(shell.current_mode(), 'stitch')].setToolTip(
+            '将当前基座系合并点云发布为独立DB结果，保留原始帧及来源关系。' if robot else
+            '优先拼接DB勾选的至少两帧原始点云；按当前模式使用标记配准或标定参数，生成独立拼接帧。未勾选时沿用当前工作流。')
         bridge = shell._backend_bridge
         self.postprocess_button.setEnabled(bool(bridge and bridge.can_change_workspace()))
         presentation = getattr(shell._stack.currentWidget(), '_industrial', None)

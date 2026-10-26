@@ -17,7 +17,8 @@ from .frame_database import FrameDatabase, _json_value
 
 PROJECT_ROOT = Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parents[2]
 DEFAULT_SESSIONS = PROJECT_ROOT / 'sessions'
-MODE_LABELS = dict(multi_cam='多相机标定', mobile_chain='移动拼接', turntable='转台拼接')
+MODE_LABELS = dict(multi_cam='多相机标定', mobile_chain='移动拼接', turntable='转台拼接',
+    robot_stitch='机器人拼接')
 
 
 def safe_name(name):
@@ -58,6 +59,7 @@ class SessionProject:
         self.save_root = Path(save_root or DEFAULT_SESSIONS).resolve()
         self.saved_path = None
         self.dirty = False
+        self.change_version = 0
         self.include_raw = True
         self.database = FrameDatabase(mode)
         self.database.directory = self.directory / 'data'

@@ -192,6 +192,9 @@ class ExplicitStitching:
             bridge.shell.log('请等待当前任务完成后再执行拼接。', 'warn')
             return
         mode = bridge._current_mode
+        if mode == 'robot_stitch':
+            bridge._on_robot_publish()
+            return
         database = bridge.frame_db.databases[mode]
         raw_ids = [uid for uid, row in database.records.items() if row.kind == 'raw']
         browser = bridge.frame_db.browsers[mode]

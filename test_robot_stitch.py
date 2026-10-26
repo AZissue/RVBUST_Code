@@ -152,6 +152,9 @@ def test_eye_in_hand():
     fd, path = tempfile.mkstemp(suffix='.ply')
     os.close(fd)
     ok, msg = wf.save_merged_ply(path)
+    assert not ok and 'VERIFIED' in msg
+    wf.handeye.validated = True
+    ok, msg = wf.save_merged_ply(path)
     assert ok, msg
     assert os.path.exists(path)
     os.unlink(path)

@@ -270,6 +270,7 @@ class SessionStorageDialog(QDialog):
             frames += list(bridge.mobile_workflow.station_manager.get_frames().values())
         turn = bridge.shell.workspace_turntable()
         frames += [frame for frame in (turn.current_frame0, turn.current_frame1, *turn.session.sequence) if frame]
+        frames += list(bridge.robot_workflow.frames)
         for frame in frames:
             for path in (frame.offline_pointmap_path, frame.offline_image_path):
                 if path:

@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-"""ui_v2.workspaces —— 双模式工作区包。"""
+"""Production workspaces for the v2 shell."""
 
 from .multi_cam_workspace import MultiCamWorkspace
 from .mobile_chain_workspace import MobileChainWorkspace
 from .turntable_workspace import TurntableWorkspace
+from .robot_workspace import RobotWorkspace
 
-__all__ = ["MultiCamWorkspace", "MobileChainWorkspace", "TurntableWorkspace"]
+__all__ = ["MultiCamWorkspace", "MobileChainWorkspace", "TurntableWorkspace", "RobotWorkspace"]

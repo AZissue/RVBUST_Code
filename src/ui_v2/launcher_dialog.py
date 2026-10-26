@@ -30,11 +30,13 @@ class LauncherDialog(QDialog):
     MODE_MULTI_CAM = "multi_cam"        # 模式 A：多相机外参标定
     MODE_MOBILE_CHAIN = "mobile_chain"  # 模式 B：单相机移动拼接
     MODE_TURNTABLE = "turntable"        # 模式 C：转台 360° 拼接
+    MODE_ROBOT = "robot_stitch"         # 模式 D：机器人手眼拼接（仅新版）
 
     MODE_NAMES = {
         MODE_MULTI_CAM: "多相机外参标定",
         MODE_MOBILE_CHAIN: "单相机移动拼接",
         MODE_TURNTABLE: "转台 360° 拼接",
+        MODE_ROBOT: "机器人手眼拼接",
     }
 
     # ---------------------------------------------------------------- 信号（接口预留）
@@ -113,6 +115,7 @@ class LauncherDialog(QDialog):
             (self.MODE_MULTI_CAM, '多相机外参标定 · 新版', '多路相机画面与3D视图；沿用正式标定、质量门禁及扫描流程。', 'camera_multi'),
             (self.MODE_MOBILE_CHAIN, '单相机移动链式拼接 · 新版', '大型3D视图、右上角2D、左侧机位及底部日志；真实采集接线。', 'chain'),
             (self.MODE_TURNTABLE, '转台拼接 · 新版', '左侧标定及步进采集，右上角2D；沿用正式转台会话与保存。', 'loop'),
+            (self.MODE_ROBOT, '机器人手眼拼接 · 新版', '手眼矩阵与机器人绝对位姿驱动点云转基座系；支持手动和CSV位姿。', 'calibrate'),
         ):
             card = ModeCard(icon, title, description)
             card.setFixedHeight(100)
@@ -261,10 +264,14 @@ class LauncherDialog(QDialog):
             self._mode_desc.setText(
                 "一台相机边走边拍，每帧自动检测标记物、自动配准增量拼接。"
                 "适合现场扫描、大件测量。")
-        else:
+        elif mode == self.MODE_TURNTABLE:
             self._mode_desc.setText(
                 "相机固定对准转台，转台上放置物体/标记物；拍摄两帧标定转台角度后，"
                 "按固定角度手动旋转并采集，最终拼接成 360° 完整点云。")
+        else:
+            self._mode_desc.setText(
+                "加载手眼矩阵，录入机器人绝对位姿，将多帧相机点云转到基座系。"
+                "通过戳点验证后导出合并结果。")
 
         # 不同模式设备要求不同，清空多选防止残留选择误导
         self._table.clear_checks()
@@ -282,14 +289,15 @@ class LauncherDialog(QDialog):
                 hint, color = f"已选 {n} 台 / 多相机模式至少需要 2 台", ACCENT
             else:
                 hint, color = f"已选 {n} 台 · 待连接", STATUS_OK
-        elif self._mode == self.MODE_MOBILE_CHAIN:
-            self._rule_hint.setText("选择 1 台相机；进入工作区后显示一个 2D 窗口。")
+        elif self._mode in (self.MODE_MOBILE_CHAIN, self.MODE_ROBOT):
+            label = self.MODE_NAMES[self._mode]
+            self._rule_hint.setText(f"选择 1 台相机；{label}使用单相机采集。")
             ok = n == 1
             if n == 0:
                 hint, color = "未选择设备", TEXT_MUTED
             elif n > 1:
                 hint, color = (
-                    f"已选 {n} 台 / 单相机移动拼接仅支持 1 台相机，"
+                    f"已选 {n} 台 / {label}仅支持 1 台相机，"
                     "请取消多余选择"), ACCENT
             else:
                 hint, color = "已选 1 台 · 待连接", STATUS_OK

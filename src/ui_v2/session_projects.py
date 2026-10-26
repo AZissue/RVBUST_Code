@@ -15,6 +15,7 @@ from core.frame_database import _json_value
 from core.frame_data import FrameData
 from core.chain_stitcher import ChainNode, ChainEdge
 from core.mobile_chain_workflow import MobileChainWorkflow
+from core.robot_stitch_workflow import RobotStitchWorkflow
 from core.calibration_engine import CalibrationEngine
 from core.offline_session import OfflineSession
 from core.turntable_calibrator import OnlineTurntableSession
@@ -88,14 +89,17 @@ class SessionProjects(QObject):
     def mark_changed(self, mode):
         if mode in self.loading or self.closed:
             return
-        self.projects[mode].dirty = True
+        project = self.projects[mode]
+        project.dirty = True
+        project.change_version += 1
         self.update(mode)
 
     def update(self, mode):
         project = self.projects[mode]
         project.database.project_title = project.title
         project.database.has_calibration = (bool(self.bridge.calibration_engine.pair_results) if mode == 'multi_cam'
-            else self.bridge.shell.workspace_turntable().session.is_calibrated() if mode == 'turntable' else False)
+            else self.bridge.shell.workspace_turntable().session.is_calibrated() if mode == 'turntable'
+            else self.bridge.robot_workflow.handeye is not None if mode == 'robot_stitch' else False)
         browser = self.bridge.frame_db.browsers.get(mode)
         if browser:
             browser.refresh()
@@ -179,7 +183,8 @@ class SessionProjects(QObject):
             browser.database = db
         workspace = {'multi_cam': self.bridge.shell.workspace_multi,
             'mobile_chain': self.bridge.shell.workspace_mobile,
-            'turntable': self.bridge.shell.workspace_turntable}[mode]()
+            'turntable': self.bridge.shell.workspace_turntable,
+            'robot_stitch': self.bridge.shell.workspace_robot}[mode]()
         workspace.frame_database = db
 
     def reset_workflow(self, mode):
@@ -205,6 +210,11 @@ class SessionProjects(QObject):
                 ws.camera_grid().set_frame(cid, None)
             bridge.fixed_workflow.start_calibration(ws.current_reference_id() or 'cam0')
             ws.set_state('connected' if bridge.camera_manager.get_connected_ids() else 'idle')
+        elif mode == 'robot_stitch':
+            ws = bridge.shell.workspace_robot()
+            ws.reset_session()
+            ws.set_capture_provider(None)
+            bridge._robot_offline_frames = []
         else:
             ws = bridge.shell.workspace_turntable()
             ws._reset_online_state()
@@ -226,6 +236,11 @@ class SessionProjects(QObject):
                 frames_calib={cid: desc(f) for cid, f in bridge.fixed_workflow.frames_calib.items()} if include_raw else {},
                 frames_scan={cid: desc(f) for cid, f in bridge.fixed_workflow.frames_scan.items()} if include_raw else {},
                 devices=[dict(serial=d.serial, model=d.model) for d in bridge.shell._devices])
+        if mode == 'robot_stitch':
+            data = bridge.robot_workflow.snapshot()
+            for capture, frame in zip(data['captures'], bridge.robot_workflow.frames):
+                capture['frame'] = desc(frame)
+            return data
         ws = bridge.shell.workspace_turntable()
         session = ws.session
         calibration = None
@@ -262,6 +277,7 @@ class SessionProjects(QObject):
                     callback(False)
                 return
         self.bridge.shell.show_loading('正在保存当前会话...')
+        save_version = project.change_version
         def work():
             data = self.describe(mode, include_raw)
             return project.save(data, include_raw=include_raw)
@@ -270,9 +286,11 @@ class SessionProjects(QObject):
             if error:
                 self.bridge.shell.log(f'会话保存失败：{error}', 'error')
             else:
-                project.dirty = False
+                project.dirty = project.change_version != save_version
                 self.update(mode)
-                self.bridge.shell.log(f'会话已保存：{path}' + ('（含原始帧）' if include_raw else '（标定信息）'), 'success')
+                suffix = '；快照后的修改仍未保存' if project.dirty else ''
+                self.bridge.shell.log(f'会话已保存：{path}' + ('（含原始帧）' if include_raw else '（标定信息）') + suffix,
+                    'info' if project.dirty else 'success')
             self.bridge.shell.session_save_finished.emit(error is None, str(error or path))
             if callback:
                 callback(error is None)
@@ -320,6 +338,8 @@ class SessionProjects(QObject):
         project.include_raw = True
         db = project.database
         try:
+            if mode == 'robot_stitch':
+                raise ValueError('机器人原型目录不是正式项目会话，请选择含 session.json 的机器人项目')
             if mode == 'multi_cam' and (Path(path) / 'turntable_meta.json').is_file():
                 raise ValueError('这是转台会话，请进入转台工作区导入')
             if mode == 'mobile_chain':
@@ -369,8 +389,8 @@ class SessionProjects(QObject):
 
     def prepare_loaded(self, project, data):
         mode = project.mode
+        bridge = self.bridge
         if mode == 'mobile_chain':
-            bridge = self.bridge
             workflow = MobileChainWorkflow(bridge.camera_manager, bridge.marker_detector,
                 CalibrationEngine(), bridge.stitch_engine, bridge.processor)
             workflow.start_chaining()
@@ -420,6 +440,12 @@ class SessionProjects(QObject):
             if selected:
                 workflow._database_preview = (selected, *project.database.load_frame(selected))
             return workflow, merged
+        if mode == 'robot_stitch':
+            workflow = RobotStitchWorkflow(bridge.camera_manager, bridge.marker_detector,
+                bridge.calibration_engine, bridge.stitch_engine, bridge.processor)
+            frames = [read_frame(project, entry['frame'])[0] for entry in data['captures']]
+            workflow.restore_snapshot(data, frames)
+            return workflow
         if mode == 'multi_cam':
             engine = CalibrationEngine()
             if data.get('calibration'):
@@ -456,6 +482,21 @@ class SessionProjects(QObject):
             raise ValueError('转台步数无效')
         return session, first
 
+    def _robot_offline_provider(self, project):
+        if not (self.bridge.offline_preview or getattr(self.bridge.shell, '_offline_preview', False)):
+            return None
+        used = {frame.database_id for frame in self.bridge.robot_workflow.frames}
+        remaining = [uid for uid, row in project.database.records.items()
+            if row.kind == 'raw' and uid not in used]
+        self.bridge._robot_offline_frames = list(remaining)
+
+        def next_frame():
+            if not remaining:
+                return None
+            return project.database.load_frame(remaining.pop(0))[0]
+
+        return next_frame
+
     def apply_loaded(self, mode, data, prepared):
         bridge = self.bridge
         if mode == 'mobile_chain':
@@ -471,6 +512,11 @@ class SessionProjects(QObject):
                 bridge.frame_db.browsers[mode].refresh()
                 bridge.frame_db.display_frame(mode, *preview)
                 del workflow._database_preview
+        elif mode == 'robot_stitch':
+            bridge.robot_workflow = prepared
+            ws = bridge.shell.workspace_robot()
+            ws.set_workflow(prepared)
+            ws.set_capture_provider(self._robot_offline_provider(self.projects[mode]))
         elif mode == 'multi_cam':
             session = OfflineSession()
             session._meta['calibration'] = data.get('calibration')

@@ -31,6 +31,7 @@ from PySide6.QtWidgets import QFileDialog
 from core.camera_manager import CameraManager
 from core.fixed_multi_cam_workflow import FixedMultiCamWorkflow
 from core.mobile_chain_workflow import MobileChainWorkflow
+from core.robot_stitch_workflow import RobotStitchWorkflow
 from core.marker_detector import MarkerDetector
 from core.calibration_engine import CalibrationEngine
 from core.stitch_engine import StitchEngine
@@ -146,6 +147,11 @@ class BackendBridge(QObject):
         self.mobile_workflow = MobileChainWorkflow(
             self.camera_manager, self.marker_detector,
             self.calibration_engine, self.stitch_engine, self.processor)
+        self.robot_workflow = RobotStitchWorkflow(
+            self.camera_manager, self.marker_detector,
+            self.calibration_engine, self.stitch_engine, self.processor)
+        self.shell.workspace_robot().set_workflow(self.robot_workflow)
+        self._robot_offline_frames = []
 
         # 当前模式
         self._current_mode = LauncherDialog.MODE_MULTI_CAM
@@ -232,6 +238,9 @@ class BackendBridge(QObject):
         # 1.0.10 池合并：给转台工作区注入统一 runner，全工程只留一个引用池
         self.shell.workspace_turntable().set_background_runner(self._run_background)
         self.shell.workspace_turntable().calibration_visualization_requested.connect(self._on_turntable_visualize_calibration)
+        self.shell.workspace_robot().set_background_runner(self._run_background)
+        self.shell.workspace_robot().set_task_gate(self.can_change_workspace)
+        self.shell.workspace_robot().result_publish_requested.connect(self._on_robot_publish)
         if hasattr(self, 'stitching'):
             self.shell.workspace_turntable()._explicit_stitch = self.stitching.execute
         self._wired = True
@@ -562,8 +571,10 @@ class BackendBridge(QObject):
         self.offline_preview = False
         self.shell._offline_preview = False
         self._offline_clouds = {}
+        self._robot_offline_frames = []
+        self.shell.workspace_robot().set_capture_provider(None)
         for workspace in (self.shell.workspace_multi(), self.shell.workspace_mobile(),
-                          self.shell.workspace_turntable()):
+                          self.shell.workspace_turntable(), self.shell.workspace_robot()):
             workspace.offline_preview = False
         if show_loading:
             self.shell.show_loading("正在连接设备...")
@@ -714,6 +725,17 @@ class BackendBridge(QObject):
                 self.shell.workspace_turntable().set_camera_manager(
                     self.camera_manager, self.marker_detector)
                 self.shell.workspace_turntable().set_state("connected")
+            elif mode == LauncherDialog.MODE_ROBOT:
+                if total_count < 1:
+                    self.shell.log('机器人手眼拼接需要至少 1 台设备', 'error')
+                    if show_loading:
+                        self.shell.hide_loading()
+                    self.connection_finished.emit(False, '机器人手眼拼接需要至少 1 台设备')
+                    return
+                if ok_count < 1 and test_count > 0:
+                    self._show_debug_mode_notice('机器人手眼拼接', ok_count, test_count)
+                self.shell.workspace_robot().set_capture_provider(None)
+                self.shell.workspace_robot().set_state('connected')
             if show_loading:
                 self.shell.hide_loading()
             self.connection_finished.emit(
@@ -2035,6 +2057,33 @@ class BackendBridge(QObject):
 
         self._run_background(_work, _done)
 
+    def _on_robot_publish(self):
+        if not self.can_change_workspace():
+            self.shell.log('当前任务进行中，不能发布机器人拼接结果', 'warn')
+            return
+        workflow = self.robot_workflow
+        if workflow.handeye is None or not workflow.handeye.validated:
+            self.shell.log('机器人拼接结果发布被戳点门禁拦住：未 VERIFIED', 'warn')
+            return
+        cloud = workflow.get_merged_pointcloud()
+        source_ids = [frame.database_id for frame in workflow.frames]
+        if cloud is None or not source_ids or any(not uid for uid in source_ids):
+            self.shell.log('没有可发布的机器人拼接结果或原始帧身份', 'warn')
+            return
+        database = self.projects.projects['robot_stitch'].database
+
+        def work():
+            return database.publish_result(cloud, source_ids, name='机器人基座系合并点云')[0]
+
+        def done(uid, error):
+            if error:
+                self.shell.log(f'机器人拼接结果发布失败：{error}', 'error')
+                return
+            self.projects.mark_changed('robot_stitch')
+            self.shell.log(f'机器人基座系合并结果已写入项目 DB：{uid}', 'success')
+
+        self._run_background(work, done, name='robot_publish')
+
     # ------------------------------------------------------------------
     # 主窗口
     # ------------------------------------------------------------------
@@ -2422,6 +2471,7 @@ class BackendBridge(QObject):
         # 也不能挂在已遮蔽的自定义信号上，否则运行中析构 → __fastfail。
         worker.finished.connect(lambda w=worker: self._on_worker_thread_finished(w))
         worker.start()
+        self.shell.workspace_robot()._refresh_actions()
         if hasattr(self.shell, '_industrial_ribbon'):
             self.shell._industrial_ribbon.update_status()
 
@@ -2430,6 +2480,7 @@ class BackendBridge(QObject):
         if worker in self._workers:
             self._workers.remove(worker)
         worker.deleteLater()
+        self.shell.workspace_robot()._refresh_actions()
         if hasattr(self.shell, '_industrial_ribbon'):
             self.shell._industrial_ribbon.update_status()
 

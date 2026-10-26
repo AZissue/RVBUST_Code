@@ -177,7 +177,9 @@ class IndustrialPresentation:
             self.set_legacy_expanded(False)
         else:
             self.side_column.addWidget(self.sidebar)
-        self.side_column.setSizes([700, 30])
+        self.side_column.setSizes([1, 1] if mode == 'robot_stitch' else [700, 30])
+        if mode == 'robot_stitch':
+            self.sidebar.setMinimumHeight(320)
         self.calibration_panel = None
         if mode == 'turntable':
             from .widgets.turntable_calibration_panel import TurntableCalibrationPanel
@@ -187,6 +189,8 @@ class IndustrialPresentation:
             self.frame_browser.properties.register_object_page('calibration', self.calibration_panel)
         self.body.addWidget(self.side_column)
         self.side_column.setStretchFactor(0, 1)
+        if mode == 'robot_stitch':
+            self.side_column.setStretchFactor(1, 1)
         self.stage = QWidget()
         stage = QVBoxLayout(self.stage)
         stage.setContentsMargins(0, 0, 0, 0)
@@ -324,7 +328,7 @@ class IndustrialPresentation:
             base = QWidget()
             base_lo = QVBoxLayout(base)
             base_lo.setContentsMargins(0, 0, 0, 0)
-            viewer = workspace._viewer if mode == 'mobile_chain' else workspace.viewer
+            viewer = workspace._viewer if mode in ('mobile_chain', 'robot_stitch') else workspace.viewer
             self._mount(viewer, base_lo)
             scene.addWidget(base, 0, 0)
             self.overlay = QGroupBox('当前相机 · 2D图像与编码圆')
@@ -412,10 +416,13 @@ class IndustrialPresentation:
                     self.inspector.raise_()
                     if self.mode == 'turntable':
                         self.workspace._preview_panel.hide()
-                    elif self.workspace._live_view.marker_context:
+                    elif self.mode == 'mobile_chain' and self.workspace._live_view.marker_context:
                         self._marker_context(*self.workspace._live_view.marker_context)
-                    else:
+                    elif self.mode == 'mobile_chain':
                         self._preview_frame(self.workspace._live_view._current_pixmap)
+                    elif self._business_marker_image:
+                        args, kwargs = self._business_marker_image
+                        self.set_marker_image(*args, **kwargs)
                 else:
                     self.overlay.raise_()
         else:

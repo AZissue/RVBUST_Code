@@ -6,7 +6,7 @@ from core.session_project import SessionProject
 
 
 def open_preview(bridge, mode, on_finished=None):
-    if mode not in ('multi_cam', 'mobile_chain', 'turntable'):
+    if mode not in ('multi_cam', 'mobile_chain', 'turntable', 'robot_stitch'):
         raise ValueError(mode)
     if not bridge.can_change_workspace():
         if on_finished:
@@ -30,11 +30,15 @@ def open_preview(bridge, mode, on_finished=None):
         database = project.database
         database.begin_session('凳子离线数据')
         for index, (frame, _) in enumerate(records):
-            purpose = '标定数据' if mode == 'multi_cam' else '移动机位' if mode == 'mobile_chain' else f'转台标定 frame{index}'
+            purpose = ('标定数据' if mode == 'multi_cam' else '移动机位'
+                if mode == 'mobile_chain' else '机器人原始帧'
+                if mode == 'robot_stitch' else f'转台标定 frame{index}')
             if mode == 'turntable':
                 frame.kind = purpose
-            database.ingest(frame, purpose=purpose, camera=frame.camera_name if mode == 'multi_cam' else 'cam0',
-                            logical_name=f'station_{index+1}' if mode == 'mobile_chain' else frame.camera_name)
+            database.ingest(frame, purpose=purpose,
+                camera=frame.camera_name if mode == 'multi_cam' else 'cam0',
+                logical_name=(f'station_{index+1}' if mode == 'mobile_chain'
+                    else f'robot_frame_{index+1}' if mode == 'robot_stitch' else frame.camera_name))
         return records, project, database.load_frame(records[0][0].database_id)
 
     def done(result, error):
@@ -56,7 +60,8 @@ def open_preview(bridge, mode, on_finished=None):
         bridge._offline_clouds = {frame.camera_name: cloud for frame, cloud in records} if mode == 'multi_cam' else {}
         bridge._current_mode = mode
         shell._offline_preview = True
-        for workspace in (shell.workspace_multi(), shell.workspace_mobile(), shell.workspace_turntable()):
+        for workspace in (shell.workspace_multi(), shell.workspace_mobile(),
+                shell.workspace_turntable(), shell.workspace_robot()):
             workspace.offline_preview = True
         shell.set_presentation('industrial')
         shell.set_mode(mode, [])
@@ -82,6 +87,17 @@ def open_preview(bridge, mode, on_finished=None):
             ws.set_state('connected')
             ws.viewer().clear_all()
             message = '已加载凳子 1、2 帧原始点云和2D图像；点击“执行拼接”后生成独立结果。'
+        elif mode == 'robot_stitch':
+            ws = shell.workspace_robot()
+            bridge._robot_offline_frames = [frame for frame, _ in records]
+            remaining = list(bridge._robot_offline_frames)
+
+            def next_offline_frame():
+                return remaining.pop(0) if remaining else None
+
+            ws.set_capture_provider(next_offline_frame)
+            ws._display_2d(records[0][0].image_np)
+            message = '已加载凳子 1、2 帧作为机器人离线原始帧；请导入手眼矩阵并录入对应的绝对位姿。'
         else:
             ws = shell.workspace_turntable()
             ws.combo_marker_type.setCurrentIndex(ws.combo_marker_type.findData(MARKER_TYPE_CODED_CIRCLE))

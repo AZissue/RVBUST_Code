@@ -31,7 +31,7 @@ from .theme import ACCENT, ACCENT_DIM, BG_CARD, BORDER, STATUS_ERR, STATUS_OK, S
 from . import icons as ui_icons
 from .widgets import FloatingLogPanel, LoadingOverlay
 from .widgets.device_table import DeviceInfo
-from .workspaces import MobileChainWorkspace, MultiCamWorkspace, TurntableWorkspace
+from .workspaces import MobileChainWorkspace, MultiCamWorkspace, TurntableWorkspace, RobotWorkspace
 from .components import UiComponents
 from .composition import WorkspaceFactories
 
@@ -139,27 +139,30 @@ class MainWindowShell(QMainWindow):
         self._toolbar = self._build_toolbar()
         root.addWidget(self._toolbar)
 
-        # ===== 中央三工作区 =====
+        # ===== 中央工作区 =====
         self._stack = QStackedWidget()
         self._ws_multi = self._workspace_factories.multi(parent=self._stack, components=self._components)
         self._ws_mobile = self._workspace_factories.mobile(parent=self._stack, components=self._components)
         self._ws_turntable = self._workspace_factories.turntable(parent=self._stack, components=self._components)
-        self._stack.addWidget(self._ws_multi)
-        self._stack.addWidget(self._ws_mobile)
-        self._stack.addWidget(self._ws_turntable)
+        self._ws_robot = self._workspace_factories.robot(parent=self._stack, components=self._components)
+        for workspace in (self._ws_multi, self._ws_mobile, self._ws_turntable, self._ws_robot):
+            self._stack.addWidget(workspace)
         from core.frame_database import FrameDatabase
         self._frame_databases = {mode: FrameDatabase(mode) for mode in LauncherDialog.MODE_NAMES}
-        for mode, workspace in zip(LauncherDialog.MODE_NAMES, (self._ws_multi, self._ws_mobile, self._ws_turntable)):
+        for mode, workspace in zip(LauncherDialog.MODE_NAMES, (self._ws_multi, self._ws_mobile, self._ws_turntable, self._ws_robot)):
             workspace.frame_database = self._frame_databases[mode]
 
         # 工作区日志统一汇入日志面板与状态栏
         self._ws_multi.log_message.connect(self.log)
         self._ws_mobile.log_message.connect(self.log)
         self._ws_turntable.log_message.connect(self.log)
+        self._ws_robot.log_message.connect(self.log)
+        self._ws_robot.state_changed.connect(self._refresh_statusbar)
         self._ws_mobile.chain_stats_changed.connect(self._on_chain_stats)
         self._ws_mobile._eval_card.changed.connect(self._refresh_chain_summary)
         self._ws_mobile.dirty_changed.connect(self.set_dirty)
         self._ws_turntable.dirty_changed.connect(self.set_dirty)
+        self._ws_robot.dirty_changed.connect(self.set_dirty)
         # 转台工作区"保存会话"按钮 → 统一走 BackendBridge 的 B 类保存（1.0.10 池合并）
         self._ws_turntable.save_session_requested.connect(
             lambda: self.save_session_requested.emit())
@@ -337,7 +340,7 @@ class MainWindowShell(QMainWindow):
             current = workspace.current_state()
             return current if preserve_state and devices and current != 'idle' else ('connected' if devices else 'idle')
         states = {workspace: state(workspace) for workspace in
-                  (self._ws_multi, self._ws_mobile, self._ws_turntable)}
+                  (self._ws_multi, self._ws_mobile, self._ws_turntable, self._ws_robot)}
 
         if mode == LauncherDialog.MODE_MULTI_CAM:
             self._stack.setCurrentWidget(self._ws_multi)
@@ -347,7 +350,7 @@ class MainWindowShell(QMainWindow):
             self._stack.setCurrentWidget(self._ws_mobile)
             self._ws_mobile.set_devices(devices)
             self._ws_mobile.set_state(states[self._ws_mobile])
-        else:
+        elif mode == LauncherDialog.MODE_TURNTABLE:
             self._stack.setCurrentWidget(self._ws_turntable)
             if self._backend_bridge is not None:
                 self._ws_turntable.set_camera_manager(
@@ -356,6 +359,10 @@ class MainWindowShell(QMainWindow):
                 )
             self._ws_turntable.set_devices(devices)
             self._ws_turntable.set_state(states[self._ws_turntable])
+        else:
+            self._stack.setCurrentWidget(self._ws_robot)
+            self._ws_robot.set_devices(devices)
+            self._ws_robot.set_state(states[self._ws_robot])
 
         self._refresh_statusbar()
         self._apply_presentation()
@@ -418,10 +425,13 @@ class MainWindowShell(QMainWindow):
     def workspace_turntable(self) -> TurntableWorkspace:
         return self._ws_turntable
 
+    def workspace_robot(self) -> RobotWorkspace:
+        return self._ws_robot
+
     def set_backend_bridge(self, bridge: 'BackendBridge'):
         """设置后端桥接器引用（用于设备枚举等 core 操作）。"""
         self._backend_bridge = bridge
-        for mode, workspace in zip(LauncherDialog.MODE_NAMES, (self._ws_multi, self._ws_mobile, self._ws_turntable)):
+        for mode, workspace in zip(LauncherDialog.MODE_NAMES, (self._ws_multi, self._ws_mobile, self._ws_turntable, self._ws_robot)):
             if hasattr(workspace, '_industrial') and hasattr(bridge, 'frame_db'):
                 bridge.frame_db.bind(mode, workspace._industrial.frame_browser)
                 workspace._industrial.frame_browser.properties.capture.bind(bridge)
@@ -448,9 +458,12 @@ class MainWindowShell(QMainWindow):
         elif self._mode == LauncherDialog.MODE_MOBILE_CHAIN:
             self._ws_mobile.set_devices([])
             self._ws_mobile.set_state("idle")
-        else:
+        elif self._mode == LauncherDialog.MODE_TURNTABLE:
             self._ws_turntable.set_devices([])
             self._ws_turntable.set_state("idle")
+        else:
+            self._ws_robot.set_devices([])
+            self._ws_robot.set_state("idle")
         self._refresh_statusbar()
 
     # ------------------------------------------------------------ 设备管理（回小窗）
@@ -684,8 +697,10 @@ class MainWindowShell(QMainWindow):
             ws = self._ws_multi
         elif self._mode == LauncherDialog.MODE_MOBILE_CHAIN:
             ws = self._ws_mobile
-        else:
+        elif self._mode == LauncherDialog.MODE_TURNTABLE:
             ws = self._ws_turntable
+        else:
+            ws = self._ws_robot
         state = ws.current_state()
         self._st_step.setText(state)
 
@@ -767,12 +782,18 @@ class MainWindowShell(QMainWindow):
             "  2. 开始取景，移动相机到不同机位\n"
             "  3. 逐个拍摄机位，自动检测标记物并增量配准\n"
             "  4. 重合度不足时重拍，支持撤销/删除/全局优化\n\n"
+            "【机器人手眼拼接】\n"
+            "  1. 连接 1 台相机，导入手眼矩阵并选择单位与安装方式\n"
+            "  2. 手动录入机器人绝对位姿，或加载带单位/类型声明的 CSV\n"
+            "  3. 拍摄后点云转到机器人基座系，可发布独立 DB 拼接结果\n"
+            "  4. 至少 3 个离面姿态戳点验证通过后才允许导出合并 PLY\n"
+            "  当前不包含品牌机器人 TCP 连接或运动控制；判别下限约 1 mm。\n\n"
             "提示：无真实多机环境时，可在启动小窗点击『+ 测试设备』临时添加虚拟相机。")
 
     def closeEvent(self, event):
         self._close_event_impl(event)
         if event.isAccepted():
-            for workspace in (self._ws_multi, self._ws_mobile, self._ws_turntable):
+            for workspace in (self._ws_multi, self._ws_mobile, self._ws_turntable, self._ws_robot):
                 viewer = workspace.viewer if workspace is self._ws_turntable else workspace.viewer()
                 viewer.shutdown()
 

@@ -16,7 +16,8 @@ class DbCloudOverlay(QObject):
     def _workspace(self, mode):
         return {'multi_cam': self.bridge.shell.workspace_multi,
                 'mobile_chain': self.bridge.shell.workspace_mobile,
-                'turntable': self.bridge.shell.workspace_turntable}[mode]()
+                'turntable': self.bridge.shell.workspace_turntable,
+                'robot_stitch': self.bridge.shell.workspace_robot}[mode]()
 
     def _viewer(self, mode):
         workspace = self._workspace(mode)

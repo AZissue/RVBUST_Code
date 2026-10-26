@@ -24,6 +24,11 @@ def _turntable(**kwargs):
     return TurntableWorkspace(**kwargs)
 
 
+def _robot(**kwargs):
+    from .workspaces.robot_workspace import RobotWorkspace
+    return RobotWorkspace(**kwargs)
+
+
 def _launcher(**kwargs):
     from .launcher_dialog import LauncherDialog
     return LauncherDialog(**kwargs)
@@ -39,6 +44,7 @@ class WorkspaceFactories:
     multi: Callable = _multi
     mobile: Callable = _mobile
     turntable: Callable = _turntable
+    robot: Callable = _robot
 
 
 @dataclass(frozen=True)

@@ -59,6 +59,10 @@ def main():
     devices = dlg.selected_devices()
     win.set_mode(LauncherDialog.MODE_MOBILE_CHAIN, devices)
     check("模式 B 工作区切换", win._stack.currentWidget() is win.workspace_mobile())
+    win.set_mode(LauncherDialog.MODE_ROBOT, devices)
+    check("模式 D 机器人工作区切换", win._stack.currentWidget() is win.workspace_robot())
+    win.set_presentation('industrial')
+    check("模式 D 新版布局", win.workspace_robot()._industrial.active)
     win.set_mode(LauncherDialog.MODE_MULTI_CAM, devices * 2)
     check("模式 A 工作区切换", win._stack.currentWidget() is win.workspace_multi())
 
