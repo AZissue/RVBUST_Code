@@ -228,14 +228,21 @@ class PostprocessWindow(QDialog):
     def _refresh(self, select=None, fit=False):
         self._invalidate_polygon()
         self.panel.refresh(select=select)
+        self._refresh_display(fit=fit)
+        self._refresh_controls()
+
+    def _refresh_display(self, *, fit=False):
         # The renderer consumes array views; do not duplicate full geometry on the UI thread.
         clouds = {str(index): layer for index, layer in enumerate(self.session.layers) if layer.visible}
         self.viewer.replace_pointclouds(clouds, fit=fit)
-        self._refresh_controls()
 
     def _visibility(self, index, visible):
         self.session.layers[index].visible = visible
-        self._refresh(select=index)
+        self._invalidate_polygon()
+        # Called synchronously inside QTreeWidgetItem.setData(). Rebuilding the
+        # tree here destroys the emitting item before Qt finishes updating it.
+        self._refresh_display()
+        self.panel._update_details()
 
     def load_selected(self, identifiers=None):
         if isinstance(identifiers, bool):

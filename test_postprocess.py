@@ -157,6 +157,35 @@ class PostprocessTests(unittest.TestCase):
         self.assertTrue(self.editor.actions['publish'].isEnabled())
         self.assertIn('test rejection', self.editor.status.text())
 
+    def test_visibility_on_reopened_db_keeps_emitting_tree_item_alive(self):
+        from shiboken6 import isValid
+        _, result, _ = self.load_grid()
+        self.editor.close()
+        self.app.processEvents()
+        self.browser.set_component_checked(result, 'cloud')
+        self.wait(lambda: bool(self.win.workspace_multi().viewer()._database_clouds))
+        self.wait(lambda: not any(worker.isRunning() for worker in self.bridge._workers))
+        self.editor = self.bridge.open_postprocess()
+        self.finish()
+        panel = self.editor.panel
+        item = panel._items[0]
+        root = item.parent()
+        original = self.editor.session.layers[0].points.copy()
+        # A no-op mock makes regression fail safely instead of deleting the
+        # QTreeWidgetItem from inside its native setData notification stack.
+        with patch.object(panel, 'refresh') as rebuild:
+            for visible in (False, True, False, True):
+                item.setCheckState(0, Qt.Checked if visible else Qt.Unchecked)
+                self.app.processEvents()
+                self.assertEqual(self.editor.session.layers[0].visible, visible)
+                self.assertEqual(len(self.editor.viewer._layers), int(visible))
+                self.assertTrue(isValid(item))
+                self.assertIs(panel._items[0], item)
+                self.assertIs(item.parent(), root)
+            rebuild.assert_not_called()
+        np.testing.assert_array_equal(self.editor.session.layers[0].points, original)
+        self.assertEqual(len(self.db.records), 2)
+
     def test_load_and_downsample_are_background_and_original_unchanged(self):
         uid, result, points = self.load_grid()
         raw = self.db.directory/'frames'/result/'pointmap.ply'

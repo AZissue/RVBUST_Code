@@ -93,7 +93,6 @@ class CloudTreePanel(QWidget):
             row.setCheckState(0, Qt.Checked if layer.visible else Qt.Unchecked)
             row.setIcon(0, icon('layers', '#bbbbbb', 16))
             row.setToolTip(0, f'来源：{layer.source}\n'
-                              f'可见性：{"显示" if layer.visible else "隐藏"}\n'
                               '显示采样不改变图层点数。')
             row.setToolTip(1, '图层完整点数；显示采样不改变图层点数。')
             self._items[index] = row
