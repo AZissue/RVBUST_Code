@@ -118,6 +118,7 @@ class TurntableCalibrator:
         self.step_count: int = 0
         self.R_init: Optional[np.ndarray] = None
         self.t_init: Optional[np.ndarray] = None
+        self.confidence = None
 
     def calibrate_from_markers(
         self,
@@ -133,6 +134,7 @@ class TurntableCalibrator:
         Returns:
             (ok, message, info_dict)
         """
+        self.confidence = None
         if points_frame0.shape != points_frame1.shape or points_frame0.shape[0] < 3:
             return False, "对应点不足 3 对", {}
 
@@ -155,6 +157,8 @@ class TurntableCalibrator:
             return False, "旋转角度几乎为 0，无法估算步数", {}
 
         self.step_count = int(round(2 * np.pi / angle))
+        from .turntable_confidence import assess
+        self.confidence = assess(axis, angle, center, translation=t, reference_points=points_frame0)
 
         info = {
             "axis": axis.tolist(),
@@ -194,6 +198,7 @@ class TurntableCalibrator:
         # R_init / t_init 仅用于标定过程信息展示，恢复时可留空
         self.R_init = None
         self.t_init = None
+        self.confidence = None
 
     def get_transform_for_step(self, step: int) -> np.ndarray:
         """第 step 帧（从 0 开始）变换到参考帧的 4x4 矩阵。"""
@@ -406,6 +411,7 @@ class OnlineTurntableSession:
             ids1 = {i if marker_key == 'index' else m.get(marker_key, m.get('code', i)) for i, m in enumerate(self.markers1)}
             codes = sorted(ids0 & ids1)
             self.calibration_result = dict(
+                confidence=self.calib.confidence,
                 source_ids=[getattr(frame, 'database_id', None) for frame in (self.frame0, self.frame1)],
                 result=dict(success=True, T=transform.tolist(),
                     rms_all_mm=float(np.sqrt(np.mean(np.sum((transformed-pts0)**2, axis=1)))),

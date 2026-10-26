@@ -3,7 +3,7 @@ import copy
 import numpy as np
 from PySide6.QtCore import Qt, QTimer, QElapsedTimer, QSignalBlocker
 from PySide6.QtGui import QColor, QFont
-from PySide6.QtWidgets import QLabel, QPushButton, QSlider, QHBoxLayout, QWidget, QScrollArea, QTabWidget, QLayout
+from PySide6.QtWidgets import QLabel, QPushButton, QSlider, QHBoxLayout, QVBoxLayout, QWidget, QScrollArea, QTabWidget, QLayout
 from core.turntable_calibrator import rotation_direction, transform_matrix
 from ui_common.calibration_result import CalibrationResultDialog, CAMERA_COLOR, valid_transform
 from .calibration_inspector import load_calibration_clouds
@@ -19,10 +19,12 @@ class TurntableCalibrationInspector(CalibrationResultDialog):
         self.resize(1040, 740)
         self.setMinimumSize(760, 620)
         self.error_filter.setCurrentIndex(1)
+        from core.turntable_confidence import report_for
+        self.confidence_report = report_for(calib, snapshot)
         direction = rotation_direction(calib.axis, calib.angle_rad)
         self.model_info = QLabel(f'旋转方向：{direction} · 从相机沿 +Z 看向场景（初始帧 → 旋转帧）\n'
             '两帧按小于180°的单步旋转解释；方向不等同于转台俯视方向。\n'
-            '显示旋转帧按转轴模型回到初始帧的误差；未进行内点分类，质量门禁未评估。')
+            f'可信度：{self.confidence_report["summary"]} · 详见“可信度”页；质量门禁未评估。')
         self.model_info.setWordWrap(True)
         self.layout().insertWidget(0, self.model_info)
         self.viewer.set_rotation_geometry(calib.axis, calib.center)
@@ -63,6 +65,31 @@ class TurntableCalibrationInspector(CalibrationResultDialog):
                 scroll.setFrameShape(QScrollArea.NoFrame)
                 scroll.setWidget(matrix_page)
                 tabs.insertTab(index, scroll, title)
+                self.confidence_page = QWidget()
+                confidence_layout = QVBoxLayout(self.confidence_page)
+                heading = QLabel('标定可信度 · ' + self.confidence_report['summary'])
+                heading.setStyleSheet('font-weight:600;color:#edb566;' if self.confidence_report['state'] != 'clear' else 'font-weight:600;color:#9edce9;')
+                heading.setWordWrap(True)
+                confidence_layout.addWidget(heading)
+                for check in self.confidence_report['checks']:
+                    label = QLabel(check['text'])
+                    label.setWordWrap(True)
+                    label.setTextFormat(Qt.PlainText)
+                    label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+                    label.setStyleSheet('color:#edb566;' if check['state'] == 'warning' else 'color:#a8b6c4;')
+                    confidence_layout.addWidget(label)
+                hint = QLabel('轴心距离为标记重心到轴线的垂距。距离提示阈值取1000 mm与10倍标记分布尺度的较大值。\n'
+                    '阈值为经验初筛值，需结合设备噪声及平台尺寸复核；不修改标定，不阻断拼接。未触发提示也不能证明两帧为固定轴纯旋转。')
+                hint.setWordWrap(True)
+                hint.setStyleSheet('color:#82909f;')
+                confidence_layout.addWidget(hint)
+                confidence_layout.addStretch(1)
+                confidence_scroll = QScrollArea()
+                confidence_scroll.setWidgetResizable(True)
+                confidence_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+                confidence_scroll.setFrameShape(QScrollArea.NoFrame)
+                confidence_scroll.setWidget(self.confidence_page)
+                tabs.addTab(confidence_scroll, '可信度')
                 break
         self.animation_timer = QTimer(self)
         self.animation_timer.setInterval(33)

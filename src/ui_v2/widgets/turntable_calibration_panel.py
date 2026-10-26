@@ -54,6 +54,7 @@ class TurntableCalibrationPanel(QGroupBox):
         session = self.workspace.session
         self._geometry = None
         warning = ''
+        self.warning.setStyleSheet('color:#edb566;')
         if not session.is_calibrated():
             self.status.setText('未标定 · 拍摄两帧后计算转台')
             self.values.setText('旋转轴：—\n旋转中心 / mm：—\n单步角度：—\n旋转方向：—\n360°步数：—')
@@ -70,9 +71,13 @@ class TurntableCalibrationPanel(QGroupBox):
                 self._geometry = (axis.copy(), center.copy())
             else:
                 warning = '轴心数值异常，已暂停标定图形显示，请重新标定。'
-            if valid and abs(angle) < 1.:
-                warning = '两帧转角过小，轴心可能不稳定；请增大转角后重新标定。'
-            self.status.setText('已标定 · 建议复核' if warning else '已标定 · 相机坐标系')
+            if valid:
+                from core.turntable_confidence import report_for
+                report = report_for(calib, session.calibration_result)
+                messages = [check['text'] for check in report['checks'] if check['state'] != 'clear']
+                warning = '可信度：' + report['summary'] + ('\n' + '\n'.join(messages) if messages else '')
+                self.warning.setStyleSheet('color:#edb566;' if report['state'] != 'clear' else 'color:#9cabb9;')
+            self.status.setText('已标定 · 建议复核' if not valid or report['state'] != 'clear' else '已标定 · 相机坐标系')
         self.warning.setText(warning)
         self.warning.setVisible(bool(warning))
         self.show_geometry.setEnabled(self._geometry is not None)

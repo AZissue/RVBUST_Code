@@ -728,6 +728,10 @@ class TurntableWorkspace(QWidget):
             self.log(f"在线标定: {msg}", "success" if ok else "error")
             if ok:
                 snapshot = self.session.calibration_result
+                if snapshot:
+                    for check in snapshot.get('confidence', {}).get('checks', []):
+                        if check['state'] == 'warning':
+                            self.log('标定可信度提示：' + check['text'], 'warn')
                 database = getattr(self, 'frame_database', None)
                 if snapshot and database:
                     snapshot['source_revisions'] = {uid: database.records[uid].revision

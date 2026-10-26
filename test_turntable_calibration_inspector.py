@@ -32,15 +32,15 @@ class TurntableInspectorTests(unittest.TestCase):
             dialog.reject()
         fixtures.FrameBrowserTests.tearDown(self)
 
-    def calibrate(self):
+    def calibrate(self, angle_deg=30., extra=(0, 0, 0)):
         self.win.set_mode('turntable', [])
         self.bridge._current_mode = 'turntable'
         ws = self.win.workspace_turntable()
         database = self.bridge.frame_db.databases['turntable']
         points = np.random.default_rng(23).normal(size=(8, 3))*30 + [10, 20, 500]
-        rotation = rodrigues(np.array([0., 0., 1.]), np.radians(30))
+        rotation = rodrigues(np.array([0., 0., 1.]), np.radians(angle_deg))
         center = np.array([10., -20., 500.])
-        moved = (points-center) @ rotation.T + center
+        moved = (points-center) @ rotation.T + center + np.asarray(extra)
         for index, xyz in enumerate((points, moved)):
             frame = self.source(index+1)
             cloud = o3d.geometry.PointCloud()
@@ -185,6 +185,21 @@ class TurntableInspectorTests(unittest.TestCase):
         self.assertFalse(dialog.animation_timer.isActive())
         dialog.set_clouds(clouds)
         self.assertTrue(dialog.animation_bar.isEnabled())
+
+    def test_confidence_warnings_are_visible_without_blocking_visualization(self):
+        from PySide6.QtWidgets import QLabel
+        ws, _, _, _ = self.calibrate(.2, (50, 0, 5))
+        panel = ws._industrial.calibration_panel
+        self.assertIn('建议复核', panel.status.text())
+        self.assertTrue(panel.visualize.isEnabled())
+        for name in ('小角度', '轴向位移', '轴心距离'):
+            self.assertIn(name, panel.warning.text())
+        dialog = self.open(ws)
+        self.assertEqual(dialog.confidence_report['state'], 'warning')
+        texts = '\n'.join(label.text() for label in dialog.confidence_page.findChildren(QLabel))
+        for name in ('小角度', '轴向位移', '轴心距离', '不阻断拼接'):
+            self.assertIn(name, texts)
+        self.assertIn('需复核', dialog.model_info.text())
 
 
 if __name__ == '__main__':
