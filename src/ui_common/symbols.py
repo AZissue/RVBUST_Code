@@ -29,6 +29,10 @@ TEXT_SECONDARY = "#9AA0A8"
 # ------------------------------------------------------------------ SVG 图元
 # 占位符 {c} = 描边颜色；实心小点用 fill="{c}" stroke="none"
 _BODIES = {
+    'polygon': '<path d="M4 17L7 5l12 3 1 11-16-2z"/><circle cx="7" cy="5" r="2"/><circle cx="19" cy="8" r="2"/><circle cx="4" cy="17" r="2"/>',
+    'polygon_close': '<path d="M4 17L7 5l12 3 1 11-16-2z"/><path d="M8 12l3 3 5-6"/>',
+    'crop_inside': '<path d="M3 18L7 4l13 4-2 12-15-2z"/><path d="M8 15l2-6 5 2-1 5z" fill="{c}" stroke="none"/>',
+    'crop_outside': '<path d="M3 18L7 4l13 4-2 12-15-2z"/><path d="M8 15l2-6 5 2-1 5zM2 3h3M19 22h3M21 2v3M2 21v-3"/>',
     # 单相机（机身 + 镜头）
     "camera":
         '<path d="M4 7h3l2-2h6l2 2h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4'

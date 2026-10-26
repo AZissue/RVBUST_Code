@@ -228,7 +228,8 @@ class GpuCloudCanvas(NavigationMixin, QOpenGLWidget):
         painter.setPen(QColor('#dce4eb'))
         painter.drawText(18, 28, f'{self.displayed_points:,} / {self.total_points:,} 点 · {"交互降采样" if self._moving else "静止细节"} · {self.policy_name}')
         painter.drawText(18, 48, '正在后台准备显示缓存…' if self.is_busy else self.backend_name)
-        painter.drawText(18, self.height() - 18, '左键旋转 · 右键拖动平移 · 中键设旋转中心 · 滚轮缩放 · F/Z 适配')
+        middle = '中键拖动平移' if self.property('postprocessMiddlePan') else '中键设旋转中心'
+        painter.drawText(18, self.height() - 18, f'左键旋转 · 右键拖动平移 · {middle} · 滚轮缩放 · F/Z 适配')
         if self.axes:
             for text, color, origin, end in self.axis_endpoints():
                 painter.setPen(QPen(QColor(color), 2))

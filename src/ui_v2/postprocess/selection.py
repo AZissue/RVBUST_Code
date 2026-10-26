@@ -1,12 +1,13 @@
 """Polygon picking overlay: two-stage state machine (drawing -> confirmed/staged)."""
-from PySide6.QtCore import Qt, QEvent, Signal, QPointF, QRectF
+from PySide6.QtCore import Qt, QEvent, Signal, QPointF
 from PySide6.QtGui import QColor, QPainter, QPen, QPolygonF
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QWidget, QApplication
 
 
 class PolygonSelectionOverlay(QWidget):
     polygon_confirmed = Signal(list)
     cancelled = Signal()
+    changed = Signal()
 
     def __init__(self, canvas):
         super().__init__(canvas)
@@ -87,6 +88,7 @@ class PolygonSelectionOverlay(QWidget):
         self.raise_()
         self.setFocus(Qt.OtherFocusReason)
         self.update()
+        self.changed.emit()
 
     def clear(self):
         self._view_locked = False
@@ -96,6 +98,7 @@ class PolygonSelectionOverlay(QWidget):
         self._confirmed_info = ''
         self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.hide()
+        self.changed.emit()
 
     def cancel(self):
         self.cancelled.emit()
@@ -108,8 +111,12 @@ class PolygonSelectionOverlay(QWidget):
         if self._confirmed_polygon is None and self._vertices:
             self._vertices.pop()
             self.update()
+            self.changed.emit()
 
     def mousePressEvent(self, event):
+        if event.button() == Qt.MiddleButton:
+            QApplication.sendEvent(self._canvas, event)
+            return
         if self._confirmed_polygon is not None:
             event.accept()
             return
@@ -120,6 +127,7 @@ class PolygonSelectionOverlay(QWidget):
                 self._vertices.append((event.position().x(), event.position().y()))
                 self._cursor = event.position()
             self.update()
+            self.changed.emit()
             event.accept()
         elif event.button() == Qt.RightButton:
             self._confirm()
@@ -131,9 +139,18 @@ class PolygonSelectionOverlay(QWidget):
             event.accept()
 
     def mouseMoveEvent(self, event):
+        if event.buttons() & Qt.MiddleButton:
+            QApplication.sendEvent(self._canvas, event)
+            return
         self._cursor = event.position()
         self.update()
         event.accept()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MiddleButton:
+            QApplication.sendEvent(self._canvas, event)
+        else:
+            event.accept()
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape:
@@ -148,30 +165,12 @@ class PolygonSelectionOverlay(QWidget):
         self._confirmed_polygon = list(self._vertices)
         self.polygon_confirmed.emit(list(self._confirmed_polygon))
         self.update()
+        self.changed.emit()
 
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         painter.fillRect(self.rect(), QColor(15, 15, 15, 70))
-        if self._confirmed_polygon is not None:
-            lines = [f'已封闭 {len(self._confirmed_polygon)} 顶点' + (f'；{self._confirmed_info}' if self._confirmed_info else ''),
-                     '请在左侧选择 保留框内 / 保留框外，或按 Esc / 放弃框选 丢弃']
-        else:
-            lines = ['框选模式：左键添加顶点，Alt+左键撤销顶点，右键或双击封闭（至少 3 点），Esc 取消']
-            if self._vertices:
-                lines.append(f'已添加 {len(self._vertices)} 个顶点')
-        metrics = painter.fontMetrics()
-        line_height = metrics.height() + 4
-        banner_width = max(metrics.horizontalAdvance(line) for line in lines) + 48
-        banner_height = len(lines) * line_height + 18
-        banner = QRectF((self.width() - banner_width) / 2, 70, banner_width, banner_height)
-        painter.setPen(QPen(QColor('#D32F2F'), 1))
-        painter.setBrush(QColor(30, 32, 38, 220))
-        painter.drawRoundedRect(banner, 8, 8)
-        painter.setPen(QColor('#E8EAED'))
-        for i, line in enumerate(lines):
-            painter.drawText(QRectF(banner.left(), banner.top() + 9 + i * line_height,
-                                    banner.width(), line_height), Qt.AlignCenter, line)
         outline = self._confirmed_polygon if self._confirmed_polygon is not None else self._vertices
         if outline:
             painter.setPen(QPen(QColor('#d32f2f'), 2))

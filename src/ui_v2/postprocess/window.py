@@ -16,6 +16,7 @@ from ..widgets.db_properties import DbProperties
 from ..industrial_ribbon import STYLE
 from ..dialogs import ChineseMessageBox as QMessageBox
 from .selection import PolygonSelectionOverlay
+from .viewport_tools import MiddlePan, SegmentationToolbar
 
 
 class PostprocessWindow(QDialog):
@@ -58,7 +59,6 @@ class PostprocessWindow(QDialog):
         self.actions = {}
         for key, text, glyph, callback in (
             ('open', '导入点云', 'folder_open', self.open_file),
-            ('select', '多边形框选', 'detect', self.start_polygon),
             ('merge', '合并点云', 'stitch', self.merge_selected),
             ('undo', '撤销处理', 'undo', self.undo),
             ('export', '导出选中', 'save', self.export_selected),
@@ -94,18 +94,6 @@ class PostprocessWindow(QDialog):
         scroll.setWidgetResizable(True)
         content = QWidget()
         form = QVBoxLayout(content)
-        group = QGroupBox('多边形分割')
-        rows = QVBoxLayout(group)
-        self.segment_label = QLabel('左键添加顶点，Alt+左键撤点；右键封闭，Esc取消。')
-        self.segment_label.setWordWrap(True)
-        rows.addWidget(self.segment_label)
-        for text, callback in [('保留框内', lambda: self.apply_segment(True)),
-                               ('保留框外', lambda: self.apply_segment(False)),
-                               ('取消框选', self._invalidate_polygon)]:
-            button = QPushButton(text)
-            button.clicked.connect(callback)
-            rows.addWidget(button)
-        form.addWidget(group)
         group = QGroupBox('下采样')
         rows = QFormLayout(group)
         self.voxel = QDoubleSpinBox()
@@ -157,6 +145,7 @@ class PostprocessWindow(QDialog):
         self.overlay = PolygonSelectionOverlay(self.viewer.canvas)
         self.overlay.polygon_confirmed.connect(self.stage_polygon)
         self.overlay.cancelled.connect(self._invalidate_polygon)
+        self._install_viewport_tools()
         self.viewer.canvas_changed.connect(self._renderer_changed)
         self.status = QLabel('在 DB 树中选择或勾选点云；处理完成后自动生成 DB 结果。')
         self.status.setWordWrap(True)
@@ -170,8 +159,39 @@ class PostprocessWindow(QDialog):
         self.overlay = PolygonSelectionOverlay(self.viewer.canvas)
         self.overlay.polygon_confirmed.connect(self.stage_polygon)
         self.overlay.cancelled.connect(self._invalidate_polygon)
+        self._install_viewport_tools()
         self.properties.bind_renderer(self.viewer)
         self.properties.max_button.hide()
+
+    def _install_viewport_tools(self):
+        canvas = self.viewer.canvas
+        self._middle_pan = MiddlePan(canvas)
+        self.segment_tools = SegmentationToolbar(canvas, dict(
+            draw=self.start_polygon, close=lambda: self.overlay._confirm(),
+            back=lambda: self.overlay.remove_last_vertex(),
+            inside=lambda: self.apply_segment(True), outside=lambda: self.apply_segment(False),
+            cancel=self._invalidate_polygon))
+        self.actions['select'] = self.segment_tools.buttons['draw']
+        self.overlay.changed.connect(self._refresh_segment_tools)
+        canvas.view_changed.connect(self._selection_view_changed)
+        self._refresh_segment_tools()
+
+    def _refresh_segment_tools(self):
+        self.segment_tools.refresh(ready=self._worker is None,
+            available=self._active_uid in self._clouds, overlay=self.overlay,
+            staged=self._segment is not None)
+
+    def _selection_view_changed(self):
+        if self.overlay.active or self._segment is not None:
+            self._invalidate_polygon()
+            self.status.setText('视角已移动，旧框选已清除；可点击右上角多边形重新框选。')
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape and self.overlay.active:
+            self._invalidate_polygon()
+            event.accept()
+        else:
+            super().keyPressEvent(event)
 
     def _source_menu(self, pos):
         self.source_browser._select_context_target(pos)
@@ -314,6 +334,7 @@ class PostprocessWindow(QDialog):
         locked = self.overlay.view_locked
         self.actions['fit'].setEnabled(ready and not locked)
         self.properties.setEnabled(ready and not locked)
+        self._refresh_segment_tools()
 
     def _refresh_display(self, *, fit=False):
         self.viewer.replace_pointclouds(
@@ -491,6 +512,8 @@ class PostprocessWindow(QDialog):
         if self._selected_layer()[1] is not None:
             self._invalidate_polygon()
             self.overlay.activate()
+            self._refresh_controls()
+            self.status.setText('左键添加顶点，Alt+左键撤点；右键/封闭按钮完成。中键平移，Esc取消。')
 
     def stage_polygon(self, polygon):
         if self._worker is not None or self._closed:
@@ -505,10 +528,15 @@ class PostprocessWindow(QDialog):
         def done(mask):
             if generation != self._selection_generation:
                 return
+            if any(not np.allclose(self._view()[key], value) for key, value in view.items()):
+                self._invalidate_polygon()
+                self.status.setText('视角或视区尺寸已变化，请重新框选。')
+                return
             self._segment = (uid, layer, mask, view)
             self.overlay.set_confirmed(polygon)
             self.overlay.show_confirmed(f'框内 {int(mask.sum()):,} 点 / 框外 {int((~mask).sum()):,} 点')
-            self.segment_label.setText(f'框内 {int(mask.sum()):,} 点 / 框外 {int((~mask).sum()):,} 点；请选择保留范围。')
+            self.status.setText(f'框内 {int(mask.sum()):,} 点 / 框外 {int((~mask).sum()):,} 点；在右上角选择保留框内或框外。')
+            self._refresh_segment_tools()
         self._run(lambda: polygon_crop_mask(layer.points, polygon, **view), done,
                   preserve_selection=True)
 
@@ -548,8 +576,6 @@ class PostprocessWindow(QDialog):
             ready = self._worker is None
             self.actions['fit'].setEnabled(ready)
             self.properties.setEnabled(ready)
-        if hasattr(self, 'segment_label'):
-            self.segment_label.setText('左键添加顶点，Alt+左键撤点；右键封闭，Esc取消。')
 
     def undo(self):
         if self._worker is not None or not self._undo:

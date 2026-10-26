@@ -153,7 +153,8 @@ class CloudCanvas(NavigationMixin, QWidget):
         painter.drawText(22, 31, '3D VIEW / 正交投影预览')
         painter.setPen(QColor('#c9d0d5'))
         painter.drawText(22, 53, f'{self.total_points:,} 点  ·  预览 {len(self._points):,} 点  ·  mm')
-        painter.drawText(22, self.height() - 20, '左键旋转 · 右键拖动平移 · 中键设旋转中心 · 滚轮缩放 · F/Z 适配')
+        middle = '中键拖动平移' if self.property('postprocessMiddlePan') else '中键设旋转中心'
+        painter.drawText(22, self.height() - 20, f'左键旋转 · 右键拖动平移 · {middle} · 滚轮缩放 · F/Z 适配')
         if self.axes:
             for label, color, origin_xy, end_xy in self.axis_endpoints():
                 origin, end = QPointF(*origin_xy), QPointF(*end_xy)
