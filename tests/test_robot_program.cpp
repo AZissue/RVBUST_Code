@@ -627,6 +627,75 @@ void TestRobotProgram::runnerRejectsEmptyProgram()
     QVERIFY(finished.last().at(1).toString().contains(QStringLiteral("空")));
 }
 
+// 「运行列表」带轮数：一整轮跑完后必须回到第一个节点，直到跑满；进度信号
+// 在每轮结束时给出。列表本身不会因为循环而重复发 finished。
+void TestRobotProgram::runnerLoopsWholeList()
+{
+    ProgramRunner runner;
+    FakeActions actions(&runner);
+    runner.setActions(&actions);
+
+    Program program;
+    program.nodes.push_back(makeMove({}, MoveNode::Space::Cartesian));
+    program.nodes.push_back(makePhoto());
+    runner.setProgram(program);
+
+    QSignalSpy finished(&runner, &ProgramRunner::finished);
+    QSignalSpy advanced(&runner, &ProgramRunner::loopAdvanced);
+    QVERIFY(runner.runAll(3));
+
+    QCOMPARE(int(actions.order.size()), 6);   // 2 个节点 × 3 轮
+    QCOMPARE(actions.order[0], NodeKind::Move);
+    QCOMPARE(actions.order[1], NodeKind::Photo);
+    QCOMPARE(actions.order[2], NodeKind::Move);   // 第二轮从第一个节点开始
+    QCOMPARE(int(advanced.count()), 2);           // 3 轮之间有 2 次衔接
+    QCOMPARE(advanced.first().at(0).toInt(), 1);
+    QCOMPARE(advanced.last().at(0).toInt(), 2);
+    QCOMPARE(advanced.last().at(1).toInt(), 3);
+    QCOMPARE(finished.count(), 1);
+    QCOMPARE(finished.last().at(0).toBool(), true);
+    QCOMPARE(runner.loopsDone(), 3);
+    QVERIFY(!runner.isRunning());
+}
+
+// 循环不吞错误：任一节点失败，列表立刻停止，不会开始下一轮；轮数被夹在
+// 1..999，避免界面传 0 / 负数 / 天量值把执行器带进奇怪状态。
+void TestRobotProgram::runnerLoopStopsOnFailureAndClamps()
+{
+    ProgramRunner runner;
+    FakeActions actions(&runner);
+    actions.completeOk = false;
+    runner.setActions(&actions);
+
+    Program program;
+    program.nodes.push_back(makeWait(1));
+    program.nodes.push_back(makeWait(1));
+    runner.setProgram(program);
+
+    QSignalSpy advanced(&runner, &ProgramRunner::loopAdvanced);
+    QSignalSpy finished(&runner, &ProgramRunner::finished);
+    QVERIFY(runner.runAll(5));
+    QCOMPARE(int(actions.order.size()), 1);
+    QCOMPARE(advanced.count(), 0);
+    QCOMPARE(finished.count(), 1);
+    QCOMPARE(finished.last().at(0).toBool(), false);
+
+    // 0 / 负数按 1 轮；超过 999 夹到 999（这里只检查暴露出来的总数）。
+    // 节点不自动完成，避免 999 轮在单次调用里递归跑完。
+    Program one;
+    one.nodes.push_back(makeWait(1));
+    runner.setProgram(one);
+    actions.completeOk = true;
+    actions.autoComplete = false;
+
+    QVERIFY(runner.runAll(0));
+    QCOMPARE(runner.loopTotal(), 1);
+    runner.stop();
+    QVERIFY(runner.runAll(5000));
+    QCOMPARE(runner.loopTotal(), 999);
+    runner.stop();
+}
+
 void TestRobotProgram::simulatedBackendMovesOnlyWhenEnabled()
 {
     SimulatedMotionBackend backend;

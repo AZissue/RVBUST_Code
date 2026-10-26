@@ -1,5 +1,7 @@
 #include "logic/ProgramRunner.h"
 
+#include <algorithm>
+
 ProgramRunner::ProgramRunner(QObject* parent) : QObject(parent) {}
 
 void ProgramRunner::setActions(ProgramActions* actions)
@@ -17,7 +19,7 @@ void ProgramRunner::setProgram(const RobotProgram::Program& program)
     emit programChanged();
 }
 
-bool ProgramRunner::runAll()
+bool ProgramRunner::runAll(int repeats)
 {
     if (isRunning())
         return false;
@@ -25,6 +27,8 @@ bool ProgramRunner::runAll()
         emit finished(false, QStringLiteral("程序为空，请先添加节点"));
         return false;
     }
+    m_loopTotal = std::clamp(repeats, 1, 999);
+    m_loopsDone = 0;
     m_runAll = true;
     m_index = 0;
     m_waiting = false;
@@ -43,6 +47,8 @@ bool ProgramRunner::runOne(int index)
         return false;
     }
     m_runAll = false;
+    m_loopTotal = 1;
+    m_loopsDone = 0;
     m_index = index;
     m_waiting = false;
     m_state = State::Running;
@@ -88,6 +94,15 @@ void ProgramRunner::notifyNodeFinished(bool ok, const QString& error)
 
     ++m_index;
     if (m_index >= static_cast<int>(m_program.nodes.size())) {
+        ++m_loopsDone;
+        if (m_loopsDone < m_loopTotal) {
+            // 下一轮：回到第一个节点。失败/停止走不到这里，所以循环不会
+            // 吞掉错误，更不会在失败后继续运动。
+            emit loopAdvanced(m_loopsDone, m_loopTotal);
+            m_index = 0;
+            startNodeAt(m_index);
+            return;
+        }
         finish(true, QString());
         return;
     }

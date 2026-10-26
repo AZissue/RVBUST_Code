@@ -970,6 +970,29 @@ QWidget* RobotProgramPanel::buildRightCard()
     m_saveButton->hide();
     footerColumn->addWidget(m_saveButton);
 
+    // 有界循环：1 = 只跑一遍。次数不做成"无限循环"——标定采集是人工摆位
+    // 流程，无人值守的无限运动有安全风险。
+    auto* loopRow = new QHBoxLayout;
+    loopRow->setSpacing(8);
+    auto* loopLabel = new QLabel(QStringLiteral("循环轮数"));
+    loopLabel->setStyleSheet(QStringLiteral("color:%1; font-size:13px;")
+                                 .arg(kTextSub));
+    m_loopSpin = new QSpinBox;
+    m_loopSpin->setObjectName(QStringLiteral("robot_program_loop_count"));
+    m_loopSpin->setRange(1, 999);
+    m_loopSpin->setValue(1);
+    m_loopSpin->setFixedWidth(72);
+    m_loopSpin->setMinimumHeight(30);
+    m_loopSpin->setAlignment(Qt::AlignCenter);
+    m_loopSpin->setStyleSheet(smallInputStyle());
+    m_loopSpin->setToolTip(QStringLiteral(
+        "1 = 只跑一遍；大于 1 时每轮成功后自动从第一个节点重来，"
+        "任一节点失败或点「停止」即终止。"));
+    loopRow->addWidget(loopLabel);
+    loopRow->addWidget(m_loopSpin);
+    loopRow->addStretch();
+    footerColumn->addLayout(loopRow);
+
     auto* runRow = new QHBoxLayout;
     runRow->setSpacing(10);
     m_runSelectedButton = new QPushButton(QStringLiteral("▶ 运行当前节点"));
@@ -1354,6 +1377,13 @@ void RobotProgramPanel::bindController()
                     showToast(QStringLiteral("已停止"));
                 }
                 refreshActions();
+            });
+    connect(m_controller, &RobotProgramController::loopAdvanced, this,
+            [this](int done, int total) {
+                const QString text = QStringLiteral("第 %1/%2 轮完成，开始下一轮")
+                                         .arg(done).arg(total);
+                showToast(text);
+                log(text);
             });
     connect(m_controller, &RobotProgramController::photoStarted, this,
             [this]() {
@@ -1752,6 +1782,9 @@ void RobotProgramPanel::refreshActions()
     m_runSelectedButton->setEnabled(canControl && editing);
     m_runAllButton->setEnabled(
         canControl && !m_controller->program().nodes.empty());
+    // 运行中不允许改轮数：执行器已经按开始时的轮数在跑，改了只会误导。
+    if (m_loopSpin)
+        m_loopSpin->setEnabled(!running);
 
     m_enableButton->setEnabled(bound && m_connected && !running);
     {
@@ -2102,7 +2135,10 @@ void RobotProgramPanel::onRunAll()
 {
     if (!m_controller || m_running)
         return;
-    m_controller->runAll();
+    const int loops = m_loopSpin ? m_loopSpin->value() : 1;
+    if (loops > 1)
+        log(QStringLiteral("运行列表：共 %1 轮（失败即停）").arg(loops));
+    m_controller->runAll(loops);
 }
 
 void RobotProgramPanel::onCartStep(int axis, int direction)

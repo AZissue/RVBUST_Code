@@ -33,6 +33,8 @@ RobotProgramController::RobotProgramController(RobotMotionBackend* backend,
             this, &RobotProgramController::nodeFinished);
     connect(m_runner, &ProgramRunner::finished,
             this, &RobotProgramController::runFinished);
+    connect(m_runner, &ProgramRunner::loopAdvanced,
+            this, &RobotProgramController::loopAdvanced);
 }
 
 RobotProgramController::~RobotProgramController() = default;
@@ -209,9 +211,9 @@ bool RobotProgramController::updateWaitSeconds(int index, double seconds)
     return true;
 }
 
-void RobotProgramController::runAll()
+void RobotProgramController::runAll(int repeats)
 {
-    m_runner->runAll();
+    m_runner->runAll(repeats);
 }
 
 void RobotProgramController::runOne(int index)

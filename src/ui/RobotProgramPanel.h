@@ -188,6 +188,7 @@ private:
     QPushButton* m_saveButton = nullptr;
     QPushButton* m_runSelectedButton = nullptr;
     QPushButton* m_runAllButton = nullptr;
+    QSpinBox* m_loopSpin = nullptr;
 
     // 顶部悬浮提示（对应 1.html 的 toast）。
     QLabel* m_toast = nullptr;

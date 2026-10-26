@@ -33,6 +33,8 @@ private slots:
     void runnerStopsOnFailure();
     void runnerRunOneAndStop();
     void runnerRejectsEmptyProgram();
+    void runnerLoopsWholeList();
+    void runnerLoopStopsOnFailureAndClamps();
     void simulatedBackendMovesOnlyWhenEnabled();
     void simulatedBackendCompletesMove();
     void simulatedBackendJogsJoints();

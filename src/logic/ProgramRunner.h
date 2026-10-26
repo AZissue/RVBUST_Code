@@ -43,7 +43,12 @@ public:
     int currentIndex() const { return m_index; }
 
     // 从第一个节点开始；空程序或正在运行时返回 false 并给出信号。
-    bool runAll();
+    // repeats>1 时，一整轮跑完后自动从第一个节点重来，直到跑满或任一节点
+    // 失败/操作员停止。次数被夹在 1..999（有界循环，不做无限循环：标定采集
+    // 是人工摆位流程，无人值守的无限运动有安全风险）。
+    bool runAll(int repeats = 1);
+    int loopTotal() const { return m_loopTotal; }
+    int loopsDone() const { return m_loopsDone; }
     // 只跑一个节点（从选中项开始，不继续后面的）。
     bool runOne(int index);
     // 停止：立刻结束本次运行，等待中的结果会被忽略。
@@ -60,6 +65,8 @@ signals:
     void nodeFinished(int index, bool ok, const QString& error);
     // 本次运行结束。ok=false 时 error 说明原因（节点失败 / 已停止 / 空程序）。
     void finished(bool ok, const QString& error);
+    // 一轮跑完、即将从第一个节点开始下一轮。done/total 用于界面显示进度。
+    void loopAdvanced(int done, int total);
 
 private:
     void startNodeAt(int index);
@@ -71,4 +78,6 @@ private:
     int m_index = -1;
     bool m_runAll = false;
     bool m_waiting = false;
+    int m_loopTotal = 1;    // 本次 runAll 请求的轮数
+    int m_loopsDone = 0;    // 已完整跑完的轮数
 };

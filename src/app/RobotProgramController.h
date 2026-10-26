@@ -61,7 +61,8 @@ public:
     bool updateWaitSeconds(int index, double seconds);
 
     // ── 运行 ──
-    void runAll();
+    // repeats>1：有界循环（1..999），一轮成功后自动从头再来，失败/停止即终止。
+    void runAll(int repeats = 1);
     void runOne(int index);
     // 停止：程序运行中 → 结束列表；只是点动/空转 → 停下运动。
     void stop();
@@ -101,6 +102,8 @@ signals:
     void nodeStarted(int index);
     void nodeFinished(int index, bool ok, const QString& error);
     void runFinished(bool ok, const QString& error);
+    // 一轮跑完、开始下一轮（done/total）。
+    void loopAdvanced(int done, int total);
     // 拍照节点真正开始采集（界面据此显示进度）。
     void photoStarted();
 

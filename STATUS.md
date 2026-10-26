@@ -32,8 +32,12 @@
     只提示不开第二路；主界面「拍照位姿/戳点位姿」在通信工具未连接时直接用
     控制台缓存的位姿（`tryConsolePose`）。协议索引现为 0 Modbus / 1 UR /
     2 NRC / 3 Efort / 4 法奥。
+  - **运行列表循环（已完成）**：`ProgramRunner::runAll(repeats)` 有界循环
+    （1–999，默认 1）；每轮成功才进入下一轮，失败/停止即终止；新增
+    `loopAdvanced(done,total)`。控制台运行按钮上方加「循环轮数」输入，
+    运行中禁用。单测 2 例（2 节点×3 轮、失败不循环+次数夹取）。
   - **未做（下一步 P1b/P2）**：Modbus/NRC/Efort 作为「只读位姿」后端接进
-    控制台，然后删掉通信页、品牌下拉进控制台；之后运行列表有界循环、连续点动。
+    控制台，然后删掉通信页、品牌下拉进控制台；之后连续点动。
   - **验证**：D 构建 exit 0、ctest 3/3（`cardPoseFromState`、
     `poseSourceChoice` PASS）；AICode 同步 8 文件后构建 exit 0、ctest 3/3。
     报告：`reports/阶段24-3.0-机器人统一管理与拍照位姿来源.md`。
