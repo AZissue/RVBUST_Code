@@ -58,6 +58,7 @@ class MarkerDetector:
         self._board_detector = CalibBoardDetector()
         # 标定板模式下，保存最近一次完整检测结果（含位姿），供主窗口读取
         self.last_board_result: Optional[Dict] = None
+        self.last_board_diagnostic: Optional[Dict] = None
 
     # ------------------------------------------------------------------
     # 标记物类型
@@ -68,6 +69,7 @@ class MarkerDetector:
             return
         self._marker_type = marker_type
         self.last_board_result = None
+        self.last_board_diagnostic = None
 
     def get_marker_type(self) -> str:
         return self._marker_type
@@ -203,17 +205,20 @@ class MarkerDetector:
         根据当前 marker_type 自动分发到编码圆检测或标定板检测。
 
         Args:
-            include_invalid: 仅编码圆模式生效。True 时 3D 提取失败的标记
+            include_invalid: True 时保留检测失败后的诊断圆心；标定板默认仅返回位姿通过的结果。
+                编码圆模式下 3D 提取失败的标记
                 也保留在返回列表中（带 valid_3d=False、无 x_3d 字段），
                 供 UI 以红圈显示"2D 检出但 3D 无深度"；False（默认）丢弃
                 无效标记，行为与历史版本一致，标定/拼接路径应保持默认。
         """
         self.last_board_result = None
+        self.last_board_diagnostic = None
 
         if self._marker_type == MARKER_TYPE_ASYMMETRIC_GRID:
             result = self._board_detector.detect(image_np, pointmap, rvc_image, offline_ply_path)
+            self.last_board_diagnostic = result
             self.last_board_result = result if result.get('success') else None
-            return result.get('markers', [])
+            return result.get('markers', []) if result.get('success') or include_invalid else []
 
         # 编码圆模式（原有逻辑）
         return self._detect_3d_coded_circle(image_np, pointmap, rvc_image, offline_ply_path,

@@ -48,6 +48,9 @@ class FrameData:
     camera_name: str           # 相机 ID（任意字符串，如 "cam0" / "A"）
     database_id: Optional[str] = field(default=None, kw_only=True)
     recognition_key: Optional[str] = field(default=None, kw_only=True)
+    recognition_state: str = field(default='', kw_only=True)
+    recognition_message: str = field(default='', kw_only=True)
+    recognition_type: str = field(default='', kw_only=True)
     image_np: Optional[np.ndarray] = None
     pointmap: Optional['RVC.PointMap'] = None
     rvc_image: Optional['RVC.Image'] = None

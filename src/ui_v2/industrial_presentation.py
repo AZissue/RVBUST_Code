@@ -611,17 +611,20 @@ class IndustrialPresentation:
         self.set_marker_image(frame.image_np, frame.markers_all or frame.markers,
                               reference.markers_all or reference.markers if reference else None,
                               accepted, frame_id=getattr(frame, 'frame_id', '—'),
-                              reference_id=getattr(reference, 'frame_id', '参考帧'))
+                              reference_id=getattr(reference, 'frame_id', '参考帧'),
+                              recognition_state=getattr(frame, 'recognition_state', ''),
+                              recognition_message=getattr(frame, 'recognition_message', ''),
+                              marker_type=getattr(frame, 'recognition_type', ''))
 
     def set_marker_image(self, image, markers, reference=None, accepted=None,
-                         *, frame_id='—', reference_id='参考帧'):
+                         *, frame_id='—', reference_id='参考帧', **recognition):
         self._business_marker_image = ((image, markers, reference, accepted),
-                                       dict(frame_id=frame_id, reference_id=reference_id))
+                                       dict(frame_id=frame_id, reference_id=reference_id, **recognition))
         if self.inspector:
             self.inspector.set_frame(image, markers or [], frame_id=frame_id,
                 reference_id=reference_id if reference is not None else None,
                 reference_markers=reference, registration_accepted=accepted,
-                current_visible=False)
+                current_visible=False, **recognition)
 
     def show_database_image(self, frame):
         self._database_result = False
@@ -631,7 +634,9 @@ class IndustrialPresentation:
             self.set_multi_view('joint')
             return
         self.inspector.set_frame(frame.image_np, frame.markers_all or frame.markers,
-            frame_id=f'DB原始帧 {frame.frame_id:03d}', current_visible=False)
+            frame_id=f'DB原始帧 {frame.frame_id:03d}', current_visible=False,
+            recognition_state=frame.recognition_state, recognition_message=frame.recognition_message,
+            marker_type=frame.recognition_type)
         self.inspector.show()
         self.inspector.raise_()
 

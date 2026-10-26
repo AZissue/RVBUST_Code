@@ -107,6 +107,20 @@ class RecognitionPageTests(unittest.TestCase):
         self.assertEqual(self.db.records[uid].markers, [dict(code=2)])
         self.assertEqual(self.db.records[uid].revision, 0)
 
+    def test_board_configuration_stays_readable_and_applies_in_narrow_panel(self):
+        page = self.page()
+        page.marker_type.setCurrentIndex(1)
+        page.resize(300, 290)
+        self.app.processEvents()
+        self.assertIn('自动尝试 3 种规格', page.board_details.text())
+        self.assertLessEqual(page.gamma.minimumSizeHint().width(), 260)
+        self.assertGreaterEqual(page.apply_button.height(), 32)
+        page.board_spec.setCurrentIndex(2)
+        page.gamma.set_value(1.8)
+        page.apply_button.click()
+        self.assertIn('已应用', page.status.text())
+        self.assertEqual(self.bridge.recognition.config('multi_cam')['gamma'], 1.8)
+
 
 if __name__ == '__main__':
     unittest.main()

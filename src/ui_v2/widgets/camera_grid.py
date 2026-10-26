@@ -304,6 +304,12 @@ class CameraCard(QFrame):
             self._arrival_times.append(monotonic())
         height, width = frame.image_np.shape[:2]
         self._image_info.setText(f'{width} × {height} · {self.preview_rate_text()}')
+        self._image_info.setToolTip('')
+        if frame.recognition_message or frame.recognition_state == 'running':
+            diagnosis = '正在后台识别…' if frame.recognition_state == 'running' else frame.recognition_message
+            self._image_info.setText(f'{width} × {height} · {diagnosis}')
+            self._image_info.setToolTip(diagnosis)
+        self._image_info.setWordWrap(True)
         if self._freeze.isChecked():
             return
         pixmap = numpy_to_qpixmap(frame.image_np)

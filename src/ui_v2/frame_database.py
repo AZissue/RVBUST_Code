@@ -401,6 +401,8 @@ class FrameBrowser(QWidget):
                     record.recognition.get('marker_type'), record.recognition.get('marker_type', '—'))
             if record.recognition.get('error'):
                 values['识别错误'] = record.recognition['error']
+            if record.recognition.get('message'):
+                values['识别诊断'] = record.recognition['message']
             if record.recognition.get('board_pattern_name'):
                 values['标定板规格'] = record.recognition['board_pattern_name']
                 values['标定板拟合 RMS'] = f"{record.recognition.get('board_rms_mm', 0):.3f} mm"

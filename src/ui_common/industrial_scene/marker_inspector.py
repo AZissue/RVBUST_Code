@@ -193,7 +193,8 @@ class MarkerInspector(QFrame):
 
     def set_frame(self, image, markers, *, frame_id=None, reference_id=None,
                   reference_markers=None, used_codes=None, rejected_codes=(),
-                  registration_accepted=None, history=(), current_visible=True):
+                  registration_accepted=None, history=(), current_visible=True,
+                  recognition_state='', recognition_message='', marker_type=''):
         loaded = load_image(image)
         if reference_id is None or reference_id == frame_id:
             reference_markers = None
@@ -202,7 +203,8 @@ class MarkerInspector(QFrame):
         self.image_view.image = loaded
         self.image_view.display = self.display
         self.image_view.update()
-        self.title.setText(f'当前帧 {frame_id if frame_id is not None else "—"} · 编码圆')
+        marker_name = '非对称圆板' if marker_type == 'asymmetric_grid' else '编码圆'
+        self.title.setText(f'当前帧 {frame_id if frame_id is not None else "—"} · {marker_name}')
         self.counts.setText(f'<span style="color:{GREEN}">● 绿 {self.display.green_count}</span>　'
                             f'<span style="color:{RED}">● 红 {self.display.red_count}</span>　'
                             f'<span style="color:{YELLOW}">● 仅2D {self.display.yellow_count}</span>')
@@ -217,6 +219,11 @@ class MarkerInspector(QFrame):
             if codes:
                 parts.append(f'<span style="color:{color}">{label} ID：{escape(text)}</span>')
         self.ids.setText('<br>'.join(parts) or '尚无检测结果')
+        diagnosis = {'running': '正在后台识别…', 'error': '识别失败：' + recognition_message}.get(
+            recognition_state, recognition_message)
+        if diagnosis:
+            self.ids.setText(escape(diagnosis) + ('<br>' + '<br>'.join(parts) if parts else ''))
+        self.ids.setToolTip(diagnosis)
         self.details_button.setEnabled(bool(self.display.rows))
         points = cumulative_world_markers(self.display, history, current_visible)
         self.world_overlay.set_points(points)

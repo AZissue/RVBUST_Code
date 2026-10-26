@@ -187,7 +187,8 @@ class FrameDatabase:
             staging.directory = directory / ('.replacing_' + uuid.uuid4().hex)
             backup = staging.directory / 'previous'
             committed = False
-            candidate = replace(frame, database_id=None, recognition_key=None, markers=[], markers_all=None,
+            candidate = replace(frame, database_id=None, recognition_key=None,
+                                recognition_state='', recognition_message='', recognition_type='', markers=[], markers_all=None,
                                 board_pose=None, board_pattern=None, board_pattern_name=None, board_rms_mm=0)
             try:
                 staged_uid = staging.ingest(candidate)
@@ -222,6 +223,9 @@ class FrameDatabase:
                 frame.markers = []
                 frame.markers_all = None
                 frame.recognition_key = None
+                frame.recognition_state = ''
+                frame.recognition_message = ''
+                frame.recognition_type = ''
                 frame.board_pose = None
                 frame.board_pattern = None
                 frame.board_pattern_name = None
@@ -328,7 +332,7 @@ class FrameDatabase:
             markers=[m for m in record.markers if m.get('valid_3d', True)], markers_all=record.markers,
             is_offline=True, offline_image_path=str(folder / 'image.png'),
             offline_pointmap_path=str(folder / 'pointmap.ply'), database_id=uid)
-        if record.recognition.get('state') == 'done':
+        if record.recognition:
             from .frame_recognition import apply
             apply(frame, record.recognition)
         if component == 'image':

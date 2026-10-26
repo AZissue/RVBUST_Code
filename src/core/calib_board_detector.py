@@ -32,7 +32,7 @@ except ImportError:
 
 
 # 默认支持的标定板规格。
-# 名称按“行×列”习惯书写；内部 cols/rows 对应 OpenCV findCirclesGrid 的 patternSize=(cols, rows)。
+# 名称按“行×列”习惯书写；OpenCV patternSize=(rows, cols)，每排 rows 个点，共 cols 排。
 # spacing_mm 为相邻圆心名义距离（用户可按实际标定板修改）。
 DEFAULT_BOARD_SPECS: List[Dict] = [
     {"name": "4x11", "cols": 11, "rows": 4, "spacing_mm": 40.0},
@@ -88,23 +88,31 @@ class CalibBoardDetector:
 
         # 1. 2D 检测（自动尝试多种规格 + 多种 gamma + 两种配色，提升不同曝光/对比度下的鲁棒性）
         gray = self._to_gray(image_np)
-        det = self._detect_pattern_robust(gray)
+        gammas = tuple(dict.fromkeys((self.gamma, 1.0, 1.5, 2.0, 2.5, 3.0)))
+        det = self._detect_pattern_robust(gray, gammas)
         if det is None:
-            return self._fail("未能检测到任何支持规格的非对称圆标定板")
+            specs = '、'.join(f"{s['rows']}×{s['cols']}" for s in self.board_specs)
+            return self._fail(f"2D 网格未检出：非对称圆板，尝试规格 {specs}，Gamma {self.gamma:g}（含回退）。请检查规格、完整可见性、圆点尺寸与曝光；编码圆需选择编码圆类型。")
 
         centers_2d, spec = det
         n_circles = len(centers_2d)
         logger.info(f"标定板检测成功: {spec['name']} ({n_circles} 个圆心)")
+        def fail_3d(message, points=None):
+            result = self._fail(message)
+            result['markers'] = self._markers(centers_2d, points)
+            result['pattern_name'] = spec['name']
+            result['pattern_size'] = (spec['cols'], spec['rows'])
+            return result
 
         # 2. 获取 PLY 点云
         ply_path, tmp_path = self._get_ply_path(pointmap, rvc_image, offline_ply_path)
         if ply_path is None:
-            return self._fail("未提供有效点云数据")
+            return fail_3d("2D 已检出，但未提供有效点云数据；请载入对应的有序原始 PLY。")
 
         try:
             points_3d = self._read_ply_points(ply_path)
         except Exception as e:
-            return self._fail(f"读取 PLY 失败: {e}")
+            return fail_3d(f"读取 PLY 失败: {e}")
         finally:
             if tmp_path and os.path.exists(tmp_path):
                 try:
@@ -113,35 +121,44 @@ class CalibBoardDetector:
                     pass
 
         if points_3d is None or len(points_3d) == 0:
-            return self._fail("PLY 点云为空")
+            return fail_3d("PLY 点云为空或读取失败")
 
         # 3. 提取圆心 3D 坐标
         h_img, w_img = gray.shape[:2]
+        if len(points_3d) != w_img * h_img:
+            return fail_3d(f"点云与图像不对应：PLY {len(points_3d)} 点，图像 {w_img}×{h_img}={w_img*h_img} 像素；需要保留无效点的有序原始点云。")
         centers_3d = self._extract_centers_3d(centers_2d, points_3d, (w_img, h_img))
 
         valid_mask = np.isfinite(centers_3d).all(axis=1)
         if valid_mask.sum() < 3:
-            return self._fail(f"有效 3D 圆心不足: {valid_mask.sum()}/3")
+            return fail_3d(f"深度无效：2D {n_circles} 个圆心，3D 有效 {valid_mask.sum()} 个，求位姿至少需要 3 个；请检查对应点云、反光及曝光。", centers_3d)
 
-        # 4. 自动估计标定板间距（从 3D 圆心最近邻距离中位数估计，避免手动输入 spacing_mm 错误）
-        estimated_spacing = self._estimate_spacing_mm(centers_3d, valid_mask)
-        if estimated_spacing is not None and estimated_spacing > 0:
-            logger.info(f"自动估计标定板间距: {estimated_spacing:.2f} mm "
-                        f"(规格默认 {spec['spacing_mm']:.2f} mm)")
-            # 用估计值覆盖规格中的 spacing_mm
-            spec = dict(spec)
-            spec['spacing_mm'] = estimated_spacing
-
-        # 5. 求解标定板位姿（尝试多种排列，兼容板子旋转 180° 等情况）
-        obj_pts = self._build_object_points(spec)
-        T_board_in_cam, rms_mm, best_perm = self._solve_board_pose_robust(
-            obj_pts, centers_3d, spec)
-        if T_board_in_cam is None:
-            return self._fail("标定板位姿求解失败")
+        # 4. 从对应圆心的成对距离估计物理尺度，避免名义间距错误。
+        # Standard OpenCV grids use (2*x + row%2, row), unlike the historical
+        # half-offset model. Fit a single physical scale from corresponding
+        # pair distances, then rigid pose; retain legacy boards as a fallback.
+        fits = []
+        for geometry in ('standard', 'legacy'):
+            unit_spec = dict(spec, spacing_mm=1.)
+            obj_pts = self._build_object_points(unit_spec, geometry)
+            a, b = obj_pts[valid_mask], centers_3d[valid_mask]
+            ia, ib = np.triu_indices(len(a), 1)
+            da = np.linalg.norm(a[ia] - a[ib], axis=1)
+            db = np.linalg.norm(b[ia] - b[ib], axis=1)
+            spacing = float(np.median(db[da > 0] / da[da > 0]))
+            if not np.isfinite(spacing) or spacing <= 0:
+                continue
+            T, rms, perm = self._solve_board_pose_robust(obj_pts * spacing, centers_3d, spec)
+            if T is not None:
+                fits.append((rms, T, perm, spacing))
+        if not fits:
+            return fail_3d("标定板位姿求解失败；请检查圆心深度与点云对齐。", centers_3d)
+        rms_mm, T_board_in_cam, best_perm, spacing = min(fits, key=lambda fit: fit[0])
+        spec = dict(spec, spacing_mm=spacing)
         max_rms = min(2.0, max(0.5, 0.05 * float(spec['spacing_mm'])))
         if rms_mm > max_rms:
-            return self._fail(
-                f"标定板位姿 RMS 超标: {rms_mm:.2f} mm (阈值 {max_rms:.2f} mm)")
+            return fail_3d(
+                f"标定板位姿 RMS 超标: {rms_mm:.2f} mm (阈值 {max_rms:.2f} mm)；请检查点云对齐与深度质量，圆心仅供诊断。", centers_3d)
 
         # 6. 构造 markers（code 统一为标定板物理索引，保证多相机/多角度下可匹配）
         markers = []
@@ -181,6 +198,18 @@ class CalibBoardDetector:
     # ------------------------------------------------------------------
     # 内部工具
     # ------------------------------------------------------------------
+    @staticmethod
+    def _markers(centers, points=None):
+        markers = []
+        for i, xy in enumerate(centers):
+            valid = points is not None and np.isfinite(points[i]).all()
+            row = dict(code=i, x=float(xy[0]), y=float(xy[1]),
+                       x_2d=float(xy[0]), y_2d=float(xy[1]), valid_3d=bool(valid))
+            if valid:
+                row.update(zip(('x_3d', 'y_3d', 'z_3d'), map(float, points[i])))
+            markers.append(row)
+        return markers
+
     @staticmethod
     def _fail(message: str) -> Dict:
         logger.warning(f"CalibBoardDetector: {message}")
@@ -223,7 +252,7 @@ class CalibBoardDetector:
 
     @staticmethod
     def _create_blob_detector(img_h: int = 0, img_w: int = 0,
-                              blob_color: int = 255) -> cv2.SimpleBlobDetector:
+                              blob_color: int = 255, small_dots=False) -> cv2.SimpleBlobDetector:
         """创建 SimpleBlobDetector，根据图像尺寸动态调整面积阈值。"""
         params = cv2.SimpleBlobDetector_Params()
         params.filterByArea = True
@@ -234,7 +263,9 @@ class CalibBoardDetector:
         if img_h > 0 and img_w > 0:
             diag = np.sqrt(img_h ** 2 + img_w ** 2)
             scale = diag / 1000.0
-            params.minArea = max(10, int(50 * scale))
+            # Small boards in full-resolution captures can have 3px-radius dots.
+            # The former ~90px minimum rejected all 77 dots in a 1440x1080 frame.
+            params.minArea = max(5, int(3 * scale * scale)) if small_dots else max(10, int(50 * scale))
             params.maxArea = min(100000, int(50000 * scale))
         else:
             params.minArea = 50
@@ -261,15 +292,16 @@ class CalibBoardDetector:
         同时兼容白底黑圆（blobColor=0）与黑底白圆（blobColor=255）两种标定板配色。
         """
         h, w = gray.shape[:2]
-        for blob_color in (255, 0):
-            blob_detector = self._create_blob_detector(h, w, blob_color=blob_color)
-            for gamma in gammas:
-                adjusted = self._adjust_gamma(gray, gamma)
-                det = self._detect_pattern(adjusted, blob_detector)
-                if det is not None:
-                    logger.info(f"标定板 2D 检测成功: gamma={gamma}, "
-                                f"blobColor={blob_color}, 规格={det[1]['name']}")
-                    return det
+        for small_dots in (False, True):
+            for blob_color in (255, 0):
+                blob_detector = self._create_blob_detector(h, w, blob_color=blob_color, small_dots=small_dots)
+                for gamma in gammas:
+                    adjusted = self._adjust_gamma(gray, gamma)
+                    det = self._detect_pattern(adjusted, blob_detector)
+                    if det is not None:
+                        logger.info(f"标定板 2D 检测成功: gamma={gamma}, "
+                                    f"blobColor={blob_color}, 小圆={small_dots}, 规格={det[1]['name']}")
+                        return det
         return None
 
     def _detect_pattern(self, image: np.ndarray,
@@ -359,7 +391,7 @@ class CalibBoardDetector:
             for idx in (idx_00, idx_10, idx_01, idx_11):
                 if idx < len(points_3d):
                     pt = points_3d[idx]
-                    if np.isfinite(pt).all():
+                    if np.isfinite(pt).all() and np.abs(pt).sum() > 0:
                         pts.append(pt)
 
             if len(pts) < 4:
@@ -435,16 +467,19 @@ class CalibBoardDetector:
         return spacing
 
     @staticmethod
-    def _build_object_points(spec: Dict) -> np.ndarray:
-        """构造标定板理论圆心坐标（mm），列优先排列，与 findCirclesGrid 输出顺序一致。
+    def _build_object_points(spec: Dict, geometry='standard') -> np.ndarray:
+        """按 OpenCV patternSize=(rows, cols) 顺序生成标准错位网格。
 
-        OpenCV findCirclesGrid（非对称网格，patternSize=(rows, cols)）返回的圆心
-        顺序为：从右到左逐列，每列内从上到下。相邻列在 y 方向有半格偏移。
-        坐标系：x 向右，y 向下，z = 0。
+        standard 的同行圆心间距为 2*d，相邻行距为 d；legacy 保留历史
+        半格错位板的几何形状，仅在其刚体拟合更好时使用。
         """
         cols = spec['cols']
         rows = spec['rows']
         d = float(spec['spacing_mm'])
+
+        if geometry == 'standard':
+            return np.asarray([[(2*i + j % 2)*d, j*d, 0.]
+                               for j in range(cols) for i in range(rows)])
 
         obj_pts = np.zeros((rows * cols, 3), dtype=np.float64)
         for k, j in enumerate(range(cols - 1, -1, -1)):  # 列：从右到左

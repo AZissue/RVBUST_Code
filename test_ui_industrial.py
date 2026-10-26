@@ -267,6 +267,7 @@ class IndustrialTests(unittest.TestCase):
         win._launcher_factory=Dialog
         reconnect=Mock(side_effect=AssertionError('Layout switch must not reconnect'))
         bridge=SimpleNamespace(can_change_workspace=lambda:True,
+            camera_manager=SimpleNamespace(get_connected_ids=lambda:['cam0']),
             enumerate_devices=lambda:devices,get_ordered_devices=lambda value:value,
             _on_device_manager_reopened=reconnect)
         win.set_backend_bridge(bridge)

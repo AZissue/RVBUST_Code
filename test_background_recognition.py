@@ -149,6 +149,28 @@ class BackgroundTests(unittest.TestCase):
         self.settle()
         self.assertEqual(frame.markers_all[0]['code'], 7)
 
+    def test_board_diagnostic_roundtrip_and_selected_frame_display(self):
+        self.bridge._current_mode = 'mobile_chain'
+        self.win.set_mode('mobile_chain', [])
+        self.db = self.bridge.frame_db.databases['mobile_chain']
+        uid = self.db.ingest(self.source())
+        message = '深度无效：2D 77 个圆心，3D 有效 0 个'
+        self.detector.side_effect = lambda frame, config: result(config,
+            [dict(code=0, x_2d=1, y_2d=1, valid_3d=False)],
+            message=message, board_success=False)
+        self.settle()
+        frame, _ = self.db.load_frame(uid, 'image')
+        self.bridge.frame_db.display_frame('mobile_chain', uid, frame, None, 'image')
+        inspector = self.win.workspace_mobile()._industrial.inspector
+        self.assertIn(message, inspector.ids.text())
+        self.assertEqual(frame.markers, [])
+        self.assertEqual(frame.recognition_message, message)
+        self.assertIn('2D检出 1 / 3D有效 0', inspector.pair_label.text())
+        self.db.set_recognition(uid, 0, self.db.directory, dict(state='error', error='PLY 无法读取'))
+        frame, _ = self.db.load_frame(uid, 'image')
+        self.win.workspace_mobile()._industrial.show_database_image(frame)
+        self.assertIn('PLY 无法读取', inspector.ids.text())
+
     def test_board_metadata_roundtrip_and_old_live_frame_cannot_erase_cache(self):
         frame = self.source()
         uid = self.db.ingest(frame)
@@ -390,6 +412,7 @@ class DetectorSnapshotTests(unittest.TestCase):
         source = MarkerDetector()
         config = frame_recognition.configuration(source, MARKER_TYPE_CODED_CIRCLE)
         detector = Mock()
+        detector.last_board_diagnostic = None
         detector.detect_3d.return_value = [dict(code=3, valid_3d=False)]
         detector.last_board_result = dict(T_board_in_cam=np.eye(4), pattern_size=(4, 11), pattern_name='4x11', rms_mm=.1)
         with patch('core.frame_recognition.MarkerDetector', return_value=detector):
