@@ -6,6 +6,7 @@
 #include "app/CalibrationController.h"
 #include "app/RobotProgramController.h"
 #include "logic/RobotProgram.h"
+#include "logic/RobotPoseSource.h"
 #include "logic/SimulatedMotionBackend.h"
 #include "logic/CameraManager.h"
 #include "logic/CalibrationService.h"
@@ -484,6 +485,17 @@ void MainWindow::wireSignals()
     m_programController->setPhotoHandler(
         [this](QString* error) { return beginProgramPhoto(error); },
         [this]() { abortProgramPhoto(); });
+    // 控制台位姿缓存：通信工具未连接时，拍照节点用这一份（按品牌约定写卡）。
+    // 只在 UI 线程读写；backend 发来的 poseUpdated 已经由控制器转到本线程。
+    connect(m_programController, &RobotProgramController::poseUpdated, this,
+            [this](const RobotMotion::State&) { rememberConsolePose(); });
+    connect(m_programController, &RobotProgramController::backendChanged,
+            this, [this]() { invalidateConsolePose(); });
+    connect(m_programController, &RobotProgramController::connectedChanged,
+            this, [this](bool connected) {
+                if (!connected)
+                    invalidateConsolePose();
+            });
     // Robot read buttons live in the ActionButtons row (visible while connected)
     connect(m_actionButtons, &ActionButtons::readCapturePoseClicked,
             this, &MainWindow::onRobotRead);
@@ -1867,6 +1879,25 @@ void MainWindow::onDetectionFinished(bool ok)
 // 程序执行器推进。任何一步失败都停止整个节点（执行器随后会停下整张表），
 // 不会带着旧位姿/旧图像继续保存。
 
+void MainWindow::rememberConsolePose()
+{
+    if (!m_programController || !m_programController->backend())
+        return;
+    // cardPose() is the per-brand calibration convention (UR axis-angle rad,
+    // FAIRINO mm/deg), NOT the pad's degree values.  This is the only place
+    // the console pose becomes a card value.
+    m_consoleCardPose = m_programController->backend()->cardPose();
+    m_consoleCardPoseUnit = m_programController->backend()->cardPoseUnit();
+    m_consolePoseAtMs = QDateTime::currentMSecsSinceEpoch();
+    m_consolePoseValid = true;
+}
+
+void MainWindow::invalidateConsolePose()
+{
+    m_consolePoseValid = false;
+    m_consolePoseAtMs = 0;
+}
+
 bool MainWindow::beginProgramPhoto(QString* error)
 {
     auto fail = [error](const QString& why) {
@@ -1880,10 +1911,46 @@ bool MainWindow::beginProgramPhoto(QString* error)
         return fail(QStringLiteral("请先连接相机再运行拍照节点"));
 
     // 眼在手上（以及需要拍照位姿的标定方式）必须从机器人读实时位姿；
-    // 没有机器人连接就拒绝，避免把空位姿或上一帧旧位姿存进记录。
+    // 没有可用来源就拒绝，避免把空位姿/旧位姿/仿真位姿存进记录。
     const bool needPose = needsCapturePose(m_eyeHandMode, m_calibType);
-    if (needPose && (!m_robot || !m_robot->isConnected()))
-        return fail(QStringLiteral("拍照节点需要先连接机器人（读取拍照位姿）"));
+
+    // Decide the source before touching any photo-node state, so a failure
+    // leaves the node idle instead of half-started.
+    RobotPoseSource::Source poseSource = RobotPoseSource::Source::Communication;
+    qint64 consoleAgeMs = -1;
+    if (needPose) {
+        RobotMotionBackend* consoleBackend =
+            m_programController ? m_programController->backend() : nullptr;
+        if (m_consolePoseAtMs > 0)
+            consoleAgeMs = QDateTime::currentMSecsSinceEpoch() - m_consolePoseAtMs;
+
+        RobotPoseSource::Inputs in;
+        in.communicationConnected = m_robot && m_robot->isConnected();
+        in.consoleConnected = consoleBackend && consoleBackend->isConnected();
+        in.consoleSimulated = !m_programController
+            || m_programController->backendKind()
+                == RobotProgramController::BackendKind::Simulated;
+        in.consolePoseFresh = m_consolePoseValid && consoleAgeMs >= 0
+            && consoleAgeMs <= RobotPoseSource::kConsolePoseFreshMs;
+        // P0：程序列表里 Move 节点本身按"到位"结束，拍照节点由执行器顺序
+        // 保证机器人已停；后端的在途运动状态在 P1 统一对象时接入。
+        in.consoleMoving = false;
+        poseSource = RobotPoseSource::choose(in);
+
+        if (poseSource == RobotPoseSource::Source::None) {
+            if (!in.consoleConnected)
+                return fail(QStringLiteral(
+                    "拍照节点需要机器人位姿：请连接「机器人通信」，"
+                    "或在机器人控制台连接真机（仿真后端不能用于标定）"));
+            if (in.consoleSimulated)
+                return fail(QStringLiteral(
+                    "拍照节点需要真机位姿：机器人控制台当前是仿真后端"));
+            if (!in.consolePoseFresh)
+                return fail(QStringLiteral(
+                    "机器人控制台位姿已超过 1 秒未更新，请检查机器人连接"));
+            return fail(QStringLiteral("机器人正在运动，停稳后再运行拍照节点"));
+        }
+    }
 
     const auto& nodes = m_programController->program().nodes;
     const int index = m_programController->currentIndex();
@@ -1896,17 +1963,39 @@ bool MainWindow::beginProgramPhoto(QString* error)
     }
 
     m_programPhotoRecordBase = m_data ? m_data->count() : 0;
-    m_programPhotoStep = needPose ? ProgramPhotoStep::WaitingPose
-                                  : ProgramPhotoStep::WaitingCapture;
-    // 兜底超时：相机没回调、窗口被关掉等情况下，节点不能永远挂着。
-    m_programPhotoTimer->start(90000);
 
-    if (needPose) {
-        // 结果回到 onRobotPoseReady()，填好卡片后再 beginProgramCapture()。
-        m_robot->readPose(RobotReadAutoBeforeCapture);
-    } else {
+    if (!needPose) {
+        m_programPhotoStep = ProgramPhotoStep::WaitingCapture;
+        // 兜底超时：相机没回调、窗口被关掉等情况下，节点不能永远挂着。
+        m_programPhotoTimer->start(90000);
         beginProgramCapture();
+        return true;
     }
+
+    if (poseSource == RobotPoseSource::Source::Communication) {
+        m_programPhotoStep = ProgramPhotoStep::WaitingPose;
+        // 结果回到 onRobotPoseReady()，填好卡片后再 beginProgramCapture()。
+        m_programPhotoTimer->start(90000);
+        m_robot->readPose(RobotReadAutoBeforeCapture);
+        return true;
+    }
+
+    // Console source: the pose is already here.  Write the brand's card
+    // convention (UR axis-angle rad, FAIRINO mm/deg) and capture immediately.
+    auto* card = m_dataInput->card(QStringLiteral("robot_capture_pose"));
+    if (!card)
+        return fail(QStringLiteral("当前标定方式没有拍照位姿卡片"));
+    const QStringList fields = RobotPose::formatFields(m_consoleCardPose);
+    card->setValue(fields.join(QStringLiteral(" ")));
+    updatePoseGuide();
+    m_logger->info(QStringLiteral("拍照节点位姿来源：%1（%2，%3 ms）: %4")
+                       .arg(RobotPoseSource::label(poseSource))
+                       .arg(m_consoleCardPoseUnit)
+                       .arg(consoleAgeMs)
+                       .arg(fields.join(QStringLiteral(" "))));
+    m_programPhotoStep = ProgramPhotoStep::WaitingCapture;
+    m_programPhotoTimer->start(90000);
+    beginProgramCapture();
     return true;
 }
 

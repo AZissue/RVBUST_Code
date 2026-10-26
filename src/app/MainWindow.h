@@ -132,6 +132,10 @@ private:
     void onProgramPhotoDetected(bool ok);
     void finishProgramPhoto(bool ok, const QString& error);
     void abortProgramPhoto();
+    // 控制台位姿：缓存最近一帧「写卡约定」的值（UR 弧度、法奥 mm/度），
+    // 供拍照节点在通信工具未连接时使用。只缓存，不代表此刻仍新鲜。
+    void rememberConsolePose();
+    void invalidateConsolePose();
 
     // ── 机器人协议分派：在 RobotController/RobotWorker 里（worker 线程）──
     // MainWindow 不再持有 reader，也不再直接调用它们的阻塞方法。
@@ -278,6 +282,12 @@ private:
     bool m_programPhotoAutoSave = true;
     int  m_programPhotoRecordBase = 0;
     QTimer* m_programPhotoTimer = nullptr;
+    // Last console pose in the protocol's card convention (UR axis-angle rad,
+    // FAIRINO mm/deg).  Freshness is the timestamp, not this flag alone.
+    RobotPose::Pose m_consoleCardPose{};
+    QString m_consoleCardPoseUnit;
+    qint64 m_consolePoseAtMs = 0;
+    bool m_consolePoseValid = false;
 
     // Window centering (restore/clamp once on first show)
     bool m_windowPositioned = false;

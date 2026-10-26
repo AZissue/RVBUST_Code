@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QString>
+#include <QStringList>
 #include <array>
 #include <cmath>
 
@@ -78,6 +79,49 @@ inline QString poseSanityText(PoseSanity s)
         break;
     }
     return QString();
+}
+
+// ── Card-pose helpers (robot console -> calibration card) ─────────────
+//
+// The console's motion state is mm + degrees (UR: axis-angle degrees) because
+// that is what the jog pad edits.  The calibration card, however, must keep
+// the convention the communication tool has always written for that protocol:
+// UR = axis-angle RADIANS, FAIRINO = mm + degrees euler.  These helpers are the
+// single conversion point; a card must never receive the console's degree
+// values for UR (that would be a silent 57.3x scale error).
+constexpr double kDegToRad = 3.14159265358979323846 / 180.0;
+
+// Six cart values (mm, brand-specific rotation) -> card pose.  No conversion.
+inline Pose fromStateCart(const std::array<double, 6>& cart)
+{
+    Pose p;
+    for (int i = 0; i < 3; ++i) {
+        p.xyz[static_cast<std::size_t>(i)] = cart[static_cast<std::size_t>(i)];
+        p.rpy[static_cast<std::size_t>(i)] = cart[static_cast<std::size_t>(i + 3)];
+    }
+    return p;
+}
+
+// UR console state stores the rotation vector in degrees; the UR card
+// convention is the raw axis-angle in radians (same as the communication tool).
+inline Pose axisAngleDegToRad(const Pose& in)
+{
+    Pose out = in;
+    for (double& v : out.rpy)
+        v *= kDegToRad;
+    return out;
+}
+
+// Same formatting as RobotController's worker->UI path (3 decimals), so a pose
+// from either source writes a byte-identical card value.
+inline QStringList formatFields(const Pose& pose)
+{
+    QStringList f;
+    for (double v : pose.xyz)
+        f << QString::number(v, 'f', 3);
+    for (double v : pose.rpy)
+        f << QString::number(v, 'f', 3);
+    return f;
 }
 
 class Reader {

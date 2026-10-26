@@ -14,6 +14,8 @@
 
 #include <array>
 
+#include "logic/RobotPose.h"
+
 namespace RobotMotion {
 
 using Pose = std::array<double, 6>;   // 笛卡尔 mm/度；关节 度
@@ -43,6 +45,20 @@ public:
     virtual bool isConnected() const = 0;
     virtual bool isEnabled() const = 0;
     virtual RobotMotion::State state() const = 0;
+
+    // ── 写入标定卡片的位姿（与通信工具同一约定）──────────────────────
+    // state() 是"点动/程序"用的内部表示（mm + 度）。卡片必须沿用该协议
+    // 历史上由通信工具写入的约定：UR 是轴角**弧度**，法奥是 mm + 度欧拉。
+    // 默认实现直接透传 state()（法奥/仿真正确）；UR 后端覆盖为角度转弧度。
+    virtual RobotPose::Pose cardPose() const
+    {
+        return RobotPose::fromStateCart(state().cart);
+    }
+    // 界面上显示的约定标签（日志/提示用），例如 "mm/弧度（轴角）"。
+    virtual QString cardPoseUnit() const
+    {
+        return QStringLiteral("mm/度（欧拉角）");
+    }
 
 public slots:
     virtual void connectDevice(const QString& host, quint16 port) = 0;

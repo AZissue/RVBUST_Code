@@ -21,4 +21,8 @@ private slots:
     void urRealtimeStaleStreamTimesOut();
     void urRtdeStreamsNewestPose();
     void urRtdeUnavailablePoseIsRejected();
+    // Console pose -> calibration card convention (UR axis-angle rad).
+    void cardPoseFromState();
+    // Which connection supplies the photo-node pose, and when to fail closed.
+    void poseSourceChoice();
 };

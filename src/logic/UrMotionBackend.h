@@ -121,6 +121,17 @@ public:
     bool isEnabled() const override { return m_enabled; }
     RobotMotion::State state() const override { return m_state; }
 
+    // UR 的内部状态是轴角**度**（便于点动），卡片沿用通信工具/官方约定
+    // 的轴角**弧度**。转换只发生在这里，避免标定数据静默放大 57.3 倍。
+    RobotPose::Pose cardPose() const override
+    {
+        return RobotPose::axisAngleDegToRad(RobotPose::fromStateCart(m_state.cart));
+    }
+    QString cardPoseUnit() const override
+    {
+        return QStringLiteral("mm/弧度（轴角）");
+    }
+
 public slots:
     void connectDevice(const QString& host, quint16 port) override;
     void disconnectDevice() override;

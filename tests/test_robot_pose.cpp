@@ -5,12 +5,14 @@
 #include <QThread>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <limits>
 #include <thread>
 #include <winsock2.h>
 
 #include "logic/RobotPose.h"
+#include "logic/RobotPoseSource.h"
 #include "logic/URRealtimeReader.h"
 #include "logic/URRtdeReader.h"
 
@@ -1082,4 +1084,92 @@ void TestRobotPose::urRtdeUnavailablePoseIsRejected()
     QVERIFY2(reader.lastError().contains(QStringLiteral("actual_TCP_pose")),
              qPrintable(reader.lastError()));
     server.stop();
+}
+
+// The console keeps the UR pose in axis-angle DEGREES (convenient for the jog
+// pads), but the calibration card and every record written from it use
+// axis-angle RADIANS (the communication tool's historical convention, and what
+// HandEyeSDK expects before the user picks a unit).  These are the exact
+// helpers UrMotionBackend::cardPose() uses -- a regression here silently
+// multiplies a calibration pose by 57.3.
+void TestRobotPose::cardPoseFromState()
+{
+    const std::array<double, 6> cart{400.5, -120.25, 310.75, 30.0, -45.5, 90.0};
+
+    const RobotPose::Pose pose = RobotPose::fromStateCart(cart);
+    QCOMPARE(pose.xyz[0], cart[0]);
+    QCOMPARE(pose.xyz[1], cart[1]);
+    QCOMPARE(pose.xyz[2], cart[2]);
+    QCOMPARE(pose.rpy[0], cart[3]);
+    QCOMPARE(pose.rpy[1], cart[4]);
+    QCOMPARE(pose.rpy[2], cart[5]);
+
+    const RobotPose::Pose rad = RobotPose::axisAngleDegToRad(pose);
+    // Translation must not be scaled; only the axis-angle part converts.
+    QCOMPARE(rad.xyz[0], cart[0]);
+    QCOMPARE(rad.xyz[2], cart[2]);
+    QVERIFY(std::abs(rad.rpy[2] - 3.14159265358979323846 / 2.0) < 1e-12);
+    QVERIFY(std::abs(rad.rpy[1] + 45.5 * 3.14159265358979323846 / 180.0) < 1e-12);
+
+    // The card is a space separated field list, always 6 entries, 3 decimals.
+    const QStringList fields = RobotPose::formatFields(rad);
+    QCOMPARE(fields.size(), 6);
+    QCOMPARE(fields[0], QStringLiteral("400.500"));
+    QCOMPARE(fields[2], QStringLiteral("310.750"));
+    QCOMPARE(fields[5], QStringLiteral("1.571"));
+    // UrMotionBackend::cardPose() is `fromStateCart` -> `axisAngleDegToRad`;
+    // there is no second conversion anywhere on the write-card path.
+}
+
+// Which connection supplies the photo-node pose.  The photo node used to check
+// only the communication tool, so a console-only connection failed; the rule
+// below must also stay fail-closed for simulated / stale / moving consoles.
+void TestRobotPose::poseSourceChoice()
+{
+    using namespace RobotPoseSource;
+
+    Inputs comm;
+    comm.communicationConnected = true;
+    QCOMPARE(choose(comm), Source::Communication);
+
+    // Communication wins even when the console is also usable: it is the
+    // pre-existing behaviour and the operator's explicit choice.
+    Inputs both;
+    both.communicationConnected = true;
+    both.consoleConnected = true;
+    both.consoleSimulated = false;
+    both.consolePoseFresh = true;
+    QCOMPARE(choose(both), Source::Communication);
+
+    Inputs consoleOnly;
+    consoleOnly.consoleConnected = true;
+    consoleOnly.consoleSimulated = false;
+    consoleOnly.consolePoseFresh = true;
+    QCOMPARE(choose(consoleOnly), Source::Console);
+
+    // Console connected but simulated: plausible numbers that must never reach
+    // a calibration record.
+    Inputs simulated = consoleOnly;
+    simulated.consoleSimulated = true;
+    QCOMPARE(choose(simulated), Source::None);
+
+    // Stream stopped for longer than the freshness window.
+    Inputs stale = consoleOnly;
+    stale.consolePoseFresh = false;
+    QCOMPARE(choose(stale), Source::None);
+
+    // Motion in flight: the image would be paired with a pose the robot no
+    // longer has.
+    Inputs moving = consoleOnly;
+    moving.consoleMoving = true;
+    QCOMPARE(choose(moving), Source::None);
+
+    // Console disconnected: no source at all.
+    Inputs off = consoleOnly;
+    off.consoleConnected = false;
+    QCOMPARE(choose(off), Source::None);
+
+    QCOMPARE(label(Source::Communication), QStringLiteral("机器人通信"));
+    QCOMPARE(label(Source::Console), QStringLiteral("机器人控制台"));
+    QCOMPARE(label(Source::None), QStringLiteral("无"));
 }
