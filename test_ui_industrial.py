@@ -140,25 +140,17 @@ class IndustrialTests(unittest.TestCase):
             win.set_mode(mode, [])
             win.set_presentation('industrial')
             p = win._stack.currentWidget()._industrial
-            self.assertTrue(p.sidebar.isHidden())
-            self.app.processEvents()
-            index = p.side_column.indexOf(p.legacy_panel)
-            self.assertEqual(p.side_column.sizes()[index], p.legacy_toggle.minimumHeight())
-            p.legacy_toggle.click()
-            self.assertFalse(p.sidebar.isHidden())
-            self.app.processEvents()
-            self.assertGreater(p.side_column.sizes()[index], p.legacy_toggle.minimumHeight())
-            p.legacy_toggle.click()
+            self.assertIsNone(p.sidebar)
+            self.assertFalse(hasattr(p, 'legacy_panel'))
+            self.assertFalse(hasattr(p, 'legacy_toggle'))
+            self.assertEqual(p.side_column.count(), 1)
             for height in (700, 950):
                 win.resize(1600, height)
                 self.app.processEvents()
-                self.assertEqual(p.side_column.sizes()[index], p.legacy_toggle.minimumHeight())
-                self.assertEqual(p.legacy_panel.height(), p.legacy_toggle.minimumHeight())
+                self.assertGreater(p.frame_browser.height(), p.side_column.height() - 12)
             p.maximize(True)
             p.maximize(False)
-            self.assertTrue(p.sidebar.isHidden())
-            self.app.processEvents()
-            self.assertEqual(p.side_column.sizes()[index], p.legacy_panel.height())
+            self.assertEqual(p.side_column.count(), 1)
         win.set_mode('mobile_chain', [])
         ws = win.workspace_mobile()
         ws.on_evaluation_done(12, .85, .24, 'ok', '继续移动')
@@ -267,6 +259,7 @@ class IndustrialTests(unittest.TestCase):
         win._launcher_factory=Dialog
         reconnect=Mock(side_effect=AssertionError('Layout switch must not reconnect'))
         bridge=SimpleNamespace(can_change_workspace=lambda:True,
+            refresh_launcher_devices=lambda dialog, **kwargs: dialog.set_devices(devices),
             camera_manager=SimpleNamespace(get_connected_ids=lambda:['cam0']),
             enumerate_devices=lambda:devices,get_ordered_devices=lambda value:value,
             _on_device_manager_reopened=reconnect)

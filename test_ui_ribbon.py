@@ -152,10 +152,10 @@ class RibbonTests(unittest.TestCase):
             last = self.ribbon.commands[(mode, 'screenshot')]
             self.assertLess(last.mapTo(self.ribbon, last.rect().topRight()).x(), self.ribbon.width())
             presentation = ws._industrial
-            widget = ws._live_view if mode == 'mobile_chain' else ws._left_panel
-            self.assertLess(widget.y(), 20)
-            if mode == 'turntable':
-                self.assertGreater(widget.height(), presentation.sidebar.viewport().height() * .8)
+            self.assertIsNone(presentation.sidebar)
+            self.assertEqual(presentation.side_column.count(), 1)
+            self.assertFalse(any(m.widget is (ws._live_view if mode == 'mobile_chain' else ws._left_panel)
+                                 for m in presentation.mounts))
 
     def test_fit_tracks_current_view_and_log_header_uses_bottom_dock(self):
         for mode in ('multi_cam', 'mobile_chain', 'turntable'):

@@ -134,16 +134,20 @@ class IndustrialPresentation:
         self.body = QSplitter(Qt.Horizontal)
         self.body.setChildrenCollapsible(False)
         root.addWidget(self.body, 1)
-        self.sidebar = QScrollArea()
-        self.sidebar.setWidgetResizable(True)
-        self.sidebar.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.sidebar.setMinimumWidth(290)
-        self.sidebar.setMaximumWidth(420)
-        content = QWidget()
-        self.controls = QVBoxLayout(content)
-        self.controls.setContentsMargins(0, 0, 6, 0)
-        self.controls.setSpacing(8)
-        self.sidebar.setWidget(content)
+        # Migrated modes have no secondary/legacy operation panel.
+        self.sidebar = None
+        self.controls = None
+        if mode == 'robot_stitch':
+            self.sidebar = QScrollArea()
+            self.sidebar.setWidgetResizable(True)
+            self.sidebar.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            self.sidebar.setMinimumWidth(290)
+            self.sidebar.setMaximumWidth(420)
+            content = QWidget()
+            self.controls = QVBoxLayout(content)
+            self.controls.setContentsMargins(0, 0, 6, 0)
+            self.controls.setSpacing(8)
+            self.sidebar.setWidget(content)
         self.side_column = QSplitter(Qt.Vertical)
         self.side_column.setChildrenCollapsible(False)
         self.side_column.setMinimumWidth(290)
@@ -160,25 +164,9 @@ class IndustrialPresentation:
         # existing controller bindings and context-menu shortcuts.
         self.frame_browser.footer.hide()
         self.side_column.addWidget(self.frame_browser)
-        self.legacy_panel = None
-        if mode in ('multi_cam', 'mobile_chain', 'turntable'):
-            self.legacy_panel = QWidget()
-            legacy_layout = QVBoxLayout(self.legacy_panel)
-            legacy_layout.setContentsMargins(0, 0, 0, 0)
-            legacy_layout.setSpacing(4)
-            self.legacy_toggle = QToolButton()
-            self.legacy_toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-            self.legacy_toggle.setCheckable(True)
-            self.legacy_toggle.setMinimumHeight(30)
-            self.legacy_toggle.toggled.connect(self.set_legacy_expanded)
-            legacy_layout.addWidget(self.legacy_toggle)
-            legacy_layout.addWidget(self.sidebar, 1)
-            self.side_column.addWidget(self.legacy_panel)
-            self.set_legacy_expanded(False)
-        else:
-            self.side_column.addWidget(self.sidebar)
-        self.side_column.setSizes([1, 1] if mode == 'robot_stitch' else [700, 30])
         if mode == 'robot_stitch':
+            self.side_column.addWidget(self.sidebar)
+            self.side_column.setSizes([1, 1])
             self.sidebar.setMinimumHeight(320)
         self.calibration_panel = None
         if mode == 'turntable':
@@ -206,8 +194,6 @@ class IndustrialPresentation:
         self._multi_view = 'joint'
         self._view_before_focus = None
         if mode == 'multi_cam':
-            self._mount(workspace._left_widget, self.controls)
-            self._mount(workspace._right_widget, self.controls)
             result_content = QWidget()
             self.calibration_panel = result_content
             result_layout = QVBoxLayout(result_content)
@@ -223,7 +209,6 @@ class IndustrialPresentation:
             workspace._result_card.setObjectName('multiResultCard')
             from .widgets.multi_camera_status import MultiCameraStatus
             self.camera_status = MultiCameraStatus(workspace)
-            self.side_column.setSizes([700, 30])
             self.frame_browser.calibration_selected.connect(self._show_calibration)
             self.view_bar = QWidget()
             bar = QHBoxLayout(self.view_bar)
@@ -341,54 +326,19 @@ class IndustrialPresentation:
             self.inspector = MarkerInspector(viewport, show_world=False)
             self.inspector.hide()
             if mode == 'mobile_chain':
-                self._mount(workspace._live_view, self.controls)
                 workspace._live_view.frame_changed.connect(self._preview_frame)
                 workspace._live_view.marker_context_changed.connect(self._marker_context)
                 workspace.preview_toggled.connect(self._mobile_preview_toggled)
-                buttons = QGroupBox('采集与会话')
-                actions = QVBoxLayout(buttons)
-                self.controls.addWidget(buttons)
-                for name in ('_btn_preview','_btn_capture','_btn_undo','_btn_recapture',
-                             '_btn_save','_btn_offline_load','_btn_delete_node'):
-                    self._mount(getattr(workspace, name), actions)
-                self._mount(workspace._timeline, self.controls)
-                # Classic evaluation widgets stay in the inactive classic page.
-                # Industrial evaluation is presented by the shell status bar.
             else:
-                self._mount(workspace._left_panel, self.controls)
+                if mode == 'robot_stitch':
+                    self._mount(workspace._left_panel, self.controls)
+                    self.controls.addStretch(1)
                 self._mount(workspace._preview_panel, preview)
-        # Turntable already contains a scroll area; let it fill the sidebar.
-        if mode != 'turntable':
-            self.controls.addStretch(1)
         self.stack.addWidget(self.surface)
         self.stack.setCurrentWidget(self.classic)
 
     def _mount(self, widget, target):
         self.mounts.append(_Mount.capture(widget, target))
-
-    def set_legacy_expanded(self, expanded):
-        """Keep production controls mounted and reachable during sidebar migration."""
-        if self.legacy_panel is None:
-            return
-        self.legacy_toggle.setChecked(expanded)
-        self.legacy_toggle.setText('旧版操作栏 · 收起' if expanded else '旧版操作栏 · 展开')
-        self.legacy_toggle.setArrowType(Qt.DownArrow if expanded else Qt.RightArrow)
-        self.sidebar.setVisible(expanded)
-        index = self.side_column.indexOf(self.legacy_panel)
-        self.side_column.setStretchFactor(index, 1 if expanded else 0)
-        if expanded:
-            self.legacy_panel.setMinimumHeight(0)
-            self.legacy_panel.setMaximumHeight(16777215)
-            self.side_column.setSizes([320, 210, 440] if self.mode == 'turntable' else [440, 300])
-        else:
-            height = self.legacy_toggle.minimumHeight()
-            self.legacy_panel.setFixedHeight(height)
-            # A widget's maximum height alone does not release the splitter's
-            # cached allocation. Give that space back to the DB / properties.
-            sizes = self.side_column.sizes()
-            sizes[0] += max(0, sizes[index] - height)
-            sizes[index] = height
-            self.side_column.setSizes(sizes)
 
     def activate(self, enabled):
         if self.active == enabled:
@@ -473,7 +423,8 @@ class IndustrialPresentation:
 
     def maximize(self, enabled):
         self.side_column.setVisible(not enabled)
-        self.sidebar.setVisible(not enabled and (self.legacy_panel is None or self.legacy_toggle.isChecked()))
+        if self.sidebar is not None:
+            self.sidebar.setVisible(not enabled)
         if self.overlay:
             self.overlay.setVisible(False if self.inspector else not enabled)
         if self.inspector:
