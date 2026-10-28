@@ -42,6 +42,11 @@ class ColorDialog(QDialog):
         self.color_strength.setRange(0, 100)
         self.color_strength.setValue(60)
         self.color_strength.setSuffix(' %')
+        self.color_seam = QDoubleSpinBox()
+        self.color_seam.setRange(0, 100)
+        self.color_seam.setValue(60)
+        self.color_seam.setSuffix(' %')
+        self.color_seam.setToolTip('局部融合中等色差；0关闭。可能平滑细小纹理，黑白大色差不参与融合。')
         self.color_gain = QDoubleSpinBox()
         self.color_gain.setRange(1, 2)
         self.color_gain.setValue(1.5)
@@ -49,12 +54,12 @@ class ColorDialog(QDialog):
         self.color_samples.setRange(24, 100000)
         self.color_samples.setValue(20000)
         for label, control in (('单云空间尺度', self.color_scale), ('多云重叠距离', self.color_distance),
-                ('校正强度', self.color_strength), ('增益上限（下限为倒数）', self.color_gain),
+                ('校正强度', self.color_strength), ('单云接缝融合', self.color_seam), ('增益上限（下限为倒数）', self.color_gain),
                 ('估计样本上限/层', self.color_samples)):
             form.addRow(label, control)
         self.color_aligned = QCheckBox('多云已处于同一坐标系')
         form.addRow(self.color_aligned)
-        hint = QLabel('单云：低频颜色场；多云：重叠区估计。原始未配准多帧请先拼接。\n'
+        hint = QLabel('单云：低频颜色场 + 局部接缝融合；多云：重叠区估计。原始未配准多帧请先拼接。\n'
                       '无色/混合输入拒绝；不覆盖来源，不改变XYZ。\n'
                       '仅缓和可估计色差，可能影响真实材质；不是摄影测量级真彩还原。')
         hint.setWordWrap(True)
@@ -87,14 +92,15 @@ class ColorDialog(QDialog):
                                  ('单云空间校正' if len(inputs) == 1 else '多云重叠匹配'))
         self.color_reference.setEnabled(len(inputs) > 1)
         self.color_aligned.setEnabled(len(inputs) > 1)
+        self.color_seam.setEnabled(len(inputs) == 1)
         self.color_scale.setEnabled(len(inputs) == 1)
         self.color_distance.setEnabled(len(inputs) > 1)
         self.color_aligned.setChecked(state.get('aligned', False))
         self._guard = ParameterGuard(self)
         for key, control in (('scale', self.color_scale), ('overlap_distance', self.color_distance),
-                ('strength', self.color_strength), ('max_gain', self.color_gain), ('sample_limit', self.color_samples)):
+                ('seam_strength', self.color_seam), ('strength', self.color_strength), ('max_gain', self.color_gain), ('sample_limit', self.color_samples)):
             if key in state:
-                control.setValue(state[key] * 100 if key == 'strength' else state[key])
+                control.setValue(state[key] * 100 if key in ('strength', 'seam_strength') else state[key])
             control.setFocusPolicy(Qt.StrongFocus)
             control.installEventFilter(self._guard)
             control.valueChanged.connect(self._updated)
@@ -106,7 +112,7 @@ class ColorDialog(QDialog):
         self._updated()
 
     def parameters(self):
-        return dict(scale=self.color_scale.value(), strength=self.color_strength.value()/100,
+        return dict(seam_strength=self.color_seam.value()/100, scale=self.color_scale.value(), strength=self.color_strength.value()/100,
             max_gain=self.color_gain.value(), sample_limit=self.color_samples.value(),
             overlap_distance=self.color_distance.value(), reference=self.color_reference.currentData(),
             aligned=self.color_aligned.isChecked())
@@ -115,7 +121,7 @@ class ColorDialog(QDialog):
         state = self.parameters()
         params = ColorParameters(**{key: state[key] for key in asdict(ColorParameters()) if key in state})
         self.summary.setText(f'尺度={params.scale:g}mm，强度={params.strength:.0%}，上限={params.max_gain:g}，'
-                             f'样本上限={params.sample_limit}，重叠距离={params.overlap_distance:g}mm')
+                             f'接缝融合={params.seam_strength:.0%}，样本上限={params.sample_limit}，重叠距离={params.overlap_distance:g}mm')
         error = ''
         try:
             params.validate()

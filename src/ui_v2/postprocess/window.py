@@ -194,7 +194,7 @@ class PostprocessWindow(QDialog):
     @staticmethod
     def _color_params_text(params):
         return (f'尺度={params.scale:g}mm，强度={params.strength:.0%}，上限={params.max_gain:g}，'
-                f'样本上限={params.sample_limit}，重叠距离={params.overlap_distance:g}mm')
+                f'接缝融合={params.seam_strength:.0%}，样本上限={params.sample_limit}，重叠距离={params.overlap_distance:g}mm')
 
     def _show_color_diagnostic(self, params, reports, heading='颜色统一'):
         self._last_color_report = reports

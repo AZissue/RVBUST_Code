@@ -19,8 +19,11 @@ class ColorParameters:
     overlap_distance: float = 2.0
     min_samples: int = 24
     chunk_size: int = 65536
+    seam_strength: float = .6
 
     def validate(self):
+        if not np.isfinite(self.seam_strength) or not 0 <= self.seam_strength <= 1:
+            raise ValueError('接缝融合强度必须在0..100%之间')
         if not np.isfinite(self.scale) or self.scale <= 0:
             raise ValueError('空间尺度必须为正有限值（mm）')
         if not np.isfinite(self.overlap_distance) or self.overlap_distance <= 0:
@@ -215,6 +218,12 @@ def _single(points, colors, gray, params):
     log_gain[~supported] = 0
     if not supported.any():
         raise ValueError('空间邻域样本不足，未进行颜色校正')
+    # A spatial gain alone cannot remove a discontinuity: coincident points
+    # receive the same gain. Estimate a colour-conditioned local residual too.
+    # Compact spatial support avoids distant sheets; a redescending range
+    # kernel excludes black/white patterns and large material boundaries.
+    seam_tree = cKDTree(xyz)
+    radius = params.scale / 4
     def gains(begin, end):
         d, ix = tree.query(points[begin:end], k=min(8, len(nodes)))
         w = np.exp(-.5*(d/params.scale)**2)
@@ -222,6 +231,18 @@ def _single(points, colors, gray, params):
         total = w.sum(axis=1)
         log = (log_gain[ix]*w[..., None]).sum(axis=1)/np.maximum(total[:, None], 1e-30)
         log[total == 0] = 0
+        if params.seam_strength:
+            sd, si = seam_tree.query(points[begin:end], k=min(24, len(xyz)))
+            original = colors[begin:end]
+            delta = log_rgb[si] - np.log(np.maximum(original[:, None, :], .002))
+            difference = np.max(np.abs(delta), axis=2)
+            sw = np.exp(-.5*(sd/radius)**2) * np.exp(-(difference/.30)**4)
+            sw[(sd > radius) | (difference > .55)] = 0
+            valid_color = ((original > .02) & (original < .98)).all(axis=1)
+            support = (sw > .05).sum(axis=1) >= 4
+            residual = (delta*sw[..., None]).sum(axis=1)/np.maximum(sw.sum(axis=1)[:, None], 1e-30)
+            residual[~(valid_color & support)] = 0
+            log += params.seam_strength * residual
         return np.exp(log)
     try:
         result, report = _apply(colors, gains, gray, params)
@@ -229,7 +250,8 @@ def _single(points, colors, gray, params):
         for row in exc.reports:
             row.update(samples=len(xyz), nodes=len(nodes), supported_nodes=int(supported.sum()), components=component_count)
         raise
-    report.update(samples=len(xyz), nodes=len(nodes), supported_nodes=int(supported.sum()), components=component_count)
+    report.update(samples=len(xyz), nodes=len(nodes), supported_nodes=int(supported.sum()), components=component_count,
+                  seam_radius_mm=radius, seam_strength=params.seam_strength)
     return result, report
 
 

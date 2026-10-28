@@ -33,6 +33,29 @@ def overlapping(gray=False):
 
 
 class ColorTests(unittest.TestCase):
+    def test_local_seam_blends_coincident_exposures_preserves_black_white(self):
+        x, y = np.meshgrid(np.arange(40.), np.arange(20.))
+        base = np.c_[x.ravel(), y.ravel(), np.zeros(x.size)]
+        points = np.repeat(base, 2, axis=0)
+        values = np.tile([.30, .39], len(base))
+        values[points[:, 1] < 3] = .005
+        values[points[:, 1] > 17] = .995
+        colors = np.repeat(values[:, None], 3, axis=1)
+        params = ColorParameters(scale=12, strength=1, max_gain=2)
+        layer = CloudLayer('overlapping exposures', points, colors)
+        with self.assertRaises(NoColorCorrection):
+            unify_colors([layer], params=replace(params, seam_strength=0))
+        old = [colors]
+        new, _ = unify_colors([layer], params=params)
+        middle = (base[:, 1] > 5) & (base[:, 1] < 15)
+        gap = lambda c: np.median(abs(c[::2, 0][middle]-c[1::2, 0][middle]))
+        self.assertLess(gap(new[0]), gap(old[0])*.7)
+        # Range gating does not mix the black and white material into the seam.
+        for selection in (points[:, 1] < 3, points[:, 1] > 17):
+            np.testing.assert_array_equal(new[0][selection], old[0][selection])
+        np.testing.assert_array_equal(layer.colors, colors)
+        np.testing.assert_array_equal(new[0][:, 0], new[0][:, 2])
+
     def test_overlap_gray_robust_gain_strength_and_reference(self):
         points, rgb, target, gain = overlapping(True)
         target[::35] = .9  # minority colour outliers must not determine gain
