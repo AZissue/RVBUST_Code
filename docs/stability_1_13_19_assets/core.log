@@ -1,0 +1,84 @@
+============================================================
+MultiCameraCalibration core 模块测试
+============================================================
+
+[1] 标定精度测试（8 点对 + 0.5mm 噪声）
+  标定成功 | 内点: 8/8 | RMS: 0.635 mm | 内点率: 1.00
+  旋转误差 (Frobenius): 0.006834
+  平移误差: 0.776 mm
+  [OK] 标定精度满足要求（旋转<0.1, 平移<2mm）
+
+[1b] 离群点排除统计测试（8 内点 + 1 离谱离群点）
+  内点 8/9 | 内点 RMS 0.669 mm | 全量 RMS 66.659 mm | 离群 code: [8]
+  [OK] 离群点已排除：内点 RMS 小值 / outlier_count=1 / outlier_codes=[8] / rms_all_mm 全量
+
+[2] 四元数 q/-q 符号歧义修复测试
+  平均四元数范数: 1.000000（未修复时约为 0/NaN）
+  与 q1 同旋转: True
+  [OK] 异号四元数平均正确（半球统一生效）
+  多帧平均: 有效帧 4/4 | 旋转误差 0.004551 | 平移误差 0.597 mm
+  内点标记 32/32 （4 帧 × 8 标记，语义与单帧统一）
+  [OK] 多帧标定端到端通过
+
+[3] N=3 相机 pair 标定（ref / camA / camB）
+  camA→ref: 旋转误差 0.001538 | 平移误差 0.186 mm | RMS 0.794 mm
+  camB→ref: 旋转误差 0.003895 | 平移误差 0.558 mm | RMS 0.650 mm
+  [OK] N=3 两对 pair 标定精度均满足要求
+
+[4] CameraManager 优雅降级测试（无相机/无 SDK 不崩溃）
+  initialize: False (PyRVC 未安装（无 SDK 环境）)
+  connect 越界索引: 正确返回 False (PyRVC 未安装（无 SDK 环境）)
+  connect 未注册相机: 正确返回 False (相机 ghost 未注册（先 add_camera）)
+  [OK] SDK absent / invalid index / enumeration failure isolated; no real SDK I/O
+  [OK] CameraManager 优雅降级通过
+
+[5] get_transform 直达 / 求逆 / 链式 hook
+  [OK] 直达 pair: camA→ref
+  [OK] 求逆 pair: ref→camA（与直达互逆）
+  [OK] 链式 hook: camA→camB 经 ref 中转复合正确
+
+[6] 标定结果保存 / 加载
+  [OK] save/load 一致（reference_id + 2 对 pair）
+
+[7] PoseGraph BFS 路径复合测试
+  [OK] 到自身返回单位矩阵
+  [OK] 星型拓扑: camA→camB 经 ref 中转复合正确
+  [OK] 链式拓扑: cam1→cam3 两步链乘正确（含几何验证与往返互逆）
+  [OK] 不连通图正确抛出 ValueError: 位姿图中找不到终点 'cam4'（无相关 pair 标定）
+  [OK] 独立连通分量正确抛出 ValueError: 位姿图不连通: 找不到 'cam1' → 'cam4' 的变换路径
+  [OK] optimize_global: BFS 生成树输出各相机到锚点的变换
+
+[7f] PoseGraph 类 add_edge 方向已知真值验证
+  [OK] add_edge 方向正确：a→b=[50,20,0]，点变换与反向互逆均成立
+
+[8] StitchEngine N 路拼接测试
+  [OK] 3 相机拼接: 合并点数 900 = 3×300, 变换生效
+  [OK] 空点云 / 未标定相机自动跳过，其余 2 台正常合并
+  [OK] 全部相机不可用时返回 (None, 原因)
+  [OK] 后处理: 体素下采样 900 → 850 点
+  [OK] stitch_offline: 2 对帧合并 1800 点
+
+[9] 集成测试: 标定 → 变换 → 拼接
+  camB9 拼接到 ref 后平均对齐误差: 0.075 mm
+  [OK] 集成测试通过: 3 相机标定→拼接, 合并 600 点, 对齐误差 0.075 mm
+
+[10] PointCloudProcessor.auto_tune 自动参数估计
+  [OK] mm 块: 点距 1.186mm, 体素 2.20mm, 预估 49,795 点（目标 50,000）
+       notes[0]: 已剔除 1 个无效点（NaN/Inf/零点）后再估计
+  [OK] 飞点场景: 推荐 AABB 裁切 ratio=1.00, std=1.5, 预估 48,668 点
+  [OK] 米单位: 检测为 m, 体素输出 2.20mm, 预估 49,795 点
+  [OK] 小点云（53,016 < 80 万）: enable_voxel_downsample=False
+  [OK] 全流程: 310,675 → 282,449 点（保留 90.9%，不会全滤掉）
+  [OK] 含 46,601 个无效点(NaN/Inf/零): 点距 1.186mm, 剔除后处理剩余 49,795 点，不再坍缩
+
+[11] 标定板检测与位姿法标定测试
+  [OK] 4x11 标定板检测成功，RMS 0.0000 mm
+
+[11b] 白底黑圆标定板检测
+  [OK] 白底黑圆 4x11 标定板检测成功，RMS 0.0000 mm
+  [OK] 位姿法标定 pair 成功，旋转误差 0.000000，平移误差 0.0000 mm
+  [OK] MarkerDetector 标记物类型切换正常
+
+============================================================
+[OK] 所有测试通过！core 模块工作正常。
+============================================================

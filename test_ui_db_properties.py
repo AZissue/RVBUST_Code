@@ -41,6 +41,24 @@ class PropertiesTests(unittest.TestCase):
         self.app.processEvents()
         self.temp.cleanup()
 
+    def test_result_sources_and_missing_sources_are_explicit_without_geometry_io(self):
+        self.db.records['raw2'] = FrameRecord('raw2', self.db.session_id, 'cam1', 3,
+            'calib', '第二路', '2026-10-28', 10, [0, 0])
+        result = self.db.records['result']
+        result.camera = ''
+        result.source_ids = ['raw', 'raw2', 'missing']
+        self.browser.refresh()
+        self.browser.tree.setCurrentItem(self.browser._items['result'])
+        values = self.browser.properties.values
+        self.assertEqual(values['相机'], '融合结果')
+        self.assertEqual(values['来源相机'], 'cam0 + cam1')
+        self.assertEqual(values['来源帧数'], 3)
+        self.db.records['result'].source_ids = ['missing']
+        self.browser.tree.clearSelection()
+        self.browser.tree.setCurrentItem(self.browser._items['raw'])
+        self.browser.tree.setCurrentItem(self.browser._items['result'])
+        self.assertEqual(self.browser.properties.values['来源相机'], '—')
+
     def test_metadata_for_cloud_image_result_group_and_clear_without_io(self):
         properties = self.browser.properties
         with patch.object(self.db, 'load_frame', side_effect=AssertionError('metadata must not read geometry')):

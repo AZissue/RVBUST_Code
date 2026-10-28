@@ -414,7 +414,7 @@ class FrameBrowser(QWidget):
                   (('后处理点云' if record.purpose == '后处理结果' else '拼接点云') if result else '原始点云') if component == 'cloud' else
                   (('后处理结果' if record.purpose == '后处理结果' else '拼接结果') if result else '原始帧'),
                   '状态': record.status, '帧编号': f'{record.frame_id:03d}',
-                  '相机': record.camera, '用途': record.purpose}
+                  '相机': record.camera or ('融合结果' if result else '—'), '用途': record.purpose}
         if component != 'image':
             values['有效点数' if result else '文件点槽位'] = f'{record.points:,}' if record.points is not None else '—'
             values['坐标单位'] = 'mm'
@@ -424,6 +424,9 @@ class FrameBrowser(QWidget):
             values['图像分辨率'] = f'{record.image_size[0]} × {record.image_size[1]} px'
         if result:
             values['来源帧数'] = len(record.source_ids)
+            cameras = sorted({self.database.records[uid].camera for uid in record.source_ids
+                if uid in self.database.records and self.database.records[uid].camera})
+            values['来源相机'] = ' + '.join(cameras) or '—'
         else:
             values['标记物数量'] = len(record.markers)
             values['后台识别'] = {'running': '识别中', 'done': '已完成', 'error': '失败，可右键重新识别'}.get(

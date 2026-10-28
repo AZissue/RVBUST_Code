@@ -5,9 +5,9 @@ import json
 
 import numpy as np
 import open3d as o3d
-from PySide6.QtCore import QObject, QEventLoop, QTimer
+from PySide6.QtCore import QObject, QEventLoop, QTimer, Qt
 from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QInputDialog,
-    QLabel, QVBoxLayout)
+    QLabel, QVBoxLayout, QProgressDialog)
 from .dialogs import ChineseMessageBox as QMessageBox, localize_buttons
 
 from core.session_project import SessionProject, MODE_LABELS
@@ -558,7 +558,18 @@ class SessionProjects(QObject):
             return False
         loop = QEventLoop(self)
         outcome = [False]
+        active = [True]
+        progress = QProgressDialog('正在保存未保存的会话；取消关闭后，当前保存仍会继续。',
+            '取消关闭', 0, 0, self.bridge.shell)
+        progress.setWindowTitle('关闭前保存进度')
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setAutoClose(False)
+        progress.canceled.connect(loop.quit)
         def step(ok=True):
+            if not active[0] or progress.wasCanceled():
+                loop.quit()
+                return
             if not ok or not dirty:
                 outcome[0] = ok
                 loop.quit()
@@ -569,9 +580,15 @@ class SessionProjects(QObject):
                 QTimer.singleShot(10, step)
                 return
             self.save(dirty.pop(0), step)
+        progress.show()
         QTimer.singleShot(0, step)
-        loop.exec()
-        return outcome[0]
+        try:
+            loop.exec()
+            return outcome[0] and not progress.wasCanceled()
+        finally:
+            active[0] = False
+            progress.close()
+            progress.deleteLater()
 
     def cleanup(self):
         self.closed = True

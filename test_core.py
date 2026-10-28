@@ -18,6 +18,7 @@ MultiCameraCalibration core 模块测试（无 GUI、无需相机）
 import os
 import sys
 import tempfile
+from unittest.mock import Mock, patch
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
@@ -197,31 +198,52 @@ print("  [OK] N=3 两对 pair 标定精度均满足要求")
 # 4. CameraManager 无相机环境优雅降级
 # ------------------------------------------------------------------
 print("\n[4] CameraManager 优雅降级测试（无相机/无 SDK 不崩溃）")
-mgr = CameraManager()
-ok_init, msg_init = mgr.initialize()
-print(f"  initialize: {ok_init} ({msg_init})")
+# Never call the installed SDK from the default core suite.
+with patch('core.camera_manager.RVC', None):
+    mgr = CameraManager()
+    ok_init, msg_init = mgr.initialize()
+    assert ok_init is False and '无 SDK' in msg_init
+    print(f"  initialize: {ok_init} ({msg_init})")
 
-assert mgr.add_camera("cam0") is True
-assert mgr.add_camera("cam0") is False, "重复 add_camera 应返回 False"
+    assert mgr.add_camera("cam0") is True
+    assert mgr.add_camera("cam0") is False, "重复 add_camera 应返回 False"
 
-# 用越界索引连接：无论有无真实设备都必须返回 False 且不崩溃
-ok, msg = mgr.connect("cam0", device_index=999)
-assert ok is False, "越界索引连接应失败"
-print(f"  connect 越界索引: 正确返回 False ({msg})")
-assert mgr.is_connected("cam0") is False
-assert mgr.get_connected_ids() == []
+    # 用越界索引连接：无论有无真实设备都必须返回 False 且不崩溃
+    ok, msg = mgr.connect("cam0", device_index=999)
+    assert ok is False, "越界索引连接应失败"
+    print(f"  connect 越界索引: 正确返回 False ({msg})")
+    assert mgr.is_connected("cam0") is False
+    assert mgr.get_connected_ids() == []
 
-ok, msg = mgr.connect("ghost", device_index=0)
-assert ok is False, "未注册相机连接应失败"
-print(f"  connect 未注册相机: 正确返回 False ({msg})")
+    ok, msg = mgr.connect("ghost", device_index=0)
+    assert ok is False, "未注册相机连接应失败"
+    print(f"  connect 未注册相机: 正确返回 False ({msg})")
 
-# 无连接时 capture / capture_all 返回空，不崩溃
-assert mgr.capture("cam0") is None
-frames = mgr.capture_all()
-assert frames == {}, f"无连接时 capture_all 应返回空 dict, 实际: {frames}"
-mgr.remove_camera("cam0")
-mgr.disconnect_all()
-mgr.shutdown()
+    # 无连接时 capture / capture_all 返回空，不崩溃
+    assert mgr.capture("cam0") is None
+    frames = mgr.capture_all()
+    assert frames == {}, f"无连接时 capture_all 应返回空 dict, 实际: {frames}"
+    mgr.remove_camera("cam0")
+    mgr.disconnect_all()
+    mgr.shutdown()
+
+# Exercise enumeration, invalid indices and failures through a fake SDK only.
+fake_sdk = Mock()
+fake_sdk.SystemListDevices.return_value = (True, [Mock()])
+with patch('core.camera_manager.RVC', fake_sdk), patch.object(CameraManager, '_sys_init_count', 0):
+    mgr = CameraManager()
+    assert mgr.initialize()[0]
+    mgr.add_camera('cam0')
+    ok, message = mgr.connect('cam0', 999)
+    assert not ok and '越界' in message
+    fake_sdk.SystemListDevices.side_effect = RuntimeError('mock enumeration failed')
+    assert not mgr.connect('cam0', 0)[0]
+    mgr.shutdown()
+    fake_sdk.SystemInit.assert_called_once()
+    fake_sdk.SystemShutdown.assert_called_once()
+    fake_sdk.X1.Create.assert_not_called()
+    fake_sdk.X2.Create.assert_not_called()
+print('  [OK] SDK absent / invalid index / enumeration failure isolated; no real SDK I/O')
 print("  [OK] CameraManager 优雅降级通过")
 
 # ------------------------------------------------------------------

@@ -40,6 +40,33 @@ class RobotWorkspaceTests(unittest.TestCase):
             DeviceInfo(serial='B', checked=True, backend_ref=1)])
         self.assertFalse(dialog._btn_connect.isEnabled())
 
+    def test_export_gate_explains_missing_matrix_busy_and_ready_states(self):
+        win = MainWindowShell()
+        self.addCleanup(win.deleteLater)
+        win.set_mode(LauncherDialog.MODE_ROBOT, [])
+        win.set_presentation('industrial')
+        workspace = win.workspace_robot()
+        source = workspace.panel.btn_export_he_file
+        command = win._industrial_ribbon.commands[('robot_stitch', 'export_he')]
+        self.assertFalse(command.isEnabled())
+        self.assertIn('请先导入', command.toolTip())
+        self.assertEqual(win._st_step.text(), '未开始')
+        matrix = np.eye(4)
+        matrix[:3, 3] = [20, -10, 120]
+        ok, message, handeye = HandEyeResult.from_matrix(matrix, 'mm', True)
+        self.assertTrue(ok, message)
+        self.assertTrue(workspace.load_handeye(handeye))
+        self.assertTrue(source.isEnabled() and command.isEnabled())
+        self.assertEqual(win._st_step.text(), '矩阵已加载，待验证')
+        workspace.set_task_gate(lambda: False)
+        workspace._refresh_actions()
+        self.assertFalse(command.isEnabled())
+        self.assertIn('当前任务进行中', command.toolTip())
+        workspace.set_task_gate(lambda: True)
+        workspace._refresh_actions()
+        self.assertTrue(command.isEnabled())
+        self.assertIn('导出当前', command.toolTip())
+
     def test_shell_switches_robot_and_applies_industrial_layout(self):
         win = MainWindowShell()
         self.addCleanup(win.deleteLater)
@@ -59,7 +86,7 @@ class RobotWorkspaceTests(unittest.TestCase):
         ok, message, handeye = HandEyeResult.from_matrix(matrix, 'mm', True)
         self.assertTrue(ok, message)
         self.assertTrue(win.workspace_robot().load_handeye(handeye))
-        self.assertEqual(win._st_step.text(), 'matrix_loaded')
+        self.assertEqual(win._st_step.text(), '矩阵已加载，待验证')
 
     def test_workspace_capture_updates_cloud_and_dirty_state(self):
         from ui_v2.workspaces.robot_workspace import RobotWorkspace

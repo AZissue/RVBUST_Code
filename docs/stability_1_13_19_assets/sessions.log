@@ -1,0 +1,28 @@
+test_calibration_workspaces_save_all_assets_and_reload_db_labels (test_ui_session_projects.SessionUiTests) ... ok
+test_cancel_close_does_not_terminate_inflight_writer (test_ui_session_projects.SessionUiTests) ... ok
+test_cancel_close_leaves_current_save_running_and_stops_next_save (test_ui_session_projects.SessionUiTests) ... ok
+test_close_cancel_discard_and_save_failure_do_not_publish_draft (test_ui_session_projects.SessionUiTests) ... ok
+test_close_save_covers_dirty_projects_in_inactive_workspaces (test_ui_session_projects.SessionUiTests) ... ok
+test_close_save_failure_keeps_window_open_and_projects_dirty (test_ui_session_projects.SessionUiTests) ... ok
+test_deleting_db_stations_clears_2d_3d_and_removes_matching_raw_pairs (test_ui_session_projects.SessionUiTests) ... ok
+test_export_goes_to_explicit_path_and_survives_discarding_draft (test_ui_session_projects.SessionUiTests) ... ok
+test_legacy_multi_import_owns_pair_without_modifying_source (test_ui_session_projects.SessionUiTests) ... ok
+test_management_deletes_selected_legacy_directory_but_protects_open_snapshot (test_ui_session_projects.SessionUiTests) ... ok
+test_new_button_creates_named_root_and_discards_only_draft (test_ui_session_projects.SessionUiTests) ... ok
+test_save_load_exact_poses_and_single_raw_pair_then_continue_delete (test_ui_session_projects.SessionUiTests) ... ok
+test_storage_batch_delete_skips_disappeared_legacy_and_preserves_replaced_directory (test_ui_session_projects.SessionUiTests) ... ok
+test_storage_checkbox_multi_selection_refresh_width_and_batch_delete (test_ui_session_projects.SessionUiTests) ... ok
+test_storage_open_folder_creates_missing_root_and_reports_failure (test_ui_session_projects.SessionUiTests) ... ok
+test_storage_opens_actual_legacy_data_and_selected_folder_without_recreating_stale_entry (test_ui_session_projects.SessionUiTests) ... ok
+test_storage_partial_delete_failure_refreshes_remaining_rows (test_ui_session_projects.SessionUiTests) ... ok
+test_storage_statistics_use_background_and_include_saved_project (test_ui_session_projects.SessionUiTests) ... ok
+test_turntable_parameters_only_save_and_restore (test_ui_session_projects.SessionUiTests) ... ok
+test_wrong_mode_open_keeps_existing_project_and_view (test_ui_session_projects.SessionUiTests) ... ok
+test_shutdown_drops_queued_ui_callbacks_after_window_deletion (test_background_lifecycle.BackgroundLifecycleTests) ... ok
+test_finished_job_releases_captured_payload_on_gui_thread (test_background_lifecycle.BackgroundLifecycleTests) ... ok
+test_cleanup_prevents_new_dispatch (test_background_lifecycle.BackgroundLifecycleTests) ... ok
+
+----------------------------------------------------------------------
+Ran 23 tests in 54.296s
+
+OK

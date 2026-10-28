@@ -152,7 +152,7 @@ print('NO_LEGACY_RUNTIME_IMPORTS')
             bridge.cleanup()
             win.deleteLater()
 
-    def test_component_replacement_reaches_all_three_workspaces(self):
+    def test_component_replacement_reaches_all_four_workspaces(self):
         previews, renderers = [], []
         class NewPreview(AspectRatioLabel):
             def __init__(self, **kwargs):
@@ -165,8 +165,8 @@ print('NO_LEGACY_RUNTIME_IMPORTS')
         components = UiComponents(NewPreview, NewRenderer)
         win = UiComposition(components=components).create_shell()
         win.workspace_multi().reset_camera_grid(["cam0", "cam1"])
-        self.assertEqual(len(renderers), 3)
-        self.assertEqual(len(previews), 4)  # B + C + two A camera cards
+        self.assertEqual(len(renderers), 4)
+        self.assertEqual(len(previews), 5)  # B + C + robot + two A camera cards
         marker = object()
         for renderer in renderers:
             recorder = Mock()
@@ -174,6 +174,7 @@ print('NO_LEGACY_RUNTIME_IMPORTS')
         win.workspace_multi().viewer().set_pointcloud_merged(marker)
         win.workspace_mobile().viewer().set_pointcloud_merged(marker)
         win.workspace_turntable().viewer.set_pointcloud_merged(marker)
+        win.workspace_robot().viewer().set_pointcloud_merged(marker)
         for renderer in renderers:
             renderer.set_pointcloud_merged.assert_called_once_with(marker)
         win.deleteLater()

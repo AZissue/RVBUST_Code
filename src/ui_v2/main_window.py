@@ -5,13 +5,13 @@ ui_v2.main_window —— 主窗口框架（可替换工作区）。
 双窗口模型的主窗口侧：
   - 顶部功能栏：设备管理 / 保存会话 / 打开会话 / 参数调试 / 日志 / 帮助；
   - 中央 QStackedWidget：多相机工作区（模式 A）/ 单相机工作区（模式 B）/
-    转台工作区（模式 C），各模式互不干扰、各自独立状态；
+    转台工作区（模式 C）/ 机器人工作区（模式 D），各模式独立状态；
   - 底部状态栏：模式 | 设备在线 n/m | 当前步骤 | 最近误差/建议。
 
 「设备管理」随时回到启动小窗（LauncherDialog）改模式/换设备，
 确认后主窗口切换工作区（有未保存工作时先弹确认）。
 
-注：后处理功能入口已移除，后续将单独增加后处理设置/预览页面。
+工业工作区提供 DB 数据管理和点云后处理入口，正式会话由用户显式保存。
 """
 
 from __future__ import annotations
@@ -631,10 +631,7 @@ class MainWindowShell(QMainWindow):
         )
 
     def _confirm_discard(self) -> bool:
-        """未保存数据确认框。
-
-        # TODO(BACKEND): 由会话脏标记驱动（_dirty 目前为壳内占位）
-        """
+        """兼容布局的未保存确认；工业布局通过项目会话管理器保护修改。"""
         ret = QMessageBox.question(
             self, "未保存的工作",
             "当前有未保存的标定/会话数据，切换模式或设备将丢失。\n是否继续？",
@@ -699,7 +696,13 @@ class MainWindowShell(QMainWindow):
         else:
             ws = self._ws_robot
         state = ws.current_state()
-        self._st_step.setText(state)
+        self._st_step.setText({
+            'idle': '未开始', 'connected': '已连接', 'captured': '已采集',
+            'detected': '已识别', 'calibrated': '已标定', 'locked': '外参已锁定',
+            'scanning': '扫描中', 'stitched': '拼接完成', 'chaining': '移动拼接中', 'capturing': '采集中',
+            'evaluating': '评估中', 'matrix_loaded': '矩阵已加载，待验证',
+            'verified': '验证通过', 'failed': '验证失败',
+        }.get(state, '未知状态'))
 
         # 状态点颜色：在线/工作流推进为绿色，idle/异常为灰色/黄色
         if state in ("connected", "captured", "detected", "calibrated", "locked"):

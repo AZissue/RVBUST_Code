@@ -1,13 +1,14 @@
 """Project actions exercise production save/load, close choices and empty views."""
 import json
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QTimer, QEvent
 from PySide6.QtGui import QCloseEvent
-from PySide6.QtWidgets import QApplication, QMessageBox, QCheckBox
+from PySide6.QtWidgets import QApplication, QMessageBox, QCheckBox, QProgressDialog, QPushButton
 
 import test_ui_frame_database as fixture
 from core.chain_stitcher import ChainNode, ChainEdge
@@ -465,6 +466,59 @@ class SessionUiTests(unittest.TestCase):
         self.assertTrue((multi.saved_path / 'session.json').exists())
         self.assertTrue((mobile.saved_path / 'session.json').exists())
         self.assertFalse(multi.dirty or mobile.dirty)
+
+    def test_cancel_close_leaves_current_save_running_and_stops_next_save(self):
+        controller, mobile = self.mobile()
+        multi = controller.projects['multi_cam']
+        multi.dirty = True
+        callbacks = []
+        def delayed_save(mode, callback):
+            callbacks.append(callback)
+            QTimer.singleShot(0, lambda: self.win.findChild(QProgressDialog).findChild(QPushButton).click())
+        with patch.object(controller, 'save', side_effect=delayed_save) as save, \
+                patch('ui_v2.session_projects.QMessageBox.warning', return_value=QMessageBox.Save):
+            self.assertFalse(controller.request_close())
+            self.assertTrue(multi.dirty and mobile.dirty)
+            self.assertFalse(controller.closed)
+            self.app.processEvents()
+            # Completion can arrive after the progress dialog was destroyed.
+            callbacks[0](True)
+            self.app.processEvents()
+            self.assertEqual(save.call_count, 1)
+
+    def test_close_save_failure_keeps_window_open_and_projects_dirty(self):
+        controller, project = self.mobile()
+        def failed_save(mode, callback):
+            QTimer.singleShot(0, lambda: callback(False))
+        with patch.object(controller, 'save', side_effect=failed_save), \
+                patch('ui_v2.session_projects.QMessageBox.warning', return_value=QMessageBox.Save):
+            self.assertFalse(controller.request_close())
+        self.assertTrue(project.dirty)
+        self.assertFalse(controller.closed)
+
+    def test_cancel_close_does_not_terminate_inflight_writer(self):
+        controller, project = self.mobile()
+        release = threading.Event()
+        written = Path(self.temp.name) / 'completed-save.txt'
+        def delayed_save(mode, callback):
+            def work():
+                if not release.wait(8):
+                    raise TimeoutError('test writer was not released')
+                written.write_text('saved', encoding='utf-8')
+            self.bridge._run_background(work, lambda value, error: callback(error is None),
+                name='project_save', must_finish=True)
+            QTimer.singleShot(0, lambda: self.win.findChild(QProgressDialog).findChild(QPushButton).click())
+        try:
+            with patch.object(controller, 'save', side_effect=delayed_save), \
+                    patch('ui_v2.session_projects.QMessageBox.warning', return_value=QMessageBox.Save):
+                self.assertFalse(controller.request_close())
+            self.assertTrue(any(w.isRunning() and w._must_finish for w in self.bridge._workers))
+            self.assertTrue(project.dirty)
+            self.app.sendPostedEvents(None, QEvent.DeferredDelete)
+        finally:
+            release.set()
+            self.wait(lambda: not any(w.isRunning() for w in self.bridge._workers))
+        self.assertEqual(written.read_text(encoding='utf-8'), 'saved')
 
     def test_management_deletes_selected_legacy_directory_but_protects_open_snapshot(self):
         from ui_v2.session_storage_dialog import SessionStorageDialog

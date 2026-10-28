@@ -1130,7 +1130,7 @@ class BackendBridge(QObject):
                         for cid, cloud in clouds.items():
                             ws.viewer().set_pointcloud(cid, cloud)
                     ws.set_state("locked")
-                    self.shell.log(f"标定完成: {msg} | {msg_scan}", "success")
+                    self.shell.log(f"{msg} | {msg_scan}", "success")
                     self._autosave_calibration()
                 else:
                     ws.set_state("calibrated")

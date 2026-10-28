@@ -1,0 +1,11 @@
+test_controls_follow_live_renderer_in_all_modes_and_after_switch (test_ui_db_properties.DisplayPropertiesTests) ... ok
+test_maximize_can_restore_with_escape_when_sidebar_is_hidden (test_ui_db_properties.DisplayPropertiesTests) ... ok
+test_metadata_for_cloud_image_result_group_and_clear_without_io (test_ui_db_properties.PropertiesTests) ... ok
+test_multiselect_refresh_and_removal_do_not_show_stale_values (test_ui_db_properties.PropertiesTests) ... ok
+test_result_sources_and_missing_sources_are_explicit_without_geometry_io (test_ui_db_properties.PropertiesTests) ... ok
+test_right_click_updates_properties_and_delete_uses_existing_signal (test_ui_db_properties.PropertiesTests) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 29.673s
+
+OK

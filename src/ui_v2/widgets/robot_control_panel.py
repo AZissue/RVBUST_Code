@@ -245,6 +245,8 @@ class RobotControlPanel(QWidget):
         self.btn_tip_record.setEnabled(loaded and pose_ready and not busy)
         self.btn_tip_check.setEnabled(loaded and not busy)
         self.btn_export_he_file.setEnabled(loaded and not busy)
+        self.btn_export_he_file.setToolTip('请先导入或录入手眼矩阵' if not loaded else
+            '当前任务进行中，请等待完成后导出' if busy else '导出当前手眼矩阵文件')
         self.btn_overlap.setEnabled(frames >= 2 and not busy)
         self.btn_save_ply.setEnabled(verified and frames >= 1 and not busy)
         self.btn_publish.setEnabled(verified and frames >= 1 and not busy)
