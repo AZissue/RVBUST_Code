@@ -1,0 +1,4 @@
+path=docs/software_stability_review_assets/export_smoke.ply
+bytes=163750890
+points=6064840
+has_colors=True
