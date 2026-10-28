@@ -125,8 +125,12 @@ class IdentityTests(unittest.TestCase):
         try:
             window.set_mode('mobile_chain', [old])
             window._launcher_factory = Dialog
+            def refresh(dialog, *, selected_serials=None):
+                for device in fresh:
+                    device.checked = device.serial in selected_serials
+                dialog.set_devices(fresh)
             window.set_backend_bridge(SimpleNamespace(can_change_workspace=lambda: True,
-                                                      enumerate_devices=lambda: fresh))
+                                                      refresh_launcher_devices=refresh))
             window.open_device_manager()
         finally:
             window._dirty = False

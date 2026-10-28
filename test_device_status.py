@@ -64,9 +64,16 @@ class NetworkTests(unittest.TestCase):
         self.assertEqual(subnet_status('192.168.1.10','32',[('192.168.1.2','24')])[0], 'subnet_mismatch')
         self.assertEqual(subnet_status('192.168.1.10','24',[('bad','24')])[0], 'unknown')
     def test_busy_is_explicit_only(self):
-        for value in ('Open failed','timeout','possibly busy','network error', ''):
+        for value in ('Open failed','timeout','possibly busy','network error',
+                      'X2 open failed','camera busy','', 'Failed open camera',
+                      # Host USB port message and firmware text are not camera occupancy.
+                      'UsbPort is Busy','UsbPort is Busy, 24','Firmware Mismatch!'):
             self.assertFalse(explicit_busy(value))
-        self.assertTrue(explicit_busy('Device is occupied'))
+        # SDK RVC.dll literals for a camera held by someone else / already open.
+        for value in ('Device is occupied','Camera is occupied!','Camera is occupied',
+                      'X2 is already open!','X1 is already open!','X1 is already open.',
+                      '相机被占用'):
+            self.assertTrue(explicit_busy(value))
 
 
 class PollTests(unittest.TestCase):
@@ -86,16 +93,42 @@ class PollTests(unittest.TestCase):
         self.assertEqual(self.events,['X2.Create','X2.Open','X2.Close','X2.Destroy',
                                       'X1.Create','X1.Open','X1.Close','X1.Destroy'])
     def test_busy_vs_other_failures(self):
-        for message, expected in [('Device is busy','busy'),('timeout','unknown'),('Open failed','unknown')]:
+        for message, expected in [('Device is busy','busy'),('Camera is occupied!','busy'),
+                                  ('X2 is already open!','busy'),
+                                  ('timeout','unknown'),('Open failed','unknown')]:
             row=self.run_poll([FakeDevice()],(False,False),message)[0]
             self.assertEqual(row.status,expected); self.assertIn(message,row.detail)
             self.assertEqual(sum(e.endswith('Destroy') for e in self.events),2)
-    def test_connected_sn_not_stale_index(self):
-        sdk,mgr,events,_=fixture([FakeDevice()]); mgr.find_by_sn.return_value=object()
-        self.assertEqual(poll_devices(mgr,sdk,[])[0].status,'connected'); self.assertEqual(events,[])
+    def test_own_connection_by_sn_skips_probe(self):
+        sdk,mgr,events,_=fixture([FakeDevice('SN-A')]); mgr.find_by_sn.return_value='cam0'
+        row=poll_devices(mgr,sdk,[])[0]
+        self.assertEqual(row.status,'connected')
+        self.assertIn('识别依据：SN',row.detail)
+        self.assertEqual(events,[])
         mgr.is_device_index_connected.assert_not_called()
+    def test_own_connection_by_index_skips_probe(self):
+        # SN 未匹配但本次枚举索引仍由本程序占用：必须 connected 且不重复 Open。
+        sdk,mgr,events,_=fixture([FakeDevice('SN-B')])
         mgr.find_by_sn.return_value=None; mgr.is_device_index_connected.return_value=True
-        self.assertEqual(poll_devices(mgr,sdk,[])[0].status,'idle')
+        row=poll_devices(mgr,sdk,[])[0]
+        self.assertEqual(row.status,'connected')
+        self.assertIn('识别依据：索引 0',row.detail); self.assertIn('不重复打开探测',row.detail)
+        self.assertEqual(events,[])
+        mgr.find_by_sn.assert_called_once_with('SN-B')
+        mgr.is_device_index_connected.assert_called_once_with(0)
+    def test_free_device_still_probed(self):
+        sdk,mgr,events,_=fixture([FakeDevice('SN-C')])
+        mgr.find_by_sn.return_value=None; mgr.is_device_index_connected.return_value=False
+        row=poll_devices(mgr,sdk,[])[0]
+        self.assertEqual(row.status,'idle')
+        self.assertEqual(events,['X2.Create','X2.Open','X2.Close','X2.Destroy'])
+    def test_own_gige_connected_keeps_ip_without_open(self):
+        dev=FakeDevice(port='GigE',ip='192.168.9.9')
+        sdk,mgr,events,_=fixture([dev]); mgr.is_device_index_connected.return_value=True
+        row=poll_devices(mgr,sdk,[('192.168.1.2','24')])[0]
+        self.assertEqual((row.status,row.ip),('connected','192.168.9.9'))
+        self.assertEqual(events,[]); dev.GetNetworkConfig.assert_called_once()
+        dev.AutoConfigureNetwork.assert_not_called()
     def test_single_failure_preserves_rows_indices(self):
         bad=FakeDevice('bad'); bad.GetDeviceInfo=Mock(side_effect=RuntimeError('timeout'))
         rows=self.run_poll([bad,FakeDevice('good')])

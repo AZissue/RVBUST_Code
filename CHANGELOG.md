@@ -4,6 +4,44 @@
 
 ---
 
+## [1.13.14] - 2026-10-28
+
+### Fixed
+- 启动小窗、重开设备管理、手动刷新和自动配网后的状态查询统一交给受管理后台线程；SDK 初始化、逐台 Open/Close 和 X2→X1 回退不再占用 GUI 主线程。查询期间显示提示并锁定重复刷新/连接，完成或失败后恢复操作，失效窗口不再回填。
+- 状态查询按只读任务处理，不创建项目临时工作区、不触发 DB 归档和元数据更新；重开设备管理仍按 SN 恢复选择、采用最新枚举索引。日志增加查询总耗时。
+- 保留当前工作区已有的相机状态识别、管理器方法归属及紧凑设备表修正。
+
+### Validation
+- 离线 unittest 49 项通过：test_launcher_refresh、test_camera_manager_status、test_device_status、test_ui_device_status、test_ui_launcher、test_camera_identity；慢 SDK 用例确认查询返回及时、GUI 定时器继续运行、禁止重复查询、成功回填及失败解除忙碌。
+- 未验证：实体相机、SDK 原生调用的实际耗时及打包环境；后台查询保留 SDK 本身的等待语义，不宣称缩短设备响应时间。
+
+## [1.13.13] - 2026-10-28
+
+### Added
+- 启动小窗设备表在序列号后固定新增“设备状态”列：空闲（绿）、占用（红）、跨网段（黄）、已连接（蓝）、未知/离线（灰）等短标签，颜色区分；tooltip 保留“IP不在同一网段”“本程序已连接”等完整语义、识别依据与错误详情；IP 列可隐藏，状态列始终保留，纯 USB 列表同样显示状态。
+- 每次打开设备管理或刷新都逐台只读轮询：GigE 先按相机与主机双方 IP/掩码判断网段，未占用才探测；探测固定 X2 优先、X1 回退，先校验固件、打开后再核验型号与 SN，句柄按路径 Close/Destroy。单台失败只保留该行并显示 unknown/错误详情，不影响整表；自动设置 IP 完成后重新枚举并按新配置重算状态。
+
+### Changed
+- 设备表改为紧凑单行排版：数据字体 11px、行高 25px、表头 26px；型号列 Stretch 占用剩余空间，序列号按内容限宽 112–190px 并中间省略，状态列按短标签适配 64–92px，IP 使用紧凑近等宽字体；型号/序列号/IP 完整内容保留 tooltip，长型号、长 SN 不再撑宽状态列或产生横向滚动。
+- 单台状态查询先按 SN 识别本程序已连接，SN 未匹配时再按本次枚举索引识别；两种命中都显示“已连接”短标签且不 Create/Open，详情注明识别依据，避免对自有相机重复打开。
+
+### Fixed
+- 本轮返工按产品语义修正测试期望：原先“索引已连接却期望空闲”的用例改为期望 connected 且无探测事件，并补充 SN 已连接、索引已连接、非占用正常探测三个显式分支及 GigE 已连接只读 IP、不自动配网用例。
+- 占用识别改用 SDK 可证实的精确文本：从已安装 RVC.dll 的 RVC::ErrorCode 消息表确认 “Camera is occupied!”、“X1/X2 is already open!”，补齐映射及对应测试；“UsbPort is Busy”属主机端口信息、普通 Open/固件/网络/超时失败继续显示 unknown，不因展示“被占用”而放宽判定。
+- 修复用户反馈的刷新异常（方法归属错误）：`poll_device_statuses` 原先定义在 `SingleCameraController`，而 `BackendBridge.enumerate_devices()` 调用的是 `CameraManager.camera_manager.poll_device_statuses()`，真实管理器没有该方法，刷新即抛 `AttributeError`。现把方法移入 `CameraManager`（`find_devices` 之后），实现保持“无 SDK 返回 []、host_interfaces 失败降级、逐台 `device_status.poll_devices`”，`SingleCameraController` 不再保留重复接口；未用 `try/except AttributeError` 掩盖问题，也未在失败时退回“全部在线/空闲”的假状态。
+
+### Validation
+- 第六轮真实类接线回归（`test_camera_manager_status`，5 项）：直接构造真实 `CameraManager` 断言方法定义在管理器类且单相机控制器无重复接口；`RVC=None` 时不初始化 SDK、返回 []；以模拟只读 SDK 驱动真实管理器执行 `BackendBridge.enumerate_devices()`，得到 idle/busy/subnet_mismatch 行、`backend_ref` 与详情，无属性错误；再以 `launcher.set_devices(bridge.enumerate_devices())`（与 main.py `on_refresh` 相同）覆盖有设备/无设备两次刷新，勾选按 SN 恢复、自有相机不重复打开、占用设备确实走 X2→X1。把同一测试文件放到“方法仍在 SingleCameraController”的临时副本上运行，得到与用户 traceback 一致的 `backend_bridge.py:571 AttributeError: 'CameraManager' object has no attribute 'poll_device_statuses'`（5 项全部 FAIL/ERROR），证明该回归能捕获本缺陷。
+- 第六轮复测：`test_camera_manager_status` 5 项、状态专项 17 项、设备表 9 项、启动窗 7 项、相机身份 9 项、相机管理 9 项断言、网络反馈 2 项全部通过，`source_unchanged: true`，见 `artifacts/T-0016/runs/20261028-round6-required`（含 test_ui_architecture 基线对照）与定稿运行 `artifacts/T-0016/runs/20261028-round6-final2`；`test_ui_architecture` 仍为既有基线失败（HEAD 86e2d2c 导出目录同样 4!=3）。
+- 刷新链路截图：用真实 `CameraManager` + 模拟只读 SDK 执行 `bridge.enumerate_devices()` 后 `launcher.set_devices()`，1062×652 与 1440×900 均显示 空闲/已连接/跨网段/占用，状态列可见，保存 PNG 的状态单元格颜色命中像素 ≥5，`failures: []`，`real_py_rvc_initialized: false`，见 `artifacts/T-0016/ui/20261028-round6-refresh2`；执行模型不支持图像输入，未做目视确认。
+- 第四轮返工按执行器可用的 PowerShell 形式（`& 'D:\Program Files\Anaconda\envs\rvc\python.exe' ...`）重跑，不再出现解析阶段退出：状态专项 17 项、设备表 7 项、启动窗 7 项、相机身份 9 项、相机管理 9 项断言、网络反馈 2 项全部通过，`results.json` 记录源码哈希前后一致，见 artifacts/T-0016/runs/20261028-round4-required 与 artifacts/T-0016/verification.md 第 8 节。
+- 验收范围外的 test_ui_architecture 仍有 1 项既有失败（test_component_replacement_reaches_all_three_workspaces 4!=3）；在 HEAD(86e2d2c) 导出目录运行同一用例结果相同，属基线问题，本次未改。
+- 用模拟 SDK 验收四类失败与释放：仅明确占用为 busy，其余 unknown 且详情保留；探测无拍摄、无参数写入、无 AutoConfigureNetwork；X1 回退、身份不一致、清理异常均有断言；占用文本反例新增 UsbPort is Busy、Firmware Mismatch!。
+- 1062×652 与 1440×900 离屏截图各 5 种状态，状态列紧随序列号；除控件像素测量外，新增对实际保存 PNG 的逐单元格颜色统计（五种状态均命中，failures/png_failures 为空），见 artifacts/T-0016/ui/20261028-115947-402192。执行模型不支持图像输入，未做目视确认。
+- 第五轮视觉收口复测：设备表专项 9 项（新增短标签/tooltip 与长型号+长 SN 的几何断言）、状态专项 17 项、启动窗 7 项、相机身份 9 项、相机管理 9 项、网络反馈 2 项全部通过，`source_unchanged: true`。1062×652 与 1440×900 下数据字体 11px、行高 25px、表头 26px，序列号 190px/状态 68px，列宽合计等于视口且横向滚动为 0；新截图 `artifacts/T-0016/ui/20261028-121549-137919`（同尺寸调整前见 `20261028-115947-402192`）。
+- 历史证据保全核对：artifacts/T-0009～T-0015 均在磁盘上，按上一轮快照比对的 69 个证据文件 68 个哈希一致、1 个为本任务验证文档更新，无缺失；第三轮“92 个删除”系 .gitignore 恢复使被忽略目录退出快照口径所致，磁盘文件未丢失。
+- 未验证：真实 PyRVC 环境下的刷新与 main.py 启动链路、真实 SDK 占用错误码/文本的运行时行为、真实多网卡、RVCManager 与主程序同时占用的实机场景、实体相机截图；测试与截图均使用模拟只读 SDK，未初始化 SDK、未接触硬件；不推送、不部署。
+
 ## [1.13.12] - 2026-10-28
 
 ### Changed

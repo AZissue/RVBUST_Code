@@ -481,16 +481,13 @@ class MainWindowShell(QMainWindow):
         # Keep fresh SDK indices; restore checks by identity, never replace the
         # fresh enumeration with the previous connection's stale device list.
         if self._backend_bridge is not None and not getattr(self, '_offline_preview', False):
-            devices = self._backend_bridge.enumerate_devices()
-            selected = {device.serial for device in self._devices if device.serial}
-            for device in devices:
-                device.checked = bool(device.serial and device.serial in selected)
-            dialog.set_devices(devices)
+            self._backend_bridge.refresh_launcher_devices(
+                dialog, selected_serials={d.serial for d in self._devices if d.serial})
 
         # 小窗内操作转发给后端
         def _do_refresh():
             if self._backend_bridge is not None:
-                dialog.set_devices(self._backend_bridge.enumerate_devices())
+                self._backend_bridge.refresh_launcher_devices(dialog)
             else:
                 self.log("刷新设备列表（backend_bridge 未设置）", "warn")
 
@@ -502,7 +499,7 @@ class MainWindowShell(QMainWindow):
                     if not dialog.isVisible():
                         return
                     dialog.set_auto_ip_busy(False)
-                    dialog.set_devices(self._backend_bridge.enumerate_devices())
+                    self._backend_bridge.refresh_launcher_devices(dialog)
                     dialog.report_auto_ip_result(results, error)
 
                 self._backend_bridge.auto_configure_network(

@@ -575,6 +575,49 @@ class BackendBridge(QObject):
                 status=row.status, status_detail=row.detail))
         return device_infos
 
+    def refresh_launcher_devices(self, dialog, *, selected_serials=None):
+        """Poll SDK off the GUI thread; deliver only to the current open dialog."""
+        if getattr(self, '_cleaned', False) or not self.can_change_workspace():
+            self.shell.log('当前任务进行中，请稍后刷新设备状态。', 'warn')
+            return False
+        from time import perf_counter
+        from shiboken6 import isValid
+        started = perf_counter()
+        dialog.set_busy(True, '正在查询相机状态，请稍候…')
+        active = [True]
+        def closed(*_):
+            active[0] = False
+        dialog.finished.connect(closed)
+
+        def work():
+            # Workspace gates and all widget access stay on the GUI thread.
+            if not self._ensure_sdk():
+                raise RuntimeError('相机 SDK 初始化失败，请查看日志')
+            return [DeviceInfo(model=row.model, serial=row.serial, ip=row.ip,
+                               online=row.online, backend_ref=row.backend_ref,
+                               status=row.status, status_detail=row.detail)
+                    for row in self.camera_manager.poll_device_statuses()]
+
+        def done(devices, error):
+            logger.info('相机状态查询耗时 %.3fs', perf_counter() - started)
+            if not isValid(dialog):
+                return
+            dialog.finished.disconnect(closed)
+            dialog.set_busy(False)
+            if not active[0]:
+                return
+            if error is not None:
+                self.shell.log(f'查询相机状态失败：{error}', 'error')
+                dialog.log_summary.append(f'查询相机状态失败：{error}', 'error')
+            else:
+                if selected_serials is not None:
+                    for device in devices:
+                        device.checked = bool(device.serial and device.serial in selected_serials)
+                dialog.set_devices(devices)
+
+        self._run_background(work, done, name='device_status')
+        return True
+
     @staticmethod
     def get_ordered_devices(devices: List[DeviceInfo]) -> List[DeviceInfo]:
         """对齐 backend 连接顺序：真实设备在前，测试/虚拟设备在后。
@@ -2511,7 +2554,7 @@ class BackendBridge(QObject):
             import traceback
             name = traceback.extract_stack()[-2].name
         project_task = name.startswith('project_')
-        inspection = name in ('calibration_inspection', 'capture_parameters', 'device_disconnect', 'recognition_parameters')
+        inspection = name in ('calibration_inspection', 'capture_parameters', 'device_disconnect', 'recognition_parameters', 'device_status')
         if self.shell._presentation == 'industrial' and not project_task and not inspection:
             self.projects.prepare(self._current_mode)
         if name not in ('offline_preview', 'db_frame_preview', 'db_open_project', 'db_mutation') and not project_task and not inspection and self.shell._presentation == 'industrial':

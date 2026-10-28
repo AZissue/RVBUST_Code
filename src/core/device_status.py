@@ -67,9 +67,17 @@ def host_interfaces():
 
 
 def explicit_busy(message):
-    # No unverified numerical error-code mapping. Deliberately exact phrases:
-    # "possibly busy" / generic open errors must never become occupied.
-    return text(message).lower().rstrip(".") in {
+    """Only SDK-confirmed occupancy literals; never inferred from generic failures.
+
+    The literals below come from the installed SDK: RVC.dll carries the
+    RVC::ErrorCode message table "Camera is occupied!" plus the per-handle
+    "X1 is already open!" / "X2 is already open!" messages that
+    RVC::GetLastErrorMessage returns. "UsbPort is Busy, {}" is a host-port
+    message, not a camera state, so it stays unknown. "possibly busy",
+    "Open failed" and timeouts must never become occupied.
+    """
+    return text(message).lower().strip().rstrip(".!。") in {
+        "camera is occupied", "x1 is already open", "x2 is already open",
         "device is busy", "device is occupied", "device is already opened by another process",
         "设备被占用", "相机被占用",
     }
@@ -133,9 +141,13 @@ def poll_devices(manager, sdk, interfaces):
                     row.model, row.serial = text(info.name), text(info.sn)
                 if not ok:
                     raise RuntimeError("GetDeviceInfo 失败")
-                own = manager.find_by_sn(row.serial) if row.serial else manager.is_device_index_connected(index)
+                own_by_sn = manager.find_by_sn(row.serial) if row.serial else None
+                own_by_index = None if own_by_sn else manager.is_device_index_connected(index)
+                own = own_by_sn or own_by_index
                 if own:
-                    row.status, row.detail = "connected", "本程序已连接；不重复打开探测"
+                    basis = "SN" if own_by_sn else f"索引 {index}"
+                    row.status = "connected"
+                    row.detail = f"本程序已连接（识别依据：{basis}）；不重复打开探测"
                     # Read network metadata without opening another camera handle.
                 is_gige = info.port == sdk.PortType.PortType_GIGE
                 if is_gige:

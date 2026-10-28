@@ -68,7 +68,7 @@ def main(*, composition=None):
     # 连接启动小窗信号
     def on_refresh():
         """刷新设备列表。"""
-        launcher.set_devices(bridge.enumerate_devices())
+        bridge.refresh_launcher_devices(launcher)
 
     def on_connect(mode: str, devices: list):
         """连接设备。
@@ -117,7 +117,7 @@ def main(*, composition=None):
                 return
             launcher.set_auto_ip_busy(False)
             # IP 可能已变化，刷新列表
-            launcher.set_devices(bridge.enumerate_devices())
+            bridge.refresh_launcher_devices(launcher)
             launcher.report_auto_ip_result(results, error)
 
         bridge.auto_configure_network(devices, on_finished=on_finished)
