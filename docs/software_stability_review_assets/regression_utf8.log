@@ -1,0 +1,456 @@
+===== test_ui_overlay.py =====
+============================================================
+AspectRatioLabel 标记叠加绘制测试（离屏）
+============================================================
+
+[1] 红圈（3D 无效）可见
+  [PASS] 红圈命中像素充足（≥8） — 命中 48
+
+[2] 绿圈（3D 有效）可见
+  [PASS] 绿圈命中像素充足（≥8） — 命中 46
+
+[3] clear_markers 后圈消失
+  [PASS] clear 后红圈消失 — 残留 0
+  [PASS] clear 后绿圈消失 — 残留 0
+
+============================================================
+全部 4 项断言通过
+============================================================
+test_ui_overlay.py exit=0
+===== test_autosave_calibration.py =====
+============================================================
+标定结果自动保存/恢复（core 层）测试
+============================================================
+
+[1] 自动保存格式 = 外参格式 + 元数据字段
+  [PASS] 含 camera_names/saved_at 的 payload 可解析 — 1 对
+  [PASS] reference_id 恢复
+  [PASS] pair 数量恢复
+  [PASS] T 矩阵恢复为 4x4 ndarray
+
+[2] 崩溃恢复路径：加载后可直接进入扫描阶段
+  [PASS] 初始无标定结果
+  [PASS] load_calibration 成功 — 外参已加载: C:\Users\jingz\AppData\Local\Temp\tmp0h38k_57\autosave_calibration.json
+  [PASS] 状态为 CALIBRATED（外参锁定）
+  [PASS] 无标定帧也可进入扫描阶段 — 扫描阶段已开始，请勿移动相机
+  [PASS] 状态为 SCANNING
+
+[3] 异常输入优雅失败
+  [PASS] 空 pairs 返回失败
+  [PASS] 非 dict 返回失败
+  [PASS] 损坏文件不抛异常
+
+============================================================
+全部 12 项断言通过
+============================================================
+test_autosave_calibration.py exit=0
+===== test_camera_manager.py =====
+RPly: Unable to read magic number from file
+============================================================
+CameraManager 并发拍摄串行化测试
+============================================================
+
+[1] capture_all(sync=True) 采集串行化
+  [PASS] 三台相机全部完成拍摄 — 实际 3
+  [PASS] 全局并发峰值 == 1（无重叠在飞采集） — 峰值 1
+  [PASS] 同步拍摄 frame_id 一致 — 实际 {1}
+
+[2] SN 去重对 'None'/空串不误报
+  [PASS] find_by_sn('None') 不误报占用
+  [PASS] find_by_sn('') 不误报占用
+  [PASS] 真实 SN 仍能去重
+
+[3] RVC SDK 全局锁接线
+  [PASS] camera_manager 使用 utils.rvc_sdk_lock
+[Open3D WARNING] Read PLY failed: unable to parse header.
+  [PASS] load_pointcloud_o3d 被 rvc_sdk_lock 串行化
+  [PASS] detect 被 rvc_sdk_lock 串行化
+
+============================================================
+全部 9 项断言通过
+============================================================
+test_camera_manager.py exit=0
+===== test_pointcloud_processor.py =====
+============================================================
+PointCloudProcessor 默认行为测试
+============================================================
+
+[1] 默认 processor 去除统计离群点
+  输入 2560 点（平面 2500 + 飞点 60） → 输出 2499 点, stats={'input_points': 2560, 'invalid_removed': 1, 'after_filter': 2499}
+  [PASS] 默认开启离群点去除 — 输出 2499 点，飞点未被去除
+  [PASS] 平面点基本保留（≥95%） — 剩 2499 点
+  [PASS] 剩余点不含远飞点（z < 50mm） — z 最大 0.0mm
+
+[2] enable_outlier_removal=False 时飞点保留
+  [PASS] 飞点保留（除 1 个全零原点） — 输出 2559 点
+
+[3] 无效点（NaN/Inf/零）默认剔除
+  [PASS] 3 个无效点（NaN/Inf/零）被剔除 — 剩 97 点, invalid_removed=3
+  [PASS] 默认路径同样报告 invalid_removed=3 — invalid_removed=3
+
+[4] 默认不裁切 / 不下采样
+  [PASS] crop_mode 默认 none
+  [PASS] 体素下采样默认关闭
+
+============================================================
+全部断言通过
+============================================================
+test_pointcloud_processor.py exit=0
+===== test_marker_detector.py =====
+============================================================
+MarkerDetector 多尺度检测回退测试
+============================================================
+
+[1] 大标记场景（r0=71px @ 2448×2048）多尺度回退
+  [PASS] 前置: 1.0x 直接检测确实返回 0（场景复现 bug） — 实际 0 个
+  [PASS] detect() 经回退检出全部 4 个标记 — 实际 [15, 29, 45, 111]
+  [PASS] 坐标已反推回全分辨率系（偏差 ≤3px） — 最大偏差 0.23px
+
+[2] 常规场景（1.0x 可检出）使用全分辨率结果
+  [PASS] 前置: 1.0x 直接检测可检出标记 — 实际 4 个
+  [PASS] 检出数量一致 — 实际 4 个
+  [PASS] 坐标与 1.0x 原始结果完全一致（未做缩放） — 最大差异 0.00e+00
+
+[3] 回退坐标反推与 SDK 子尺度拟合中心一致
+  [PASS] 0.75x 拟合中心 ×1/0.75 与 detect() 返回坐标一致 — 最大差异 0.00e+00
+
+[4] _extract_centers_3d 邻域中位数回退
+  [PASS] 圆心 2×2 邻域全 NaN 时仍提取到 3D — 输出=[ True  True  True]
+  [PASS] 提取值接近真值（平面 z=200mm） — 最大偏差 0.0050mm
+  [PASS] 全无效点云返回 NaN（不伪造）
+
+[5] detect_3d(include_invalid=True) 保留 3D 无效标记
+  [PASS] include_invalid=True 返回 2 个标记（含 3D 无效） — 实际 2 个
+  [PASS] valid_3d 标志正确（15=False, 29=True） — 实际 {15: False, 29: True}
+  [PASS] 有效标记含 3D 坐标（z≈200mm） — z=200.0
+  [PASS] 无效标记不含 x_3d 字段
+  [PASS] 默认调用仍过滤 3D 无效标记（只返回 1 个） — 实际 [29]
+
+[6] detect() 多尺度合并（按 code 并集，高尺度坐标优先）
+  [PASS] 合并后 4 个标记（15/29/45/111） — 实际 [15, 29, 45, 111]
+  [PASS] 1.0x 坐标优先（code=15 保持 100,200） — 实际 (100.0,200.0)
+  [PASS] 0.75x 坐标已反推（code=45 → 533.3,666.7） — 实际 (533.3,666.7)
+  [PASS] 0.5x 坐标已反推（code=111 → 1000,600） — 实际 (1000.0,600.0)
+
+============================================================
+全部 19 项断言通过
+============================================================
+test_marker_detector.py exit=0
+===== test_handeye.py =====
+============================================================
+HandEyeCalibrator 测试
+============================================================
+
+[1] Eye-in-Hand 合成数据标定（15 组样本，无噪声）
+  样本数: 15
+  平移一致性 RMS: 0.0000 mm
+  旋转一致性 RMS: 0.0000°
+  相对真值平移误差: 0.0000 mm，旋转误差: 0.0000°
+  [OK] Eye-in-Hand 标定精度满足要求
+
+[2] Eye-in-Hand 带 0.1mm/0.05° 噪声
+  相对真值平移误差: 0.0931 mm，旋转误差: 0.0208°
+  [OK] 带噪声标定仍满足亚毫米/亚度级精度
+
+[3] 样本不足应返回失败
+  失败提示: 手眼标定至少需要 3 组样本
+  [OK] 样本不足正确失败
+
+[4] 手眼结果 JSON 保存/加载
+  加载后相对真值平移误差: 0.0000 mm，旋转误差: 0.0000°
+  [OK] 保存/加载一致
+
+[5] Eye-to-Hand 合成数据标定
+  样本数: 15
+  平移一致性 RMS: 0.0000 mm
+  旋转一致性 RMS: 0.0000°
+  相对真值平移误差: 0.0000 mm，旋转误差: 0.0000°
+  [OK] Eye-to-Hand 标定精度满足要求
+
+============================================================
+[OK] 所有 HandEye 测试通过
+============================================================
+test_handeye.py exit=0
+===== test_robot_stitch.py =====
+============================================================
+RobotStitchWorkflow 合成数据测试
+============================================================
+
+[1] Eye-in-Hand 机器人拼接测试
+  合并点数: 15000
+  物体中心估计: [400.45 199.69 100.66]
+  中心误差: 0.856 mm
+  [OK] Eye-in-Hand 拼接精度满足要求
+
+[2] Eye-to-Hand 机器人拼接测试
+  合并点数: 15000
+  物体中心估计: [400.35 200.14 100.48]
+  中心误差: 0.615 mm
+  [OK] Eye-to-Hand 拼接精度满足要求
+
+============================================================
+[OK] 所有机器人拼接测试通过
+============================================================
+test_robot_stitch.py exit=0
+===== test_chain_stitcher.py =====
+============================================================
+ChainStitcher 合成数据测试
+============================================================
+
+[1] 单链 5 机位拼接精度测试
+  station_1: 机位 station_1 设为参考系，10 个标记
+  station_2: 机位 station_2 配准成功: 10 个共有标记, RMS 0.000mm, 内点率 100.0%, 累计误差 0.000mm
+  station_3: 机位 station_3 配准成功: 10 个共有标记, RMS 0.000mm, 内点率 100.0%, 累计误差 0.000mm
+  station_4: 机位 station_4 配准成功: 10 个共有标记, RMS 0.000mm, 内点率 100.0%, 累计误差 0.000mm
+  station_5: 机位 station_5 配准成功: 10 个共有标记, RMS 0.000mm, 内点率 100.0%, 累计误差 0.000mm
+  station_2→station_1 变换误差: 0.000000
+  station_3→station_1 变换误差: 0.000000
+  station_4→station_1 变换误差: 0.000000
+  station_5→station_1 变换误差: 0.000000
+  [OK] 单链 5 机位拼接精度达标
+
+[2] 链式累积误差与全局 BA 测试
+  机位 | BFS 误差 | BA 误差 | 理论值
+  station_2 | 0.497036 | 0.497036
+  station_3 | 0.863685 | 0.863685
+  station_4 | 6.461776 | 6.461776
+  station_5 | 16.027621 | 16.027621
+  [OK] 全局 BA 优化完成，误差可控
+
+[3] 闭环检测提示测试
+  检测到闭环机位: ['station_1', 'station_2', 'station_3']
+  [OK] 闭环检测提示正常
+
+[4] 配准质量门限测试
+  标记不足: 共有标记不足: 5 < 8
+  [OK] 配准质量门限生效
+
+[5] 配准失败残留节点清理 + 重拍成功测试
+  失败清理后重拍成功，station_2→station_1 变换误差: 0.000000
+  [OK] 配准失败节点已清理，重拍不崩溃且结果正确
+
+[6] PoseGraph 增量边添加与变换查询测试
+  B→A 平移: [10.  0.  0.]
+  C→A 平移: [19.84807753  1.73648178  0.        ]
+  C→B 平移: [10.  0.  0.]
+  复合关系误差: 0.000000
+  [OK] PoseGraph 增量边添加与变换查询正常
+
+[7] 删除中间机位后继续拍摄回归测试
+  删除 station_2 后节点: ['station_1', 'station_3', 'station_4', 'station_5']
+  继续拍摄 station_5 后节点: ['station_1', 'station_3', 'station_4', 'station_5']
+  [OK] 删除中间机位后继续拍摄不崩溃，位姿图保持连通
+
+============================================================
+[OK] 全部 ChainStitcher 测试通过
+============================================================
+test_chain_stitcher.py exit=0
+===== test_core.py =====
+============================================================
+MultiCameraCalibration core 模块测试
+============================================================
+
+[1] 标定精度测试（8 点对 + 0.5mm 噪声）
+  标定成功 | 内点: 8/8 | RMS: 0.635 mm | 内点率: 1.00
+  旋转误差 (Frobenius): 0.006834
+  平移误差: 0.776 mm
+  [OK] 标定精度满足要求（旋转<0.1, 平移<2mm）
+
+[1b] 离群点排除统计测试（8 内点 + 1 离谱离群点）
+  内点 8/9 | 内点 RMS 0.669 mm | 全量 RMS 66.659 mm | 离群 code: [8]
+  [OK] 离群点已排除：内点 RMS 小值 / outlier_count=1 / outlier_codes=[8] / rms_all_mm 全量
+
+[2] 四元数 q/-q 符号歧义修复测试
+  平均四元数范数: 1.000000（未修复时约为 0/NaN）
+  与 q1 同旋转: True
+  [OK] 异号四元数平均正确（半球统一生效）
+  多帧平均: 有效帧 4/4 | 旋转误差 0.004551 | 平移误差 0.597 mm
+  内点标记 32/32 （4 帧 × 8 标记，语义与单帧统一）
+  [OK] 多帧标定端到端通过
+
+[3] N=3 相机 pair 标定（ref / camA / camB）
+  camA→ref: 旋转误差 0.001538 | 平移误差 0.186 mm | RMS 0.794 mm
+  camB→ref: 旋转误差 0.003895 | 平移误差 0.558 mm | RMS 0.650 mm
+  [OK] N=3 两对 pair 标定精度均满足要求
+
+[4] CameraManager 优雅降级测试（无相机/无 SDK 不崩溃）
+  initialize: True (RVC 系统初始化成功)
+  connect 越界索引: 正确返回 False (索引 999 越界)
+  connect 未注册相机: 正确返回 False (相机 ghost 未注册（先 add_camera）)
+  [OK] CameraManager 优雅降级通过
+
+[5] get_transform 直达 / 求逆 / 链式 hook
+  [OK] 直达 pair: camA→ref
+  [OK] 求逆 pair: ref→camA（与直达互逆）
+  [OK] 链式 hook: camA→camB 经 ref 中转复合正确
+
+[6] 标定结果保存 / 加载
+  [OK] save/load 一致（reference_id + 2 对 pair）
+
+[7] PoseGraph BFS 路径复合测试
+  [OK] 到自身返回单位矩阵
+  [OK] 星型拓扑: camA→camB 经 ref 中转复合正确
+  [OK] 链式拓扑: cam1→cam3 两步链乘正确（含几何验证与往返互逆）
+  [OK] 不连通图正确抛出 ValueError: 位姿图中找不到终点 'cam4'（无相关 pair 标定）
+  [OK] 独立连通分量正确抛出 ValueError: 位姿图不连通: 找不到 'cam1' → 'cam4' 的变换路径
+  [OK] optimize_global: BFS 生成树输出各相机到锚点的变换
+
+[7f] PoseGraph 类 add_edge 方向已知真值验证
+  [OK] add_edge 方向正确：a→b=[50,20,0]，点变换与反向互逆均成立
+
+[8] StitchEngine N 路拼接测试
+  [OK] 3 相机拼接: 合并点数 900 = 3×300, 变换生效
+  [OK] 空点云 / 未标定相机自动跳过，其余 2 台正常合并
+  [OK] 全部相机不可用时返回 (None, 原因)
+  [OK] 后处理: 体素下采样 900 → 850 点
+  [OK] stitch_offline: 2 对帧合并 1800 点
+
+[9] 集成测试: 标定 → 变换 → 拼接
+  camB9 拼接到 ref 后平均对齐误差: 0.075 mm
+  [OK] 集成测试通过: 3 相机标定→拼接, 合并 600 点, 对齐误差 0.075 mm
+
+[10] PointCloudProcessor.auto_tune 自动参数估计
+  [OK] mm 块: 点距 1.186mm, 体素 2.20mm, 预估 49,795 点（目标 50,000）
+       notes[0]: 已剔除 1 个无效点（NaN/Inf/零点）后再估计
+  [OK] 飞点场景: 推荐 AABB 裁切 ratio=1.00, std=1.5, 预估 48,668 点
+  [OK] 米单位: 检测为 m, 体素输出 2.20mm, 预估 49,795 点
+  [OK] 小点云（53,016 < 80 万）: enable_voxel_downsample=False
+  [OK] 全流程: 310,675 → 282,449 点（保留 90.9%，不会全滤掉）
+  [OK] 含 46,601 个无效点(NaN/Inf/零): 点距 1.186mm, 剔除后处理剩余 49,795 点，不再坍缩
+
+[11] 标定板检测与位姿法标定测试
+  [OK] 4x11 标定板检测成功，RMS 0.0000 mm
+
+[11b] 白底黑圆标定板检测
+  [OK] 白底黑圆 4x11 标定板检测成功，RMS 0.0000 mm
+  [OK] 位姿法标定 pair 成功，旋转误差 0.000000，平移误差 0.0000 mm
+  [OK] MarkerDetector 标记物类型切换正常
+
+============================================================
+[OK] 所有测试通过！core 模块工作正常。
+============================================================
+test_core.py exit=0
+===== test_station.py =====
+============================================================
+MultiCameraCalibration 站位模式测试（offscreen + 合成数据）
+============================================================
+
+[1] StationManager：mock 物理相机拍摄 3 个站位
+  站位 ID: ['station_1', 'station_2', 'station_3'] | 会话目录: C:\Users\jingz\AppData\Local\Temp\mcc_station_0d0yn4gc\stations\session_20261028_150827
+  每站位目录含 station_1.png/.ply/meta.json，get_frames 返回 3 个离线帧
+  [OK] StationManager 拍摄存盘通过
+
+[2] 站位帧持久性（后续拍摄不覆盖先拍站位）
+  3 次连续拍摄后，站位 1 的 PNG/PLY 均完好且内容与原始一致
+  [OK] 站位帧持久性通过
+Station persistence, UIv2 mapping, deletion and session reset: ALL OK
+test_station.py exit=0
+===== test_workflows.py =====
+============================================================
+工作流测试（无相机、无 GUI）
+============================================================
+
+[1] FixedMultiCamWorkflow 标定→扫描状态机测试
+  拼接点数: 6
+  标定保存/加载: C:\Users\jingz\AppData\Local\Temp\tmpqcas6gs_\calibration.json
+  [OK] FixedMultiCamWorkflow 标定→扫描→保存链路正常
+
+[2] MobileChainWorkflow 链式拼接流程测试
+  机位列表: ['station_1', 'station_2', 'station_3']
+  误差报告: 3 节点, 2 边
+  [OK] MobileChainWorkflow 链式拼接流程正常
+
+[2b] 模式 B 状态一致性回归测试
+  全局优化残差: 0.000000mm -> 0.000000mm
+  删除机位 2 后列表: ['station_1', 'station_3']
+  重拍 station_3 后列表: ['station_1', 'station_4']
+  [OK] 模式 B 状态一致性回归通过
+
+[3] SessionManager 统一会话创建与加载测试
+  [OK] SessionManager 统一会话创建与加载正常
+
+============================================================
+[OK] 全部工作流测试通过
+============================================================
+test_workflows.py exit=0
+===== test_integration.py =====
+============================================================
+MultiCameraCalibration 集成测试（offscreen + 合成数据）
+============================================================
+
+[1] 创建三相机离线会话
+
+[2] 模拟拍摄 5 对帧（3 相机 × 合成图像 + PLY 点云）
+  5 拍 × 3 相机已拍摄并保存
+
+[3] 校验离线会话目录结构
+  会话目录: C:\Users\jingz\AppData\Local\Temp\mcc_integration_61rjolbi\session_20261028_150832
+  会话 meta: 5 帧, 相机 ['cam0', 'cam1', 'cam2']
+  [OK] 会话保存通过（frame_XXXX/{cam}.png+{cam}.ply+meta.json）
+
+[4] 重新加载会话
+  加载: 3 台相机 × 5 帧, 标记为空（待检测）
+  [OK] 会话加载通过
+
+[5] 批量检测会话标记
+  全部 3 台相机 × 5 帧均检测到 8 个编码圆
+  [OK] 批量检测通过（结果已回写帧 meta.json）
+
+[6] 批量标定会话（多帧平均）
+  cam1→cam0: 有效帧 5/5 | RMS 0.7788 mm | 旋转误差 0.001503 | 平移误差 0.2785 mm
+  cam2→cam0: 有效帧 5/5 | RMS 0.7811 mm | 旋转误差 0.000972 | 平移误差 0.2754 mm
+  [OK] 批量标定通过（多帧平均精度满足要求）
+
+[7] 批量拼接会话
+  合并点云: 3,000 点 (5 拍 × 3 相机 × 200 点)
+  [OK] 批量拼接通过
+
+[8] 拼接结果精度验证
+  cam1 点云经估计外参变换到 cam0 后平均对齐误差: 0.2927 mm
+  cam2 点云经估计外参变换到 cam0 后平均对齐误差: 0.1396 mm
+  [OK] 拼接精度满足要求（对齐误差 < 2mm）
+
+[9] 保存标定结果
+  已保存: C:\Users\jingz\AppData\Local\Temp\mcc_integration_61rjolbi\calibration.json
+  [OK] 标定结果保存通过
+
+[10] 重新加载标定结果并验证一致性
+  保存/加载矩阵完全一致，且精度保持
+  [OK] 标定结果保存/加载一致性通过
+
+============================================================
+全部集成测试通过 [ALL OK]
+============================================================
+test_integration.py exit=0
+===== test_ui_architecture.py =====
+test_component_replacement_reaches_all_three_workspaces (__main__.UiArchitectureTests) ... FAIL
+test_default_components_honor_public_ports (__main__.UiArchitectureTests) ... ok
+test_directory_icon_pack_has_fallback_and_filename_aliases (__main__.UiArchitectureTests) ... ok
+test_icon_pack_changes_both_v2_and_shared_viewer_and_resets_cache (__main__.UiArchitectureTests) ... ok
+test_incomplete_renderers_and_previews_fail_at_factory_boundary (__main__.UiArchitectureTests) ... ok
+test_incomplete_view_rejected_before_partial_connection (__main__.UiArchitectureTests) ... ok
+test_launcher_factory_is_reused_for_device_manager (__main__.UiArchitectureTests) ... ok
+test_legacy_source_package_is_removed (__main__.UiArchitectureTests) ... ok
+test_new_workspace_layout_keeps_controller_bindings_once (__main__.UiArchitectureTests) ... ok
+test_no_legacy_imports_in_production_or_common_layer (__main__.UiArchitectureTests) ... ok
+test_preview_control_port_emits_user_intent_without_button_access (__main__.UiArchitectureTests) ... ok
+test_production_imports_and_views_work_when_legacy_package_is_blocked (__main__.UiArchitectureTests) ... ok
+test_renderer_can_be_replaced_without_inheriting_existing_viewer (__main__.UiArchitectureTests) ... ok
+test_repository_has_no_legacy_imports (__main__.UiArchitectureTests) ... ok
+test_skin_changes_common_preview_and_renderer_chrome (__main__.UiArchitectureTests) ... ok
+test_v2_bridge_restores_offline_frames_without_sdk_or_legacy_window (__main__.UiArchitectureTests) ... ok
+test_worker_result_and_thread_exit_remain_distinct (__main__.UiArchitectureTests) ... ok
+
+======================================================================
+FAIL: test_component_replacement_reaches_all_three_workspaces (__main__.UiArchitectureTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "D:\RVC_SRC\Python\MultiCameraCalibration\test_ui_architecture.py", line 168, in test_component_replacement_reaches_all_three_workspaces
+    self.assertEqual(len(renderers), 3)
+AssertionError: 4 != 3
+
+----------------------------------------------------------------------
+Ran 17 tests in 11.678s
+
+FAILED (failures=1)
+test_ui_architecture.py exit=1
