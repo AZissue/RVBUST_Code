@@ -182,7 +182,8 @@ def poll_devices(manager, sdk, interfaces, *, probe_open=True):
                     row.status = "connected"
                     row.detail = f"本程序已连接（识别依据：{basis}）；不重复打开探测"
                     # Read network metadata without opening another camera handle.
-                is_gige = info.port == sdk.PortType.PortType_GIGE
+                # DeviceInfo.port is a descriptive string; type is the PortType enum.
+                is_gige = info.type == sdk.PortType.PortType_GIGE
                 if is_gige:
                     _, ip, mask, gateway, code = device.GetNetworkConfig(sdk.NetworkDevice.NetworkDevice_LightMachine)
                     row.ip = text(ip)

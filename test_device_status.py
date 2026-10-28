@@ -11,7 +11,8 @@ from core.utils import rvc_sdk_lock
 
 class FakeDevice:
     def __init__(self, sn='SN', port='USB', ip='192.168.1.10', mask='255.255.255.0'):
-        self.info = NS(name='RVC', sn=sn, port=port)
+        self.info = NS(name='RVC', sn=sn, port=ip if port == 'GigE' else 'USB port',
+                       type=2 if port == 'GigE' else 1)
         self.ip, self.mask = ip, mask
         self.GetNetworkConfig = Mock(return_value=(0, ip.encode(), mask.encode(), b'0.0.0.0', 0))
         self.IsFirmwareMatch = Mock(return_value=True)
@@ -39,7 +40,7 @@ def fixture(devices, outcomes=(True, True), error='Open failed'):
             cameras.append(camera)
             return camera
         return factory
-    sdk = NS(PortType=NS(PortType_GIGE='GigE'), NetworkDevice=NS(NetworkDevice_LightMachine=0),
+    sdk = NS(PortType=NS(PortType_GIGE=2), NetworkDevice=NS(NetworkDevice_LightMachine=0),
              CameraID_Left=0, GetLastErrorMessage=Mock(return_value=error))
     for kind in ('X2', 'X1'):
         setattr(sdk, kind, NS(Create=Mock(side_effect=create(kind)),

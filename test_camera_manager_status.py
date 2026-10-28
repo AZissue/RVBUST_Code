@@ -26,7 +26,8 @@ class FakeDevice:
 
     def __init__(self, sn, model='RVC', port='USB', ip='', mask='255.255.255.0',
                  open_ok=True):
-        self.info = NS(name=model, sn=sn, port=port)
+        self.info = NS(name=model, sn=sn, port=ip if port == 'GigE' else 'USB port',
+                       type=2 if port == 'GigE' else 1)
         self.ip, self.mask, self.open_ok = ip, mask, open_ok
         self.GetNetworkConfig = Mock(
             return_value=(0, ip.encode(), mask.encode(), b'0.0.0.0', 0))
@@ -54,7 +55,7 @@ def fake_sdk(devices, error='Camera is occupied!'):
 
     sdk = NS(
         SystemListDeviceTypeEnum=NS(All=0),
-        PortType=NS(PortType_GIGE='GigE'),
+        PortType=NS(PortType_GIGE=2),
         NetworkDevice=NS(NetworkDevice_LightMachine=0),
         CameraID_Left=0,
         GetLastErrorMessage=Mock(return_value=error),
