@@ -46,6 +46,8 @@ STATUS_LABELS = {
     'idle': ('空闲', '空闲', STATUS_OK),
     'busy': ('占用', '被占用', STATUS_ERR),
     'subnet_mismatch': ('跨网段', 'IP不在同一网段', STATUS_WARN),
+    'ip_conflict': ('IP冲突', '网络地址冲突', STATUS_ERR),
+    'unreachable': ('不可达', '网络设备不可达', STATUS_WARN),
     'connected': ('已连接', '本程序已连接', '#64B5F6'),
     'unknown': ('未知', '状态未知', TEXT_MUTED),
     'offline': ('离线', '设备已离线', TEXT_MUTED),

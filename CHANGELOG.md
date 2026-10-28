@@ -4,6 +4,18 @@
 
 ---
 
+## [1.13.17] - 2026-10-28
+
+### Changed
+- GigE 设备改用 GetNetworkConfig 返回的网络设备状态识别空闲、占用、IP 冲突和不可达，保留跨网段判断及本程序已连接优先级；查询不执行 Create/Open/Close、固件检查或自动配网，USB 继续保持未探测/未知。
+- 修正此前将 Python 五元组末项当作调用错误码的处理：该项是网络设备状态，C++ 调用返回码未由现有 PyRVC 绑定暴露。详情保留状态名称、原始数值及判断依据；未知状态值和异常保持未知并保留设备行。
+- 状态映射遵循本机 RVC.h 与生成文档：0=OK、1=Not_Reachable、2=In_Use、3=Conflict；优先使用绑定暴露的具名常量，缺失时使用上述定义。SDK Python 示例把 2/3 写反，与头文件不一致，未据其硬编码。
+- 设备表增加“IP冲突”和“不可达”标签。网络 OK 不保证实际连接或采集成功，不可达不直接当作断电/离线。
+
+### Validation
+- 54 项离线测试通过（test_device_status、test_camera_manager_status、test_launcher_refresh、test_ui_device_status、test_ui_launcher、test_camera_identity）：覆盖各网络状态、未知数值、已连接优先、异常隔离、真实管理器到桥接回填及新增标签；确认网络状态查询不创建/打开相机句柄。
+- 未验证：实体相机状态切换、当前运行库实际占用/冲突状态值及耗时；上述数字映射以本机 SDK 头文件和文档为依据，仍需实机核验。
+
 ## [1.13.16] - 2026-10-28
 
 ### Removed

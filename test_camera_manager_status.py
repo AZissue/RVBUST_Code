@@ -124,6 +124,25 @@ class RealManagerEnumerateTests(unittest.TestCase):
         sdk.X2.Create.assert_not_called()
         sdk.X1.Create.assert_not_called()
 
+    def test_network_statuses_reach_bridge_without_open(self):
+        devices = [FakeDevice(f'NET-{code}', port='GigE', ip='192.168.1.10')
+                   for code in range(5)]
+        for code, device in enumerate(devices):
+            device.GetNetworkConfig.return_value = (
+                0, b'192.168.1.10', b'255.255.255.0', b'0.0.0.0', code)
+        sdk, events = fake_sdk(devices)
+        bridge = make_bridge(CameraManager())
+        with patch.object(camera_manager_module, 'RVC', sdk), \
+                patch('core.device_status.host_interfaces',
+                      return_value=[('192.168.1.2', '24')]):
+            rows = bridge.enumerate_devices()
+        self.assertEqual([r.status for r in rows],
+                         ['idle','unreachable','busy','ip_conflict','unknown'])
+        self.assertEqual([r.backend_ref for r in rows], list(range(5)))
+        self.assertEqual(events, [])
+        sdk.X1.Create.assert_not_called()
+        sdk.X2.Create.assert_not_called()
+
     def test_enumerate_devices_without_sdk_returns_empty(self):
         manager = CameraManager()
         bridge = make_bridge(manager)

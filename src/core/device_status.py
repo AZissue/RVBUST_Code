@@ -127,6 +127,39 @@ def probe(sdk, device, info):
     return ("busy" if busy else "unknown"), "; ".join(errors)
 
 
+def network_status(code, ip, mask, interfaces, sdk):
+    """Decode the status output, NOT GetNetworkConfig's C++ return code.
+
+    Installed RVC.h (and generated SDK documentation) define 0 OK, 1
+    Not_Reachable, 2 In_Use, 3 Conflict. The Python example swaps 2/3.
+    Prefer named SDK constants if a future Python binding exposes them.
+    """
+    names = ('OK', 'Not_Reachable', 'In_Use', 'Conflict')
+    values = {}
+    enum = getattr(sdk, 'NetworkDeviceStatus_', None)
+    for fallback, name in enumerate(names):
+        symbol = 'NetworkDeviceStatus_' + name
+        value = getattr(sdk, symbol, None)
+        if value is None and enum is not None:
+            value = getattr(enum, symbol, None)
+        values[name] = int(value) if value is not None else fallback
+    code = int(code)
+    name = next((name for name, value in values.items() if value == code), 'Unknown')
+    prefix = f'GetNetworkConfig: {name} ({code})'
+    if name == 'In_Use':
+        return 'busy', prefix + '；SDK 报告设备被占用，未打开相机'
+    if name == 'Conflict':
+        return 'ip_conflict', prefix + '；SDK 报告网络地址冲突，未打开相机'
+    if name == 'Unknown':
+        return 'unknown', prefix + '；无法识别的网络设备状态'
+    state, detail = subnet_status(ip, mask, interfaces)
+    if state != 'same':
+        return state, prefix + '；' + detail
+    if name == 'Not_Reachable':
+        return 'unreachable', prefix + '；设备不可达（不能据此判定断电或离线）'
+    return 'idle', prefix + '；网络状态正常，未打开验证采集能力'
+
+
 def poll_devices(manager, sdk, interfaces, *, probe_open=True):
     """One synchronous generation under SDK lock; failures remain individual rows."""
     rows = []
@@ -154,14 +187,10 @@ def poll_devices(manager, sdk, interfaces, *, probe_open=True):
                     _, ip, mask, gateway, code = device.GetNetworkConfig(sdk.NetworkDevice.NetworkDevice_LightMachine)
                     row.ip = text(ip)
                     if own:
-                        row.detail += f"；IP {row.ip}"
+                        row.detail += f"；IP {row.ip}；网络状态原始值 {code}"
                         continue
-                    if int(code) != 0:
-                        raise RuntimeError(f"读取网络配置失败，配置状态码 {code}")
-                    state, detail = subnet_status(ip, mask, interfaces)
-                    if state != "same":
-                        row.status, row.detail = state, detail
-                        continue
+                    row.status, row.detail = network_status(code, ip, mask, interfaces, sdk)
+                    continue  # GigE status never requires Create/Open/Close.
                 if own:
                     continue
                 if not row.serial:

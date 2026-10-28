@@ -415,7 +415,7 @@ class CameraManager:
             return []
 
     def poll_device_statuses(self):
-        """刷新设备元信息；暂不打开相机探测空闲/占用。
+        """刷新设备元信息与 GigE 网络状态；不打开相机探测。
 
         由 ui_v2.BackendBridge.enumerate_devices() 调用（self.camera_manager
         是 CameraManager）。无 SDK 环境直接返回 []，绝不在此初始化 SDK；

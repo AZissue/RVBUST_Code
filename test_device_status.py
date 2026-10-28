@@ -141,10 +141,47 @@ class PollTests(unittest.TestCase):
         dev.GetNetworkConfig.return_value=(0,b'192.168.1.10',b'255.255.255.0',b'0.0.0.0',0)
         self.assertEqual(poll_devices(self.manager,self.sdk,[('192.168.1.2','24')])[0].status,'idle')
         dev.AutoConfigureNetwork.assert_not_called()
-    def test_network_config_error_unknown_with_ip(self):
+    def test_network_conflict_with_ip(self):
         dev=FakeDevice(port='GigE'); dev.GetNetworkConfig.return_value=(0,b'192.168.1.10',b'',b'',3)
-        row=self.run_poll([dev])[0]; self.assertEqual(row.status,'unknown'); self.assertEqual(row.ip,'192.168.1.10')
+        row=self.run_poll([dev])[0]; self.assertEqual(row.status,'ip_conflict'); self.assertEqual(row.ip,'192.168.1.10')
         self.assertEqual(self.events,[])
+    def test_gige_network_statuses_without_camera_handles(self):
+        for code, expected in ((0,'idle'), (1,'unreachable'), (2,'busy'),
+                               (3,'ip_conflict'), (99,'unknown')):
+            with self.subTest(code=code):
+                dev = FakeDevice(port='GigE')
+                dev.GetNetworkConfig.return_value = (0,b'192.168.1.10',b'255.255.255.0',b'',code)
+                sdk,mgr,events,_ = fixture([dev])
+                row = poll_devices(mgr,sdk,[('192.168.1.2','24')],probe_open=False)[0]
+                self.assertEqual(row.status, expected)
+                self.assertTrue(row.online)  # Discovered, even when not reachable.
+                self.assertIn(str(code), row.detail)
+                self.assertEqual(events, [])
+                sdk.X1.Create.assert_not_called()
+                sdk.X2.Create.assert_not_called()
+                dev.IsFirmwareMatch.assert_not_called()
+                dev.AutoConfigureNetwork.assert_not_called()
+
+    def test_gige_own_connection_overrides_network_occupancy(self):
+        dev = FakeDevice(port='GigE')
+        dev.GetNetworkConfig.return_value = (0,b'192.168.1.10',b'255.255.255.0',b'',2)
+        sdk,mgr,events,_ = fixture([dev])
+        mgr.find_by_sn.return_value = 'cam0'
+        row = poll_devices(mgr,sdk,[],probe_open=False)[0]
+        self.assertEqual(row.status, 'connected')
+        self.assertIn('原始值 2', row.detail)
+        self.assertEqual(events, [])
+
+    def test_gige_network_read_exception_does_not_drop_other_rows(self):
+        bad = FakeDevice('bad',port='GigE')
+        bad.GetNetworkConfig.side_effect = RuntimeError('read failed')
+        good = FakeDevice('good',port='GigE')
+        sdk,mgr,events,_ = fixture([bad,good])
+        rows = poll_devices(mgr,sdk,[('192.168.1.2','24')],probe_open=False)
+        self.assertEqual([r.status for r in rows], ['unknown','idle'])
+        self.assertEqual([r.backend_ref for r in rows], [0,1])
+        self.assertEqual(events, [])
+
     def test_no_host_config_no_open(self):
         sdk,mgr,events,_=fixture([FakeDevice(port='GigE')])
         self.assertEqual(poll_devices(mgr,sdk,[])[0].status,'unknown'); self.assertEqual(events,[])

@@ -43,6 +43,17 @@ class TableTests(unittest.TestCase):
         self.assertIn('状态未知',self.table.item(3,3).toolTip())
         self.assertIn('查询超时',self.table.item(3,3).toolTip())
         self.assertFalse(self.table.isColumnHidden(3));self.assertFalse(self.table.isColumnHidden(4))
+    def test_network_conflict_and_unreachable_have_distinct_labels(self):
+        self.table.set_devices([
+            DeviceInfo('GigE','conflict',status='ip_conflict',status_detail='Conflict (3)'),
+            DeviceInfo('GigE','unreachable',status='unreachable',status_detail='Not_Reachable (1)')])
+        for row,label,color,detail in ((0,'IP冲突',STATUS_ERR,'Conflict (3)'),
+                                       (1,'不可达',STATUS_WARN,'Not_Reachable (1)')):
+            item = self.table.item(row,3)
+            self.assertEqual(item.text(),label)
+            self.assertEqual(item.foreground().color().name(),color.lower())
+            self.assertIn(detail,item.toolTip())
+
     def test_usb_and_offline_status_always_visible(self):
         self.table.set_devices([DeviceInfo('USB','sn',status='idle',backend_ref=0)])
         self.assertTrue(self.table.isColumnHidden(4));self.assertFalse(self.table.isColumnHidden(3))
