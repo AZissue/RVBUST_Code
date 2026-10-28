@@ -415,7 +415,7 @@ class CameraManager:
             return []
 
     def poll_device_statuses(self):
-        """刷新设备列表时逐台只读探测状态；本方法属于设备管理器。
+        """刷新设备元信息；暂不打开相机探测空闲/占用。
 
         由 ui_v2.BackendBridge.enumerate_devices() 调用（self.camera_manager
         是 CameraManager）。无 SDK 环境直接返回 []，绝不在此初始化 SDK；
@@ -426,7 +426,9 @@ class CameraManager:
             interfaces = host_interfaces()
         except Exception:
             interfaces = []
-        return poll_devices(self, RVC, interfaces) if RVC is not None else []
+        # 暂停逐台 Open/Close 状态轮询：SDK 超时和 X2→X1 回退会拖慢启动。
+        # return poll_devices(self, RVC, interfaces) if RVC is not None else []
+        return poll_devices(self, RVC, interfaces, probe_open=False) if RVC is not None else []
 
     # ------------------------------------------------------------------
     # 相机增删

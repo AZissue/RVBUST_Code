@@ -127,7 +127,7 @@ def probe(sdk, device, info):
     return ("busy" if busy else "unknown"), "; ".join(errors)
 
 
-def poll_devices(manager, sdk, interfaces):
+def poll_devices(manager, sdk, interfaces, *, probe_open=True):
     """One synchronous generation under SDK lock; failures remain individual rows."""
     rows = []
     with rvc_sdk_lock:
@@ -166,7 +166,11 @@ def poll_devices(manager, sdk, interfaces):
                     continue
                 if not row.serial:
                     raise RuntimeError("缺少序列号，无法核验打开后的身份")
-                row.status, row.detail = probe(sdk, device, info)
+                if probe_open:
+                    row.status, row.detail = probe(sdk, device, info)
+                else:
+                    row.status = "unknown"
+                    row.detail = "已枚举；暂未探测空闲/占用状态（已停用打开相机轮询）"
             except Exception as exc:
                 if row.status != "connected":
                     row.status = "unknown"

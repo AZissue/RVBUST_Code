@@ -110,18 +110,19 @@ class RealManagerEnumerateTests(unittest.TestCase):
             rows = BackendBridge.enumerate_devices(bridge)
 
         self.assertEqual([r.serial for r in rows], ['SN-USB', 'SN-BUSY', 'SN-NET'])
-        self.assertEqual([r.status for r in rows], ['idle', 'busy', 'subnet_mismatch'])
+        self.assertEqual([r.status for r in rows], ['unknown', 'unknown', 'subnet_mismatch'])
         self.assertEqual([r.backend_ref for r in rows], [0, 1, 2])
         self.assertEqual(rows[2].ip, '192.168.2.10')
-        self.assertIn('Camera is occupied!', rows[1].status_detail)
+        self.assertIn('已停用打开相机轮询', rows[1].status_detail)
         devices[0].GetNetworkConfig.assert_not_called()
         devices[1].GetNetworkConfig.assert_not_called()
         devices[2].GetNetworkConfig.assert_called_once()
         for device in devices:
             device.AutoConfigureNetwork.assert_not_called()
         self.assertTrue(rows[0].online)
-        self.assertEqual(events, [
-            'X2.Open', 'X2.Close', 'X2.Open', 'X2.Close', 'X1.Open', 'X1.Close'])
+        self.assertEqual(events, [])
+        sdk.X2.Create.assert_not_called()
+        sdk.X1.Create.assert_not_called()
 
     def test_enumerate_devices_without_sdk_returns_empty(self):
         manager = CameraManager()
@@ -174,12 +175,12 @@ class LauncherRefreshChainTests(unittest.TestCase):
             self.assertEqual(table.COLS, ('', '型号', '序列号', '设备状态', 'IP 地址'))
             rows = {table.item(r, 2).text(): r for r in range(table.rowCount())}
             self.assertEqual(set(rows), {'SN-USB', 'SN-OWN', 'SN-NET', 'SN-BUSY'})
-            self.assertEqual(table.item(rows['SN-USB'], 3).text(), '空闲')
+            self.assertEqual(table.item(rows['SN-USB'], 3).text(), '未知')
             self.assertEqual(table.item(rows['SN-OWN'], 3).text(), '已连接')
             self.assertEqual(table.item(rows['SN-NET'], 3).text(), '跨网段')
-            self.assertEqual(table.item(rows['SN-BUSY'], 3).text(), '占用')
+            self.assertEqual(table.item(rows['SN-BUSY'], 3).text(), '未知')
             self.assertIn('本程序已连接', table.item(rows['SN-OWN'], 3).toolTip())
-            self.assertIn('Camera is occupied!',
+            self.assertIn('已停用打开相机轮询',
                           table.item(rows['SN-BUSY'], 3).toolTip())
             self.assertFalse(table.isColumnHidden(3))
             self.assertNotEqual(table.item(rows['SN-BUSY'], 3).text(), '空闲')
@@ -195,15 +196,15 @@ class LauncherRefreshChainTests(unittest.TestCase):
             self.dlg.set_devices(bridge.enumerate_devices())
             self.assertEqual([d.serial for d in self.dlg.selected_devices()],
                              ['SN-USB'])
-            # 两次刷新都重新逐台探测：空闲 + 占用各 Open 一次；自有相机不重复打开。
-            self.assertEqual(events.count('X2.Open'), 4)
+            # 两次刷新都只枚举，不打开任何相机。
+            self.assertEqual(events.count('X2.Open'), 0)
             # 直接调用真实管理器的轮询方法仍返回同一组行。
             polled = manager.poll_device_statuses()
             self.assertEqual([r.serial for r in polled],
                              ['SN-USB', 'SN-OWN', 'SN-NET', 'SN-BUSY'])
             self.assertEqual(polled[1].status, 'connected')
-            self.assertEqual(events.count('X2.Open'), 6)
-            self.assertEqual(events.count('X1.Open'), 3)
+            self.assertEqual(events.count('X2.Open'), 0)
+            self.assertEqual(events.count('X1.Open'), 0)
             devices[1].GetNetworkConfig.assert_called()
             for device in devices:
                 device.AutoConfigureNetwork.assert_not_called()
