@@ -11,7 +11,7 @@ from ui_common.symbols import icon
 from core.frame_database import STALE_RESULT
 from core.postprocess.session import CloudLayer, read_cloud, write_cloud
 from core.postprocess.processing import polygon_crop_mask, voxel_downsample, random_downsample
-from core.postprocess.color_correction import ColorParameters, NoColorCorrection, unify_colors
+from core.postprocess.color_correction import ColorParameters, NoColorCorrection, correct_color_layers
 from ..frame_database import FrameBrowser
 from ..industrial_ribbon import STYLE
 from ..dialogs import ChineseMessageBox as QMessageBox
@@ -193,7 +193,7 @@ class PostprocessWindow(QDialog):
 
     @staticmethod
     def _color_params_text(params):
-        return (f'尺度={params.scale:g}mm，强度={params.strength:.0%}，上限={params.max_gain:g}，'
+        return (f'算法={params.algorithm}，预下采样={params.voxel_size:g}mm，尺度={params.scale:g}mm，强度={params.strength:.0%}，上限={params.max_gain:g}，'
                 f'接缝融合={params.seam_strength:.0%}，样本上限={params.sample_limit}，重叠距离={params.overlap_distance:g}mm')
 
     def _show_color_diagnostic(self, params, reports, heading='颜色统一'):
@@ -204,6 +204,8 @@ class PostprocessWindow(QDialog):
             row.setdefault('params', asdict(params))
             text = (f"{row.get('name', '点云')}：{row.get('status', '拒绝')}，样本{row.get('samples', 0)}，"
                     f"格/支持{row.get('nodes', 0)}/{row.get('supported_nodes', 0)}，几何分区{row.get('components', 1)}，重叠内点{row.get('matches', 0)}")
+            if 'output_points' in row:
+                text += f"，点数{row['input_points']:,}→{row['output_points']:,}"
             if 'gain_min' in row:
                 text += (f"，估计增益{np.round(row.get('estimated_gain_min', row.get('estimated_gain', [1]*3)), 3).tolist()}"
                          f"..{np.round(row.get('estimated_gain_max', row.get('estimated_gain', [1]*3)), 3).tolist()}"
@@ -279,14 +281,12 @@ class PostprocessWindow(QDialog):
         reports = []
         def work():
             try:
-                colors, details = unify_colors(layers, reference=reference, params=params)
+                outputs, details = correct_color_layers(layers, reference=reference, params=params)
             except NoColorCorrection as exc:
                 reports.extend(dict(row, name=layer.name) for layer, row in zip(layers, exc.reports))
                 raise
             reports.extend(dict(row, name=layer.name) for layer, row in zip(layers, details))
-            return [CloudLayer(layer.name+' · 颜色统一', layer.points, color,
-                               source=layer.source, origins=layer.origins)
-                    for layer, color in zip(layers, colors)]
+            return outputs
         def diagnostic():
             self._color_comparison = (tuple(identifiers), tuple(self._display_ids))
             self._refresh_controls()

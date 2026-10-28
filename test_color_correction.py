@@ -7,7 +7,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent/'src'))
 from core.postprocess.session import CloudLayer
-from core.postprocess.color_correction import ColorParameters, NoColorCorrection, unify_colors
+from core.postprocess.color_correction import ColorParameters, NoColorCorrection, unify_colors, correct_color_layers
 
 
 def scene(gray=False):
@@ -33,6 +33,43 @@ def overlapping(gray=False):
 
 
 class ColorTests(unittest.TestCase):
+    def test_aggressive_modes_and_prevoxel_pipeline(self):
+        x, y = np.meshgrid(np.arange(40.), np.arange(20.))
+        base = np.c_[x.ravel(), y.ravel(), np.zeros(x.size)]
+        points = np.repeat(base, 2, axis=0)
+        colors = np.repeat(np.tile([.2, .38], len(base))[:, None], 3, axis=1)
+        layer = CloudLayer('seam', points, colors, origins=(('input', 7),))
+        gaps = []
+        for mode in ('balanced', 'aggressive', 'spatial'):
+            try:
+                result, _ = correct_color_layers([layer], params=ColorParameters(
+                    algorithm=mode, strength=1, seam_strength=1, max_gain=2, scale=12))
+            except NoColorCorrection:
+                self.assertEqual(mode, 'balanced')
+                result = [layer]
+            gaps.append(np.median(abs(result[0].colors[::2]-result[0].colors[1::2])))
+            self.assertEqual(result[0].origins, layer.origins)
+            np.testing.assert_array_equal(result[0].points, points)
+        self.assertLess(gaps[1], gaps[0]*.5)
+        self.assertLess(gaps[2], gaps[0]*.5)
+        # Voxel centroids and averaged colors are the exact correction inputs.
+        from core.postprocess.processing import voxel_downsample
+        p, true, observed = scene(True)
+        layer = CloudLayer('shoe', p, observed, origins=(('shoe', 2),))
+        params = ColorParameters(voxel_size=2, algorithm='spatial', scale=15)
+        result, reports = correct_color_layers([layer], params=params)
+        xyz, rgb = voxel_downsample(p, observed, 2)
+        expected, _ = unify_colors([CloudLayer('voxel', xyz, rgb)], params=params)
+        np.testing.assert_array_equal(result[0].points, xyz)
+        np.testing.assert_array_equal(result[0].colors, expected[0])
+        self.assertLess(len(xyz), len(p))
+        self.assertEqual(reports[0]['input_points'], len(p))
+        self.assertEqual(reports[0]['output_points'], len(xyz))
+        np.testing.assert_array_equal(layer.colors, observed)
+        for params in (ColorParameters(algorithm='unknown'), ColorParameters(voxel_size=-1)):
+            with self.assertRaises(ValueError):
+                correct_color_layers([layer], params=params)
+
     def test_local_seam_blends_coincident_exposures_preserves_black_white(self):
         x, y = np.meshgrid(np.arange(40.), np.arange(20.))
         base = np.c_[x.ravel(), y.ravel(), np.zeros(x.size)]

@@ -20,6 +20,25 @@ class ColorPostprocessTests(unittest.TestCase):
     source = fixture.PostprocessTests.source
     finish = fixture.PostprocessTests.finish
 
+    def test_aggressive_prevoxel_dialog_and_result_provenance(self):
+        _, sources = self.inputs(single=True)
+        source = self.editor._clouds[sources[0]]
+        self.editor._color_state.update(algorithm='spatial', voxel_size=2., seam_strength=1.)
+        dialog = self.editor.create_color_dialog()
+        self.assertEqual(dialog.parameters()['algorithm'], 'spatial')
+        self.assertEqual(dialog.parameters()['voxel_size'], 2.)
+        dialog.reject()
+        self.editor.correct_colors()
+        self.finish()
+        output = self.editor._display_ids[0]
+        self.assertNotEqual(output, sources[0])
+        self.assertLess(len(self.editor._clouds[output].points), len(source.points))
+        self.assertEqual(self.db.records[output].source_ids, sources)
+        report = self.editor._last_color_report[0]
+        self.assertEqual(report['algorithm'], 'spatial')
+        self.assertEqual(report['voxel_size_mm'], 2.)
+        self.assertEqual(report['output_points'], len(self.editor._clouds[output].points))
+
     def inputs(self, single=False, uncolored=False):
         raw = self.db.ingest(self.source())
         if single:
@@ -264,11 +283,11 @@ class ColorPostprocessTests(unittest.TestCase):
         _, sources = self.inputs()
         before = set(self.db.records)
         entered, release = threading.Event(), threading.Event()
-        from core.postprocess.color_correction import unify_colors
+        from core.postprocess.color_correction import correct_color_layers
         def delayed(*args, **kwargs):
             entered.set(); release.wait(5)
-            return unify_colors(*args, **kwargs)
-        with patch('ui_v2.postprocess.window.unify_colors', delayed):
+            return correct_color_layers(*args, **kwargs)
+        with patch('ui_v2.postprocess.window.correct_color_layers', delayed):
             self.editor.correct_colors()
             self.assertTrue(entered.wait(2))
             try:

@@ -29,6 +29,18 @@ class ColorDialog(QDialog):
         form.addRow(self.color_inputs)
         self.color_reference = QComboBox()
         form.addRow('多云参考层', self.color_reference)
+        self.algorithm = QComboBox()
+        self.algorithm.addItem('温和保色（现有）', 'balanced')
+        self.algorithm.addItem('强力保边融合', 'aggressive')
+        self.algorithm.addItem('空间均色（最强，会削弱纹理）', 'spatial')
+        form.addRow('单云算法', self.algorithm)
+        self.voxel_size = QDoubleSpinBox()
+        self.voxel_size.setRange(0, 1000)
+        self.voxel_size.setDecimals(2)
+        self.voxel_size.setSingleStep(.25)
+        self.voxel_size.setSuffix(' mm')
+        self.voxel_size.setSpecialValueText('关闭（保留全量点）')
+        form.addRow('处理前体素下采样', self.voxel_size)
         self.color_scale = QDoubleSpinBox()
         self.color_scale.setRange(.01, 1000000)
         self.color_scale.setValue(30)
@@ -60,7 +72,8 @@ class ColorDialog(QDialog):
         self.color_aligned = QCheckBox('多云已处于同一坐标系')
         form.addRow(self.color_aligned)
         hint = QLabel('单云：低频颜色场 + 局部接缝融合；多云：重叠区估计。原始未配准多帧请先拼接。\n'
-                      '无色/混合输入拒绝；不覆盖来源，不改变XYZ。\n'
+                      '预下采样会合并体素内坐标和颜色，减少输出点数；来源不变。\n'
+                      '最强算法会消除真实明暗纹理；建议先用1mm体素、100%强度/融合、增益2。\n'
                       '仅缓和可估计色差，可能影响真实材质；不是摄影测量级真彩还原。')
         hint.setWordWrap(True)
         form.addRow(hint)
@@ -92,12 +105,14 @@ class ColorDialog(QDialog):
                                  ('单云空间校正' if len(inputs) == 1 else '多云重叠匹配'))
         self.color_reference.setEnabled(len(inputs) > 1)
         self.color_aligned.setEnabled(len(inputs) > 1)
+        self.algorithm.setCurrentIndex(max(0, self.algorithm.findData(state.get('algorithm', 'balanced'))))
+        self.algorithm.setEnabled(len(inputs) == 1)
         self.color_seam.setEnabled(len(inputs) == 1)
         self.color_scale.setEnabled(len(inputs) == 1)
         self.color_distance.setEnabled(len(inputs) > 1)
         self.color_aligned.setChecked(state.get('aligned', False))
         self._guard = ParameterGuard(self)
-        for key, control in (('scale', self.color_scale), ('overlap_distance', self.color_distance),
+        for key, control in (('voxel_size', self.voxel_size), ('scale', self.color_scale), ('overlap_distance', self.color_distance),
                 ('seam_strength', self.color_seam), ('strength', self.color_strength), ('max_gain', self.color_gain), ('sample_limit', self.color_samples)):
             if key in state:
                 control.setValue(state[key] * 100 if key in ('strength', 'seam_strength') else state[key])
@@ -106,13 +121,14 @@ class ColorDialog(QDialog):
             control.valueChanged.connect(self._updated)
         self.color_gain.setSingleStep(.05)
         self.color_samples.setSingleStep(1000)
+        self.algorithm.currentIndexChanged.connect(self._updated)
         self.color_reference.currentIndexChanged.connect(self._updated)
         self.color_aligned.toggled.connect(self._updated)
         self._input_count = len(inputs)
         self._updated()
 
     def parameters(self):
-        return dict(seam_strength=self.color_seam.value()/100, scale=self.color_scale.value(), strength=self.color_strength.value()/100,
+        return dict(algorithm=self.algorithm.currentData(), voxel_size=self.voxel_size.value(), seam_strength=self.color_seam.value()/100, scale=self.color_scale.value(), strength=self.color_strength.value()/100,
             max_gain=self.color_gain.value(), sample_limit=self.color_samples.value(),
             overlap_distance=self.color_distance.value(), reference=self.color_reference.currentData(),
             aligned=self.color_aligned.isChecked())
@@ -120,7 +136,7 @@ class ColorDialog(QDialog):
     def _updated(self, *_):
         state = self.parameters()
         params = ColorParameters(**{key: state[key] for key in asdict(ColorParameters()) if key in state})
-        self.summary.setText(f'尺度={params.scale:g}mm，强度={params.strength:.0%}，上限={params.max_gain:g}，'
+        self.summary.setText(f'算法={params.algorithm}，预下采样={params.voxel_size:g}mm，尺度={params.scale:g}mm，强度={params.strength:.0%}，上限={params.max_gain:g}，'
                              f'接缝融合={params.seam_strength:.0%}，样本上限={params.sample_limit}，重叠距离={params.overlap_distance:g}mm')
         error = ''
         try:

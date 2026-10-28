@@ -20,8 +20,14 @@ class ColorParameters:
     min_samples: int = 24
     chunk_size: int = 65536
     seam_strength: float = .6
+    algorithm: str = 'balanced'
+    voxel_size: float = 0.
 
     def validate(self):
+        if self.algorithm not in ('balanced', 'aggressive', 'spatial'):
+            raise ValueError('未知颜色统一算法')
+        if not np.isfinite(self.voxel_size) or self.voxel_size < 0:
+            raise ValueError('预下采样体素必须为非负有限值（0关闭）')
         if not np.isfinite(self.seam_strength) or not 0 <= self.seam_strength <= 1:
             raise ValueError('接缝融合强度必须在0..100%之间')
         if not np.isfinite(self.scale) or self.scale <= 0:
@@ -223,7 +229,7 @@ def _single(points, colors, gray, params):
     # Compact spatial support avoids distant sheets; a redescending range
     # kernel excludes black/white patterns and large material boundaries.
     seam_tree = cKDTree(xyz)
-    radius = params.scale / 4
+    radius = params.scale / (4 if params.algorithm == 'balanced' else 2)
     def gains(begin, end):
         d, ix = tree.query(points[begin:end], k=min(8, len(nodes)))
         w = np.exp(-.5*(d/params.scale)**2)
@@ -236,8 +242,17 @@ def _single(points, colors, gray, params):
             original = colors[begin:end]
             delta = log_rgb[si] - np.log(np.maximum(original[:, None, :], .002))
             difference = np.max(np.abs(delta), axis=2)
-            sw = np.exp(-.5*(sd/radius)**2) * np.exp(-(difference/.30)**4)
-            sw[(sd > radius) | (difference > .55)] = 0
+            width, cutoff = (.30, .55) if params.algorithm == 'balanced' else (.70, 1.4)
+            if params.algorithm == 'spatial':
+                # Deliberately remove luminance edges, retaining chroma edges.
+                # This also removes real gray texture: explicitly opt in.
+                chroma = delta - delta.mean(axis=2, keepdims=True)
+                range_weight = np.exp(-(np.max(abs(chroma), axis=2)/.25)**4)
+            else:
+                range_weight = np.exp(-(difference/width)**4)
+                range_weight[difference > cutoff] = 0
+            sw = np.exp(-.5*(sd/radius)**2) * range_weight
+            sw[sd > radius] = 0
             valid_color = ((original > .02) & (original < .98)).all(axis=1)
             support = (sw > .05).sum(axis=1) >= 4
             residual = (delta*sw[..., None]).sum(axis=1)/np.maximum(sw.sum(axis=1)[:, None], 1e-30)
@@ -253,6 +268,30 @@ def _single(points, colors, gray, params):
     report.update(samples=len(xyz), nodes=len(nodes), supported_nodes=int(supported.sum()), components=component_count,
                   seam_radius_mm=radius, seam_strength=params.seam_strength)
     return result, report
+
+
+def correct_color_layers(layers, *, reference=0, params=None):
+    """Optional voxel averaging BEFORE estimation/application, with provenance."""
+    from .session import CloudLayer
+    from .processing import voxel_downsample
+    params = params or ColorParameters()
+    params.validate()
+    if any(layer.colors is None for layer in layers):
+        raise ValueError('颜色统一拒绝无色或混合有色/无色输入')
+    inputs = layers
+    if params.voxel_size:
+        inputs = []
+        for layer in layers:
+            xyz, rgb = voxel_downsample(layer.points, layer.colors, params.voxel_size)
+            inputs.append(CloudLayer(layer.name, xyz, rgb, source=layer.source, origins=layer.origins))
+    colors, reports = unify_colors(inputs, reference=reference, params=params)
+    outputs = []
+    for source, layer, rgb, report in zip(layers, inputs, colors, reports):
+        report.update(input_points=len(source.points), output_points=len(layer.points),
+                      voxel_size_mm=params.voxel_size, algorithm=params.algorithm)
+        outputs.append(CloudLayer(source.name+' · 颜色统一', layer.points, rgb,
+                                  source=source.source, origins=source.origins))
+    return outputs, reports
 
 
 def unify_colors(layers, *, reference=0, params=None):
