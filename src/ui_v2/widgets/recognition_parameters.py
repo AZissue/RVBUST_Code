@@ -5,7 +5,6 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QFormLayout, QComboBox,
                               QGroupBox, QLabel, QPushButton, QLayout, QScrollArea,
                               QSpinBox, QDoubleSpinBox)
 from core.calib_board_detector import DEFAULT_BOARD_SPECS
-from ui_common.parameter_slider import ParameterSlider
 
 
 class RecognitionParameters(QWidget):
@@ -75,14 +74,9 @@ class RecognitionParameters(QWidget):
         self.board_spec.setToolTip('优先选择板上实际行列数；自动模式会逐一尝试全部规格。')
         self.board_details = QLabel()
         self.board_details.setWordWrap(True)
-        self.gamma = ParameterSlider(decimals=2)
-        self.gamma.set_range(.1, 10.)
-        self.gamma.setMinimumHeight(32)
-        self.gamma.setToolTip('优先使用此 Gamma 检测；失败后自动尝试其他亮度，以适应曝光变化。')
         board.addRow('规格', self.board_spec)
         board.addRow(self.board_details)
-        board.addRow('Gamma', self.gamma)
-        self.board_group.setToolTip('规格按行 × 列显示；圆心间距由三维数据自动估计。Gamma 优先应用，失败时尝试其他亮度。')
+        self.board_group.setToolTip('规格按行 × 列显示；圆心间距由三维数据自动估计。')
         layout.addWidget(self.board_group)
         layout.addStretch()
         scroll = QScrollArea()
@@ -98,7 +92,6 @@ class RecognitionParameters(QWidget):
         root.addWidget(self.status)
         self.marker_type.currentIndexChanged.connect(self._changed)
         self.board_spec.currentIndexChanged.connect(self._changed)
-        self.gamma.spin.valueChanged.connect(self._changed)
         self.timer = QTimer(self)
         self.timer.setInterval(500)
         self.timer.timeout.connect(self.refresh)
@@ -141,7 +134,7 @@ class RecognitionParameters(QWidget):
         if config != self._loaded and not self._edited:
             self._load(config)
         idle = self.bridge.can_change_workspace()
-        for control in (self.marker_type, self.board_spec, self.gamma,
+        for control in (self.marker_type, self.board_spec,
                         self.circle_n, self.circle_r1, self.circle_r2):
             control.setEnabled(idle and self._search_cancel is None)
         self.auto_button.setEnabled(idle or self._search_cancel is not None)
@@ -163,7 +156,6 @@ class RecognitionParameters(QWidget):
                 self.board_spec.addItem('当前配置的规格组合', copy.deepcopy(config['boards']))
                 selected = self.board_spec.count() - 1
             self.board_spec.setCurrentIndex(selected)
-            self.gamma.set_value(config['gamma'])
         n, r1, r2 = config['circle']
         for spin, value in zip((self.circle_n, self.circle_r1, self.circle_r2), (n, r1, r2)):
             spin.setValue(value)
@@ -206,7 +198,6 @@ class RecognitionParameters(QWidget):
             self.status.setText('识别配置已在其他入口变化，已重新读取；请重新修改。')
             return
         config = self._loaded
-        gamma = config['gamma'] if self.gamma.value() == round(config['gamma'], 2) else self.gamma.value()
         circle = [self.circle_n.value(), self.circle_r1.value(), self.circle_r2.value()]
         for index, spin in enumerate((self.circle_r1, self.circle_r2), 1):
             if circle[index] == round(config['circle'][index], spin.decimals()):
@@ -215,7 +206,7 @@ class RecognitionParameters(QWidget):
             circle = config['circle']
         try:
             self.bridge.recognition.configure(self.mode, self.marker_type.currentData(),
-                                              self.board_spec.currentData(), gamma, circle=circle)
+                                              self.board_spec.currentData(), config['gamma'], circle=circle)
         except ValueError as exc:
             self.status.setText(str(exc))
             return

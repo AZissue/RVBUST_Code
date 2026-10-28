@@ -35,12 +35,13 @@ class RecognitionPageTests(unittest.TestCase):
             self.assertEqual(page.circle_n.value(), 8)
             page.marker_type.setCurrentIndex(page.marker_type.findData('asymmetric_grid'))
             page.board_spec.setCurrentIndex(2)
-            page.gamma.set_value(1.75)
+            gamma_before = page._loaded['gamma']
+            self.assertFalse(hasattr(page, 'gamma'))
             self.applied(page)
             config = self.bridge.recognition.config(mode)
             self.assertEqual(config['marker_type'], 'asymmetric_grid')
             self.assertEqual([(s['rows'], s['cols']) for s in config['boards']], [(7, 11)])
-            self.assertEqual(config['gamma'], 1.75)
+            self.assertEqual(config['gamma'], gamma_before)
             if mode == 'multi_cam':
                 self.assertEqual(self.win.workspace_multi().current_detect_method(), 'calib_board')
             if mode == 'turntable':
@@ -118,13 +119,13 @@ class RecognitionPageTests(unittest.TestCase):
         page.resize(300, 290)
         self.app.processEvents()
         self.assertIn('自动尝试 3 种规格', page.board_details.text())
-        self.assertLessEqual(page.gamma.minimumSizeHint().width(), 260)
+        self.assertFalse(hasattr(page, 'gamma'))
         self.assertFalse(hasattr(page, 'apply_button'))
         page.board_spec.setCurrentIndex(2)
-        page.gamma.set_value(1.8)
+        gamma_before = page._loaded['gamma']
         self.applied(page)
         self.assertIn('已自动应用', page.status.text())
-        self.assertEqual(self.bridge.recognition.config('multi_cam')['gamma'], 1.8)
+        self.assertEqual(self.bridge.recognition.config('multi_cam')['gamma'], gamma_before)
 
     def test_circle_edits_debounce_once_invalidate_cache_and_keep_board_settings(self):
         service = self.bridge.recognition
@@ -142,7 +143,7 @@ class RecognitionPageTests(unittest.TestCase):
         self.assertEqual(before['boards'], after['boards'])
         page.marker_type.setCurrentIndex(1)
         self.applied(page)
-        page.gamma.set_value(1.2)
+        page.board_spec.setCurrentIndex(2)
         self.applied(page)
         self.assertEqual(service.config('multi_cam')['circle'], after['circle'])
         page.marker_type.setCurrentIndex(0)
