@@ -1,0 +1,332 @@
+# -*- coding: utf-8 -*-
+"""把《3D相机拼接方案通俗说明》生成为带插图的 Word 文档。"""
+import os
+
+from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml.ns import qn
+from docx.shared import Cm, Pt, RGBColor
+
+BASE = os.path.dirname(os.path.abspath(__file__))
+FIG = os.path.join(BASE, "figures")
+OUT = os.path.join(BASE, "..", "3D相机拼接方案通俗说明.docx")
+
+CN_FONT = "微软雅黑"
+
+
+def set_font(run, size=10.5, bold=False, color=None):
+    run.font.name = CN_FONT
+    run.font.size = Pt(size)
+    run.font.bold = bold
+    if color:
+        run.font.color.rgb = RGBColor(*color)
+    run._element.rPr.rFonts.set(qn("w:eastAsia"), CN_FONT)
+
+
+def para(doc, text, size=10.5, bold=False, align=None, space_after=6,
+         indent=False, color=None):
+    p = doc.add_paragraph()
+    run = p.add_run(text)
+    set_font(run, size=size, bold=bold, color=color)
+    if align is not None:
+        p.alignment = align
+    p.paragraph_format.space_after = Pt(space_after)
+    p.paragraph_format.line_spacing = 1.3
+    if indent:
+        p.paragraph_format.first_line_indent = Pt(21)
+    return p
+
+
+def rich_para(doc, segments, space_after=6, indent=True):
+    """segments: list of (text, bold)"""
+    p = doc.add_paragraph()
+    for text, bold in segments:
+        run = p.add_run(text)
+        set_font(run, size=10.5, bold=bold)
+    p.paragraph_format.space_after = Pt(space_after)
+    p.paragraph_format.line_spacing = 1.3
+    if indent:
+        p.paragraph_format.first_line_indent = Pt(21)
+    return p
+
+
+def bullet(doc, text, bold_head=None):
+    p = doc.add_paragraph(style="List Bullet")
+    if bold_head:
+        run = p.add_run(bold_head)
+        set_font(run, size=10.5, bold=True)
+    run = p.add_run(text)
+    set_font(run, size=10.5)
+    p.paragraph_format.space_after = Pt(4)
+    p.paragraph_format.line_spacing = 1.3
+    return p
+
+
+def heading(doc, text, level):
+    h = doc.add_heading(level=level)
+    run = h.add_run(text)
+    sizes = {0: 20, 1: 15, 2: 12.5}
+    set_font(run, size=sizes.get(level, 12), bold=True,
+             color=(0x1F, 0x3B, 0x66) if level <= 1 else (0x2E, 0x54, 0x8A))
+    return h
+
+
+def figure(doc, filename, width_cm, caption=None):
+    path = os.path.join(FIG, filename)
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = p.add_run()
+    run.add_picture(path, width=Cm(width_cm))
+    p.paragraph_format.space_after = Pt(2)
+    if caption:
+        para(doc, caption, size=9, align=WD_ALIGN_PARAGRAPH.CENTER,
+             space_after=10, color=(0x59, 0x59, 0x59))
+
+
+def set_cell(cell, text, bold=False, size=9.5, shade=None):
+    cell.text = ""
+    p = cell.paragraphs[0]
+    run = p.add_run(text)
+    set_font(run, size=size, bold=bold)
+    p.paragraph_format.space_after = Pt(2)
+    if shade:
+        tcPr = cell._tc.get_or_add_tcPr()
+        shd = tcPr.makeelement(qn("w:shd"), {
+            qn("w:val"): "clear", qn("w:fill"): shade})
+        tcPr.append(shd)
+
+
+def table(doc, rows, header=True):
+    t = doc.add_table(rows=len(rows), cols=len(rows[0]))
+    t.style = "Table Grid"
+    for r, row in enumerate(rows):
+        for c, val in enumerate(row):
+            is_head = header and r == 0
+            set_cell(t.rows[r].cells[c], val, bold=is_head,
+                     shade="D9E2F3" if is_head else None)
+    doc.add_paragraph().paragraph_format.space_after = Pt(2)
+    return t
+
+
+def build():
+    doc = Document()
+    sec = doc.sections[0]
+    sec.page_width, sec.page_height = Cm(21.0), Cm(29.7)
+    sec.left_margin = sec.right_margin = Cm(2.3)
+    sec.top_margin = sec.bottom_margin = Cm(2.5)
+
+    # 标题与导语
+    heading(doc, "3D 相机拼接方案通俗说明", 0)
+    para(doc, "面向对象：没有点云/标定背景的项目参与者、客户、新人。", size=10,
+         color=(0x59, 0x59, 0x59), space_after=2)
+    para(doc, "目标：看完这份文档，能明白“多张照片拼成一个完整 3D 模型”是怎么回事、"
+              "主流做法有哪几种、各自适合什么场合、有什么坑。",
+         size=10, color=(0x59, 0x59, 0x59), space_after=12)
+
+    # 一
+    heading(doc, "一、什么是 3D 相机拼接", 1)
+    para(doc, "一台 3D 相机（结构光、线激光、ToF 等）每次拍照，只能拍到它“眼前那一块”。"
+              "就像手机拍一个大房间，一张装不下，要拍好几张再拼起来。", indent=True)
+    para(doc, "需要拼接的不只是大工件。工件不大、但形状不规则时——凹槽、倒扣、深腔会被自身遮挡，"
+              "单视角永远拍不透。这类需要做逆向建模的小工件，同样要靠多视角拼接才能获得完整数据。",
+         indent=True)
+    rich_para(doc, [("拼接", True),
+                    ("做的事就是：把多张照片（更准确地说是多片“点云”——每个像素对应一个空间坐标点）"
+                     "合成到同一个坐标系里，拼成一张完整的 3D 图。", False)])
+    para(doc, "生活中最贴切的类比：两张拍风景的照片，你认出两张照片里都有一座塔，"
+              "就可以把两张照片对齐拼起来。3D 拼接的核心原理完全一样："
+              "找到两张图中“同一个物体上的点”，算出两幅图之间的旋转和平移关系，"
+              "把后面那张图“搬”到前面那张图的位置上。", indent=True)
+    rich_para(doc, [("关键概念就一个——变换矩阵：", True),
+                    ("一个 4×4 的数字表格，完整描述“旋转多少度、平移多少毫米”。"
+                     "有了它，就能把任何一片点云搬到统一坐标系下。"
+                     "拼接的全部工作，归根结底就是求出每片点云对应的变换矩阵。", False)])
+    figure(doc, "fig01_拼接原理.png", 15.5, "图 1  3D 拼接的核心原理：找公共点 → 求变换矩阵 → 统一坐标系")
+
+    # 二
+    heading(doc, "二、怎么算出变换矩阵：三类思路", 1)
+    para(doc, "算矩阵需要“线索”，按线索来源，主流方案分成三大类（外加一个不能单独用的辅助手段）。")
+
+    heading(doc, "思路 1：贴标记物（在工件上贴“路标”）", 2)
+    rich_para(doc, [("原理：", True),
+                    ("在工件表面贴上带编号的特殊圆点标记（编码圆——中间一个白圆，"
+                     "外圈黑白相间的环带编码出唯一 ID，相机一眼能认出“这是 42 号标记”）。"
+                     "相邻两张照片如果拍到同一个标记，就知道两张照片里“42 号圆心”是同一个物理点。"
+                     "拍到 ≥3 个（工程上建议 ≥6 个）这样的公共点，就能精确解出两幅图之间的变换矩阵。", False)])
+    figure(doc, "fig02_编码圆.png", 8.6, "图 2  编码圆标志物结构示意")
+    rich_para(doc, [("操作方式", True), ("（以手持/走拍扫描一个大工件为例）：", False)])
+    bullet(doc, "在工件表面按一定间距贴编码圆标记（打印店专业打印，贴平、不破损）；")
+    bullet(doc, "拿着相机从第一个位置拍照，然后平移一小段再拍一张，"
+                "保证相邻两张照片有重叠、重叠区里能看到至少 3~6 个相同的标记；")
+    bullet(doc, "软件自动识别标记、两两配准，逐张把点云链式地拼到第一张照片的坐标系里；")
+    bullet(doc, "全部拼完后做后处理（去重、平滑），输出完整模型。")
+    rich_para(doc, [("适用场景：", True),
+                    ("没有任何运动机构可用、工件允许贴标记、一次性或低频扫描。"
+                     "是最灵活、设备成本最低的兜底方案。", False)])
+    rich_para(doc, [("局限性：", True)])
+    bullet(doc, "：大工件可能要贴几百个标记，拍一两百张照片，耗时以小时计；",
+           bold_head="人工成本高")
+    bullet(doc, "：第 1 张和第 150 张之间的变换是 149 步误差累加出来的，"
+                "末端容易“漂”——表现为模型首尾对不上、闭环处错位。"
+                "必须“扫回起点形成闭环 + 全局优化”来消漂移（见图 6）；",
+           bold_head="精度随链条变长而衰减")
+    bullet(doc, "：圆心在照片上至少要占 4 个像素、不能过曝过暗、不能被遮挡，"
+                "圆心处的点云不能有孔洞，否则这个点就废了；", bold_head="标记本身有要求")
+    bullet(doc, "：标记外圈 N 个扇区最多只能编出几百到四千个不重复的号，"
+                "大面积贴标时要选大 N 规格，否则“重码”会被软件误认为同一个点，"
+                "直接给出错误的拼接结果。", bold_head="编码数量有限")
+    figure(doc, "fig06_链式闭环.png", 15.5, "图 6  链式拼接的误差累积与闭环校正")
+
+    heading(doc, "思路 2：用“已知的运动”代替标记（机器告诉你相机动了多少）", 2)
+    para(doc, "如果相机装在一个运动机构上（导轨、机器人、转台），而且机构能精确告诉你"
+              "“相机从 A 点移动到 B 点，位移是多少、转了多少度”，那变换矩阵根本不用从图像里猜——"
+              "直接由机构读数给出。这是工业上精度最高、最省事的路线。按运动形式细分四种：")
+    figure(doc, "fig04_已知运动.png", 15.5, "图 4  “已知运动”拼接的四种形态")
+
+    rich_para(doc, [("（a）编码器固定线扫（导轨匀速走一条直线）", True)])
+    rich_para(doc, [("原理：", True),
+                    ("相机沿导轨匀速移动，每移动一个固定小距离（由编码器脉冲触发）就采一条线，"
+                     "扫过去直接得到一整条“面片”。行与行之间的位移来自编码器读数，根本不需要拼接。", False)])
+    bullet(doc, "导轨 + 编码器装好，相机沿轴线走 1~2 趟即扫完整个长工件。")
+    bullet(doc, "长条形工件（筒体、管道、轨道件）轴向测量。精度 0.2~1 mm，"
+                "标记用量降到几十量级，工时最短。")
+    bullet(doc, "需要导轨和编码器硬件；只适合“沿一条直线展开”的场景；"
+                "环向（绕工件一圈的方向）仍要靠其他手段补。", )
+    rich_para(doc, [("（b）导轨/龙门走拍 + 已知位移", True)])
+    rich_para(doc, [("原理：", True),
+                    ("每拍一张照片，光栅尺/伺服告诉软件相机挪了多远。"
+                     "拼接 = 已知平移（粗对齐）+ 少量标记或 ICP 微调。", False)])
+    bullet(doc, "导轨走一个网格路径逐点拍照，机构位置自动记录。")
+    bullet(doc, "工件能放在龙门/导轨下、需要较高精度的离线扫描。"
+                "精度 0.2~0.8 mm（导轨直线度直接进误差）。")
+    bullet(doc, "需要导轨工装；重叠区可以压得很小（15% 即可），但仍需少量标记做漂移校验。")
+    rich_para(doc, [("（c）机器人 + 手眼标定", True)])
+    rich_para(doc, [("原理：", True),
+                    ("相机装在机械臂末端（“眼在手上”）或固定在工作区旁边（“眼在手外”）。"
+                     "先做一次手眼标定——让机器人摆 15 个以上不同姿势拍照，"
+                     "软件算出“相机”和“机器人”之间的固定变换矩阵。"
+                     "之后机器人在任意位置拍的照片，都能通过机器人读数换算到统一坐标系，"
+                     "拼接退化成纯粹的坐标换算。", False)])
+    bullet(doc, "机械臂带动标定板在工作空间内摆 ≥15 个姿势（多角度旋转，每次转 10°~30°），"
+                "每个姿势拍照并记录机器人位姿；")
+    bullet(doc, "手眼标定软件算出相机↔机器人变换矩阵（残差 <0.5 mm 为正常）；")
+    bullet(doc, "正式扫描时机器人逐点拍照，自动拼接。")
+    bullet(doc, "多品种、需要柔性的自动化产线，工件大且形状复杂，一次标定长期复用。")
+    bullet(doc, "精度天花板是机器人本身的绝对定位精度（未标定的机器人普遍 1~3 mm 误差），"
+                "往往不如导轨；机器人 + 视觉系统总成本高；"
+                "标定要求姿势覆盖充分，单轴运动会退化导致标定失败；"
+                "欧拉角约定（不同品牌机器人角度顺序不同）搞错会直接错出约 900 mm——"
+                "这是最常见的翻车点之一。", )
+    rich_para(doc, [("（d）转台/托辊旋转", True)])
+    rich_para(doc, [("原理：", True),
+                    ("工件放在转台或滚轮架上绕自身轴线转，相机固定。"
+                     "每转一个已知角度拍一张，环向拼接变成简单的“旋转已知角度”。"
+                     "工件本来就在滚轮架上的工位（焊接、喷砂）改造最省。", False)])
+    bullet(doc, "转台每转 3~6 个固定角度拍一帧，沿轴再挪几个站位，即可覆盖圆柱面全周。")
+    bullet(doc, "圆柱/回转体工件的 360° 检测，精度 0.3~1 mm。")
+    bullet(doc, "需要转台/滚轮架机构；转台角度精度直接决定环向精度；节拍偏慢。")
+
+    heading(doc, "思路 3：多相机固定阵列 + 一次标定", 2)
+    rich_para(doc, [("原理：", True),
+                    ("多台相机固定安装、同时（或交替）拍照，覆盖工件的不同侧面。"
+                     "标定只做一次（用一块标定板或多个公共特征点算出所有相机之间的外参矩阵），"
+                     "之后每来一个工件，各相机各拍一帧，软件自动变换合并——工件上什么都不用贴。", False)])
+    bullet(doc, "按工件尺寸布设相机阵列，保证相邻相机视野有重叠；")
+    bullet(doc, "在重叠区放标定板，采集标定数据，一次性解出所有相机间的变换矩阵；")
+    bullet(doc, "量产阶段：拍照 → 变换 → 合并，一气呵成。")
+    rich_para(doc, [("适用场景：", True),
+                    ("产线在线检测、批量工件、节拍要求快的场合。"
+                     "精度最高（0.1~0.5 mm）且长期稳定，是量产的首选。", False)])
+    rich_para(doc, [("局限性：", True),
+                    ("硬件成本最高（多台相机 + 工位改造）；柔性差——换工件、换位置就要重新标定；"
+                     "多台结构光相机同时拍照会互相干扰（条纹污染），要交替触发或选不同波段机型。", False)])
+    figure(doc, "fig05_固定阵列.png", 10.5, "图 5  多相机固定阵列：一次标定，拍照即拼接")
+
+    heading(doc, "辅助手段（不能单独用）：ICP 点云配准", 2)
+    para(doc, "ICP 是让两片点云“自动对齐”的经典算法：不断微调一片点云的位置，"
+              "直到两片重叠区域的点距离最小。", indent=True)
+    rich_para(doc, [("为什么不能单独用：", True),
+                    ("如果两片点云重叠区域形状规则（比如都是平面或圆柱面），"
+                     "ICP 存在“无论怎么转/滑都差不多对齐”的自由度——数学上叫简并。"
+                     "典型例子：圆柱面上纯 ICP 一定沿轴向漂移 + 绕轴乱转。"
+                     "ICP 的正确角色是作为上面所有方案的“微调精配准后处理”，而不是主方案。", False)])
+    figure(doc, "fig07_ICP简并.png", 14, "图 7  为什么纯 ICP 在圆柱面上必然漂移（简并）")
+    figure(doc, "fig03_方案决策.png", 12.5, "图 3  拼接方案选择决策图")
+
+    # 三
+    heading(doc, "三、特殊难题：顶底拼接", 1)
+    para(doc, "普通拼接假设相邻照片“有重叠、能看到共同的东西”。"
+              "但顶部相机和底部相机互相看不见对方能看到的东西，常规手段全部失效。"
+              "解决办法是引入“中转”：", indent=True)
+    table(doc, [
+        ["方案", "做法", "适用"],
+        ["中转标定物",
+         "用一块双面标定板（两面都有标记、厚度已知）同时给顶、底相机看，"
+         "两面几何关系已知，借此把两个坐标系“桥接”起来。一次标定长期复用，精度最高",
+         "固定工位、批量检测（首选）"],
+        ["物体贴标记 + 链式",
+         "顶 → 侧 → 底 借侧面视角做中间传递，像接力一样把变换传下去",
+         "柔性、样件、多品种"],
+        ["转台/夹具翻转",
+         "工件翻个面再拍，用夹具上的标记对齐两次扫描",
+         "需要完整 360° 模型时"],
+    ])
+    figure(doc, "fig08_顶底中转.png", 8.8, "图 8  顶底拼接：双面标定物作“中转”")
+
+    # 四
+    heading(doc, "四、方案对比一览", 1)
+    table(doc, [
+        ["方案", "贴标记", "运动机构", "典型精度", "柔性", "工装成本", "一句话定位"],
+        ["编码器线扫", "很少(20~70)", "导轨+编码器", "0.2~1 mm", "中", "中", "长工件首选，工时最短"],
+        ["导轨走拍+已知位移", "少量(校验)", "导轨/龙门", "0.2~0.8 mm", "高", "中", "高精度离线扫描"],
+        ["机器人+手眼标定", "0~30", "机械臂", "0.3~1 mm", "最高", "高", "多品种自动化产线"],
+        ["转台/托辊旋转", "0~40", "转台/滚轮架", "0.3~1 mm", "中", "中", "回转体 360°"],
+        ["纯标记物链式拼接", "多(300~700)", "不需要", "0.5~2 mm", "最高", "几乎为零", "无机构时的兜底"],
+        ["多相机固定阵列", "不需要", "固定阵列", "0.1~0.5 mm", "低", "最高", "产线在线批量检测"],
+        ["纯 ICP", "—", "—", "不可控", "—", "零", "只能当精配准后处理"],
+    ])
+
+    # 五
+    heading(doc, "五、怎么选：六个问题", 1)
+    bullet(doc, "（导轨/机器人/龙门）——能，优先走“已知运动”路线；", bold_head="1. 相机能不能装到运动机构上？")
+    bullet(doc, "（托辊/转台）——能，环向问题大幅简化；", bold_head="2. 工件能不能转？")
+    bullet(doc, "（焊缝、缺陷）——局部可以再砍一半工作量；", bold_head="3. 要全表面模型，还是只测局部？")
+    bullet(doc, "标记拼接 0.5~2 mm；已知运动 + ICP 0.2~1 mm；固定阵列 0.1~0.5 mm；", bold_head="4. 精度目标是多少？")
+    bullet(doc, "（外观/清洁度要求）——不允许则排除标记法；", bold_head="5. 工件表面允不允许贴标记？")
+    bullet(doc, "——在线检测基本只能选固定阵列或已知运动。", bold_head="6. 节拍要求：离线建模还是产线在线检测？")
+
+    # 六
+    heading(doc, "六、局限性与常见坑（汇总）", 1)
+    para(doc, "无论选哪种方案，这些是所有 3D 拼接共同的现实约束：")
+    bullet(doc, "：同一块表面被两张照片各采一层，合并后看着像两层皮，"
+                "必须去重/下采样/平滑后才能用（见图 9）；", bold_head="重叠区“双层皮”")
+    bullet(doc, "：凡是一步一步链式拼接的，链越长末端漂得越多。"
+                "对策：扫回起点形成闭环 + 全局优化；", bold_head="链式误差累积")
+    bullet(doc, "：多台结构光相机同时拍照，投影条纹会互相污染对方的点云。"
+                "对策：交替软触发，或选不同颜色波段（红/蓝）的机型；", bold_head="结构光互扰")
+    bullet(doc, "：打印糊了、贴歪了、被反光干扰、圆心点云有孔洞，这个标记点就废了；"
+                "相邻两帧公共标记不足 3 个，这一步拼接直接失败；", bold_head="标记质量")
+    bullet(doc, "：用标准球/量块复测 + 重叠区点间距 RMS 统计说话，不能口头承诺“很准”；",
+           bold_head="精度验收要有硬指标")
+    bullet(doc, "：长时间工作相机点云会随温度漂移，需要定期用固定标记做温漂补偿；",
+           bold_head="温度漂移")
+    bullet(doc, "：内存中点云单位是米、存盘文件通常是毫米，差 1000 倍是最常见的低级错误。",
+           bold_head="单位陷阱")
+    figure(doc, "fig09_双层皮.png", 14, "图 9  重叠区“双层皮”与合并后处理")
+
+    # 七
+    heading(doc, "七、一句话总结", 1)
+    p = para(doc, "3D 拼接的本质是“求每片点云到一个公共坐标系的变换矩阵”。"
+                  "线索要么来自工件上的标记（贴标法，灵活但累、会累积误差），"
+                  "要么来自运动机构的读数（已知运动法，精度高、省事但要有硬件），"
+                  "要么一次标定永久复用（固定阵列，量产最优）；"
+                  "纯算法对齐（ICP）只能打下手，不能挑大梁。",
+             size=11, bold=True, indent=True)
+    p.paragraph_format.space_before = Pt(6)
+
+    doc.save(OUT)
+    print("saved:", os.path.abspath(OUT))
+
+
+if __name__ == "__main__":
+    build()

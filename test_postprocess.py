@@ -89,6 +89,10 @@ class PostprocessTests(unittest.TestCase):
         if not self.editor._closed:
             self.editor.close()
         fixture.FrameBrowserTests.tearDown(self)
+        # processEvents alone leaves closed windows queued for DeferredDelete.
+        # Drain them before another test applies an application-wide stylesheet.
+        self.app.sendPostedEvents(None, QEvent.DeferredDelete)
+        self.app.processEvents()
 
     def finish(self):
         self.wait(lambda: self.editor._worker is None and self.editor._pending_load is None)
@@ -270,14 +274,13 @@ class PostprocessTests(unittest.TestCase):
         before = original.read_bytes()
         self.editor.viewer.canvas.zoom = 1.3
         view = self.editor._view()
-        self.editor.voxel.setValue(3)
         from core.postprocess import processing
         threads = []
         def run(*args):
             threads.append(threading.get_ident())
             return processing.voxel_downsample(*args)
         with patch('ui_v2.postprocess.window.voxel_downsample', side_effect=run):
-            self.editor.downsample('voxel')
+            self.editor.downsample('voxel', 3)
             self.assertFalse(self.editor.actions['open'].isEnabled())
             self.finish()
         result = self.editor._display_ids[0]
@@ -334,6 +337,141 @@ class PostprocessTests(unittest.TestCase):
         self.assertEqual({p.name for p in (self.db.directory/'frames').iterdir()}, before)
         self.assertEqual((self.db.directory/'index.json').read_bytes(), index)
         self.assertIs(self.editor._clouds[source], original)
+        self.assertFalse(self.editor._undo)
+
+    def test_grouped_results_refresh_reload_fallback_and_selection(self):
+        raw, source, _ = self.load_grid()
+        original = self.editor._clouds[source]
+        self.editor._segment = (source, original, np.arange(100) < 40, self.editor._view())
+        self.editor.apply_segment(True)
+        self.finish()
+        outputs = [uid for uid, _ in self.editor._undo[-1][0]]
+        multi = self.db.publish_result(cloud([[0, 0, 1]]), [raw, source], postprocess=True)
+        missing = self.db.publish_result(cloud([[0, 0, 2]]), [], postprocess=True)
+        # Emulate an unavailable source without altering the stored session format.
+        self.db.records[missing].source_ids = ['0' * 32]
+        browser = self.editor.source_browser
+        # Reversed snapshots ensure attachment never depends on insertion order.
+        sessions, records = self.db.snapshot()
+        with patch.object(self.db, 'snapshot', return_value=(sessions, records[::-1])):
+            browser.refresh()
+        def verify(tree):
+            self.assertEqual(set(tree._items), set(self.db.records))
+            for uid in outputs:
+                frame = tree._items[uid].parent()
+                self.assertIs(frame, tree._items[outputs[0]].parent())
+                self.assertFalse(frame.data(0, Qt.UserRole))
+                self.assertTrue(frame.text(0).startswith('后处理帧 '))
+                self.assertIs(frame.parent(), tree._items[source].parent())
+                self.assertIs(tree._component_items[uid, 'cloud'], tree._items[uid])
+                self.assertEqual(tree._items[uid].childCount(), 0)
+            self.assertEqual(tree._items[source].childCount(), 1)
+            self.assertEqual([tree._items[uid].text(0) for uid in outputs],
+                             ['框内点云 · PLY', '框外点云 · PLY'])
+            for uid in (multi, missing):
+                self.assertEqual(tree._items[uid].parent().parent().text(0), '拼接结果')
+        verify(browser)
+        verify(self.browser)
+        with QSignalBlocker(browser.tree):
+            browser.tree.clearSelection()
+            browser._items[source].setSelected(True)
+        self.assertEqual(browser.selected_ids(), [source])
+        self.assertEqual(self.editor._selected_cloud_ids(), [source])
+        checks = browser.checked_components()
+        browser.refresh()
+        verify(browser)
+        self.assertEqual(browser.selected_ids(), [source])
+        self.assertEqual(browser.checked_components(), checks)
+        self.editor.close()
+        self.app.processEvents()
+        self.db._save_index()
+        self.db.open_project(self.db.directory / 'index.json')
+        self.editor = self.bridge.open_postprocess()
+        self.finish()
+        verify(self.editor.source_browser)
+
+    def test_virtual_frame_selection_delete_restore_and_legacy_metadata(self):
+        import json
+        raw, source, _ = self.load_grid()
+        second = self.source(2)
+        second.kind = 'scan'
+        raw2 = self.db.ingest(second)
+        layer = self.editor._clouds[source]
+        self.editor._segment = (source, layer, np.arange(100) < 40, self.editor._view())
+        self.editor.apply_segment(True); self.finish()
+        outputs = [uid for uid, _ in self.editor._undo[-1][0]]
+        operation = self.db.records[outputs[0]].operation_id
+        self.assertTrue(operation)
+        self.assertEqual(self.db.records[outputs[1]].operation_id, operation)
+        for browser in (self.browser, self.editor.source_browser):
+            self.assertEqual(browser._items[raw2].parent().text(0), '扫描帧数据')
+            frame = browser._items[outputs[0]].parent()
+            previews = []
+            browser.component_selected.connect(lambda *args: previews.append(args))
+            browser.frame_selected.connect(lambda *args: previews.append(args))
+            displayed = list(self.editor._display_ids)
+            browser.tree.setCurrentItem(frame)
+            self.assertEqual(self.editor._display_ids, displayed)
+            self.assertIsNone(self.editor._worker)
+            self.assertEqual(previews, [])
+            self.assertEqual(browser.selected_ids(), outputs)
+            self.assertIsNone(browser.export_uid())
+            browser._items[outputs[0]].setSelected(True)
+            self.assertEqual(browser.selected_ids(), outputs)
+            browser.refresh()
+            self.assertEqual(browser.selected_ids(), outputs)
+            self.assertEqual(browser._items[outputs[0]].parent().childCount(), 2)
+        self.assertEqual(self.editor._selected_cloud_ids(), outputs)
+        before = {uid: (self.db.directory/'frames'/uid/'pointmap.ply').read_bytes()
+                  for uid in (raw, raw2, source)}
+        for uid in outputs:
+            target = Path(self.temp.name)/(uid+'.ply')
+            self.db.export_cloud(uid, target)
+            self.assertEqual(target.read_bytes(), (self.db.directory/'frames'/uid/'pointmap.ply').read_bytes())
+        self.db.remove(outputs)
+        self.db._save_index()
+        self.db.open_project(self.db.directory/'index.json')
+        self.db.restore_last_removal()
+        self.assertEqual([self.db.records[uid].operation_id for uid in outputs], [operation]*2)
+        project = SessionProject('multi_cam', save_root=Path(self.temp.name)/'saved-group')
+        self.addCleanup(project.dispose)
+        project.database = self.db
+        saved = project.save({})
+        restored, _ = SessionProject.load(saved, 'multi_cam')
+        self.addCleanup(restored.dispose)
+        from ui_v2.frame_database import FrameBrowser
+        restored_browser = FrameBrowser(restored.database)
+        self.addCleanup(restored_browser.deleteLater)
+        self.assertIs(restored_browser._items[outputs[0]].parent(),
+                      restored_browser._items[outputs[1]].parent())
+        self.assertEqual(restored.database.records[outputs[0]].output_role, 'inside')
+        for uid, data in before.items():
+            self.assertEqual((self.db.directory/'frames'/uid/'pointmap.ply').read_bytes(), data)
+        # Old readers ignore the optional top-level map; old sessions have none.
+        index = self.db.directory/'index.json'
+        data = json.loads(index.read_text(encoding='utf-8'))
+        self.assertEqual(data['schema'], 1)
+        self.assertNotIn('operation_id', data['records'][0])
+        data.pop('operations')
+        index.write_text(json.dumps(data), encoding='utf-8')
+        self.db.open_project(index)
+        self.browser.refresh()
+        self.assertIsNot(self.browser._items[outputs[0]].parent(),
+                         self.browser._items[outputs[1]].parent())
+        self.assertEqual(set(self.browser._items), set(self.db.records))
+
+    def test_split_index_failure_rolls_back_both_branches(self):
+        _, source, _ = self.load_grid()
+        layer = self.editor._clouds[source]
+        self.editor._segment = (source, layer, np.arange(100) < 40, self.editor._view())
+        before = set(self.db.records)
+        index = (self.db.directory / 'index.json').read_bytes()
+        with patch.object(self.db, '_save_index', side_effect=OSError('split disk full')):
+            self.editor.apply_segment(False)
+            self.wait(lambda: self.editor._worker is None)
+        self.assertEqual(set(self.db.records), before)
+        self.assertEqual((self.db.directory / 'index.json').read_bytes(), index)
+        self.assertIs(self.editor._clouds[source], layer)
         self.assertFalse(self.editor._undo)
 
     def test_index_failure_keeps_previous_preview_and_database(self):
@@ -504,18 +642,26 @@ class PostprocessTests(unittest.TestCase):
             self.db.directory = directory
 
     def test_external_import_converts_units_and_automatically_joins_db(self):
+        from PySide6.QtCore import QTimer
         target = Path(self.temp.name)/'meters.ply'
         o3d.io.write_point_cloud(str(target), cloud([[.1,.2,.3]]))
-        self.editor.file_unit.setCurrentIndex(1)
-        with patch('ui_v2.postprocess.window.QFileDialog.getOpenFileName', return_value=(str(target),'')):
-            self.editor.open_file(); self.finish()
-        uid = self.editor._display_ids[0]
-        np.testing.assert_allclose(self.editor._clouds[uid].points, [[100,200,300]])
-        self.assertEqual(self.db.records[uid].source_ids, [])
-        self.assertIn(uid, self.browser._items)
-        self.editor.undo(); self.finish()
-        self.assertFalse(self.db.records)
-        self.assertIn(uid, self.db.removed)
+        source_bytes = target.read_bytes()
+        for unit, expected in (('mm', [[.1,.2,.3]]), ('m', [[100,200,300]])):
+            def choose():
+                dialog = self.app.activeModalWidget()
+                dialog.file_unit.setCurrentIndex(dialog.file_unit.findData(unit))
+                dialog.execute_button.click()
+            QTimer.singleShot(0, choose)
+            with patch('ui_v2.postprocess.window.QFileDialog.getOpenFileName', return_value=(str(target),'')):
+                self.editor.actions['open'].click(); self.finish()
+            uid = self.editor._display_ids[0]
+            np.testing.assert_allclose(self.editor._clouds[uid].points, expected)
+            self.assertEqual(self.db.records[uid].source_ids, [])
+            self.assertIn(uid, self.browser._items)
+            self.assertEqual(target.read_bytes(), source_bytes)
+            self.editor.undo(); self.finish()
+            self.assertFalse(self.db.records)
+            self.assertIn(uid, self.db.removed)
 
     def test_hidden_selected_db_cloud_can_export_full_source(self):
         _, source, _ = self.load_grid()

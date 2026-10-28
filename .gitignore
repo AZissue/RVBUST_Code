@@ -49,3 +49,9 @@ offline_test_data/**/.cache/
 
 # Explicit user session projects are local data, not source files.
 /sessions/
+
+# Agent 运行产物与临时数据（本地保留，不入库）
+tmp_skill_logs/
+*.log.*
+artifacts/
+offline_test_data/*.ply

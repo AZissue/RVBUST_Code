@@ -173,6 +173,13 @@ class OfflineStitcher:
         """
         image = cv2.imread(pair.image_path)
         if image is None:
+            # cv2.imread 不支持非 ASCII 路径（如中文目录），退回 imdecode
+            try:
+                buf = np.fromfile(pair.image_path, dtype=np.uint8)
+                image = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+            except Exception:
+                image = None
+        if image is None:
             return False, f"无法读取图像: {pair.image_path}", []
 
         markers = self.marker_detector.detect_3d(

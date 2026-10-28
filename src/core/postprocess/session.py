@@ -13,6 +13,7 @@ class CloudLayer:
     source: str = '点云数据'
 
     origins: tuple = ()  # (DB UID, geometry revision) provenance
+    output_role: str = ''
 
     def __post_init__(self):
         pts = np.asarray(self.points, dtype=np.float64)

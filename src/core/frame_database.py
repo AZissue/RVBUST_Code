@@ -67,6 +67,8 @@ class FrameRecord:
     source_ids: list = field(default_factory=list)
     revision: int = 0
     recognition: dict = field(default_factory=dict)
+    operation_id: str = ''
+    output_role: str = ''
 
 
 class FrameDatabase:
@@ -90,16 +92,22 @@ class FrameDatabase:
         self.directory.mkdir(parents=True, exist_ok=True)
         # Keep the schema-1 record shape readable by older MCC versions. The
         # optional top-level cache can be ignored without losing raw assets.
-        records = [{key: value for key, value in vars(row).items() if key != 'recognition'}
+        records = [{key: value for key, value in vars(row).items() if key not in ('recognition', 'operation_id', 'output_role')}
                    for row in self.records.values()]
         removed = {uid: {**entry, 'record': {key: value for key, value in entry['record'].items()
-                                            if key != 'recognition'}} for uid, entry in self.removed.items()}
+                                            if key not in ('recognition', 'operation_id', 'output_role')}} for uid, entry in self.removed.items()}
         recognition = {uid: row.recognition for uid, row in self.records.items() if row.recognition}
         recognition.update({uid: entry['record']['recognition'] for uid, entry in self.removed.items()
                             if entry['record'].get('recognition')})
+        operations = {row.uid: dict(operation_id=row.operation_id, output_role=row.output_role)
+                      for row in self.records.values() if row.operation_id}
+        operations.update({uid: {key: entry['record'].get(key, '')
+                                for key in ('operation_id', 'output_role')}
+                           for uid, entry in self.removed.items()
+                           if entry['record'].get('operation_id')})
         write_json_atomic(str(self.directory / 'index.json'), _json_value(dict(
             schema=1, mode=self.mode, sessions=self.sessions,
-            records=records, removed=removed, recognition=recognition)), ensure_ascii=False, indent=2)
+            records=records, removed=removed, recognition=recognition, operations=operations)), ensure_ascii=False, indent=2)
 
     def _notify(self):
         if self.on_changed:
@@ -376,7 +384,7 @@ class FrameDatabase:
         """Commit a separate immutable result; never change raw frame geometry."""
         return self.publish_results([(cloud, source_ids, name)], postprocess=postprocess)[0]
 
-    def publish_results(self, results, *, postprocess=False):
+    def publish_results(self, results, *, postprocess=False, output_roles=None):
         """Atomically commit related (cloud, source_ids, name) result branches.
 
         In particular, polygon keep/discard branches must both succeed or neither
@@ -386,6 +394,10 @@ class FrameDatabase:
         results = [(cloud, list(sources), name) for cloud, sources, name in results]
         if not results:
             raise ValueError('没有结果可写入')
+        output_roles = list(output_roles) if output_roles is not None else [''] * len(results)
+        if len(output_roles) != len(results) or any(role not in ('', 'inside', 'outside') for role in output_roles):
+            raise ValueError('后处理输出角色无效')
+        operation_id = uuid.uuid4().hex if postprocess else ''
         role = '后处理' if postprocess else '拼接'
         identifiers, folders, staged = [], [], {}
         with self._lock:
@@ -401,7 +413,7 @@ class FrameDatabase:
                 self.begin_session()
             number = 1 + sum(row.kind == 'result' for row in self.records.values())
             try:
-                for cloud, sources, name in results:
+                for (cloud, sources, name), output_role in zip(results, output_roles):
                     uid = uuid.uuid4().hex
                     folder = self.directory / 'frames' / uid
                     folders.append(folder)
@@ -411,7 +423,8 @@ class FrameDatabase:
                     title = name or (f'后处理点云 {number:03d}' if postprocess else f'拼接帧 {number:03d}')
                     staged[uid] = FrameRecord(uid, self.session_id, '', number, role + '结果',
                         title, datetime.now().isoformat(timespec='seconds'), len(cloud.points), [0, 0],
-                        status='已处理' if postprocess else '已拼接', kind='result', source_ids=sources)
+                        status='已处理' if postprocess else '已拼接', kind='result', source_ids=sources,
+                        operation_id=operation_id, output_role=output_role)
                     identifiers.append(uid)
                     number += 1
                 self.records.update(staged)
@@ -527,7 +540,15 @@ class FrameDatabase:
         recognition = data.get('recognition', {})
         if not isinstance(recognition, dict) or not all(isinstance(value, dict) for value in recognition.values()):
             raise ValueError('DB识别缓存格式无效')
+        operations = data.get('operations', {})
+        if (not isinstance(operations, dict) or any(
+                not isinstance(value, dict) or not isinstance(value.get('operation_id', ''), str)
+                or value.get('output_role', '') not in ('', 'inside', 'outside')
+                for value in operations.values())):
+            raise ValueError('DB后处理分组格式无效')
         for uid, entry in removed.items():
+            entry['record'].update({key: operations.get(uid, {}).get(key, '')
+                                    for key in ('operation_id', 'output_role')})
             entry['record']['recognition'] = recognition.get(uid, entry['record'].get('recognition', {}))
             batch = entry['batch']
             if (len(uid) != 32 or len(batch) != 32 or
@@ -536,6 +557,8 @@ class FrameDatabase:
                 raise ValueError('DB回收区索引无效')
         for values in data['records']:
             row = FrameRecord(**values)
+            row.operation_id = operations.get(row.uid, {}).get('operation_id', '')
+            row.output_role = operations.get(row.uid, {}).get('output_role', '')
             row.recognition = recognition.get(row.uid, row.recognition)
             if len(row.uid) != 32 or any(c not in '0123456789abcdef' for c in row.uid):
                 raise ValueError('DB帧标识无效')

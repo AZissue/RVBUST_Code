@@ -565,19 +565,14 @@ class BackendBridge(QObject):
         device_infos = []
         if not self._ensure_sdk():
             return device_infos
-        for i, dev in enumerate(self.camera_manager.find_devices()):
-            try:
-                ret, info = dev.GetDeviceInfo()
-                if ret:
-                    device_infos.append(DeviceInfo(
-                        model=info.name,
-                        serial=info.sn,
-                        ip=getattr(info, 'ip', ''),
-                        online=True,
-                        backend_ref=i,
-                    ))
-            except Exception:
-                pass
+        if not self.can_change_workspace():
+            self.shell.log('正在采集或处理任务，请稍后刷新设备状态。', 'warn')
+            return device_infos
+        for row in self.camera_manager.poll_device_statuses():
+            device_infos.append(DeviceInfo(
+                model=row.model, serial=row.serial, ip=row.ip,
+                online=row.online, backend_ref=row.backend_ref,
+                status=row.status, status_detail=row.detail))
         return device_infos
 
     @staticmethod
@@ -2509,6 +2504,9 @@ class BackendBridge(QObject):
             （traceback.extract_stack()[-2] 取调用方方法名，零调用点改动）。
         """
         from ui_common.worker_thread import WorkerThread
+        from .background_delivery import BackgroundDelivery
+        if getattr(self, '_cleaned', False):
+            return
         if name is None:
             import traceback
             name = traceback.extract_stack()[-2].name
@@ -2548,11 +2546,10 @@ class BackendBridge(QObject):
                 except Exception as exc:
                     self.shell.log('DB元数据更新失败：' + str(exc), 'error')
 
-        worker.result_ready.connect(_wrapped_done)
         # 基类 QThread.finished：线程真正退出后才摘除引用并交 Qt 回收。
         # 不能挂在 result_ready 上（run() 内发射、线程仍在运行），
         # 也不能挂在已遮蔽的自定义信号上，否则运行中析构 → __fastfail。
-        worker.finished.connect(lambda w=worker: self._on_worker_thread_finished(w))
+        worker._delivery = BackgroundDelivery(self, worker, _wrapped_done)
         worker.start()
         self.shell.workspace_robot()._refresh_actions()
         if hasattr(self.shell, '_industrial_ribbon'):
@@ -2563,6 +2560,8 @@ class BackendBridge(QObject):
         if worker in self._workers:
             self._workers.remove(worker)
         worker.deleteLater()
+        if getattr(self, '_cleaned', False):
+            return
         self.shell.workspace_robot()._refresh_actions()
         if hasattr(self.shell, '_industrial_ribbon'):
             self.shell._industrial_ribbon.update_status()

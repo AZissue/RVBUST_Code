@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 1240px; height: 1754px; }
+  body {
+    font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+    background: #F4F7FB;
+    color: #1E293B;
+    display: flex; flex-direction: column;
+  }
+  /* ---------- 头部 ---------- */
+  .hero {
+    background: linear-gradient(135deg, #0B2A5E 0%, #1558C0 60%, #2563EB 100%);
+    color: #fff; padding: 36px 72px 26px; flex-shrink: 0;
+    position: relative; overflow: hidden;
+  }
+  .hero::after {
+    content: ""; position: absolute; right: -140px; top: -140px;
+    width: 420px; height: 420px; border-radius: 50%;
+    background: rgba(255,255,255,0.07);
+  }
+  .hero::before {
+    content: ""; position: absolute; right: 60px; bottom: -180px;
+    width: 320px; height: 320px; border-radius: 50%;
+    background: rgba(255,255,255,0.05);
+  }
+  .brand { font-size: 22px; letter-spacing: 2px; opacity: .85; margin-bottom: 26px; }
+  .brand b { font-weight: 700; }
+  h1 { font-size: 47px; line-height: 1.3; font-weight: 700; }
+  .hero .sub {
+    margin-top: 16px; font-size: 22px; opacity: .92; line-height: 1.6;
+  }
+  .hero .lead {
+    margin-top: 10px; font-size: 17.5px; opacity: .72; line-height: 1.7;
+  }
+  .chips { margin-top: 20px; display: flex; gap: 16px; }
+  .chip {
+    border: 1px solid rgba(255,255,255,.45); border-radius: 999px;
+    padding: 8px 22px; font-size: 17.5px; background: rgba(255,255,255,.10);
+  }
+  /* ---------- 主体 ---------- */
+  .body { padding: 20px 72px 0; }
+  .card {
+    background: #fff; border-radius: 18px; padding: 22px 36px;
+    box-shadow: 0 6px 24px rgba(15,42,94,.07); margin-bottom: 18px;
+  }
+  .card-head { display: flex; align-items: center; gap: 16px; margin-bottom: 14px; }
+  .badge {
+    width: 50px; height: 50px; border-radius: 14px; flex-shrink: 0;
+    color: #fff; font-size: 26px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .b-blue { background: #2563EB; }
+  .b-teal { background: #0D9488; }
+  .card-head h2 { font-size: 29px; font-weight: 700; }
+  .card-head .tag { font-size: 18px; color: #64748B; font-weight: 400; margin-left: 6px; }
+  .principle {
+    border-radius: 12px; padding: 13px 20px; font-size: 18.5px; line-height: 1.65;
+    margin-bottom: 15px;
+  }
+  .p-blue { background: #EFF4FF; border-left: 6px solid #2563EB; }
+  .p-teal { background: #ECFAF7; border-left: 6px solid #0D9488; }
+  .principle b { color: inherit; }
+  .cols { display: flex; gap: 36px; }
+  .col { flex: 1; }
+  .col h3 {
+    font-size: 19.5px; margin-bottom: 9px; display: flex; align-items: center; gap: 10px;
+  }
+  .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .d-blue { background: #2563EB; }
+  .d-teal { background: #0D9488; }
+  .d-amber { background: #D97706; }
+  ul { list-style: none; }
+  li {
+    font-size: 17.5px; line-height: 1.6; color: #334155;
+    padding-left: 22px; position: relative; margin-bottom: 5px;
+  }
+  li::before {
+    content: ""; position: absolute; left: 2px; top: 12px;
+    width: 8px; height: 8px; border-radius: 2px; background: #94A3B8;
+  }
+  li b { color: #0F2A5E; }
+  /* ---------- 选型表 ---------- */
+  .table-card {
+    background: #fff; border-radius: 18px; padding: 22px 36px;
+    box-shadow: 0 6px 24px rgba(15,42,94,.07);
+  }
+  .table-card h2 { font-size: 23px; margin-bottom: 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 17.5px; }
+  th, td { text-align: left; padding: 10px 16px; border-radius: 8px; }
+  th { background: #0F2A5E; color: #fff; font-weight: 600; }
+  th:first-child { border-radius: 8px 0 0 8px; }
+  th:last-child { border-radius: 0 8px 8px 0; }
+  tr:nth-child(even) td { background: #F4F7FB; }
+  td:last-child { font-weight: 700; color: #1558C0; }
+  /* ---------- 底部 ---------- */
+  .summary {
+    margin: 14px 72px 0; background: #0F2A5E; color: #fff;
+    border-radius: 16px; padding: 19px 32px; font-size: 18.5px; line-height: 1.7;
+  }
+  .summary b { color: #7DB2FF; }
+  .footer {
+    margin-top: 14px; padding: 0 72px 24px;
+    display: flex; justify-content: space-between; align-items: flex-end;
+    color: #64748B; font-size: 15.5px;
+  }
+  .footer .logo { font-size: 24px; font-weight: 700; color: #0F2A5E; letter-spacing: 1px; }
+</style>
+</head>
+<body>
+  <div class="hero">
+    <div class="brand"><b>RVC</b> · 3D 拼接方案</div>
+    <h1>把“拍不全”的工件，<br>拼成一个完整的 3D</h1>
+    <div class="sub">两大类拼接方案 · 大件全覆盖，小件无死角</div>
+    <div class="lead">单台 3D 相机一次只能拍一个视角：大件一张装不下，不规则小件有遮挡死角。<br>拼接方案把多视角数据自动拼成一个完整 3D 模型，全程无需人工对齐。</div>
+    <div class="chips">
+      <div class="chip">精度 0.1 ~ 2 mm</div>
+      <div class="chip">全自动 · 零人工对齐</div>
+      <div class="chip">一次标定 · 长期复用</div>
+    </div>
+  </div>
+
+  <div class="body">
+    <div class="card">
+      <div class="card-head">
+        <div class="badge b-blue">壹</div>
+        <h2>标记物拼接<span class="tag">贴几个标记，剩下的交给软件</span></h2>
+      </div>
+      <div class="principle p-blue"><b>一句话原理：</b>在工件表面贴上带编号的编码标记，相机自动认出“两张照片里的同一个标记”，据此算出两片数据的相对位置，逐帧拼合成整体。</div>
+      <div class="cols">
+        <div class="col">
+          <h3><span class="dot d-blue"></span>适合谁</h3>
+          <ul>
+            <li>现场<b>没有导轨、机器人、转台</b>，也不想改造产线</li>
+            <li>一次性扫描、逆向建模、大件测绘类项目</li>
+            <li>筒体、模具、铸件、叶片、框架类<b>大型工件</b>——搬不动、转不了、拍不全</li>
+            <li>不规则<b>小工件</b>——凹槽、倒扣、深腔被遮挡，单视角拍不透，需多视角<b>逆向建模</b></li>
+          </ul>
+        </div>
+        <div class="col">
+          <h3><span class="dot d-amber"></span>解决什么痛点</h3>
+          <ul>
+            <li><b>全：</b>大件单视角装不下、小件单视角有死角 → 多视角自动拼</li>
+            <li><b>省：</b>零工装投入，贴标就能干</li>
+            <li><b>快：</b>全自动，典型精度 0.5~2 mm</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <div class="badge b-teal">贰</div>
+        <h2>已知变换拼接<span class="tag">设备知道相机在哪，拍下来就是拼好的</span></h2>
+      </div>
+      <div class="principle p-teal"><b>一句话原理：</b>相机装在导轨、机器人或转台上（或采用多相机固定阵列），每张照片的位置关系由设备精确给出、一次标定长期有效，点云自动归位。</div>
+      <div class="cols">
+        <div class="col">
+          <h3><span class="dot d-teal"></span>适合谁</h3>
+          <ul>
+            <li><b>产线在线检测、批量生产</b> → 多相机固定阵列，拍照即出结果</li>
+            <li>圆柱、回转体 360° 全周检测 → 转台 / 托辊</li>
+            <li>长筒、管道类长工件 → 编码器线扫；多品种柔性产线 → 机器人 + 手眼标定</li>
+          </ul>
+        </div>
+        <div class="col">
+          <h3><span class="dot d-amber"></span>解决什么痛点</h3>
+          <ul>
+            <li><b>净：</b>外观件不能贴标记 → 工件上什么都不用贴</li>
+            <li><b>快：</b>拍照即拼接，无人工环节，满足产线节拍</li>
+            <li><b>精：</b>典型精度 0.1~1 mm，标定一次长期复用</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <div class="table-card">
+      <h2>一张表看懂怎么选</h2>
+      <table>
+        <tr><th>你的现场情况</th><th>推荐方案</th></tr>
+        <tr><td>无运动机构、允许贴标、大件 / 一次性扫描</td><td>标记物拼接</td></tr>
+        <tr><td>产线在线检测、批量工件</td><td>多相机固定阵列</td></tr>
+        <tr><td>圆柱回转体、工件在滚轮架上</td><td>转台 / 托辊</td></tr>
+        <tr><td>长筒管道等长条形工件 / 多品种柔性产线</td><td>编码器线扫 / 机器人 + 手眼标定</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="summary">一句话总结：有机构走<b>“已知变换”</b>（快、精、全自动），没机构走<b>“标记物”</b>（零改造、最灵活）——两类方案覆盖从大件离线测绘到产线在线检测的全部场景。</div>
+
+  <div class="footer">
+    <div class="logo">RVC · RVBUST</div>
+    <div>典型精度为工程经验区间，具体以现场标定与验收测试为准</div>
+  </div>
+</body>
+</html>

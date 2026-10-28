@@ -73,6 +73,15 @@ class SingleCameraController:
         self.line_scan_detected = False  # 连接时检测到线扫模式（已自动改面阵）
         self._capture_lock = threading.RLock()  # 串行化 2D/3D 拍摄，避免 SDK 句柄并发冲突
 
+    def poll_device_statuses(self):
+        """Refresh-only, read-only availability probe; never initialize SDK here."""
+        from .device_status import host_interfaces, poll_devices
+        try:
+            interfaces = host_interfaces()
+        except Exception:
+            interfaces = []
+        return poll_devices(self, RVC, interfaces) if RVC is not None else []
+
     def find_devices(self) -> list:
         if RVC is None:
             return []

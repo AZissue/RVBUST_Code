@@ -1,35 +1,7 @@
-"""Compact viewport segmentation tools and postprocess-only middle pan."""
-from PySide6.QtCore import QObject, QEvent, Qt, QSize
-from PySide6.QtGui import QMouseEvent
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QToolButton
+"""Compact viewport segmentation tools."""
+from PySide6.QtCore import QEvent, Qt, QSize
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QToolButton, QButtonGroup
 from ui_common.symbols import icon
-
-
-class MiddlePan(QObject):
-    """Reuse the renderer's right-drag pan without changing other workspaces."""
-    def __init__(self, canvas):
-        super().__init__(canvas)
-        self.canvas = canvas
-        canvas.setProperty('postprocessMiddlePan', True)
-        canvas.installEventFilter(self)
-
-    def eventFilter(self, watched, event):
-        kinds = (QEvent.MouseButtonPress, QEvent.MouseMove, QEvent.MouseButtonRelease)
-        if event.type() not in kinds or not (event.button() == Qt.MiddleButton or
-                                             event.buttons() & Qt.MiddleButton):
-            return False
-        buttons = event.buttons() & ~Qt.MiddleButton
-        if event.buttons() & Qt.MiddleButton:
-            buttons |= Qt.RightButton
-        button = Qt.RightButton if event.button() == Qt.MiddleButton else event.button()
-        translated = QMouseEvent(event.type(), event.position(), event.globalPosition(),
-                                 button, buttons, event.modifiers())
-        handler = {QEvent.MouseButtonPress: self.canvas.mousePressEvent,
-                   QEvent.MouseMove: self.canvas.mouseMoveEvent,
-                   QEvent.MouseButtonRelease: self.canvas.mouseReleaseEvent}[event.type()]
-        handler(translated)
-        event.accept()
-        return True
 
 
 class SegmentationToolbar(QFrame):
@@ -45,12 +17,14 @@ class SegmentationToolbar(QFrame):
         row.setSpacing(3)
         row.addWidget(QLabel('分割'))
         self.buttons = {}
+        self.keep_direction = QButtonGroup(self)
+        self.keep_direction.setExclusive(True)
         for key, title, glyph in (
-                ('draw', '多边形框选：左键加顶点，Alt+左键撤点；中键拖动平移并重新框选', 'polygon'),
                 ('close', '封闭多边形（至少3个顶点；也可右键或双击）', 'polygon_close'),
                 ('back', '撤销最后一个顶点（Alt+左键）', 'undo'),
-                ('inside', '保留框内点云；框外另存为DB分支', 'crop_inside'),
-                ('outside', '保留框外点云；框内另存为DB分支', 'crop_outside'),
+                ('inside', '保留框内：快捷删除框外；框外仍保存为DB分支', 'crop_inside'),
+                ('outside', '保留框外：快捷删除框内；框内仍保存为DB分支', 'crop_outside'),
+                ('delete', '快捷删除：保留框内时删除框外，保留框外时删除框内；原始数据保留', 'trash'),
                 ('cancel', '取消框选（Esc）', 'close')):
             button = QToolButton()
             button.setIcon(icon(glyph, '#dddddd', 21))
@@ -58,11 +32,19 @@ class SegmentationToolbar(QFrame):
             button.setFixedSize(30, 30)
             button.setToolTip(title)
             button.setAccessibleName(title.split('：')[0].split('（')[0])
-            button.clicked.connect(callbacks[key])
+            if key in ('inside', 'outside', 'delete'):
+                button.setText(title.split('：')[0])
+                button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+                button.setFixedWidth(96)
+            if key in ('inside', 'outside'):
+                button.setCheckable(True)
+                self.keep_direction.addButton(button)
+            else:
+                button.clicked.connect(callbacks[key])
             row.addWidget(button)
             self.buttons[key] = button
-        self.buttons['draw'].setCheckable(True)
-        self.setToolTip('左键画多边形 · 右键封闭 · 中键平移 · Esc取消；封闭后锁住视图，应用或取消后恢复。分割沿视线投影，不区分深度。')
+        self.buttons['inside'].setChecked(True)
+        self.setToolTip('左键画多边形 · 右键封闭 · 中键设旋转中心 · Esc取消；封闭后锁住视图，应用或取消后恢复。分割沿视线投影，不区分深度。')
         canvas.installEventFilter(self)
         self.adjustSize()
         self._position()
@@ -78,11 +60,10 @@ class SegmentationToolbar(QFrame):
         return False
 
     def refresh(self, *, ready, available, overlay, staged):
-        self.buttons['draw'].setEnabled(ready and available)
-        self.buttons['draw'].setChecked(overlay.active)
         self.buttons['close'].setEnabled(ready and overlay.active and not overlay.has_mask and overlay.vertex_count >= 3)
         self.buttons['back'].setEnabled(ready and overlay.active and not overlay.has_mask and overlay.vertex_count > 0)
         for key in ('inside', 'outside'):
-            self.buttons[key].setEnabled(ready and staged)
+            self.buttons[key].setEnabled(ready and available)
+        self.buttons['delete'].setEnabled(ready and staged and available)
         self.buttons['cancel'].setEnabled(overlay.active)
         self.raise_()

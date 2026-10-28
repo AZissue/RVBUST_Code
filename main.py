@@ -150,6 +150,10 @@ def main(*, composition=None):
         launcher._set_mode(mode, 'industrial')
         QTimer.singleShot(0, lambda: on_offline(mode))
 
+    else:
+        # Opening the real device manager performs one fresh status poll.
+        QTimer.singleShot(0, on_refresh)
+
     exit_code = 0
     try:
         if launcher.exec() != QDialog.Accepted:

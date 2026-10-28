@@ -151,7 +151,7 @@ class FrameBrowser(QWidget):
     def refresh(self):
         checked = set(self.checked_components())
         self._check_pressed = None
-        selected = {(item.data(0, Qt.UserRole), item.data(0, Qt.UserRole + 2)) for item in self.tree.selectedItems()}
+        selected = {(item.data(0, Qt.UserRole), item.data(0, Qt.UserRole + 2), item.data(0, Qt.UserRole + 3)) for item in self.tree.selectedItems()}
         expanded = set()
         def remember(item, key=''):
             key += '/' + item.text(0)
@@ -174,27 +174,15 @@ class FrameBrowser(QWidget):
         if hasattr(self.database, 'project_title'):
             project_root = QTreeWidgetItem(self.tree, [self.database.project_title, count_text])
             project_root.setIcon(0, icons.icon('folder_open', '#bbbbbb', 16))
+        records = sorted(records, key=lambda row: (row.created, row.frame_id, row.uid))
+        operation_groups = {}
         for record in records:
-            session = sessions[record.session_id]
-            session_key = record.session_id
-            if session_key not in groups:
-                groups[session_key] = project_root if project_root is not None else QTreeWidgetItem(self.tree, [session['title'] + ' · ' + session['created'][11:], ''])
-                groups[session_key].setData(0, Qt.UserRole + 1, session_key)
-                groups[session_key].setToolTip(0, session['created'])
-                groups[session_key].setIcon(0, icons.icon('folder_open', '#bbbbbb', 16))
-            category = (('后处理结果' if record.purpose == '后处理结果' else '拼接结果') if record.kind == 'result' else '标定会话数据'
-                if self.database.mode != 'mobile_chain' and ('标定' in record.purpose or record.purpose == 'calib') else '扫描原始帧')
-            category_key = (id(groups[session_key]), category)
-            if category_key not in categories:
-                categories[category_key] = QTreeWidgetItem(groups[session_key], [category, ''])
-                categories[category_key].setIcon(0, icons.icon('folder_open', '#aaaaaa', 16))
-            parent = categories[category_key]
             title = (record.logical_name if record.purpose == '后处理结果' else f'拼接帧 {record.frame_id:03d}') if record.kind == 'result' else f'帧 {record.frame_id:03d}'
             if record.kind == 'result' and record.status == STALE_RESULT:
                 title += ' · 来源已变化' if record.purpose == '后处理结果' else ' · 需重新拼接'
             if self.database.mode == 'multi_cam' and record.kind == 'raw':
                 title += ' · ' + record.camera
-            row = QTreeWidgetItem(parent, [title, ''])
+            row = QTreeWidgetItem([title, ''])
             row.setData(0, Qt.UserRole, record.uid)
             row.setToolTip(0, f'{record.camera} · {record.purpose} · {record.logical_name}\n{record.status}\n'
                 f'原始PLY + 2D PNG（{record.image_size[0]} × {record.image_size[1]}）\n'
@@ -203,11 +191,17 @@ class FrameBrowser(QWidget):
             if record.kind == 'result':
                 row.setIcon(0, icons.icon('stitch', '#d65050', 16))
                 row.setToolTip(0, '独立' + ('后处理结果' if record.purpose == '后处理结果' else '拼接结果') + ' · mm\n' + record.status + '\n来源帧：' + '\n'.join(record.source_ids) + '\n' + record.created)
+            postprocess = record.kind == 'result' and record.purpose == '后处理结果'
             self._items[record.uid] = row
             cloud_item = QTreeWidgetItem(row, ['点云 · PLY', f'{record.points:,}' if record.points is not None else '—'])
             cloud_item.setIcon(0, icons.icon('layers', '#bbbbbb', 16))
             cloud_item.setToolTip(1, '结果有效几何点数；原始帧保持独立。' if record.kind == 'result'
                 else '原始点槽位数，包含有序点云中的无效占位点；文件不下采样。')
+            if postprocess:
+                # A result is a real leaf; its frame parent is a UID-free UI container.
+                row.takeChild(0)
+                cloud_item.setText(0, {'inside': '框内点云 · PLY', 'outside': '框外点云 · PLY'}.get(record.output_role, '点云 · PLY'))
+                self._items[record.uid] = cloud_item
             components = [('cloud', cloud_item)]
             if record.kind != 'result':
                 image_item = QTreeWidgetItem(row, ['2D 图像', f'{record.image_size[0]} × {record.image_size[1]}'])
@@ -223,7 +217,33 @@ class FrameBrowser(QWidget):
                     ('\n复选框：在3D画布叠加显示；原始帧不应用标定变换。' if component == 'cloud'
                      else '\n复选框：勾选待处理图像，与预览及多选删除独立。') +
                     '\n删除操作针对所属完整帧，可在回收区恢复。')
+                item.setToolTip(0, record.logical_name + '\n' + item.toolTip(0))
                 self._component_items[(record.uid, component)] = item
+        for record in records:
+            session = sessions[record.session_id]
+            session_key = record.session_id
+            if session_key not in groups:
+                groups[session_key] = project_root if project_root is not None else QTreeWidgetItem(self.tree, [session['title'] + ' · ' + session['created'][11:], ''])
+                groups[session_key].setData(0, Qt.UserRole + 1, session_key)
+                groups[session_key].setToolTip(0, session['created'])
+                groups[session_key].setIcon(0, icons.icon('folder_open', '#bbbbbb', 16))
+            category = ('拼接结果' if record.kind == 'result' else '标定会话数据'
+                if self.database.mode != 'mobile_chain' and ('标定' in record.purpose or record.purpose == 'calib') else '扫描帧数据')
+            category_key = (id(groups[session_key]), category)
+            if category_key not in categories:
+                categories[category_key] = QTreeWidgetItem(groups[session_key], [category, ''])
+                categories[category_key].setIcon(0, icons.icon('folder_open', '#aaaaaa', 16))
+            parent = categories[category_key]
+            if record.kind == 'result' and record.purpose == '后处理结果':
+                # Scope group identity to the session; legacy results each get a frame.
+                key = record.session_id + '/' + (record.operation_id or record.uid)
+                if key not in operation_groups:
+                    frame = QTreeWidgetItem(parent, [f'后处理帧 {record.frame_id:03d}', ''])
+                    frame.setData(0, Qt.UserRole + 3, key)
+                    frame.setIcon(0, icons.icon('stitch', '#d65050', 16))
+                    operation_groups[key] = frame
+                parent = operation_groups[key]
+            parent.addChild(self._items[record.uid])
         parameters = None
         if self.database.mode in ('multi_cam', 'turntable') or (project_root is not None and getattr(self.database, 'has_calibration', False)):
             calibration_group = next((item for item in categories.values() if item.text(0) == '标定会话数据'), None)
@@ -248,8 +268,10 @@ class FrameBrowser(QWidget):
             item = self.tree.topLevelItem(i)
             restore(item)
             self._known_groups.add('/' + item.text(0))
-        for uid, component in selected:
-            if component == 'calibration':
+        for uid, component, operation in selected:
+            if operation:
+                item = operation_groups.get(operation)
+            elif component == 'calibration':
                 item = parameters
             elif component:
                 item = self._component_items.get((uid, component))
@@ -312,10 +334,21 @@ class FrameBrowser(QWidget):
         Record kind is unrestricted so derived DB branches use the same path.
         """
         items = self.tree.selectedItems()
-        cloud_items = [item for item in items if item.data(0, Qt.UserRole)
-                       and item.data(0, Qt.UserRole+2) != 'image']
+        cloud_items = [item for item in items if item.data(0, Qt.UserRole+2) != 'image']
         if cloud_items:
-            identifiers = list(dict.fromkeys(item.data(0, Qt.UserRole) for item in cloud_items))
+            identifiers = set()
+            def visit(item):
+                if item.data(0, Qt.UserRole+2) == 'image':
+                    return
+                uid = item.data(0, Qt.UserRole)
+                if uid:
+                    identifiers.add(uid)
+                else:
+                    for index in range(item.childCount()):
+                        visit(item.child(index))
+            for item in cloud_items:
+                visit(item)
+            identifiers = list(identifiers)
         else:
             identifiers = [uid for uid, _ in self.checked_components('cloud')]
             if not identifiers:

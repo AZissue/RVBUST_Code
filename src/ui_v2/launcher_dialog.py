@@ -331,10 +331,10 @@ class LauncherDialog(QDialog):
         """临时：向设备表追加四台测试相机，方便查看多机布局效果。"""
         existing = self._table.devices()
         test_devices = [
-            DeviceInfo(model="TEST-A", serial="SN_TEST_A", online=True),
-            DeviceInfo(model="TEST-B", serial="SN_TEST_B", online=True),
-            DeviceInfo(model="TEST-C", serial="SN_TEST_C", online=True),
-            DeviceInfo(model="TEST-D", serial="SN_TEST_D", online=True),
+            DeviceInfo(model="TEST-A", status="idle", status_detail="测试设备，不查询SDK", serial="SN_TEST_A", online=True),
+            DeviceInfo(model="TEST-B", status="idle", status_detail="测试设备，不查询SDK", serial="SN_TEST_B", online=True),
+            DeviceInfo(model="TEST-C", status="idle", status_detail="测试设备，不查询SDK", serial="SN_TEST_C", online=True),
+            DeviceInfo(model="TEST-D", status="idle", status_detail="测试设备，不查询SDK", serial="SN_TEST_D", online=True),
         ]
         # 避免重复添加
         existing_serials = {d.serial for d in existing}

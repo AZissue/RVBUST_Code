@@ -1,22 +1,25 @@
 """Industrial postprocess workspace: DB snapshots in, immutable result branches out."""
 from pathlib import Path
+from dataclasses import asdict
 import numpy as np
 from PySide6.QtCore import Qt, QSize, QSignalBlocker, QItemSelectionModel
 from PySide6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QSplitter, QTabWidget, QGroupBox, QFormLayout, QDoubleSpinBox, QPushButton,
-    QToolButton, QFileDialog, QMenu, QScrollArea, QComboBox)
+    QSplitter, QToolButton, QFileDialog, QMenu)
 from ui_common.industrial_viewer import IndustrialViewer
 from ui_common.worker_thread import WorkerThread
 from ui_common.symbols import icon
 from core.frame_database import STALE_RESULT
 from core.postprocess.session import CloudLayer, read_cloud, write_cloud
 from core.postprocess.processing import polygon_crop_mask, voxel_downsample, random_downsample
+from core.postprocess.color_correction import ColorParameters, NoColorCorrection, unify_colors
 from ..frame_database import FrameBrowser
-from ..widgets.db_properties import DbProperties
 from ..industrial_ribbon import STYLE
 from ..dialogs import ChineseMessageBox as QMessageBox
 from .selection import PolygonSelectionOverlay
-from .viewport_tools import MiddlePan, SegmentationToolbar
+from .viewport_tools import SegmentationToolbar
+from .downsample_dialog import DownsampleDialog
+from .import_dialog import ImportDialog
+from .color_dialog import ColorDialog
 
 
 class PostprocessWindow(QDialog):
@@ -38,6 +41,11 @@ class PostprocessWindow(QDialog):
         self._worker = None
         self._segment = None
         self._closed = False
+        self._import_unit = 'mm'
+        self._color_state = dict(asdict(ColorParameters()), reference=None, aligned=False)
+        self._last_color_report = []
+        self._color_comparison = ((), ())
+        self._downsample_state = {'method': 'voxel', 'voxel': 2.0, 'ratio': 50.0}
         self.setWindowTitle('MCC · 点云后处理')
         self.setWindowModality(Qt.WindowModal)
         self.setAttribute(Qt.WA_DeleteOnClose, True)
@@ -55,11 +63,18 @@ class PostprocessWindow(QDialog):
         line.addStretch()
         line.addWidget(QLabel('当前项目 · mm', objectName='studioBadge'))
         root.addWidget(header)
-        actions = QHBoxLayout()
+        self.operation_bar = QWidget()
+        actions = QHBoxLayout(self.operation_bar)
+        actions.setContentsMargins(4, 0, 4, 0)
+        actions.setSpacing(4)
         self.actions = {}
         for key, text, glyph, callback in (
-            ('open', '导入点云', 'folder_open', self.open_file),
+            ('open', '导入点云', 'folder_open', self.open_import_dialog),
+            ('downsample', '下采样', 'layers', self.open_downsample_dialog),
+            ('color', '颜色统一', 'layers', self.open_color_dialog),
+            ('compare', '对比原色', 'layers', self.compare_color_source),
             ('merge', '合并点云', 'stitch', self.merge_selected),
+            ('select', '多边形框选', 'polygon', self.start_polygon),
             ('undo', '撤销处理', 'undo', self.undo),
             ('export', '导出选中', 'save', self.export_selected),
             ('fit', '适配视图', 'reset_view', lambda: self.viewer.reset_view())):
@@ -72,8 +87,16 @@ class PostprocessWindow(QDialog):
             button.clicked.connect(callback)
             actions.addWidget(button)
             self.actions[key] = button
+        self.actions['downsample'].setToolTip(
+            '下采样：体素下采样或随机抽样；参数在独立弹窗设置；结果新增到 DB，原始数据保留')
+        self.actions['open'].setToolTip('导入点云：在独立弹窗确认源文件单位后选择文件')
+        self.actions['color'].setToolTip('颜色统一：在独立弹窗设置参数，生成独立 DB 结果')
+        self.actions['select'].setCheckable(True)
+        self.actions['select'].setToolTip('选取分割：左键添加顶点，封闭后选择保留方向并点击快捷删除')
+        self.actions['select'].setAccessibleName('多边形框选')
         actions.addStretch()
-        root.addLayout(actions)
+        root.addWidget(self.operation_bar)
+        self.actions['compare'].setCheckable(True)
         body = QSplitter(Qt.Horizontal)
         body.setChildrenCollapsible(False)
         root.addWidget(body, 1)
@@ -89,56 +112,21 @@ class PostprocessWindow(QDialog):
         self.source_browser.tree.itemClicked.connect(self._selection_requested)
         self.source_browser.checked_components_changed.connect(self._checks_requested)
         left.addWidget(self.source_browser)
-        params = QTabWidget()
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        content = QWidget()
-        form = QVBoxLayout(content)
-        group = QGroupBox('下采样')
-        rows = QFormLayout(group)
-        self.voxel = QDoubleSpinBox()
-        self.voxel.setRange(.01, 100000)
-        self.voxel.setValue(2)
-        self.voxel.setSuffix(' mm')
-        rows.addRow('体素尺寸', self.voxel)
-        voxel_button = QPushButton('体素下采样')
-        voxel_button.clicked.connect(lambda: self.downsample('voxel'))
-        rows.addRow(voxel_button)
-        self.ratio = QDoubleSpinBox()
-        self.ratio.setRange(.1, 100)
-        self.ratio.setValue(50)
-        self.ratio.setSuffix(' %')
-        rows.addRow('随机保留', self.ratio)
-        random_button = QPushButton('随机抽样')
-        random_button.clicked.connect(lambda: self.downsample('random'))
-        rows.addRow(random_button)
-        form.addWidget(group)
-        group = QGroupBox('外部文件')
-        rows = QFormLayout(group)
-        self.file_unit = QComboBox()
-        self.file_unit.addItem('毫米 mm', 'mm')
-        self.file_unit.addItem('米 m（载入后转为 mm）', 'm')
-        rows.addRow('源文件单位', self.file_unit)
-        form.addWidget(group)
-        hint = QLabel('分割沿当前视线投影，不区分前后深度。舍去部分保留为分支。\n处理完成自动新增 DB 后处理结果，原始数据保留。')
-        hint.setWordWrap(True)
-        form.addWidget(hint)
-        form.addStretch()
-        scroll.setWidget(content)
-        params.addTab(scroll, '处理参数')
         self.viewer = IndustrialViewer()
         self.viewer.toolbar.hide()
-        self.properties = DbProperties()
+        # Reuse the DB inspector so selection and metadata retain one owner.
+        self.properties = self.source_browser.properties
+        # Retain the key for shared renderer binding; hide only this control.
+        self.properties.options['marker_centers'].hide()
         self.properties.bind_renderer(self.viewer)
         self.properties.max_button.hide()
         self.properties.tabs.removeTab(3)
         self.properties.tabs.removeTab(2)
-        self.properties.tabs.removeTab(0)
-        self.properties.tabs.tabBar().hide()
-        params.addTab(self.properties, '3D 显示')
-        left.addWidget(params)
-        left.setSizes([380, 340])
-        self.params = params
+        left.addWidget(self.properties)
+        self.properties.show()
+        left.setStretchFactor(0, 1)
+        left.setStretchFactor(1, 1)
+        left.setSizes([280, 440])
         body.addWidget(left)
         body.addWidget(self.viewer)
         body.setSizes([330, 1110])
@@ -153,6 +141,163 @@ class PostprocessWindow(QDialog):
         root.addWidget(self.status)
         self._refresh_controls()
 
+    def _parameter_gate(self):
+        return (self._worker is None and not self._closed and self.bridge.can_change_workspace()
+                and self.database is self.bridge.frame_db.databases[self.mode]
+                and self.database.directory == self.directory)
+
+    def _input_snapshot(self):
+        return (self.database, self.database.directory, self._active_uid, tuple(self._display_ids),
+                tuple((uid, self.database.records[uid].revision if uid in self.database.records else None)
+                      for uid in self._display_ids))
+
+    def create_import_dialog(self):
+        dialog = ImportDialog(self._import_unit, self)
+        dialog.unit_changed.connect(lambda unit: setattr(self, '_import_unit', unit))
+        return dialog
+
+    def open_import_dialog(self):
+        if not self._parameter_gate():
+            return
+        snapshot = self._input_snapshot()
+        dialog = self.create_import_dialog()
+        accepted = []
+        dialog.accepted.connect(lambda: accepted.append(dialog.unit()))
+        if dialog.exec() == QDialog.Accepted:
+            if snapshot != self._input_snapshot() or not self._parameter_gate():
+                self.status.setText('输入或项目已变化，请重新打开导入参数。')
+                return
+            self.open_file(accepted[0], snapshot=snapshot)
+
+    def create_color_dialog(self):
+        inputs = [(uid, self._clouds[uid].name, len(self._clouds[uid].points)) for uid in self._display_ids]
+        dialog = ColorDialog(inputs, self._active_uid, self._color_state, self)
+        dialog.parameters_changed.connect(lambda state: setattr(self, '_color_state', dict(state)))
+        return dialog
+
+    def open_color_dialog(self):
+        if not self._parameter_gate() or not self._display_ids:
+            return
+        snapshot = self._input_snapshot()
+        dialog = self.create_color_dialog()
+        accepted = []
+        dialog.accepted.connect(lambda: accepted.append(dialog.parameters()))
+        if dialog.exec() == QDialog.Accepted:
+            state = accepted[0]
+            params = ColorParameters(**{key: state[key] for key in asdict(ColorParameters()) if key in state})
+            self.correct_colors(params, reference_uid=state['reference'], aligned=state['aligned'], snapshot=snapshot)
+
+    def _color_params(self):
+        return ColorParameters(**{key: value for key, value in self._color_state.items()
+                                 if key in asdict(ColorParameters())})
+
+    @staticmethod
+    def _color_params_text(params):
+        return (f'尺度={params.scale:g}mm，强度={params.strength:.0%}，上限={params.max_gain:g}，'
+                f'样本上限={params.sample_limit}，重叠距离={params.overlap_distance:g}mm')
+
+    def _show_color_diagnostic(self, params, reports, heading='颜色统一'):
+        self._last_color_report = reports
+        self._last_color_params = asdict(params)
+        lines = [heading+'；'+self._color_params_text(params)]
+        for row in reports:
+            row.setdefault('params', asdict(params))
+            text = (f"{row.get('name', '点云')}：{row.get('status', '拒绝')}，样本{row.get('samples', 0)}，"
+                    f"格/支持{row.get('nodes', 0)}/{row.get('supported_nodes', 0)}，几何分区{row.get('components', 1)}，重叠内点{row.get('matches', 0)}")
+            if 'gain_min' in row:
+                text += (f"，估计增益{np.round(row.get('estimated_gain_min', row.get('estimated_gain', [1]*3)), 3).tolist()}"
+                         f"..{np.round(row.get('estimated_gain_max', row.get('estimated_gain', [1]*3)), 3).tolist()}"
+                         f"，应用{np.round(row['gain_min'], 3).tolist()}..{np.round(row['gain_max'], 3).tolist()}"
+                         f"，变化>5%/{row.get('changed_gt5_fraction', 0):.1%}、>10%/{row.get('changed_gt10_fraction', 0):.1%}"
+                         f"，分布保留{row.get('distribution_retention', 1):.1%}，截断{row.get('clipped_fraction', 0):.2%}"
+                         f"，实际强度{row.get('actual_strength', params.strength):.1%}")
+                if row.get('adaptive_scale', 1) < 1:
+                    text += f"，受高光限制，实际幅度k={row['adaptive_scale']:.1%}"
+                if row.get('material_warning'):
+                    text += '；可能抹平材质，建议降低强度'
+            if row.get('reason'):
+                text += '；'+row['reason']
+            lines.append(text)
+        message = '\n'.join(lines)
+        self.bridge.shell.log(message, 'info')
+        self.status.setToolTip(message)
+        return message
+
+    def compare_color_source(self):
+        sources, results = self._color_comparison
+        if (self._worker is not None or self._closed or not sources or not results
+                or not self.bridge.can_change_workspace() or self.database.directory != self.directory
+                or self.database is not self.bridge.frame_db.databases[self.mode]):
+            return
+        target = results if tuple(self._display_ids) == sources else sources
+        if any(uid not in self.database.records or self.database.records[uid].status == STALE_RESULT for uid in target):
+            self.status.setText('对比来源或结果已变化，请重新生成颜色统一结果。')
+            return
+        # Only UID lists are retained. Reload on demand; never keep a second
+        # permanent full-size colour cache just to compare the original.
+        self.load_selected(list(target))
+
+    def correct_colors(self, params=None, *, reference_uid=None, aligned=None, snapshot=None):
+        if snapshot is not None and snapshot != self._input_snapshot():
+            self.status.setText('输入、来源修订或项目已变化，请重新打开参数。')
+            return
+        if (self._worker is not None or self._closed or not self.bridge.can_change_workspace()
+                or self.database is not self.bridge.frame_db.databases[self.mode]
+                or self.database.directory != self.directory):
+            self.status.setText('正在处理或项目已切换，不能执行颜色统一。')
+            return
+        identifiers = list(self._display_ids)
+        if not identifiers:
+            self.status.setText('请先显示至少一项有色点云。')
+            return
+        with self.database._lock:
+            if any(uid not in self.database.records or self.database.records[uid].status == STALE_RESULT
+                    or self._clouds[uid].origins != ((uid, self.database.records[uid].revision),)
+                    for uid in identifiers):
+                self.status.setText('来源数据已变化，请重新显示后执行颜色统一。')
+                return
+        if len(identifiers) > 1 and (not (self._color_state['aligned'] if aligned is None else aligned) or any(
+                self.database.records[uid].kind == 'raw' for uid in identifiers)):
+            self.status.setText('多云需同一坐标系，重叠区用于估计；原始未配准帧请先拼接，并确认坐标系。')
+            return
+        layers = [self._clouds[uid] for uid in identifiers]
+        if any(layer.colors is None for layer in layers):
+            self.status.setText('颜色统一拒绝无色或混合有色/无色输入，不会补造原始颜色。')
+            return
+        reference = reference_uid if reference_uid is not None else self._color_state.get('reference')
+        if reference_uid is not None and reference_uid not in identifiers:
+            self.status.setText('参考点云已变化，请重新打开颜色参数。')
+            return
+        reference = identifiers.index(reference) if reference in identifiers else identifiers.index(
+            self._active_uid) if self._active_uid in identifiers else 0
+        params = params or self._color_params()
+        try:
+            params.validate()
+        except ValueError as exc:
+            self.status.setText(self._show_color_diagnostic(params, [dict(status='参数拒绝', reason=str(exc))]))
+            return
+        reports = []
+        def work():
+            try:
+                colors, details = unify_colors(layers, reference=reference, params=params)
+            except NoColorCorrection as exc:
+                reports.extend(dict(row, name=layer.name) for layer, row in zip(layers, exc.reports))
+                raise
+            reports.extend(dict(row, name=layer.name) for layer, row in zip(layers, details))
+            return [CloudLayer(layer.name+' · 颜色统一', layer.points, color,
+                               source=layer.source, origins=layer.origins)
+                    for layer, color in zip(layers, colors)]
+        def diagnostic():
+            self._color_comparison = (tuple(identifiers), tuple(self._display_ids))
+            self._refresh_controls()
+            return self._show_color_diagnostic(params, reports)
+        def failed(error):
+            details = reports or [dict(status='拒绝', reason=str(error))]
+            self.status.setText(self._show_color_diagnostic(params, details, '颜色统一未发布：'+str(error)))
+        self.status.setText('正在颜色统一；'+self._color_params_text(params))
+        self._commit_operation(work, display_all=True, diagnostic=diagnostic, on_error=failed)
+
+
     def _renderer_changed(self, *_):
         self._invalidate_polygon()
         self.overlay.deleteLater()
@@ -162,29 +307,37 @@ class PostprocessWindow(QDialog):
         self._install_viewport_tools()
         self.properties.bind_renderer(self.viewer)
         self.properties.max_button.hide()
+        self._refresh_controls()
 
     def _install_viewport_tools(self):
         canvas = self.viewer.canvas
-        self._middle_pan = MiddlePan(canvas)
         self.segment_tools = SegmentationToolbar(canvas, dict(
-            draw=self.start_polygon, close=lambda: self.overlay._confirm(),
+            close=lambda: self.overlay._confirm(),
             back=lambda: self.overlay.remove_last_vertex(),
-            inside=lambda: self.apply_segment(True), outside=lambda: self.apply_segment(False),
+            delete=lambda: self.apply_segment(self.segment_tools.buttons['inside'].isChecked()),
             cancel=self._invalidate_polygon))
-        self.actions['select'] = self.segment_tools.buttons['draw']
         self.overlay.changed.connect(self._refresh_segment_tools)
         canvas.view_changed.connect(self._selection_view_changed)
         self._refresh_segment_tools()
 
     def _refresh_segment_tools(self):
-        self.segment_tools.refresh(ready=self._worker is None,
-            available=self._active_uid in self._clouds, overlay=self.overlay,
+        ready = (self._worker is None and not self._closed and self.bridge.can_change_workspace()
+                 and self.database is self.bridge.frame_db.databases[self.mode]
+                 and self.database.directory == self.directory)
+        record = self.database.records.get(self._active_uid)
+        available = (self._active_uid in self._clouds and record is not None
+                     and record.status != STALE_RESULT
+                     and self._clouds[self._active_uid].origins == ((record.uid, record.revision),))
+        self.actions['select'].setEnabled(ready and available)
+        self.actions['select'].setChecked(self.overlay.active)
+        self.segment_tools.refresh(ready=ready,
+            available=available, overlay=self.overlay,
             staged=self._segment is not None)
 
     def _selection_view_changed(self):
         if self.overlay.active or self._segment is not None:
             self._invalidate_polygon()
-            self.status.setText('视角已移动，旧框选已清除；可点击右上角多边形重新框选。')
+            self.status.setText('视角已移动，旧框选已清除；可点击顶部多边形框选重新绘制。')
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape and self.overlay.active:
@@ -269,6 +422,9 @@ class PostprocessWindow(QDialog):
         items = self.source_browser.tree.selectedItems()
         if items and all(item.data(0, Qt.UserRole + 2) == 'image' for item in items):
             return
+        if items and all(item.data(0, Qt.UserRole + 3) for item in items):
+            # Virtual operation frames select outputs for explicit actions only.
+            return
         identifiers = self.source_browser.selected_ids()
         if identifiers:
             self.load_selected(identifiers)
@@ -277,7 +433,7 @@ class PostprocessWindow(QDialog):
         if not self._syncing and not self._closed:
             self.load_selected([uid for uid, component in checked if component == 'cloud'])
 
-    def _run(self, work, done, *, kind='edit', preserve_selection=False):
+    def _run(self, work, done, *, kind='edit', preserve_selection=False, on_error=None):
         if self._worker is not None or self._closed:
             return False
         if not preserve_selection:
@@ -295,6 +451,8 @@ class PostprocessWindow(QDialog):
                 if preserve_selection:
                     self._invalidate_polygon()
                 self.status.setText('处理失败：' + str(error))
+                if on_error:
+                    on_error(error)
             else:
                 self.status.setText('处理完成。')
                 try:
@@ -327,13 +485,24 @@ class PostprocessWindow(QDialog):
         for button in self.actions.values():
             button.setEnabled(ready)
         self.source_browser.setEnabled(ready)
-        self.params.setEnabled(ready)
         self.actions['undo'].setEnabled(ready and bool(self._undo))
         self.actions['merge'].setEnabled(ready and len(self._display_ids) > 1)
+        self.actions['downsample'].setEnabled(ready and self._active_uid in self._clouds)
         self.actions['select'].setEnabled(ready and self._active_uid in self._clouds)
         locked = self.overlay.view_locked
         self.actions['fit'].setEnabled(ready and not locked)
         self.properties.setEnabled(ready and not locked)
+        self.actions['color'].setEnabled(ready and not self._closed and bool(self._display_ids)
+            and self.bridge.can_change_workspace()
+            and self.database is self.bridge.frame_db.databases[self.mode]
+            and self.database.directory == self.directory)
+        sources, results = self._color_comparison
+        comparable = bool(sources and results and tuple(self._display_ids) in (sources, results)
+            and all(uid in self.database.records and self.database.records[uid].status != STALE_RESULT
+                    for uid in (*sources, *results)))
+        self.actions['compare'].setEnabled(ready and comparable)
+        self.actions['compare'].setText('返回校正结果' if comparable and tuple(self._display_ids) == sources else '对比原色')
+        self.actions['compare'].setChecked(comparable and tuple(self._display_ids) == sources)
         self._refresh_segment_tools()
 
     def _refresh_display(self, *, fit=False):
@@ -373,7 +542,8 @@ class PostprocessWindow(QDialog):
         self._refresh_controls()
 
     def _validate_source(self, directory, tokens):
-        if self.database.directory != directory:
+        if (self.database.directory != directory
+                or self.database is not self.bridge.frame_db.databases[self.mode]):
             raise ValueError('项目已切换，请重新打开后处理窗口。')
         for uid, revision in tokens:
             record = self.database.records.get(uid)
@@ -441,12 +611,13 @@ class PostprocessWindow(QDialog):
             entries.append((cloud, [uid for uid, _ in layer.origins], layer.name))
         with self.database._lock:
             self._validate_source(directory, [token for layer in layers for token in layer.origins])
-            identifiers = self.database.publish_results(entries, postprocess=True)
+            identifiers = self.database.publish_results(entries, postprocess=True,
+                output_roles=[layer.output_role for layer in layers])
             for uid, layer in zip(identifiers, layers):
                 layer.origins = ((uid, self.database.records[uid].revision),)
         return layers
 
-    def _commit_operation(self, work):
+    def _commit_operation(self, work, *, display_all=False, diagnostic=None, on_error=None):
         if self._worker is not None:
             return
         directory = self.directory
@@ -458,15 +629,22 @@ class PostprocessWindow(QDialog):
             self._undo = self._undo[-8:]
             self._active_uid = None
             # Keep the retained split visible; the discard branch remains in DB.
-            self._show_records(layers[:1], refresh=True)
+            self._show_records(layers if display_all else layers[:1], refresh=True)
             self.bridge.shell.set_dirty(True)
-            self.status.setText(f'已自动新增 {len(layers)} 项 DB 后处理结果；请在主程序保存会话。')
-        self._run(run, done)
+            self.status.setText(f'已自动新增 {len(layers)} 项 DB 后处理结果；原始数据保留，请在主程序保存会话。' +
+                                ('\n'+diagnostic() if diagnostic else ''))
+        self._run(run, done, on_error=on_error)
 
-    def open_file(self):
+    def open_file(self, unit=None, *, snapshot=None):
+        if not self._parameter_gate():
+            return
+        unit = unit or self._import_unit
+        snapshot = snapshot or self._input_snapshot()
         path, _ = QFileDialog.getOpenFileName(self, '导入点云（请先确认源文件单位）', '', '点云 (*.ply *.pcd *.xyz *.pts)')
         if path:
-            unit = self.file_unit.currentData()
+            if snapshot != self._input_snapshot() or not self._parameter_gate():
+                self.status.setText('输入或项目已变化，请重新导入。')
+                return
             self._commit_operation(lambda: [read_cloud(path, unit)])
 
     def _selected_layer(self):
@@ -476,11 +654,48 @@ class PostprocessWindow(QDialog):
             return None, None
         return uid, self._clouds[uid]
 
-    def downsample(self, method):
+    def create_downsample_dialog(self):
+        source = self._clouds.get(self._active_uid)
+        dialog = DownsampleDialog(
+            source.name if source is not None else '',
+            len(source.points) if source is not None else 0,
+            self._downsample_state,
+            self,
+        )
+        dialog.parameters_changed.connect(self._remember_downsample_parameters)
+        return dialog
+
+    def _remember_downsample_parameters(self, parameters):
+        self._downsample_state = dict(parameters)
+
+    def open_downsample_dialog(self):
+        if self._worker is not None or self._closed:
+            return
         _, source = self._selected_layer()
         if source is None:
             return
-        value = self.voxel.value() if method == 'voxel' else self.ratio.value()/100
+        dialog = self.create_downsample_dialog()
+        accepted_parameters = []
+        # WA_DeleteOnClose may destroy the C++ dialog before exec() returns.
+        dialog.accepted.connect(lambda: accepted_parameters.append(dialog.parameters()))
+        accepted = dialog.exec() == QDialog.Accepted
+        if accepted:
+            parameters = accepted_parameters[0]
+            method = parameters['method']
+            self.downsample(method, parameters[method])
+
+    def downsample(self, method, value=None):
+        if method not in ('voxel', 'random'):
+            raise ValueError('未知下采样方法。')
+        _, source = self._selected_layer()
+        if source is None:
+            return
+        if value is None:
+            value = 2.0 if method == 'voxel' else .5
+        elif method == 'random':
+            value = float(value) / 100
+        else:
+            value = float(value)
         def work():
             data = voxel_downsample(source.points, source.colors, value) if method == 'voxel' else random_downsample(source.points, source.colors, value)
             title = '体素下采样' if method == 'voxel' else '随机抽样'
@@ -509,11 +724,13 @@ class PostprocessWindow(QDialog):
                     width=max(1, canvas.width()), height=max(1, canvas.height()))
 
     def start_polygon(self):
+        if self._worker is not None or self._closed or not self.bridge.can_change_workspace():
+            return
         if self._selected_layer()[1] is not None:
             self._invalidate_polygon()
             self.overlay.activate()
             self._refresh_controls()
-            self.status.setText('左键添加顶点，Alt+左键撤点；右键/封闭按钮完成。中键平移，Esc取消。')
+            self.status.setText('左键添加顶点，Alt+左键撤点；右键/封闭按钮完成。中键设旋转中心，Esc取消。')
 
     def stage_polygon(self, polygon):
         if self._worker is not None or self._closed:
@@ -535,12 +752,14 @@ class PostprocessWindow(QDialog):
             self._segment = (uid, layer, mask, view)
             self.overlay.set_confirmed(polygon)
             self.overlay.show_confirmed(f'框内 {int(mask.sum()):,} 点 / 框外 {int((~mask).sum()):,} 点')
-            self.status.setText(f'框内 {int(mask.sum()):,} 点 / 框外 {int((~mask).sum()):,} 点；在右上角选择保留框内或框外。')
+            self.status.setText(f'框内 {int(mask.sum()):,} 点 / 框外 {int((~mask).sum()):,} 点；选择保留方向后点击快捷删除，另一侧保存为分支，原始数据保留。')
             self._refresh_segment_tools()
         self._run(lambda: polygon_crop_mask(layer.points, polygon, **view), done,
                   preserve_selection=True)
 
     def apply_segment(self, keep_inside):
+        if self._worker is not None or self._closed or not self.bridge.can_change_workspace():
+            return
         if self._segment is None:
             self.status.setText('请先完成多边形框选。')
             return
@@ -560,7 +779,8 @@ class PostprocessWindow(QDialog):
             def build(selected, inside):
                 return CloudLayer(source.name + (' · 框内' if inside else ' · 框外'),
                     source.points[selected], None if source.colors is None else source.colors[selected],
-                    source=source.source, origins=source.origins)
+                    source=source.source, origins=source.origins,
+                    output_role='inside' if inside else 'outside')
             layers = [build(keep, keep_inside)]
             if (~keep).any():
                 layers.append(build(~keep, not keep_inside))
