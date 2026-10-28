@@ -5,6 +5,7 @@ import copy
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QFileDialog
 from .dialogs import ChineseMessageBox as QMessageBox
+from .stitch_failure import show_stitch_failure
 from core.frame_database import STALE_RESULT
 from core.calibration_engine import CalibrationEngine
 from core.mobile_chain_workflow import MobileChainWorkflow
@@ -236,7 +237,8 @@ class ExplicitStitching:
         # Fixed-camera scans already have calibrated extrinsics; their markers
         # remain useful for inspection but are not an input to this stitch.
         if mode != 'multi_cam' and (not explicit or use_chain) and not bridge.recognition.ensure(mode, recognition_inputs,
-                lambda: self.execute((mode, raw_ids, explicit))):
+                lambda: self.execute((mode, raw_ids, explicit)),
+                on_error=lambda error: show_stitch_failure(bridge, mode, error)):
             return
         voxel = turn.spin_voxel.value() or None
         refine = turn.chk_icp_refine.isChecked()
@@ -338,7 +340,7 @@ class ExplicitStitching:
             bridge._resume_2d_preview(preview)
             bridge._resume_card_preview(cards)
             if error:
-                bridge.shell.log('拼接失败：' + str(error), 'error')
+                show_stitch_failure(bridge, mode, error)
                 return
             uid, cloud, workflow = result
             bridge.frame_db.overlay.reset(mode)

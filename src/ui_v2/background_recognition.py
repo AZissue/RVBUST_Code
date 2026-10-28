@@ -13,6 +13,7 @@ class BackgroundRecognition(QObject):
         self.pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix='frame-recognition')
         self.jobs = {}
         self.waiters = []
+        self.waiter_errors = {}
         self.forced = set()
         self.available = set()
         self.commit_errors = set()
@@ -134,28 +135,35 @@ class BackgroundRecognition(QObject):
         bridge._run_background(work, done, name='recognition_parameters')
         return cancel
 
-    def ensure(self, mode, identifiers, callback):
+    def ensure(self, mode, identifiers, callback, on_error=None):
         """Continue an explicit action once only its input frames are ready."""
+        def fail(message, level='error'):
+            if on_error is not None:
+                on_error(message)
+            else:
+                self.bridge.shell.log(message, level)
         if not self.enabled:
             return True
         db = self.bridge.frame_db.databases[mode]
         key = frame_recognition.fingerprint(self.config(mode))
         if any(uid not in db.records for uid in identifiers):
-            self.bridge.shell.log('原始帧已删除或项目已变化，请重新选择输入数据。', 'warn')
+            fail('原始帧已删除或项目已变化，请重新选择输入数据。', 'warn')
             return False
         rows = [db.records[uid] for uid in identifiers]
         if any((mode, db.directory, row.uid, row.revision, key) in self.commit_errors for row in rows):
-            self.bridge.shell.log('识别结果未能写入DB，请检查存储后右键重新识别。', 'error')
+            fail('识别结果未能写入DB，请检查存储后右键重新识别。', 'error')
             return False
         errors = [row for row in rows if row.recognition.get('key') == key and row.recognition.get('state') == 'error']
         if errors:
-            self.bridge.shell.log('标记识别失败，请在DB右键重新识别：' + errors[0].recognition.get('error', ''), 'error')
+            fail('标记识别失败，请在DB右键重新识别：' + errors[0].recognition.get('error', ''), 'error')
             return False
         if all(row.recognition.get('key') == key and row.recognition.get('state') == 'done' for row in rows):
             return True
         token = (mode, db.directory, tuple((row.uid, row.revision) for row in rows), key)
         if not any(item[0] == token for item in self.waiters):
             self.waiters.append((token, callback))
+            if on_error is not None:
+                self.waiter_errors[token] = on_error
         self.bridge.shell.show_loading('正在等待所选帧的后台标记识别…')
         return False
 
@@ -259,8 +267,12 @@ class BackgroundRecognition(QObject):
             ready = all(result.get('state') == 'done' and result.get('key') == key for result in results)
             if stale or failed or ready and bridge.can_change_workspace():
                 self.waiters.remove((token, callback))
+                error_handler = self.waiter_errors.pop(token, None)
                 bridge.shell.hide_loading()
-                if not stale and not failed:
+                if failed and not stale and error_handler is not None:
+                    details = next((r.get('error') for r in results if r.get('error')), '识别结果未能写入DB，请检查项目存储')
+                    error_handler('标记识别失败：' + str(details))
+                elif not stale and not failed:
                     callback()
                 else:
                     bridge.shell.log('识别等待已结束：输入帧/识别参数已变化或识别失败，请检查DB后重试。', 'warn')
@@ -322,6 +334,7 @@ class BackgroundRecognition(QObject):
         if getattr(self, 'search_cancel', None) is not None:
             self.search_cancel.set()
         self.waiters.clear()
+        self.waiter_errors.clear()
         self.pool.shutdown(wait=True, cancel_futures=True)
         self.jobs.clear()
         self.available.clear()
