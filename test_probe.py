@@ -50,6 +50,27 @@ class ProbeUiTests(unittest.TestCase):
         self.editor.load_selected([uid]); self.finish()
         return uid
 
+    def test_toolbar_dialog_is_manual_reusable_and_busy_gated(self):
+        self.assertFalse(self.editor.actions['probe'].isEnabled())
+        self.inputs()
+        with patch.object(self.editor, 'analyze_probe') as analyze:
+            self.editor.actions['probe'].click()
+            self.app.processEvents()
+            self.assertTrue(self.editor.probe_dialog.isVisible())
+            self.assertFalse(self.editor.properties.isAncestorOf(self.editor.probe))
+            analyze.assert_not_called()
+            self.editor.probe_dialog.close()
+            self.editor.actions['probe'].click()
+            self.assertTrue(self.editor.probe_dialog.isVisible())
+        self.editor.analyze_probe()
+        self.assertFalse(self.editor.actions['probe'].isEnabled())
+        self.assertFalse(self.editor.probe.isEnabled())
+        self.editor.probe_dialog.close()
+        self.finish()
+        self.editor.actions['probe'].click()
+        self.assertTrue(self.editor.probe.apply.isEnabled())
+        self.assertTrue(self.editor.probe.isEnabled())
+
     def test_reasons(self):
         uid = self.inputs()
         row = self.db.records[uid]

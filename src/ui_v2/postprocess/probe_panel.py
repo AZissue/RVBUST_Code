@@ -1,4 +1,4 @@
-"""Optional data-properties probe, updated independently of metadata."""
+"""Probe controls shared by the reusable analysis dialog."""
 from PySide6.QtCore import Signal, Qt
 from PySide6.QtWidgets import QGroupBox, QVBoxLayout, QLabel, QPushButton, QDoubleSpinBox, QCheckBox, QSizePolicy
 
@@ -31,6 +31,7 @@ class ProbePanel(QGroupBox):
         hint = QLabel('阈值 τ 下的点覆盖重合率，不是面积重合率，也不是拼接绝对精度；重合区 RMS 不代表整个表面的精度。Mesh 实验参考：法向邻域可从 3–5×P50 起步；点间距不能确定 Poisson 深度或保证封装质量。')
         hint.setWordWrap(True)
         layout.addWidget(hint)
+        layout.addStretch()
 
     def reset(self):
         self.text.setText('点击分析当前点云。')

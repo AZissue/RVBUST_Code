@@ -4,7 +4,7 @@ from dataclasses import asdict
 import numpy as np
 from PySide6.QtCore import Qt, QSize, QSignalBlocker, QItemSelectionModel
 from PySide6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QSplitter, QToolButton, QFileDialog, QMenu)
+    QSplitter, QToolButton, QFileDialog, QMenu, QScrollArea)
 from ui_common.industrial_viewer import IndustrialViewer
 from ui_common.worker_thread import WorkerThread
 from ui_common.symbols import icon
@@ -70,13 +70,14 @@ class PostprocessWindow(QDialog):
         self.actions = {}
         for key, text, glyph, callback in (
             ('open', '导入点云', 'folder_open', self.open_import_dialog),
-            ('downsample', '下采样', 'layers', self.open_downsample_dialog),
-            ('color', '颜色统一', 'layers', self.open_color_dialog),
-            ('compare', '对比原色', 'layers', self.compare_color_source),
-            ('merge', '合并点云', 'stitch', self.merge_selected),
+            ('downsample', '下采样', 'cloud_sample', self.open_downsample_dialog),
+            ('color', '颜色统一', 'color_palette', self.open_color_dialog),
+            ('compare', '对比原色', 'color_compare', self.compare_color_source),
+            ('merge', '合并点云', 'cloud_merge', self.merge_selected),
             ('select', '多边形框选', 'polygon', self.start_polygon),
             ('undo', '撤销处理', 'undo', self.undo),
-            ('export', '导出选中', 'save', self.export_selected),
+            ('export', '导出选中', 'cloud_export', self.export_selected),
+            ('probe', '点云探针', 'cloud_probe', self.open_probe_dialog),
             ('fit', '适配视图', 'reset_view', lambda: self.viewer.reset_view())):
             button = QToolButton()
             button.setText(text)
@@ -91,6 +92,7 @@ class PostprocessWindow(QDialog):
             '下采样：体素下采样或随机抽样；参数在独立弹窗设置；结果新增到 DB，原始数据保留')
         self.actions['open'].setToolTip('导入点云：在独立弹窗确认源文件单位后选择文件')
         self.actions['color'].setToolTip('颜色统一：在独立弹窗设置参数，生成独立 DB 结果')
+        self.actions['probe'].setToolTip('点云探针：打开间距、重合度分析与体素参考；点击分析后开始只读计算')
         self.actions['select'].setCheckable(True)
         self.actions['select'].setToolTip('选取分割：左键添加顶点，封闭后选择保留方向并点击快捷删除')
         self.actions['select'].setAccessibleName('多边形框选')
@@ -117,8 +119,17 @@ class PostprocessWindow(QDialog):
         # Reuse the DB inspector so selection and metadata retain one owner.
         self.properties = self.source_browser.properties
         from .probe_panel import ProbePanel
+        self.probe_dialog = QDialog(self)
+        self.probe_dialog.setWindowTitle('点云探针 · 当前点云（mm）')
+        self.probe_dialog.resize(640, 650)
+        self.probe_dialog.setMinimumSize(460, 380)
+        probe_layout = QVBoxLayout(self.probe_dialog)
+        probe_scroll = QScrollArea()
+        probe_scroll.setWidgetResizable(True)
+        probe_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.probe = ProbePanel()
-        self.properties.set_probe_panel(self.probe)
+        probe_scroll.setWidget(self.probe)
+        probe_layout.addWidget(probe_scroll)
         self.probe.analyze.connect(self.analyze_probe)
         self.probe.adopt.connect(self.adopt_probe_voxel)
         self._probe_report = None
@@ -502,6 +513,8 @@ class PostprocessWindow(QDialog):
             and self.bridge.can_change_workspace()
             and self.database is self.bridge.frame_db.databases[self.mode]
             and self.database.directory == self.directory)
+        self.actions['probe'].setEnabled(self._parameter_gate() and self._active_uid in self._clouds)
+        self.probe.setEnabled(self._parameter_gate())
         sources, results = self._color_comparison
         comparable = bool(sources and results and tuple(self._display_ids) in (sources, results)
             and all(uid in self.database.records and self.database.records[uid].status != STALE_RESULT
@@ -661,6 +674,13 @@ class PostprocessWindow(QDialog):
             self.status.setText('请先在 DB 树中选择点云。')
             return None, None
         return uid, self._clouds[uid]
+
+    def open_probe_dialog(self):
+        if not self._parameter_gate() or self._active_uid not in self._clouds:
+            return
+        self.probe_dialog.show()
+        self.probe_dialog.raise_()
+        self.probe_dialog.activateWindow()
 
     def _probe_key(self):
         with self.database._lock:
@@ -927,6 +947,7 @@ class PostprocessWindow(QDialog):
 
     def shutdown(self):
         self._closed = True
+        self.probe_dialog.close()
         self._pending_load = None
         if self._worker is not None:
             self._worker.wait()
