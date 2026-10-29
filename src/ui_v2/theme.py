@@ -350,3 +350,54 @@ QPushButton:focus, QToolButton:focus { border-color: #805052; }
 """
 GLOBAL_QSS += BUTTON_FOCUS_QSS
 LAUNCHER_QSS += BUTTON_FOCUS_QSS
+
+
+# Explicit subcontrols avoid platform-native raised buttons in either skin.
+# assets/icons is included by the existing PyInstaller specification.
+from pathlib import Path as _Path
+import sys as _sys
+_SPIN_ICON_ROOT = (_Path(getattr(_sys, "_MEIPASS", _Path(__file__).resolve().parents[2]))
+                   / "assets" / "icons").as_posix()
+SPINBOX_QSS = """
+QSpinBox, QDoubleSpinBox {
+    padding: 5px 32px 5px 10px;
+    min-height: 26px;
+    selection-background-color: #753b3e;
+}
+QSpinBox:hover, QDoubleSpinBox:hover { border-color: #686068; }
+QSpinBox:focus, QDoubleSpinBox:focus { border-color: #c45156; }
+QSpinBox:disabled, QDoubleSpinBox:disabled { color: #777b82; border-color: #3c3c3c; }
+QSpinBox::up-button, QDoubleSpinBox::up-button,
+QSpinBox::down-button, QDoubleSpinBox::down-button {
+    subcontrol-origin: border;
+    width: 26px;
+    background: #343434;
+    border: none;
+    border-left: 1px solid #484848;
+    margin: 1px;
+}
+QSpinBox::up-button, QDoubleSpinBox::up-button {
+    subcontrol-position: top right;
+    border-top-right-radius: 4px;
+}
+QSpinBox::down-button, QDoubleSpinBox::down-button {
+    subcontrol-position: bottom right;
+    border-bottom-right-radius: 4px;
+}
+QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,
+QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover { background: #554043; }
+QSpinBox::up-button:pressed, QDoubleSpinBox::up-button:pressed,
+QSpinBox::down-button:pressed, QDoubleSpinBox::down-button:pressed { background: #803b40; }
+QSpinBox::up-button:disabled, QDoubleSpinBox::up-button:disabled,
+QSpinBox::down-button:disabled, QDoubleSpinBox::down-button:disabled,
+QSpinBox::up-button:off, QDoubleSpinBox::up-button:off,
+QSpinBox::down-button:off, QDoubleSpinBox::down-button:off { background: #292929; border-left-color: #3c3c3c; }
+"""
+for _direction in ("up", "down"):
+    for _state, _suffix in (("", ""), (":hover", "-active"), (":disabled", "-disabled"), (":off", "-disabled")):
+        SPINBOX_QSS += (
+            f'QSpinBox::{_direction}-arrow{_state}, QDoubleSpinBox::{_direction}-arrow{_state} '
+            f'{{ image: url("{_SPIN_ICON_ROOT}/spin-{_direction}{_suffix}.svg"); width: 12px; height: 12px; }}\n'
+        )
+GLOBAL_QSS += SPINBOX_QSS
+LAUNCHER_QSS += SPINBOX_QSS
