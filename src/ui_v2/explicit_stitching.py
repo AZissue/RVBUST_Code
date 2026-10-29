@@ -183,7 +183,10 @@ class ExplicitStitching:
             frame, cloud = result
             bridge.frame_db.display_frame('mobile_chain', frame.database_id, frame, cloud)
             bridge.shell.set_dirty(True)
-            bridge.shell.log('原始点云与2D图像已入DB；点击“执行拼接”生成结果。', 'success')
+            if frame.pointcloud_aligned is False:
+                bridge.shell.log('原始点云与2D图像已保存；该帧未对齐，已标黄。请开启“点云对应2D”后重拍当前帧，暂不能参与拼接。', 'warn')
+            else:
+                bridge.shell.log('原始点云与2D图像已入DB；点击“执行拼接”生成结果。', 'success')
             bridge.shell._refresh_statusbar()
         bridge._run_background(work, done, must_finish=True, name='raw_capture')
 
@@ -214,6 +217,10 @@ class ExplicitStitching:
             explicit = prepared[2]
         if any(uid not in database.records or database.records[uid].kind != 'raw' for uid in raw_ids):
             bridge.shell.log('请仅勾选原始点云执行拼接；拼接结果不能作为原始帧输入。', 'warn')
+            return
+        unaligned = [database.records[uid] for uid in raw_ids if database.records[uid].pointcloud_aligned is False]
+        if unaligned:
+            show_stitch_failure(bridge, mode, '帧' + '、'.join(f'{row.frame_id:03d}' for row in unaligned) + '：点云未与2D对齐，无法参与拼接。请将拍摄参数“点云对应2D”设为“是”，然后重拍这些帧。')
             return
         if len(raw_ids) < 2:
             bridge.shell.log('执行拼接至少需要两帧原始数据。', 'warn')

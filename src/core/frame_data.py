@@ -46,6 +46,7 @@ class FrameData:
     """单帧捕获数据。支持在线（RVC对象）和离线（文件路径）模式。"""
     frame_id: int
     camera_name: str           # 相机 ID（任意字符串，如 "cam0" / "A"）
+    pointcloud_aligned: Optional[bool] = field(default=None, kw_only=True)
     database_id: Optional[str] = field(default=None, kw_only=True)
     recognition_key: Optional[str] = field(default=None, kw_only=True)
     recognition_state: str = field(default='', kw_only=True)

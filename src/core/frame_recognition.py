@@ -17,6 +17,9 @@ def fingerprint(config):
 
 
 def detect(frame, config):
+    if frame.pointcloud_aligned is False:
+        return dict(state='done', key=fingerprint(config), markers=[], marker_type=config['marker_type'],
+                    message='点云未与2D对齐，无法参与拼接；请开启对齐后重拍当前帧。')
     # No shared last_board_result, mutable SDK marker type, or capture handles.
     detector = MarkerDetector(config['marker_type'])
     detector.save_debug_images = False

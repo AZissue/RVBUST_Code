@@ -298,6 +298,10 @@ class SingleCameraController:
                 if img is None or pm is None:
                     return None, None, None, "获取图像/点云失败"
 
+                snapshot = options if options is not None else self.current_options
+                self.last_pointcloud_aligned = (False if snapshot is not None
+                    and getattr(snapshot, 'capture_mode', None) == getattr(RVC, 'CaptureMode_SwingLineScan', object())
+                    and getattr(snapshot, 'correspond2d', True) == False else (True if snapshot is not None else None))
                 image_np = np.array(img, copy=True)
                 return image_np, pm.Clone(), img.Clone(), "success"
             except Exception as e:
@@ -717,7 +721,8 @@ class CameraManager:
                 logger.error(f"capture {camera_id} 失败: {msg}")
                 return None
             frame = FrameData(frame_id=frame_id, camera_name=camera_id,
-                              image_np=img, pointmap=pm, rvc_image=rvc_img)
+                              image_np=img, pointmap=pm, rvc_image=rvc_img,
+                              pointcloud_aligned=getattr(cam, "last_pointcloud_aligned", None))
             capture_sink = getattr(self, 'capture_sink', None)
             if capture_sink is not None:
                 try:

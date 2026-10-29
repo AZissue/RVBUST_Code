@@ -5,6 +5,8 @@ from .dialogs import ChineseMessageBox
 
 def advice(error, marker_type):
     text = str(error)
+    if '未与2D对齐' in text:
+        return '请在“属性 → 拍摄参数”开启“点云对应2D”，在DB树中选中黄色原始帧后点击顶部“重拍当前”。修改相机设置不会修复旧帧；请完成重拍后再执行拼接。'
     if any(word in text for word in ('写入DB', '存储', '磁盘', '文件', 'disk', 'Permission')):
         return '请检查项目路径、磁盘空间及写入权限，确认文件未被占用；恢复存储后在DB树右键重新识别，再执行拼接。'
     if any(word in text for word in ('标记', '识别', '圆', '内点', 'RMS', '配准')):

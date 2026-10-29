@@ -69,6 +69,7 @@ class FrameRecord:
     recognition: dict = field(default_factory=dict)
     operation_id: str = ''
     output_role: str = ''
+    pointcloud_aligned: bool | None = None
 
 
 class FrameDatabase:
@@ -145,9 +146,16 @@ class FrameDatabase:
                 target = folder / 'pointmap.ply'
                 if frame.pointmap is not None and frame.rvc_image is not None:
                     sdk = _import_rvc()
-                    if sdk is None or not frame.pointmap.SaveWithImage(str(target), frame.rvc_image,
-                            sdk.PointMapUnitEnum.Millimeter, True):
-                        raise IOError('原始点云保存失败')
+                    if sdk is None:
+                        raise IOError('无法加载相机SDK，原始点云未保存')
+                    if frame.pointcloud_aligned is False:
+                        saved = frame.pointmap.Save(str(target), sdk.PointMapUnitEnum.Millimeter, True)
+                    else:
+                        saved = frame.pointmap.SaveWithImage(str(target), frame.rvc_image,
+                            sdk.PointMapUnitEnum.Millimeter, True)
+                    if not saved:
+                        detail = sdk.GetLastErrorMessage() if hasattr(sdk, 'GetLastErrorMessage') else 'SDK未提供错误详情'
+                        raise IOError('原始点云保存失败：' + str(detail))
                 elif frame.offline_pointmap_path:
                     shutil.copyfile(frame.offline_pointmap_path, target)
                 else:
@@ -161,6 +169,7 @@ class FrameDatabase:
                     frame.frame_id, purpose or frame.kind or '采集帧', logical_name or frame.camera_name,
                     datetime.now().isoformat(timespec='seconds'), count,
                     list(image.shape[:2][::-1]), _json_value(frame.markers_all if frame.markers_all is not None else frame.markers))
+                record.pointcloud_aligned = frame.pointcloud_aligned
                 # Large PLY/PNG writes above do not hold the metadata lock, so
                 # Qt can read the existing tree while another camera is saving.
                 with self._lock:
@@ -326,7 +335,7 @@ class FrameDatabase:
             if component == 'image':
                 raise ValueError('拼接结果没有对应2D图像')
             frame = FrameData(record.frame_id, record.logical_name, is_offline=True,
-                offline_pointmap_path=str(folder / 'pointmap.ply'), database_id=uid)
+                offline_pointmap_path=str(folder / 'pointmap.ply'), database_id=uid, pointcloud_aligned=record.pointcloud_aligned)
             cloud = frame.load_pointcloud_o3d()
             if cloud is None or not len(cloud.points):
                 raise IOError('DB拼接点云读取失败')
@@ -339,7 +348,7 @@ class FrameDatabase:
         frame = FrameData(record.frame_id, record.camera, image_np=image,
             markers=[m for m in record.markers if m.get('valid_3d', True)], markers_all=record.markers,
             is_offline=True, offline_image_path=str(folder / 'image.png'),
-            offline_pointmap_path=str(folder / 'pointmap.ply'), database_id=uid)
+            offline_pointmap_path=str(folder / 'pointmap.ply'), database_id=uid, pointcloud_aligned=record.pointcloud_aligned)
         if record.recognition:
             from .frame_recognition import apply
             apply(frame, record.recognition)

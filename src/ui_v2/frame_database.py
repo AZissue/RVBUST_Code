@@ -1,3 +1,4 @@
+from PySide6.QtGui import QColor
 """New-UI frame archive controller and hierarchical browser."""
 from PySide6.QtCore import QObject, Qt, Signal, Slot, QEvent, QSignalBlocker
 from PySide6.QtWidgets import (QFileDialog, QHBoxLayout, QHeaderView, QLabel,
@@ -98,6 +99,7 @@ class FrameBrowser(QWidget):
         self.tree.header().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         self.tree.setMinimumHeight(100)
         self.tree.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.tree.itemClicked.connect(self._alignment_clicked)
         self.tree.currentItemChanged.connect(self._selected)
         self.tree.itemChanged.connect(self._component_check_changed)
         self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
@@ -183,10 +185,17 @@ class FrameBrowser(QWidget):
             if self.database.mode == 'multi_cam' and record.kind == 'raw':
                 title += ' · ' + record.camera
             row = QTreeWidgetItem([title, ''])
+            if record.pointcloud_aligned is False:
+                row.setText(0, title + '  !')
+                row.setForeground(0, QColor('#ffc44d'))
+                row.setForeground(1, QColor('#ffc44d'))
+
             row.setData(0, Qt.UserRole, record.uid)
             row.setToolTip(0, f'{record.camera} · {record.purpose} · {record.logical_name}\n{record.status}\n'
                 f'原始PLY + 2D PNG（{record.image_size[0]} × {record.image_size[1]}）\n'
                 '原始相机坐标；选择后在右侧查看2D / 3D。\n' + record.created)
+            if record.pointcloud_aligned is False:
+                row.setToolTip(0, '! 点云未与2D对齐，无法参与拼接。请开启拍摄参数“点云对应2D”后重拍当前帧。\n' + row.toolTip(0))
             row.setIcon(0, icons.icon('layers', '#bbbbbb', 16))
             if record.kind == 'result':
                 row.setIcon(0, icons.icon('stitch', '#d65050', 16))
@@ -515,6 +524,26 @@ class FrameBrowser(QWidget):
         menu.addAction('返回工作视图', self.restore_requested.emit)
         menu.addAction('会话占用 / 管理', self.manage_requested.emit)
         menu.exec(self.tree.viewport().mapToGlobal(position))
+
+    def _alignment_clicked(self, item, column):
+        uid = item.data(0, Qt.UserRole)
+        record = self.database.records.get(uid)
+        if record is None or record.pointcloud_aligned is not False:
+            return
+        old = getattr(self, '_alignment_notice', None)
+        if old is not None and old.isVisible():
+            old.raise_()
+            return
+        box = QMessageBox(self)
+        box.setWindowTitle('当前帧未对齐')
+        box.setIcon(QMessageBox.Warning)
+        box.setText('该帧点云未与2D图像对齐，不能参与拼接。')
+        box.setInformativeText('点云和图像已保存，可以查看或单独导出。请在“拍摄参数”中将“点云对应2D”设为“是”，然后选中该原始帧，点击顶部“重拍当前”。开启对齐不会修复已拍摄的旧帧。')
+        box.addButton('知道了', QMessageBox.AcceptRole)
+        box.setAttribute(Qt.WA_DeleteOnClose)
+        box.finished.connect(lambda _: setattr(self, '_alignment_notice', None))
+        self._alignment_notice = box
+        box.open()
 
     def _selected(self, item, previous):
         if item and item.data(0, Qt.UserRole + 2) == 'calibration':
