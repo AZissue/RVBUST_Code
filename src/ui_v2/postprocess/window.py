@@ -351,7 +351,13 @@ class PostprocessWindow(QDialog):
         reports = []
         def work():
             try:
-                outputs, details = correct_color_layers(layers, reference=reference, params=params)
+                if params.algorithm == 'image_fusion':
+                    from core.postprocess.image_color_fusion import source_poses, fuse_image_colors
+                    pairs = [fuse_image_colors(self.database, layer, source_poses(self.database, uid), params)
+                             for uid, layer in zip(identifiers, layers)]
+                    outputs, details = [p[0] for p in pairs], [p[1] for p in pairs]
+                else:
+                    outputs, details = correct_color_layers(layers, reference=reference, params=params)
             except NoColorCorrection as exc:
                 reports.extend(dict(row, name=layer.name) for layer, row in zip(layers, exc.reports))
                 raise

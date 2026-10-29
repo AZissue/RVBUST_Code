@@ -2194,7 +2194,8 @@ class BackendBridge(QObject):
         database = self.projects.projects['robot_stitch'].database
 
         def work():
-            return database.publish_result(cloud, source_ids, name='机器人基座系合并点云')[0]
+            return database.publish_result(cloud, source_ids, name='机器人基座系合并点云',
+                source_transforms={uid: matrix.tolist() for uid, matrix in zip(source_ids, workflow.transforms)})
 
         def done(uid, error):
             if error:

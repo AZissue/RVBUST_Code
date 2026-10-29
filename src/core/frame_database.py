@@ -70,6 +70,7 @@ class FrameRecord:
     operation_id: str = ''
     output_role: str = ''
     pointcloud_aligned: bool | None = None
+    source_transforms: dict = field(default_factory=dict)
 
 
 class FrameDatabase:
@@ -389,11 +390,11 @@ class FrameDatabase:
                     temporary.unlink(missing_ok=True)
         return str(target)
 
-    def publish_result(self, cloud, source_ids, *, postprocess=False, name=None):
+    def publish_result(self, cloud, source_ids, *, postprocess=False, name=None, source_transforms=None):
         """Commit a separate immutable result; never change raw frame geometry."""
-        return self.publish_results([(cloud, source_ids, name)], postprocess=postprocess)[0]
+        return self.publish_results([(cloud, source_ids, name)], postprocess=postprocess, source_transforms=source_transforms)[0]
 
-    def publish_results(self, results, *, postprocess=False, output_roles=None):
+    def publish_results(self, results, *, postprocess=False, output_roles=None, source_transforms=None):
         """Atomically commit related (cloud, source_ids, name) result branches.
 
         In particular, polygon keep/discard branches must both succeed or neither
@@ -433,7 +434,8 @@ class FrameDatabase:
                     staged[uid] = FrameRecord(uid, self.session_id, '', number, role + '结果',
                         title, datetime.now().isoformat(timespec='seconds'), len(cloud.points), [0, 0],
                         status='已处理' if postprocess else '已拼接', kind='result', source_ids=sources,
-                        operation_id=operation_id, output_role=output_role)
+                        operation_id=operation_id, output_role=output_role,
+                        source_transforms=copy.deepcopy(source_transforms or {}))
                     identifiers.append(uid)
                     number += 1
                 self.records.update(staged)

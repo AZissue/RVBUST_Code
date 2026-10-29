@@ -33,7 +33,8 @@ class ColorDialog(QDialog):
         self.algorithm.addItem('温和保色（现有）', 'balanced')
         self.algorithm.addItem('强力保边融合', 'aggressive')
         self.algorithm.addItem('空间均色（最强，会削弱纹理）', 'spatial')
-        form.addRow('单云算法', self.algorithm)
+        self.algorithm.addItem('原始2D颜色融合（需原始帧及拼接位姿）', 'image_fusion')
+        form.addRow('颜色算法', self.algorithm)
         self.voxel_size = QDoubleSpinBox()
         self.voxel_size.setRange(0, 1000)
         self.voxel_size.setDecimals(2)
@@ -71,7 +72,8 @@ class ColorDialog(QDialog):
             form.addRow(label, control)
         self.color_aligned = QCheckBox('多云已处于同一坐标系')
         form.addRow(self.color_aligned)
-        hint = QLabel('单云：低频颜色场 + 局部接缝融合；多云：重叠区估计。原始未配准多帧请先拼接。\n'
+        hint = QLabel('原始2D融合：保留XYZ与点数，忽略预下采样；需至少两帧已对齐原始PNG/PLY与保存的拼接位姿。旧结果缺位姿请重新拼接。\n'
+                      '单云：低频颜色场 + 局部接缝融合；多云：重叠区估计。原始未配准多帧请先拼接。\n'
                       '预下采样会合并体素内坐标和颜色，减少输出点数；来源不变。\n'
                       '最强算法会消除真实明暗纹理；建议先用1mm体素、100%强度/融合、增益2。\n'
                       '仅缓和可估计色差，可能影响真实材质；不是摄影测量级真彩还原。')
@@ -135,6 +137,14 @@ class ColorDialog(QDialog):
 
     def _updated(self, *_):
         state = self.parameters()
+        image_mode = state['algorithm'] == 'image_fusion'
+        self.color_inputs.setText(f'预计输入：{self._input_count} 层 · ' + ('原始2D颜色融合（保留XYZ）' if image_mode else
+            '单云空间校正' if self._input_count == 1 else '多云重叠校正'))
+        self.voxel_size.setEnabled(not image_mode)
+        self.color_scale.setEnabled(not image_mode and self._input_count == 1)
+        self.color_seam.setEnabled(not image_mode and self._input_count == 1)
+        self.color_reference.setEnabled(not image_mode and self._input_count > 1)
+        self.color_distance.setEnabled(image_mode or self._input_count > 1)
         params = ColorParameters(**{key: state[key] for key in asdict(ColorParameters()) if key in state})
         self.summary.setText(f'算法={params.algorithm}，预下采样={params.voxel_size:g}mm，尺度={params.scale:g}mm，强度={params.strength:.0%}，上限={params.max_gain:g}，'
                              f'接缝融合={params.seam_strength:.0%}，样本上限={params.sample_limit}，重叠距离={params.overlap_distance:g}mm')

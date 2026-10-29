@@ -272,6 +272,7 @@ class TurntableCalibrator:
 
         merged = o3d.geometry.PointCloud()
         n_refined = 0
+        self.last_stitch_transforms = [None] * len(pcds)
         for i, pcd in enumerate(pcds):
             if pcd is None or len(pcd.points) == 0:
                 continue
@@ -287,6 +288,7 @@ class TurntableCalibrator:
                         n_refined += 1
                 except Exception:
                     logger.warning(f"第 {i} 帧 ICP 精修失败，使用初值变换", exc_info=True)
+            self.last_stitch_transforms[i] = T.copy()
             pcd_t = o3d.geometry.PointCloud(pcd)
             pcd_t.transform(T)
             merged += pcd_t

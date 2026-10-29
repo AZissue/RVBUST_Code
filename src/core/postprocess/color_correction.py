@@ -24,7 +24,7 @@ class ColorParameters:
     voxel_size: float = 0.
 
     def validate(self):
-        if self.algorithm not in ('balanced', 'aggressive', 'spatial'):
+        if self.algorithm not in ('balanced', 'aggressive', 'spatial', 'image_fusion'):
             raise ValueError('未知颜色统一算法')
         if not np.isfinite(self.voxel_size) or self.voxel_size < 0:
             raise ValueError('预下采样体素必须为非负有限值（0关闭）')
@@ -276,6 +276,8 @@ def correct_color_layers(layers, *, reference=0, params=None):
     from .processing import voxel_downsample
     params = params or ColorParameters()
     params.validate()
+    if params.algorithm == 'image_fusion':
+        raise ValueError('原始2D融合需要DB原始帧和拼接位姿，请从后处理颜色统一入口执行')
     if any(layer.colors is None for layer in layers):
         raise ValueError('颜色统一拒绝无色或混合有色/无色输入')
     inputs = layers
@@ -302,6 +304,8 @@ def unify_colors(layers, *, reference=0, params=None):
     """
     params = params or ColorParameters()
     params.validate()
+    if params.algorithm == 'image_fusion':
+        raise ValueError('原始2D融合需要DB原始帧和拼接位姿，请从后处理颜色统一入口执行')
     if not layers or not isinstance(reference, int) or not 0 <= reference < len(layers):
         raise ValueError('请选择有效的颜色输入和参考层')
     if any(layer.colors is None for layer in layers):

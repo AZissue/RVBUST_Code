@@ -258,6 +258,7 @@ class ExplicitStitching:
         bridge.shell.show_loading('正在执行拼接；原始帧保持独立...')
         def work():
             workflow = None
+            source_transforms = {}
             sources = raw_ids
             if use_chain:
                 workflow = MobileChainWorkflow(bridge.camera_manager, bridge.marker_detector,
@@ -283,6 +284,8 @@ class ExplicitStitching:
                     ok, message, before_mm, after_mm = workflow.optimize_global()
                     if not ok:
                         raise ValueError(message)
+                source_transforms = {node.frame.database_id: node.T_world.tolist()
+                    for node in workflow._chain_stitcher.nodes.values()}
                 merged = workflow._chain_stitcher.get_merged_pointcloud()
                 if mode != 'mobile_chain':
                     workflow = None
@@ -309,6 +312,7 @@ class ExplicitStitching:
                 merged = o3d.geometry.PointCloud()
                 for camera, cloud in frames.items():
                     transform = bridge.calibration_engine.get_transform(camera, reference)
+                    source_transforms[next(uid for uid in raw_ids if database.records[uid].camera == camera)] = transform.tolist()
                     cloud.transform(transform)
                     merge_pointclouds(merged, cloud)
                 merged, _ = bridge.processor.process(merged)
@@ -320,10 +324,12 @@ class ExplicitStitching:
                     raise ValueError('勾选帧没有有效点云')
                 from ui_common.industrial_scene.marker_display import valid_xyz
                 markers = [[m for m in frame.markers if valid_xyz(m) is not None] for frame, _ in frames_clouds]
-                merged, message = copy.deepcopy(turn.session.calib).stitch_pointclouds(clouds,
+                color_calib = copy.deepcopy(turn.session.calib)
+                merged, message = color_calib.stitch_pointclouds(clouds,
                     downsample_voxel=voxel, icp_refine=refine, markers=markers, step_indices=step_indices)
                 if merged is None:
                     raise ValueError(message)
+                source_transforms = {uid: t.tolist() for uid, t in zip(raw_ids, color_calib.last_stitch_transforms) if t is not None}
             elif mode == 'multi_cam':
                 sources = [frame.database_id for frame in bridge.fixed_workflow.frames_scan.values()]
                 if len(sources) < 2:
@@ -333,6 +339,8 @@ class ExplicitStitching:
                 ok, message, merged = bridge.fixed_workflow.stitch()
                 if not ok:
                     raise ValueError(message + '；请先完成外参标定并采集扫描帧')
+                source_transforms = {uid: bridge.calibration_engine.get_transform(database.records[uid].camera,
+                    bridge.fixed_workflow.reference_id).tolist() for uid in sources}
             else:
                 sources = [frame.database_id for frame in turn.session.get_all_frames()]
                 if any(uid not in database.records for uid in sources):
@@ -340,7 +348,8 @@ class ExplicitStitching:
                 merged, message = turn.session.stitch(downsample_voxel=voxel, icp_refine=refine)
                 if merged is None:
                     raise ValueError(message)
-            uid = database.publish_result(merged, sources)
+                source_transforms = {uid: t.tolist() for uid, t in zip(sources, turn.session.calib.last_stitch_transforms) if t is not None}
+            uid = database.publish_result(merged, sources, source_transforms=source_transforms)
             return uid, merged, workflow
         def done(result, error):
             bridge.shell.hide_loading()
