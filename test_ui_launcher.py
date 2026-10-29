@@ -111,7 +111,10 @@ class LauncherTests(unittest.TestCase):
     def test_test_devices_auto_ip_warns_without_calling_backend(self):
         dlg = self.dialog
         dlg.set_devices([])
-        dlg._on_add_test_devices()
+        self.assertFalse(hasattr(dlg, '_btn_add_test'))
+        self.assertFalse(hasattr(dlg, '_on_add_test_devices'))
+        # Legacy injected records remain guarded; the UI cannot create them.
+        dlg.set_devices([DeviceInfo(model='TEST', serial='SN_TEST_A', online=True)])
         auto_ip = QSignalSpy(dlg.auto_ip_requested)
         for choose in (False, True):
             dlg._table._check_widgets[0].setChecked(choose)

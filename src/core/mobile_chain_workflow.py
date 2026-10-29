@@ -98,7 +98,7 @@ class MobileChainWorkflow(WorkflowBase):
             calibration_engine=self.calibration_engine,
             stitch_engine=self.stitch_engine,
             min_common_markers=3,
-            min_inlier_ratio=0.7,
+            min_inlier_ratio=0.6,
             max_rms_mm=2.0,
         )
         self._station_manager = StationManager(self.camera_manager)
@@ -146,7 +146,7 @@ class MobileChainWorkflow(WorkflowBase):
             calibration_engine=self.calibration_engine,
             stitch_engine=self.stitch_engine,
             min_common_markers=3,
-            min_inlier_ratio=0.7,
+            min_inlier_ratio=0.6,
             max_rms_mm=2.0,
         )
         self._station_manager = StationManager(self.camera_manager)

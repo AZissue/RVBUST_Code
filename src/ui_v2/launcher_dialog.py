@@ -163,10 +163,7 @@ class LauncherDialog(QDialog):
         self._btn_auto_ip.clicked.connect(self._on_auto_ip)
         net_row.addWidget(self._btn_auto_ip)
         net_row.addStretch(1)
-        self._btn_add_test = QPushButton("添加测试设备")
-        self._btn_add_test.setToolTip("仅供界面调试：添加 TEST-A～TEST-D，不代表已连接真实相机")
-        self._btn_add_test.clicked.connect(self._on_add_test_devices)
-        net_row.addWidget(self._btn_add_test)
+
         right.addLayout(net_row)
         self._device_hint = QLabel("正在等待设备列表…", objectName="launcherHint")
         self._device_hint.setWordWrap(True)
@@ -327,22 +324,6 @@ class LauncherDialog(QDialog):
     def _on_filter(self, text: str):
         self._table.apply_filter(text)
 
-    def _on_add_test_devices(self):
-        """临时：向设备表追加四台测试相机，方便查看多机布局效果。"""
-        existing = self._table.devices()
-        test_devices = [
-            DeviceInfo(model="TEST-A", status="idle", status_detail="测试设备，不查询SDK", serial="SN_TEST_A", online=True),
-            DeviceInfo(model="TEST-B", status="idle", status_detail="测试设备，不查询SDK", serial="SN_TEST_B", online=True),
-            DeviceInfo(model="TEST-C", status="idle", status_detail="测试设备，不查询SDK", serial="SN_TEST_C", online=True),
-            DeviceInfo(model="TEST-D", status="idle", status_detail="测试设备，不查询SDK", serial="SN_TEST_D", online=True),
-        ]
-        # 避免重复添加
-        existing_serials = {d.serial for d in existing}
-        for d in test_devices:
-            if d.serial not in existing_serials:
-                existing.append(d)
-        self.set_devices(existing)
-
     def _on_checked_changed(self, _checked: list):
         self._refresh_connect_state()
 
@@ -417,7 +398,7 @@ class LauncherDialog(QDialog):
     def _update_busy_controls(self):
         busy = self._is_busy()
         for widget in (self._mode_choices, self._search_edit, self._table,
-                       self._btn_refresh, self._btn_auto_ip, self._btn_add_test,
+                       self._btn_refresh, self._btn_auto_ip,
                        self._btn_cancel):
             widget.setEnabled(not busy)
         self._refresh_connect_state()

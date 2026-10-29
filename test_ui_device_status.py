@@ -137,11 +137,8 @@ class TableTests(unittest.TestCase):
         try:
             dlg.set_devices([DeviceInfo('RVC','real',backend_ref=2,status='busy',checked=True)])
             spy=QSignalSpy(dlg.refresh_requested);dlg._btn_refresh.click();self.assertEqual(spy.count(),1)
-            dlg._on_add_test_devices()
-            tests=[d for d in dlg._table.devices() if d.backend_ref is None]
-            self.assertEqual(len(tests),4);self.assertTrue(all(d.status=='idle' and '测试' in d.status_detail for d in tests))
-            row=[r for r in range(dlg._table.rowCount()) if dlg._table.item(r,2).text()=='SN_TEST_A'][0]
-            self.assertEqual(dlg._table.item(row,3).text(),'测试')
+            self.assertFalse(hasattr(dlg, '_btn_add_test'))
+            self.assertFalse(hasattr(dlg, '_on_add_test_devices'))
             dlg.set_devices([DeviceInfo('RVC','real',backend_ref=0,status='idle')])
             self.assertEqual(dlg.selected_devices()[0].backend_ref,0)
         finally:

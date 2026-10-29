@@ -68,7 +68,7 @@ class ChainStitcher:
                  calibration_engine: CalibrationEngine,
                  stitch_engine: StitchEngine,
                  min_common_markers: int = 6,
-                 min_inlier_ratio: float = 0.7,
+                 min_inlier_ratio: float = 0.6,
                  max_rms_mm: float = 2.0):
         self.marker_detector = marker_detector
         self.calibration_engine = calibration_engine
@@ -491,7 +491,7 @@ class ChainStitcher:
             return False, f"内点率过低: {edge.inlier_ratio:.1%} < {self.min_inlier_ratio:.1%}"
         if edge.rms_mm > self.max_rms_mm:
             return False, f"RMS 过高: {edge.rms_mm:.3f}mm > {self.max_rms_mm}mm"
-        edge.quality = "good" if edge.rms_mm < 0.5 else "ok"
+        edge.quality = "good" if edge.rms_mm < 0.5 and edge.inlier_ratio >= .7 else "ok"
         return True, "配准质量良好"
 
     def _compute_cumulative_rms(self, station_id: str) -> float:

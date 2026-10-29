@@ -408,7 +408,9 @@ class ExplicitStitchingTests(unittest.TestCase):
                 target = self.win.workspace_turntable().session
                 target.sequence = frames
                 returned = (cloud, 'ok')
-            with patch.object(target, 'stitch', return_value=returned) as stitch:
+                target.calib.last_stitch_transforms = [np.eye(4), np.eye(4)]
+            with patch.object(self.bridge.calibration_engine, 'get_transform', return_value=np.eye(4)), \
+                    patch.object(target, 'stitch', return_value=returned) as stitch:
                 self.win._industrial_ribbon.commands[(mode, 'stitch')].click()
                 self.wait(lambda: not any(w.isRunning() for w in self.bridge._workers))
                 stitch.assert_called_once()

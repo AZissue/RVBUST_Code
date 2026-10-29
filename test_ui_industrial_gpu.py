@@ -25,7 +25,7 @@ def main():
     with patch('core.camera_manager.CameraManager.initialize',side_effect=AssertionError('SDK prohibited')):
         launcher=LauncherDialog();launcher.show()
         launcher._industrial_cards['mobile_chain'].clicked.emit()
-        launcher._on_add_test_devices()
+        launcher.set_devices([])
         app.processEvents()
         assert launcher.grab().save(str(output/'production_parallel_launcher.png'))
         launcher.close()
