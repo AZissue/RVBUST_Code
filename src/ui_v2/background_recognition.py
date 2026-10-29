@@ -178,6 +178,11 @@ class BackgroundRecognition(QObject):
         if not self.enabled or getattr(self.bridge, '_cleaned', False):
             return
         bridge = self.bridge
+        # Publishing a large stitch holds the DB transaction lock during I/O.
+        # A GUI timer must not wait on that lock and freeze the event loop.
+        if any(worker.isRunning() and getattr(worker, '_task_name', '') == 'explicit_stitch'
+               for worker in bridge._workers):
+            return
         for token, future in list(self.jobs.items()):
             if not future.done():
                 continue

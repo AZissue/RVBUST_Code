@@ -400,6 +400,21 @@ class BackgroundTests(unittest.TestCase):
         self.assertEqual(self.db.records[uid].recognition['state'], 'done')
 
 
+    def test_stitch_worker_prevents_gui_timer_waiting_on_database_lock(self):
+        class ForbiddenLock:
+            def __enter__(self):
+                raise AssertionError('GUI timer attempted to acquire busy DB lock')
+            def __exit__(self, *_):
+                return False
+        worker = SimpleNamespace(isRunning=lambda: True, _task_name='explicit_stitch')
+        self.bridge._workers.append(worker)
+        try:
+            with patch.object(self.db, '_lock', ForbiddenLock()):
+                self.recognition.tick()
+        finally:
+            self.bridge._workers.remove(worker)
+
+
 class DetectorSnapshotTests(unittest.TestCase):
     def test_background_sdk_errors_are_distinct_from_zero_detections(self):
         source = MarkerDetector()
@@ -416,7 +431,7 @@ class DetectorSnapshotTests(unittest.TestCase):
         detector.detect_3d.return_value = [dict(code=3, valid_3d=False)]
         detector.last_board_result = dict(T_board_in_cam=np.eye(4), pattern_size=(4, 11), pattern_name='4x11', rms_mm=.1)
         with patch('core.frame_recognition.MarkerDetector', return_value=detector):
-            outcome = frame_recognition.detect(SimpleNamespace(image_np=None, offline_pointmap_path='raw.ply'), config)
+            outcome = frame_recognition.detect(SimpleNamespace(image_np=None, offline_pointmap_path='raw.ply', pointcloud_aligned=True), config)
         detector.set_params.assert_called_once_with(*config['circle'])
         self.assertEqual(outcome['board_pattern'], [4, 11])
         self.assertEqual(outcome['markers'][0]['valid_3d'], False)

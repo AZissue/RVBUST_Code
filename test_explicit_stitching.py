@@ -418,6 +418,27 @@ class ExplicitStitchingTests(unittest.TestCase):
             self.assertEqual(len(results), 1, self.win._st_hint.text())
             self.assertEqual(results[0].source_ids, [frame.database_id for frame in frames])
 
+    def test_large_turntable_uses_isolated_job_and_publishes_transform_provenance(self):
+        self.win.set_mode('turntable', [])
+        self.bridge._current_mode = 'turntable'
+        database = self.bridge.frame_db.databases['turntable']
+        frames = [self.source(i) for i in (1,2)]
+        ids = [database.ingest(frame) for frame in frames]
+        for uid in ids:
+            database.records[uid].points = 1_000_000
+        session = self.win.workspace_turntable().session
+        session.apply_calibration([0,0,1], [0,0,0], 90, 4)
+        session.sequence = frames
+        cloud = frames[0].load_pointcloud_o3d()
+        transforms = [np.eye(4).tolist(), np.eye(4).tolist()]
+        with patch('core.turntable_stitch_job.run_job', return_value=(cloud, dict(transforms=transforms, counts=[4,4]))) as job:
+            self.win._industrial_ribbon.commands[('turntable','stitch')].click()
+            self.wait(lambda: not any(w.isRunning() for w in self.bridge._workers))
+            job.assert_called_once()
+        result = next(row for row in database.records.values() if row.kind=='result')
+        self.assertEqual(result.source_ids, ids)
+        self.assertEqual(set(result.source_transforms), set(ids))
+
     def check_clouds(self, mode, ids):
         browser = self.bridge.frame_db.browsers[mode]
         for uid in ids:

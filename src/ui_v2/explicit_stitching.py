@@ -256,11 +256,32 @@ class ExplicitStitching:
         if use_chain:
             bridge.shell.log('参与拼接的原始点云：' + '、'.join(frame_names.values()), 'info')
         bridge.shell.show_loading('正在执行拼接；原始帧保持独立...')
+        stitch_report = []
         def work():
             workflow = None
             source_transforms = {}
             sources = raw_ids
-            if use_chain:
+            import sys
+            process_sources = raw_ids if explicit else [frame.database_id for frame in turn.session.get_all_frames()]
+            isolated = (mode == 'turntable' and not use_chain and not getattr(sys, 'frozen', False)
+                        and all(uid in database.records for uid in process_sources)
+                        and sum(database.records[uid].points or 0 for uid in process_sources) >= 1_000_000)
+            if isolated:
+                from core.turntable_stitch_job import run_job
+                import numpy as np
+                from ui_common.industrial_scene.marker_display import valid_xyz
+                sources = process_sources
+                calib = turn.session.calib
+                config = dict(axis=calib.axis.tolist(), center=calib.center.tolist(),
+                    angle_deg=float(np.degrees(calib.angle_rad)), step_count=calib.step_count)
+                markers = [[m for m in database.records[uid].markers if valid_xyz(m) is not None] for uid in sources]
+                merged, metadata = run_job([database.directory/'frames'/uid/'pointmap.ply' for uid in sources],
+                    config, markers, step_indices if explicit else None, voxel, refine)
+                source_transforms = {uid: t for uid, t in zip(sources, metadata['transforms']) if t is not None}
+                stitch_report.append('独立进程拼接：' + '、'.join(
+                    f'帧{database.records[uid].frame_id:03d} 有效{count:,}点'
+                    for uid, count in zip(sources, metadata['counts'])) + f'；输出 {len(merged.points):,} 点。')
+            elif use_chain:
                 workflow = MobileChainWorkflow(bridge.camera_manager, bridge.marker_detector,
                     CalibrationEngine(display_names=frame_names), bridge.stitch_engine, bridge.processor)
                 workflow.start_chaining()
@@ -359,6 +380,8 @@ class ExplicitStitching:
                 show_stitch_failure(bridge, mode, error)
                 return
             uid, cloud, workflow = result
+            for report in stitch_report:
+                bridge.shell.log(report, 'info')
             bridge.frame_db.overlay.reset(mode)
             bridge.projects.projects[mode].include_raw = True
             if workflow is not None:

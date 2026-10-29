@@ -226,7 +226,7 @@ def test_stitch_filters_invalid():
 
     calib = TurntableCalibrator()
     calib.set_calibration(synth.axis, synth.center, angle_deg=90.0, step_count=2)
-    merged, msg = calib.stitch_pointclouds(pcds, markers=markers)
+    merged, msg = calib.stitch_pointclouds(pcds, markers=markers, remove_outliers=True)
     assert merged is not None, msg
     out = np.asarray(merged.points)
     assert np.isfinite(out).all(), f"输出仍含非有限点: {np.count_nonzero(~np.isfinite(out).all(axis=1))}"

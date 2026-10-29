@@ -352,8 +352,8 @@ class TurntableWorkspace(QWidget):
 
         # ICP 精修：以标定变换为初值逐帧 ICP，校正标定残差
         # （标记对数少时标定噪声可达数度/数十 mm，纯标定变换拼接会重影）
-        self.chk_icp_refine = QCheckBox("拼接时 ICP 精修（推荐，校正标定残差）")
-        self.chk_icp_refine.setChecked(True)
+        self.chk_icp_refine = QCheckBox("拼接时 ICP 精修（可选，重叠不足或大平面可能误配准）")
+        self.chk_icp_refine.setChecked(False)
         v.addWidget(self.chk_icp_refine)
 
         self.btn_stitch = QPushButton("拼接并显示")

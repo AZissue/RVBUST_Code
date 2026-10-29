@@ -215,6 +215,7 @@ class TurntableCalibrator:
         markers: Optional[List[List[Dict]]] = None,
         marker_chain: bool = True,
         step_indices: Optional[List[int]] = None,
+        remove_outliers: bool = False,
     ) -> Tuple[Optional[o3d.geometry.PointCloud], str]:
         """按标定角度把多帧点云变换到参考系并合并。
 
@@ -231,6 +232,7 @@ class TurntableCalibrator:
                 无共有标记（大步进）的帧回退标定变换。
             marker_chain: 是否启用标记链式配准（需 markers 非空）
             step_indices: 原始步序；选择间隔帧时保留真实角度差，默认连续步序。
+            remove_outliers: 显式启用统计去飞点；默认保留稀疏边缘和单帧可见表面。
         """
         if not self.is_calibrated():
             return None, "转台尚未标定"
@@ -273,6 +275,7 @@ class TurntableCalibrator:
         merged = o3d.geometry.PointCloud()
         n_refined = 0
         self.last_stitch_transforms = [None] * len(pcds)
+        from .point_cloud_processor import PointCloudProcessor
         for i, pcd in enumerate(pcds):
             if pcd is None or len(pcd.points) == 0:
                 continue
@@ -289,21 +292,21 @@ class TurntableCalibrator:
                 except Exception:
                     logger.warning(f"第 {i} 帧 ICP 精修失败，使用初值变换", exc_info=True)
             self.last_stitch_transforms[i] = T.copy()
-            pcd_t = o3d.geometry.PointCloud(pcd)
+            valid_cloud, _ = PointCloudProcessor._filter_valid(pcd)
+            pcd_t = o3d.geometry.PointCloud(valid_cloud)
             pcd_t.transform(T)
             merged += pcd_t
 
         if len(merged.points) == 0:
             return None, "合并结果为空"
 
-        # 无效点/飞点过滤：实机导出曾把整帧 NaN 无效像素与飞点原样写入
-        # PLY（文件点数恰为 帧数×全像素数）。与拼接链路（StitchEngine）
-        # 对齐：先剔 NaN/Inf/全零点，再统计去飞点。
+        # Invalid slots are removed before transforms. Statistical outlier
+        # removal is opt-in: a single-view sparse surface is still real data.
         from .point_cloud_processor import PointCloudProcessor
         before_filter = len(merged.points)
         merged, n_invalid = PointCloudProcessor._filter_valid(merged)
         n_outlier = 0
-        if len(merged.points) >= 100:
+        if remove_outliers and len(merged.points) >= 100:
             try:
                 merged, _ = merged.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.0)
                 n_outlier = before_filter - n_invalid - len(merged.points)
