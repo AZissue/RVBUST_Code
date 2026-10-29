@@ -97,10 +97,12 @@ class PostprocessTests(unittest.TestCase):
     def test_log_entry_history_live_filter_and_close(self):
         panel = self.editor._log_panel
         self.assertFalse(panel.isVisible())
+        self.assertTrue(self.editor.status.isVisible())
         self.win.log('后处理日志共享检查', 'warn')
         self.editor._btn_log.click()
         self.app.processEvents()
         self.assertTrue(panel.isVisible())
+        self.assertFalse(self.editor.status.isVisible())
         self.assertEqual(panel.records[-1], self.win._log_panel.records[-1])
         from core.utils import logger
         task = threading.Thread(target=lambda: logger.warning('后台线程日志同步检查'))
@@ -112,12 +114,22 @@ class PostprocessTests(unittest.TestCase):
         self.assertEqual(len(panel.visible_records()), 1)
         self.editor._set_status('处理失败：日志检查')
         self.assertEqual(panel.records[-1][1], 'error')
+        self.assertFalse(self.editor.status.isVisible())
         panel._btn_close.click()
         self.assertFalse(self.editor._btn_log.isChecked())
         self.assertFalse(panel.isVisible())
+        self.assertTrue(self.editor.status.isVisible())
+        self.assertEqual(self.editor.status.text(), '处理失败：日志检查')
         self.win.log('隐藏时继续记录', 'success')
         self.editor._btn_log.click()
         self.assertEqual(panel.records[-1][-1], '隐藏时继续记录')
+        self.assertFalse(self.editor.status.isVisible())
+        panel._btn_collapse.click()
+        self.assertTrue(self.editor.status.isVisible())
+        self.editor._btn_log.click()
+        self.assertFalse(self.editor.status.isVisible())
+        self.editor._btn_log.click()
+        self.assertTrue(self.editor.status.isVisible())
 
     def test_log_history_and_shutdown_disconnect(self):
         self.editor.close()

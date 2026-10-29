@@ -200,6 +200,7 @@ class PostprocessWindow(QDialog):
             self._log_panel._schedule()
 
     def _toggle_log(self, checked):
+        self.status.setVisible(not checked)
         self._log_panel.setVisible(checked)
         if checked:
             height = self._content_split.height()
