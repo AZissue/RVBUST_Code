@@ -116,6 +116,12 @@ class PostprocessWindow(QDialog):
         self.viewer.toolbar.hide()
         # Reuse the DB inspector so selection and metadata retain one owner.
         self.properties = self.source_browser.properties
+        from .probe_panel import ProbePanel
+        self.probe = ProbePanel()
+        self.properties.set_probe_panel(self.probe)
+        self.probe.analyze.connect(self.analyze_probe)
+        self.probe.adopt.connect(self.adopt_probe_voxel)
+        self._probe_report = None
         # Retain the key for shared renderer binding; hide only this control.
         self.properties.options['marker_centers'].hide()
         self.properties.bind_renderer(self.viewer)
@@ -511,6 +517,8 @@ class PostprocessWindow(QDialog):
 
     def _show_records(self, layers, *, refresh=False, fit=False, select=True):
         """GUI-only completion: model rebuilds never run in itemChanged handlers."""
+        self.probe.reset()
+        self._probe_report = None
         self._invalidate_polygon()
         self._clouds = {layer.origins[0][0]: layer for layer in layers}
         self._display_ids = list(self._clouds)
@@ -570,7 +578,7 @@ class PostprocessWindow(QDialog):
         if self._closed:
             return
         if self._worker is not None:
-            if self._busy_kind == 'load':
+            if self._busy_kind in ('load', 'probe'):
                 if self._pending_load == identifiers or (self._pending_load is None and self._loading_ids == identifiers):
                     return
                 self._load_version += 1
@@ -653,6 +661,76 @@ class PostprocessWindow(QDialog):
             self.status.setText('请先在 DB 树中选择点云。')
             return None, None
         return uid, self._clouds[uid]
+
+    def _probe_key(self):
+        with self.database._lock:
+            self._validate_source(self.directory, [])
+            row = self.database.records.get(self._active_uid)
+            if row is None or row.uid != self._active_uid or row.status == STALE_RESULT:
+                raise ValueError('当前点云已删除或失效')
+            sources = tuple((uid, self.database.records[uid].revision
+                             if uid in self.database.records else None) for uid in row.source_ids)
+            return (str(self.directory.resolve()), row.uid, row.revision, sources,
+                    self.probe.threshold.value(), self.probe.confirmed.isChecked(), self._load_version)
+
+    def analyze_probe(self):
+        if self._worker is not None or self._closed:
+            return
+        source = self._clouds.get(self._active_uid)
+        if source is None:
+            return
+        try:
+            key = self._probe_key()
+        except ValueError as exc:
+            self.probe.text.setText(str(exc))
+            return
+        self.probe.apply.setEnabled(False)
+        def work():
+            from time import perf_counter
+            from core.postprocess.probe import spacing, coverage, source_reason
+            start = perf_counter()
+            stats = spacing(source.points)
+            tau = key[4] or 3*stats.get('p50', 0)
+            with self.database._lock:
+                self._validate_source(self.directory, [(key[1], key[2])])
+                records = [self.database.records.get(uid) for uid, _ in key[3]]
+                reason = source_reason(records, key[5])
+            if not reason and tau <= 0:
+                reason = 'P50为0或有效点不足，请设置正阈值'
+            directions = []
+            if not reason:
+                tokens = key[3]
+                # One target tree per direction, at most two source clouds live.
+                for i in range(len(tokens)):
+                    for j in range(i+1, len(tokens)):
+                        for a, b in ((i, j), (j, i)):
+                            layers = self._read_records(self.directory, [tokens[a], tokens[b]])
+                            row = coverage(layers[0].points, layers[1].points, tau)
+                            directions.append((layers[0].name, layers[1].name, row))
+                            del layers
+            return dict(spacing=stats, tau=tau, reason=reason,
+                        directions=directions, seconds=perf_counter()-start)
+        def done(report):
+            try:
+                if key != self._probe_key() or self._closed:
+                    return
+            except ValueError:
+                return
+            self._probe_report = (key, report)
+            self.probe.show_report(report)
+        self._run(work, done, kind='probe', preserve_selection=True)
+
+    def adopt_probe_voxel(self, value):
+        if self._probe_report is None:
+            return
+        try:
+            if self._probe_report[0] != self._probe_key():
+                return
+        except ValueError:
+            return
+        self._downsample_state.update(method='voxel', voxel=float(value))
+        # Populate the existing dialog; only its explicit Execute action processes.
+        self.open_downsample_dialog()
 
     def create_downsample_dialog(self):
         source = self._clouds.get(self._active_uid)

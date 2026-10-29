@@ -33,7 +33,11 @@ class DbProperties(QWidget):
         self.tabs.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Ignored)
         root.addWidget(self.tabs, 1)
         self.data = QWidget()
-        self.form = QFormLayout(self.data)
+        self.data_layout = QVBoxLayout(self.data)
+        self.data_layout.setSizeConstraint(QLayout.SetMinimumSize)
+        self.metadata = QWidget()
+        self.data_layout.addWidget(self.metadata)
+        self.form = QFormLayout(self.metadata)
         self.form.setSizeConstraint(QLayout.SetMinimumSize)
         self.form.setContentsMargins(8, 6, 8, 6)
         self.form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
@@ -105,6 +109,10 @@ class DbProperties(QWidget):
         page = self._scroll(content)
         self._object_pages[kind] = page
         self.object_pages.addWidget(page)
+
+    def set_probe_panel(self, panel):
+        """Keep optional controls alive when show_values rebuilds metadata."""
+        self.data_layout.addWidget(panel)
 
     def show_values(self, values, *, object_type=None):
         self.values = dict(values)
