@@ -94,6 +94,42 @@ class PostprocessTests(unittest.TestCase):
         self.app.sendPostedEvents(None, QEvent.DeferredDelete)
         self.app.processEvents()
 
+    def test_log_entry_history_live_filter_and_close(self):
+        panel = self.editor._log_panel
+        self.assertFalse(panel.isVisible())
+        self.win.log('后处理日志共享检查', 'warn')
+        self.editor._btn_log.click()
+        self.app.processEvents()
+        self.assertTrue(panel.isVisible())
+        self.assertEqual(panel.records[-1], self.win._log_panel.records[-1])
+        from core.utils import logger
+        task = threading.Thread(target=lambda: logger.warning('后台线程日志同步检查'))
+        task.start()
+        task.join()
+        self.app.processEvents()
+        self.assertEqual(sum(row[-1] == '后台线程日志同步检查' for row in panel.records), 1)
+        panel.search.setText('后处理日志共享检查')
+        self.assertEqual(len(panel.visible_records()), 1)
+        self.editor._set_status('处理失败：日志检查')
+        self.assertEqual(panel.records[-1][1], 'error')
+        panel._btn_close.click()
+        self.assertFalse(self.editor._btn_log.isChecked())
+        self.assertFalse(panel.isVisible())
+        self.win.log('隐藏时继续记录', 'success')
+        self.editor._btn_log.click()
+        self.assertEqual(panel.records[-1][-1], '隐藏时继续记录')
+
+    def test_log_history_and_shutdown_disconnect(self):
+        self.editor.close()
+        self.win.log('重开前历史', 'info')
+        self.editor = self.bridge.open_postprocess()
+        self.app.processEvents()
+        self.assertEqual(self.editor._log_panel.records[-1][-1], '重开前历史')
+        self.editor.shutdown()
+        count = len(self.editor._log_panel.records)
+        self.win.log('关闭后日志', 'info')
+        self.assertEqual(len(self.editor._log_panel.records), count)
+
     def finish(self):
         self.wait(lambda: self.editor._worker is None and self.editor._pending_load is None)
         self.assertNotIn('失败', self.editor.status.text())

@@ -2,7 +2,7 @@
 from pathlib import Path
 from dataclasses import asdict
 import numpy as np
-from PySide6.QtCore import Qt, QSize, QSignalBlocker, QItemSelectionModel
+from PySide6.QtCore import Qt, QSize, QSignalBlocker, QItemSelectionModel, QTimer
 from PySide6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QSplitter, QToolButton, QFileDialog, QMenu, QScrollArea)
 from ui_common.industrial_viewer import IndustrialViewer
@@ -12,6 +12,7 @@ from core.frame_database import STALE_RESULT
 from core.postprocess.session import CloudLayer, read_cloud, write_cloud
 from core.postprocess.processing import polygon_crop_mask, voxel_downsample, random_downsample
 from core.postprocess.color_correction import ColorParameters, NoColorCorrection, correct_color_layers
+from ..widgets import FloatingLogPanel
 from ..frame_database import FrameBrowser
 from ..industrial_ribbon import STYLE
 from ..dialogs import ChineseMessageBox as QMessageBox
@@ -62,6 +63,13 @@ class PostprocessWindow(QDialog):
         line.addWidget(QLabel('点云后处理', objectName='studioMode'))
         line.addStretch()
         line.addWidget(QLabel('当前项目 · mm', objectName='studioBadge'))
+        self._btn_log = QToolButton()
+        self._btn_log.setText('运行日志')
+        self._btn_log.setIcon(icon('terminal', '#dddddd', 15))
+        self._btn_log.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self._btn_log.setCheckable(True)
+        self._btn_log.toggled.connect(self._toggle_log)
+        line.addWidget(self._btn_log)
         root.addWidget(header)
         self.operation_bar = QWidget()
         actions = QHBoxLayout(self.operation_bar)
@@ -101,7 +109,25 @@ class PostprocessWindow(QDialog):
         self.actions['compare'].setCheckable(True)
         body = QSplitter(Qt.Horizontal)
         body.setChildrenCollapsible(False)
-        root.addWidget(body, 1)
+        self._content_split = QSplitter(Qt.Vertical)
+        self._content_split.setChildrenCollapsible(False)
+        root.addWidget(self._content_split, 1)
+        self._content_split.addWidget(body)
+        self._log_panel = FloatingLogPanel(self, docked=True)
+        self._content_split.addWidget(self._log_panel)
+        self._log_panel.closed.connect(lambda: self._btn_log.setChecked(False))
+        self._log_panel.hide()
+        self._shared_log = bridge.shell._log_panel
+        self._log_panel.records.extend(self._shared_log.records)
+        self._log_signal = getattr(self._shared_log, 'record_added', None)
+        self._log_sync_timer = QTimer(self)
+        self._log_sync_timer.setInterval(250)
+        self._log_sync_timer.timeout.connect(self._sync_log_history)
+        if self._log_signal is not None:
+            self._log_signal.connect(self._receive_log)
+        else:
+            # An already running shell may still own the earlier log widget.
+            self._log_sync_timer.start()
         left = QSplitter(Qt.Vertical)
         left.setChildrenCollapsible(False)
         left.setMinimumWidth(300)
@@ -158,6 +184,33 @@ class PostprocessWindow(QDialog):
         root.addWidget(self.status)
         self._refresh_controls()
 
+    def _receive_log(self, record):
+        if self._closed:
+            return
+        self._log_panel.records.append(record)
+        self._log_panel._schedule()
+
+    def _sync_log_history(self):
+        if self._closed:
+            return
+        records = list(self._shared_log.records)
+        if records != list(self._log_panel.records):
+            self._log_panel.records.clear()
+            self._log_panel.records.extend(records)
+            self._log_panel._schedule()
+
+    def _toggle_log(self, checked):
+        self._log_panel.setVisible(checked)
+        if checked:
+            height = self._content_split.height()
+            self._content_split.setSizes([max(160, height - 240), 240])
+
+    def _set_status(self, message):
+        self.status.setText(message)
+        level = 'error' if '失败' in message else 'warn' if any(
+            word in message for word in ('拒绝', '请先', '已变化', '不能')) else 'info'
+        self.bridge.shell.log(message, level)
+
     def _parameter_gate(self):
         return (self._worker is None and not self._closed and self.bridge.can_change_workspace()
                 and self.database is self.bridge.frame_db.databases[self.mode]
@@ -182,7 +235,7 @@ class PostprocessWindow(QDialog):
         dialog.accepted.connect(lambda: accepted.append(dialog.unit()))
         if dialog.exec() == QDialog.Accepted:
             if snapshot != self._input_snapshot() or not self._parameter_gate():
-                self.status.setText('输入或项目已变化，请重新打开导入参数。')
+                self._set_status('输入或项目已变化，请重新打开导入参数。')
                 return
             self.open_file(accepted[0], snapshot=snapshot)
 
@@ -250,7 +303,7 @@ class PostprocessWindow(QDialog):
             return
         target = results if tuple(self._display_ids) == sources else sources
         if any(uid not in self.database.records or self.database.records[uid].status == STALE_RESULT for uid in target):
-            self.status.setText('对比来源或结果已变化，请重新生成颜色统一结果。')
+            self._set_status('对比来源或结果已变化，请重新生成颜色统一结果。')
             return
         # Only UID lists are retained. Reload on demand; never keep a second
         # permanent full-size colour cache just to compare the original.
@@ -258,34 +311,34 @@ class PostprocessWindow(QDialog):
 
     def correct_colors(self, params=None, *, reference_uid=None, aligned=None, snapshot=None):
         if snapshot is not None and snapshot != self._input_snapshot():
-            self.status.setText('输入、来源修订或项目已变化，请重新打开参数。')
+            self._set_status('输入、来源修订或项目已变化，请重新打开参数。')
             return
         if (self._worker is not None or self._closed or not self.bridge.can_change_workspace()
                 or self.database is not self.bridge.frame_db.databases[self.mode]
                 or self.database.directory != self.directory):
-            self.status.setText('正在处理或项目已切换，不能执行颜色统一。')
+            self._set_status('正在处理或项目已切换，不能执行颜色统一。')
             return
         identifiers = list(self._display_ids)
         if not identifiers:
-            self.status.setText('请先显示至少一项有色点云。')
+            self._set_status('请先显示至少一项有色点云。')
             return
         with self.database._lock:
             if any(uid not in self.database.records or self.database.records[uid].status == STALE_RESULT
                     or self._clouds[uid].origins != ((uid, self.database.records[uid].revision),)
                     for uid in identifiers):
-                self.status.setText('来源数据已变化，请重新显示后执行颜色统一。')
+                self._set_status('来源数据已变化，请重新显示后执行颜色统一。')
                 return
         if len(identifiers) > 1 and (not (self._color_state['aligned'] if aligned is None else aligned) or any(
                 self.database.records[uid].kind == 'raw' for uid in identifiers)):
-            self.status.setText('多云需同一坐标系，重叠区用于估计；原始未配准帧请先拼接，并确认坐标系。')
+            self._set_status('多云需同一坐标系，重叠区用于估计；原始未配准帧请先拼接，并确认坐标系。')
             return
         layers = [self._clouds[uid] for uid in identifiers]
         if any(layer.colors is None for layer in layers):
-            self.status.setText('颜色统一拒绝无色或混合有色/无色输入，不会补造原始颜色。')
+            self._set_status('颜色统一拒绝无色或混合有色/无色输入，不会补造原始颜色。')
             return
         reference = reference_uid if reference_uid is not None else self._color_state.get('reference')
         if reference_uid is not None and reference_uid not in identifiers:
-            self.status.setText('参考点云已变化，请重新打开颜色参数。')
+            self._set_status('参考点云已变化，请重新打开颜色参数。')
             return
         reference = identifiers.index(reference) if reference in identifiers else identifiers.index(
             self._active_uid) if self._active_uid in identifiers else 0
@@ -293,7 +346,7 @@ class PostprocessWindow(QDialog):
         try:
             params.validate()
         except ValueError as exc:
-            self.status.setText(self._show_color_diagnostic(params, [dict(status='参数拒绝', reason=str(exc))]))
+            self._set_status(self._show_color_diagnostic(params, [dict(status='参数拒绝', reason=str(exc))]))
             return
         reports = []
         def work():
@@ -310,8 +363,8 @@ class PostprocessWindow(QDialog):
             return self._show_color_diagnostic(params, reports)
         def failed(error):
             details = reports or [dict(status='拒绝', reason=str(error))]
-            self.status.setText(self._show_color_diagnostic(params, details, '颜色统一未发布：'+str(error)))
-        self.status.setText('正在颜色统一；'+self._color_params_text(params))
+            self._set_status(self._show_color_diagnostic(params, details, '颜色统一未发布：'+str(error)))
+        self._set_status('正在颜色统一；'+self._color_params_text(params))
         self._commit_operation(work, display_all=True, diagnostic=diagnostic, on_error=failed)
 
 
@@ -354,7 +407,7 @@ class PostprocessWindow(QDialog):
     def _selection_view_changed(self):
         if self.overlay.active or self._segment is not None:
             self._invalidate_polygon()
-            self.status.setText('视角已移动，旧框选已清除；可点击顶部多边形框选重新绘制。')
+            self._set_status('视角已移动，旧框选已清除；可点击顶部多边形框选重新绘制。')
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape and self.overlay.active:
@@ -399,7 +452,7 @@ class PostprocessWindow(QDialog):
             return
         if (self.database is not self.bridge.frame_db.databases[self.mode]
                 or self.database.directory != self.directory):
-            self.status.setText('项目已切换，请重新打开后处理窗口。')
+            self._set_status('项目已切换，请重新打开后处理窗口。')
             return
         identifiers = self._selected_cloud_ids()
         if not recover:
@@ -428,8 +481,7 @@ class PostprocessWindow(QDialog):
             self.bridge.shell.set_dirty(True)
             verb = '恢复' if recover else '删除'
             message = f'已{verb} {len(moves)} 项DB点云。'
-            self.status.setText(message)
-            self.bridge.shell.log(message, 'success')
+            self._set_status(message)
         work = self.database.restore_last_removal if recover else lambda: self.database.remove(identifiers)
         self._run(work, done)
 
@@ -467,17 +519,17 @@ class PostprocessWindow(QDialog):
             if error:
                 if preserve_selection:
                     self._invalidate_polygon()
-                self.status.setText('处理失败：' + str(error))
+                self._set_status('处理失败：' + str(error))
                 if on_error:
                     on_error(error)
             else:
-                self.status.setText('处理完成。')
+                self._set_status('处理完成。')
                 try:
                     done(result)
                 except Exception as exc:
                     if preserve_selection:
                         self._invalidate_polygon()
-                    self.status.setText('更新结果失败：' + str(exc))
+                    self._set_status('更新结果失败：' + str(exc))
 
         def finished():
             if worker in self.bridge._workers:
@@ -493,7 +545,7 @@ class PostprocessWindow(QDialog):
         worker.result_ready.connect(completed)
         worker.finished.connect(finished)
         self._refresh_controls()
-        self.status.setText('正在后台读取点云…' if kind == 'load' else '正在处理并更新 DB…')
+        self._set_status('正在后台读取点云…' if kind == 'load' else '正在处理并更新 DB…')
         worker.start()
         return True
 
@@ -601,7 +653,7 @@ class PostprocessWindow(QDialog):
         version = self._load_version
         if not identifiers:
             self._show_records([], select=False)
-            self.status.setText('请选择或勾选 DB 点云。')
+            self._set_status('请选择或勾选 DB 点云。')
             return
         directory = self.directory
         current = self.source_browser.tree.currentItem()
@@ -609,7 +661,7 @@ class PostprocessWindow(QDialog):
         self._loading_ids = identifiers
         with self.database._lock:
             if any(uid not in self.database.records for uid in identifiers):
-                self.status.setText('来源数据已变化，请重新选择。')
+                self._set_status('来源数据已变化，请重新选择。')
                 return
             tokens = [(uid, self.database.records[uid].revision) for uid in identifiers]
         def done(layers):
@@ -617,7 +669,7 @@ class PostprocessWindow(QDialog):
                 return
             self._active_uid = active if active in identifiers else identifiers[0]
             self._show_records(layers, fit=True)
-            self.status.setText(f'已显示 {len(layers)} 项 DB 点云；处理完成后自动新增结果。')
+            self._set_status(f'已显示 {len(layers)} 项 DB 点云；处理完成后自动新增结果。')
         self._run(lambda: self._read_records(directory, tokens), done, kind='load')
 
     def _publish_layers(self, layers, directory):
@@ -652,7 +704,7 @@ class PostprocessWindow(QDialog):
             # Keep the retained split visible; the discard branch remains in DB.
             self._show_records(layers if display_all else layers[:1], refresh=True)
             self.bridge.shell.set_dirty(True)
-            self.status.setText(f'已自动新增 {len(layers)} 项 DB 后处理结果；原始数据保留，请在主程序保存会话。' +
+            self._set_status(f'已自动新增 {len(layers)} 项 DB 后处理结果；原始数据保留，请在主程序保存会话。' +
                                 ('\n'+diagnostic() if diagnostic else ''))
         self._run(run, done, on_error=on_error)
 
@@ -664,14 +716,14 @@ class PostprocessWindow(QDialog):
         path, _ = QFileDialog.getOpenFileName(self, '导入点云（请先确认源文件单位）', '', '点云 (*.ply *.pcd *.xyz *.pts)')
         if path:
             if snapshot != self._input_snapshot() or not self._parameter_gate():
-                self.status.setText('输入或项目已变化，请重新导入。')
+                self._set_status('输入或项目已变化，请重新导入。')
                 return
             self._commit_operation(lambda: [read_cloud(path, unit)])
 
     def _selected_layer(self):
         uid = self._active_uid
         if uid not in self._clouds:
-            self.status.setText('请先在 DB 树中选择点云。')
+            self._set_status('请先在 DB 树中选择点云。')
             return None, None
         return uid, self._clouds[uid]
 
@@ -804,7 +856,7 @@ class PostprocessWindow(QDialog):
     def merge_selected(self):
         layers = [self._clouds[uid] for uid in self._display_ids]
         if len(layers) < 2:
-            self.status.setText('请在 DB 树中勾选或多选至少两项点云。')
+            self._set_status('请在 DB 树中勾选或多选至少两项点云。')
             return
         def work():
             colors = (np.vstack([layer.colors if layer.colors is not None else
@@ -828,7 +880,7 @@ class PostprocessWindow(QDialog):
             self._invalidate_polygon()
             self.overlay.activate()
             self._refresh_controls()
-            self.status.setText('左键添加顶点，Alt+左键撤点；右键/封闭按钮完成。中键设旋转中心，Esc取消。')
+            self._set_status('左键添加顶点，Alt+左键撤点；右键/封闭按钮完成。中键设旋转中心，Esc取消。')
 
     def stage_polygon(self, polygon):
         if self._worker is not None or self._closed:
@@ -845,12 +897,12 @@ class PostprocessWindow(QDialog):
                 return
             if any(not np.allclose(self._view()[key], value) for key, value in view.items()):
                 self._invalidate_polygon()
-                self.status.setText('视角或视区尺寸已变化，请重新框选。')
+                self._set_status('视角或视区尺寸已变化，请重新框选。')
                 return
             self._segment = (uid, layer, mask, view)
             self.overlay.set_confirmed(polygon)
             self.overlay.show_confirmed(f'框内 {int(mask.sum()):,} 点 / 框外 {int((~mask).sum()):,} 点')
-            self.status.setText(f'框内 {int(mask.sum()):,} 点 / 框外 {int((~mask).sum()):,} 点；选择保留方向后点击快捷删除，另一侧保存为分支，原始数据保留。')
+            self._set_status(f'框内 {int(mask.sum()):,} 点 / 框外 {int((~mask).sum()):,} 点；选择保留方向后点击快捷删除，另一侧保存为分支，原始数据保留。')
             self._refresh_segment_tools()
         self._run(lambda: polygon_crop_mask(layer.points, polygon, **view), done,
                   preserve_selection=True)
@@ -859,19 +911,19 @@ class PostprocessWindow(QDialog):
         if self._worker is not None or self._closed or not self.bridge.can_change_workspace():
             return
         if self._segment is None:
-            self.status.setText('请先完成多边形框选。')
+            self._set_status('请先完成多边形框选。')
             return
         uid, source, mask, view = self._segment
         if any(not np.allclose(self._view()[key], value) for key, value in view.items()):
             self._invalidate_polygon()
-            self.status.setText('视角或视区尺寸已变化，请重新框选。')
+            self._set_status('视角或视区尺寸已变化，请重新框选。')
             return
         if self._clouds.get(uid) is not source:
             self._invalidate_polygon()
             return
         keep = mask if keep_inside else ~mask
         if not keep.any():
-            self.status.setText('保留部分为空，已拒绝分割。')
+            self._set_status('保留部分为空，已拒绝分割。')
             return
         def work():
             def build(selected, inside):
@@ -916,13 +968,13 @@ class PostprocessWindow(QDialog):
             self._active_uid = None
             self._show_records(layers, refresh=True)
             self.bridge.shell.set_dirty(True)
-            self.status.setText('已撤销处理；生成结果已移入 DB 回收区，来源数据保留。')
+            self._set_status('已撤销处理；生成结果已移入 DB 回收区，来源数据保留。')
         self._run(work, done)
 
     def export_selected(self):
         identifiers = self.source_browser.selected_ids() or list(self._display_ids)
         if not identifiers:
-            self.status.setText('请选择 DB 点云。')
+            self._set_status('请选择 DB 点云。')
             return
         path, _ = QFileDialog.getSaveFileName(self, '导出选中 DB 点云（mm）', 'postprocess.ply', 'PLY (*.ply)')
         if not path:
@@ -943,9 +995,14 @@ class PostprocessWindow(QDialog):
                     return self.database.records[identifiers[0]].points
                 layers = self._read_records(directory, tokens)
             return write_cloud(path, layers)
-        self._run(work, lambda count: self.status.setText(f'已导出 {count:,} 点。'))
+        self._run(work, lambda count: self._set_status(f'已导出 {count:,} 点。'))
 
     def shutdown(self):
+        if self._closed:
+            return
+        self._log_sync_timer.stop()
+        if self._log_signal is not None:
+            self._log_signal.disconnect(self._receive_log)
         self._closed = True
         self.probe_dialog.close()
         self._pending_load = None
@@ -960,7 +1017,7 @@ class PostprocessWindow(QDialog):
 
     def closeEvent(self, event):
         if self._worker is not None:
-            self.status.setText('正在处理或写入数据，请等待任务完成后关闭。')
+            self._set_status('正在处理或写入数据，请等待任务完成后关闭。')
             event.ignore()
             return
         self.shutdown()

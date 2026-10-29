@@ -29,6 +29,7 @@ class _Handler(logging.Handler):
 
 class ActivityLogPanel(QFrame):
     closed = Signal()
+    record_added = Signal(object)
     COLORS = dict(info='#d6dce3', success='#80d69b', warn='#f1c86a', error='#ff7c82')
     LABELS = dict(info='信息', success='成功', warn='警告', error='错误')
 
@@ -118,6 +119,7 @@ class ActivityLogPanel(QFrame):
             level = 'info'
         stamp = datetime.now().astimezone().isoformat(timespec='seconds')
         self.records.append((stamp, level, str(frame), str(task), str(message).replace('\n', ' ↵ ')[:4000]))
+        self.record_added.emit(self.records[-1])
         self._schedule()
 
     def appendPlainText(self, message):
