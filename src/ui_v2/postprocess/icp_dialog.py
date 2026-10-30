@@ -23,6 +23,7 @@ class ICPDialog(QDialog):
         note = QLabel('另一项点云将移动到参考坐标系。两项须已粗略对齐；ICP可能在大平面或重复结构上误配准。计算体素仅用于加速，输出保留全部有效点和颜色。完成后新增移动点云结果，请勾选结果与参考对比，需要时再合并。')
         if rebuild:
             note.setText('固定一帧作为参考，使用原拼接位姿逐帧精配准并重新合并。保留全部有效点和颜色，新增独立DB分支；任一帧失败则整批不发布。大平面和重复结构仍需检查结果。仅重建原始拼接结果，不用于已裁剪的后处理分支。')
+        self.note = note
         note.setWordWrap(True); form.addRow(note)
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         localize_buttons(buttons); buttons.button(QDialogButtonBox.Ok).setText('执行精配准')

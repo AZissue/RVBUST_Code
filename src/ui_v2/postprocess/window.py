@@ -81,6 +81,7 @@ class PostprocessWindow(QDialog):
             ('downsample', '下采样', 'cloud_sample', self.open_downsample_dialog),
             ('color', '颜色统一', 'color_palette', self.open_color_dialog),
             ('compare', '对比原色', 'color_compare', self.compare_color_source),
+            ('manual', '手动配准', 'cloud_register', self.open_manual_registration),
             ('icp', 'ICP精配准', 'cloud_register', self.open_icp_dialog),
             ('merge', '合并点云', 'cloud_merge', self.merge_selected),
             ('select', '多边形框选', 'polygon', self.start_polygon),
@@ -564,6 +565,7 @@ class PostprocessWindow(QDialog):
             button.setEnabled(ready)
         self.source_browser.setEnabled(ready)
         self.actions['undo'].setEnabled(ready and bool(self._undo))
+        self.actions['manual'].setEnabled(self._parameter_gate() and len(self._display_ids) == 2)
         self.actions['icp'].setEnabled(self._parameter_gate() and len(self._display_ids) in (1, 2))
         self.actions['merge'].setEnabled(ready and len(self._display_ids) > 1)
         self.actions['downsample'].setEnabled(ready and self._active_uid in self._clouds)
@@ -697,7 +699,8 @@ class PostprocessWindow(QDialog):
             identifiers = self.database.publish_results(entries, postprocess=True,
                 output_roles=[layer.output_role for layer in layers],
                 registration_transform=layers[0].registration_transform if len(layers) == 1 else None,
-                source_transforms=layers[0].source_transforms if len(layers) == 1 else None)
+                source_transforms=layers[0].source_transforms if len(layers) == 1 else None,
+                parent_transforms=layers[0].parent_transforms if len(layers) == 1 else None)
             for uid, layer in zip(identifiers, layers):
                 layer.origins = ((uid, self.database.records[uid].revision),)
         return layers
@@ -864,6 +867,47 @@ class PostprocessWindow(QDialog):
             return [CloudLayer(source.name+' · '+title, data[0], data[1],
                                source=source.source, origins=source.origins)]
         self._commit_operation(work)
+
+    def open_manual_registration(self):
+        if not self._parameter_gate() or len(self._display_ids) != 2:
+            return
+        from .manual_registration_dialog import ManualRegistrationDialog
+        from .icp_dialog import ICPDialog
+        snapshot = self._input_snapshot()
+        dialog = ManualRegistrationDialog([(uid,self._clouds[uid]) for uid in self._display_ids],self)
+        if dialog.exec() != QDialog.Accepted:
+            dialog.deleteLater()
+            return
+        reference_uid, (a,b) = dialog.selection()
+        dialog.deleteLater()
+        params_dialog = ICPDialog([(reference_uid,self._clouds[reference_uid].name)],self)
+        params_dialog.setWindowTitle('手动配准 · ICP优化参数')
+        params_dialog.note.setText('先使用已选共有点计算刚体变换，再执行ICP优化，最终合并两项点云为独立DB结果。计算体素仅用于加速，输出保留全部有效点和颜色；ICP失败时整批不发布。')
+        params_dialog.reference.setEnabled(False)
+        if params_dialog.exec() == QDialog.Accepted:
+            _, params = params_dialog.parameters()
+            self.register_manual(reference_uid,a,b,params,snapshot=snapshot)
+        params_dialog.deleteLater()
+
+    def register_manual(self, reference_uid, a, b, params, *, snapshot=None):
+        if (not self._parameter_gate() or len(self._display_ids)!=2 or reference_uid not in self._display_ids
+                or (snapshot is not None and snapshot != self._input_snapshot())):
+            self._set_status('输入或项目已变化，请重新选择共有点。')
+            return
+        reference=self._clouds[reference_uid]
+        moving=self._clouds[next(uid for uid in self._display_ids if uid!=reference_uid)]
+        directory=self.directory
+        tokens=reference.origins+moving.origins
+        reports=[]
+        def work():
+            from core.postprocess.manual_registration import register_manual
+            self._validate_source(directory,tokens)
+            output,message=register_manual(reference,moving,a,b,params)
+            self._validate_source(directory,tokens)
+            reports.append(message)
+            return [output]
+        self._commit_operation(work,diagnostic=lambda:'\n'.join(reports),
+            on_error=lambda error:QMessageBox.warning(self,'手动配准失败',str(error)))
 
     def open_icp_dialog(self):
         if not self._parameter_gate() or len(self._display_ids) not in (1, 2):

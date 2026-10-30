@@ -15,6 +15,7 @@ class CloudLayer:
     origins: tuple = ()  # (DB UID, geometry revision) provenance
     output_role: str = ''
     registration_transform: list | None = None
+    parent_transforms: dict | None = None
     source_transforms: dict | None = None
 
     def __post_init__(self):

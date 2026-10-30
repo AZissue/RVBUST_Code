@@ -11,6 +11,30 @@ def source_poses(database, uid, path=()):
     row = database.records[uid]
     if row.status == '来源数据已变更，请重新拼接':
         raise ValueError('来源数据已变化，请重新拼接')
+    if row.parent_transforms is not None:
+        if set(row.parent_transforms) != set(row.source_ids):
+            raise ValueError('手动配准来源位姿不完整')
+        combined = {}
+        for parent_uid, value in row.parent_transforms.items():
+            matrix = np.asarray(value, float)
+            if (matrix.shape != (4,4) or not np.isfinite(matrix).all()
+                    or not np.allclose(matrix[3], [0,0,0,1])
+                    or not np.allclose(matrix[:3,:3].T @ matrix[:3,:3], np.eye(3), atol=1e-5)
+                    or not np.isclose(np.linalg.det(matrix[:3,:3]),1,atol=1e-5)):
+                raise ValueError('手动配准来源位姿无效')
+            parent = database.records.get(parent_uid)
+            if parent is not None and parent.kind == 'raw':
+                if parent.pointcloud_aligned is not True:
+                    raise ValueError('原始帧未确认2D对齐，不能融合')
+                poses = {parent_uid:(parent.revision,np.eye(4))}
+            else:
+                poses = source_poses(database,parent_uid,(*path,uid))
+            for key,(revision,pose) in poses.items():
+                transformed = matrix @ pose
+                if key in combined and not np.allclose(combined[key][1],transformed):
+                    raise ValueError('同一原始帧存在不同配准位置，不能直接进行2D融合')
+                combined[key] = (revision,transformed)
+        return combined
     if row.registration_transform is not None:
         matrix = np.asarray(row.registration_transform, dtype=float)
         if (matrix.shape != (4,4) or not np.isfinite(matrix).all()

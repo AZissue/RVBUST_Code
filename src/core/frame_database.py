@@ -72,6 +72,7 @@ class FrameRecord:
     pointcloud_aligned: bool | None = None
     source_transforms: dict = field(default_factory=dict)
     registration_transform: list | None = None
+    parent_transforms: dict | None = None
 
 
 class FrameDatabase:
@@ -395,7 +396,7 @@ class FrameDatabase:
         """Commit a separate immutable result; never change raw frame geometry."""
         return self.publish_results([(cloud, source_ids, name)], postprocess=postprocess, source_transforms=source_transforms)[0]
 
-    def publish_results(self, results, *, postprocess=False, output_roles=None, source_transforms=None, registration_transform=None):
+    def publish_results(self, results, *, postprocess=False, output_roles=None, source_transforms=None, registration_transform=None, parent_transforms=None):
         """Atomically commit related (cloud, source_ids, name) result branches.
 
         In particular, polygon keep/discard branches must both succeed or neither
@@ -437,7 +438,8 @@ class FrameDatabase:
                         status='已处理' if postprocess else '已拼接', kind='result', source_ids=sources,
                         operation_id=operation_id, output_role=output_role,
                         source_transforms=copy.deepcopy(source_transforms or {}),
-                        registration_transform=copy.deepcopy(registration_transform))
+                        registration_transform=copy.deepcopy(registration_transform),
+                        parent_transforms=copy.deepcopy(parent_transforms))
                     identifiers.append(uid)
                     number += 1
                 self.records.update(staged)
