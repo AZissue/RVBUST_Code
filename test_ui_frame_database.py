@@ -73,6 +73,20 @@ class FrameBrowserTests(unittest.TestCase):
         return FrameData(number, 'cam0', image_np=np.zeros((2, 2, 3), np.uint8),
                          is_offline=True, offline_pointmap_path=str(path), kind='calib')
 
+    def test_calibration_and_scan_labels_have_independent_display_numbers(self):
+        identifiers=[]
+        for number, purpose in ((1,'标定数据'), (2,'标定数据'), (3,'扫描数据'), (4,'扫描数据')):
+            identifiers.append(self.db.ingest(self.source(number), purpose=purpose))
+        self.browser.refresh()
+        expected=['标定帧 001 · cam0','标定帧 002 · cam0','拼接帧 001 · cam0','拼接帧 002 · cam0']
+        self.assertEqual([self.browser._items[uid].text(0) for uid in identifiers],expected)
+        self.assertEqual([self.db.records[uid].frame_id for uid in identifiers],[1,2,3,4])
+        self.browser.refresh()
+        self.assertEqual([self.browser._items[uid].text(0) for uid in identifiers],expected)
+        editor=self.bridge.open_postprocess()
+        self.assertEqual([editor.source_browser._items[uid].text(0) for uid in identifiers],expected)
+        editor.close();self.app.processEvents()
+
     def test_selected_frame_shows_matching_2d_and_raw_cloud_without_replacing_workflow(self):
         frame = self.source()
         uid = self.db.ingest(frame)
@@ -110,7 +124,7 @@ class FrameBrowserTests(unittest.TestCase):
         pm.SaveWithImage.side_effect = save
         fake_sdk = SimpleNamespace(PointMapUnitEnum=SimpleNamespace(Millimeter=1),
             PointMap=SimpleNamespace(Destroy=Mock()), Image=SimpleNamespace(Destroy=Mock()))
-        self.bridge.camera_manager._cameras = {'cam0': SimpleNamespace(is_connected=True, sn='MOCK',
+        self.bridge.camera_manager._cameras = {'cam0': SimpleNamespace(is_connected=True, sn='MOCK', device_info=SimpleNamespace(name='MOCK'),
             capture_3d=lambda options: (np.zeros((2, 2, 3), np.uint8), pm, object(), 'ok'))}
         self.bridge.fixed_workflow.start_calibration('cam0')
         ws = self.win.workspace_multi()

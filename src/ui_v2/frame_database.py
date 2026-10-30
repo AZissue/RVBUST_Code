@@ -178,8 +178,16 @@ class FrameBrowser(QWidget):
             project_root.setIcon(0, icons.icon('folder_open', '#bbbbbb', 16))
         records = sorted(records, key=lambda row: (row.created, row.frame_id, row.uid))
         operation_groups = {}
+        frame_counts = {}
         for record in records:
-            title = (record.logical_name if record.purpose == '后处理结果' else f'拼接帧 {record.frame_id:03d}') if record.kind == 'result' else f'帧 {record.frame_id:03d}'
+            if record.kind == 'result':
+                title = record.logical_name if record.purpose == '后处理结果' else f'拼接帧 {record.frame_id:03d}'
+            else:
+                calibration = self.database.mode != 'mobile_chain' and ('标定' in record.purpose or record.purpose == 'calib')
+                prefix = '标定帧' if calibration else '拼接帧'
+                key = (record.session_id, prefix)
+                frame_counts[key] = frame_counts.get(key, 0) + 1
+                title = f'{prefix} {frame_counts[key]:03d}'
             if record.kind == 'result' and record.status == STALE_RESULT:
                 title += ' · 来源已变化' if record.purpose == '后处理结果' else ' · 需重新拼接'
             if self.database.mode == 'multi_cam' and record.kind == 'raw':
