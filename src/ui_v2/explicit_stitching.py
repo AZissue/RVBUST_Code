@@ -15,6 +15,98 @@ class ExplicitStitching:
     def __init__(self, bridge):
         self.bridge = bridge
 
+    def selected_raw(self, mode):
+        browser = self.bridge.frame_db.browsers.get(mode)
+        if browser is None:
+            return None
+        items = browser.tree.selectedItems()
+        ids = browser.selected_ids()
+        if (not items or len(ids) != 1 or any(not item.data(0, Qt.UserRole) for item in items)):
+            return None
+        uid = ids[0]
+        return uid if browser.database.records[uid].kind == 'raw' else None
+
+    def can_recapture(self, mode):
+        bridge = self.bridge
+        uid = self.selected_raw(mode)
+        if uid is None or not bridge.can_change_workspace() or bridge.offline_preview:
+            return False
+        record = bridge.frame_db.databases[mode].records[uid]
+        return record.camera in bridge.camera_manager.get_connected_ids()
+
+    def recapture_selected(self):
+        bridge = self.bridge
+        mode = bridge._current_mode
+        if mode == 'mobile_chain':
+            return self.recapture_mobile()
+        if mode not in ('multi_cam', 'turntable') or not self.can_recapture(mode):
+            return
+        uid = self.selected_raw(mode)
+        database = bridge.frame_db.databases[mode]
+        row = copy.deepcopy(database.records[uid])
+        calibration = '标定' in row.purpose or row.purpose == 'calib'
+        frames = bridge.frame_db._frames()
+        preview = bridge._pause_2d_preview()
+        cards = bridge._pause_card_preview()
+        bridge.frame_db._selection += 1
+        bridge.shell.show_loading('正在重拍选中帧，成功后覆盖原数据…')
+        def work():
+            with bridge.frame_db.replacing_capture(mode, uid):
+                frame = bridge.camera_manager.capture(row.camera)
+            if frame is None:
+                raise IOError('相机采集失败，旧帧保持不变')
+            if calibration:
+                for key, record in list(database.records.items()):
+                    if record.kind == 'result':
+                        database.set_status(key, STALE_RESULT)
+            return database.load_frame(uid)
+        def done(result, error):
+            bridge.shell.hide_loading()
+            bridge._resume_2d_preview(preview)
+            bridge._resume_card_preview(cards)
+            if error:
+                QMessageBox.warning(bridge.shell,'重拍失败',str(error))
+                return
+            frame, cloud = result
+            # Replace owned workflow references too; retaining a cached old cloud
+            # would make a later stitch silently use the preceding exposure.
+            for previous in frames:
+                if previous.database_id == uid:
+                    previous.__dict__.update(frame.__dict__)
+            if mode == 'turntable':
+                ws = bridge.shell.workspace_turntable()
+                for index, previous in enumerate(ws.session.sequence):
+                    if previous.database_id == uid:
+                        ws.session.sequence[index] = frame
+                        ws.session.sequence_pcds[index] = cloud
+                        ws.session.sequence_markers[index] = []
+                if calibration:
+                    slot = 0 if 'frame0' in row.purpose else 1
+                    setattr(ws,'current_frame'+str(slot),frame)
+                    setattr(ws,'current_markers'+str(slot),[])
+                    getattr(ws.session,'set_frame'+str(slot))(frame,[],cloud)
+                    ws.session.calibrated = False
+                    ws.session.calibration_result = None
+                    ws.set_state('connected')
+                ws.merged = None
+            elif calibration:
+                workflow = bridge.fixed_workflow
+                workflow.frames_calib[row.camera] = frame
+                workflow._calibration_locked = False
+                workflow._state = workflow.STATE_CALIBRATING
+                bridge.calibration_engine.reset()
+                bridge.shell.workspace_multi().set_state('captured')
+            else:
+                bridge.fixed_workflow.frames_scan[row.camera] = frame
+            workspace = bridge.shell.workspace_turntable() if mode == 'turntable' else bridge.shell.workspace_multi()
+            viewer = workspace.viewer() if callable(workspace.viewer) else workspace.viewer
+            viewer.clear_all()
+            bridge.frame_db.browsers[mode].refresh()
+            bridge.frame_db.display_frame(mode,uid,frame,cloud)
+            bridge.shell.set_dirty(True)
+            bridge.shell.log('已覆盖选中帧的点云和图像；'+('请重新识别并计算标定，再执行拼接。' if calibration else '请重新执行拼接。'),'success')
+        bridge._run_background(work,done,must_finish=True,name='selected_raw_recapture')
+
     def _mobile_selection(self):
         browser = self.bridge.frame_db.browsers.get('mobile_chain')
         if browser is None:

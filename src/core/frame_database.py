@@ -223,7 +223,7 @@ class FrameDatabase:
                     new = staging.records[staged_uid]
                     new = replace(new, uid=uid, session_id=original.session_id,
                         camera=original.camera, frame_id=original.frame_id,
-                        purpose=original.purpose, logical_name=original.logical_name,
+                        purpose=original.purpose, logical_name=original.logical_name, created=original.created,
                         revision=original.revision + 1, status='已重拍，待拼接')
                     target.rename(backup)
                     try:

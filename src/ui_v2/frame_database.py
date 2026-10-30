@@ -185,7 +185,7 @@ class FrameBrowser(QWidget):
             else:
                 calibration = self.database.mode != 'mobile_chain' and ('标定' in record.purpose or record.purpose == 'calib')
                 prefix = '标定帧' if calibration else '拼接帧'
-                key = (record.session_id, prefix)
+                key = ('project' if project_root is not None else record.session_id, prefix)
                 frame_counts[key] = frame_counts.get(key, 0) + 1
                 title = f'{prefix} {frame_counts[key]:03d}'
             if record.kind == 'result' and record.status == STALE_RESULT:

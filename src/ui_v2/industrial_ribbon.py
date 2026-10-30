@@ -243,6 +243,9 @@ class IndustrialRibbon(QWidget):
                                   ('auto', '自动采集', 'loop', turn.btn_auto_capture)])]
         for caption, entries in groups:
             self._group(row, caption, entries, mode)
+        if mode in ('multi_cam', 'turntable'):
+            self._group(row, '帧编辑', [('recapture', '重拍选中帧', 'refresh',
+                lambda: self._stitch_action('recapture_selected'))], mode)
         stitch_source = robot.panel.btn_publish if mode == 'robot_stitch' else lambda: self._stitch_action('execute')
         self._group(row, '拼接', [('stitch', '执行拼接', 'stitch', stitch_source)], mode)
         self._group(row, '视图', [('restore', '返回视图', 'undo', self.restore_view),
@@ -342,6 +345,10 @@ class IndustrialRibbon(QWidget):
         self.commands[(shell.current_mode(), 'export')].setToolTip('导出选中或单独勾选的DB点云完整PLY；无选择时导出最新有效拼接结果')
         if bridge and hasattr(bridge, 'stitching'):
             bridge.stitching.update_mobile_actions()
+            mode = shell.current_mode()
+            if mode in ('multi_cam', 'turntable'):
+                self.commands[(mode, 'recapture')].setEnabled(bridge.stitching.can_recapture(mode))
+                self.commands[(mode, 'recapture')].setToolTip('选中原始帧或其PLY/图像子项后重拍并覆盖。请先将相机和转台恢复到该帧对应位置/角度；失败保留旧数据。')
 
     def _viewer(self):
         workspace = self.shell._stack.currentWidget()
