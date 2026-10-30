@@ -26,6 +26,7 @@ class IndustrialViewer(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._pcds = {}
+        self._latest_only = False
         self._merged = None
         self._database_cloud = None
         self._database_clouds = {}
@@ -164,6 +165,9 @@ class IndustrialViewer(QWidget):
         clouds = {'__merged__':self._merged} if selected == '__merged__' else self._pcds
         if selected == '__db_frame__':
             clouds = self._database_clouds
+        elif selected is None and self._latest_only:
+            # Only explicit DB checks may overlay acquisition frames.
+            clouds = dict(list(self._pcds.items())[-1:])
         elif selected not in (None,'__merged__'):
             clouds = {selected:self._pcds.get(selected)}
         layers = []
@@ -188,9 +192,15 @@ class IndustrialViewer(QWidget):
             if index >= 0:
                 self.mode.removeItem(index)
         else:
+            self._latest_only = True
+            self._pcds.pop(camera_id, None)
             self._pcds[camera_id] = pcd
             if self.mode.findData(camera_id) < 0:
                 self.mode.addItem(camera_id, camera_id)
+            if self.mode.currentData() == '__db_frame__':
+                self._database_previous_mode = None
+            else:
+                self.mode.setCurrentIndex(0)
         self._refresh()
 
     def replace_pointclouds(self, clouds, *, fit=False):
@@ -200,6 +210,7 @@ class IndustrialViewer(QWidget):
         Arrays can be read-only; display sampling never mutates source data.
         """
         self._pcds = dict(clouds)
+        self._latest_only = False
         self._merged = self._database_cloud = None
         self._database_clouds = {}
         self._highlights.clear()

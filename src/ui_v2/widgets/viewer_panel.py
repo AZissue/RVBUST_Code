@@ -37,6 +37,7 @@ class ViewerPanel(QFrame):
         self._title = title
         self._clouds = {}
         self._merged = None
+        self._latest_display_merged = False
         self._database_cloud = None
         self._database_clouds = {}
         self._reference = None
@@ -101,7 +102,7 @@ class ViewerPanel(QFrame):
             candidate.set_cloud_markers(self._cloud_markers)
         for key, pcd in self._clouds.items():
             candidate.set_pointcloud(key, pcd)
-        if self._merged is not None:
+        if self._merged is not None and (not enabled or self._latest_display_merged):
             candidate.set_pointcloud_merged(self._merged)
         candidate.show()
         if enabled and self._database_cloud is not None:
@@ -135,12 +136,15 @@ class ViewerPanel(QFrame):
         if pcd is None:
             self._clouds.pop(camera_id, None)
         else:
+            self._clouds.pop(camera_id, None)
             self._clouds[camera_id] = pcd
+            self._latest_display_merged = False
         self._viewer.set_pointcloud(camera_id, pcd)
 
     def set_pointcloud_merged(self, pcd: Any):
         """设置拼接合并结果。"""
         self._merged = pcd
+        self._latest_display_merged = True
         self._viewer.set_pointcloud_merged(pcd)
 
     def remove_camera(self, camera_id: str):

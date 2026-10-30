@@ -16,6 +16,38 @@ class OverlayTests(unittest.TestCase):
     def panel(self):
         return self.win.workspace_multi().viewer()
 
+    def test_latest_capture_replaces_visible_frame_and_survives_renderer_switch(self):
+        panel = self.panel()
+        first = self.db.ingest(self.source())
+        second = self.db.ingest(self.source(2))
+        a = self.db.load_frame(first, 'cloud')[1]
+        b = self.db.load_frame(second, 'cloud')[1]
+        panel.set_pointcloud('frame0', a)
+        panel.set_pointcloud('frame1', b)
+        self.assertEqual([layer.name for layer in panel.viewer()._layers], ['frame1'])
+        panel.set_pointcloud_merged(a)
+        panel.set_pointcloud('frame0', b)
+        self.assertEqual([layer.name for layer in panel.viewer()._layers], ['frame0'])
+        panel.set_industrial(False)
+        panel.set_industrial(True)
+        self.assertEqual([layer.name for layer in panel.viewer()._layers], ['frame0'])
+        self.assertEqual(set(panel._clouds), {'frame0', 'frame1'})
+
+    def test_unchecking_overlay_returns_to_latest_capture(self):
+        first = self.db.ingest(self.source())
+        second = self.db.ingest(self.source(2))
+        panel = self.panel()
+        panel.set_pointcloud('frame0', self.db.load_frame(first, 'cloud')[1])
+        panel.set_pointcloud('frame1', self.db.load_frame(second, 'cloud')[1])
+        self.browser.set_component_checked(first, 'cloud')
+        self.browser.set_component_checked(second, 'cloud')
+        self.wait(lambda: len(panel._database_clouds) == 2)
+        self.assertEqual(len(panel.viewer()._layers), 2)
+        self.browser.set_component_checked(first, 'cloud', False)
+        self.assertEqual(len(panel.viewer()._layers), 1)
+        self.browser.set_component_checked(second, 'cloud', False)
+        self.assertEqual([layer.name for layer in panel.viewer()._layers], ['frame1'])
+
     def test_two_checked_raw_clouds_use_original_coordinates_and_cache(self):
         first = self.db.ingest(self.source())
         second = self.db.ingest(self.source(2))
