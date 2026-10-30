@@ -46,3 +46,59 @@ def refine_icp(reference, moving, params):
         f'对应点RMS {before.inlier_rmse:.4f} → {result.inlier_rmse:.4f} mm；'
         f'输出 {len(points):,} 点（保持有效点数）。参考点云：{reference.name}。')
     return output, report
+
+
+def refine_stitched(database, uid, reference_uid, params):
+    """Rebuild a stitch from its raw frames; fix one frame and grow the reference."""
+    from .image_color_fusion import source_poses
+    from ..point_cloud_processor import PointCloudProcessor
+    row = database.records[uid]
+    if row.kind != 'result' or row.purpose == '后处理结果':
+        raise ValueError('请选择原始拼接结果；裁剪/下采样后的结果不能直接按原始帧重建')
+    poses = source_poses(database, uid)
+    if len(poses) < 2 or reference_uid not in poses:
+        raise ValueError('原始帧及位姿不足，请重新执行拼接')
+    order = [reference_uid] + [key for key in poses if key != reference_uid]
+    def load(key):
+        revision, pose = poses[key]
+        raw = database.records.get(key)
+        if raw is None or raw.revision != revision:
+            raise ValueError('原始帧已变化，请重新执行拼接')
+        _, cloud = database.load_frame(key, 'cloud')
+        cloud, _ = PointCloudProcessor._filter_valid(cloud)
+        return CloudLayer(raw.logical_name,
+            np.asarray(cloud.points) @ pose[:3,:3].T + pose[:3,3],
+            np.asarray(cloud.colors) if cloud.has_colors() else None,
+            origins=((key, revision),))
+    layers = [load(reference_uid)]
+    transforms = {reference_uid: poses[reference_uid][1].tolist()}
+    reports = []
+    pending = order[1:]
+    # Retry non-overlapping frames after the reference has grown. No frame is dropped.
+    while pending:
+        progressed = False
+        failures = []
+        for key in list(pending):
+            reference = CloudLayer('已精配准参考', np.vstack([layer.points for layer in layers]))
+            moving = load(key)
+            try:
+                output, report = refine_icp(reference, moving, params)
+            except ValueError as exc:
+                failures.append(f'{moving.name}：{exc}')
+                continue
+            transforms[key] = (np.asarray(output.registration_transform) @ poses[key][1]).tolist()
+            layers.append(output)
+            reports.append(report)
+            pending.remove(key)
+            progressed = True
+        if not progressed:
+            raise ValueError('部分来源帧无法精配准，整批未发布。请检查重叠或调整参数。\n'+'\n'.join(failures))
+    has_colors = [layer.colors is not None for layer in layers]
+    if any(has_colors) and not all(has_colors):
+        raise ValueError('来源帧颜色属性不一致，未发布结果；请统一原始帧颜色数据')
+    merged = CloudLayer(row.logical_name+' · 来源帧ICP精修',
+        np.vstack([layer.points for layer in layers]),
+        np.vstack([layer.colors for layer in layers]) if all(has_colors) else None,
+        source='原始帧ICP重建', origins=tuple((key, poses[key][0]) for key in order),
+        source_transforms=transforms)
+    return merged, f'固定参考：{database.records[reference_uid].logical_name}；重建{len(layers)}帧，保留全部{len(merged.points):,}有效点。\n'+'\n'.join(reports)

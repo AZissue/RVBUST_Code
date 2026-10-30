@@ -22,6 +22,20 @@ class ICPTests(unittest.TestCase):
         self.assertIn('RMS',report)
         np.testing.assert_allclose(np.array(out.registration_transform)[:3,3],[-.15,.1,-.08],atol=1e-6)
 
+    def test_rebuild_rejects_missing_pose_and_disconnected_frames(self):
+        from test_image_color_fusion import FusionTests
+        from core.postprocess.icp_registration import refine_stitched
+        seed=FusionTests();seed.setUp();self.addCleanup(seed.doCleanups)
+        row=seed.db.records[seed.uid]
+        before=set(seed.db.records)
+        row.source_transforms[seed.ids[1]][0][3]=1000
+        with self.assertRaisesRegex(ValueError,'整批未发布'):
+            refine_stitched(seed.db,seed.uid,seed.ids[0],ICPParameters(.2,.1))
+        self.assertEqual(set(seed.db.records),before)
+        row.source_transforms={}
+        with self.assertRaisesRegex(ValueError,'位姿'):
+            refine_stitched(seed.db,seed.uid,seed.ids[0],ICPParameters())
+
     def test_no_overlap_and_invalid_parameters_rejected(self):
         rng=np.random.default_rng(4); xyz=rng.random((100,3))+10
         a=CloudLayer('a',xyz); b=CloudLayer('b',xyz+100)
@@ -76,5 +90,37 @@ class ICPUiTests(unittest.TestCase):
             self.assertIn('粗配准',warning.call_args.args[-1])
         self.assertEqual(set(self.db.records),before)
         self.assertFalse(self.editor._undo)
+
+    def test_single_stitch_rebuild_preserves_raws_and_publishes_poses(self):
+        from core.postprocess.image_color_fusion import source_poses
+        from core.frame_database import FrameDatabase
+        rng=np.random.default_rng(28)
+        xyz=rng.uniform(10,30,(800,3))
+        ids=[]
+        for n in (1,2,3):
+            frame=self.source(n)
+            frame.pointcloud_aligned=True
+            import open3d as o3d
+            o3d.io.write_point_cloud(frame.offline_pointmap_path,fixture.cloud(xyz))
+            ids.append(self.db.ingest(frame))
+        poses={key:np.eye(4).tolist() for key in ids}
+        poses[ids[1]][0][3]=.1
+        poses[ids[2]][1][3]=-.1
+        stitched=self.db.publish_result(fixture.cloud(np.vstack([xyz,xyz+[.1,0,0],xyz+[0,-.1,0]])),ids,source_transforms=poses)
+        self.editor.load_selected([stitched]);self.finish()
+        self.assertTrue(self.editor.actions['icp'].isEnabled())
+        self.editor.register_stitched_icp(ids[0],ICPParameters(1,.02,60,.8));self.finish()
+        result=self.editor._display_ids[0]
+        self.assertNotEqual(result,stitched)
+        self.assertEqual(set(self.db.records[result].source_ids),set(ids))
+        self.assertEqual(len(self.editor._clouds[result].points),2400)
+        for block in np.split(self.editor._clouds[result].points,3):
+            np.testing.assert_allclose(block,xyz,atol=1e-5)
+        opened=FrameDatabase(self.db.mode);opened.open_project(self.db.directory/'index.json')
+        for _,pose in source_poses(opened,result).values():
+            np.testing.assert_allclose(pose,np.eye(4),atol=1e-5)
+        self.assertEqual(self.db.records[stitched].source_transforms,poses)
+        self.editor.undo();self.finish()
+        self.assertEqual(self.editor._display_ids,[stitched])
 
 if __name__=='__main__':unittest.main()

@@ -101,7 +101,7 @@ class PostprocessWindow(QDialog):
             '下采样：体素下采样或随机抽样；参数在独立弹窗设置；结果新增到 DB，原始数据保留')
         self.actions['open'].setToolTip('导入点云：在独立弹窗确认源文件单位后选择文件')
         self.actions['color'].setToolTip('颜色统一：在独立弹窗设置参数，生成独立 DB 结果')
-        self.actions['icp'].setToolTip('勾选两项已粗略对齐的点云，固定参考后精配准另一项；新增结果，保留点数和原始数据')
+        self.actions['icp'].setToolTip('选择一项原始拼接结果按来源帧重建，或勾选两项点云精配准；新增结果，保留全部有效点')
         self.actions['probe'].setToolTip('点云探针：打开间距、重合度分析与体素参考；点击分析后开始只读计算')
         self.actions['select'].setCheckable(True)
         self.actions['select'].setToolTip('选取分割：左键添加顶点，封闭后选择保留方向并点击快捷删除')
@@ -564,7 +564,7 @@ class PostprocessWindow(QDialog):
             button.setEnabled(ready)
         self.source_browser.setEnabled(ready)
         self.actions['undo'].setEnabled(ready and bool(self._undo))
-        self.actions['icp'].setEnabled(self._parameter_gate() and len(self._display_ids) == 2)
+        self.actions['icp'].setEnabled(self._parameter_gate() and len(self._display_ids) in (1, 2))
         self.actions['merge'].setEnabled(ready and len(self._display_ids) > 1)
         self.actions['downsample'].setEnabled(ready and self._active_uid in self._clouds)
         self.actions['select'].setEnabled(ready and self._active_uid in self._clouds)
@@ -696,7 +696,8 @@ class PostprocessWindow(QDialog):
             self._validate_source(directory, [token for layer in layers for token in layer.origins])
             identifiers = self.database.publish_results(entries, postprocess=True,
                 output_roles=[layer.output_role for layer in layers],
-                registration_transform=layers[0].registration_transform if len(layers) == 1 else None)
+                registration_transform=layers[0].registration_transform if len(layers) == 1 else None,
+                source_transforms=layers[0].source_transforms if len(layers) == 1 else None)
             for uid, layer in zip(identifiers, layers):
                 layer.origins = ((uid, self.database.records[uid].revision),)
         return layers
@@ -865,15 +866,53 @@ class PostprocessWindow(QDialog):
         self._commit_operation(work)
 
     def open_icp_dialog(self):
-        if not self._parameter_gate() or len(self._display_ids) != 2:
-            self._set_status('请先在DB树勾选两项已粗略对齐的点云。')
+        if not self._parameter_gate() or len(self._display_ids) not in (1, 2):
+            self._set_status('请选择一项拼接结果，或勾选两项已粗略对齐的点云。')
             return
         from .icp_dialog import ICPDialog
         snapshot = self._input_snapshot()
-        dialog = ICPDialog([(uid, self._clouds[uid].name) for uid in self._display_ids], self)
+        rebuild = len(self._display_ids) == 1
+        inputs = [(uid, self._clouds[uid].name) for uid in self._display_ids]
+        if rebuild:
+            try:
+                uid = self._display_ids[0]
+                row = self.database.records[uid]
+                if row.kind != 'result' or row.purpose == '后处理结果':
+                    raise ValueError('请选择原始拼接结果；后处理分支或单个原始帧无法按来源重建')
+                from core.postprocess.image_color_fusion import source_poses
+                poses = source_poses(self.database, uid)
+                if len(poses) < 2:
+                    raise ValueError('至少需要两帧来源数据和拼接位姿，请重新执行拼接')
+                inputs = [(key, f'采集帧{self.database.records[key].frame_id:03d} · {self.database.records[key].logical_name}') for key in poses]
+            except ValueError as exc:
+                QMessageBox.warning(self, '无法重建ICP', str(exc))
+                return
+        dialog = ICPDialog(inputs, self, rebuild=rebuild)
         if dialog.exec() == QDialog.Accepted:
             reference_uid, params = dialog.parameters()
-            self.register_icp(reference_uid, params, snapshot=snapshot)
+            if rebuild:
+                self.register_stitched_icp(reference_uid, params, snapshot=snapshot)
+            else:
+                self.register_icp(reference_uid, params, snapshot=snapshot)
+
+    def register_stitched_icp(self, reference_uid, params, *, snapshot=None):
+        if (not self._parameter_gate() or len(self._display_ids) != 1
+                or (snapshot is not None and snapshot != self._input_snapshot())):
+            self._set_status('输入或项目已变化，请重新打开ICP参数。')
+            return
+        uid = self._display_ids[0]
+        directory = self.directory
+        tokens = self._clouds[uid].origins
+        reports = []
+        def work():
+            from core.postprocess.icp_registration import refine_stitched
+            self._validate_source(directory, tokens)
+            output, message = refine_stitched(self.database, uid, reference_uid, params)
+            self._validate_source(directory, tokens)
+            reports.append(message)
+            return [output]
+        self._commit_operation(work, diagnostic=lambda: '\n'.join(reports),
+            on_error=lambda error: QMessageBox.warning(self, '来源帧ICP失败', str(error)))
 
     def register_icp(self, reference_uid, params, *, snapshot=None):
         if (not self._parameter_gate() or len(self._display_ids) != 2
