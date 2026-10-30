@@ -81,6 +81,7 @@ class PostprocessWindow(QDialog):
             ('downsample', '下采样', 'cloud_sample', self.open_downsample_dialog),
             ('color', '颜色统一', 'color_palette', self.open_color_dialog),
             ('compare', '对比原色', 'color_compare', self.compare_color_source),
+            ('icp', 'ICP精配准', 'cloud_register', self.open_icp_dialog),
             ('merge', '合并点云', 'cloud_merge', self.merge_selected),
             ('select', '多边形框选', 'polygon', self.start_polygon),
             ('undo', '撤销处理', 'undo', self.undo),
@@ -100,6 +101,7 @@ class PostprocessWindow(QDialog):
             '下采样：体素下采样或随机抽样；参数在独立弹窗设置；结果新增到 DB，原始数据保留')
         self.actions['open'].setToolTip('导入点云：在独立弹窗确认源文件单位后选择文件')
         self.actions['color'].setToolTip('颜色统一：在独立弹窗设置参数，生成独立 DB 结果')
+        self.actions['icp'].setToolTip('勾选两项已粗略对齐的点云，固定参考后精配准另一项；新增结果，保留点数和原始数据')
         self.actions['probe'].setToolTip('点云探针：打开间距、重合度分析与体素参考；点击分析后开始只读计算')
         self.actions['select'].setCheckable(True)
         self.actions['select'].setToolTip('选取分割：左键添加顶点，封闭后选择保留方向并点击快捷删除')
@@ -562,6 +564,7 @@ class PostprocessWindow(QDialog):
             button.setEnabled(ready)
         self.source_browser.setEnabled(ready)
         self.actions['undo'].setEnabled(ready and bool(self._undo))
+        self.actions['icp'].setEnabled(self._parameter_gate() and len(self._display_ids) == 2)
         self.actions['merge'].setEnabled(ready and len(self._display_ids) > 1)
         self.actions['downsample'].setEnabled(ready and self._active_uid in self._clouds)
         self.actions['select'].setEnabled(ready and self._active_uid in self._clouds)
@@ -692,7 +695,8 @@ class PostprocessWindow(QDialog):
         with self.database._lock:
             self._validate_source(directory, [token for layer in layers for token in layer.origins])
             identifiers = self.database.publish_results(entries, postprocess=True,
-                output_roles=[layer.output_role for layer in layers])
+                output_roles=[layer.output_role for layer in layers],
+                registration_transform=layers[0].registration_transform if len(layers) == 1 else None)
             for uid, layer in zip(identifiers, layers):
                 layer.origins = ((uid, self.database.records[uid].revision),)
         return layers
@@ -859,6 +863,39 @@ class PostprocessWindow(QDialog):
             return [CloudLayer(source.name+' · '+title, data[0], data[1],
                                source=source.source, origins=source.origins)]
         self._commit_operation(work)
+
+    def open_icp_dialog(self):
+        if not self._parameter_gate() or len(self._display_ids) != 2:
+            self._set_status('请先在DB树勾选两项已粗略对齐的点云。')
+            return
+        from .icp_dialog import ICPDialog
+        snapshot = self._input_snapshot()
+        dialog = ICPDialog([(uid, self._clouds[uid].name) for uid in self._display_ids], self)
+        if dialog.exec() == QDialog.Accepted:
+            reference_uid, params = dialog.parameters()
+            self.register_icp(reference_uid, params, snapshot=snapshot)
+
+    def register_icp(self, reference_uid, params, *, snapshot=None):
+        if (not self._parameter_gate() or len(self._display_ids) != 2
+                or reference_uid not in self._display_ids
+                or (snapshot is not None and snapshot != self._input_snapshot())):
+            self._set_status('输入或项目已变化，请重新打开ICP参数。')
+            return
+        reference = self._clouds[reference_uid]
+        moving = self._clouds[next(uid for uid in self._display_ids if uid != reference_uid)]
+        tokens = tuple(token for layer in (reference, moving) for token in layer.origins)
+        directory = self.directory
+        report = []
+        def work():
+            self._validate_source(directory, tokens)
+            from core.postprocess.icp_registration import refine_icp
+            output, message = refine_icp(reference, moving, params)
+            self._validate_source(directory, tokens)
+            report.append(message)
+            return [output]
+        def failed(error):
+            QMessageBox.warning(self, 'ICP精配准失败', str(error))
+        self._commit_operation(work, diagnostic=lambda: '\n'.join(report), on_error=failed)
 
     def merge_selected(self):
         layers = [self._clouds[uid] for uid in self._display_ids]

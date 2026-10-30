@@ -11,6 +11,23 @@ def source_poses(database, uid, path=()):
     row = database.records[uid]
     if row.status == '来源数据已变更，请重新拼接':
         raise ValueError('来源数据已变化，请重新拼接')
+    if row.registration_transform is not None:
+        matrix = np.asarray(row.registration_transform, dtype=float)
+        if (matrix.shape != (4,4) or not np.isfinite(matrix).all()
+                or not np.allclose(matrix[3], [0,0,0,1])
+                or not np.allclose(matrix[:3,:3].T @ matrix[:3,:3], np.eye(3), atol=1e-5)
+                or not np.isclose(np.linalg.det(matrix[:3,:3]), 1, atol=1e-5)
+                or len(row.source_ids) != 1):
+            raise ValueError('ICP来源位姿无效，请重新执行精配准')
+        uid_source = row.source_ids[0]
+        parent = database.records.get(uid_source)
+        if parent is not None and parent.kind == 'raw':
+            if parent.pointcloud_aligned is not True:
+                raise ValueError('原始帧未确认2D对齐，不能融合')
+            poses = {uid_source: (parent.revision, np.eye(4))}
+        else:
+            poses = source_poses(database, uid_source, (*path, uid))
+        return {key: (revision, matrix @ pose) for key, (revision, pose) in poses.items()}
     if row.source_transforms:
         if set(row.source_transforms) != set(row.source_ids):
             raise ValueError('拼接位姿与来源帧不完整，请重新拼接')
@@ -33,7 +50,7 @@ def source_poses(database, uid, path=()):
             if key in result and not np.allclose(result[key][1],pose[1]):
                 raise ValueError('来源包含不同坐标系的拼接结果，不能直接融合')
             result[key] = pose
-    if len(result) < 2:
+    if not result:
         raise ValueError('该结果未保存原始帧拼接位姿，请重新执行拼接；当前模式无法提供位姿时不能使用2D融合')
     return result
 

@@ -33,6 +33,7 @@ _BODIES = {
     'cloud_sample': '<path d="M10 12h5m-2-2 2 2-2 2"/><g fill="{c}" stroke="none"><circle cx="3" cy="5" r="1.2"/><circle cx="7" cy="5" r="1.2"/><circle cx="3" cy="10" r="1.2"/><circle cx="7" cy="10" r="1.2"/><circle cx="3" cy="15" r="1.2"/><circle cx="7" cy="15" r="1.2"/><circle cx="3" cy="20" r="1.2"/><circle cx="7" cy="20" r="1.2"/><circle cx="20" cy="7" r="1.7"/><circle cx="20" cy="17" r="1.7"/></g>',
     'color_palette': '<path d="M12 3a9 9 0 1 0 0 18h1a2.5 2.5 0 0 0 1.8-4.2 1.5 1.5 0 0 1 1.1-2.6H18a4 4 0 0 0 3-4c0-4-4-7.2-9-7.2z"/><circle cx="7" cy="10" r="1"/><circle cx="10" cy="6.5" r="1"/><circle cx="15" cy="7" r="1"/><circle cx="18" cy="10.5" r="1"/>',
     'color_compare': '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16M5.5 15l3-6 3 6M6.5 13h4"/><path d="M15 8h2a2 2 0 0 1 0 4h-2V8zm0 4h2a2 2 0 0 1 0 4h-2v-4z"/>',
+    'cloud_register': '<path d="M3 5h7v7H3zM14 12h7v7h-7zM7 16h4m-2-2 2 2-2 2M17 8h-4m2-2-2 2 2 2"/>',
     'cloud_merge': '<path d="M3 5h5l4 7-4 7H3M21 5h-5l-4 7 4 7h5M12 12h9m-3-3 3 3-3 3"/>',
     'cloud_probe': '<circle cx="10" cy="10" r="6.5"/><path d="m15 15 6 6M6 12V9m4 3V6m4 6v-2"/>',
     'cloud_export': '<path d="M13 3H5v18h14v-8M9 15 21 3M15 3h6v6M8 18h3"/>',

@@ -14,6 +14,7 @@ class CloudLayer:
 
     origins: tuple = ()  # (DB UID, geometry revision) provenance
     output_role: str = ''
+    registration_transform: list | None = None
 
     def __post_init__(self):
         pts = np.asarray(self.points, dtype=np.float64)
