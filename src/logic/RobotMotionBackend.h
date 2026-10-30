@@ -26,9 +26,23 @@ struct State {
     bool hasJoint = false;
 };
 
+// 连接参数。合并「机器人通信」后，不同品牌共用这一个入口：
+//   * host/port 所有走网络的品牌都用；
+//   * registerFormat/scale/unitId/startAddress 只有 Modbus TCP 用；
+//   * 埃夫特走 SDK，port 被忽略（见 EfortPoseReader.h）。
+struct ConnectOptions {
+    QString host;
+    quint16 port = 0;
+    int registerFormat = 0;   // 0 Float32 / 1 Int32×scale / 2 Int16×scale
+    double scale = 1.0;
+    quint8 unitId = 1;
+    quint16 startAddress = 0;
+};
+
 } // namespace RobotMotion
 
 Q_DECLARE_METATYPE(RobotMotion::State)
+Q_DECLARE_METATYPE(RobotMotion::ConnectOptions)
 
 class RobotMotionBackend : public QObject {
     Q_OBJECT
@@ -41,6 +55,9 @@ public:
 
     virtual QString name() const = 0;
     virtual bool isSimulated() const = 0;
+    // 能否下发运动（Move/点动）。Modbus/NRC/Efort 只读位姿，控制台据此
+    // 隐藏运动区；程序里的移动节点在这些品牌上会明确失败，不会静默跳过。
+    virtual bool supportsMotion() const { return true; }
 
     virtual bool isConnected() const = 0;
     virtual bool isEnabled() const = 0;
@@ -62,6 +79,11 @@ public:
 
 public slots:
     virtual void connectDevice(const QString& host, quint16 port) = 0;
+    // 带品牌参数的连接入口；不支持额外参数的品牌默认转调上面的方法。
+    virtual void connectDevice(const RobotMotion::ConnectOptions& options)
+    {
+        connectDevice(options.host, options.port);
+    }
     virtual void disconnectDevice() = 0;
     // 「使能」是软件层的运动许可（UR 真机还需要控制器处于 RUNNING）。禁用
     // 时必须立即停止正在执行的移动，不能只是把按钮变灰。

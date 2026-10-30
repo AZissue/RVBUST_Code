@@ -1,10 +1,8 @@
 set(SOURCES
     main.cpp
     app/MainWindow.cpp
-    # 机器人通道（线程 + 四个 reader + 逻辑连接状态）——MainWindow 只做 UI
-    app/RobotController.cpp
-    app/RobotController.h
-    # 机器人控制台：程序节点 + 执行器 + 运动后端 + 粘合层（第 17 阶段 P1）
+    # 机器人控制（合并后的唯一机器人页）：程序节点 + 执行器 + 运动后端 +
+    # 粘合层（第 17 阶段 P1）。原 app/RobotController（机器人通信）已并入这里。
     app/RobotProgramController.cpp
     app/RobotProgramController.h
     logic/RobotProgram.cpp
@@ -12,6 +10,9 @@ set(SOURCES
     logic/ProgramRunner.cpp
     logic/ProgramRunner.h
     logic/RobotMotionBackend.h
+    # 合并「机器人控制」后的只读位姿品牌（Modbus / 博纳斯 / 埃夫特）。
+    logic/PoseOnlyMotionBackend.cpp
+    logic/PoseOnlyMotionBackend.h
     logic/SimulatedMotionBackend.cpp
     logic/SimulatedMotionBackend.h
     # UR 真机后端：30003 反馈 + 30001 脚本 + 29999 Dashboard（工作线程）

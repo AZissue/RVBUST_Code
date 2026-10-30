@@ -19,7 +19,9 @@
 #  undef far
 #endif
 
+#include "app/RobotProgramController.h"
 #include "logic/JogPolicy.h"
+#include "logic/PoseOnlyMotionBackend.h"
 #include "logic/ProgramRunner.h"
 #include "logic/RobotProgram.h"
 #include "logic/SimulatedMotionBackend.h"
@@ -778,4 +780,83 @@ void TestRobotProgram::simulatedBackendJogsJoints()
         QVERIFY(std::abs(backend.state().joint[static_cast<std::size_t>(i)]
                          - base[static_cast<std::size_t>(i)]) < 1e-6);
     }
+}
+
+// ── 合并「机器人通信」后的品牌目录 ────────────────────────────────────
+//
+// 六个后端共用一个控制器；默认地址/端口与「有没有运动能力」是页面上
+// 下拉框与运动区显隐的唯一依据，钉住它们，避免合并时把某个品牌丢掉。
+
+void TestRobotProgram::backendCatalogDefaults()
+{
+    using C = RobotProgramController;
+    // UR：脚本 30001 / Dashboard 29999 固定，实时反馈 30003。
+    QCOMPARE(C::defaultPort(C::BackendKind::Ur), quint16(30003));
+    QCOMPARE(C::defaultHost(C::BackendKind::Ur), QStringLiteral("192.168.0.38"));
+    // 法奥：20003 命令口（20004 由后端固定使用）。
+    QCOMPARE(C::defaultPort(C::BackendKind::Fairino), quint16(20003));
+    QCOMPARE(C::defaultHost(C::BackendKind::Fairino),
+             QStringLiteral("192.168.58.2"));
+    // 原「机器人通信」支持的品牌：Modbus 502 / 博纳斯 6001 / 埃夫特无端口。
+    QCOMPARE(C::defaultPort(C::BackendKind::Modbus), quint16(502));
+    QCOMPARE(C::defaultPort(C::BackendKind::NrcJson), quint16(6001));
+    QCOMPARE(C::defaultPort(C::BackendKind::Efort), quint16(0));
+    QCOMPARE(C::defaultHost(C::BackendKind::Modbus),
+             QStringLiteral("192.168.0.1"));
+    QCOMPARE(C::defaultHost(C::BackendKind::NrcJson),
+             QStringLiteral("192.168.0.1"));
+    QCOMPARE(C::defaultHost(C::BackendKind::Efort),
+             QStringLiteral("192.168.0.1"));
+}
+
+void TestRobotProgram::poseOnlyBackendRefusesMotion()
+{
+    PoseOnlyMotionBackend modbus(PoseOnlyMotionBackend::Kind::Modbus);
+    QVERIFY(!modbus.supportsMotion());
+    QVERIFY(!modbus.isSimulated());
+    QCOMPARE(modbus.name(), QStringLiteral("Modbus TCP"));
+
+    PoseOnlyMotionBackend nrc(PoseOnlyMotionBackend::Kind::NrcJson);
+    QCOMPARE(nrc.name(), QStringLiteral("博纳斯 JSON/TCP"));
+    PoseOnlyMotionBackend efort(PoseOnlyMotionBackend::Kind::Efort);
+    QCOMPARE(efort.name(), QStringLiteral("埃夫特"));
+
+    // 运动请求必须明确失败（执行器据此停下整张表），不能静默成功。
+    QSignalSpy finished(&modbus, &RobotMotionBackend::motionFinished);
+    modbus.jogCartesian(0, 5.0, 20.0);
+    QCOMPARE(finished.count(), 1);
+    QCOMPARE(finished.at(0).at(0).toBool(), false);
+    QVERIFY(finished.at(0).at(1).toString().contains(QStringLiteral("位姿")));
+
+    finished.clear();
+    modbus.moveCartesian(RobotMotion::Pose{}, 30.0);
+    QCOMPARE(finished.count(), 1);
+    QCOMPARE(finished.at(0).at(0).toBool(), false);
+
+    // 使能是空操作，但不会把连接状态改掉。
+    modbus.setEnabled(true);
+    QVERIFY(!modbus.isEnabled());
+}
+
+void TestRobotProgram::controllerSwitchesBrandCapabilities()
+{
+    using C = RobotProgramController;
+    C controller(new SimulatedMotionBackend, C::BackendKind::Simulated);
+    QVERIFY(controller.supportsMotion());
+
+    controller.setBackendKind(C::BackendKind::Modbus);
+    QVERIFY(!controller.supportsMotion());
+    QCOMPARE(controller.backend()->name(), QStringLiteral("Modbus TCP"));
+
+    controller.setBackendKind(C::BackendKind::NrcJson);
+    QVERIFY(!controller.supportsMotion());
+    QCOMPARE(controller.backend()->name(), QStringLiteral("博纳斯 JSON/TCP"));
+
+    // 埃夫特：端口由 SDK 固定，控制器层同样没有运动能力。
+    controller.setBackendKind(C::BackendKind::Efort);
+    QVERIFY(!controller.supportsMotion());
+
+    // 有运动能力的真机品牌不能被误判为只读（否则控制台会把点动区藏掉）。
+    controller.setBackendKind(C::BackendKind::Fairino);
+    QVERIFY(controller.supportsMotion());
 }

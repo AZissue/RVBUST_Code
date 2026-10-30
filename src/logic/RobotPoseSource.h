@@ -2,34 +2,27 @@
 
 // Which connection supplies the pose for a calibration photo.
 //
-// There are two independent robot connections in the app:
-//   * the communication tool (RobotController), used for manual/auto pose reads;
-//   * the console (RobotProgramController), which owns the motion backend.
+// 「机器人通信」与「机器人控制」合并后，机器人只剩一条连接（控制台后端，
+// 品牌见 RobotProgramController::BackendKind）。本规则就是"这份位姿能不能
+// 写进标定记录"的唯一判定点；它是纯函数（无 Qt 对象），优先级与失败条件
+// 都有单测：
 //
-// The program's photo node used to require only the first, so a console-only
-// connection failed with "拍照前需要先连接机器人".  The rule below is the one
-// fix point.  It is deliberately pure (no Qt objects) so the precedence and the
-// fail-closed conditions are unit-tested:
+//   控制台已连接 + 真机后端 + 位姿新鲜 + 未在运动 -> 用这份位姿；
+//   否则 -> 没有位姿来源（拍照节点必须失败，绝不把旧位姿或仿真位姿写进
+//   标定记录）。
 //
-//   1. communication tool connected  -> use it (existing behaviour, unchanged);
-//   2. console connected, real backend, fresh pose, not moving -> use it;
-//   3. otherwise -> no pose source (the node must fail, never save a stale or
-//      simulated pose into a calibration record).
-//
-// "Simulated" is rejected on purpose: the console's simulated backend produces
-// plausible-looking numbers that must never enter a calibration card.
+// "仿真" 被明确排除：仿真的数字看起来完全合理，但它不是这台机器人的真实
+// 位姿，一旦进卡片，整个标定结果都是错的。
 #include <QString>
 
 namespace RobotPoseSource {
 
 enum class Source {
     None,
-    Communication,
     Console
 };
 
 struct Inputs {
-    bool communicationConnected = false;
     bool consoleConnected = false;
     // True for the console's 仿真 backend (or any other non-real backend).
     bool consoleSimulated = true;
@@ -46,8 +39,6 @@ constexpr qint64 kConsolePoseFreshMs = 1000;
 
 inline Source choose(const Inputs& in)
 {
-    if (in.communicationConnected)
-        return Source::Communication;
     if (in.consoleConnected && !in.consoleSimulated
         && in.consolePoseFresh && !in.consoleMoving) {
         return Source::Console;
@@ -58,10 +49,8 @@ inline Source choose(const Inputs& in)
 inline QString label(Source s)
 {
     switch (s) {
-    case Source::Communication:
-        return QStringLiteral("机器人通信");
     case Source::Console:
-        return QStringLiteral("机器人控制台");
+        return QStringLiteral("机器人控制");
     case Source::None:
         break;
     }

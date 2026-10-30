@@ -179,8 +179,8 @@ SettingsDialog::SettingsDialog(AppConfig& config, DataManager* data, QWidget* pa
     auto* importBtn = new QPushButton(QStringLiteral("导入流程..."), programGroup);
     programLayout->addWidget(importBtn);
     m_programStatus = new QLabel(
-        QStringLiteral("从 *.program.json 导入机器人控制台的流程节点；"
-                       "保存请用控制台节点列表下方的「保存流程」。"),
+        QStringLiteral("从 *.program.json 导入「机器人控制」页的流程节点；"
+                       "保存请用节点列表下方的「保存流程」。"),
         programGroup);
     m_programStatus->setStyleSheet(hintStyle());
     m_programStatus->setWordWrap(true);

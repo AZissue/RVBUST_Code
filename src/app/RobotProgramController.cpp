@@ -2,6 +2,7 @@
 
 #include "logic/FairinoMotionBackend.h"
 #include "logic/JogPolicy.h"
+#include "logic/PoseOnlyMotionBackend.h"
 #include "logic/SimulatedMotionBackend.h"
 #include "logic/UrMotionBackend.h"
 
@@ -95,6 +96,15 @@ void RobotProgramController::setBackendKind(BackendKind kind)
     case BackendKind::Fairino:
         next = new FairinoMotionBackend(this);
         break;
+    case BackendKind::Modbus:
+        next = new PoseOnlyMotionBackend(PoseOnlyMotionBackend::Kind::Modbus, this);
+        break;
+    case BackendKind::NrcJson:
+        next = new PoseOnlyMotionBackend(PoseOnlyMotionBackend::Kind::NrcJson, this);
+        break;
+    case BackendKind::Efort:
+        next = new PoseOnlyMotionBackend(PoseOnlyMotionBackend::Kind::Efort, this);
+        break;
     case BackendKind::Simulated:
         next = new SimulatedMotionBackend(this);
         break;
@@ -106,16 +116,34 @@ void RobotProgramController::setBackendKind(BackendKind kind)
 QString RobotProgramController::defaultHost(BackendKind kind)
 {
     // 法奥控制器的出厂/常见网段是 192.168.58.2（SDK 示例同此）；UR 沿用现场
-    // 一直用的 192.168.0.38。仿真不访问网络，给一个看起来正常的地址即可。
-    return kind == BackendKind::Fairino ? QStringLiteral("192.168.58.2")
-                                        : QStringLiteral("192.168.0.38");
+    // 一直用的 192.168.0.38。Modbus/博纳斯沿用通信页此前的默认 192.168.0.1；
+    // 埃夫特同样填 IP（端口由 SDK 固定）。仿真不访问网络。
+    switch (kind) {
+    case BackendKind::Fairino:
+        return QStringLiteral("192.168.58.2");
+    case BackendKind::Modbus:
+    case BackendKind::NrcJson:
+    case BackendKind::Efort:
+        return QStringLiteral("192.168.0.1");
+    default:
+        return QStringLiteral("192.168.0.38");
+    }
 }
 
 quint16 RobotProgramController::defaultPort(BackendKind kind)
 {
     // 法奥控制台连的是 20003 命令口（20004 实时口由后端固定使用）；
-    // UR 是 30003 实时反馈。仿真填同一个值只为界面一致。
-    return kind == BackendKind::Fairino ? 20003 : 30003;
+    // UR 是 30003 实时反馈；Modbus 502；博纳斯 6001；埃夫特不用端口
+    // （SDK 固定 8100），给一个不会误导的 0。
+    switch (kind) {
+    case BackendKind::Ur:      return 30003;
+    case BackendKind::Fairino: return 20003;
+    case BackendKind::Modbus:  return 502;
+    case BackendKind::NrcJson: return 6001;
+    case BackendKind::Efort:   return 0;
+    case BackendKind::Simulated: break;
+    }
+    return 30003;
 }
 
 bool RobotProgramController::setProgram(const RobotProgram::Program& program,
@@ -235,6 +263,13 @@ void RobotProgramController::connectDevice(const QString& host, quint16 port)
 {
     if (m_backend)
         m_backend->connectDevice(host, port);
+}
+
+void RobotProgramController::connectDevice(
+    const RobotMotion::ConnectOptions& options)
+{
+    if (m_backend)
+        m_backend->connectDevice(options);
 }
 
 void RobotProgramController::disconnectDevice()

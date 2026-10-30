@@ -75,6 +75,8 @@ private:
     void showToast(const QString& text, bool error = false);
     void log(const QString& text, bool error = false);
     void syncAddressFields();
+    // 只读位姿品牌（Modbus/博纳斯/埃夫特）隐藏运动相关控件。
+    void applyBackendCapabilities();
 
     // ── 节点选择 / 编辑 ──
     bool isEditing() const;
@@ -130,6 +132,8 @@ private:
     // ── 顶部状态栏 ──
     QLabel* m_statusDot = nullptr;
     QLabel* m_connLabel = nullptr;
+    // 速度 + 使能：只读位姿品牌整块隐藏。
+    QWidget* m_motionBar = nullptr;
     QSlider* m_speedSlider = nullptr;
     QLabel* m_speedLabel = nullptr;
     QPushButton* m_enableButton = nullptr;
@@ -155,8 +159,18 @@ private:
     QWidget* m_commBody = nullptr;
     QComboBox* m_backendCombo = nullptr;
     QLineEdit* m_hostEdit = nullptr;
+    QLabel* m_portLabel = nullptr;
     QSpinBox* m_portSpin = nullptr;
     QPushButton* m_connectButton = nullptr;
+    // Modbus TCP 的寄存器参数（其他品牌隐藏）。
+    QWidget* m_modbusFields = nullptr;
+    QComboBox* m_registerFormat = nullptr;
+    QLineEdit* m_scaleEdit = nullptr;
+    QSpinBox* m_unitSpin = nullptr;
+    QSpinBox* m_startAddrSpin = nullptr;
+    // 只读位姿品牌：隐藏运动区，改显示一行说明。
+    QLabel* m_poseOnlyHint = nullptr;
+    QWidget* m_stepSetting = nullptr;
 
     // ── 右卡：编辑条 / 模式切换 ──
     QFrame* m_editBanner = nullptr;

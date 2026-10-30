@@ -9,12 +9,20 @@
 #include "logic/AppConfig.h"
 #include "logic/CalibrationService.h"
 #include "logic/BoardPoseFit.h"
-#include "app/RobotController.h"
 #include "logic/FrameBuffer.h"
+#include "logic/RobotPose.h"
 #include "logic/RobotPoseSource.h"
 #include "logic/UiStallWatchdog.h"
 #include "ui/ActionButtons.h"
 #include "ui/MeasurementSnapshot.h"
+
+// 读位姿的三种用途（原 RobotController.h 的枚举，随合并搬到这里）：
+// 决定写哪张卡片、是否刷新引导、失败时是否记日志。
+enum RobotReadKind {
+    RobotReadCapturePose       = 0,   // 「拍照位姿」 → robot_capture_pose 卡片
+    RobotReadTouchPose         = 1,   // 「戳点位姿」 → robot_target_xyz 卡片
+    RobotReadAutoBeforeCapture = 2    // 拍照前自动读取 → robot_capture_pose 卡片
+};
 
 // Forward declarations
 class CameraManager;
@@ -110,14 +118,10 @@ private:
     // 工具页「用当前会话」：把当前会话目录与每组机器人位姿喂回面板（无记录也回一次）。
     void onCalibrationSessionRequested();
     void onCalibrationFinished();
-    void onRobotConnect(const QString& host, quint16 port,
-                        int protocol, int format, double scale,
-                        quint8 unitId, quint16 startAddress);
-    void onRobotDisconnect();
+    // 「机器人通信」合并进「机器人控制」后，连接与位姿都来自控制台后端；
+    // 这两个按钮只是把控制台最新位姿写进卡片。
     void onRobotRead();
     void onRobotReadTouch();
-    // T-009: answers from the robot worker thread (queued into this thread).
-    void onRobotConnectFinished(bool ok, const QString& label, const QString& error);
     void onRobotPoseReady(int kind, bool ok, const QStringList& fields,
                           const QString& error);
     void updateRobotReadBar();
@@ -132,19 +136,15 @@ private:
     void onProgramPhotoDetected(bool ok);
     void finishProgramPhoto(bool ok, const QString& error);
     void abortProgramPhoto();
-    // 控制台位姿：缓存最近一帧「写卡约定」的值（UR 弧度、法奥 mm/度），
-    // 供拍照节点在通信工具未连接时使用。只缓存，不代表此刻仍新鲜。
+    // 控制台位姿：缓存最近一帧「写卡约定」的值（UR 弧度、法奥 mm/度）。
+    // 只缓存，不代表此刻仍新鲜。
     void rememberConsolePose();
     void invalidateConsolePose();
-    // 控制台这一侧的位姿可用性（真机、新鲜、未在运动）。通信工具的连接状态
-    // 不参与：choosing 时由调用方把它填进 Inputs。
+    // 控制台这一侧的位姿可用性（真机、新鲜、未在运动）。
     RobotPoseSource::Inputs consolePoseInputs() const;
-    // 通信工具没连、但控制台可用时，主界面的「拍照位姿 / 戳点位姿」按钮
-    // 直接消费控制台缓存的位姿；返回 true 表示已经处理。
+    // 主界面的「拍照位姿 / 戳点位姿」按钮直接消费控制台缓存的位姿；
+    // 返回 true 表示已经处理。
     bool tryConsolePose(int kind);
-
-    // ── 机器人协议分派：在 RobotController/RobotWorker 里（worker 线程）──
-    // MainWindow 不再持有 reader，也不再直接调用它们的阻塞方法。
 
 private:
     // Card updates
@@ -274,16 +274,10 @@ private:
     std::vector<BoardFrameEntry> m_boardFrames;      // one fitted pose per saved frame
     BoardPoseFit::Pose m_pendingBoardPose;           // last detected frame's board pose
 
-    // Stage 8: robot communication (isolated, default off).
-    // The thread, the four readers and the logical connection state live in
-    // RobotController; this window only reads isConnected()/autoRead() and
-    // updates the widgets from its two signals.
-    // 0 = Modbus TCP, 1 = UR Realtime, 2 = 博纳斯(纳博特) JSON/TCP（协议号语义不变）
-    RobotController* m_robot = nullptr;
-
-    // 第 17 阶段 P1：机器人控制台（程序节点 / 仿真运动后端 / 拍照一条龙）。
+    // 第 17 阶段 P1：机器人控制（合并后的唯一机器人连接：程序节点 / 运动
+    // 后端 / 位姿读取 / 拍照一条龙）。原 RobotController 已并入它的后端。
     RobotProgramController* m_programController = nullptr;
-    enum class ProgramPhotoStep { None, WaitingPose, WaitingCapture, WaitingDetect };
+    enum class ProgramPhotoStep { None, WaitingCapture, WaitingDetect };
     ProgramPhotoStep m_programPhotoStep = ProgramPhotoStep::None;
     bool m_programPhotoAutoSave = true;
     int  m_programPhotoRecordBase = 0;

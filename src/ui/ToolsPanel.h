@@ -46,13 +46,11 @@ public:
     // 避免两个 AppConfig 各存一份 m_data 互相覆盖）。必须在 show 前调用。
     void setAppConfig(AppConfig* cfg);
 
-    // 机器人控制台的控制端由主窗口创建后晚绑定（ToolsPanel 构造时它还不存在）。
+    // 机器人控制的控制端由主窗口创建后晚绑定（ToolsPanel 构造时它还不存在）。
+    // 原「机器人通信」页已合并进这一页（连接/位姿/运动共用同一个后端）。
     void setRobotProgramController(RobotProgramController* controller);
-    // 切到「机器人控制台」页（导入流程后让用户立刻看到结果）。
+    // 切到「机器人控制」页（导入流程后让用户立刻看到结果）。
     void showRobotProgramPage();
-
-    void setRobotStatus(const QString& text, bool ok);
-    void setRobotConnected(bool connected);
 
     // ── Measurement tools (aligned with the Python 3D 测量一体化工具) ──
     // Each method is its own entry in the left list and its own MeasurePage in
@@ -98,10 +96,7 @@ signals:
     void measurementUpdated(const Measurement::Snapshot& snapshot);
     // ROI rectangles to draw on the 2D image (image pixels).
     void roisChanged(const QVector<QRect>& rois, const QStringList& labels);
-    void robotConnectRequested(const QString& host, quint16 port,
-                               int protocol, int format, double scale,
-                               quint8 unitId, quint16 startAddress);
-    void robotDisconnectRequested();
+    // 机器人的连接/位姿全部走「机器人控制」页自己的后端，这里不再转发。
     // Measurement explanation / result lines (P4).  MainWindow writes them into
     // the operation log; the panel itself never touches the logger.
     void logMessage(const QString& line);
@@ -146,8 +141,7 @@ private:
     void buildCalibrationPage(QStackedWidget* stack);
     void buildTransformPage(QStackedWidget* stack);
     void buildFormatInferencePage(QStackedWidget* stack);
-    void buildRobotCommPage(QStackedWidget* stack);
-    // 机器人控制台（程序节点 + 点动）。独立一项，不塞进「机器人通信」页。
+    // 机器人控制（合并后的唯一机器人页：连接 + 位姿 + 程序节点 + 点动）。
     void buildRobotProgramPage(QStackedWidget* stack);
     // 7 个方法页（顺序 = MeasureTools::methodSpecs()），共用 MeasurePage 基类。
     void buildMeasurePages(QStackedWidget* stack);
@@ -342,20 +336,6 @@ private:
     RobotDataFormats::Id m_inferBest = RobotDataFormats::Id::EulerSxyz;
     bool m_inferBestValid = false;
     TransformTools::AngleUnit m_inferBestUnit = TransformTools::AngleUnit::Degree;
-
-    // Robot communication tool (Modbus TCP / UR Realtime)
-    QComboBox* m_robotProtocol = nullptr;
-    QLineEdit* m_robotHost = nullptr;
-    // 埃夫特专用：输入里带了 ":端口" 时显示一行说明（平时隐藏）。
-    QLabel* m_robotHostNote = nullptr;
-    QSpinBox* m_robotPort = nullptr;
-    QWidget* m_modbusFieldsWidget = nullptr;   // Modbus-only rows (hidden for UR)
-    QSpinBox* m_robotStartAddr = nullptr;
-    QComboBox* m_robotFormat = nullptr;
-    QLineEdit* m_robotScale = nullptr;
-    QSpinBox* m_robotUnitId = nullptr;
-    QPushButton* m_btnRobotConnect = nullptr;
-    QLabel* m_robotStatus = nullptr;
 
     // ── Measurement tools (3D 测量一体化工具 parity) ──
     // 7 个方法页，左侧列表里各占一项。面板只留三样共享状态：点云、ROI 矩形、

@@ -112,8 +112,8 @@ inline Pose axisAngleDegToRad(const Pose& in)
     return out;
 }
 
-// Same formatting as RobotController's worker->UI path (3 decimals), so a pose
-// from either source writes a byte-identical card value.
+// Card value formatting (3 decimals), shared by every robot backend so the
+// same pose always writes a byte-identical card value.
 inline QStringList formatFields(const Pose& pose)
 {
     QStringList f;

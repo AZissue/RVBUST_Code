@@ -775,24 +775,12 @@ void TestRobotPose::cardPoseFromState()
 }
 
 // Which connection supplies the photo-node pose.  The photo node used to check
-// only the communication tool, so a console-only connection failed; the rule
-// below must also stay fail-closed for simulated / stale / moving consoles.
+// only the communication tool, so a console-only connection failed; after the
+// merge the console is the only connection, and the rule must stay fail-closed
+// for simulated / stale / moving consoles.
 void TestRobotPose::poseSourceChoice()
 {
     using namespace RobotPoseSource;
-
-    Inputs comm;
-    comm.communicationConnected = true;
-    QCOMPARE(choose(comm), Source::Communication);
-
-    // Communication wins even when the console is also usable: it is the
-    // pre-existing behaviour and the operator's explicit choice.
-    Inputs both;
-    both.communicationConnected = true;
-    both.consoleConnected = true;
-    both.consoleSimulated = false;
-    both.consolePoseFresh = true;
-    QCOMPARE(choose(both), Source::Communication);
 
     Inputs consoleOnly;
     consoleOnly.consoleConnected = true;
@@ -822,7 +810,6 @@ void TestRobotPose::poseSourceChoice()
     off.consoleConnected = false;
     QCOMPARE(choose(off), Source::None);
 
-    QCOMPARE(label(Source::Communication), QStringLiteral("机器人通信"));
-    QCOMPARE(label(Source::Console), QStringLiteral("机器人控制台"));
+    QCOMPARE(label(Source::Console), QStringLiteral("机器人控制"));
     QCOMPARE(label(Source::None), QStringLiteral("无"));
 }

@@ -24,9 +24,9 @@
 class RobotProgramController : public QObject, public ProgramActions {
     Q_OBJECT
 public:
-    // 运动后端种类。其他品牌按 RobotMotionBackend 接口新增一个枚举值 +
-    // 一个工厂分支即可，界面/执行器不用动。
-    enum class BackendKind { Simulated, Ur, Fairino };
+    // 后端种类 = 合并后的「机器人控制」支持的品牌。UR/法奥有运动；其余
+    // 三个只读位姿（supportsMotion()==false，控制台隐藏运动区）。
+    enum class BackendKind { Simulated, Ur, Fairino, Modbus, NrcJson, Efort };
 
     // kind 必须与 backend 的类型一致：三个后端都能"连接"，不能靠
     // isSimulated() 反推（那是两后端时代的写法）。
@@ -69,6 +69,12 @@ public:
 
     // ── 连接 / 使能 / 点动 ──
     void connectDevice(const QString& host, quint16 port);
+    // 合并后的统一连接入口：Modbus 的寄存器参数也从这里下去。
+    void connectDevice(const RobotMotion::ConnectOptions& options);
+    bool supportsMotion() const
+    {
+        return m_backend && m_backend->supportsMotion();
+    }
     void disconnectDevice();
     void setEnabled(bool enabled);
     void setJogSpeed(double speedPct);

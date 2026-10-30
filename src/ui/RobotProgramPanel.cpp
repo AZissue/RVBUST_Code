@@ -43,35 +43,52 @@ namespace {
 
 using BackendKind = RobotProgramController::BackendKind;
 
-// 后端组合框只有三项，但映射集中在一处：添第四种后端时不会漏改某个
-// `== 1` 的判断。
+// 合并「机器人通信」后的全部品牌都在这一张表里：添新品牌只改这里与
+// RobotProgramController 的工厂，不会漏改某个 `== 1` 的判断。
 int backendComboIndex(BackendKind kind)
 {
     switch (kind) {
-    case BackendKind::Ur:
-        return 1;
-    case BackendKind::Fairino:
-        return 2;
-    case BackendKind::Simulated:
-        break;
+    case BackendKind::Simulated: return 0;
+    case BackendKind::Ur:        return 1;
+    case BackendKind::Fairino:   return 2;
+    case BackendKind::Modbus:    return 3;
+    case BackendKind::NrcJson:   return 4;
+    case BackendKind::Efort:     return 5;
     }
     return 0;
 }
 
 BackendKind backendKindForIndex(int index)
 {
-    return index == 1 ? BackendKind::Ur
-         : index == 2 ? BackendKind::Fairino
-                      : BackendKind::Simulated;
+    switch (index) {
+    case 1: return BackendKind::Ur;
+    case 2: return BackendKind::Fairino;
+    case 3: return BackendKind::Modbus;
+    case 4: return BackendKind::NrcJson;
+    case 5: return BackendKind::Efort;
+    default: return BackendKind::Simulated;
+    }
 }
 
 QString backendPortTooltip(BackendKind kind)
 {
-    return kind == BackendKind::Fairino
-        ? QStringLiteral("法奥 XML-RPC 命令端口（默认 20003）；20004 实时状态口"
-                         "由后端固定使用，不需要填写。")
-        : QStringLiteral("UR 实时反馈端口。脚本 30001 与 Dashboard 29999 固定，"
-                         "自动使用。");
+    switch (kind) {
+    case BackendKind::Fairino:
+        return QStringLiteral("法奥 XML-RPC 命令端口（默认 20003）；20004 实时状态口"
+                              "由后端固定使用，不需要填写。");
+    case BackendKind::Modbus:
+        return QStringLiteral("Modbus TCP 端口（默认 502）。");
+    case BackendKind::NrcJson:
+        return QStringLiteral("博纳斯(纳博特) JSON/TCP 端口（默认 6001）。");
+    case BackendKind::Efort:
+        return QStringLiteral("埃夫特端口由厂商 SDK 固定（8100），本栏不使用。");
+    case BackendKind::Simulated:
+        return QStringLiteral("仿真不访问网络。");
+    case BackendKind::Ur:
+        break;
+    }
+    return QStringLiteral("UR 实时反馈端口。脚本 30001 与 Dashboard 29999 固定，"
+                          "自动使用。");
 }
 
 // ── 设计变量：逐项对应 MyUIdesign/1.html 的 :root ─────────────────────
@@ -585,8 +602,16 @@ QWidget* RobotProgramPanel::buildTopBar()
     row->addWidget(m_connLabel);
     row->addSpacing(10);
 
+    row->addStretch(1);
+
+    // 速度 + 使能放进同一个容器：只读位姿品牌整块隐藏（它们没有运动可调）。
+    m_motionBar = new QWidget;
+    auto* motionRow = new QHBoxLayout(m_motionBar);
+    motionRow->setContentsMargins(0, 0, 0, 0);
+    motionRow->setSpacing(10);
+
     auto* speedTitle = textLabel(QStringLiteral("运行速度:"), 13, "#666666");
-    row->addWidget(speedTitle);
+    motionRow->addWidget(speedTitle);
     m_speedSlider = new QSlider(Qt::Horizontal);
     m_speedSlider->setObjectName(QStringLiteral("robot_program_speed"));
     m_speedSlider->setRange(static_cast<int>(JogPolicy::MIN_SPEED),
@@ -599,12 +624,12 @@ QWidget* RobotProgramPanel::buildTopBar()
     m_speedSlider->setStyleSheet(sliderStyle());
     m_speedSlider->setToolTip(
         QStringLiteral("点动速度，也是新建移动节点的默认速度。"));
-    row->addWidget(m_speedSlider);
+    motionRow->addWidget(m_speedSlider);
     m_speedLabel = textLabel(QStringLiteral("50%"), 13, "#666666");
     m_speedLabel->setMinimumWidth(38);
-    row->addWidget(m_speedLabel);
+    motionRow->addWidget(m_speedLabel);
 
-    row->addStretch(1);
+    row->addWidget(m_motionBar);
 
     m_enableButton = new QPushButton(QStringLiteral("⚡ 开启使能"));
     m_enableButton->setObjectName(QStringLiteral("robot_program_enable"));
@@ -615,7 +640,7 @@ QWidget* RobotProgramPanel::buildTopBar()
     m_enableButton->setToolTip(QStringLiteral(
         "软件运动许可；真机还要求控制器本身可运动：UR 处于 RUNNING，"
         "法奥处于自动模式且上使能、无故障码。"));
-    row->addWidget(m_enableButton);
+    motionRow->addWidget(m_enableButton);
     row->addSpacing(5);
 
     m_stopButton = new QPushButton(QStringLiteral("停止 (STOP)"));
@@ -768,7 +793,7 @@ QWidget* RobotProgramPanel::buildCommSection()
     column->setSpacing(8);
 
     m_commHeader = new QToolButton;
-    m_commHeader->setText(QStringLiteral("⚙️ 机器人通信配置"));
+    m_commHeader->setText(QStringLiteral("⚙️ 机器人连接配置"));
     m_commHeader->setCheckable(true);
     m_commHeader->setChecked(true);
     m_commHeader->setAutoRaise(true);
@@ -794,6 +819,9 @@ QWidget* RobotProgramPanel::buildCommSection()
     m_backendCombo->addItem(QStringLiteral("仿真"));
     m_backendCombo->addItem(QStringLiteral("UR 真机"));
     m_backendCombo->addItem(QStringLiteral("法奥真机"));
+    m_backendCombo->addItem(QStringLiteral("Modbus TCP"));
+    m_backendCombo->addItem(QStringLiteral("博纳斯 JSON/TCP"));
+    m_backendCombo->addItem(QStringLiteral("埃夫特 (SDK)"));
     m_backendCombo->setStyleSheet(comboStyle());
     m_backendCombo->setMinimumHeight(30);
     backendRow->addWidget(m_backendCombo, 1);
@@ -807,7 +835,8 @@ QWidget* RobotProgramPanel::buildCommSection()
     m_hostEdit->setStyleSheet(smallInputStyle());
     m_hostEdit->setMinimumHeight(30);
     addressRow->addWidget(m_hostEdit, 1);
-    addressRow->addWidget(textLabel(QStringLiteral("端口:"), 13, kTextSub));
+    m_portLabel = textLabel(QStringLiteral("端口:"), 13, kTextSub);
+    addressRow->addWidget(m_portLabel);
     m_portSpin = new QSpinBox;
     m_portSpin->setRange(1, 65535);
     m_portSpin->setValue(30003);
@@ -817,6 +846,65 @@ QWidget* RobotProgramPanel::buildCommSection()
     m_portSpin->setToolTip(backendPortTooltip(BackendKind::Ur));
     addressRow->addWidget(m_portSpin);
     body->addLayout(addressRow);
+
+    // Modbus TCP 专用：寄存器格式 / 系数 / 起始寄存器 / 站号。
+    // 只在后端为 Modbus 时显示（延续原「机器人通信」页的参数）。
+    m_modbusFields = new QWidget;
+    auto* modbusColumn = new QVBoxLayout(m_modbusFields);
+    modbusColumn->setContentsMargins(0, 0, 0, 0);
+    modbusColumn->setSpacing(6);
+    {
+        auto* formatRow = new QHBoxLayout;
+        formatRow->setSpacing(6);
+        formatRow->addWidget(
+            textLabel(QStringLiteral("格式/系数:"), 13, kTextSub));
+        m_registerFormat = new QComboBox;
+        m_registerFormat->setObjectName(
+            QStringLiteral("robot_program_register_format"));
+        m_registerFormat->addItem(QStringLiteral("Float32"));
+        m_registerFormat->addItem(QStringLiteral("Int32×系数"));
+        m_registerFormat->addItem(QStringLiteral("Int16×系数"));
+        m_registerFormat->setStyleSheet(comboStyle());
+        m_registerFormat->setMinimumHeight(30);
+        formatRow->addWidget(m_registerFormat, 1);
+        m_scaleEdit = new QLineEdit(QStringLiteral("1.0"));
+        m_scaleEdit->setObjectName(
+            QStringLiteral("robot_program_register_scale"));
+        m_scaleEdit->setFixedWidth(72);
+        m_scaleEdit->setMinimumHeight(30);
+        m_scaleEdit->setStyleSheet(smallInputStyle());
+        m_scaleEdit->setToolTip(
+            QStringLiteral("整数寄存器换算成物理量的系数（Float32 格式下不起作用）。"));
+        formatRow->addWidget(m_scaleEdit);
+        modbusColumn->addLayout(formatRow);
+
+        auto* registerRow = new QHBoxLayout;
+        registerRow->setSpacing(6);
+        registerRow->addWidget(
+            textLabel(QStringLiteral("起始/站号:"), 13, kTextSub));
+        m_startAddrSpin = new QSpinBox;
+        m_startAddrSpin->setObjectName(
+            QStringLiteral("robot_program_register_start"));
+        m_startAddrSpin->setRange(0, 65535);
+        m_startAddrSpin->setValue(0);
+        m_startAddrSpin->setFixedWidth(90);
+        m_startAddrSpin->setMinimumHeight(30);
+        m_startAddrSpin->setStyleSheet(smallInputStyle());
+        registerRow->addWidget(m_startAddrSpin);
+        m_unitSpin = new QSpinBox;
+        m_unitSpin->setObjectName(
+            QStringLiteral("robot_program_register_unit"));
+        m_unitSpin->setRange(1, 255);
+        m_unitSpin->setValue(1);
+        m_unitSpin->setFixedWidth(70);
+        m_unitSpin->setMinimumHeight(30);
+        m_unitSpin->setStyleSheet(smallInputStyle());
+        registerRow->addWidget(m_unitSpin);
+        registerRow->addStretch(1);
+        modbusColumn->addLayout(registerRow);
+    }
+    m_modbusFields->hide();
+    body->addWidget(m_modbusFields);
 
     m_connectButton = new QPushButton(QStringLiteral("🔌 连接"));
     m_connectButton->setObjectName(QStringLiteral("robot_program_connect"));
@@ -830,6 +918,18 @@ QWidget* RobotProgramPanel::buildCommSection()
         "QPushButton:disabled { background:#f5f5f5; color:#999999; }")
         .arg(kPrimary));
     body->addWidget(m_connectButton);
+
+    // 只读位姿品牌：运动区整块隐藏，这里说明还能做什么。
+    m_poseOnlyHint = new QLabel;
+    m_poseOnlyHint->setObjectName(QStringLiteral("robot_program_pose_only_hint"));
+    m_poseOnlyHint->setWordWrap(true);
+    m_poseOnlyHint->setStyleSheet(
+        QStringLiteral("color:%1; font-size:12px; background:#fffbe6;"
+                       " border:1px solid #ffe58f; border-radius:4px;"
+                       " padding:6px;")
+            .arg(kTextSub));
+    m_poseOnlyHint->hide();
+    body->addWidget(m_poseOnlyHint);
 
     column->addWidget(m_commBody);
 
@@ -939,7 +1039,8 @@ QWidget* RobotProgramPanel::buildRightCard()
     m_pad->addWidget(m_waitPad);
     m_pad->addWidget(m_photoPad);
     bodyColumn->addWidget(m_pad);
-    bodyColumn->addWidget(buildStepSetting());
+    m_stepSetting = buildStepSetting();
+    bodyColumn->addWidget(m_stepSetting);
     bodyColumn->addStretch(1);
 
     scroll->setWidget(body);
@@ -1282,7 +1383,7 @@ void RobotProgramPanel::setController(RobotProgramController* controller)
         m_editDirty = false;
         refreshNodes();
         refreshPadValues();
-        refreshActions();
+        applyBackendCapabilities();
         return;
     }
     bindController();
@@ -1296,6 +1397,7 @@ void RobotProgramPanel::bindController()
             backendComboIndex(m_controller->backendKind()));
     }
     syncAddressFields();
+    applyBackendCapabilities();
     m_controller->setJogSpeed(m_speedSlider->value());
 
     connect(m_controller, &RobotProgramController::backendChanged, this,
@@ -1306,6 +1408,7 @@ void RobotProgramPanel::bindController()
                 m_backendCombo->setCurrentIndex(
                     backendComboIndex(m_controller->backendKind()));
                 syncAddressFields();
+                applyBackendCapabilities();
                 m_selectedIndex = -1;
                 m_selectedId.clear();
                 m_editDirty = false;
@@ -1756,7 +1859,10 @@ void RobotProgramPanel::refreshActions()
     const bool bound = m_controller != nullptr;
     const bool running = m_running;
     const bool editing = isEditing();
-    const bool canControl = bound && m_connected && m_enabled && !running;
+    // 只读位姿品牌没有使能概念（isEnabled() 跟随连接），拍照/等待节点仍可跑。
+    const bool poseOnly = bound && !m_controller->supportsMotion();
+    const bool canControl =
+        bound && m_connected && (m_enabled || poseOnly) && !running;
     const bool canEdit = editing && !running;
     const auto kind = selectedKind();
     const bool editingMove = canEdit && kind == RobotProgram::NodeKind::Move;
@@ -1769,7 +1875,7 @@ void RobotProgramPanel::refreshActions()
     // 仿真不需要地址；UR 和法奥都需要 IP/端口（法奥的地址是命令口 20003）。
     const bool realBackend = m_backendCombo && m_backendCombo->currentIndex() != 0;
 
-    m_addMoveButton->setEnabled(canControl);
+    m_addMoveButton->setEnabled(canControl && !poseOnly);
     m_addPhotoButton->setEnabled(canControl);
     m_addWaitButton->setEnabled(canControl);
 
@@ -1886,7 +1992,7 @@ void RobotProgramPanel::showToast(const QString& text, bool error)
 
 void RobotProgramPanel::log(const QString& text, bool error)
 {
-    emit logMessage(QStringLiteral("[机器人控制台] %1").arg(text));
+    emit logMessage(QStringLiteral("[机器人控制] %1").arg(text));
     Q_UNUSED(error);
 }
 
@@ -1900,9 +2006,55 @@ void RobotProgramPanel::syncAddressFields()
     if (m_hostEdit)
         m_hostEdit->setEnabled(editable);
     if (m_portSpin) {
+        // 埃夫特端口由厂商 SDK 固定（8100），端口框连标签一起收起来，
+        // 免得给人"填了就有用"的错觉。
+        const bool showPort = kind != BackendKind::Efort;
+        m_portSpin->setVisible(showPort);
+        if (m_portLabel)
+            m_portLabel->setVisible(showPort);
         m_portSpin->setEnabled(editable);
         m_portSpin->setToolTip(backendPortTooltip(kind));
     }
+    const bool modbus = kind == BackendKind::Modbus;
+    if (m_modbusFields)
+        m_modbusFields->setVisible(modbus);
+    if (modbus) {
+        for (QWidget* field : { static_cast<QWidget*>(m_registerFormat),
+                                static_cast<QWidget*>(m_scaleEdit),
+                                static_cast<QWidget*>(m_unitSpin),
+                                static_cast<QWidget*>(m_startAddrSpin) }) {
+            if (field)
+                field->setEnabled(editable);
+        }
+    }
+}
+
+void RobotProgramPanel::applyBackendCapabilities()
+{
+    const bool bound = m_controller != nullptr;
+    const bool poseOnly = bound && !m_controller->supportsMotion();
+
+    // 运动区：模式切换 / 控制盘 / 步长 / 速度+使能 / 添加移动节点。
+    if (m_motionBar)
+        m_motionBar->setVisible(!poseOnly);
+    if (m_modeSwitcher)
+        m_modeSwitcher->setVisible(!poseOnly);
+    if (m_pad)
+        m_pad->setVisible(!poseOnly);
+    if (m_stepSetting)
+        m_stepSetting->setVisible(!poseOnly);
+    if (m_addMoveButton)
+        m_addMoveButton->setVisible(!poseOnly);
+
+    if (m_poseOnlyHint) {
+        m_poseOnlyHint->setVisible(poseOnly);
+        if (poseOnly)
+            m_poseOnlyHint->setText(
+                QStringLiteral("%1 只支持读取位姿：可用于拍照记录、标定与"
+                               "运行拍照/等待节点；移动与点动不可用。")
+                    .arg(m_controller->backend()->name()));
+    }
+    refreshActions();
 }
 
 // ── 动作 ─────────────────────────────────────────────────────────────
@@ -1923,6 +2075,7 @@ void RobotProgramPanel::onBackendKindChanged(int index)
         }
     }
     syncAddressFields();
+    applyBackendCapabilities();
 }
 
 void RobotProgramPanel::onConnectClicked()
@@ -1938,8 +2091,23 @@ void RobotProgramPanel::onConnectClicked()
         host = RobotProgramController::defaultHost(m_controller->backendKind());
         m_hostEdit->setText(host);
     }
-    m_controller->connectDevice(
-        host, static_cast<quint16>(m_portSpin->value()));
+    // 合并「机器人通信」后，Modbus 的寄存器参数也由这里收集；其余品牌
+    // 只用 host/port（基类默认实现只转发这两个）。
+    RobotMotion::ConnectOptions options;
+    options.host = host;
+    options.port = static_cast<quint16>(m_portSpin->value());
+    if (m_registerFormat)
+        options.registerFormat = m_registerFormat->currentIndex();
+    if (m_scaleEdit) {
+        bool ok = false;
+        const double scale = m_scaleEdit->text().trimmed().toDouble(&ok);
+        options.scale = (ok && scale > 0.0) ? scale : 1.0;
+    }
+    if (m_unitSpin)
+        options.unitId = static_cast<quint8>(m_unitSpin->value());
+    if (m_startAddrSpin)
+        options.startAddress = static_cast<quint16>(m_startAddrSpin->value());
+    m_controller->connectDevice(options);
 }
 
 void RobotProgramPanel::onEnableToggled(bool on)
@@ -1980,7 +2148,9 @@ void RobotProgramPanel::onAddPhoto()
 {
     if (!m_controller || m_running)
         return;
-    if (!m_connected || !m_enabled) {
+    // 只读位姿品牌没有使能概念：连上就能拍照/等待。
+    const bool poseOnly = !m_controller->supportsMotion();
+    if (!m_connected || (!m_enabled && !poseOnly)) {
         showToast(QStringLiteral("请先连接并使能机器人"), true);
         return;
     }
@@ -1994,7 +2164,8 @@ void RobotProgramPanel::onAddWait()
 {
     if (!m_controller || m_running)
         return;
-    if (!m_connected || !m_enabled) {
+    const bool poseOnly = !m_controller->supportsMotion();
+    if (!m_connected || (!m_enabled && !poseOnly)) {
         showToast(QStringLiteral("请先连接并使能机器人"), true);
         return;
     }

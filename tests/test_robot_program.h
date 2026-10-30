@@ -38,4 +38,9 @@ private slots:
     void simulatedBackendMovesOnlyWhenEnabled();
     void simulatedBackendCompletesMove();
     void simulatedBackendJogsJoints();
+    // 合并「机器人通信」后：六种品牌的默认地址/端口，以及只读位姿后端
+    // 必须明确拒绝运动（不静默跳过）。
+    void backendCatalogDefaults();
+    void poseOnlyBackendRefusesMotion();
+    void controllerSwitchesBrandCapabilities();
 };

@@ -99,8 +99,14 @@ add_executable(unit_tests ${TEST_SOURCES}
     # 第 17 阶段 P1：节点模型 + 执行状态机 + 仿真后端（纯 Qt，无网络）。
     ${CMAKE_SOURCE_DIR}/src/logic/RobotProgram.cpp
     ${CMAKE_SOURCE_DIR}/src/logic/ProgramRunner.cpp
+    # 合并「机器人通信」后：控制器的品牌工厂/默认地址（只构造后端，不连接）。
+    ${CMAKE_SOURCE_DIR}/src/app/RobotProgramController.cpp
+    ${CMAKE_SOURCE_DIR}/src/app/RobotProgramController.h
     # 抽象后端只有头文件；列进 target 才能让 AUTOMOC 生成它的 metaobject。
     ${CMAKE_SOURCE_DIR}/src/logic/RobotMotionBackend.h
+    # 只读位姿品牌后端：单测只验证"没有运动能力"的静态行为，不连接设备。
+    ${CMAKE_SOURCE_DIR}/src/logic/PoseOnlyMotionBackend.cpp
+    ${CMAKE_SOURCE_DIR}/src/logic/PoseOnlyMotionBackend.h
     ${CMAKE_SOURCE_DIR}/src/logic/SimulatedMotionBackend.cpp
     # UR 真机后端也列进来：单测不连接设备，只保证它随每次构建编译通过。
     ${CMAKE_SOURCE_DIR}/src/logic/UrMotionBackend.cpp
