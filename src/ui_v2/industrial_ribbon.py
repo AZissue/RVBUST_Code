@@ -205,7 +205,7 @@ class IndustrialRibbon(QWidget):
         self._group(row, '项目', [
             ('new', '新建会话', 'folder_open', lambda: self._project_action('new_dialog')),
             ('open', '打开会话', 'folder_open', shell.open_session_requested.emit),
-            ('save', '保存会话', 'save', turn.btn_save_session if mode == 'turntable' else shell.save_session_requested.emit),
+            ('save', '保存会话', 'save', shell.save_session_requested.emit),
             ('manage', '会话管理', 'folder_open', lambda: self._project_action('manage')),
             ('export', '导出点云', 'layers', lambda: self._stitch_action('export')),
         ], mode)
@@ -330,6 +330,7 @@ class IndustrialRibbon(QWidget):
         bridge = shell._backend_bridge
         ready = bool(bridge and bridge.can_change_workspace())
         for mode in self._pages:
+            self.commands[(mode, 'save')].setEnabled(ready)
             self.commands[(mode, 'postprocess')].setEnabled(ready)
             self.commands[(mode, 'disconnect')].setEnabled(
                 bool(ready and bridge.camera_manager.get_connected_ids()))

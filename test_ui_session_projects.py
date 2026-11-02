@@ -22,6 +22,36 @@ class SessionUiTests(unittest.TestCase):
     tearDown = fixture.FrameBrowserTests.tearDown
     wait = fixture.FrameBrowserTests.wait
 
+    def test_turntable_db_only_save_ignores_empty_capture_sequence(self):
+        self.win.set_mode('turntable', [])
+        self.bridge._current_mode = 'turntable'
+        project = self.bridge.projects.projects['turntable']
+        project.save_root = Path(self.temp.name) / 'sessions'
+        source = Path(self.temp.name) / 'raw.ply'
+        source.write_bytes(PLY)
+        frame = FrameData(1, 'cam0', image_np=np.zeros((2, 2, 3), np.uint8),
+                          is_offline=True, offline_pointmap_path=str(source))
+        uid = project.database.ingest(frame)
+        self.bridge.projects.mark_changed('turntable')
+        ws = self.win.workspace_turntable()
+        ws._update_online_ui()
+        self.assertFalse(ws.btn_save_session.isEnabled())
+        ribbon = self.win._industrial_ribbon
+        ribbon.update_status()
+        save = ribbon.commands[('turntable', 'save')]
+        self.assertTrue(save.isEnabled())
+        ws._busy = True
+        ribbon.update_status()
+        self.assertFalse(save.isEnabled())
+        ws._busy = False
+        ribbon.update_status()
+        QTimer.singleShot(0, lambda: QApplication.activeModalWidget().accept())
+        save.click()
+        self.wait(lambda: project.saved_path is not None and not project.dirty)
+        self.wait(lambda: not any(w.isRunning() for w in self.bridge._workers))
+        index = json.loads((project.saved_path / 'data' / 'index.json').read_text(encoding='utf-8'))
+        self.assertIn(uid, [row['uid'] for row in index['records']])
+
     def mobile(self):
         self.win.set_mode('mobile_chain', [])
         self.bridge._current_mode = 'mobile_chain'
