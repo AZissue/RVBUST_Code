@@ -64,3 +64,18 @@ segment in / segment out / 撤销回滚 / 分支回收 / 多选合并 / Alt 撤�
 - 框选暂存绑定"封闭时刻的当前图层与相机视角"：切换当前图层或任何改变图层数据/列表的
   操作都会使暂存失效并提示。
 - 合成演示点云仅用于界面演示，不代表任何测量精度。
+
+
+## 颜色功能独立验证入口
+
+正式后处理暂时关闭颜色统一及原色对比，颜色算法保留用于原型验证。
+
+```powershell
+& 'D:/Program Files/Anaconda/envs/rvc/python.exe' prototypes/industrial_pointcloud_postprocess/color_validation.py
+# 读取保存会话的私有副本，验证原始2D颜色融合等功能
+& 'D:/Program Files/Anaconda/envs/rvc/python.exe' prototypes/industrial_pointcloud_postprocess/color_validation.py --session '会话目录路径'
+```
+
+无会话时可以使用“导入点云”。已有会话通过私有工作区副本读取，不启动相机SDK，也不自动后台识别。原型顶部提供颜色统一和原色对比，参数及算法沿用已有实现，包括有完整来源/位姿时的原始2D颜色融合。
+
+“保存验证副本”默认写入 `outputs/color_validation/`，也可使用 `--output` 指定另一个目录。源会话不被覆盖；可单独导出PLY。需在原型中验证颜色、接缝、几何保持及大数据性能后再评估恢复主程序入口，当前未宣称通过现场颜色效果验收。

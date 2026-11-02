@@ -72,7 +72,12 @@ class FusionTests(unittest.TestCase):
 import test_postprocess as ui_fixture
 class FusionUiTests(unittest.TestCase):
     setUpClass=classmethod(ui_fixture.PostprocessTests.setUpClass.__func__)
-    setUp=ui_fixture.PostprocessTests.setUp
+    def setUp(self):
+        ui_fixture.PostprocessTests.setUp(self)
+        from prototypes.industrial_pointcloud_postprocess.color_validation import ColorValidationWindow
+        self.editor.close()
+        self.editor = ColorValidationWindow(self.bridge,self.bridge._current_mode)
+        self.editor.show()
     tearDown=ui_fixture.PostprocessTests.tearDown
     wait=ui_fixture.PostprocessTests.wait
     finish=ui_fixture.PostprocessTests.finish

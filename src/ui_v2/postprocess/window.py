@@ -24,6 +24,7 @@ from .color_dialog import ColorDialog
 
 
 class PostprocessWindow(QDialog):
+    COLOR_VALIDATION = False  # Enabled only by the independent prototype subclass.
     def __init__(self, bridge, mode, parent=None):
         super().__init__(parent or bridge.shell)
         self.bridge, self.mode = bridge, mode
@@ -110,6 +111,8 @@ class PostprocessWindow(QDialog):
         actions.addStretch()
         root.addWidget(self.operation_bar)
         self.actions['compare'].setCheckable(True)
+        for key in ('color', 'compare'):
+            self.actions[key].setVisible(self.COLOR_VALIDATION)
         body = QSplitter(Qt.Horizontal)
         body.setChildrenCollapsible(False)
         self._content_split = QSplitter(Qt.Vertical)
@@ -244,12 +247,16 @@ class PostprocessWindow(QDialog):
             self.open_file(accepted[0], snapshot=snapshot)
 
     def create_color_dialog(self):
+        if not self.COLOR_VALIDATION:
+            raise RuntimeError("颜色功能已移至独立原型验证")
         inputs = [(uid, self._clouds[uid].name, len(self._clouds[uid].points)) for uid in self._display_ids]
         dialog = ColorDialog(inputs, self._active_uid, self._color_state, self)
         dialog.parameters_changed.connect(lambda state: setattr(self, '_color_state', dict(state)))
         return dialog
 
     def open_color_dialog(self):
+        if not self.COLOR_VALIDATION:
+            return
         if not self._parameter_gate() or not self._display_ids:
             return
         snapshot = self._input_snapshot()
@@ -300,6 +307,8 @@ class PostprocessWindow(QDialog):
         return message
 
     def compare_color_source(self):
+        if not self.COLOR_VALIDATION:
+            return
         sources, results = self._color_comparison
         if (self._worker is not None or self._closed or not sources or not results
                 or not self.bridge.can_change_workspace() or self.database.directory != self.directory
@@ -314,6 +323,8 @@ class PostprocessWindow(QDialog):
         self.load_selected(list(target))
 
     def correct_colors(self, params=None, *, reference_uid=None, aligned=None, snapshot=None):
+        if not self.COLOR_VALIDATION:
+            return
         if snapshot is not None and snapshot != self._input_snapshot():
             self._set_status('输入、来源修订或项目已变化，请重新打开参数。')
             return
@@ -573,7 +584,7 @@ class PostprocessWindow(QDialog):
         locked = self.overlay.view_locked
         self.actions['fit'].setEnabled(ready and not locked)
         self.properties.setEnabled(ready and not locked)
-        self.actions['color'].setEnabled(ready and not self._closed and bool(self._display_ids)
+        self.actions['color'].setEnabled(self.COLOR_VALIDATION and ready and not self._closed and bool(self._display_ids)
             and self.bridge.can_change_workspace()
             and self.database is self.bridge.frame_db.databases[self.mode]
             and self.database.directory == self.directory)
@@ -583,7 +594,7 @@ class PostprocessWindow(QDialog):
         comparable = bool(sources and results and tuple(self._display_ids) in (sources, results)
             and all(uid in self.database.records and self.database.records[uid].status != STALE_RESULT
                     for uid in (*sources, *results)))
-        self.actions['compare'].setEnabled(ready and comparable)
+        self.actions['compare'].setEnabled(self.COLOR_VALIDATION and ready and comparable)
         self.actions['compare'].setText('返回校正结果' if comparable and tuple(self._display_ids) == sources else '对比原色')
         self.actions['compare'].setChecked(comparable and tuple(self._display_ids) == sources)
         self._refresh_segment_tools()

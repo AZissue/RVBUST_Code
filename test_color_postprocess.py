@@ -14,7 +14,12 @@ from PySide6.QtTest import QTest
 
 class ColorPostprocessTests(unittest.TestCase):
     setUpClass = classmethod(fixture.PostprocessTests.setUpClass.__func__)
-    setUp = fixture.PostprocessTests.setUp
+    def setUp(self):
+        fixture.PostprocessTests.setUp(self)
+        from prototypes.industrial_pointcloud_postprocess.color_validation import ColorValidationWindow
+        self.editor.close()
+        self.editor = ColorValidationWindow(self.bridge,self.bridge._current_mode)
+        self.editor.show()
     tearDown = fixture.PostprocessTests.tearDown
     wait = fixture.PostprocessTests.wait
     source = fixture.PostprocessTests.source
