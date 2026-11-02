@@ -240,7 +240,8 @@ class IndustrialRibbon(QWidget):
                                   ('frame1', '拍摄旋转帧', 'camera', turn.btn_capture_frame1),
                                   ('calibrate', '计算转轴', 'calibrate', turn.btn_online_calib)]),
                       ('步进采集', [('capture', '拍摄当前步', 'camera', turn.btn_capture_step),
-                                  ('auto', '自动采集', 'loop', turn.btn_auto_capture)])]
+                                  ('auto', '自动采集', 'loop', turn.btn_auto_capture),
+                                  ('new_round', '新一轮采集', 'refresh', turn.btn_clear_sequence)])]
         for caption, entries in groups:
             self._group(row, caption, entries, mode)
         if mode in ('multi_cam', 'turntable'):

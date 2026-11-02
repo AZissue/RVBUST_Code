@@ -325,7 +325,7 @@ class TurntableWorkspace(QWidget):
         self.lbl_sequence = QLabel("已采集序列: 0 帧")
         v.addWidget(self.lbl_sequence)
 
-        self.btn_clear_sequence = QPushButton("清空拍摄数据")
+        self.btn_clear_sequence = QPushButton("新一轮采集")
         self.btn_clear_sequence.setToolTip(
             "清空当前步进采集的点云数据，保留标定结果，便于更换工件后重新拍摄拼接"
         )
@@ -938,12 +938,13 @@ class TurntableWorkspace(QWidget):
 
     def _on_clear_sequence_data(self):
         """清空当前步进采集的点云数据，保留标定结果，便于更换工件后重新采集。"""
-        if not self.session.sequence and self.merged is None:
+        if self._busy or (not self.session.sequence and self.merged is None):
             return
         ret = QMessageBox.question(
-            self, "清空拍摄数据",
-            "确定清空当前步进采集的点云数据吗？\n"
-            "标定结果将保留，可更换工件后重新拍摄拼接。",
+            self, "新一轮采集",
+            "结束当前采集轮次并将采集步数重置为0？\n"
+            "标定参数和已归档的DB数据保留，当前预览将清空。\n"
+            "请先将转台回到本轮起始位置；相机与转台相对位置须保持不变。",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No
         )
         if ret != QMessageBox.Yes:
@@ -963,8 +964,8 @@ class TurntableWorkspace(QWidget):
         self.viewer.clear_all()
         self.preview_2d_label.clear_image()
         self.set_state("calibrated" if self.session.is_calibrated() else "connected")
-        self.dirty_changed.emit(False)
-        self.log("已清空拍摄数据，保留标定结果，可重新采集")
+        self.dirty_changed.emit(True)
+        self.log("已开始新一轮采集，保留标定及DB数据；请将转台回到起始位置后拍摄")
         self._update_online_ui()
 
     # ------------------------------------------------------------------ 拼接 / 保存
