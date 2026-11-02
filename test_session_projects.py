@@ -29,6 +29,35 @@ class SessionProjectTests(unittest.TestCase):
             is_offline=True, offline_pointmap_path=str(self.source))
         return self.project.database.ingest(frame)
 
+    def test_readable_folders_csv_and_legacy_load(self):
+        import csv
+        from core.session_layout import restore_snapshot
+        uid=self.ingest()
+        saved=self.project.save({})
+        data=json.loads((saved/'data'/'index.json').read_text(encoding='utf-8'))
+        folder=data['asset_folders'][uid]
+        self.assertTrue(folder.startswith('拼接帧_001_cam0_'))
+        self.assertTrue(folder.endswith(uid[:8]))
+        with (saved/'data'/'数据清单.csv').open(encoding='utf-8-sig',newline='') as stream:
+            rows=list(csv.DictReader(stream))
+        self.assertEqual(rows[0]['唯一ID'],uid)
+        self.assertEqual(rows[0]['相对目录'],'frames/'+folder)
+        # Model an older UUID-only snapshot and prove backwards compatibility.
+        restore_snapshot(saved/'data')
+        loaded,_=SessionProject.load(saved,'mobile_chain')
+        try:
+            self.assertEqual(loaded.database.load_frame(uid)[0].database_id,uid)
+        finally: loaded.dispose()
+
+    def test_invalid_snapshot_mapping_is_rejected(self):
+        uid=self.ingest();saved=self.project.save({})
+        index=saved/'data'/'index.json'
+        data=json.loads(index.read_text(encoding='utf-8'))
+        data['asset_folders'][uid]='../outside'
+        index.write_text(json.dumps(data),encoding='utf-8')
+        with self.assertRaisesRegex(ValueError,'路径无效'):
+            SessionProject.load(saved,'mobile_chain')
+
     def test_startup_has_no_persistent_directory_and_save_updates_one_project(self):
         self.assertFalse(self.project.directory.exists())
         self.assertFalse(self.project.save_root.exists())
@@ -53,7 +82,7 @@ class SessionProjectTests(unittest.TestCase):
         self.addCleanup(other.dispose)
         self.assertNotEqual(other.database.directory, path / 'data')
         other.database.remove([uid])
-        self.assertTrue((path / 'data' / 'frames' / uid / 'image.png').exists())
+        self.assertTrue((path / 'data' / 'frames' / json.loads((path/'data'/'index.json').read_text(encoding='utf-8'))['asset_folders'][uid] / 'image.png').exists())
         with self.assertRaisesRegex(ValueError, '类型不匹配'):
             SessionProject.load(path, 'turntable')
 
@@ -77,14 +106,14 @@ class SessionProjectTests(unittest.TestCase):
                 project.include_raw = False
                 path = project.save({})
                 self.assertTrue(json.loads((path / 'session.json').read_text(encoding='utf-8'))['include_raw'])
-                self.assertEqual((path / 'data' / 'frames' / uid / 'pointmap.ply').read_bytes(), PLY)
-                self.assertTrue((path / 'data' / 'frames' / uid / 'image.png').is_file())
+                self.assertEqual((path / 'data' / 'frames' / json.loads((path/'data'/'index.json').read_text(encoding='utf-8'))['asset_folders'][uid] / 'pointmap.ply').read_bytes(), PLY)
+                self.assertTrue((path / 'data' / 'frames' / json.loads((path/'data'/'index.json').read_text(encoding='utf-8'))['asset_folders'][uid] / 'image.png').is_file())
 
     def test_same_size_retake_changes_saved_assets_only_after_explicit_save(self):
         uid = self.ingest()
         database = self.project.database
         saved = self.project.save({})
-        target = saved/'data'/'frames'/uid/'pointmap.ply'
+        target = saved/'data'/'frames'/json.loads((saved/'data'/'index.json').read_text(encoding='utf-8'))['asset_folders'][uid]/'pointmap.ply'
         saved_before = target.read_bytes()
         modified = PLY.replace(b'1 2 3', b'7 8 9')
         self.assertEqual(len(modified), len(saved_before))

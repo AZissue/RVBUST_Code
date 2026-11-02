@@ -99,9 +99,11 @@ class SessionProject:
             if include_raw:
                 self.database._save_index()
                 previous_revisions = {}
+                previous_folders = {}
                 previous_index = destination / 'data' / 'index.json'
                 if previous_index.is_file():
                     previous_data = json.loads(previous_index.read_text(encoding='utf-8'))
+                    previous_folders = previous_data.get('asset_folders', {})
                     previous_revisions = {row['uid']: row.get('revision', 0)
                         for row in previous_data['records']}
                     previous_revisions.update({uid: entry['record'].get('revision', 0)
@@ -111,7 +113,11 @@ class SessionProject:
                     for uid, entry in self.database.removed.items()})
                 def copy_asset(source, target):
                     source = Path(source)
-                    previous = destination / 'data' / source.relative_to(self.database.directory)
+                    relative = source.relative_to(self.database.directory)
+                    if len(relative.parts) == 3 and relative.parts[0] == 'frames':
+                        previous = destination / 'data' / 'frames' / previous_folders.get(relative.parts[1], relative.parts[1]) / relative.parts[2]
+                    else:
+                        previous = destination / 'data' / relative
                     # Reuse only the same exposure revision of a stable UUID.
                     # Link the saved inode, never the mutable draft.
                     # Filesystems without hard-link support use ordinary copies.
@@ -125,6 +131,8 @@ class SessionProject:
                             pass
                     return shutil.copy2(source, target)
                 shutil.copytree(self.database.directory, staging / 'data', copy_function=copy_asset)
+                from .session_layout import name_snapshot
+                name_snapshot(staging / 'data')
             manifest = dict(format='MCC_SESSION', schema=1, id=self.uid, mode=self.mode,
                 name=self.name, created=self.created, saved=datetime.now().isoformat(timespec='seconds'),
                 units='mm', include_raw=bool(include_raw), workflow=workflow)
@@ -164,6 +172,8 @@ class SessionProject:
                 if (path / 'data').is_symlink() or any(item.is_symlink() for item in (path / 'data').rglob('*')):
                     raise ValueError('会话数据目录不能包含符号链接')
                 shutil.copytree(path / 'data', project.database.directory)
+                from .session_layout import restore_snapshot
+                restore_snapshot(project.database.directory)
                 project.database.open_project(project.database.directory / 'index.json')
             project.uid = uid
             project.created = data['created']

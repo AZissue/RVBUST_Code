@@ -427,10 +427,10 @@ class SessionUiTests(unittest.TestCase):
                 self.assertEqual(options, [0])
                 path = project.saved_path
                 self.assertTrue(json.loads((path / 'session.json').read_text(encoding='utf-8'))['include_raw'])
-                folder = path / 'data' / 'frames' / uid
+                folder = path / 'data' / 'frames' / json.loads((path/'data'/'index.json').read_text(encoding='utf-8'))['asset_folders'][uid]
                 self.assertEqual((folder / 'pointmap.ply').read_bytes(), PLY)
                 self.assertTrue((folder / 'image.png').is_file())
-                self.assertTrue((path / 'data' / 'frames' / result / 'pointmap.ply').is_file())
+                self.assertTrue((path / 'data' / 'frames' / json.loads((path/'data'/'index.json').read_text(encoding='utf-8'))['asset_folders'][result] / 'pointmap.ply').is_file())
                 project.include_raw = False
                 controller.save(mode)  # Subsequent saves must use the same full-data policy.
                 self.wait(lambda: not any(w.isRunning() for w in self.bridge._workers))

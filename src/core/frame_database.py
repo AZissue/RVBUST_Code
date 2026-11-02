@@ -548,6 +548,8 @@ class FrameDatabase:
     def open_project(self, index):
         directory = Path(index).resolve().parent
         data = json.loads((directory / 'index.json').read_text(encoding='utf-8'))
+        if 'asset_folders' in data:
+            raise ValueError('这是正式会话数据，请通过“打开会话”选择所属session.json目录载入')
         if data.get('schema') != 1 or data.get('mode') != self.mode:
             raise ValueError('DB项目版本或工作区类型不匹配')
         records = {}
