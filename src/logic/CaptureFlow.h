@@ -50,6 +50,12 @@ public:
     // is dropped instead of being applied to a window that is going away.
     void abandonPendingWork();
 
+    struct SaveIssue {
+        bool ok = true;
+        QString field;    // card id to highlight, empty when ok
+        QString message;
+    };
+
     // Workflow entry points
     void beginCapture();            // sets busy and triggers camera capture
     void onCaptureReady(const QString& pngPath, const QString& plyPath,
@@ -57,8 +63,18 @@ public:
                         const FrameBuffer::FloatBuf& colors,
                         const QImage& image);
     void detect();
-    void save(const QString& cameraTargetXyz, const QString& robotCapturePose,
-              const QString& robotTargetXyz);
+    // 保存按当前会话模式校验。返回结果而不是 void：程序节点需要把"到底缺
+    // 哪一项"原样带回去（"请检查必填项"对现场没有指导意义）。失败时卡片高亮、
+    // toast/日志照旧由本函数发。
+    SaveIssue save(const QString& cameraTargetXyz,
+                   const QString& robotCapturePose,
+                   const QString& robotTargetXyz);
+    // 按指定模式保存：流程节点恒按标记物标定保存（2D + 3D + 机器人拍照位姿），
+    // 与主界面当前选的是标记物还是戳点无关。
+    SaveIssue saveWithMode(const CalibrationMode& mode,
+                           const QString& cameraTargetXyz,
+                           const QString& robotCapturePose,
+                           const QString& robotTargetXyz);
     void undo();
 
     // State
@@ -100,12 +116,6 @@ public:
         }
         return false;
     }
-
-    struct SaveIssue {
-        bool ok = true;
-        QString field;    // card id to highlight, empty when ok
-        QString message;
-    };
 
     // Required-field + numeric-format validation (mode aware, unit-tested).
     static SaveIssue validateSaveInputs(const QString& cameraTargetXyz,

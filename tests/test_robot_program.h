@@ -33,6 +33,8 @@ private slots:
     void runnerStopsOnFailure();
     void runnerRunOneAndStop();
     void runnerRejectsEmptyProgram();
+    // 运行前准备：拒绝时一个节点都不执行；"会不会写记录"按整表 / 单节点判断。
+    void runnerPrepareRunCanRefuse();
     void runnerLoopsWholeList();
     void runnerLoopStopsOnFailureAndClamps();
     void simulatedBackendMovesOnlyWhenEnabled();

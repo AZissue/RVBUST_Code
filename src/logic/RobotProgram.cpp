@@ -62,6 +62,12 @@ NodeKind kindOf(const NodePayload& payload)
     return NodeKind::Wait;
 }
 
+bool writesRecord(const NodePayload& payload)
+{
+    const auto* photo = std::get_if<PhotoNode>(&payload);
+    return photo != nullptr && photo->autoSave;
+}
+
 QString kindLabel(NodeKind kind)
 {
     switch (kind) {

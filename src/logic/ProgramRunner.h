@@ -23,6 +23,17 @@ public:
     // 取消正在等待的动作（运动停止 / 计时器取消 / 拍照序列中止）。
     // 不要在这里反过来调用 runner->stop()，那是递归。
     virtual void stopProgram() = 0;
+
+    // 一次运行开始前的准备。willWriteRecord=true 表示本次运行会写采集记录
+    // （拍照节点且勾了保存）—— 实现方借此把采集模式/会话调整到位。
+    // 返回 false 表示拒绝本次运行，error 会随 finished(false, error) 上报；
+    // 此时一个节点都不会执行。默认允许（单测里的假实现不必覆盖）。
+    virtual bool prepareRun(bool willWriteRecord, QString* error)
+    {
+        Q_UNUSED(willWriteRecord);
+        Q_UNUSED(error);
+        return true;
+    }
 };
 
 class ProgramRunner : public QObject {
@@ -69,6 +80,8 @@ signals:
     void loopAdvanced(int done, int total);
 
 private:
+    // 运行前准备：委托给 ProgramActions；拒绝时发 finished(false, error)。
+    bool prepare(bool willWriteRecord);
     void startNodeAt(int index);
     void finish(bool ok, const QString& error);
 

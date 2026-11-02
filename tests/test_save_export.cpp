@@ -138,6 +138,43 @@ void TestSaveExport::saveAttemptWithoutRequiredFieldsDoesNotAddRecord()
     QVERIFY(flow.hasUnsavedCapture());   // 帧还在，补完数据可以再保存
 }
 
+void TestSaveExport::saveReturnsTheMissingField()
+{
+    QTemporaryDir base;
+    QTemporaryDir captured;
+    QVERIFY(base.isValid() && captured.isValid());
+    const QString png = captured.path() + QStringLiteral("/shot.png");
+    const QString ply = captured.path() + QStringLiteral("/shot.ply");
+    for (const QString& p : { png, ply }) {
+        QFile f(p);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("x");
+        f.close();
+    }
+
+    DataManager dm;
+    dm.newSession(base.path(), EyeHandMode::EyeInHand, CalibType::Marker);
+    CaptureFlow flow(nullptr, &dm);
+    CalibrationMode mode;
+    mode.eyeHand = EyeHandMode::EyeInHand;
+    mode.calibType = CalibType::Marker;
+    flow.setMode(mode);
+
+    flow.onCaptureReady(png, ply, {}, {}, QImage());
+
+    const auto noTarget = flow.save(QString(), QStringLiteral("1 2 3 4 5 6"),
+                                    QString());
+    QVERIFY(!noTarget.ok);
+    QCOMPARE(noTarget.field, QStringLiteral("camera_target_xyz"));
+    QVERIFY(noTarget.message.contains(QStringLiteral("相机目标点")));
+
+    const auto noPose = flow.save(QStringLiteral("1 2 3"), QString(), QString());
+    QVERIFY(!noPose.ok);
+    QCOMPARE(noPose.field, QStringLiteral("robot_capture_pose"));
+    QVERIFY(noPose.message.contains(QStringLiteral("机器人拍照位姿")));
+    QCOMPARE(dm.count(), 0);
+}
+
 void TestSaveExport::captureFlowSurfacesExportFailure()
 {
     QTemporaryDir base;
@@ -167,11 +204,15 @@ void TestSaveExport::captureFlowSurfacesExportFailure()
     QSignalSpy logs(&flow, &CaptureFlow::logRequested);
     flow.onCaptureReady(png, ply, {}, {}, QImage());
     QVERIFY(breakPoseExport(dm.saveDir()));
-    flow.save(QStringLiteral("1.0 2.0 3.0"),
-              QStringLiteral("10 20 30 0.1 0.2 0.3"),
-              QStringLiteral("4.0 5.0 6.0"));
+    const auto result = flow.save(QStringLiteral("1.0 2.0 3.0"),
+                                  QStringLiteral("10 20 30 0.1 0.2 0.3"),
+                                  QStringLiteral("4.0 5.0 6.0"));
 
     QCOMPARE(dm.count(), 1);   // the data itself is not lost
+    // 程序节点靠这个返回值停下：导出没写成不能被当成"保存成功"。
+    QVERIFY2(!result.ok, "the caller must not receive ok=true when export failed");
+    QVERIFY2(result.message.contains(QStringLiteral("导出失败")),
+             "the returned message must name the failed export");
 
     bool sawSuccessToast = false, sawFailureToast = false;
     for (const auto& call : toasts) {

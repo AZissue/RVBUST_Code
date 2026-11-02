@@ -46,11 +46,26 @@ public:
     }
     void stopProgram() override { ++stopCalls; }
 
+    bool prepareRun(bool willWriteRecord, QString* error) override
+    {
+        prepareCalls.push_back(willWriteRecord);
+        if (!allowPrepare) {
+            if (error)
+                *error = prepareError;
+            return false;
+        }
+        return true;
+    }
+
     ProgramRunner* m_runner = nullptr;
     bool autoComplete = true;
     bool completeOk = true;
     int stopCalls = 0;
     std::vector<NodeKind> order;
+
+    bool allowPrepare = true;
+    QString prepareError = QStringLiteral("需要标记物标定");
+    std::vector<bool> prepareCalls;
 };
 
 } // namespace
@@ -627,6 +642,50 @@ void TestRobotProgram::runnerRejectsEmptyProgram()
     QCOMPARE(finished.count(), 1);
     QCOMPARE(finished.last().at(0).toBool(), false);
     QVERIFY(finished.last().at(1).toString().contains(QStringLiteral("空")));
+}
+
+void TestRobotProgram::runnerPrepareRunCanRefuse()
+{
+    ProgramRunner runner;
+    FakeActions actions(&runner);
+    runner.setActions(&actions);
+
+    Program program;
+    program.nodes.push_back(makeWait(1));
+    program.nodes.push_back(makePhoto(true));
+    runner.setProgram(program);
+
+    // 拒绝：runAll 返回 false、一个节点都不执行、原因随 finished 上报。
+    actions.allowPrepare = false;
+    QSignalSpy finished(&runner, &ProgramRunner::finished);
+    QVERIFY(!runner.runAll());
+    QCOMPARE(finished.count(), 1);
+    QCOMPARE(finished.last().at(0).toBool(), false);
+    QCOMPARE(finished.last().at(1).toString(), actions.prepareError);
+    QCOMPARE(int(actions.order.size()), 0);
+    QVERIFY(!runner.isRunning());
+    // 整表里有一个会写记录的拍照节点 → 准备时要知道。
+    QVERIFY(!actions.prepareCalls.empty());
+    QCOMPARE(actions.prepareCalls.back(), true);
+
+    // 放行后正常跑完。
+    actions.allowPrepare = true;
+    QVERIFY(runner.runAll());
+    QCOMPARE(int(actions.order.size()), 2);
+    QCOMPARE(finished.last().at(0).toBool(), true);
+
+    // 单节点运行按"这个节点会不会写记录"判断：等待节点 → false。
+    actions.order.clear();
+    actions.prepareCalls.clear();
+    QVERIFY(runner.runOne(0));
+    QCOMPARE(int(actions.prepareCalls.size()), 1);
+    QCOMPARE(actions.prepareCalls.back(), false);
+
+    // 拍照节点（autoSave=true）→ true。
+    actions.order.clear();
+    actions.prepareCalls.clear();
+    QVERIFY(runner.runOne(1));
+    QCOMPARE(actions.prepareCalls.back(), true);
 }
 
 // 「运行列表」带轮数：一整轮跑完后必须回到第一个节点，直到跑满；进度信号

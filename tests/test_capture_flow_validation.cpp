@@ -61,6 +61,35 @@ void TestCaptureFlowValidation::validatesRequiredFieldsByMode()
     QVERIFY(r5.ok);  // pose card is hidden for eye-to-hand TCP
 }
 
+// 程序节点的保存判据恒为标记物：同一组输入，戳点会话下因缺 tcp 点而拒绝，
+// 按标记物保存则通过（相机目标点 + 机器人拍照位姿齐了就够）。
+void TestCaptureFlowValidation::markerValidationOverridesTouchSession()
+{
+    CalibrationMode session;
+    session.eyeHand = EyeHandMode::EyeToHand;
+    session.calibType = CalibType::TcpTouch;
+
+    const auto touch = CaptureFlow::validateSaveInputs(
+        QStringLiteral("1 2 3"), QStringLiteral("10 20 30 0 0 0"), QString(),
+        session);
+    QVERIFY(!touch.ok);
+    QCOMPARE(touch.field, QStringLiteral("robot_target_xyz"));
+
+    CalibrationMode marker = session;
+    marker.calibType = CalibType::Marker;
+    const auto overridden = CaptureFlow::validateSaveInputs(
+        QStringLiteral("1 2 3"), QStringLiteral("10 20 30 0 0 0"), QString(),
+        marker);
+    QVERIFY(overridden.ok);
+
+    // 覆盖只改"要哪几列"，不放松数值格式：缺拍照位姿仍然要报出来。
+    const auto noPose = CaptureFlow::validateSaveInputs(
+        QStringLiteral("1 2 3"), QString(), QString(), marker);
+    QVERIFY(!noPose.ok);
+    QCOMPARE(noPose.field, QStringLiteral("robot_capture_pose"));
+    QVERIFY(noPose.message.contains(QStringLiteral("机器人拍照位姿")));
+}
+
 void TestCaptureFlowValidation::rejectsNonNumericValues()
 {
     CalibrationMode marker;

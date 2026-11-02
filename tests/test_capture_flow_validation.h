@@ -8,6 +8,7 @@ private slots:
     void acceptsCleanValues();
     void rejectsNanInfVariants();
     void validatesRequiredFieldsByMode();
+    void markerValidationOverridesTouchSession();
     void rejectsNonNumericValues();
     void rejectsNanInfViaSaveValidation();
     void acceptsValidInputs();

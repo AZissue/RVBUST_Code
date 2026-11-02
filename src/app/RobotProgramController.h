@@ -89,10 +89,16 @@ public:
     using PhotoHandler = std::function<bool(QString* error)>;
     using PhotoAbort = std::function<void()>;
     void setPhotoHandler(PhotoHandler start, PhotoAbort abort = {});
+    // 运行前准备也由主窗口注入：流程节点恒按标记物标定采集，主窗口在这里
+    // 把采集模式/会话切成标记物（必要时先问用户）。返回 false 拒绝本次运行。
+    // 参数 willWriteRecord 见 ProgramActions::prepareRun()。
+    using RunPreparation = std::function<bool(bool willWriteRecord, QString* error)>;
+    void setRunPreparation(RunPreparation prepare);
     // 采集链路结束后调用（ok=false 时 error 进日志/提示）。
     void notifyPhotoFinished(bool ok, const QString& error = QString());
 
     // ── ProgramActions ──
+    bool prepareRun(bool willWriteRecord, QString* error) override;
     void startNode(const RobotProgram::NodePayload& payload) override;
     void stopProgram() override;
 
@@ -127,4 +133,5 @@ private:
     PhotoHandler m_photoStart;
     PhotoAbort m_photoAbort;
     bool m_photoPending = false;
+    RunPreparation m_prepareRun;
 };

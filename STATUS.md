@@ -1,9 +1,38 @@
 # STATUS.md — 进度状态（每次会话结束必须更新）
 
-> 最后更新：2026-10-31（之三十五：各品牌运动能力补齐方案已定、实施暂缓）
+> 最后更新：2026-11-02（之三十六：流程节点拍照恒按标记物保存 + 拒绝原因点名）
 > 只保留「当前快照」，不积累历史；旧条目删除即可，git 历史里仍可追溯。
 
 ## ⏭ 交接块（新会话先读这里）
+
+- **2026-11-02（之三十六：流程节点拍照恒按标记物保存 + 拒绝原因点名）**
+  - **现场反馈**（UR 192.168.0.60 + M3GM620B039）：第一次跑流程节点列表，拍照节点
+    横幅只报「保存被拒绝：请检查相机目标点 / 机器人位姿等必填项」，看不出缺哪项；
+    且主界面选「戳点」时整条流程必失败。用户要求：①报错点名缺项；②流程节点恒按
+    标记物标定采集，不受主界面标定方式影响。
+  - **根因**：①`onProgramPhotoDetected()` 用"记录数 +1"判断成败，丢掉了
+    `SaveIssue.message`，自己拼了句笼统文案；②保存校验读会话模式，戳点要
+    `robot_target_xyz`，流程节点没有这一步 → 必然拒绝；③导出格式也按会话模式，
+    戳点会把流程数据导成 tcp 格式。
+  - **修复**：
+    - `CaptureFlow::save()` 返回 `SaveIssue{ok, field, message}`，新增
+      `saveWithMode(mode, …)`；导出失败也返回 `ok=false`（记录保留，不让程序
+      当成功继续跑）。
+    - 流程节点保存显式按**标记物**校验（`robot_target_xyz` 传空），失败时把
+      `issue.message` 原样带进横幅 / 运行日志。
+    - `ProgramActions::prepareRun(bool willWriteRecord, QString* error)`：执行器在
+      改状态前调用；`RobotProgram::writesRecord()` 判断整表 / 单节点是否会写记录；
+      主窗口 `prepareProgramCapture()` 把模式与会话切到标记物——**已有戳点数据时
+      先问用户**，取消则拒绝本次运行并说明原因。
+    - `beginProgramPhoto()`：`needPose = 节点是否保存`，与主界面标定方式无关。
+  - **测试**：`runnerPrepareRunCanRefuse`、`markerValidationOverridesTouchSession`、
+    `saveReturnsTheMissingField`，并加强 `captureFlowSurfacesExportFailure`；
+    D 构建 exit 0、ctest 3/3（`unit_tests` 内 robot_program 28 passed、
+    capture_flow_validation 15、save_export 11）。
+  - **人工验证**：见 `reports/阶段26-3.0-流程节点拍照保存语义与报错.md` §4（戳点
+    会话有数据/无数据两条路径、缺相机目标点、缺拍照位姿、未连机器人）。
+  - **未做**：连续点动仍挂起（需真机）；阶段 25 运动能力补齐维持"方案已定、暂缓"。
+    **只本地提交，未推送。**
 
 - **2026-10-31（之三十五：各品牌运动能力补齐方案已定、实施暂缓）**
   - **用户反馈**：博纳斯/埃夫特也是厂商 SDK，为什么只读位姿；法奥为什么不支持

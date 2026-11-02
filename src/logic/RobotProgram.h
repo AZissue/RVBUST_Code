@@ -47,6 +47,9 @@ struct WaitNode {
 using NodePayload = std::variant<MoveNode, PhotoNode, WaitNode>;
 
 NodeKind kindOf(const NodePayload& payload);
+// 这个节点跑完会不会往会话里写一条采集记录（拍照节点且勾了「保存」）。
+// 运行前判断"要不要先把采集模式切成标记物标定"用它，不要在调用处再拆一次 variant。
+bool writesRecord(const NodePayload& payload);
 QString kindLabel(NodeKind kind);          // 移动 / 拍照 / 等待
 QString kindTag(NodeKind kind);            // MOVE / PHOTO / WAIT（列表小标签）
 QString displayTitle(const NodePayload& payload);

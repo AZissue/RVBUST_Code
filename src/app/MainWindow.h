@@ -129,6 +129,12 @@ private:
     // ── 机器人控制台的拍照节点：读位姿 → 拍照 → 识别 → 保存 ────────
     // 这是一条由程序执行器触发的采集链，复用与手动按钮完全相同的
     // CaptureFlow / 卡片校验；不另写一套保存逻辑。
+    //
+    // 采集语义固定为「标记物标定」：2D + 3D + 机器人拍照位姿，与主界面当前
+    // 选的是标记物还是戳点无关。会写记录时，运行前先把模式/会话切到标记物
+    // （已有戳点数据时先问用户，绝不清空得不明不白）。
+    bool prepareProgramCapture(bool willWriteRecord, QString* error);
+    void switchCalibrationTypeToMarker();
     bool beginProgramPhoto(QString* error);
     void beginProgramCapture();
     void onProgramPhotoCaptured(const FrameBuffer::FloatBuf& points,
@@ -280,7 +286,6 @@ private:
     enum class ProgramPhotoStep { None, WaitingCapture, WaitingDetect };
     ProgramPhotoStep m_programPhotoStep = ProgramPhotoStep::None;
     bool m_programPhotoAutoSave = true;
-    int  m_programPhotoRecordBase = 0;
     QTimer* m_programPhotoTimer = nullptr;
     // Last console pose in the protocol's card convention (UR axis-angle rad,
     // FAIRINO mm/deg).  Freshness is the timestamp, not this flag alone.

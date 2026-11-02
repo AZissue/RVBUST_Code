@@ -520,12 +520,21 @@ void CaptureFlow::applyDetectionResult(const DetectResult& result)
 
 // ── Save ──────────────────────────────────────────────────────────────
 
-void CaptureFlow::save(const QString& cameraTargetXyz, const QString& robotCapturePose,
-                       const QString& robotTargetXyz)
+CaptureFlow::SaveIssue CaptureFlow::save(const QString& cameraTargetXyz,
+                                        const QString& robotCapturePose,
+                                        const QString& robotTargetXyz)
+{
+    return saveWithMode(m_mode, cameraTargetXyz, robotCapturePose, robotTargetXyz);
+}
+
+CaptureFlow::SaveIssue CaptureFlow::saveWithMode(const CalibrationMode& mode,
+                                                const QString& cameraTargetXyz,
+                                                const QString& robotCapturePose,
+                                                const QString& robotTargetXyz)
 {
     RuntimeLog::log("save requested");
     const auto issue = validateSaveInputs(
-        cameraTargetXyz, robotCapturePose, robotTargetXyz, m_mode);
+        cameraTargetXyz, robotCapturePose, robotTargetXyz, mode);
     if (!issue.ok) {
         RuntimeLog::log("save REJECTED: %s", qPrintable(issue.message));
         if (!issue.field.isEmpty())
@@ -534,7 +543,7 @@ void CaptureFlow::save(const QString& cameraTargetXyz, const QString& robotCaptu
         emit toastRequested(issue.message, false);
         emitLog(this, QStringLiteral("warning"),
                 QStringLiteral("保存被拒绝: %1").arg(issue.message));
-        return;
+        return issue;
     }
 
     // Copy PNG/PLY from temp to permanent save directory
@@ -549,7 +558,8 @@ void CaptureFlow::save(const QString& cameraTargetXyz, const QString& robotCaptu
         emitLog(this, QStringLiteral("error"),
                 QStringLiteral("无法创建保存目录: %1").arg(saveDir));
         emit toastRequested(QStringLiteral("保存失败: 无法创建目录"), false);
-        return;
+        return { false, QString(),
+                 QStringLiteral("无法创建保存目录: %1").arg(saveDir) };
     }
 
     // Remove stale target files first (overwrite safety)
@@ -570,7 +580,9 @@ void CaptureFlow::save(const QString& cameraTargetXyz, const QString& robotCaptu
                 QStringLiteral("文件拷贝失败: PNG=%1 PLY=%2")
                     .arg(pngOk ? "OK" : "FAIL", plyOk ? "OK" : "FAIL"));
         emit toastRequested(QStringLiteral("保存失败: 文件写入错误"), false);
-        return;
+        return { false, QString(),
+                 QStringLiteral("文件拷贝失败: PNG=%1 PLY=%2")
+                     .arg(pngOk ? "OK" : "FAIL", plyOk ? "OK" : "FAIL") };
     }
 
     m_data->addRecord(permPng, permPly, cameraTargetXyz, robotCapturePose, robotTargetXyz,
@@ -581,6 +593,7 @@ void CaptureFlow::save(const QString& cameraTargetXyz, const QString& robotCaptu
     const bool exportOk = m_data->writeHandEyeOutput();
     const int n = m_data->count();
 
+    SaveIssue result;
     if (!exportOk) {
         const QString err = m_data->lastExportError();
         const QString detail = err.isEmpty()
@@ -591,6 +604,11 @@ void CaptureFlow::save(const QString& cameraTargetXyz, const QString& robotCaptu
             QStringLiteral("第 %1 组数据保存失败: %2").arg(n).arg(detail), false);
         emitLog(this, QStringLiteral("error"),
                 QStringLiteral("第 %1 组数据导出失败: %2").arg(n).arg(detail));
+        // 记录本身不丢（在列表里），但导出文件没更新 → 后续标定会用到旧文件，
+        // 必须让程序节点停下来，不能当成"保存成功"继续跑。
+        result = { false, QString(),
+                   QStringLiteral("第 %1 组已保存，但导出失败: %2")
+                       .arg(n).arg(detail) };
     } else {
         RuntimeLog::log("save OK: record %d (%s)", n,
                         qPrintable(QFileInfo(saveDir).fileName()));
@@ -602,6 +620,7 @@ void CaptureFlow::save(const QString& cameraTargetXyz, const QString& robotCaptu
     setDetectEnabled(false);
     setSaveEnabled(false);
     emit tipRequested(QStringLiteral("请移动机器人到下一个位姿并点击拍照"), false);
+    return result;
 }
 
 // ── Undo ──────────────────────────────────────────────────────────────

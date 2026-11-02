@@ -18,6 +18,8 @@ private slots:
     // 且拍照后的颜色缓冲要留到后续重传（识别/离线视图恢复）。
     void captureAloneEnablesSaveAndKeepsColors();
     void saveAttemptWithoutRequiredFieldsDoesNotAddRecord();
+    // 拒绝保存时必须把"缺哪一项"返回给调用方（程序节点的横幅靠它）。
+    void saveReturnsTheMissingField();
     void captureFlowSurfacesExportFailure();   // save() 不能报"保存成功"
     void undoSurfacesExportFailure();          // undo() 同理
     void backupCarriesVersion();              // 备份有 version 字段

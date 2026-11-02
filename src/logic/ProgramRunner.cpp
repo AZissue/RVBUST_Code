@@ -27,6 +27,15 @@ bool ProgramRunner::runAll(int repeats)
         emit finished(false, QStringLiteral("程序为空，请先添加节点"));
         return false;
     }
+    bool willWriteRecord = false;
+    for (const auto& node : m_program.nodes) {
+        if (RobotProgram::writesRecord(node.payload)) {
+            willWriteRecord = true;
+            break;
+        }
+    }
+    if (!prepare(willWriteRecord))
+        return false;
     m_loopTotal = std::clamp(repeats, 1, 999);
     m_loopsDone = 0;
     m_runAll = true;
@@ -46,6 +55,9 @@ bool ProgramRunner::runOne(int index)
         emit finished(false, QStringLiteral("没有选中要运行的节点"));
         return false;
     }
+    if (!prepare(RobotProgram::writesRecord(
+            m_program.nodes[static_cast<std::size_t>(index)].payload)))
+        return false;
     m_runAll = false;
     m_loopTotal = 1;
     m_loopsDone = 0;
@@ -55,6 +67,20 @@ bool ProgramRunner::runOne(int index)
     emit stateChanged(m_state);
     startNodeAt(m_index);
     return true;
+}
+
+bool ProgramRunner::prepare(bool willWriteRecord)
+{
+    // 没配执行端时保持原行为：由 startNodeAt() 报"未配置执行端"。
+    if (!m_actions)
+        return true;
+    QString error;
+    if (m_actions->prepareRun(willWriteRecord, &error))
+        return true;
+    emit finished(false, error.isEmpty()
+                             ? QStringLiteral("运行前的准备未通过，已取消")
+                             : error);
+    return false;
 }
 
 void ProgramRunner::startNodeAt(int index)

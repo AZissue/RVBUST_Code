@@ -327,6 +327,19 @@ void RobotProgramController::setPhotoHandler(PhotoHandler start, PhotoAbort abor
     m_photoAbort = std::move(abort);
 }
 
+void RobotProgramController::setRunPreparation(RunPreparation prepare)
+{
+    m_prepareRun = std::move(prepare);
+}
+
+bool RobotProgramController::prepareRun(bool willWriteRecord, QString* error)
+{
+    // 没注入准备逻辑（单测/无主窗口）时保持"直接跑"。
+    if (!m_prepareRun)
+        return true;
+    return m_prepareRun(willWriteRecord, error);
+}
+
 void RobotProgramController::notifyPhotoFinished(bool ok, const QString& error)
 {
     if (!m_photoPending)

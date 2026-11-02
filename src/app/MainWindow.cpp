@@ -466,6 +466,12 @@ void MainWindow::wireSignals()
     m_programController->setPhotoHandler(
         [this](QString* error) { return beginProgramPhoto(error); },
         [this]() { abortProgramPhoto(); });
+    // 流程节点恒按标记物标定采集：运行前把模式/会话调整好。放在 runAll/runOne
+    // 入口而不是每个拍照节点里——切模式会新建会话，绝不能在一次运行的中途清数据。
+    m_programController->setRunPreparation(
+        [this](bool willWriteRecord, QString* error) {
+            return prepareProgramCapture(willWriteRecord, error);
+        });
     // 控制台位姿缓存：通信工具未连接时，拍照节点用这一份（按品牌约定写卡）。
     // 只在 UI 线程读写；backend 发来的 poseUpdated 已经由控制器转到本线程。
     connect(m_programController, &RobotProgramController::poseUpdated, this,
@@ -1861,6 +1867,68 @@ void MainWindow::invalidateConsolePose()
     m_consolePoseAtMs = 0;
 }
 
+bool MainWindow::prepareProgramCapture(bool willWriteRecord, QString* error)
+{
+    auto refuse = [error](const QString& why) {
+        if (error)
+            *error = why;
+        return false;
+    };
+    // 不写记录的运行（只移动/等待，或拍照节点没勾保存）与标定方式无关。
+    if (!willWriteRecord)
+        return true;
+    if (m_calibType == CalibType::Marker)
+        return true;
+
+    // 和 onModeChanged 同一套代价：切类型会新建会话（清空记录），所以已有
+    // 数据时先问。绝不因为"程序要跑"就静默把用户的数据清掉。
+    const int count = m_data ? m_data->count() : 0;
+    if (count > 0) {
+        const auto reply = QMessageBox::question(
+            this, QStringLiteral("流程节点采集"),
+            QStringLiteral("流程节点按标记物标定采集，但当前会话是戳点标定，"
+                           "已有 %1 组数据。\n切换到标记物会新建会话并清空这些"
+                           "数据，是否继续？").arg(count));
+        // 模态等待是用户思考时间，不算 UI 卡顿。
+        m_watchdog.reset();
+        if (reply != QMessageBox::Yes)
+            return refuse(QStringLiteral(
+                "流程节点按标记物标定采集：当前是戳点会话，切换已取消"));
+    }
+    switchCalibrationTypeToMarker();
+    return true;
+}
+
+void MainWindow::switchCalibrationTypeToMarker()
+{
+    m_calibType = CalibType::Marker;
+
+    CalibrationMode mode;
+    mode.eyeHand = m_eyeHandMode;
+    mode.calibType = m_calibType;
+    mode.markerType = m_markerType;
+    m_flow->setMode(mode);
+
+    // 选择器只是投影：静默同步过去，避免再触发一次 onModeChanged 的确认框。
+    m_modeSelector->blockSignals(true);
+    m_modeSelector->setMode(m_eyeHandMode == EyeHandMode::EyeInHand, true,
+                            m_markerType == MarkerType::ConcentricCircle);
+    m_modeSelector->blockSignals(false);
+
+    const bool eyeInHand = m_eyeHandMode == EyeHandMode::EyeInHand;
+    m_dataInput->updateVisibility(eyeInHand, true);
+    m_sidePanel->updateFilePreview(eyeInHand, true, m_data->allRecords());
+    updateRobotReadBar();
+    // newSession(…, Marker)：导出走 pose.txt，与随后写入的记录语义一致。
+    resetSession();
+    m_config.setLastMode(eyeInHand, true,
+                         m_markerType == MarkerType::ConcentricCircle);
+
+    m_logger->info(QStringLiteral("流程节点采集：标定方式已切换为标记物"));
+    m_toast->showMessage(
+        QStringLiteral("流程节点按标记物标定采集：已切换到标记物模式"), true);
+}
+
 bool MainWindow::beginProgramPhoto(QString* error)
 {
     auto fail = [error](const QString& why) {
@@ -1873,9 +1941,19 @@ bool MainWindow::beginProgramPhoto(QString* error)
     if (!m_camera || !m_camera->isConnected())
         return fail(QStringLiteral("请先连接相机再运行拍照节点"));
 
-    // 眼在手上（以及需要拍照位姿的标定方式）必须从控制台读实时位姿；
-    // 没有可用来源就拒绝，避免把空位姿/旧位姿/仿真位姿存进记录。
-    const bool needPose = needsCapturePose(m_eyeHandMode, m_calibType);
+    // 先取节点自己的「保存」开关，再决定要不要位姿：流程节点的保存语义恒为
+    // 标记物标定（2D + 3D + 机器人拍照位姿），所以只要会写记录就必须有位姿，
+    // 与主界面选的是标记物还是戳点无关。
+    const auto& nodes = m_programController->program().nodes;
+    const int index = m_programController->currentIndex();
+    m_programPhotoAutoSave = true;
+    if (index >= 0 && index < static_cast<int>(nodes.size())) {
+        if (const auto* photo = std::get_if<RobotProgram::PhotoNode>(
+                &nodes[static_cast<std::size_t>(index)].payload)) {
+            m_programPhotoAutoSave = photo->autoSave;
+        }
+    }
+    const bool needPose = m_programPhotoAutoSave;
 
     // 先判定位姿来源再动节点状态：失败时节点保持未启动，而不是半启动。
     qint64 consoleAgeMs = -1;
@@ -1901,18 +1979,6 @@ bool MainWindow::beginProgramPhoto(QString* error)
             return fail(QStringLiteral("机器人正在运动，停稳后再运行拍照节点"));
         }
     }
-
-    const auto& nodes = m_programController->program().nodes;
-    const int index = m_programController->currentIndex();
-    m_programPhotoAutoSave = true;
-    if (index >= 0 && index < static_cast<int>(nodes.size())) {
-        if (const auto* photo = std::get_if<RobotProgram::PhotoNode>(
-                &nodes[static_cast<std::size_t>(index)].payload)) {
-            m_programPhotoAutoSave = photo->autoSave;
-        }
-    }
-
-    m_programPhotoRecordBase = m_data ? m_data->count() : 0;
 
     if (!needPose) {
         m_programPhotoStep = ProgramPhotoStep::WaitingCapture;
@@ -1983,13 +2049,28 @@ void MainWindow::onProgramPhotoDetected(bool ok)
         return;
     }
 
-    const int before = m_programPhotoRecordBase;
-    saveFromCards();
-    const bool saved = m_data && m_data->count() > before;
+    // 流程节点恒按标记物标定保存：相机目标点（识别自动填）+ 机器人拍照位姿。
+    // 戳点列（robot_target_xyz）不属于这条流程，显式传空——即便主界面当前选
+    // 的是戳点标定，也不能把保存判据带偏。
+    CalibrationMode markerMode;
+    markerMode.eyeHand = m_eyeHandMode;
+    markerMode.calibType = CalibType::Marker;
+    markerMode.markerType = m_markerType;
+
+    auto* camCard = m_dataInput->card(QStringLiteral("camera_target_xyz"));
+    auto* poseCard = m_dataInput->card(QStringLiteral("robot_capture_pose"));
+    const CaptureFlow::SaveIssue result = m_flow->saveWithMode(
+        markerMode,
+        camCard ? camCard->value() : QString(),
+        poseCard ? poseCard->value() : QString(),
+        QString());
+
+    // 失败原因原样带回去（"相机目标点坐标不能为空" / "机器人拍照位姿应为
+    // 6 个数值" …），界面横幅与运行日志都能看出到底缺哪一项。
     finishProgramPhoto(
-        saved,
-        saved ? QString()
-              : QStringLiteral("保存被拒绝：请检查相机目标点 / 机器人位姿等必填项"));
+        result.ok,
+        result.ok ? QString()
+                  : QStringLiteral("保存被拒绝：%1").arg(result.message));
 }
 
 void MainWindow::finishProgramPhoto(bool ok, const QString& error)
