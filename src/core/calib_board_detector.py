@@ -88,11 +88,11 @@ class CalibBoardDetector:
 
         # 1. 2D 检测（自动尝试多种规格 + 多种 gamma + 两种配色，提升不同曝光/对比度下的鲁棒性）
         gray = self._to_gray(image_np)
-        gammas = tuple(dict.fromkeys((self.gamma, 1.0, 1.5, 2.0, 2.5, 3.0)))
+        gammas = tuple(dict.fromkeys((1.0, self.gamma, 1.5, 2.0, 2.5, 3.0)))
         det = self._detect_pattern_robust(gray, gammas)
         if det is None:
             specs = '、'.join(f"{s['rows']}×{s['cols']}" for s in self.board_specs)
-            return self._fail(f"2D 网格未检出：非对称圆板，尝试规格 {specs}，Gamma {self.gamma:g}（含回退）。请检查规格、完整可见性、圆点尺寸与曝光；编码圆需选择编码圆类型。")
+            return self._fail(f"2D 网格未检出：非对称圆板，尝试规格 {specs}，原始灰度优先，Gamma {self.gamma:g} 回退。请检查规格、完整可见性、圆点尺寸与曝光；编码圆需选择编码圆类型。")
 
         centers_2d, spec = det
         n_circles = len(centers_2d)
@@ -281,7 +281,7 @@ class CalibBoardDetector:
         return cv2.SimpleBlobDetector_create(params)
 
     def _detect_pattern_robust(self, gray: np.ndarray,
-                               gammas: Tuple[float, ...] = (2.5, 1.0, 1.5, 2.0, 3.0)
+                               gammas: Tuple[float, ...] = (1.0, 2.5, 1.5, 2.0, 3.0)
                                ) -> Optional[Tuple[np.ndarray, Dict]]:
         """依次尝试多种 gamma、两种 blobColor（白圆/黑圆）与多种规格，
         返回第一个成功检测到的 (centers_2d, spec)。
@@ -292,16 +292,28 @@ class CalibBoardDetector:
         同时兼容白底黑圆（blobColor=0）与黑底白圆（blobColor=255）两种标定板配色。
         """
         h, w = gray.shape[:2]
-        for small_dots in (False, True):
-            for blob_color in (255, 0):
-                blob_detector = self._create_blob_detector(h, w, blob_color=blob_color, small_dots=small_dots)
-                for gamma in gammas:
-                    adjusted = self._adjust_gamma(gray, gamma)
+        # Finish every raw-image polarity/size attempt before any gamma fallback.
+        for gamma in dict.fromkeys((1.0, *gammas)):
+            adjusted = self._adjust_gamma(gray, gamma)
+            for small_dots in (False, True):
+                for blob_color in (255, 0):
+                    blob_detector = self._create_blob_detector(h, w, blob_color=blob_color, small_dots=small_dots)
                     det = self._detect_pattern(adjusted, blob_detector)
                     if det is not None:
                         logger.info(f"标定板 2D 检测成功: gamma={gamma}, "
                                     f"blobColor={blob_color}, 小圆={small_dots}, 规格={det[1]['name']}")
                         return det
+            if gamma == 1.0:
+                # A single global segmentation avoids threshold-sweep duplicate
+                # blobs on high-contrast boards; keep original pixel coordinates.
+                _, binary = cv2.threshold(adjusted, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+                for small_dots in (False, True):
+                    for blob_color in (255, 0):
+                        detector = self._create_blob_detector(h, w, blob_color=blob_color, small_dots=small_dots)
+                        det = self._detect_pattern(binary, detector)
+                        if det is not None:
+                            logger.info(f"标定板 2D 检测成功: 原图 Otsu 分割，规格={det[1]['name']}")
+                            return det
         return None
 
     def _detect_pattern(self, image: np.ndarray,

@@ -55,13 +55,20 @@ class BoardRegressionTests(unittest.TestCase):
             _, registration = self.detect(points, include_invalid=False)
             self.assertEqual(registration, [])
 
-    def test_gamma_is_first_attempt_and_empty_grid_explains_configuration(self):
+    def test_raw_is_first_attempt_and_empty_grid_explains_configuration(self):
         detector = CalibBoardDetector(gamma=1.73)
         with patch.object(detector, '_detect_pattern_robust', return_value=None) as run:
             result = detector.detect(self.image)
-        self.assertEqual(run.call_args.args[1][0], 1.73)
+        self.assertEqual(run.call_args.args[1][0], 1.0)
         self.assertIn('2D 网格未检出', result['message'])
         self.assertIn('7×11', result['message'])
+
+    def test_all_raw_variants_precede_gamma(self):
+        detector = CalibBoardDetector()
+        attempts = []
+        with patch.object(detector, '_adjust_gamma', side_effect=lambda image, gamma: (attempts.append(gamma) or image)), patch.object(detector, '_detect_pattern', return_value=None):
+            detector._detect_pattern_robust(self.image, (2.5, 1.0))
+        self.assertEqual(attempts, [1.0, 2.5])
 
     def test_failed_pose_keeps_diagnostic_depth_out_of_registration(self):
         detector = MarkerDetector('asymmetric_grid')

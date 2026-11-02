@@ -203,7 +203,9 @@ class MarkerInspector(QFrame):
         self.image_view.image = loaded
         self.image_view.display = self.display
         self.image_view.update()
-        marker_name = '非对称圆板' if marker_type == 'asymmetric_grid' else '编码圆'
+        self.is_board = marker_type in ('asymmetric_grid', 'calib_board')
+        marker_name = '非对称圆板' if self.is_board else '编码圆'
+        self.details_button.setText('标定板圆心数据' if self.is_board else '编码圆数据')
         self.title.setText(f'当前帧 {frame_id if frame_id is not None else "—"} · {marker_name}')
         self.counts.setText(f'<span style="color:{GREEN}">● 绿 {self.display.green_count}</span>　'
                             f'<span style="color:{RED}">● 红 {self.display.red_count}</span>　'
@@ -212,12 +214,17 @@ class MarkerInspector(QFrame):
         kind = '配准内点' if used_codes is not None else '共有可配对'
         self.pair_label.setText(f'2D检出 {len(self.display.rows)} / 3D有效 {self.display.green_count+self.display.red_count}\n'
                                 f'参考帧 {reference_text} · 红圈：{kind}；黄圈：无有效3D')
+        if self.is_board:
+            self.pair_label.setText(
+                f'标定板圆心：2D检出 {len(self.display.rows)} / 3D有效 '
+                f'{self.display.green_count+self.display.red_count}\n'
+                '序号为网格圆心索引；黄圈表示无有效3D。')
         parts = []
         for color, label in [(GREEN, '有效'), (RED, '共有'), (YELLOW, '仅2D')]:
             codes = [str(row.code) for row in self.display.rows if row.color == color]
             text = ' · '.join(codes[:14]) + (' …' if len(codes) > 14 else '')
             if codes:
-                parts.append(f'<span style="color:{color}">{label} ID：{escape(text)}</span>')
+                parts.append(f'<span style="color:{color}">{label} {"圆心序号" if self.is_board else "ID"}：{escape(text)}</span>')
         self.ids.setText('<br>'.join(parts) or '尚无检测结果')
         diagnosis = {'running': '正在后台识别…', 'error': '识别失败：' + recognition_message}.get(
             recognition_state, recognition_message)
@@ -234,7 +241,7 @@ class MarkerInspector(QFrame):
 
     def show_details(self):
         dialog = QDialog(self.window())
-        dialog.setWindowTitle('当前帧编码圆数据（相机坐标 mm）')
+        dialog.setWindowTitle('当前帧' + ('标定板圆心' if getattr(self, 'is_board', False) else '编码圆') + '数据（相机坐标 mm）')
         dialog.resize(900, 450)
         layout = QVBoxLayout(dialog)
         table = QTableWidget(len(self.display.rows), 8)
