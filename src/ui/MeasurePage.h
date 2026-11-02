@@ -29,6 +29,7 @@
 #include <vector>
 
 #include "logic/FrameBuffer.h"
+#include "logic/MeasureFrame.h"
 #include "logic/MeasureMethods.h"
 #include "logic/MeasureTools.h"
 #include "ui/MeasurementSnapshot.h"
@@ -117,6 +118,16 @@ public:
     Measurement::Snapshot snapshot() const;
     void refreshSeriesUi();
 
+    // ── 测量帧（阶段 27）──
+    // 把这一页的"证据"装成清单：方法 id、ROI（图像像素）、结果行与主值。
+    // 网格与图像由 ToolsPanel 手里那份统一提供（一次拍照所有页共用）。
+    MeasureFrame::Manifest frameManifest() const;
+    // 用当前 ROI 立刻测一次（打开测量帧后自动复测；会写一条 [测量-结果]）。
+    void measureNow();
+    // 自绘页（3D 孔洞）把专有口径写进 extra（覆盖率、圆度、是否亚像素…）。
+    // 基类默认写公差与偏差色标区间。
+    virtual void fillFrameExtra(QJsonObject* extra) const;
+
 signals:
     void snapshotReady(const Measurement::Snapshot& snapshot);
     void deviationColoringChanged(bool on);
@@ -124,6 +135,10 @@ signals:
     void logRequested(const QString& line);
     // ROI 选择变化（自定义界面的页用它刷新「测量区域」等显示）。
     void roiChanged();
+    // 测量帧：保存由 ToolsPanel 决定目录并写盘；打开由它弹选择框、读回后
+    // 把网格/图像/ROI 推回所有页（一次拍照所有页共用同一份数据）。
+    void frameSaveRequested();
+    void frameOpenRequested();
 
 protected:
     // 自绘界面的页（3D 孔洞）用：跳过基类的表单/结果表/序列区，

@@ -31,6 +31,9 @@ public:
 
     // 基类的勾选框在本页不存在：3D 工具栏的同步入口改为驱动页内的开关。
     void setDeviationColoring(bool on) override;
+    // 测量帧：本页的专有口径（探测方向、覆盖率、圆度、是否亚像素）写进 extra，
+    // 回放/比较时"当时按哪条边量的"不会丢。
+    void fillFrameExtra(QJsonObject* extra) const override;
     // 新一帧点云 / 新一轮测量：结果面板回到「等待测量」。
     void resetResult() override;
     // 改 3D 着色开关会重算（不写日志）：重算后要把数值重新画回来。

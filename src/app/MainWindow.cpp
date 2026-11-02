@@ -330,6 +330,9 @@ void MainWindow::buildUi()
     // 否则工具页「应用」写的和主界面「计算」读的会是两个不同的实例。
     m_toolsPanel->setAppConfig(&m_config);
     m_toolsPanel->setRobotProgramController(m_programController);
+    // 阶段 27：测量帧默认存进当前会话目录（<会话>/measure_frames/…），
+    // 与采集数据放在一起，交付/复现时不会各在一处。
+    m_toolsPanel->setMeasureFrameDirProvider([this]() { return m_data->saveDir(); });
 }
 
 // ── Signal/Slot Wiring ────────────────────────────────────────────────

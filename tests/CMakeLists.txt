@@ -61,6 +61,8 @@ set(TEST_SOURCES
     # 法奥（FAIRINO）：XML-RPC / HTTP 分帧 / 20004 状态包 / 命令参数 / 姿态数学，
     # 以及对着本进程内的假控制器跑一遍位姿 Reader 与 20003 客户端。
     test_fairino.cpp
+    # 阶段 27：测量帧（网格 + 图像 + ROI + 结果）落盘/读回；真件回放的前提。
+    test_measure_frame.cpp
 )
 
 add_executable(unit_tests ${TEST_SOURCES}
@@ -84,6 +86,8 @@ add_executable(unit_tests ${TEST_SOURCES}
     ${CMAKE_SOURCE_DIR}/src/logic/RuntimeLog.cpp
     # Measurement kernel: pure computation, no Qt, no SDK.
     ${CMAKE_SOURCE_DIR}/src/logic/MeasureTools.cpp
+    # 阶段 27：测量帧的落盘/读回（Qt Core + Gui，无界面）。
+    ${CMAKE_SOURCE_DIR}/src/logic/MeasureFrame.cpp
     # Pixel -> 3D shared service (used by the tool page offline and, later, by
     # the online click-to-pick path).
     ${CMAKE_SOURCE_DIR}/src/logic/PixelTo3DService.cpp

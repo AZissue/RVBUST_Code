@@ -9,6 +9,7 @@
 #include "logic/RobotDataFormats.h"
 #include "logic/ToolInputParser.h"
 #include "logic/TransformTools.h"
+#include "logic/MeasureFrame.h"
 #include "logic/MeasureMethods.h"
 #include "ui/ArrowComboBox.h"
 #include "ui/MeasurePage.h"
@@ -19,6 +20,7 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QCheckBox>
+#include <QDateTime>
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -36,6 +38,7 @@
 #include <QPolygon>
 #include <QScrollArea>
 #include <QSignalBlocker>
+#include <QStandardPaths>
 #include <QTextEdit>
 #include <QVBoxLayout>
 #include <QtConcurrent>
@@ -2400,6 +2403,12 @@ void ToolsPanel::buildMeasurePages(QStackedWidget* stack)
                 this, &ToolsPanel::clearMeasurementRois);
         connect(page, &MeasurePage::logRequested, this,
                 [this](const QString& line) { emit logMessage(line); });
+        // 阶段 27：测量帧的保存/打开由面板统一处理（目录来自会话，网格与
+        // 图像也只有面板这一份），页自己不知道写到哪里。
+        connect(page, &MeasurePage::frameSaveRequested,
+                this, &ToolsPanel::saveActiveMeasureFrame);
+        connect(page, &MeasurePage::frameOpenRequested,
+                this, &ToolsPanel::openMeasureFrame);
         // 7 个页的「3D 偏差着色」状态必须一致：一页改了，其余 6 页跟着改，
         // 再把事件转给 3D 工具栏的孪生按钮（MainWindow 是唯一的同步者）。
         connect(page, &MeasurePage::deviationColoringChanged, this,
@@ -2554,6 +2563,135 @@ void ToolsPanel::clearMeasurementRois()
         pushRoiToActivePage(
             QString::fromStdString(MeasureTools::roiStateText(m_page->roiCount(), 0)));
     }
+}
+
+void ToolsPanel::setMeasureFrameDirProvider(std::function<QString()> provider)
+{
+    m_frameDirProvider = std::move(provider);
+}
+
+void ToolsPanel::saveActiveMeasureFrame()
+{
+    // 信号来自哪一页就存哪一页：切到别的工具页后 m_page 仍指向"最近测过的那页"，
+    // 但用户点的是他眼前这一页的按钮。
+    MeasurePage* page = qobject_cast<MeasurePage*>(sender());
+    if (!page)
+        page = m_page;
+    if (!page) {
+        emit logMessage(QStringLiteral("[测量-帧] 未保存：当前没有测量方法页。"));
+        return;
+    }
+    if (!m_measureGrid || m_measureGridW <= 0 || m_measureGridH <= 0) {
+        emit logMessage(QStringLiteral("[测量-帧] 未保存：尚未采集点云（先拍照，再测量）。"));
+        return;
+    }
+
+    QString root = m_frameDirProvider ? m_frameDirProvider() : QString();
+    if (root.isEmpty())
+        root = m_lastFrameDir;
+    if (root.isEmpty())
+        root = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    if (root.isEmpty())
+        root = QDir::homePath();
+
+    MeasureFrame::Manifest manifest = page->frameManifest();
+    // 网格与图像以面板手里这一份为准：所有页都是同一次拍照喂进来的，
+    // 页自己的尺寸只是抄件，写盘时不能让两者打架。
+    manifest.gridW = m_measureGridW;
+    manifest.gridH = m_measureGridH;
+    manifest.hasImage = !m_measureImage.isNull();
+    manifest.imageW = m_measureImage.width();
+    manifest.imageH = m_measureImage.height();
+
+    const QString dir = MeasureFrame::suggestDir(
+        root, manifest.methodId, QDateTime::currentDateTime());
+    QString error;
+    if (!MeasureFrame::save(dir, manifest, *m_measureGrid, m_measureImage, &error)) {
+        emit logMessage(QStringLiteral("[测量-帧] 保存失败：%1").arg(error));
+        return;
+    }
+    m_lastFrameDir = root;
+    emit logMessage(QStringLiteral("[测量-帧] 已保存：%1（方法 %2，ROI %3 个，结果 %4 行）")
+                        .arg(QDir::toNativeSeparators(dir), manifest.methodId)
+                        .arg(manifest.rois.size())
+                        .arg(manifest.rows.size()));
+}
+
+void ToolsPanel::openMeasureFrame()
+{
+    QString start = m_lastFrameDir;
+    if (start.isEmpty() && m_frameDirProvider)
+        start = m_frameDirProvider();
+    if (start.isEmpty())
+        start = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+
+    const QString file = QFileDialog::getOpenFileName(
+        this, QStringLiteral("打开测量帧"), start,
+        QStringLiteral("测量帧 (frame.json);;所有文件 (*)"));
+    if (file.isEmpty())
+        return;
+
+    const QString dir = QFileInfo(file).absolutePath();
+    MeasureFrame::Manifest manifest;
+    std::vector<double> grid;
+    QImage image;
+    QString error;
+    if (!MeasureFrame::load(dir, &manifest, &grid, &image, &error)) {
+        emit logMessage(QStringLiteral("[测量-帧] 打开失败：%1").arg(error));
+        return;
+    }
+
+    // 1) 先把网格与图像装回面板（所有页一起换帧；这一步会清掉旧 ROI 与结果）。
+    FrameBuffer::DoubleBuf buffer = FrameBuffer::makeDouble(std::move(grid));
+    setMeasurementCloud(buffer, manifest.gridW, manifest.gridH,
+                        manifest.hasImage ? manifest.imageW : 0,
+                        manifest.hasImage ? manifest.imageH : 0);
+    setMeasurementImage(image);
+
+    // 2) 切到这一帧的方法页（帧可能不是当前方法存的）。
+    bool methodFound = false;
+    for (int i = 0; i < static_cast<int>(m_pages.size()); ++i) {
+        if (QString::fromUtf8(MeasureTools::methodId(m_pages[static_cast<std::size_t>(i)]->method()))
+            == manifest.methodId) {
+            m_toolList->setCurrentRow(m_firstMeasureRow + i);
+            methodFound = true;
+            break;
+        }
+    }
+    if (!methodFound) {
+        // 老版本存的方法在新版本里没有对应页：数据已经装好，但不要拿别的
+        // 方法去套它的 ROI（那会得到一个"沉默的错答案"）。
+        emit logMessage(QStringLiteral("[测量-帧] 该帧的方法「%1」在当前版本里没有对应页，"
+                                       "已装回点云与图像，未恢复 ROI。")
+                            .arg(manifest.methodId));
+        return;
+    }
+
+    // 3) 恢复 ROI（图像像素），再按它复测一次。存下来的结果先写一条日志，
+    //    便于和复测值对照——算法改过之后这正是要看的差值。
+    m_roiRects.clear();
+    for (const MeasureFrame::RoiRect& r : manifest.rois)
+        m_roiRects.append(QRect(QPoint(r.left, r.top), QPoint(r.right, r.bottom)));
+    emit roisChanged(m_roiRects, roiLabels());
+    if (m_page) {
+        pushRoiToActivePage(QString::fromStdString(
+            MeasureTools::roiStateText(m_page->roiCount(), m_roiRects.size())));
+    }
+
+    m_lastFrameDir = QFileInfo(dir).absolutePath();
+    emit logMessage(QStringLiteral("[测量-帧] 已打开：%1（方法 %2，%3）")
+                        .arg(QDir::toNativeSeparators(dir), manifest.methodId,
+                             manifest.hasImage ? QStringLiteral("含图像")
+                                               : QStringLiteral("无图像，按 3D 兜底")));
+    if (!manifest.rows.isEmpty()) {
+        QStringList parts;
+        for (const MeasureFrame::ResultRow& row : manifest.rows)
+            parts << QStringLiteral("%1 = %2 %3").arg(row.method, row.value, row.unit);
+        emit logMessage(QStringLiteral("[测量-帧] 保存时的结果：%1").arg(parts.join(QStringLiteral("；"))));
+    }
+
+    if (m_page && !m_roiRects.isEmpty())
+        m_page->measureNow();
 }
 
 QStringList ToolsPanel::roiLabels() const

@@ -4,11 +4,13 @@
 #include "ui/Theme.h"
 
 #include <QCheckBox>
+#include <QDateTime>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QJsonObject>
 #include <QLabel>
 #include <QPushButton>
 #include <QTableWidget>
@@ -125,6 +127,33 @@ void MeasurePage::buildUi()
     m_roiClearBtn->setStyleSheet(Theme::secondaryButtonStyle());
     cloudForm->addRow(QString(), m_roiClearBtn);
     layout->addWidget(cloudGroup);
+
+    // ── 测量帧（阶段 27）──
+    // 一次测量留不下证据，真件就没法回放（3.0 M-02）。保存的是这一帧的
+    // 全部输入（网格 + 图像 + ROI）与结果，可在没有相机时重新打开复测。
+    auto* frameGroup = new QGroupBox(QStringLiteral("测量帧"), this);
+    auto* frameLayout = new QVBoxLayout(frameGroup);
+    auto* frameRow = new QHBoxLayout();
+    auto* saveFrameBtn = new QPushButton(QStringLiteral("保存测量帧"), frameGroup);
+    saveFrameBtn->setObjectName(QStringLiteral("measure_frame_save_%1").arg(id));
+    saveFrameBtn->setStyleSheet(Theme::secondaryButtonStyle());
+    auto* openFrameBtn = new QPushButton(QStringLiteral("打开测量帧"), frameGroup);
+    openFrameBtn->setObjectName(QStringLiteral("measure_frame_open_%1").arg(id));
+    openFrameBtn->setStyleSheet(Theme::secondaryButtonStyle());
+    frameRow->addWidget(saveFrameBtn);
+    frameRow->addWidget(openFrameBtn);
+    frameRow->addStretch();
+    frameLayout->addLayout(frameRow);
+    auto* frameHint = new QLabel(
+        QStringLiteral("保存点云网格 + 图像 + ROI + 结果；打开已保存的帧可在没有相机时复测。"),
+        frameGroup);
+    frameHint->setWordWrap(true);
+    frameHint->setStyleSheet(QStringLiteral("color: %1; font-size: %2px;")
+                                 .arg(Theme::TEXT_HINT).arg(Theme::FONT_HINT));
+    frameLayout->addWidget(frameHint);
+    layout->addWidget(frameGroup);
+    connect(saveFrameBtn, &QPushButton::clicked, this, &MeasurePage::frameSaveRequested);
+    connect(openFrameBtn, &QPushButton::clicked, this, &MeasurePage::frameOpenRequested);
 
     // 「说明」区已删除（用户反馈 5）：怎么用 / 这些数说明了什么，现在只写在
     // 操作日志里（选中方法写 [测量-说明]、测完写 [测量-结果]），工具窗口不再讲一遍。
@@ -716,4 +745,67 @@ Measurement::Snapshot MeasurePage::snapshot() const
 void MeasurePage::publish()
 {
     emit snapshotReady(snapshot());
+}
+
+// ── 测量帧（阶段 27）─────────────────────────────────────────────────────
+//
+// 清单只描述"这一页"，网格与图像由 ToolsPanel 提供：一次拍照的所有页共用
+// 同一份网格/图像，把它们抄进每一页既浪费内存，也容易出现"页 A 存的是旧帧"。
+MeasureFrame::Manifest MeasurePage::frameManifest() const
+{
+    MeasureFrame::Manifest m;
+    m.methodId = QString::fromUtf8(m_spec.id);
+    m.capturedAt = QDateTime::currentDateTime().toString(Qt::ISODate);
+    m.gridW = m_gridW;
+    m.gridH = m_gridH;
+    m.hasImage = m_imageW > 0 && m_imageH > 0;
+    m.imageW = m_imageW;
+    m.imageH = m_imageH;
+    for (const QRect& r : m_rects) {
+        MeasureFrame::RoiRect roi;
+        roi.left = r.left();
+        roi.top = r.top();
+        roi.right = r.right();
+        roi.bottom = r.bottom();
+        m.rois.append(roi);
+    }
+    for (const Measurement::ResultRow& row : m_rows) {
+        MeasureFrame::ResultRow out;
+        out.method = row.method;
+        out.value = row.value;
+        out.unit = row.unit;
+        out.points = row.points;
+        out.confidence = row.confidence;
+        m.rows.append(out);
+    }
+    m.primaryKey = m_primaryKey;
+    m.primaryValue = m_primaryValue;
+    m.hasPrimary = m_hasPrimary;
+    if (m_cloudLabel)
+        m.note = m_cloudLabel->text();
+    fillFrameExtra(&m.extra);
+    return m;
+}
+
+void MeasurePage::measureNow()
+{
+    run(true);
+}
+
+void MeasurePage::fillFrameExtra(QJsonObject* extra) const
+{
+    if (!extra)
+        return;
+    // 公差与偏差色标区间决定了"这一帧当时是怎么判的"，不存下来，回放时
+    // 同一组数会被当成另一套判据。
+    extra->insert(QStringLiteral("tolerance_enabled"),
+                  m_tolEnable ? m_tolEnable->isChecked() : m_customTolEnabled);
+    extra->insert(QStringLiteral("tolerance_lo"),
+                  m_tolLo ? m_tolLo->value() : m_customTolLo);
+    extra->insert(QStringLiteral("tolerance_hi"),
+                  m_tolHi ? m_tolHi->value() : m_customTolHi);
+    extra->insert(QStringLiteral("dev_lo"), m_devLo);
+    extra->insert(QStringLiteral("dev_hi"), m_devHi);
+    extra->insert(QStringLiteral("dev_robust"), m_devRobust);
+    extra->insert(QStringLiteral("has_result"), m_hasResult);
 }

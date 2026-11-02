@@ -40,6 +40,7 @@
 #include "test_robot_program.h"
 #include "test_camera_connect_diagnosis.h"
 #include "test_fairino.h"
+#include "test_measure_frame.h"
 
 namespace {
 
@@ -257,6 +258,12 @@ int main(int argc, char** argv)
         // 覆盖分帧/校验/重同步/最新帧，以及 MoveL/MoveJ 的参数布局。
         TestFairino t33;
         status |= runClass(&t33, argc, argv, "fairino");
+    }
+    {
+        // 阶段 27：测量帧（网格 + 图像 + ROI + 结果）落盘与读回。真件回放
+        // （3.0 M-02）的前提：现场一帧必须能被同一套格式原样读回。
+        TestMeasureFrame t34;
+        status |= runClass(&t34, argc, argv, "measure_frame");
     }
     return status;
 }

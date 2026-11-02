@@ -20,6 +20,7 @@
 #include <QFutureWatcher>
 #include <QDoubleSpinBox>
 #include <array>
+#include <functional>
 #include <memory>
 #include <vector>
 #include "logic/CalibrationService.h"
@@ -71,6 +72,15 @@ public:
     // Mirror of the 3D view's toolbar toggle.  Applying it re-runs the last
     // measurement so the colouring appears (or disappears) immediately.
     void setDeviationColoring(bool on);
+
+    // 阶段 27：测量帧目录（当前会话目录）由主窗口注入；返回空 = 没有会话，
+    // 保存时会请用户选一个目录。
+    void setMeasureFrameDirProvider(std::function<QString()> provider);
+
+public slots:
+    // 「保存测量帧」/「打开测量帧」（测量页的按钮都转到这里）。
+    void saveActiveMeasureFrame();
+    void openMeasureFrame();
 
     // 像素→3D 工具页的「在线/离线」开关状态（离线 = 用主 2D 视窗取点）。
     bool pixelTo3DOffline() const { return !m_p2dOnline; }
@@ -353,4 +363,9 @@ private:
     QImage m_measureImage;                     // 本次拍照的 2D 图像（亚像素边缘用）
     QVector<QRect> m_roiRects;                 // image pixels, max 2
     QMap<QString, QVector<double>> m_series;   // repeatability series (memory only)
+
+    // 阶段 27：测量帧。目录优先取当前会话（主窗口注入），没有会话时让用户选；
+    // m_lastFrameDir 记住上一次的位置，现场连续存几帧不必每次重新找。
+    std::function<QString()> m_frameDirProvider;
+    QString m_lastFrameDir;
 };

@@ -7,6 +7,7 @@
 #include <QFrame>
 #include <QGridLayout>
 #include <QHBoxLayout>
+#include <QJsonObject>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMouseEvent>
@@ -745,10 +746,43 @@ QWidget* Hole3DPage::buildFooter()
     m_addButton->setEnabled(false);
     h->addWidget(m_addButton);
 
+    // 测量帧：本页是自绘界面，不经过基类的通用表单，所以按钮在这里各一份。
+    auto* saveFrame = new QPushButton(QStringLiteral("保存测量帧"), footer);
+    saveFrame->setObjectName(QStringLiteral("hole3dBtnFrameSave"));
+    saveFrame->setCursor(Qt::PointingHandCursor);
+    h->addWidget(saveFrame);
+    auto* openFrame = new QPushButton(QStringLiteral("打开测量帧"), footer);
+    openFrame->setObjectName(QStringLiteral("hole3dBtnFrameOpen"));
+    openFrame->setCursor(Qt::PointingHandCursor);
+    h->addWidget(openFrame);
+
     connect(cancel, &QPushButton::clicked, this, &Hole3DPage::onCancel);
     connect(measure, &QPushButton::clicked, this, &Hole3DPage::onMeasure);
     connect(m_addButton, &QPushButton::clicked, this, &Hole3DPage::onAddToSequence);
+    connect(saveFrame, &QPushButton::clicked, this, &Hole3DPage::frameSaveRequested);
+    connect(openFrame, &QPushButton::clicked, this, &Hole3DPage::frameOpenRequested);
     return footer;
+}
+
+void Hole3DPage::fillFrameExtra(QJsonObject* extra) const
+{
+    if (!extra)
+        return;
+    MeasurePage::fillFrameExtra(extra);
+    // 3D 孔洞的"这条边是怎么选的"就是探测方向；其余是判断可信度的口径。
+    extra->insert(QStringLiteral("material_inside"), materialInside());
+    extra->insert(QStringLiteral("reliable"), m_lastReliable);
+    extra->insert(QStringLiteral("subpixel"), m_lastSubpixel);
+    extra->insert(QStringLiteral("coverage"), m_lastCoverage);
+    extra->insert(QStringLiteral("roundness"), m_lastRoundness);
+    extra->insert(QStringLiteral("radius"), m_lastRadius);
+    extra->insert(QStringLiteral("mm_per_px"), m_lastMmPerPx);
+    extra->insert(QStringLiteral("sectors"), m_lastSectors);
+    extra->insert(QStringLiteral("used"), m_lastUsed);
+    extra->insert(QStringLiteral("center_x"), m_lastCenter[0]);
+    extra->insert(QStringLiteral("center_y"), m_lastCenter[1]);
+    extra->insert(QStringLiteral("center_z"), m_lastCenter[2]);
+    extra->insert(QStringLiteral("sequence_size"), static_cast<int>(m_sequence.size()));
 }
 
 void Hole3DPage::switchTab(int index)

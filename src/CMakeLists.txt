@@ -63,6 +63,8 @@ set(SOURCES
     logic/FairinoMotionBackend.cpp
     logic/FairinoMotionBackend.h
     logic/MeasureTools.cpp
+    # 阶段 27：测量帧（网格 + 图像 + ROI + 结果）落盘/读回，真件回放的前提。
+    logic/MeasureFrame.cpp
     logic/PixelTo3DService.cpp
     # 测量方法目录（P3 ROI 需求 / P4 说明）— 纯数据，无 Qt 依赖
     logic/MeasureMethods.h
