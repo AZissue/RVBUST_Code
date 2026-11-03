@@ -68,7 +68,7 @@ class ProbeUiTests(unittest.TestCase):
         self.editor.probe_dialog.close()
         self.finish()
         self.editor.actions['probe'].click()
-        self.assertTrue(self.editor.probe.apply.isEnabled())
+        self.assertIn('典型点间距', self.editor.probe_properties.text())
         self.assertTrue(self.editor.probe.isEnabled())
 
     def test_reasons(self):
@@ -84,20 +84,36 @@ class ProbeUiTests(unittest.TestCase):
         row.status = STALE_RESULT
         self.assertTrue(source_reason([row, row], True))
 
-    def test_readonly_and_adopt(self):
+    def test_readonly_report_in_properties(self):
         self.inputs()
         before = (self.db.directory/'index.json').read_bytes()
+        before_parameters = dict(self.editor._downsample_state)
         with patch.object(self.db, 'publish_results', side_effect=AssertionError('DB write')), patch.object(self.bridge.shell, 'set_dirty', side_effect=AssertionError('dirty')), patch('core.frame_data._import_rvc', side_effect=AssertionError('SDK')):
             self.editor.analyze_probe(); self.finish()
         self.assertEqual(before, (self.db.directory/'index.json').read_bytes())
         self.assertIsNotNone(self.editor._probe_report)
-        with patch.object(self.editor, 'open_downsample_dialog') as opened, patch.object(self.editor, 'downsample') as execute:
-            self.editor.adopt_probe_voxel(1.234)
-            opened.assert_called_once()
-            execute.assert_not_called()
-            self.assertEqual(self.editor.create_downsample_dialog().parameters()['voxel'], 1.23)
+        self.assertTrue(self.editor.properties.isAncestorOf(self.editor.probe_properties))
+        self.assertIn('典型点间距', self.editor.probe_properties.text())
+        self.assertFalse(hasattr(self.editor.probe, 'apply'))
+        self.assertFalse(hasattr(self.editor, 'adopt_probe_voxel'))
+        self.assertEqual(self.editor._downsample_state, before_parameters)
         self.editor.properties.show_values({'test': 'metadata'})
         self.assertIsNotNone(self.editor.probe.parent())
+
+    def test_reports_follow_cloud_revision(self):
+        uid = self.inputs()
+        self.editor.analyze_probe(); self.finish()
+        text = self.editor.probe_properties.text()
+        self.assertIn('典型点间距', text)
+        other = self.db.ingest(self.source(2))
+        self.editor.source_browser.refresh()
+        self.editor.load_selected([other]); self.finish()
+        self.assertNotIn('典型点间距', self.editor.probe_properties.text())
+        self.editor.load_selected([uid]); self.finish()
+        self.assertEqual(self.editor.probe_properties.text(), text)
+        self.db.records[uid].revision += 1
+        self.editor._refresh_probe_properties()
+        self.assertNotIn('典型点间距', self.editor.probe_properties.text())
 
     def test_stale_selection_and_project(self):
         uid = self.inputs()

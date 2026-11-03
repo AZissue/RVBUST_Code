@@ -105,7 +105,7 @@ class PostprocessWindow(QDialog):
         self.actions['open'].setToolTip('导入点云：在独立弹窗确认源文件单位后选择文件')
         self.actions['color'].setToolTip('颜色统一：在独立弹窗设置参数，生成独立 DB 结果')
         self.actions['icp'].setToolTip('选择一项原始拼接结果按来源帧重建，或勾选两项点云精配准；新增结果，保留全部有效点')
-        self.actions['probe'].setToolTip('点云探针：打开间距、重合度分析与体素参考；点击分析后开始只读计算')
+        self.actions['probe'].setToolTip('点云探针：检测点间距与重合比例，结果显示在数据属性中；点击分析后开始只读计算')
         self.actions['select'].setCheckable(True)
         self.actions['select'].setToolTip('选取分割：左键添加顶点，封闭后选择保留方向并点击快捷删除')
         self.actions['select'].setAccessibleName('多边形框选')
@@ -164,8 +164,14 @@ class PostprocessWindow(QDialog):
         probe_scroll.setWidget(self.probe)
         probe_layout.addWidget(probe_scroll)
         self.probe.analyze.connect(self.analyze_probe)
-        self.probe.adopt.connect(self.adopt_probe_voxel)
         self._probe_report = None
+        self._probe_reports = {}
+        self.probe_properties = QLabel('尚未检测：点击顶部“点云探针”分析当前点云。')
+        self.probe_properties.setWordWrap(True)
+        self.probe_properties.setTextFormat(Qt.PlainText)
+        self.probe_properties.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.properties.data_layout.addWidget(QLabel('点云检测结果（只读参考）'))
+        self.properties.data_layout.addWidget(self.probe_properties)
         # Retain the key for shared renderer binding; hide only this control.
         self.properties.options['marker_centers'].hide()
         self.properties.bind_renderer(self.viewer)
@@ -592,6 +598,7 @@ class PostprocessWindow(QDialog):
             and self.database.directory == self.directory)
         self.actions['probe'].setEnabled(self._parameter_gate() and self._active_uid in self._clouds)
         self.probe.setEnabled(self._parameter_gate())
+        self._refresh_probe_properties()
         sources, results = self._color_comparison
         comparable = bool(sources and results and tuple(self._display_ids) in (sources, results)
             and all(uid in self.database.records and self.database.records[uid].status != STALE_RESULT
@@ -786,7 +793,6 @@ class PostprocessWindow(QDialog):
         except ValueError as exc:
             self.probe.text.setText(str(exc))
             return
-        self.probe.apply.setEnabled(False)
         def work():
             from time import perf_counter
             from core.postprocess.probe import spacing, coverage, source_reason
@@ -820,19 +826,21 @@ class PostprocessWindow(QDialog):
                 return
             self._probe_report = (key, report)
             self.probe.show_report(report)
+            self._probe_reports[key[:4]] = f'检测对象：{source.name}\n' + self.probe.text.text()
+            self.probe.text.setText('检测完成。请在左侧“数据属性”的“点云检测结果”中查看；可关闭本窗口继续操作。')
+            self._refresh_probe_properties()
+            self.properties.tabs.setCurrentIndex(0)
         self._run(work, done, kind='probe', preserve_selection=True)
 
-    def adopt_probe_voxel(self, value):
-        if self._probe_report is None:
-            return
+    def _refresh_probe_properties(self):
         try:
-            if self._probe_report[0] != self._probe_key():
-                return
+            key = self._probe_key()[:4]
+            text = self._probe_reports.get(key, '尚未检测：点击顶部“点云探针”分析当前点云。')
+            if self._active_uid not in self._clouds:
+                text = '请选择点云后进行检测。'
         except ValueError:
-            return
-        self._downsample_state.update(method='voxel', voxel=float(value))
-        # Populate the existing dialog; only its explicit Execute action processes.
-        self.open_downsample_dialog()
+            text = '当前点云不可用或已失效，请重新选择并检测。'
+        self.probe_properties.setText(text)
 
     def create_downsample_dialog(self):
         source = self._clouds.get(self._active_uid)
@@ -955,16 +963,6 @@ class PostprocessWindow(QDialog):
             return layers
         self._commit_operation(work,display_all=True,
             on_error=lambda error:QMessageBox.warning(self,'提取中间帧失败',str(error)))
-
-    def icp_probe_report(self):
-        if self._probe_report is not None:
-            try:
-                key,report = self._probe_report
-                if key == self._probe_key():
-                    return self._clouds[self._active_uid].name, report
-            except (ValueError,KeyError):
-                pass
-        return None
 
     def open_icp_dialog(self):
         if not self._parameter_gate() or len(self._display_ids) not in (1, 2):
