@@ -547,6 +547,16 @@ class PostprocessWindow(QDialog):
             return False
         if not preserve_selection:
             self._invalidate_polygon()
+        from time import perf_counter
+        started = perf_counter()
+        timer = QTimer(self)
+        timer.setInterval(500)
+        def update_progress():
+            if not self._closed:
+                phase = (getattr(self,'_progress_state',None) or {}).get('stage','后台处理并更新DB')
+                self.status.setText(f'{phase}… 已用时 {perf_counter()-started:.1f} 秒')
+        timer.timeout.connect(update_progress)
+        timer.start()
         worker = WorkerThread(work)
         self._worker, self._busy_kind = worker, kind
         worker._task_name = 'postprocess'
@@ -554,6 +564,7 @@ class PostprocessWindow(QDialog):
         self.bridge._workers.append(worker)
 
         def completed(result, error):
+            timer.stop()
             if self._closed:
                 return
             if error:
@@ -572,6 +583,9 @@ class PostprocessWindow(QDialog):
                     self._set_status('更新结果失败：' + str(exc))
 
         def finished():
+            timer.stop()
+            timer.deleteLater()
+            self._progress_state = None
             if worker in self.bridge._workers:
                 self.bridge._workers.remove(worker)
             self._worker, self._busy_kind = None, None
@@ -754,7 +768,10 @@ class PostprocessWindow(QDialog):
         directory = self.directory
         before = tuple(self._clouds[uid].origins[0] for uid in self._display_ids)
         def run():
-            return self._publish_layers(work(), directory)
+            layers = work()
+            if getattr(self,'_progress_state',None) is not None:
+                self._progress_state['stage'] = '写入DB结果（保留完整点云）'
+            return self._publish_layers(layers, directory)
         def done(layers):
             self._undo.append((tuple(layer.origins[0] for layer in layers), before))
             self._undo = self._undo[-8:]
@@ -954,10 +971,12 @@ class PostprocessWindow(QDialog):
         directory=self.directory
         tokens=reference.origins+moving.origins
         reports=[]
+        progress={'stage':'准备手动配准'}
+        self._progress_state=progress
         def work():
             from core.postprocess.manual_registration import register_manual
             self._validate_source(directory,tokens)
-            output,message=register_manual(reference,moving,a,b,params)
+            output,message=register_manual(reference,moving,a,b,params,progress=lambda text:progress.update(stage=text))
             self._validate_source(directory,tokens)
             reports.append(message)
             return [output]

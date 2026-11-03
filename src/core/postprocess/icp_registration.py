@@ -24,12 +24,17 @@ def refine_icp(reference, moving, params):
     params.validate()
     def sampled(layer):
         cloud = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(layer.points.copy()))
-        return cloud.voxel_down_sample(params.voxel)
+        sampled = cloud.voxel_down_sample(params.voxel)
+        if len(sampled.points) > 200000:
+            sampled = sampled.uniform_down_sample(int(np.ceil(len(sampled.points)/200000)))
+        return sampled
     target, source = sampled(reference), sampled(moving)
     if min(len(target.points), len(source.points)) < 6:
         raise ValueError('计算点数不足，请减小计算体素尺寸')
     reg = o3d.pipelines.registration
     before = reg.evaluate_registration(source, target, params.distance)
+    if before.fitness < .01 or len(before.correspondence_set) < 6:
+        raise ValueError(f'ICP重叠不足（初始{before.fitness:.1%}），请核对共有点顺序和粗配准初始位姿，或增大最大对应距离；未发布结果')
     result = reg.registration_icp(source, target, params.distance, np.eye(4),
         reg.TransformationEstimationPointToPoint(),
         reg.ICPConvergenceCriteria(max_iteration=int(params.iterations)))
@@ -42,7 +47,7 @@ def refine_icp(reference, moving, params):
     points = moving.points @ matrix[:3,:3].T + matrix[:3,3]
     output = CloudLayer(moving.name+' · ICP精配准', points, moving.colors,
         source='ICP精配准', origins=moving.origins, registration_transform=matrix.tolist())
-    report = (f'ICP重叠率 {before.fitness:.1%} → {result.fitness:.1%}；'
+    report = (f'ICP计算参考/移动点数 {len(target.points):,}/{len(source.points):,}（每侧上限200,000，仅计算抽样）；ICP重叠率 {before.fitness:.1%} → {result.fitness:.1%}；'
         f'对应点RMS {before.inlier_rmse:.4f} → {result.inlier_rmse:.4f} mm；'
         f'输出 {len(points):,} 点（保持有效点数）。参考点云：{reference.name}。')
     return output, report

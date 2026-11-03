@@ -27,14 +27,23 @@ def landmark_transform(reference, moving):
     return transform, float(np.sqrt(np.mean(np.sum(residual**2,axis=1))))
 
 
-def register_manual(reference, moving, reference_points, moving_points, params):
+def register_manual(reference, moving, reference_points, moving_points, params, *, isolated=True, progress=None):
+    import sys
+    params.validate()
+    if isolated and not getattr(sys, 'frozen', False) and len(reference.points)+len(moving.points) >= 200000:
+        from .registration_job import run_job
+        return run_job(reference,moving,reference_points,moving_points,params,progress=progress)
+    notify = progress or (lambda message: None)
+    notify('共有点初配准')
     initial, rms = landmark_transform(reference_points, moving_points)
     rough = CloudLayer(moving.name, moving.points @ initial[:3,:3].T+initial[:3,3],
                        moving.colors, origins=moving.origins)
+    notify('ICP精配准（每侧最多20万计算点）')
     aligned, report = refine_icp(reference, rough, params)
     matrix = np.asarray(aligned.registration_transform) @ initial
     if (reference.colors is None) != (moving.colors is None):
         raise ValueError('两项颜色属性不一致，请使用同类点云，避免补造颜色')
+    notify('变换并合并完整点云')
     output = CloudLayer(reference.name+' + '+moving.name+' · 手动配准ICP',
         np.vstack([reference.points, aligned.points]),
         np.vstack([reference.colors, aligned.colors]) if reference.colors is not None else None,

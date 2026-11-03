@@ -20,6 +20,25 @@ class ManualTests(unittest.TestCase):
         np.testing.assert_array_equal(b.points,moving)
         self.assertEqual(set(output.parent_transforms),{'a','b'})
 
+    def test_isolated_job_preserves_geometry_and_reports_progress(self):
+        from core.postprocess.registration_job import run_job
+        xyz=np.random.default_rng(10).uniform(10,30,(1500,3))
+        a=CloudLayer('a',xyz,origins=(('a',0),)); b=CloudLayer('b',xyz+[100,0,0],origins=(('b',0),))
+        stages=[]
+        out,report=run_job(a,b,xyz[:4],b.points[:4],ICPParameters(1,.02,30,.8),progress=stages.append)
+        self.assertEqual(len(out.points),3000)
+        np.testing.assert_allclose(out.points[1500:],xyz,atol=1e-6)
+        self.assertIn('读取完整配准结果',stages)
+        self.assertIn('200,000',report)
+
+    def test_isolated_timeout_terminates_without_result(self):
+        from core.postprocess.registration_job import run_job
+        xyz=np.random.default_rng(11).uniform(10,30,(100,3))
+        a=CloudLayer('a',xyz,origins=(('a',0),));b=CloudLayer('b',xyz,origins=(('b',0),))
+        with self.assertRaises(TimeoutError):
+            run_job(a,b,xyz[:4],xyz[:4],ICPParameters(),timeout=.001)
+        np.testing.assert_array_equal(a.points,xyz)
+
     def test_degenerate_pairs_rejected(self):
         for a,b in (([[1,2,3]]*3,[[1,2,3]]*3),([[i,0,0] for i in range(3)],[[i,0,0] for i in range(3)]),([[1,2,3]]*2,[[1,2,3]]*2)):
             with self.assertRaises(ValueError):landmark_transform(a,b)
