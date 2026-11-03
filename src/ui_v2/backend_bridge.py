@@ -1074,7 +1074,9 @@ class BackendBridge(QObject):
             previous.raise_()
             previous.activateWindow()
             return
-        dialog = CalibrationInspector(pairs, self.shell)
+        from core.multi_camera_topology import calibration_paths
+        dialog = CalibrationInspector(pairs, self.shell, topology=self.calibration_engine.topology,
+                                      paths=calibration_paths(self.calibration_engine))
         self._calibration_inspector = dialog
         paths = {cid: frame.offline_pointmap_path
                  for cid, frame in self.fixed_workflow.frames_calib.items()
@@ -1091,6 +1093,34 @@ class BackendBridge(QObject):
 
         self._run_background(lambda: load_calibration_clouds(paths), done,
                              name='calibration_inspection')
+
+    def _sync_multi_topology(self):
+        from core.multi_camera_topology import calibration_paths
+        ws = self.shell.workspace_multi()
+        ws.set_calibration_topology(self.calibration_engine.topology)
+        paths = calibration_paths(self.calibration_engine)
+        routes = [' → '.join(path) for cid, path in sorted(paths.items())
+                  if cid != self.calibration_engine.reference_id]
+        missing = set(self.calibration_engine.required_cameras) - paths.keys()
+        routes.extend(cid + ' → 无合格路径' for cid in sorted(missing))
+        ws._path_summary.setText('\n'.join(routes))
+
+    def _on_multi_topology_changed(self, topology):
+        if not self.can_change_workspace():
+            self.shell.log('请等待当前任务完成，再切换标定方式。', 'warn')
+            return
+        if topology == self.calibration_engine.topology:
+            self._sync_multi_topology()
+            return
+        self.fixed_workflow.set_topology(topology)
+        ws = self.shell.workspace_multi()
+        ws.clear_calibration_results()
+        ws.viewer().clear_all()
+        frames = self.fixed_workflow.frames_calib
+        ws.set_state('detected' if len(frames) >= 2 and all(len(f.markers) >= 3 for f in frames.values())
+                     else 'captured' if frames else 'connected' if ws._devices else 'idle')
+        self._sync_multi_topology()
+        self.shell.set_dirty(True)
 
     def _on_multi_calibrate(self):
         """计算外参。"""
@@ -1119,6 +1149,7 @@ class BackendBridge(QObject):
             # 设置参考相机，viewer 中参考相机显示为白色
             ws.viewer().set_reference(self.calibration_engine.reference_id)
             ws.on_calibrate_done(pairs, score, ok)
+            self._sync_multi_topology()
             self.shell.set_dirty(True)
             if ok:
                 ok_scan, msg_scan = self.fixed_workflow.start_scanning()
@@ -1171,6 +1202,7 @@ class BackendBridge(QObject):
         pairs = _pairs_from_engine(self.calibration_engine)
         score = _score_from_pairs(pairs)
         ws.on_calibrate_done(pairs, score, quality_passed=True)
+        self._sync_multi_topology()
 
         ok_scan, msg_scan = self.fixed_workflow.start_scanning()
         if ok_scan:
@@ -2437,6 +2469,9 @@ class BackendBridge(QObject):
         calib_ok = False
         calib_data = session.get_meta("calibration")
         self.fixed_workflow.reset()
+        self.calibration_engine.topology = session.get_meta('calibration_topology') or 'star'
+        if self.calibration_engine.topology not in ('star', 'chain'):
+            self.calibration_engine.topology = 'star'
         if calib_data:
             ok, msg = self.calibration_engine.load_from_dict(calib_data)
             if ok:
@@ -2468,6 +2503,15 @@ class BackendBridge(QObject):
                 self.shell.log(f"加载 {cid} 标定帧失败: {msg}", "warn")
         if failed:
             self.shell.log(f"部分相机标定帧未加载: {failed}", "warn")
+
+        if calib_ok:
+            valid, reason = self.fixed_workflow.restore_calibration_state()
+            if not valid:
+                calib_ok = False
+                self.calibration_engine.pair_results.clear()
+                ws.clear_calibration_results()
+                self.shell.log('加载的外参未通过完整性门禁：' + reason, 'warn')
+        self._sync_multi_topology()
 
         # 4. 回填扫描帧（需标定结果支持进入扫描阶段）
         scan_loaded = False
@@ -2519,10 +2563,11 @@ class BackendBridge(QObject):
                     f"会话加载完成: 标定结果已恢复（{len(pairs)} 对），"
                     f"{len(scan_latest)} 台相机扫描帧已恢复，可直接拼接", "success")
             else:
-                ws.set_state("calibrated")
+                ok_scan, msg_scan = self.fixed_workflow.start_scanning()
+                ws.set_state("locked" if ok_scan else "calibrated")
                 self.shell.log(
                     f"会话加载完成: 标定结果已恢复（{len(pairs)} 对），"
-                    "可拍摄扫描帧并拼接", "success")
+                    + ("可拍摄扫描帧并拼接" if ok_scan else msg_scan), "success" if ok_scan else "warn")
         else:
             # 标定帧 markers 已随会话恢复时跳过「检测」步骤
             if calib_latest and all(f.markers for f in calib_latest.values()):

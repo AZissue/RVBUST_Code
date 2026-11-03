@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
     QComboBox, QFrame, QGroupBox, QHBoxLayout, QLabel, QListWidget,
     QProgressBar, QPushButton, QRadioButton, QSpinBox, QSplitter,
     QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView,
-    QVBoxLayout, QWidget, QPlainTextEdit,
+    QVBoxLayout, QWidget, QPlainTextEdit, QDialog, QDialogButtonBox,
 )
 
 from ..theme import (
@@ -128,6 +128,7 @@ class MultiCamWorkspace(QWidget):
     # TODO(BACKEND): MarkerDetector / CalibBoardDetector，完成后回 on_detect_done"""
 
     calibrate_requested = Signal()
+    calibration_topology_changed = Signal(str)
     """计算外参。# TODO(BACKEND): CalibrationEngine，完成后回 on_calibrate_done"""
 
     calibration_visualization_requested = Signal()
@@ -332,6 +333,14 @@ class MultiCamWorkspace(QWidget):
         result_header.addWidget(self._btn_visualize_calibration)
         res_lo.addLayout(result_header)
         self._result_card = res_card
+        self._btn_topology = QPushButton('星型标定')
+        self._btn_topology.setToolTip('选择星型 / 链式标定方式；切换后保留标定帧，重新计算外参')
+        self._btn_topology.clicked.connect(self._choose_topology)
+        self._calibration_topology = 'star'
+        self._path_summary = QLabel()
+        self._path_summary.setWordWrap(True)
+        res_lo.addWidget(self._btn_topology)
+        res_lo.addWidget(self._path_summary)
         self._result_table = QTableWidget(0, 4)
         self._result_table.setHorizontalHeaderLabels(
             ["pair", "RMS(mm)", "内点率", "状态"])
@@ -595,6 +604,35 @@ class MultiCamWorkspace(QWidget):
         """返回当前标定 Tab 选中的检测方式（'coded_circle' | 'calib_board'）。"""
         return self._detect_combo.currentData() or "coded_circle"
 
+    def set_calibration_topology(self, topology):
+        self._calibration_topology = topology
+        self._btn_topology.setText('链式标定' if topology == 'chain' else '星型标定')
+        self._btn_topology.setToolTip(self._btn_topology.text() + '：切换方式后保留标定帧，重新计算外参')
+
+    def _choose_topology(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle('多相机标定方式')
+        layout = QVBoxLayout(dialog)
+        choice = QComboBox()
+        choice.addItem('星型标定', 'star')
+        choice.addItem('链式标定（自动共视连接）', 'chain')
+        choice.setCurrentIndex(choice.findData(self._calibration_topology))
+        layout.addWidget(choice)
+        note = QLabel('星型：每台相机都需要与参考相机共视。\n'
+                      '链式：自动检测共视配对，选择合格连接树，沿路径统一坐标。\n'
+                      '链式误差会沿路径累积；本模式不执行闭环全局优化。\n'
+                      '切换后保留原始标定帧，清除旧外参与扫描状态，需要重新计算。')
+        note.setWordWrap(True)
+        layout.addWidget(note)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        from ..dialogs import localize_buttons
+        localize_buttons(buttons)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec() == QDialog.Accepted and choice.currentData() != self._calibration_topology:
+            self.calibration_topology_changed.emit(choice.currentData())
+
     def current_reference_id(self) -> Optional[str]:
         """返回当前参考相机下拉选中的 camera_id。"""
         return self._ref_combo.currentData()
@@ -682,6 +720,7 @@ class MultiCamWorkspace(QWidget):
     def clear_calibration_results(self):
         """清空标定结果表格、质量评分与门禁提示（重新标定时调用）。"""
         self._quality_passed = False
+        self._path_summary.clear()
         self._matrix_values.clear()
         self._score_bar.setValue(0)
         self._score_bar.setFormat('待标定')

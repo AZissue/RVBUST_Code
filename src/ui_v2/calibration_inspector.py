@@ -32,6 +32,14 @@ def load_calibration_clouds(paths, limit=120_000):
 
 class CalibrationInspector(CalibrationResultDialog):
     """Multi-camera compatibility entry with the workflow's pair gate."""
-    def __init__(self, pairs, parent=None):
+    def __init__(self, pairs, parent=None, *, topology='star', paths=None):
         super().__init__(pairs, parent, title='标定结果与误差',
                          rms_limit_mm=2., min_inlier_ratio=.5, loading=True)
+        from PySide6.QtWidgets import QLabel
+        description = ('链式标定 · 合格共视连接树；误差为每条配对边的局部拟合误差，'
+                       '沿路径可能累积，未执行全局优化。' if topology == 'chain' else
+                       '星型标定 · 每路直接对齐参考相机。')
+        routes = '\n'.join(' → '.join(path) for path in (paths or {}).values() if len(path) > 1)
+        label = QLabel(description + ('\n' + routes if routes else ''))
+        label.setWordWrap(True)
+        self.layout().insertWidget(0, label)

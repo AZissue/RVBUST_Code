@@ -7,6 +7,7 @@ MULTI_ACTIONS = (
     ("capture_requested", "_on_multi_capture"),
     ("detect_requested", "_on_multi_detect"),
     ("calibrate_requested", "_on_multi_calibrate"),
+    ("calibration_topology_changed", "_on_multi_topology_changed"),
     ("calibration_visualization_requested", "_on_multi_visualize_calibration"),
     ("save_extrinsics_requested", "_on_multi_save_extrinsics"),
     ("load_extrinsics_requested", "_on_multi_load_extrinsics"),

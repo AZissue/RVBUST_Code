@@ -561,6 +561,7 @@ class ExplicitStitchingTests(unittest.TestCase):
         self.bridge.calibration_engine.pair_results[('cam0','cam1')] = dict(
             success=True, T=transform, rms_mm=.1, inlier_ratio=1.)
         self.bridge.fixed_workflow._reference_id = 'cam0'
+        self.bridge.calibration_engine.reference_id = 'cam0'
         self.assertEqual(self.bridge.fixed_workflow.frames_scan, {})
         self.check_clouds('multi_cam', ids[:2])
         self.run_mode('multi_cam')
@@ -572,6 +573,26 @@ class ExplicitStitchingTests(unittest.TestCase):
         raw = np.asarray(PointCloudProcessor._filter_valid(source)[0].points)
         merged = np.asarray(database.load_frame(result.uid)[1].points)
         np.testing.assert_allclose(merged, np.vstack([raw, raw+[10,0,0]]), atol=1e-5)
+
+    def test_checked_multicam_composes_chain_through_unselected_intermediate_camera(self):
+        database = self.bridge.frame_db.databases['multi_cam']
+        ids = [database.ingest(self.source(i+1), camera=f'cam{i}') for i in range(3)]
+        engine = self.bridge.calibration_engine
+        engine.reference_id = self.bridge.fixed_workflow._reference_id = 'cam0'
+        engine.topology = 'chain'
+        engine.required_cameras = ['cam0', 'cam1', 'cam2']
+        for ref, cam, distance in [('cam0', 'cam1', 10), ('cam1', 'cam2', 20)]:
+            transform = np.eye(4)
+            transform[0, 3] = distance
+            engine.pair_results[ref, cam] = dict(success=True, T=transform, rms_mm=.1, inlier_ratio=1.)
+        self.check_clouds('multi_cam', [ids[0], ids[2]])
+        self.run_mode('multi_cam')
+        result = next(row for row in database.records.values() if row.kind == 'result')
+        self.assertEqual(result.source_ids, [ids[0], ids[2]])
+        from core.point_cloud_processor import PointCloudProcessor
+        raw = np.asarray(PointCloudProcessor._filter_valid(database.load_frame(ids[0])[1])[0].points)
+        merged = np.asarray(database.load_frame(result.uid)[1].points)
+        np.testing.assert_allclose(merged, np.vstack([raw, raw+[30,0,0]]), atol=1e-5)
 
     def test_single_checked_frame_does_not_silently_stitch_all(self):
         self.mobile()

@@ -90,6 +90,7 @@ class FixedMultiCamWorkflow(WorkflowBase):
         self._calibration_locked = False
         self.calibration_engine.pair_results.clear()
         self.calibration_engine.reference_id = None
+        self.calibration_engine.required_cameras = []
         logger.info("功能一工作流已重置")
 
     # ------------------------------------------------------------------
@@ -165,32 +166,22 @@ class FixedMultiCamWorkflow(WorkflowBase):
         return True, f"标记检测完成，共 {total} 个"
 
     def calibrate(self) -> Tuple[bool, str]:
-        """执行外参标定（所有非参考相机对标参考相机）。"""
+        """按所选星型直接配对 / 链式共视连接树求解，并检查全部参与相机。"""
         if self._state != self.STATE_CALIBRATING:
             return False, "当前不在标定阶段"
+        self._calibration_locked = False
+        self.calibration_engine.pair_results.clear()
         if not self._reference_id:
             return False, "未设置参考相机"
         ref_frame = self._frames_calib.get(self._reference_id)
         if ref_frame is None or not ref_frame.markers:
             return False, "参考相机缺少标记数据，请先检测标记"
 
-        results = []
-        for cid, frame in self._frames_calib.items():
-            if cid == self._reference_id:
-                continue
-            if not frame.markers:
-                results.append(f"{cid}: 缺少标记，跳过")
-                continue
-            result = self.calibration_engine.calibrate_pair(
-                self._reference_id, cid,
-                ref_frame.markers, frame.markers,
-                ransac_threshold=2.0)
-            if result.get('success'):
-                results.append(
-                    f"{cid}→{self._reference_id}: RMS {result['rms_mm']:.4f}mm, "
-                    f"内点率 {result['inlier_ratio']:.1%}")
-            else:
-                results.append(f"{cid}→{self._reference_id}: 失败 ({result.get('message')})")
+        from .multi_camera_topology import solve
+        self._frames_scan.clear()
+        results = solve(self.calibration_engine, self._frames_calib, self._reference_id,
+                        self.calibration_engine.topology,
+                        set(self._frames_calib) | set(self.camera_manager.get_connected_ids()))
 
         ok, quality_msg = self._check_calibration_quality()
         if ok:
@@ -214,11 +205,20 @@ class FixedMultiCamWorkflow(WorkflowBase):
         """加载外参 JSON。"""
         if self.calibration_engine.load_calibration(path):
             self._reference_id = self.calibration_engine.reference_id
-            self._state = self.STATE_CALIBRATED
-            self._calibration_locked = True
+            valid, reason = self.restore_calibration_state()
+            if not valid:
+                return False, reason
             return True, f"外参已加载: {path}"
         reason = self.calibration_engine.last_error or "未知原因"
         return False, f"加载失败: {reason}"
+
+    def restore_calibration_state(self):
+        """A validated saved calibration can scan even without saved raw inputs."""
+        valid, reason = self._check_calibration_quality()
+        self._calibration_locked = valid
+        if valid:
+            self._state = self.STATE_CALIBRATED
+        return valid, reason
 
     # ------------------------------------------------------------------
     # 扫描阶段
@@ -247,6 +247,12 @@ class FixedMultiCamWorkflow(WorkflowBase):
             return False, "当前不在扫描阶段", None
         if not self._frames_scan:
             return False, "无扫描帧，请先拍摄", None
+        ok, message = self._check_calibration_quality()
+        if not ok:
+            return False, message, None
+        missing = set(self.calibration_engine.required_cameras) - self._frames_scan.keys()
+        if missing:
+            return False, '缺少扫描帧：' + '、'.join(sorted(missing)), None
 
         merged, msg = self.stitch_engine.stitch(
             self._frames_scan, self.calibration_engine,
@@ -267,20 +273,21 @@ class FixedMultiCamWorkflow(WorkflowBase):
     # ------------------------------------------------------------------
     def _check_calibration_quality(self) -> Tuple[bool, str]:
         """检查标定质量（RMS / 内点率）。"""
-        if not self.calibration_engine.pair_results:
-            return False, "无标定结果"
-        max_rms = 0.0
-        min_inlier = 1.0
-        for (ref, cam), res in self.calibration_engine.pair_results.items():
-            if not res.get('success'):
-                return False, f"{cam}→{ref} 标定失败"
-            max_rms = max(max_rms, res['rms_mm'])
-            min_inlier = min(min_inlier, res['inlier_ratio'])
-        if max_rms > 2.0:
-            return False, f"最大 RMS {max_rms:.3f}mm 超过 2.0mm"
-        if min_inlier < 0.5:
-            return False, f"最小内点率 {min_inlier:.1%} 低于 50%"
-        return True, f"最大 RMS {max_rms:.3f}mm, 最小内点率 {min_inlier:.1%}"
+        from .multi_camera_topology import quality_gate
+        return quality_gate(self.calibration_engine, self._frames_calib)
+
+    def set_topology(self, topology):
+        if topology not in ('star', 'chain'):
+            raise ValueError('未知标定方式')
+        if topology == self.calibration_engine.topology:
+            return
+        self.calibration_engine.topology = topology
+        self.calibration_engine.pair_results.clear()
+        self.calibration_engine.required_cameras = []
+        self._frames_scan.clear()
+        self._calibration_locked = False
+        if self._reference_id:
+            self._state = self.STATE_CALIBRATING
 
     # ------------------------------------------------------------------
     # 帧数据访问（UI 层使用）

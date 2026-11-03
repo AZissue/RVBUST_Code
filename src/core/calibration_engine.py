@@ -42,6 +42,8 @@ class CalibrationEngine:
         self.pair_results: Dict[Tuple[str, str], dict] = {}
         # 参考相机 ID（默认第一台参与标定的相机，也可显式指定）
         self.reference_id: Optional[str] = None
+        self.topology = 'star'
+        self.required_cameras = []
         # 多帧标定缓存：{(ref_id, cam_id): [(markers_ref, markers_cam), ...]}
         self._multi_frame_data: Dict[Tuple[str, str], list] = {}
         # 最近一次 load_calibration 失败原因（供上层展示）
@@ -465,6 +467,8 @@ class CalibrationEngine:
         self.pair_results = {}
         self._multi_frame_data = {}
         self.reference_id = None
+        self.topology = 'star'
+        self.required_cameras = []
 
     # ------------------------------------------------------------------
     # 保存 / 加载
@@ -473,6 +477,8 @@ class CalibrationEngine:
         """序列化全部 pair 结果 + reference_id 为可 JSON 化的 dict。"""
         data = {
             'reference_id': self.reference_id,
+            'topology': self.topology,
+            'required_cameras': self.required_cameras,
             'pairs': {},
         }
         for (ref_id, cam_id), res in self.pair_results.items():
@@ -497,6 +503,18 @@ class CalibrationEngine:
                 "如果选择的是会话目录中的 meta.json，请改用主窗口「打开会话」加载；\n"
                 "外参文件应为「保存外参/保存会话」生成的、包含 pairs 字段的 JSON。")
         self.reference_id = data.get('reference_id')
+        if self.reference_id is not None and not isinstance(self.reference_id, str):
+            return False, '参考相机 ID 无效'
+        self.topology = data.get('topology', 'star')
+        if self.topology not in ('star', 'chain'):
+            return False, '未知多相机标定方式'
+        required = data.get('required_cameras', [])
+        if not isinstance(required, list) or any(not isinstance(cid, str) for cid in required):
+            return False, '相机参与列表无效'
+        self.required_cameras = list(required)
+        if not self.required_cameras:
+            self.required_cameras = sorted({cid for key in pairs if '|' in str(key)
+                                            for cid in str(key).split('|', 1)})
         self.pair_results = {}
         n_invalid = 0
         for key, entry in pairs.items():
@@ -504,7 +522,7 @@ class CalibrationEngine:
                 ref_id, cam_id = str(key).split('|', 1)
                 entry = dict(entry)
                 T = np.asarray(entry['T'], dtype=np.float64)
-                if T.shape != (4, 4):
+                if T.shape != (4, 4) or not np.isfinite(T).all() or abs(np.linalg.det(T)) < 1e-12:
                     raise ValueError("T 矩阵维度错误")
                 entry['T'] = T
                 self.pair_results[(ref_id, cam_id)] = entry

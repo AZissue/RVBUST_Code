@@ -167,7 +167,7 @@ class IndustrialRibbon(QWidget):
         actions = QHBoxLayout()
         actions.setSpacing(1)
         for key, text, glyph, source in entries:
-            button = CommandButton(source, text, glyph, follow_text=mode == 'multi_cam' and key == 'capture') if hasattr(source, 'click') else RibbonButton()
+            button = CommandButton(source, text, glyph, follow_text=mode == 'multi_cam' and key in ('capture', 'topology')) if hasattr(source, 'click') else RibbonButton()
             if not isinstance(button, CommandButton):
                 button.setText(text)
                 button.setIcon(icons.icon(glyph, '#d6d6d6', 23))
@@ -216,6 +216,7 @@ class IndustrialRibbon(QWidget):
         ], mode)
         if mode == 'multi_cam':
             groups = [('外参标定', [
+                ('topology', '星型标定', 'layers', multi._btn_topology),
                 ('capture', '拍摄标定帧', 'camera', multi._btn_capture),
                 ('detect', '检测标记', 'detect', multi._btn_detect),
                 ('calibrate', '计算外参', 'calibrate', multi._btn_calibrate)]),

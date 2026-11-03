@@ -233,6 +233,7 @@ class SessionProjects(QObject):
                 reference_id=chain._reference_id if chain else None)
         if mode == 'multi_cam':
             return dict(calibration=bridge.calibration_engine.to_dict() if bridge.calibration_engine.pair_results else None,
+                calibration_topology=bridge.calibration_engine.topology,
                 frames_calib={cid: desc(f) for cid, f in bridge.fixed_workflow.frames_calib.items()} if include_raw else {},
                 frames_scan={cid: desc(f) for cid, f in bridge.fixed_workflow.frames_scan.items()} if include_raw else {},
                 devices=[dict(serial=d.serial, model=d.model) for d in bridge.shell._devices])
@@ -520,6 +521,7 @@ class SessionProjects(QObject):
         elif mode == 'multi_cam':
             session = OfflineSession()
             session._meta['calibration'] = data.get('calibration')
+            session._meta['calibration_topology'] = data.get('calibration_topology', 'star')
             bridge._load_fixed_session(session, prepared)
         else:
             session, first = prepared
