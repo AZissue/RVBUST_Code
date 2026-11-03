@@ -62,6 +62,46 @@ def kabsch_rigid_transform(
     return R.astype(np.float64), t.astype(np.float64)
 
 
+def robust_rigid_transform(src, dst, threshold_mm=1.0):
+    """Deterministic consensus fit; reject non-rigid/degenerate correspondences."""
+    import itertools
+    import math
+    src, dst = np.asarray(src, dtype=float), np.asarray(dst, dtype=float)
+    if src.shape != dst.shape or src.ndim != 2 or src.shape[1] != 3 or len(src) < 3 or not np.isfinite([src, dst]).all():
+        raise ValueError('标记对应无效或不足3对')
+    n = len(src)
+    triples = itertools.combinations(range(n), 3)
+    if math.comb(n, 3) > 512:
+        rng = np.random.default_rng(0)
+        triples = sorted({tuple(sorted(rng.choice(n, 3, replace=False))) for _ in range(640)})[:512]
+    best = None
+    for ids in triples:
+        ids = list(ids)
+        if any(np.linalg.matrix_rank(p[ids]-p[ids].mean(0), tol=1e-6) < 2 for p in (src, dst)):
+            continue
+        R, t = kabsch_rigid_transform(src[ids], dst[ids])
+        errors = np.linalg.norm(src @ R.T + t - dst, axis=1)
+        mask = errors <= threshold_mm
+        score = (int(mask.sum()), -float(np.sum(errors[mask]**2)))
+        if best is None or score > best[0]:
+            best = score, mask
+    if best is None or best[0][0] < max(3, math.ceil(.6*n)):
+        raise ValueError('标记几何不一致：无足够非共线内点，请复核编码及3D坐标')
+    mask = best[1]
+    for _ in range(3):
+        R, t = kabsch_rigid_transform(src[mask], dst[mask])
+        errors = np.linalg.norm(src @ R.T + t - dst, axis=1)
+        updated = errors <= threshold_mm
+        if np.array_equal(updated, mask):
+            break
+        mask = updated
+    if mask.sum() < max(3, math.ceil(.6*n)) or any(np.linalg.matrix_rank(p[mask]-p[mask].mean(0), tol=1e-6) < 2 for p in (src, dst)):
+        raise ValueError('标记内点不足或退化，拒绝配准')
+    R, t = kabsch_rigid_transform(src[mask], dst[mask])
+    errors = np.linalg.norm(src @ R.T + t - dst, axis=1)
+    return R, t, mask, errors
+
+
 def decompose_rotation(R: np.ndarray) -> Tuple[np.ndarray, float]:
     """把旋转矩阵分解为轴角，返回 (axis, angle_rad)。"""
     angle = np.arccos(np.clip((np.trace(R) - 1.0) / 2.0, -1.0, 1.0))
@@ -141,7 +181,12 @@ class TurntableCalibrator:
         # 求 frame0 -> frame1 的刚体变换 (R, t)，使 p1 ≈ R @ p0 + t。
         # 这样 R 的轴角直接对应转台从 frame0 旋转到 frame1 的角度 +θ，
         # 后续第 i 帧用 -i*θ 反向旋转即可回到参考系。
-        R, t = kabsch_rigid_transform(points_frame0, points_frame1)
+        try:
+            R, t, mask, errors = robust_rigid_transform(points_frame0, points_frame1)
+        except ValueError as exc:
+            return False, str(exc), {}
+        self.fit_inliers = mask
+        self.fit_errors = errors
         axis, angle = decompose_rotation(R)
         center = estimate_rotation_center(R, t, points_frame0.mean(axis=0))
 
@@ -160,15 +205,21 @@ class TurntableCalibrator:
         from .turntable_confidence import assess
         self.confidence = assess(axis, angle, center, translation=t, reference_points=points_frame0)
 
+        if not mask.all():
+            self.confidence['state'] = 'warning'
+            self.confidence['summary'] = f'已剔除 {int((~mask).sum())} 对几何异常标记；请复核编码与3D取点'
+
         info = {
             "axis": axis.tolist(),
             "center": center.tolist(),
             "angle_deg": float(np.degrees(angle)),
             "step_count": self.step_count,
+            "inlier_count": int(mask.sum()),
+            "rms_inlier_mm": float(np.sqrt(np.mean(errors[mask]**2))),
         }
         return (
             True,
-            f"标定成功：旋转轴 {axis.round(4)}, 角度 {np.degrees(angle):.2f}°, "
+            f"标定成功：内点 {int(mask.sum())}/{len(mask)}，RMS {np.sqrt(np.mean(errors[mask]**2)):.3f} mm；旋转轴 {axis.round(4)}, 角度 {np.degrees(angle):.2f}°, "
             f"中心 {center.round(2)}, 估算 {self.step_count} 步/360°",
             info,
         )
@@ -255,12 +306,15 @@ class TurntableCalibrator:
                     pts_j, pts_i, match_msg = match_markers_pair(markers[j], markers[i])
                     if pts_j is None:
                         continue
-                    R, t = kabsch_rigid_transform(pts_i, pts_j)
+                    try:
+                        R, t, mask, errors = robust_rigid_transform(pts_i, pts_j)
+                    except ValueError:
+                        continue
                     T_ij = np.eye(4, dtype=np.float64)
                     T_ij[:3, :3] = R
                     T_ij[:3, 3] = t
                     T_world = T_worlds[j] @ T_ij
-                    chain_msgs.append(f"帧{i}=标记链(与帧{j}共有{len(pts_j)}对)")
+                    chain_msgs.append(f"帧{i}=标记链(与帧{j}内点{int(mask.sum())}/{len(pts_j)}对，RMS {np.sqrt(np.mean(errors[mask]**2)):.3f}mm)")
                     break
             if T_world is None:
                 T_world = self.get_transform_for_step(step_indices[i] - step_indices[0])
@@ -419,6 +473,9 @@ class OnlineTurntableSession:
                 confidence=self.calib.confidence,
                 source_ids=[getattr(frame, 'database_id', None) for frame in (self.frame0, self.frame1)],
                 result=dict(success=True, T=transform.tolist(),
+                    inlier_codes=[code for code, keep in zip(codes, self.calib.fit_inliers) if keep],
+                    rejected_codes=[code for code, keep in zip(codes, self.calib.fit_inliers) if not keep],
+                    rms_inlier_mm=float(np.sqrt(np.mean(self.calib.fit_errors[self.calib.fit_inliers]**2))),
                     rms_all_mm=float(np.sqrt(np.mean(np.sum((transformed-pts0)**2, axis=1)))),
                     details=[dict(code=code, pt_ref=p0.tolist(), pt_cam_transformed=p1.tolist())
                              for code, p0, p1 in zip(codes, pts0, transformed)]))
