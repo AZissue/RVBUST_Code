@@ -4,7 +4,7 @@ from dataclasses import asdict
 import numpy as np
 from PySide6.QtCore import Qt, QSize, QSignalBlocker, QItemSelectionModel, QTimer
 from PySide6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QSplitter, QToolButton, QFileDialog, QMenu, QScrollArea)
+    QSplitter, QToolButton, QFileDialog, QMenu, QScrollArea, QGroupBox)
 from ui_common.industrial_viewer import IndustrialViewer
 from ui_common.worker_thread import WorkerThread
 from ui_common.symbols import icon
@@ -167,6 +167,17 @@ class PostprocessWindow(QDialog):
         self.probe.analyze.connect(self.analyze_probe)
         self._probe_report = None
         self._probe_reports = {}
+        self.probe_reference = QGroupBox('后处理参考值 · 手动设置')
+        self.probe_reference.setStyleSheet('QGroupBox { border:1px solid #618477; border-radius:5px; margin-top:10px; padding:10px 6px 6px; color:#a8e4c5; }')
+        reference_layout = QVBoxLayout(self.probe_reference)
+        self.probe_reference_text = QLabel()
+        self.probe_reference_text.setTextFormat(Qt.PlainText)
+        self.probe_reference_text.setWordWrap(True)
+        self.probe_reference_text.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.probe_reference_text.setStyleSheet('color:#c8f0d9; font-size:13px; font-weight:600;')
+        reference_layout.addWidget(self.probe_reference_text)
+        self.properties.data_layout.insertWidget(0, self.probe_reference)
+        self.probe_reference.hide()
         self.probe_properties = QLabel('尚未检测：点击顶部“点云探针”分析当前点云。')
         self.probe_properties.setWordWrap(True)
         self.probe_properties.setTextFormat(Qt.PlainText)
@@ -836,21 +847,32 @@ class PostprocessWindow(QDialog):
                 return
             self._probe_report = (key, report)
             self.probe.show_report(report)
-            self._probe_reports[key[:4]] = f'检测对象：{source.name}\n' + self.probe.text.text()
+            from .probe_panel import reference_text
+            name = f'检测对象：{source.name}\n'
+            references = reference_text(report['spacing']).splitlines()
+            summary = '\n'.join(references[:3])
+            notes = '\n'.join(references[3:])
+            self._probe_reports[key[:4]] = (
+                name + summary + '\nICP仅供已粗对齐时起步参考；请手动设置。',
+                name + self.probe.text.text() + ('\n\n参考值说明\n' + notes if notes else ''))
             self.probe.text.setText('检测完成。请在左侧“数据属性”的“点云检测结果”中查看；可关闭本窗口继续操作。')
             self._refresh_probe_properties()
             self.properties.tabs.setCurrentIndex(0)
         self._run(work, done, kind='probe', preserve_selection=True)
 
     def _refresh_probe_properties(self):
+        reference = ''
         try:
             key = self._probe_key()[:4]
-            text = self._probe_reports.get(key, '尚未检测：点击顶部“点云探针”分析当前点云。')
+            reference, text = self._probe_reports.get(key, ('', '尚未检测：点击顶部“点云探针”分析当前点云。'))
             if self._active_uid not in self._clouds:
+                reference = ''
                 text = '请选择点云后进行检测。'
         except ValueError:
             text = '当前点云不可用或已失效，请重新选择并检测。'
         self.probe_properties.setText(text)
+        self.probe_reference_text.setText(reference)
+        self.probe_reference.setVisible(bool(reference))
 
     def create_downsample_dialog(self):
         source = self._clouds.get(self._active_uid)

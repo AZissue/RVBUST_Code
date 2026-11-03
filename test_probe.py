@@ -9,6 +9,17 @@ from core.frame_database import STALE_RESULT
 
 
 class ProbeMathTests(unittest.TestCase):
+    def test_reference_values_and_unreliable_spacing(self):
+        from ui_v2.postprocess.probe_panel import reference_text
+        text = reference_text(dict(p50=.146344, ratio=1.27))
+        self.assertIn('体素尺寸：0.22 mm', text)
+        self.assertIn('计算体素：0.220 mm', text)
+        self.assertIn('最大对应距离：0.439 mm', text)
+        self.assertIn('已粗略对齐', text)
+        for value in (0, float('nan')):
+            self.assertIn('暂无可靠参考值', reference_text(dict(p50=value)))
+        self.assertIn('超出可设置范围', reference_text(dict(p50=.0001)))
+
     def test_grid_and_determinism(self):
         xyz = np.array([[x, y, 0] for x in range(10) for y in range(10)])*2
         s = spacing(xyz)
@@ -69,6 +80,9 @@ class ProbeUiTests(unittest.TestCase):
         self.finish()
         self.editor.actions['probe'].click()
         self.assertIn('典型点间距', self.editor.probe_properties.text())
+        self.assertFalse(self.editor.probe_reference.isHidden())
+        self.assertIn('ICP · 最大对应距离', self.editor.probe_reference_text.text())
+        self.assertIs(self.editor.properties.data_layout.itemAt(0).widget(), self.editor.probe_reference)
         self.assertTrue(self.editor.probe.isEnabled())
 
     def test_reasons(self):
@@ -109,11 +123,14 @@ class ProbeUiTests(unittest.TestCase):
         self.editor.source_browser.refresh()
         self.editor.load_selected([other]); self.finish()
         self.assertNotIn('典型点间距', self.editor.probe_properties.text())
+        self.assertTrue(self.editor.probe_reference.isHidden())
         self.editor.load_selected([uid]); self.finish()
         self.assertEqual(self.editor.probe_properties.text(), text)
+        self.assertFalse(self.editor.probe_reference.isHidden())
         self.db.records[uid].revision += 1
         self.editor._refresh_probe_properties()
         self.assertNotIn('典型点间距', self.editor.probe_properties.text())
+        self.assertTrue(self.editor.probe_reference.isHidden())
 
     def test_stale_selection_and_project(self):
         uid = self.inputs()

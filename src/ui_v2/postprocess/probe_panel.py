@@ -1,6 +1,31 @@
 """Probe controls shared by the reusable analysis dialog."""
+import math
 from PySide6.QtCore import Signal, Qt
 from PySide6.QtWidgets import QGroupBox, QVBoxLayout, QLabel, QPushButton, QDoubleSpinBox, QCheckBox, QSizePolicy
+
+
+def reference_text(stats):
+    """Density-based starting points only; never populate processing controls."""
+    spacing = stats.get('p50', 0)
+    if not math.isfinite(spacing) or spacing <= 0:
+        return '暂无可靠参考值：有效点不足或重复点过多，请先检查点云。'
+    voxel = 1.5 * spacing
+    distance = 3 * spacing
+    sampling_value = f'{voxel:.2f} mm' if .01 <= voxel <= 100000 else '超出可设置范围，请检查尺度'
+    icp_voxel = f'{voxel:.3f} mm' if .001 <= voxel <= 1000 else '超出可设置范围，请检查尺度'
+    icp_distance = f'{distance:.3f} mm' if .001 <= distance <= 1000 else '超出可设置范围，请检查尺度'
+    lines = [f'下采样 · 体素尺寸：{sampling_value}',
+             f'ICP · 计算体素：{icp_voxel}',
+             f'ICP · 最大对应距离：{icp_distance}',
+             f'下采样可试 {spacing:.4g}～{2*spacing:.4g} mm；越大点越少、细节越少。',
+             f'ICP对应距离可试 {distance:.4g}～{5*spacing:.4g} mm，仅适用于已粗略对齐的点云。',
+             '估算方式：体素取典型点间距的1.5倍，ICP最大对应距离取3倍；不跟随检测重合判定距离变化。',
+             '以上按当前点间距估算，需在处理窗口手动设置。单份点云不能判断两帧错位或最佳ICP参数。']
+    if not (.001 <= voxel <= 1000 and .001 <= distance <= 1000):
+        lines.append('ICP参考值超出当前参数窗口范围（0.001～1000 mm），请检查数据单位和尺度，不要直接照填。')
+    if stats.get('ratio') is None or stats['ratio'] >= 3:
+        lines.append('点密度差异较大或存在重复点，以上全局参考值应分区域复核。')
+    return '\n'.join(lines)
 
 
 class ProbePanel(QGroupBox):
@@ -38,18 +63,20 @@ class ProbePanel(QGroupBox):
     def show_report(self, report):
         s = report['spacing']
         bbox = ' × '.join(f'{v:.4g}' for v in s['bbox'])
-        lines = [f"有效点数：{s['count']:,}；点云尺寸（X × Y × Z）：{bbox} mm",
-                 f"{'抽样估计' if s['estimated'] else '全量查询'}；样本 {s['samples']:,}；总耗时 {report['seconds']:.3f}s"]
+        lines = [f"有效点数：{s['count']:,}", f"尺寸（X × Y × Z）：{bbox} mm",
+                 f"{'抽样估计' if s['estimated'] else '全量查询'} {s['samples']:,} 点 · 耗时 {report['seconds']:.2f}s"]
         if 'p50' in s:
-            lines += [f"典型点间距：{s['p50']:.6g} mm（最近邻距离的中位数）；平均点间距：{s['mean']:.6g} mm",
-                      f"90%的点最近邻距离不超过：{s['p90']:.6g} mm；95%不超过：{s['p95']:.6g} mm"]
+            lines += [f"典型点间距：{s['p50']:.4g} mm（中位数）",
+                      f"平均点间距：{s['mean']:.4g} mm",
+                      f"90%的最近邻距离 ≤ {s['p90']:.4g} mm",
+                      f"95%的最近邻距离 ≤ {s['p95']:.4g} mm"]
             if s['ratio'] is None or s['ratio'] >= 3:
                 lines.append('密度提示：点分布差异较大或存在重复点，可分区域检查点云分布。')
             else:
-                lines.append(f"密度参考：较大点间距约为典型值的{s['ratio']:.2f}倍（90%分位值÷中位数，越大表示间距差异越明显）。")
+                lines.append(f"点间距差异：{s['ratio']:.2f}倍（90%分位值÷典型值；越大越不均匀）")
         else:
             lines.append(s['reason'])
-        lines.append(f"重合判定距离：{report['tau']:.6g} mm（距离不超过此值的点计为重合）")
+        lines.append(f"本次重合判定距离：{report['tau']:.4g} mm（仅用于本次检测）")
         if report.get('reason'):
             lines.append('来源点云重合比例暂不可计算：'+report['reason'])
         for a, b, row in report['directions']:
