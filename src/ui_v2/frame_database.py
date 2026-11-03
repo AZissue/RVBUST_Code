@@ -178,6 +178,7 @@ class FrameBrowser(QWidget):
             project_root.setIcon(0, icons.icon('folder_open', '#bbbbbb', 16))
         records = sorted(records, key=lambda row: (row.created, row.frame_id, row.uid))
         operation_groups = {}
+        intermediate_groups = {}
         frame_counts = {}
         for record in records:
             if record.kind == 'result':
@@ -214,10 +215,13 @@ class FrameBrowser(QWidget):
             cloud_item.setIcon(0, icons.icon('layers', '#bbbbbb', 16))
             cloud_item.setToolTip(1, '结果有效几何点数；原始帧保持独立。' if record.kind == 'result'
                 else '原始点槽位数，包含有序点云中的无效占位点；文件不下采样。')
-            if postprocess:
+            if postprocess or record.intermediate_of:
                 # A result is a real leaf; its frame parent is a UID-free UI container.
                 row.takeChild(0)
                 cloud_item.setText(0, {'inside': '框内点云 · PLY', 'outside': '框外点云 · PLY'}.get(record.output_role, '点云 · PLY'))
+                if record.intermediate_of:
+                    cloud_item.setText(0, record.logical_name + ' · PLY')
+                    cloud_item.setToolTip(0, row.toolTip(0))
                 self._items[record.uid] = cloud_item
             components = [('cloud', cloud_item)]
             if record.kind != 'result':
@@ -261,8 +265,15 @@ class FrameBrowser(QWidget):
                     operation_groups[key] = frame
                 parent = operation_groups[key]
             if record.intermediate_of in self._items:
-                parent = self._items[record.intermediate_of]
+                if record.intermediate_of not in intermediate_groups:
+                    group = QTreeWidgetItem(self._items[record.intermediate_of], ['配准中间数据', ''])
+                    group.setIcon(0, icons.icon('folder_open', '#aaaaaa', 16))
+                    group.setToolTip(0, '当前拼接结果的独立配准点云；勾选可叠加显示，选择两项可执行ICP。')
+                    intermediate_groups[record.intermediate_of] = group
+                parent = intermediate_groups[record.intermediate_of]
             parent.addChild(self._items[record.uid])
+        for group in intermediate_groups.values():
+            group.setText(1, f'{group.childCount()} 项点云')
         parameters = None
         if self.database.mode in ('multi_cam', 'turntable') or (project_root is not None and getattr(self.database, 'has_calibration', False)):
             calibration_group = next((item for item in categories.values() if item.text(0) == '标定会话数据'), None)

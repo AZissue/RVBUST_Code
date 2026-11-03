@@ -131,7 +131,12 @@ class ICPUiTests(unittest.TestCase):
             row=self.db.records[uid]
             self.assertEqual(row.intermediate_of,parent)
             self.assertEqual(row.source_ids,[key])
-            self.assertEqual(self.editor.source_browser._items[uid].parent().data(0,256),parent)
+            leaf=self.editor.source_browser._items[uid]
+            self.assertEqual(leaf.childCount(),0)
+            self.assertEqual(leaf.parent().text(0),'配准中间数据')
+            self.assertEqual(leaf.parent().childCount(),2)
+            self.assertEqual(leaf.parent().parent().data(0,256),parent)
+            self.assertEqual(leaf.data(0,258),'cloud')
             np.testing.assert_allclose(source_poses(self.db,uid)[key][1],poses[key])
             from core.point_cloud_processor import PointCloudProcessor
             original=PointCloudProcessor._filter_valid(self.db.load_frame(key,'cloud')[1])[0]
