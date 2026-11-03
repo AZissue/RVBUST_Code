@@ -16,6 +16,7 @@ class CloudLayer:
     output_role: str = ''
     registration_transform: list | None = None
     parent_transforms: dict | None = None
+    intermediate_of: str = ""
     source_transforms: dict | None = None
 
     def __post_init__(self):

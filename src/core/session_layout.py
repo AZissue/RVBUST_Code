@@ -17,6 +17,8 @@ def describe(data):
     rows = []
     for record in sorted(data['records'], key=lambda row:(row['created'],row['frame_id'],row['uid'])):
         kind = ('后处理结果' if record['purpose']=='后处理结果' else '拼接结果') if record['kind']=='result' else ('标定帧' if '标定' in record['purpose'] or record['purpose']=='calib' else '拼接帧')
+        if record.get('intermediate_of'):
+            kind = '配准中间帧'
         counts[kind] = counts.get(kind,0)+1
         stamp = re.sub(r'[^0-9]', '', record['created'])[:14] or '未知时间'
         uid = record['uid']

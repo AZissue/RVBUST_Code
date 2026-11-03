@@ -181,7 +181,7 @@ class FrameBrowser(QWidget):
         frame_counts = {}
         for record in records:
             if record.kind == 'result':
-                title = record.logical_name if record.purpose == '后处理结果' else f'拼接帧 {record.frame_id:03d}'
+                title = record.logical_name if record.purpose in ('后处理结果','配准中间帧') else f'拼接帧 {record.frame_id:03d}'
             else:
                 calibration = self.database.mode != 'mobile_chain' and ('标定' in record.purpose or record.purpose == 'calib')
                 prefix = '标定帧' if calibration else '拼接帧'
@@ -260,6 +260,8 @@ class FrameBrowser(QWidget):
                     frame.setIcon(0, icons.icon('stitch', '#d65050', 16))
                     operation_groups[key] = frame
                 parent = operation_groups[key]
+            if record.intermediate_of in self._items:
+                parent = self._items[record.intermediate_of]
             parent.addChild(self._items[record.uid])
         parameters = None
         if self.database.mode in ('multi_cam', 'turntable') or (project_root is not None and getattr(self.database, 'has_calibration', False)):

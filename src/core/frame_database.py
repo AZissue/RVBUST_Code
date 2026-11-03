@@ -73,6 +73,7 @@ class FrameRecord:
     source_transforms: dict = field(default_factory=dict)
     registration_transform: list | None = None
     parent_transforms: dict | None = None
+    intermediate_of: str = ""
 
 
 class FrameDatabase:
@@ -264,7 +265,7 @@ class FrameDatabase:
         while True:
             descendants = {row.uid for row in self.records.values()
                            if row.kind == 'result' and row.uid not in changed
-                           and changed.intersection(row.source_ids)}
+                           and (changed.intersection(row.source_ids) or row.intermediate_of in changed)}
             if not descendants:
                 break
             for uid in descendants:
@@ -396,7 +397,7 @@ class FrameDatabase:
         """Commit a separate immutable result; never change raw frame geometry."""
         return self.publish_results([(cloud, source_ids, name)], postprocess=postprocess, source_transforms=source_transforms)[0]
 
-    def publish_results(self, results, *, postprocess=False, output_roles=None, source_transforms=None, registration_transform=None, parent_transforms=None):
+    def publish_results(self, results, *, postprocess=False, output_roles=None, source_transforms=None, registration_transform=None, parent_transforms=None, per_source_transforms=None, intermediate_of=""):
         """Atomically commit related (cloud, source_ids, name) result branches.
 
         In particular, polygon keep/discard branches must both succeed or neither
@@ -409,6 +410,10 @@ class FrameDatabase:
         output_roles = list(output_roles) if output_roles is not None else [''] * len(results)
         if len(output_roles) != len(results) or any(role not in ('', 'inside', 'outside') for role in output_roles):
             raise ValueError('后处理输出角色无效')
+        if per_source_transforms is not None and len(per_source_transforms) != len(results):
+            raise ValueError('来源位姿数量不匹配')
+        if intermediate_of and (intermediate_of not in self.records or self.records[intermediate_of].status == STALE_RESULT):
+            raise ValueError('拼接结果已失效')
         operation_id = uuid.uuid4().hex if postprocess else ''
         role = '后处理' if postprocess else '拼接'
         identifiers, folders, staged = [], [], {}
@@ -425,7 +430,7 @@ class FrameDatabase:
                 self.begin_session()
             number = 1 + sum(row.kind == 'result' for row in self.records.values())
             try:
-                for (cloud, sources, name), output_role in zip(results, output_roles):
+                for output_index, ((cloud, sources, name), output_role) in enumerate(zip(results, output_roles)):
                     uid = uuid.uuid4().hex
                     folder = self.directory / 'frames' / uid
                     folders.append(folder)
@@ -433,11 +438,12 @@ class FrameDatabase:
                     if not write_point_cloud_atomic(str(folder / 'pointmap.ply'), cloud):
                         raise IOError(role + '结果写入失败')
                     title = name or (f'后处理点云 {number:03d}' if postprocess else f'拼接帧 {number:03d}')
-                    staged[uid] = FrameRecord(uid, self.session_id, '', number, role + '结果',
+                    staged[uid] = FrameRecord(uid, self.session_id, self.records[sources[0]].camera if intermediate_of else '', number, '配准中间帧' if intermediate_of else role + '结果',
                         title, datetime.now().isoformat(timespec='seconds'), len(cloud.points), [0, 0],
                         status='已处理' if postprocess else '已拼接', kind='result', source_ids=sources,
                         operation_id=operation_id, output_role=output_role,
-                        source_transforms=copy.deepcopy(source_transforms or {}),
+                        source_transforms=copy.deepcopy(per_source_transforms[output_index] if per_source_transforms is not None else source_transforms or {}),
+                        intermediate_of=intermediate_of,
                         registration_transform=copy.deepcopy(registration_transform),
                         parent_transforms=copy.deepcopy(parent_transforms))
                     identifiers.append(uid)

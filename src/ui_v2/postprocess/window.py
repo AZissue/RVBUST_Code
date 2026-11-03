@@ -83,6 +83,7 @@ class PostprocessWindow(QDialog):
             ('color', '颜色统一', 'color_palette', self.open_color_dialog),
             ('compare', '对比原色', 'color_compare', self.compare_color_source),
             ('manual', '手动配准', 'cloud_register', self.open_manual_registration),
+            ('intermediate', '提取中间帧', 'layers', self.extract_intermediates),
             ('icp', 'ICP精配准', 'cloud_register', self.open_icp_dialog),
             ('merge', '合并点云', 'cloud_merge', self.merge_selected),
             ('select', '多边形框选', 'polygon', self.start_polygon),
@@ -577,6 +578,7 @@ class PostprocessWindow(QDialog):
         self.source_browser.setEnabled(ready)
         self.actions['undo'].setEnabled(ready and bool(self._undo))
         self.actions['manual'].setEnabled(self._parameter_gate() and len(self._display_ids) == 2)
+        self.actions['intermediate'].setEnabled(self._parameter_gate() and len(self._display_ids) == 1)
         self.actions['icp'].setEnabled(self._parameter_gate() and len(self._display_ids) in (1, 2))
         self.actions['merge'].setEnabled(ready and len(self._display_ids) > 1)
         self.actions['downsample'].setEnabled(ready and self._active_uid in self._clouds)
@@ -711,7 +713,9 @@ class PostprocessWindow(QDialog):
                 output_roles=[layer.output_role for layer in layers],
                 registration_transform=layers[0].registration_transform if len(layers) == 1 else None,
                 source_transforms=layers[0].source_transforms if len(layers) == 1 else None,
-                parent_transforms=layers[0].parent_transforms if len(layers) == 1 else None)
+                parent_transforms=layers[0].parent_transforms if len(layers) == 1 else None,
+                per_source_transforms=[layer.source_transforms or {} for layer in layers],
+                intermediate_of=layers[0].intermediate_of if layers else "")
             for uid, layer in zip(identifiers, layers):
                 layer.origins = ((uid, self.database.records[uid].revision),)
         return layers
@@ -919,6 +923,48 @@ class PostprocessWindow(QDialog):
             return [output]
         self._commit_operation(work,diagnostic=lambda:'\n'.join(reports),
             on_error=lambda error:QMessageBox.warning(self,'手动配准失败',str(error)))
+
+    def extract_intermediates(self):
+        if not self._parameter_gate() or len(self._display_ids) != 1:
+            return
+        uid = self._display_ids[0]
+        existing = [key for key,row in self.database.records.items() if row.intermediate_of == uid and row.status != STALE_RESULT]
+        if existing:
+            self.load_selected(existing)
+            return
+        directory = self.directory
+        tokens = self._clouds[uid].origins
+        def work():
+            from core.postprocess.image_color_fusion import source_poses
+            from core.point_cloud_processor import PointCloudProcessor
+            self._validate_source(directory,tokens)
+            row = self.database.records[uid]
+            if row.kind != 'result' or row.purpose == '后处理结果' or row.intermediate_of:
+                raise ValueError('请选择原始拼接结果，避免从裁剪结果恢复已删除的区域')
+            poses = source_poses(self.database,uid)
+            layers = []
+            for index,(key,(revision,pose)) in enumerate(poses.items(),1):
+                frame, cloud = self.database.load_frame(key,'cloud')
+                cloud,_ = PointCloudProcessor._filter_valid(cloud)
+                raw = self.database.records[key]
+                layers.append(CloudLayer(f'配准中间帧 {index:03d} · {raw.camera} · 原帧{raw.frame_id:03d}',
+                    np.asarray(cloud.points) @ pose[:3,:3].T + pose[:3,3],
+                    np.asarray(cloud.colors) if cloud.has_colors() else None,
+                    origins=((key,revision),), source_transforms={key:pose.tolist()}, intermediate_of=uid))
+            self._validate_source(directory,tokens)
+            return layers
+        self._commit_operation(work,display_all=True,
+            on_error=lambda error:QMessageBox.warning(self,'提取中间帧失败',str(error)))
+
+    def icp_probe_report(self):
+        if self._probe_report is not None:
+            try:
+                key,report = self._probe_report
+                if key == self._probe_key():
+                    return self._clouds[self._active_uid].name, report
+            except (ValueError,KeyError):
+                pass
+        return None
 
     def open_icp_dialog(self):
         if not self._parameter_gate() or len(self._display_ids) not in (1, 2):

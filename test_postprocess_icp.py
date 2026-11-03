@@ -91,6 +91,46 @@ class ICPUiTests(unittest.TestCase):
         self.assertEqual(set(self.db.records),before)
         self.assertFalse(self.editor._undo)
 
+    def test_extract_intermediates_and_probe_context(self):
+        from core.postprocess.image_color_fusion import source_poses
+        from ui_v2.postprocess.icp_dialog import ICPDialog
+        from PySide6.QtWidgets import QLabel,QPushButton
+        raw=[self.db.ingest(self.source(n)) for n in (1,2)]
+        poses={key:np.eye(4).tolist() for key in raw}
+        poses[raw[1]][0][3]=10
+        for key in raw: self.db.records[key].pointcloud_aligned=True
+        parent=self.db.publish_result(fixture.cloud([[1,2,3],[11,2,3]]),raw,source_transforms=poses)
+        self.editor.load_selected([parent]);self.finish()
+        self.editor.extract_intermediates();self.finish()
+        outputs=list(self.editor._display_ids)
+        self.assertEqual(len(outputs),2)
+        for uid,key in zip(outputs,raw):
+            row=self.db.records[uid]
+            self.assertEqual(row.intermediate_of,parent)
+            self.assertEqual(row.source_ids,[key])
+            self.assertEqual(self.editor.source_browser._items[uid].parent().data(0,256),parent)
+            np.testing.assert_allclose(source_poses(self.db,uid)[key][1],poses[key])
+            from core.point_cloud_processor import PointCloudProcessor
+            original=PointCloudProcessor._filter_valid(self.db.load_frame(key,'cloud')[1])[0]
+            expected=np.asarray(original.points)+np.asarray(poses[key])[:3,3]
+            np.testing.assert_allclose(self.editor._clouds[uid].points,expected)
+        from core.frame_database import FrameDatabase
+        reopened=FrameDatabase(self.db.mode);reopened.open_project(self.db.directory/'index.json')
+        self.assertEqual(reopened.records[outputs[0]].intermediate_of,parent)
+        count=len(self.db.records)
+        self.editor.load_selected([parent]);self.finish();self.editor.extract_intermediates();self.finish()
+        self.assertEqual(len(self.db.records),count)
+        self.editor._probe_report=(self.editor._probe_key(),dict(spacing=dict(p50=.2,p90=.3,p95=.4,voxel=.3),tau=.6))
+        dialog=ICPDialog([(uid,self.db.records[uid].logical_name) for uid in outputs],self.editor)
+        self.assertTrue(any('P50=' in label.text() for label in dialog.findChildren(QLabel)))
+        next(button for button in dialog.findChildren(QPushButton) if button.text()=='采用探针体素和分析距离').click()
+        self.assertAlmostEqual(dialog.distance.value(),.6)
+        self.assertAlmostEqual(dialog.voxel.value(),.3)
+        dialog.reject()
+        self.db._invalidate_results([parent])
+        from core.frame_database import STALE_RESULT
+        self.assertTrue(all(self.db.records[uid].status == STALE_RESULT for uid in outputs))
+
     def test_single_stitch_rebuild_preserves_raws_and_publishes_poses(self):
         from core.postprocess.image_color_fusion import source_poses
         from core.frame_database import FrameDatabase
