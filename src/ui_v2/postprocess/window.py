@@ -38,6 +38,7 @@ class PostprocessWindow(QDialog):
         self._selection_generation = 0
         self._load_version = 0
         self._pending_load = None
+        self._pending_intermediates = None
         self._busy_kind = None
         self._loading_ids = None
         self._worker = None
@@ -569,7 +570,12 @@ class PostprocessWindow(QDialog):
                 self.bridge.shell._industrial_ribbon.update_status()
                 if self._pending_load is not None:
                     pending, self._pending_load = self._pending_load, None
+                    self._pending_intermediates = None
                     self.load_selected(pending)
+                elif self._pending_intermediates is not None:
+                    uid, self._pending_intermediates = self._pending_intermediates, None
+                    if self._display_ids == [uid]:
+                        self.extract_intermediates(automatic=True)
         worker.result_ready.connect(completed)
         worker.finished.connect(finished)
         self._refresh_controls()
@@ -667,7 +673,7 @@ class PostprocessWindow(QDialog):
                     source=f'DB · {record.logical_name}', origins=((uid, revision),)))
         return layers
 
-    def load_selected(self, identifiers=None):
+    def load_selected(self, identifiers=None, *, auto_intermediates=False):
         if isinstance(identifiers, bool) or identifiers is None:
             identifiers = self.source_browser.selected_ids() or [
                 uid for uid, _ in self.source_browser.checked_components('cloud')]
@@ -702,6 +708,10 @@ class PostprocessWindow(QDialog):
             self._active_uid = active if active in identifiers else identifiers[0]
             self._show_records(layers, fit=True)
             self._set_status(f'已显示 {len(layers)} 项 DB 点云；处理完成后自动新增结果。')
+            if auto_intermediates and len(identifiers) == 1:
+                row = self.database.records[identifiers[0]]
+                if row.kind == 'result' and not row.intermediate_of and row.purpose != '后处理结果' and len(row.source_transforms) >= 2:
+                    self._pending_intermediates = row.uid
         self._run(lambda: self._read_records(directory, tokens), done, kind='load')
 
     def _publish_layers(self, layers, directory):
@@ -932,7 +942,7 @@ class PostprocessWindow(QDialog):
         self._commit_operation(work,diagnostic=lambda:'\n'.join(reports),
             on_error=lambda error:QMessageBox.warning(self,'手动配准失败',str(error)))
 
-    def extract_intermediates(self):
+    def extract_intermediates(self, *, automatic=False):
         if not self._parameter_gate() or len(self._display_ids) != 1:
             return
         uid = self._display_ids[0]
@@ -962,7 +972,8 @@ class PostprocessWindow(QDialog):
             self._validate_source(directory,tokens)
             return layers
         self._commit_operation(work,display_all=True,
-            on_error=lambda error:QMessageBox.warning(self,'提取中间帧失败',str(error)))
+            on_error=(lambda error:self._set_status('自动补齐中间帧失败：'+str(error)+'；请检查来源或点击提取中间帧查看。')) if automatic else
+            (lambda error:QMessageBox.warning(self,'提取中间帧失败',str(error))))
 
     def open_icp_dialog(self):
         if not self._parameter_gate() or len(self._display_ids) not in (1, 2):

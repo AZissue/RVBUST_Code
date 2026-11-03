@@ -91,6 +91,29 @@ class ICPUiTests(unittest.TestCase):
         self.assertEqual(set(self.db.records),before)
         self.assertFalse(self.editor._undo)
 
+    def test_automatic_intermediate_failure_does_not_block_window(self):
+        ids=[self.db.ingest(self.source(n)) for n in (1,2)]
+        uid=self.db.publish_result(fixture.cloud([[1,2,3]]),ids,
+            source_transforms={key:np.eye(4).tolist() for key in ids})
+        self.editor.load_selected([uid],auto_intermediates=True)
+        self.wait(lambda:self.editor._worker is None and '自动补齐中间帧失败' in self.editor.status.text())
+        self.assertEqual(len(self.db.records),3)
+        self.assertTrue(self.editor.actions['intermediate'].isEnabled())
+
+    def test_opening_result_automatically_populates_intermediates(self):
+        ids=[self.db.ingest(self.source(n)) for n in (1,2)]
+        for key in ids: self.db.records[key].pointcloud_aligned=True
+        uid=self.db.publish_result(fixture.cloud([[1,2,3],[4,5,6]]),ids,
+            source_transforms={key:np.eye(4).tolist() for key in ids})
+        self.editor.load_selected([uid],auto_intermediates=True)
+        self.wait(lambda:self.editor._worker is None and len([row for row in self.db.records.values() if row.intermediate_of==uid])==2)
+        self.assertEqual(len(self.editor._display_ids),2)
+        self.assertTrue(self.editor.actions['icp'].isEnabled())
+        count=len(self.db.records)
+        self.editor.load_selected([uid],auto_intermediates=True)
+        self.wait(lambda:self.editor._worker is None and len(self.editor._display_ids)==2)
+        self.assertEqual(len(self.db.records),count)
+
     def test_extract_intermediates_and_probe_context(self):
         from core.postprocess.image_color_fusion import source_poses
         from ui_v2.postprocess.icp_dialog import ICPDialog

@@ -208,11 +208,18 @@ class BackendBridge(QObject):
                        or browser.selected_ids()) if browser else []
         if not identifiers and mode in self.frame_db._displayed:
             identifiers = [self.frame_db._displayed[mode][0]]
+        if not identifiers:
+            database = self.frame_db.databases[mode]
+            candidates = [row for row in database.records.values() if row.kind == 'result'
+                and not row.intermediate_of and row.purpose != '后处理结果'
+                and row.status != '来源数据已变更，请重新拼接']
+            if candidates:
+                identifiers = [max(candidates,key=lambda row:(row.created,row.frame_id)).uid]
         window = PostprocessWindow(self, mode)
         self._postprocess_window = window
         window.show()
         if identifiers:
-            window.load_selected(identifiers)
+            window.load_selected(identifiers, auto_intermediates=True)
         return window
 
     def _ensure_sdk(self):
