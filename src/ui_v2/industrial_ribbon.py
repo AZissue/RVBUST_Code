@@ -130,6 +130,10 @@ class IndustrialRibbon(QWidget):
         line.addWidget(self.workflow_status)
         self.badge = QLabel(objectName='studioBadge')
         line.addWidget(self.badge)
+        self.experiment_button = self._header_button('实验功能', 'layers',
+            lambda: shell._backend_bridge and shell._backend_bridge.open_experiments())
+        self.experiment_button.setToolTip('使用正式工作区验证功能，数据写入隔离副本')
+        line.addWidget(self.experiment_button)
         self.log_button = self._header_button('运行日志', 'terminal', shell._btn_log.click)
         self.log_button.setCheckable(True)
         shell._btn_log.toggled.connect(self.log_button.setChecked)
@@ -330,6 +334,7 @@ class IndustrialRibbon(QWidget):
             '优先拼接DB勾选的至少两帧原始点云；按当前模式使用标记配准或标定参数，生成独立拼接帧。未勾选时沿用当前工作流。')
         bridge = shell._backend_bridge
         ready = bool(bridge and bridge.can_change_workspace())
+        self.experiment_button.setEnabled(ready and not getattr(bridge, 'validation_root', None))
         for mode in self._pages:
             self.commands[(mode, 'save')].setEnabled(ready)
             self.commands[(mode, 'postprocess')].setEnabled(ready)

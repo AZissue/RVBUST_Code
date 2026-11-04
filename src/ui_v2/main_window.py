@@ -791,6 +791,11 @@ class MainWindowShell(QMainWindow):
             "提示：无真实多机环境时，可在启动小窗点击『+ 测试设备』临时添加虚拟相机。")
 
     def closeEvent(self, event):
+        validation = getattr(self._backend_bridge, '_validation_shell', None)
+        if validation is not None:
+            if not validation.close():
+                event.ignore()
+                return
         self._close_event_impl(event)
         if event.isAccepted():
             for workspace in (self._ws_multi, self._ws_mobile, self._ws_turntable, self._ws_robot):

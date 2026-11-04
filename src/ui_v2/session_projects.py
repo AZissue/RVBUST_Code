@@ -173,6 +173,13 @@ class SessionProjects(QObject):
         self.bridge.shell.log(f'已新建{MODE_LABELS[mode]}会话：{project.name}（未保存）', 'success')
 
     def install(self, mode, project):
+        if getattr(self.bridge, 'validation_root', None):
+            import uuid
+            project.uid = uuid.uuid4().hex
+            project.saved_path = None
+            project.save_root = self.bridge.validation_root
+            if not project.name.endswith('_实验副本'):
+                project.name += '_实验副本'
         self.projects[mode] = project
         db = project.database
         self.bridge.frame_db.databases[mode] = db

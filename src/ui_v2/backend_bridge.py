@@ -191,6 +191,22 @@ class BackendBridge(QObject):
         self.recognition = BackgroundRecognition(self)
         self.shell.workspace_turntable().background_recognition = self.recognition
 
+    def open_experiments(self):
+        if getattr(self, 'validation_root', None):
+            self.shell.log('当前已是实验副本；请关闭后返回主工作区选择其他实验。', 'info')
+            return
+        from .experiments import ExperimentHub
+        if not self.can_change_workspace():
+            self.shell.log('请等待当前任务完成后再进入实验功能。', 'warn')
+            return
+        previous = getattr(self, '_experiment_hub', None)
+        if previous is not None and previous.isVisible():
+            previous.raise_()
+            return previous
+        self._experiment_hub = ExperimentHub(self)
+        self._experiment_hub.show()
+        return self._experiment_hub
+
     def open_postprocess(self):
         """Open the offline editor on this DB; no camera or workflow reset."""
         previous = getattr(self, '_postprocess_window', None)
@@ -215,7 +231,12 @@ class BackendBridge(QObject):
                 and row.status != '来源数据已变更，请重新拼接']
             if candidates:
                 identifiers = [max(candidates,key=lambda row:(row.created,row.frame_id)).uid]
-        window = PostprocessWindow(self, mode)
+        if getattr(self, 'validation_color', False):
+            class ValidationEditor(PostprocessWindow):
+                COLOR_VALIDATION = True
+            window = ValidationEditor(self, mode)
+        else:
+            window = PostprocessWindow(self, mode)
         self._postprocess_window = window
         window.show()
         if identifiers:
