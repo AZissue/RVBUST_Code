@@ -29,6 +29,35 @@ class SessionProjectTests(unittest.TestCase):
             is_offline=True, offline_pointmap_path=str(self.source))
         return self.project.database.ingest(frame)
 
+    def test_save_rename_moves_same_session_and_preserves_extra_files(self):
+        uid=self.ingest()
+        old=self.project.save({},name='零件A')
+        (old/'备注.txt').write_text('keep',encoding='utf-8')
+        original_id=self.project.uid
+        new=self.project.save({},name='零件B')
+        self.assertFalse(old.exists())
+        self.assertIn('零件B',new.name)
+        self.assertEqual(self.project.uid,original_id)
+        self.assertEqual(self.project.name,'零件B')
+        self.assertEqual((new/'备注.txt').read_text(encoding='utf-8'),'keep')
+        loaded,_=SessionProject.load(new,'mobile_chain')
+        try:self.assertIn(uid,loaded.database.records)
+        finally:loaded.dispose()
+
+    def test_rename_failure_rolls_back_old_name_and_snapshot(self):
+        self.ingest();old=self.project.save({})
+        original_name=self.project.name
+        rename=Path.rename
+        def fail_staging(path,target):
+            if path.name.startswith('.saving_'): raise OSError('injected rename failure')
+            return rename(path,target)
+        with patch.object(Path,'rename',fail_staging):
+            with self.assertRaises(OSError):self.project.save({},name='新的名字')
+        self.assertTrue((old/'session.json').is_file())
+        self.assertEqual(self.project.name,original_name)
+        self.assertEqual(self.project.saved_path,old)
+        self.assertEqual(len(list(self.project.save_root.iterdir())),1)
+
     def test_readable_folders_csv_and_legacy_load(self):
         import csv
         from core.session_layout import restore_snapshot

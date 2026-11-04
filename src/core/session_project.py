@@ -68,14 +68,19 @@ class SessionProject:
     def title(self):
         return self.name + (' *' if self.dirty else '')
 
-    def save(self, workflow, *, include_raw=None):
+    def save(self, workflow, *, include_raw=None, name=None):
         include_raw = True if include_raw is None else include_raw
         self.save_root.mkdir(parents=True, exist_ok=True)
-        destination = self.saved_path or self.save_root / (
-            MODE_LABELS[self.mode] + '_' + safe_name(self.name) + '_' +
+        saved_name = safe_name(name) if name is not None else self.name
+        rename = self.saved_path is not None and saved_name != self.name
+        destination = (None if rename else self.saved_path) or self.save_root / (
+            MODE_LABELS[self.mode] + '_' + safe_name(saved_name) + '_' +
             datetime.now().strftime('%Y%m%d_%H%M%S') + '_' + self.uid[:8])
-        if destination.exists():
-            old = json.loads((destination / 'session.json').read_text(encoding='utf-8'))
+        source_directory = self.saved_path or destination
+        if rename and destination.exists():
+            raise ValueError('新会话目录已存在，请换一个名称或稍后重试')
+        if source_directory.exists():
+            old = json.loads((source_directory / 'session.json').read_text(encoding='utf-8'))
             if old.get('id') != self.uid:
                 raise ValueError('目标目录不属于当前会话')
         staging = self.save_root / ('.saving_' + uuid.uuid4().hex)
@@ -84,8 +89,8 @@ class SessionProject:
         try:
             # Keep explicit exports and user notes placed in the project folder.
             # Re-saving session state must not erase these independent outputs.
-            if destination.exists():
-                for item in destination.iterdir():
+            if source_directory.exists():
+                for item in source_directory.iterdir():
                     if item.name in ('data', 'session.json'):
                         continue
                     if item.is_symlink():
@@ -100,7 +105,7 @@ class SessionProject:
                 self.database._save_index()
                 previous_revisions = {}
                 previous_folders = {}
-                previous_index = destination / 'data' / 'index.json'
+                previous_index = source_directory / 'data' / 'index.json'
                 if previous_index.is_file():
                     previous_data = json.loads(previous_index.read_text(encoding='utf-8'))
                     previous_folders = previous_data.get('asset_folders', {})
@@ -115,9 +120,9 @@ class SessionProject:
                     source = Path(source)
                     relative = source.relative_to(self.database.directory)
                     if len(relative.parts) == 3 and relative.parts[0] == 'frames':
-                        previous = destination / 'data' / 'frames' / previous_folders.get(relative.parts[1], relative.parts[1]) / relative.parts[2]
+                        previous = source_directory / 'data' / 'frames' / previous_folders.get(relative.parts[1], relative.parts[1]) / relative.parts[2]
                     else:
-                        previous = destination / 'data' / relative
+                        previous = source_directory / 'data' / relative
                     # Reuse only the same exposure revision of a stable UUID.
                     # Link the saved inode, never the mutable draft.
                     # Filesystems without hard-link support use ordinary copies.
@@ -134,22 +139,23 @@ class SessionProject:
                 from .session_layout import name_snapshot
                 name_snapshot(staging / 'data')
             manifest = dict(format='MCC_SESSION', schema=1, id=self.uid, mode=self.mode,
-                name=self.name, created=self.created, saved=datetime.now().isoformat(timespec='seconds'),
+                name=saved_name, created=self.created, saved=datetime.now().isoformat(timespec='seconds'),
                 units='mm', include_raw=bool(include_raw), workflow=workflow)
             write_json_atomic(str(staging / 'session.json'), _json_value(manifest), ensure_ascii=False, indent=2)
-            if destination.exists():
-                destination.rename(backup)
+            if source_directory.exists():
+                source_directory.rename(backup)
             try:
                 staging.rename(destination)
             except Exception:
                 if backup.exists():
-                    backup.rename(destination)
+                    backup.rename(source_directory)
                 raise
         finally:
             if staging.exists():
                 shutil.rmtree(staging)
         if backup.exists():
             shutil.rmtree(backup)
+        self.name = saved_name
         self.saved_path = destination
         self.include_raw = bool(include_raw)
         return destination

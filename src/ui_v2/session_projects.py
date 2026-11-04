@@ -7,10 +7,10 @@ import numpy as np
 import open3d as o3d
 from PySide6.QtCore import QObject, QEventLoop, QTimer, Qt
 from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QInputDialog,
-    QLabel, QVBoxLayout, QProgressDialog)
+    QLabel, QLineEdit, QVBoxLayout, QProgressDialog)
 from .dialogs import ChineseMessageBox as QMessageBox, localize_buttons
 
-from core.session_project import SessionProject, MODE_LABELS
+from core.session_project import SessionProject, MODE_LABELS, safe_name
 from core.frame_database import _json_value
 from core.frame_data import FrameData
 from core.chain_stitcher import ChainNode, ChainEdge
@@ -260,16 +260,32 @@ class SessionProjects(QObject):
             return
         project = self.projects[mode]
         include_raw = True
-        if project.saved_path is None:
+        save_name = project.name
+        if callback is None or project.saved_path is None:
             dialog = QDialog(self.bridge.shell)
             dialog.setWindowTitle('保存会话')
             layout = QVBoxLayout(dialog)
-            label = QLabel(f'{project.name}\n保存到：{project.save_root}\n重复保存更新同一项目。\n'
+            label = QLabel(f'保存到：{project.save_root}\n重复保存更新同一项目，修改名称时同步调整会话目录。\n'
                 '保存全部会话数据：标定信息、原始点云、2D图像及拼接结果。')
             label.setWordWrap(True)
             layout.addWidget(label)
+            layout.addWidget(QLabel('会话名称'))
+            name_edit = QLineEdit(project.name)
+            name_edit.setObjectName('sessionSaveName')
+            name_edit.setMaxLength(60)
+            name_edit.selectAll()
+            layout.addWidget(name_edit)
+            name_preview = QLabel()
+            name_preview.setWordWrap(True)
+            layout.addWidget(name_preview)
             buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
             localize_buttons(buttons)
+            def validate_name():
+                text = name_edit.text().strip()
+                buttons.button(QDialogButtonBox.Save).setEnabled(bool(text))
+                name_preview.setText('保存名称：'+safe_name(text) if text else '请输入会话名称。')
+            name_edit.textChanged.connect(validate_name)
+            validate_name()
             buttons.accepted.connect(dialog.accept)
             buttons.rejected.connect(dialog.reject)
             layout.addWidget(buttons)
@@ -277,11 +293,15 @@ class SessionProjects(QObject):
                 if callback:
                     callback(False)
                 return
+            if not name_edit.text().strip():
+                if callback: callback(False)
+                return
+            save_name = safe_name(name_edit.text())
         self.bridge.shell.show_loading('正在保存当前会话...')
         save_version = project.change_version
         def work():
             data = self.describe(mode, include_raw)
-            return project.save(data, include_raw=include_raw)
+            return project.save(data, include_raw=include_raw, name=save_name)
         def done(path, error):
             self.bridge.shell.hide_loading()
             if error:

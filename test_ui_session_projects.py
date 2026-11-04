@@ -8,7 +8,7 @@ from unittest.mock import patch
 import numpy as np
 from PySide6.QtCore import QTimer, QEvent
 from PySide6.QtGui import QCloseEvent
-from PySide6.QtWidgets import QApplication, QMessageBox, QCheckBox, QProgressDialog, QPushButton
+from PySide6.QtWidgets import QApplication, QMessageBox, QCheckBox, QProgressDialog, QPushButton, QLineEdit, QDialogButtonBox
 
 import test_ui_frame_database as fixture
 from core.chain_stitcher import ChainNode, ChainEdge
@@ -21,6 +21,36 @@ class SessionUiTests(unittest.TestCase):
     setUp = fixture.FrameBrowserTests.setUp
     tearDown = fixture.FrameBrowserTests.tearDown
     wait = fixture.FrameBrowserTests.wait
+    source = fixture.FrameBrowserTests.source
+
+    def test_save_name_editor_first_save_and_rename(self):
+        controller=self.bridge.projects
+        project=controller.projects['multi_cam']
+        project.save_root=Path(self.temp.name)/'renamed_sessions'
+        uid=project.database.ingest(self.source(1))
+        def enter_name(name):
+            dialog=QApplication.activeModalWidget()
+            edit=dialog.findChild(QLineEdit,'sessionSaveName')
+            edit.clear()
+            self.assertFalse(dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Save).isEnabled())
+            edit.setText(name);dialog.accept()
+        QTimer.singleShot(0,lambda:enter_name('支架首轮'))
+        controller.save('multi_cam')
+        self.wait(lambda:project.saved_path is not None and not self.bridge._workers)
+        old=project.saved_path
+        self.assertEqual(project.name,'支架首轮')
+        QTimer.singleShot(0,lambda:enter_name('支架复测'))
+        controller.save('multi_cam')
+        self.wait(lambda:project.name=='支架复测' and not self.bridge._workers)
+        self.assertFalse(old.exists())
+        self.assertIn('支架复测',project.saved_path.name)
+        self.assertIn('支架复测',project.database.project_title)
+        self.assertIn(uid,project.database.records)
+        name=project.name;path=project.saved_path
+        QTimer.singleShot(0,lambda:QApplication.activeModalWidget().reject())
+        controller.save('multi_cam')
+        self.assertEqual(project.name,name)
+        self.assertEqual(project.saved_path,path)
 
     def test_turntable_db_only_save_ignores_empty_capture_sequence(self):
         self.win.set_mode('turntable', [])
@@ -119,6 +149,7 @@ class SessionUiTests(unittest.TestCase):
             self.wait(lambda: not any(w.isRunning() for w in self.bridge._workers))
         self.assertNotIn(uid, self.bridge.frame_db.databases['mobile_chain'].records)
         self.assertEqual(len(self.bridge.mobile_workflow.get_station_evaluations()), 0)
+        QTimer.singleShot(0, lambda: QApplication.activeModalWidget().accept())
         self.bridge._on_save_session()
         self.wait(lambda: not controller.projects['mobile_chain'].dirty)
         self.wait(lambda: not any(w.isRunning() for w in self.bridge._workers))
@@ -462,6 +493,7 @@ class SessionUiTests(unittest.TestCase):
                 self.assertTrue((folder / 'image.png').is_file())
                 self.assertTrue((path / 'data' / 'frames' / json.loads((path/'data'/'index.json').read_text(encoding='utf-8'))['asset_folders'][result] / 'pointmap.ply').is_file())
                 project.include_raw = False
+                QTimer.singleShot(0, lambda: QApplication.activeModalWidget().accept())
                 controller.save(mode)  # Subsequent saves must use the same full-data policy.
                 self.wait(lambda: not any(w.isRunning() for w in self.bridge._workers))
                 self.assertTrue(json.loads((path / 'session.json').read_text(encoding='utf-8'))['include_raw'])
