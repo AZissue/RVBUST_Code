@@ -10,6 +10,7 @@ OUTPUT = PROJECT_ROOT / 'outputs' / 'experiments'
 FEATURES = (
     ('color', '颜色统一 / 原色对比 / 原始2D融合', None),
     ('geometry', '几何后处理 / 框选 / 下采样 / ICP', None),
+    ('circle_triangle', '普通圆点识别 / 三角形几何匹配拼接', None),
     ('multi_cam', '固定多相机外参及拼接', 'multi_cam'),
     ('mobile_chain', '离线链式拼接', 'mobile_chain'),
     ('robot_stitch', '机器人手眼变换与戳点验证', 'robot_stitch'),
@@ -165,7 +166,7 @@ def open_validation(owner, project, workflow, feature, identifiers):
         banner.setStyleSheet('background:#573d20;color:#ffe1a6;padding:8px;')
         shell.centralWidget().layout().insertWidget(0, banner)
         shell.show()
-        if feature in ('color', 'geometry'):
+        if feature in ('color', 'geometry', 'circle_triangle'):
             class ValidationEditor(PostprocessWindow):
                 COLOR_VALIDATION = feature == 'color'
             editor = ValidationEditor(bridge, project.mode)
@@ -176,7 +177,10 @@ def open_validation(owner, project, workflow, feature, identifiers):
             if not ids:
                 ids = [row.uid for row in project.database.records.values()
                        if row.kind == 'result' and not row.intermediate_of][-1:]
-            if ids:
+            if feature == 'circle_triangle':
+                from PySide6.QtCore import QTimer
+                QTimer.singleShot(0, editor.open_circle_match)
+            elif ids:
                 editor.load_selected(ids, auto_intermediates=True)
         shell.log('验证副本已打开；关闭后返回原工作区。需要保留结果时请点击保存会话。', 'info')
         return shell

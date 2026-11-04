@@ -83,6 +83,7 @@ class PostprocessWindow(QDialog):
             ('downsample', '下采样', 'cloud_sample', self.open_downsample_dialog),
             ('color', '颜色统一', 'color_palette', self.open_color_dialog),
             ('compare', '对比原色', 'color_compare', self.compare_color_source),
+            ('triangle', '圆点匹配', 'cloud_register', self.open_circle_match),
             ('manual', '手动配准', 'cloud_register', self.open_manual_registration),
             ('intermediate', '提取中间帧', 'layers', self.extract_intermediates),
             ('icp', 'ICP精配准', 'cloud_register', self.open_icp_dialog),
@@ -112,6 +113,7 @@ class PostprocessWindow(QDialog):
         self.actions['select'].setAccessibleName('多边形框选')
         actions.addStretch()
         root.addWidget(self.operation_bar)
+        self.actions['triangle'].setVisible(bool(getattr(bridge, 'validation_root', None)))
         self.actions['compare'].setCheckable(True)
         for key in ('color', 'compare'):
             self.actions[key].setVisible(self.COLOR_VALIDATION)
@@ -620,6 +622,8 @@ class PostprocessWindow(QDialog):
             button.setEnabled(ready)
         self.source_browser.setEnabled(ready)
         self.actions['undo'].setEnabled(ready and bool(self._undo))
+        self.actions['triangle'].setEnabled(bool(getattr(self.bridge, 'validation_root', None))
+            and self._parameter_gate() and sum(row.kind == 'raw' for row in self.database.records.values()) >= 2)
         self.actions['manual'].setEnabled(self._parameter_gate() and len(self._display_ids) == 2)
         self.actions['intermediate'].setEnabled(self._parameter_gate() and len(self._display_ids) == 1)
         self.actions['icp'].setEnabled(self._parameter_gate() and len(self._display_ids) in (1, 2))
@@ -945,6 +949,40 @@ class PostprocessWindow(QDialog):
             return [CloudLayer(source.name+' · '+title, data[0], data[1],
                                source=source.source, origins=source.origins)]
         self._commit_operation(work)
+
+    def open_circle_match(self):
+        if not getattr(self.bridge, 'validation_root', None) or not self._parameter_gate():
+            return
+        from .circle_match_dialog import CircleMatchDialog
+        dialog = CircleMatchDialog(self)
+        try:
+            if dialog.exec() == QDialog.Accepted and not self._closed:
+                self.publish_circle_match(dialog.analysis, dialog.tokens)
+        finally:
+            from shiboken6 import isValid
+            if isValid(dialog):
+                dialog.deleteLater()
+
+    def publish_circle_match(self, analysis, tokens):
+        if (not getattr(self.bridge, 'validation_root', None) or not self._parameter_gate()
+                or not analysis or analysis.get('match') is None):
+            self._set_status('请在实验副本中重新识别并确认圆点匹配。')
+            return
+        from prototypes.circle_geometry_match.core.pipeline import merged_layer
+        tokens = tuple(tokens)
+        if tokens != tuple(token for frame in analysis['frames'] for token in frame['layer'].origins):
+            self._set_status('匹配来源已变化，请重新识别。')
+            return
+        directory = self.directory
+        def work():
+            self._validate_source(directory, tokens)
+            layer = merged_layer(analysis)
+            self._validate_source(directory, tokens)
+            return [layer]
+        match = analysis['match']
+        self._commit_operation(work, diagnostic=lambda:
+            f'普通圆点三角形匹配：{len(match["pairs"])}对；圆心RMS {match["rms"]:.4f} mm；'
+            '移动帧变换到参考帧；保留全部有效点和原始颜色，未执行ICP。')
 
     def open_manual_registration(self):
         if not self._parameter_gate() or len(self._display_ids) != 2:

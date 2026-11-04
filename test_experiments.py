@@ -42,11 +42,14 @@ class ExperimentTests(unittest.TestCase):
             mode = mode or 'multi_cam'
             project = clone_project(self.bridge.projects.projects[mode])
             workflow = self.bridge.projects.describe(mode, True)
-            with patch.object(CameraManager, 'initialize', side_effect=AssertionError('SDK forbidden')):
+            with patch.object(CameraManager, 'initialize', side_effect=AssertionError('SDK forbidden')), \
+                    patch('ui_v2.postprocess.window.PostprocessWindow.open_circle_match') as circle_entry:
                 shell = open_validation(self.bridge, project, workflow, feature, [])
                 self.bridge._validation_shell = shell
                 self.app.processEvents()
                 child = shell._backend_bridge
+                if feature == 'circle_triangle':
+                    circle_entry.assert_called_once()
                 self.assertEqual(shell.current_mode(), mode)
                 self.assertTrue(child.offline_preview)
                 self.assertFalse(child.recognition.enabled)
