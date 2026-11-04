@@ -666,6 +666,8 @@ class FrameDatabaseController(QObject):
             return
         self.browsers[mode] = browser
         browser.properties.recognition.bind(self.bridge, mode)
+        pages = self.overlay._workspace(mode)._industrial.view_pages
+        pages.view_changed.connect(lambda view: self._page_selected(mode,view))
         browser.frame_selected.connect(lambda uid: self.select(mode, uid))
         browser.component_selected.connect(lambda uid, component: self.select(mode, uid, component))
         browser.checked_components_changed.connect(lambda _: self.overlay.changed(mode))
@@ -715,10 +717,24 @@ class FrameDatabaseController(QObject):
             workspace._industrial.restore_business_image()
         self._preview_modes.discard(mode)
 
-    def select(self, mode, uid, component='frame'):
+    def _page_selected(self, mode, view):
+        if mode != self.bridge._current_mode or view not in ('2d','joint'):
+            return
+        displayed = self._displayed.get(mode)
+        if displayed is None or not self.bridge.can_change_workspace():
+            return
+        uid, frame, component = displayed
+        row = self.databases[mode].records.get(uid)
+        if row is not None and row.kind == 'raw' and frame.image_np is None:
+            self.select(mode,uid,'image',follow_view=False)
+
+    def select(self, mode, uid, component='frame', *, follow_view=True):
+        requested_component = component
         bridge = self.bridge
         if self.overlay.active(mode) and component != 'image':
             if component == 'cloud' or self.databases[mode].records[uid].kind == 'result':
+                pages = getattr(self.bridge.shell._stack.currentWidget()._industrial,'view_pages',None)
+                if pages is not None and component == 'cloud':pages.set_view('3d')
                 return
             component = 'image'
         if not bridge.can_change_workspace():
@@ -735,10 +751,10 @@ class FrameDatabaseController(QObject):
                 bridge.shell.log('DB单帧读取失败：' + str(error), 'error')
                 return
             frame, cloud = result
-            self.display_frame(mode, uid, frame, cloud, component)
+            self.display_frame(mode, uid, frame, cloud, component, switch_view=follow_view and requested_component in ('cloud','image'))
         bridge._run_background(lambda: self.databases[mode].load_frame(uid, component), done, name='db_frame_preview')
 
-    def display_frame(self, mode, uid, frame, cloud, component='frame'):
+    def display_frame(self, mode, uid, frame, cloud, component='frame', *, switch_view=True):
         self._displayed[mode] = (uid, frame, component)
         self._preview_modes.add(mode)
         browser = self.browsers.get(mode)
@@ -757,10 +773,13 @@ class FrameDatabaseController(QObject):
             viewer.set_cloud_markers(display.cloud_points()
                                     if self.databases[mode].records[uid].kind == 'raw' else [])
             viewer.reset_view()
-        if component == 'cloud' or self.databases[mode].records[uid].kind == 'result':
-            workspace._industrial.show_database_result()
+        if self.databases[mode].records[uid].kind == 'result':
+            workspace._industrial.show_database_result(clear_image=True)
         else:
             workspace._industrial.show_database_image(frame)
+        pages = getattr(workspace._industrial,'view_pages',None)
+        if pages is not None and switch_view and component in ('cloud','image'):
+            pages.set_view('2d' if component == 'image' else '3d')
         record = self.databases[mode].records[uid]
         hint = (f'正在查看：{record.logical_name} · {record.points:,} 个有效点' if record.kind == 'result' else
                 f'正在查看：原始帧 {record.frame_id:03d} · {record.points:,} 个槽位（含无效深度）')

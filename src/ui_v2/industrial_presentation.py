@@ -193,7 +193,7 @@ class IndustrialPresentation:
         self._business_marker_image = None
         self._database_result = False
         self.grid = None
-        self._multi_view = 'joint'
+        self._multi_view = '3d'
         self._view_before_focus = None
         if mode == 'multi_cam':
             result_content = QWidget()
@@ -286,6 +286,7 @@ class IndustrialPresentation:
             preview_header.addStretch(1)
             preview_header.addWidget(self.preview_all)
             preview_header.addWidget(self.preview_stop)
+            preview_header.addWidget(self.all_cameras_button)
             preview_layout.addLayout(preview_header)
             self.fill_button = QToolButton()
             self.fill_button.setObjectName('previewCrop')
@@ -336,6 +337,22 @@ class IndustrialPresentation:
                     self._mount(workspace._left_panel, self.controls)
                     self.controls.addStretch(1)
                 self._mount(workspace._preview_panel, preview)
+        # A single shared viewport owns the two persistent views in every mode.
+        from ui_common.multimodal_viewport import MultimodalViewport
+        image_content = self.preview_panel if mode == 'multi_cam' else self.inspector
+        if mode == 'multi_cam':
+            self.preview_panel.setMinimumSize(0,0)
+            self.preview_panel.setMaximumSize(16777215,16777215)
+            self.preview_toggle.hide()
+        else:
+            self.inspector.set_embedded(True)
+        self.view_pages = MultimodalViewport(base,image_content)
+        stage.addWidget(self.view_pages,1)
+        self.viewport.hide()
+        if self.grid:self.grid.hide()
+        self.view_pages.view_changed.connect(self._page_changed)
+        if mode == 'multi_cam':
+            workspace.card_preview_toggled.connect(self._card_preview_view)
         self.stack.addWidget(self.surface)
         self.stack.setCurrentWidget(self.classic)
 
@@ -396,6 +413,11 @@ class IndustrialPresentation:
                 self.inspector.hide()
             self.stack.setCurrentWidget(self.classic)
         self.active = enabled
+        if enabled:
+            self.viewport.hide()
+            if self.grid:self.grid.hide()
+            self.view_pages.show()
+            self.view_pages.set_view(self.view_pages.current_view())
         if self.mode == 'multi_cam' and enabled:
             self.workspace.refresh_marker_pair()
         if self.mode == 'multi_cam':
@@ -419,6 +441,18 @@ class IndustrialPresentation:
             if self.mode == 'mobile_chain':
                 self._mobile_preview_toggled(self.workspace.is_preview_enabled())
 
+    def _card_preview_view(self, camera_id, enabled):
+        if not self.active:return
+        if enabled:self.view_pages.set_view('2d')
+        self.view_pages.set_context(('实时取景' if enabled else '当前帧')+f' · {camera_id}')
+
+    def _page_changed(self, view):
+        if self.mode == 'multi_cam':
+            self._multi_view=view
+            self.workspace._camera_grid.show()
+            self.workspace._viewer.show()
+        if self.inspector:self.inspector.show()
+
     def _bind_canvas(self, canvas):
         if self.active:
             self.inspector.bind_viewport(canvas)
@@ -430,15 +464,9 @@ class IndustrialPresentation:
         if self.overlay:
             self.overlay.setVisible(False if self.inspector else not enabled)
         if self.inspector:
-            self.inspector.setVisible(not enabled and not self._database_result)
-        if self.mode == 'multi_cam':
-            self.view_bar.hide()
-            if enabled:
-                self.preview_panel.hide()
-                self.workspace._camera_grid.hide()
-                self.workspace._viewer.show()
-            else:
-                self.set_multi_view(self._multi_view, resize=False)
+            self.inspector.setVisible(True)
+        if hasattr(self,'view_pages'):
+            self.view_pages.set_view(self.view_pages.current_view())
 
     def _preview_frame(self, pixmap):
         if self.inspector:
@@ -453,11 +481,17 @@ class IndustrialPresentation:
             return
         self._database_result = False
         self.workspace._viewer.set_maximized(False)
+        self.view_pages.set_view('2d')
         self.inspector.collapse.setChecked(False)
         self.inspector.show()
         self.inspector.raise_()
 
     def set_multi_view(self, view, *, resize=True):
+        if hasattr(self,'view_pages'):
+            if self.mode == 'multi_cam' and view in ('2d','joint','3d'):
+                self._multi_view=view
+                self.view_pages.set_view(view)
+            return
         if self.mode != 'multi_cam' or view not in ('2d', 'joint', '3d'):
             return
         self._multi_view = view
@@ -500,6 +534,7 @@ class IndustrialPresentation:
                 card._thumb.set_fill(enabled)
 
     def _size_preview(self):
+        if hasattr(self,'view_pages'):return
         if not hasattr(self, 'preview_panel') or self._multi_view == '2d':
             return
         canvas = getattr(self.workspace._viewer.viewer(), 'canvas', None)
@@ -532,6 +567,8 @@ class IndustrialPresentation:
         # Drive the production buttons, preserving backend permission checks.
         if enabled:
             self.restore_business_image()
+            self.view_pages.set_view('2d')
+            self.view_pages.set_context('实时取景 · 全部相机')
         for card in self.workspace._camera_grid._cards.values():
             if card._btn_preview.isEnabled():
                 card._btn_preview.setChecked(enabled)
@@ -574,6 +611,7 @@ class IndustrialPresentation:
         self._business_marker_image = ((image, markers, reference, accepted),
                                        dict(frame_id=frame_id, reference_id=reference_id, **recognition))
         if self.inspector:
+            self.view_pages.set_context(('实时取景' if self.mode == 'mobile_chain' and self.workspace.is_preview_enabled() else '采集帧')+f' · {frame_id}')
             self.inspector.set_frame(image, markers or [], frame_id=frame_id,
                 reference_id=reference_id if reference is not None else None,
                 reference_markers=reference, registration_accepted=accepted,
@@ -581,10 +619,10 @@ class IndustrialPresentation:
 
     def show_database_image(self, frame):
         self._database_result = False
+        self.view_pages.set_context(f'DB · {frame.camera_name} · 帧{frame.frame_id:03d}')
         if self.mode == 'multi_cam':
             self.workspace._camera_grid.show_database_frame(frame)
             self.all_cameras_button.setEnabled(False)
-            self.set_multi_view('joint')
             return
         self.inspector.set_frame(frame.image_np, frame.markers_all or frame.markers,
             frame_id=f'DB原始帧 {frame.frame_id:03d}', current_visible=False,
@@ -593,15 +631,17 @@ class IndustrialPresentation:
         self.inspector.show()
         self.inspector.raise_()
 
-    def show_database_result(self):
+    def show_database_result(self, *, clear_image=False):
         self._database_result = True
+        if not clear_image:return
         if self.mode == 'multi_cam':
             self.workspace._camera_grid.show_database_frame(None)
             self._size_preview()
-            if self._multi_view == '2d':
-                self.set_multi_view('joint')
+            self.view_pages.set_context('当前为点云结果，无关联2D图像')
         elif self.inspector:
-            self.inspector.hide()
+            self.view_pages.set_context('当前为点云结果，无关联2D图像')
+            self.inspector.set_frame(None,[],current_visible=False)
+            self.inspector.show()
 
     def restore_business_image(self):
         self._database_result = False

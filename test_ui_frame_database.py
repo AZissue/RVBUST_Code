@@ -106,6 +106,8 @@ class FrameBrowserTests(unittest.TestCase):
         self.assertIs(viewer._merged, merged)
         grid = self.win.workspace_multi().camera_grid()
         self.assertEqual(grid._database_card.current_frame().image_np.shape[1], 2)
+        self.win.workspace_multi()._industrial.view_pages.set_view('joint')
+        self.app.processEvents()
         self.assertTrue(grid._database_card.isVisible())
         self.assertIsNone(self.win.workspace_multi()._industrial.inspector)
         self.win._industrial_ribbon.commands[('multi_cam', 'restore')].click()
@@ -173,7 +175,7 @@ class FrameBrowserTests(unittest.TestCase):
         cloud_item = self.browser._component_items[(first, 'cloud')]
         self.browser.tree.setCurrentItem(cloud_item)
         self.wait(lambda: viewer._database_cloud is not None)
-        self.assertIsNone(grid._database_card)
+        self.assertEqual(self.win.workspace_multi()._industrial.view_pages.current_view(),'3d')
         original_cloud = viewer._database_cloud
         canvas = viewer.viewer().canvas
         canvas.zoom = 2.

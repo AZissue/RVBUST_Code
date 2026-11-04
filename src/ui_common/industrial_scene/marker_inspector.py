@@ -34,6 +34,24 @@ class MarkerImage(QWidget):
         self.image = QImage()
         self.display = MarkerDisplay((), frozenset(), frozenset(), False)
         self.setFixedHeight(175)
+        self.zoom = 1.0
+        self.pan = QPointF()
+        self._drag = None
+
+    def wheelEvent(self,event):
+        self.zoom=max(.2,min(20,self.zoom*(1.15 if event.angleDelta().y()>0 else 1/1.15)))
+        self.update();event.accept()
+
+    def mousePressEvent(self,event):
+        if event.button()==Qt.LeftButton:self._drag=event.position()
+
+    def mouseMoveEvent(self,event):
+        if self._drag is not None:
+            self.pan+=event.position()-self._drag;self._drag=event.position();self.update()
+
+    def mouseReleaseEvent(self,event):self._drag=None
+    def mouseDoubleClickEvent(self,event):
+        self.zoom=1.;self.pan=QPointF();self.update()
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -42,9 +60,9 @@ class MarkerImage(QWidget):
             painter.setPen(QColor('#aaaaaa'))
             painter.drawText(self.rect(), Qt.AlignCenter, '未关联当前帧2D图像')
             return
-        scale = min(self.width()/self.image.width(), self.height()/self.image.height())
+        scale = min(self.width()/self.image.width(), self.height()/self.image.height())*self.zoom
         width, height = self.image.width()*scale, self.image.height()*scale
-        x, y = (self.width()-width)/2, (self.height()-height)/2
+        x, y = (self.width()-width)/2+self.pan.x(), (self.height()-height)/2+self.pan.y()
         painter.setRenderHint(QPainter.SmoothPixmapTransform)
         painter.drawImage(QRectF(x, y, width, height), self.image)
         painter.setRenderHint(QPainter.Antialiasing)
@@ -155,7 +173,20 @@ class MarkerInspector(QFrame):
         self.adjustSize()
         self._position()
 
+    def set_embedded(self,enabled):
+        self.embedded=enabled
+        if enabled:
+            self.setMinimumSize(0,0);self.setMaximumSize(16777215,16777215)
+            self.collapse.hide();self.body.show()
+            self.image_view.setMinimumHeight(120);self.image_view.setMaximumHeight(16777215)
+            self.body.layout().setStretch(0,1)
+            self.layout().setStretch(1,1)
+        self._position()
+
     def _position(self):
+        if getattr(self,'embedded',False):
+            self.world_overlay.setGeometry(self.viewport.rect())
+            return
         self.setFixedWidth(max(230, min(340, self.viewport.width()-24)))
         compact = self.viewport.height() < 420
         self.image_view.setFixedHeight(max(24, min(90, self.viewport.height()-135)) if compact else 175)
@@ -180,7 +211,8 @@ class MarkerInspector(QFrame):
         self.viewport.removeEventFilter(self)
         self.viewport.view_changed.disconnect(self.world_overlay.update)
         self.viewport = viewport
-        self.setParent(viewport)
+        if not getattr(self,'embedded',False):
+            self.setParent(viewport)
         self.world_overlay.setParent(viewport)
         self.world_overlay.viewport = viewport
         viewport.installEventFilter(self)
