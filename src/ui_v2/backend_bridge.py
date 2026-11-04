@@ -2628,7 +2628,7 @@ class BackendBridge(QObject):
             import traceback
             name = traceback.extract_stack()[-2].name
         project_task = name.startswith('project_')
-        inspection = name in ('calibration_inspection', 'capture_parameters', 'device_disconnect', 'recognition_parameters', 'device_status')
+        inspection = name in ('calibration_inspection', 'capture_parameters', 'device_disconnect', 'recognition_parameters', 'device_status', 'robot_2d_preview')
         if self.shell._presentation == 'industrial' and not project_task and not inspection:
             self.projects.prepare(self._current_mode)
         if name not in ('offline_preview', 'db_frame_preview', 'db_open_project', 'db_mutation') and not project_task and not inspection and self.shell._presentation == 'industrial':

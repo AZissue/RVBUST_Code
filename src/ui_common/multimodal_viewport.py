@@ -15,6 +15,9 @@ class MultimodalViewport(QWidget):
             button.setStyleSheet('QToolButton {padding:5px 14px;background:#292c30;border:1px solid #41454a;color:#cccccc;} QToolButton:checked {color:#ffffff;background:#513031;border-bottom:2px solid #d12d30;}')
             button.clicked.connect(lambda checked=False,k=key:self.set_view(k))
             group.addButton(button);row.addWidget(button);self.buttons[key]=button
+        self.preview_button=QToolButton();self.preview_button.setText('2D预览')
+        self.preview_button.setToolTip('在当前窗口预览相机2D画面')
+        row.addWidget(self.preview_button)
         row.addStretch();self.context=QLabel('当前帧');self.context.setStyleSheet('color:#b0b6bd;');row.addWidget(self.context)
         root.addWidget(self.bar)
         self.content=QWidget()

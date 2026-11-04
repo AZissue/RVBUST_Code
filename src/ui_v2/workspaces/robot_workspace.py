@@ -7,7 +7,7 @@ from typing import List, Optional
 import numpy as np
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QFileDialog, QFrame, QGroupBox, QHBoxLayout, QLabel, QScrollArea,
+    QFileDialog, QFrame, QPushButton, QGroupBox, QHBoxLayout, QLabel, QScrollArea,
     QSizePolicy, QSplitter, QVBoxLayout, QWidget,
 )
 
@@ -71,6 +71,9 @@ class RobotWorkspace(QWidget):
         preview_layout.setContentsMargins(6, 12, 6, 6)
         self.preview_2d_label = self._components.create_preview(ratio=4.0 / 3.0)
         self.preview_2d_label.setMinimumSize(300, 220)
+        self.btn_preview_2d = QPushButton('2D预览')
+        self.btn_preview_2d.clicked.connect(self.on_preview_2d)
+        preview_layout.addWidget(self.btn_preview_2d)
         preview_layout.addWidget(self.preview_2d_label)
         self.lbl_camera = QLabel('未连接相机；离线模式使用项目原始帧')
         self.lbl_camera.setWordWrap(True)
@@ -158,6 +161,7 @@ class RobotWorkspace(QWidget):
         return 'matrix_loaded'
 
     def _refresh_actions(self):
+        self.btn_preview_2d.setEnabled(self._can_modify() and bool(self._devices) and not self.offline_preview)
         handeye = self.workflow.handeye
         pose_ready = self.workflow.pose_source is not None
         frames = self.workflow.get_frame_count()
@@ -333,6 +337,36 @@ class RobotWorkspace(QWidget):
         self.panel.set_pose_status(message)
         self._log(message, 'success' if ok else 'error')
         self._refresh_actions()
+
+    def on_preview_2d(self):
+        if not self.btn_preview_2d.isEnabled() or not self._can_modify():
+            return
+        manager = self.workflow.camera_manager
+        connected = manager.get_connected_ids() if manager is not None else []
+        if not connected:
+            self._log('没有已连接相机，无法预览', 'warn')
+            return
+        if self._background_runner is None:
+            self._log('后台采集服务未就绪', 'warn')
+            return
+        camera_id = connected[0]
+        token = self._generation
+        self._busy = True
+        self._refresh_actions()
+        def done(frame, error):
+            if token != self._generation:
+                return
+            self._busy = False
+            if error or frame is None or frame.image_np is None:
+                self._log(f'2D预览失败：{error or "未取得图像"}', 'error')
+            else:
+                self._display_2d(frame.image_np)
+            self._refresh_actions()
+        try:
+            self._background_runner(lambda: manager.capture_2d_preview(camera_id),
+                                    done, name='robot_2d_preview')
+        except Exception as exc:
+            done(None, exc)
 
     def on_capture(self):
         if (not self._can_modify() or self.workflow.handeye is None

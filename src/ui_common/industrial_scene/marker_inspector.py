@@ -152,7 +152,7 @@ class MarkerInspector(QFrame):
         self.ids.setMaximumHeight(67)
         content.addWidget(self.ids)
         buttons = QHBoxLayout()
-        self.details_button = QPushButton('编码圆数据')
+        self.details_button = QPushButton('标记物数据')
         self.details_button.clicked.connect(self.show_details)
         buttons.addWidget(self.details_button)
         if load_callback is not None:
@@ -237,7 +237,7 @@ class MarkerInspector(QFrame):
         self.image_view.update()
         self.is_board = marker_type in ('asymmetric_grid', 'calib_board')
         marker_name = '非对称圆板' if self.is_board else '编码圆'
-        self.details_button.setText('标定板圆心数据' if self.is_board else '编码圆数据')
+        self.details_button.setText('标记物数据')
         self.title.setText(f'当前帧 {frame_id if frame_id is not None else "—"} · {marker_name}')
         self.counts.setText(f'<span style="color:{GREEN}">● 绿 {self.display.green_count}</span>　'
                             f'<span style="color:{RED}">● 红 {self.display.red_count}</span>　'

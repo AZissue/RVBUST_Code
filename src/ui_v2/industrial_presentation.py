@@ -9,6 +9,34 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QStackedLayout, QSplitter, QScrollArea, QGroupBox, QLabel, QToolButton, QButtonGroup, QComboBox, QSizePolicy, QLayout)
 
 
+class _PreviewAction(QObject):
+    """Mirror production preview permissions and state into the viewport toolbar."""
+    def __init__(self, pages, source):
+        super().__init__(pages)
+        self.pages, self.source = pages, source
+        source.installEventFilter(self)
+        source.toggled.connect(self.sync)
+        pages.preview_button.clicked.connect(self.trigger)
+        self.sync()
+
+    def sync(self, *_):
+        button = self.pages.preview_button
+        button.setEnabled(self.source.isEnabled())
+        button.setText('停止2D预览' if self.source.isCheckable() and self.source.isChecked() else '2D预览')
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.EnabledChange:
+            self.sync()
+        return False
+
+    def trigger(self):
+        if not self.source.isEnabled():
+            return
+        self.pages.set_view('2d')
+        self.source.click()
+        self.sync()
+
+
 class _Viewport(QWidget):
     view_changed = Signal()
 
@@ -348,6 +376,10 @@ class IndustrialPresentation:
             self.inspector.set_embedded(True)
         self.view_pages = MultimodalViewport(base,image_content)
         stage.addWidget(self.view_pages,1)
+        preview_source = (workspace._btn_scan_preview if mode == 'multi_cam' else
+                          workspace._btn_preview if mode == 'mobile_chain' else
+                          workspace.btn_preview_2d)
+        self._preview_action = _PreviewAction(self.view_pages, preview_source)
         self.viewport.hide()
         if self.grid:self.grid.hide()
         self.view_pages.view_changed.connect(self._page_changed)
