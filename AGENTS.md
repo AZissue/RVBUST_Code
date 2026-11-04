@@ -1,8 +1,12 @@
 # AGENTS.md — 手眼标定数据收集助手（项目规则，每次会话自动加载）
 
 > 本文件只放稳定不变的信息；详细状态/计划/需求按需读取下方索引，禁止一次全读。
-> 双工作区：源码真源 = `AICode/handeye-tools`；运行/构建副本 = `D:\MyCode\MyHandEyeTools`。
-> 修改先在 AICode 完成并构建+单测全绿，再同步到 D 工作区构建+单测。
+> 双工作区：源码真源 = `D:\MyCode\MyHandEyeTools`（2026-10-22 起）；
+> `C:\Users\rvbust\Documents\Codex\AICode\handeye-tools` 为同步镜像。
+> 修改先在 D 工作区完成并构建+单测全绿，再同步到 AICode 构建+单测。
+>
+> 工具独立工程：`D:\MyCode\MyTools`（独立仓库、纯 Qt、零 SDK）。测量类工具的
+> 迭代在那里做；主程序里的工具保留不动（2026-11-03 用户决定）。
 
 ## 项目一句话
 
@@ -23,8 +27,8 @@
   （或 D 工作区 `run.bat`）。
 - 构建后必查：`$LASTEXITCODE` 为 0、exe 时间戳已刷新；测试 exe 是 GUI 子系统，
   stdout 不可见，失败详情用 `-o <文件>,txt` 输出查看。
-- 同步：把改动文件（src/、tests/、CMakeLists.txt、文档）Copy-Item 到 D 工作区，
-  再构建+ctest。
+- 同步：把 D 工作区的改动文件（src/、tests/、CMakeLists.txt、文档）Copy-Item 到
+  AICode 镜像，再构建+ctest。
 
 ## 文档索引（按需读取，禁止一次全读）
 

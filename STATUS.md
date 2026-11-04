@@ -1,9 +1,38 @@
 # STATUS.md — 进度状态（每次会话结束必须更新）
 
-> 最后更新：2026-11-02（之三十七：测量帧 = 证据链与真件回放）
+> 最后更新：2026-11-04（之三十八：工具解耦为独立工程 MyTools）
 > 只保留「当前快照」，不积累历史；旧条目删除即可，git 历史里仍可追溯。
 
 ## ⏭ 交接块（新会话先读这里）
+
+- **2026-11-03/04（之三十八：工具解耦为独立工程 MyTools；主程序不动）**
+  - **用户决定**：测量工具的后续迭代不再放在主程序里做，而是把所有工具解耦成
+    独立工程、在新会话里单独开发。三项选择已由用户拍板：
+    ①位置 `D:\MyCode\MyTools`（与 D 工作区平级，独立 CMake/build/git）；
+    ②形态 = **独立 Qt 程序**（数据源 = 测量帧 / `.grid` / 图像 / PLY，不连相机与机器人）；
+    ③主程序里的工具**保留不动**。
+  - **本轮交付（在 `D:\MyCode\MyTools`，不在本仓库内）**：
+    - 新工程 Qt5/C++17，**零 SDK 依赖**（无 RVC / HandEyeSDK / 机器人库）；
+      CMake 自动部署 Qt 运行时，产物 `build\src\Release\MyTools.exe`。
+    - 纯逻辑原样解耦：`MeasureTools`、`MeasureMethods`、`MeasureFrame`、
+      `RobotDataFormats`、`PixelTo3DService`、`GeometryTools`、`TransformTools`、
+      `ToolInputParser`、`PointCloudUtils`、`FrameBuffer`、`PlyPointReader`。
+    - 工具：欧氏距离、像素→3D（离线）、坐标转换、机器人数据格式推算（方式 ①②），
+      以及 7 个测量页（含「保存/打开测量帧」）。
+    - 新写 `ui/FrameView.*`（左键拖框 ROI、滚轮缩放、右键平移）与
+      `ui/MeasureHost.*`（网格/图像/ROI/序列库、帧保存/打开）。
+    - 固定样例帧 `samples/plane_flat_200`（网格取自本仓库
+      `codex_testData/plane_flat.grid`），单测与人工验证共用；
+      `MyTools.exe <frame.json>` 可直接打开并自动复测。
+  - **刻意未包含**（README 已写明原因）：手眼标定、机器人控制/通信（需厂商 SDK
+    与硬件）、推算方式 ③（依赖标定结果）。测量帧格式不变，两边可互相打开。
+  - **验证**：MyTools Release 构建 exit 0、**155 个用例全绿**、空白启动与带样例帧
+    启动冒烟均正常；本仓库**源码未改动**，只更新文档。
+  - **文档**：`D:\MyCode\MyTools\{README.md,AGENTS.md}` 已写好构建命令、目录职责、
+    数据契约、代码约定与当前缺口（M-01/M-04/M-05/M-07…）。
+    MyTools 本地提交：`37650b0`（解耦）、`fb8286e`（项目说明）、`22927ab`（命令行开帧）。
+  - **下一步**：在 `D:\MyCode\MyTools` **另开会话**迭代测量工具；主程序保持现状，
+    3.0 主线仍等现场真件帧（M-02）后再做 M-04。**全部只本地提交，未推送。**
 
 - **2026-11-02（之三十七：测量帧 — 证据链与真件回放；3.0 测量收口开工）**
   - **背景**：用户要求优化测量工具，先提意见。结论：测量"能算"，但一次测量留不下
