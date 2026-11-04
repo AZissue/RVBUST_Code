@@ -34,7 +34,7 @@ class IndustrialTests(unittest.TestCase):
         self.win._dirty=False
         self.win.close(); self.win.deleteLater(); self.app.processEvents()
 
-    def test_eight_entries_keep_business_modes_and_restore_presentation(self):
+    def test_four_entries_keep_business_modes_and_restore_presentation(self):
         dlg=LauncherDialog()
         self.assertEqual(len(dlg._industrial_cards),4)
         spy=QSignalSpy(dlg.connect_requested)
@@ -57,7 +57,7 @@ class IndustrialTests(unittest.TestCase):
             for _, slot in actions:setattr(controller,slot,Mock())
         for view,actions in [(original[0],MULTI_ACTIONS),(original[1],MOBILE_ACTIONS),(self.win,SHELL_ACTIONS)]:
             connect_actions(view,controller,actions)
-        args={'capture_requested':(True,), 'detect_requested':('coded_circle',),
+        args={'calibration_topology_changed':('star',), 'capture_requested':(True,), 'detect_requested':('coded_circle',),
               'batch_scan_requested':(2,), 'reference_changed':('cam0',),'step_back_requested':(0,),
               'card_preview_toggled':('cam0',True), 'card_capture_requested':('cam0',),
               'card_detect_requested':('cam0',), 'preview_toggled':(True,),

@@ -120,6 +120,8 @@ class IndustrialPresentation:
         self.active = False
         self.mounts = []
         self._split_sizes = {}
+        # RETIRED classic layout retained as a shared-control container.
+        # Backup/dependency notes: archive/legacy_ui/2026-11-04/README.md.
         # Move the existing root intact; it remains the classic presentation.
         self.classic = QWidget()
         self.classic.setLayout(workspace.layout())

@@ -39,6 +39,18 @@ class LauncherTests(unittest.TestCase):
         for checkbox in self.dialog._table._check_widgets:
             checkbox.setChecked(True)
 
+    def test_only_industrial_entries_and_legacy_restore_redirect(self):
+        from PySide6.QtWidgets import QLabel
+        dlg=self.dialog
+        self.assertEqual(dlg.selected_presentation(),'industrial')
+        self.assertEqual(len(dlg._industrial_cards),4)
+        self.assertIs(dlg._cards,dlg._industrial_cards)
+        self.assertFalse(hasattr(dlg,'card_multi'))
+        self.assertFalse(any('试用' in label.text() or '现有工作区' in label.text() for label in dlg.findChildren(QLabel)))
+        dlg.restore_state(dlg.MODE_TURNTABLE,[],'classic')
+        self.assertEqual(dlg.selected_presentation(),'industrial')
+        self.assertTrue(dlg._industrial_cards[dlg.MODE_TURNTABLE].is_checked())
+
     def test_selection_never_moves_cards_and_modes_keep_rules(self):
         dlg = self.dialog
         dlg.show(); self.app.processEvents()

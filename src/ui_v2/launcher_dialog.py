@@ -64,7 +64,7 @@ class LauncherDialog(QDialog):
         self._connecting = False
 
         self._mode = self.MODE_MULTI_CAM
-        self._presentation = 'classic'
+        self._presentation = 'industrial'
         self._setup_ui()
         self.log_summary.attach_logger(logger)
         self.finished.connect(lambda *_: self.log_summary.detach_loggers())
@@ -90,38 +90,21 @@ class LauncherDialog(QDialog):
         left = QVBoxLayout(self._mode_choices)
         left.setContentsMargins(0, 0, 0, 0)
         left.setSpacing(8)
-        left.addWidget(QLabel('现有工作区', objectName='launcherHint'))
-        self.card_multi = ModeCard(
-            "camera_multi", "多相机外参标定",
-            "多台相机固定安装，设置参考相机，标定外参后进行固定工位拼接。")
-        self.card_mobile = ModeCard(
-            "chain", "单相机移动链式拼接",
-            "一台相机移动拍摄，检测编码圆，逐帧配准并累积点云。")
-        self.card_turntable = ModeCard(
-            "loop", "转台拼接",
-            "先完成 frame0 / frame1 转台标定，再按固定角度旋转、采集与拼接。")
-        self._cards = {
-            self.MODE_MULTI_CAM: self.card_multi,
-            self.MODE_MOBILE_CHAIN: self.card_mobile,
-            self.MODE_TURNTABLE: self.card_turntable,
-        }
-        for mode, card in self._cards.items():
-            card.setFixedHeight(100)
-            card.clicked.connect(lambda key=mode: self._set_mode(key))
-            left.addWidget(card)
-        left.addWidget(QLabel('新版工作区 · 试用', objectName='launcherHint'))
+        # Classic launcher entries retired; source snapshot: archive/legacy_ui/2026-11-04/.
+        left.addWidget(QLabel('工作区', objectName='launcherHint'))
         self._industrial_cards = {}
         for mode, title, description, icon in (
-            (self.MODE_MULTI_CAM, '多相机外参标定 · 新版', '多路相机画面与3D视图；沿用正式标定、质量门禁及扫描流程。', 'camera_multi'),
-            (self.MODE_MOBILE_CHAIN, '单相机移动链式拼接 · 新版', '大型3D视图、右上角2D、左侧机位及底部日志；真实采集接线。', 'chain'),
-            (self.MODE_TURNTABLE, '转台拼接 · 新版', '左侧标定及步进采集，右上角2D；沿用正式转台会话与保存。', 'loop'),
-            (self.MODE_ROBOT, '机器人手眼拼接 · 新版', '手眼矩阵与机器人绝对位姿驱动点云转基座系；支持手动和CSV位姿。', 'calibrate'),
+            (self.MODE_MULTI_CAM, '多相机外参标定', '多路相机画面与3D视图；沿用正式标定、质量门禁及扫描流程。', 'camera_multi'),
+            (self.MODE_MOBILE_CHAIN, '单相机移动链式拼接', '大型3D视图、右上角2D、左侧机位及底部日志；真实采集接线。', 'chain'),
+            (self.MODE_TURNTABLE, '转台拼接', '左侧标定及步进采集，右上角2D；沿用正式转台会话与保存。', 'loop'),
+            (self.MODE_ROBOT, '机器人手眼拼接', '手眼矩阵与机器人绝对位姿驱动点云转基座系；支持手动和CSV位姿。', 'calibrate'),
         ):
             card = ModeCard(icon, title, description)
             card.setFixedHeight(100)
             card.clicked.connect(lambda key=mode: self._set_mode(key, 'industrial'))
             self._industrial_cards[mode] = card
             left.addWidget(card)
+        self._cards = self._industrial_cards  # Historical card lookup now refers to industrial only.
         left.addStretch(1)
         scroll.setWidget(self._mode_choices)
         main.addWidget(scroll, 3)
@@ -239,18 +222,18 @@ class LauncherDialog(QDialog):
                       geo.y() + (geo.height() - self.height()) // 2)
 
     # ------------------------------------------------------------ 模式联动
-    def _set_mode(self, mode: str, presentation='classic'):
+    def _set_mode(self, mode: str, presentation='industrial'):
         """切换模式：更新卡片态 / 说明 / 数量提示，并清空设备多选。"""
         if self._is_busy() or mode not in self.MODE_NAMES or presentation not in ('classic', 'industrial'):
             return
+        # Restore requests from the retired launcher must not reopen classic UI.
+        presentation = 'industrial'
         self._mode = mode
         self._presentation = presentation
-        self._mode_title.setText(self.MODE_NAMES[mode] + (' · 新版' if presentation == 'industrial' else ''))
-        for key, card in self._cards.items():
-            card.setChecked(key == mode and presentation == 'classic')
+        self._mode_title.setText(self.MODE_NAMES[mode])
         for key, card in self._industrial_cards.items():
-            card.setChecked(key == mode and presentation == 'industrial')
-        selected_card = (self._industrial_cards if presentation == 'industrial' else self._cards)[mode]
+            card.setChecked(key == mode)
+        selected_card = self._industrial_cards[mode]
         QTimer.singleShot(0, lambda: self._entry_scroll.ensureWidgetVisible(selected_card, 0, 8))
 
         if mode == self.MODE_MULTI_CAM:
@@ -427,7 +410,7 @@ class LauncherDialog(QDialog):
         super().closeEvent(event)
 
     # ------------------------------------------------------------ 回填（设备管理重开时用）
-    def restore_state(self, mode: str, devices: List[DeviceInfo], presentation='classic'):
+    def restore_state(self, mode: str, devices: List[DeviceInfo], presentation='industrial'):
         """回填当前模式与已连接设备勾选状态。"""
         self._set_mode(mode, presentation)
         self.set_devices(devices)
