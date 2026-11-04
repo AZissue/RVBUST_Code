@@ -425,6 +425,7 @@ class PostprocessWindow(QDialog):
             close=lambda: self.overlay._confirm(),
             back=lambda: self.overlay.remove_last_vertex(),
             delete=lambda: self.apply_segment(self.segment_tools.buttons['inside'].isChecked()),
+            color_filter=self.open_color_filter,
             cancel=self._invalidate_polygon))
         self.overlay.changed.connect(self._refresh_segment_tools)
         canvas.view_changed.connect(self._selection_view_changed)
@@ -442,7 +443,12 @@ class PostprocessWindow(QDialog):
         self.actions['select'].setChecked(self.overlay.active)
         self.segment_tools.refresh(ready=ready,
             available=available, overlay=self.overlay,
-            staged=self._segment is not None)
+            staged=self._segment is not None,
+            color_available=bool(self.COLOR_VALIDATION or getattr(self.bridge, 'validation_root', None)))
+        self.segment_tools.buttons['color_filter'].setEnabled(
+            ready and available and self._segment is not None
+            and bool(self.COLOR_VALIDATION or getattr(self.bridge, 'validation_root', None))
+            and self._clouds[self._active_uid].colors is not None)
 
     def _selection_view_changed(self):
         if self.overlay.active or self._segment is not None:
@@ -1140,6 +1146,78 @@ class PostprocessWindow(QDialog):
             self._refresh_segment_tools()
         self._run(lambda: polygon_crop_mask(layer.points, polygon, **view), done,
                   preserve_selection=True)
+
+    def _color_filter_gate(self, segment):
+        return (bool(self.COLOR_VALIDATION or getattr(self.bridge, 'validation_root', None))
+                and self._parameter_gate() and segment is not None and self._segment is segment
+                and self._clouds.get(segment[0]) is segment[1]
+                and segment[1].colors is not None
+                and segment[0] in self.database.records
+                and self.database.records[segment[0]].status != STALE_RESULT
+                and segment[1].origins == ((segment[0], self.database.records[segment[0]].revision),)
+                and all(np.allclose(self._view()[key], value) for key, value in segment[3].items()))
+
+    def open_color_filter(self):
+        segment = self._segment
+        if not self._color_filter_gate(segment):
+            self._set_status('请在实验副本中选中有原始RGB颜色的点云，完成多边形框选后再过滤。')
+            return
+        from core.postprocess.color_filter import preview_data
+        from .color_filter_dialog import ColorFilterDialog
+        uid, source, mask, view = segment
+        def prepared(data):
+            def show_dialog():
+                if self._closed or self._segment is not segment:
+                    return
+                if self._worker is not None:
+                    QTimer.singleShot(10, show_dialog)
+                    return
+                if not self._color_filter_gate(segment):
+                    return
+                dialog = ColorFilterDialog(data, getattr(self, '_color_filter_state', None), self)
+                try:
+                    accepted = dialog.exec() == QDialog.Accepted
+                    if self._closed:
+                        return
+                    self._color_filter_state = dialog.parameters()
+                    if accepted:
+                        self.apply_color_filter(self._color_filter_state, segment)
+                finally:
+                    from shiboken6 import isValid
+                    if isValid(dialog):
+                        dialog.deleteLater()
+            QTimer.singleShot(0, show_dialog)
+        self._run(lambda: preview_data(source, mask, view), prepared,
+                  kind='probe', preserve_selection=True)
+        self._set_status('正在统计框内全部原始点的颜色；不会修改点云。')
+
+    def apply_color_filter(self, parameters, segment=None):
+        segment = segment if segment is not None else self._segment
+        if not self._color_filter_gate(segment):
+            self._set_status('框选、来源或视角已变化，请重新框选后再过滤。')
+            return
+        from core.postprocess.color_filter import threshold_rejection
+        uid, source, mask, view = segment
+        report = []
+        def work():
+            rejected = threshold_rejection(source.colors, mask, **parameters)
+            keep = ~rejected
+            if not rejected.any():
+                raise ValueError('框内没有超出阈值的点，未生成结果')
+            if not keep.any():
+                raise ValueError('保留结果为空，请缩小框选或调整阈值')
+            report.append(f'框内颜色过滤：剔除 {int(rejected.sum()):,} 点；'
+                f'保留 {int(keep.sum()):,} 点；框外全部保留。'
+                f'通道 {parameters["metric"]}，保留范围 [{parameters["low"]}, {parameters["high"]}]。')
+            def build(selected, name, role):
+                return CloudLayer(source.name + name, source.points[selected], source.colors[selected],
+                    source=source.source, origins=source.origins, output_role=role,
+                    source_transforms=source.source_transforms,
+                    registration_transform=source.registration_transform,
+                    parent_transforms=source.parent_transforms, intermediate_of=source.intermediate_of)
+            return [build(keep, ' · 颜色过滤保留', 'color_kept'),
+                    build(rejected, ' · 阈值剔除', 'color_rejected')]
+        self._commit_operation(work, diagnostic=lambda: '\n'.join(report))
 
     def apply_segment(self, keep_inside):
         if self._worker is not None or self._closed or not self.bridge.can_change_workspace():

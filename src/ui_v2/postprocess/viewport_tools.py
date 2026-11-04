@@ -25,6 +25,7 @@ class SegmentationToolbar(QFrame):
                 ('inside', '保留框内：快捷删除框外；框外仍保存为DB分支', 'crop_inside'),
                 ('outside', '保留框外：快捷删除框内；框内仍保存为DB分支', 'crop_outside'),
                 ('delete', '快捷删除：保留框内时删除框外，保留框外时删除框内；原始数据保留', 'trash'),
+                ('color_filter', '颜色过滤：仅剔除框内超出颜色阈值的点，框外保留', 'color_palette'),
                 ('cancel', '取消框选（Esc）', 'close')):
             button = QToolButton()
             button.setIcon(icon(glyph, '#dddddd', 21))
@@ -32,7 +33,7 @@ class SegmentationToolbar(QFrame):
             button.setFixedSize(30, 30)
             button.setToolTip(title)
             button.setAccessibleName(title.split('：')[0].split('（')[0])
-            if key in ('inside', 'outside', 'delete'):
+            if key in ('inside', 'outside', 'delete', 'color_filter'):
                 button.setText(title.split('：')[0])
                 button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
                 button.setFixedWidth(96)
@@ -59,11 +60,15 @@ class SegmentationToolbar(QFrame):
             self._position()
         return False
 
-    def refresh(self, *, ready, available, overlay, staged):
+    def refresh(self, *, ready, available, overlay, staged, color_available=False):
         self.buttons['close'].setEnabled(ready and overlay.active and not overlay.has_mask and overlay.vertex_count >= 3)
         self.buttons['back'].setEnabled(ready and overlay.active and not overlay.has_mask and overlay.vertex_count > 0)
         for key in ('inside', 'outside'):
             self.buttons[key].setEnabled(ready and available)
         self.buttons['delete'].setEnabled(ready and staged and available)
+        self.buttons['color_filter'].setVisible(color_available)
+        self.buttons['color_filter'].setEnabled(ready and staged and available and color_available)
+        self.adjustSize()
+        self._position()
         self.buttons['cancel'].setEnabled(overlay.active)
         self.raise_()

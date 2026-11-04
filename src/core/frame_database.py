@@ -408,7 +408,7 @@ class FrameDatabase:
         if not results:
             raise ValueError('没有结果可写入')
         output_roles = list(output_roles) if output_roles is not None else [''] * len(results)
-        if len(output_roles) != len(results) or any(role not in ('', 'inside', 'outside') for role in output_roles):
+        if len(output_roles) != len(results) or any(role not in ('', 'inside', 'outside', 'color_kept', 'color_rejected') for role in output_roles):
             raise ValueError('后处理输出角色无效')
         if per_source_transforms is not None and len(per_source_transforms) != len(results):
             raise ValueError('来源位姿数量不匹配')
@@ -566,7 +566,7 @@ class FrameDatabase:
         operations = data.get('operations', {})
         if (not isinstance(operations, dict) or any(
                 not isinstance(value, dict) or not isinstance(value.get('operation_id', ''), str)
-                or value.get('output_role', '') not in ('', 'inside', 'outside')
+                or value.get('output_role', '') not in ('', 'inside', 'outside', 'color_kept', 'color_rejected')
                 for value in operations.values())):
             raise ValueError('DB后处理分组格式无效')
         for uid, entry in removed.items():

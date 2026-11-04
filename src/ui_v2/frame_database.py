@@ -218,7 +218,8 @@ class FrameBrowser(QWidget):
             if postprocess or record.intermediate_of:
                 # A result is a real leaf; its frame parent is a UID-free UI container.
                 row.takeChild(0)
-                cloud_item.setText(0, {'inside': '框内点云 · PLY', 'outside': '框外点云 · PLY'}.get(record.output_role, '点云 · PLY'))
+                cloud_item.setText(0, {'inside': '框内点云 · PLY', 'outside': '框外点云 · PLY',
+                    'color_kept': '颜色过滤保留 · PLY', 'color_rejected': '阈值剔除 · PLY'}.get(record.output_role, '点云 · PLY'))
                 if record.intermediate_of:
                     cloud_item.setText(0, record.logical_name + ' · PLY')
                     cloud_item.setToolTip(0, row.toolTip(0))

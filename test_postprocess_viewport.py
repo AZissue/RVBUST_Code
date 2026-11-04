@@ -19,6 +19,14 @@ class ViewportTests(unittest.TestCase):
     finish = fixture.PostprocessTests.finish
     load_grid = fixture.PostprocessTests.load_grid
 
+    def use_color_validation_editor(self):
+        # Colour dialogs moved to prototype validation in v1.13.44.
+        self.editor.close()
+        from prototypes.industrial_pointcloud_postprocess.color_validation import ColorValidationWindow
+        self.editor = ColorValidationWindow(self.bridge, self.bridge._current_mode)
+        self.editor.show()
+        self.app.processEvents()
+
     def send_drag(self, target, button=Qt.MiddleButton):
         for kind, pos, pressed, buttons in (
                 (QEvent.MouseButtonPress, (100, 150), button, button),
@@ -77,6 +85,7 @@ class ViewportTests(unittest.TestCase):
         self.assertFalse(self.editor._closed)
 
     def test_top_parameters_and_pure_properties_at_both_sizes(self):
+        self.use_color_validation_editor()
         from PySide6.QtWidgets import QDialog, QGroupBox
         from PySide6.QtCore import QSignalBlocker
         raw, source, _ = self.load_grid()
@@ -155,6 +164,7 @@ class ViewportTests(unittest.TestCase):
         self.assertFalse(editor.actions['downsample'].isEnabled())
 
     def test_all_parameter_dialogs_cancel_escape_close_without_leaks_or_work(self):
+        self.use_color_validation_editor()
         from PySide6.QtCore import QTimer
         from PySide6.QtWidgets import QDialog, QToolButton
         from shiboken6 import isValid
