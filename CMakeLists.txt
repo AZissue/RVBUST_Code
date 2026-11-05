@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(HandEyeCalibrationTool VERSION 2.0.0 LANGUAGES CXX)
+project(HandEyeCalibrationTool VERSION 3.1.0 LANGUAGES CXX)
 
 # 2.0 正式包开关：测量方法还没通过现场验收，发布版把整个测量组从工具
 # 列表里隐藏（逻辑与页面仍编译，默认构建/单测不受影响）。

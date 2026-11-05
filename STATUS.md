@@ -1,9 +1,32 @@
 # STATUS.md — 进度状态（每次会话结束必须更新）
 
-> 最后更新：2026-11-04（之三十八：工具解耦为独立工程 MyTools）
+> 最后更新：2026-11-05（之三十九：3.1 正式包，测量工具隐藏）
 > 只保留「当前快照」，不积累历史；旧条目删除即可，git 历史里仍可追溯。
 
 ## ⏭ 交接块（新会话先读这里）
+
+- **2026-11-05（之三十九：3.1 正式包 — 主线保留、7 个测量工具隐藏）**
+  - **用户要求**：在当前主线上只把 7 个测量工具（平面度、高度段差、面面距离夹角、
+    3D 孔洞、包围盒、截面轮廓、重复性）隐去，然后打包成正式版 **3.1**。
+  - **做法（复用 2.0 的既有开关，不新造机制）**：
+    - `HANDEYE_HIDE_MEASUREMENT_TOOLS` 只在 `build-release` 打开（开发构建与
+      单测仍包含全部测量方法，功能不被删）；隐藏范围 = 左侧工具列表整组、
+      帮助里的「测量方法」章与入口文案。
+    - 版本号 `src/AppInfo.h` → `3.1`，根 CMake `project(... VERSION 3.1.0)`；
+      帮助「版本与更新记录」新增 3.1 条目（单测要求首条 == `AppInfo::version()`）。
+    - `README.md` 的发布版本、打包命令、顶栏示意图同步为 3.1。
+  - **验证**：
+    - `build`（隐藏 OFF）与 `build-release`（隐藏 ON）均构建 exit 0；
+      两处 `ctest` 各 3/3 通过（`unit_tests` / `measurement_truth` / `circle_truth`）。
+    - 发布 exe 内嵌 `edition: release package (measurement tools hidden)`；
+      包解压到临时目录启动正常，runtime 日志首行
+      `=== HandEyeCalibrationTool v3.1 runtime start ===`，第三行为上述 edition 行。
+    - 产物：`dist\HandEyeCalibrationTool_v3.1\`（128 个文件 / 231.6 MB）与
+      `dist\HandEyeCalibrationTool_v3.1.zip`（`dist/` 与 `build-release/` 均不入库）。
+  - **未做**：包内界面的最终人工确认（按惯例由用户执行；重点看「工具」列表
+    只有 6 项、帮助里没有「测量方法」章）。
+  - **下一步**：把包交给现场；测量工具继续在 `D:\MyCode\MyTools` 迭代，
+    验证通过后再决定是否并入主程序。**只本地提交，未推送。**
 
 - **2026-11-03/04（之三十八：工具解耦为独立工程 MyTools；主程序不动）**
   - **用户决定**：测量工具的后续迭代不再放在主程序里做，而是把所有工具解耦成

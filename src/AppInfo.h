@@ -14,7 +14,7 @@ namespace AppInfo {
 
 inline QString name() { return QStringLiteral("手眼标定数据收集助手"); }
 
-inline QString version() { return QStringLiteral("2.0"); }
+inline QString version() { return QStringLiteral("3.1"); }
 
 // 窗口标题 / 顶栏标题用的 "名字 V版本"。
 inline QString title()

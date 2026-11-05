@@ -2380,7 +2380,7 @@ void ToolsPanel::buildMeasurePages(QStackedWidget* stack)
 {
     m_firstMeasureRow = m_toolList->count();
 #ifdef HANDEYE_HIDE_MEASUREMENT_TOOLS
-    // 2.0 正式包：测量方法尚未通过现场验收，整组不进左侧列表。
+    // 正式包：测量方法尚未通过现场验收，整组不进左侧列表。
     // 页面与算法照常编译，默认构建/单测仍覆盖它们。
     Q_UNUSED(stack);
     return;

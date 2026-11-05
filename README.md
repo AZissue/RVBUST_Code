@@ -5,7 +5,7 @@
 存成 HandEyeManager 兼容的数据文件，外带测量、坐标转换、像素→3D、标定计算、
 机器人通信等辅助工具。以**绿色免安装包**交付现场。
 
-- 当前发布版本：**2.0**（版本号的唯一出处是 `src/AppInfo.h`，界面与标题都引用它）
+- 当前发布版本：**3.1**（版本号的唯一出处是 `src/AppInfo.h`，界面与标题都引用它）
 - 开发线：**3.0**（分支 `HandEyeTools-3.0`；范围与进度见 `reports/3.0-规划.md`）
 - 主程序：`build/src/Release/HandEyeCalibrationTool.exe`
 - 完整使用说明（含分章节的操作手册）：**程序内按 `F1`**，或点顶栏「帮助」
@@ -41,8 +41,8 @@ cmake -S . -B build-release -G "Visual Studio 18 2026" `
       -DHANDEYE_HIDE_MEASUREMENT_TOOLS=ON
 cmake --build build-release --config Release
 
-powershell -File pack_portable.ps1 -SourceDir build-release\src\Release -Version 2.0
-# 产出 dist\HandEyeCalibrationTool_v2.0\ 与同名 .zip，拷到目标机解压双击即用
+powershell -File pack_portable.ps1 -SourceDir build-release\src\Release -Version 3.1
+# 产出 dist\HandEyeCalibrationTool_v3.1\ 与同名 .zip，拷到目标机解压双击即用
 ```
 
 不带 `-DHANDEYE_HIDE_MEASUREMENT_TOOLS=ON` 的普通构建/单测仍包含全部 7 个
@@ -70,7 +70,7 @@ powershell -File pack_portable.ps1 -SourceDir build-release\src\Release -Version
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ TopNavBar  [手眼标定数据收集助手 V2.0]  [已采集 0/15 组数据 ▓░░░░]  ● 未连接   │
+│ TopNavBar  [手眼标定数据收集助手 V3.1]  [已采集 0/15 组数据 ▓░░░░]  ● 未连接   │
 │                                          [连接] [新建会话] [设置] [帮助]        │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ ModeSelector  [工具]  手眼模式：[眼在手外|眼在手上]                             │
