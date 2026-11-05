@@ -46,8 +46,9 @@ powershell -File pack_portable.ps1 -SourceDir build-release\src\Release -Version
 ```
 
 不带 `-DHANDEYE_HIDE_MEASUREMENT_TOOLS=ON` 的普通构建/单测仍包含全部 7 个
-测量方法；只有正式包隐藏它们（帮助正文也会同步不列出）。运行日志第二行
-区会出现 `edition: release package (measurement tools hidden)`。
+测量方法；只有正式包隐藏它们（帮助正文同步不列出，3D 视窗的「偏差着色」
+按钮也一并不创建）。运行日志第二行区会出现
+`edition: release package (measurement tools hidden)`。
 
 ---
 

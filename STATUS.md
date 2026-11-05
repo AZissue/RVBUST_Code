@@ -11,7 +11,8 @@
   - **做法（复用 2.0 的既有开关，不新造机制）**：
     - `HANDEYE_HIDE_MEASUREMENT_TOOLS` 只在 `build-release` 打开（开发构建与
       单测仍包含全部测量方法，功能不被删）；隐藏范围 = 左侧工具列表整组、
-      帮助里的「测量方法」章与入口文案。
+      帮助里的「测量方法」章与入口文案、3D 视窗的「偏差着色」按钮（第二轮
+      按用户要求补隐；没有测量页时它点了无效果）。
     - 版本号 `src/AppInfo.h` → `3.1`，根 CMake `project(... VERSION 3.1.0)`；
       帮助「版本与更新记录」新增 3.1 条目（单测要求首条 == `AppInfo::version()`）。
     - `README.md` 的发布版本、打包命令、顶栏示意图同步为 3.1。
@@ -19,10 +20,14 @@
     - `build`（隐藏 OFF）与 `build-release`（隐藏 ON）均构建 exit 0；
       两处 `ctest` 各 3/3 通过（`unit_tests` / `measurement_truth` / `circle_truth`）。
     - 发布 exe 内嵌 `edition: release package (measurement tools hidden)`；
-      包解压到临时目录启动正常，runtime 日志首行
+      按钮的专有 tooltip 在发布 exe 中不存在、开发 exe 中存在（证明「偏差着色」
+      未创建）。
+    - 包解压到临时目录启动正常，runtime 日志首行
       `=== HandEyeCalibrationTool v3.1 runtime start ===`，第三行为上述 edition 行。
     - 产物：`dist\HandEyeCalibrationTool_v3.1\`（128 个文件 / 231.6 MB）与
-      `dist\HandEyeCalibrationTool_v3.1.zip`（`dist/` 与 `build-release/` 均不入库）。
+      `dist\HandEyeCalibrationTool_v3.1.zip`；SHA-256
+      `583EA9DCFB814A7DE8537969480BD0970957C6B69FCD4DF6B3FDC306893C796A`
+      （`dist/` 与 `build-release/` 均不入库）。
   - **未做**：包内界面的最终人工确认（按惯例由用户执行；重点看「工具」列表
     只有 6 项、帮助里没有「测量方法」章）。
   - **下一步**：把包交给现场；测量工具继续在 `D:\MyCode\MyTools` 迭代，

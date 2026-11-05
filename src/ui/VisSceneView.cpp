@@ -688,6 +688,9 @@ void VisSceneView::setupToolbar()
     // colouring is computed by the tools panel, so the button only reports the
     // user's wish (deviationColoringToggled) and is answered by a re-published
     // snapshot — this view never reaches into the measurement code itself.
+#ifndef HANDEYE_HIDE_MEASUREMENT_TOOLS
+    // 正式包隐藏测量工具时这里也不建：没有测量页，按钮点了没有任何效果，
+    // 留着只会被当成故障。
     m_deviationButton = new GlassButton(m_containerWidget);
     m_deviationButton->setText(QStringLiteral("偏差着色"));
     m_deviationButton->setObjectName(QStringLiteral("vis_deviation_toggle"));
@@ -701,6 +704,7 @@ void VisSceneView::setupToolbar()
     m_deviationButton->setStyleSheet(overlayBtnStyle);
     QObject::connect(m_deviationButton, &QPushButton::toggled, this,
                      &VisSceneView::deviationColoringToggled);
+#endif
 
     // T-002 判据 1：原来那条「识别后可点击场景中的点选择填充」的视窗内提示
     // （m_pickHint）已删除——它改由 logRequested 进操作日志，见
@@ -709,7 +713,9 @@ void VisSceneView::setupToolbar()
     // 3D 侧的真模糊：这三个浮层都挂上 DWM 的 blur-behind（见文件上方的说明）。
     applyBlurBehind(m_resetButton);
     applyBlurBehind(m_historyButton);
+#ifndef HANDEYE_HIDE_MEASUREMENT_TOOLS
     applyBlurBehind(m_deviationButton);
+#endif
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1680,7 +1686,9 @@ void VisSceneView::showEvent(QShowEvent* event)
     // Qt 在隐藏/显示之间可能重建原生窗口，accent 策略会跟着掉；露出来时补挂一次。
     applyBlurBehind(m_resetButton);
     applyBlurBehind(m_historyButton);
+#ifndef HANDEYE_HIDE_MEASUREMENT_TOOLS
     applyBlurBehind(m_deviationButton);
+#endif
 #ifdef HAS_RVBUST_VIS
     if (m_shuttingDown) return;
     if (d && !d->initialized)
