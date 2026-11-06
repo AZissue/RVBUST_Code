@@ -2,9 +2,11 @@
 
 #include "app/RobotProgramController.h"
 #include "logic/JogPolicy.h"
+#include "ui/Theme.h"
 
 #include <QAbstractButton>
 #include <QButtonGroup>
+#include <QColor>
 #include <QComboBox>
 #include <QDialog>
 #include <QDir>
@@ -26,6 +28,7 @@
 #include <QResizeEvent>
 #include <QScrollArea>
 #include <QSignalBlocker>
+#include <QSize>
 #include <QSlider>
 #include <QSpinBox>
 #include <QSplitter>
@@ -549,14 +552,15 @@ void RobotProgramPanel::buildUi()
     setMinimumWidth(560);
 
     auto* root = new QVBoxLayout(this);
-    root->setContentsMargins(15, 15, 15, 15);
-    root->setSpacing(15);
+    root->setContentsMargins(Theme::Grid::Margin, Theme::Grid::Margin,
+                             Theme::Grid::Margin, Theme::Grid::Margin);
+    root->setSpacing(Theme::Grid::Gutter);
 
     root->addWidget(buildTopBar());
 
     auto* splitter = new QSplitter(Qt::Horizontal);
     splitter->setChildrenCollapsible(false);
-    splitter->setHandleWidth(15);
+    splitter->setHandleWidth(Theme::Grid::Gutter);
     splitter->setStyleSheet(QStringLiteral("QSplitter::handle { background:transparent; }"));
     splitter->addWidget(buildLeftCard());
     splitter->addWidget(buildRightCard());
@@ -581,6 +585,18 @@ void RobotProgramPanel::buildUi()
     onModeChanged(0);
 }
 
+namespace {
+void setRobotButtonIcon(QPushButton* btn, const QString& name, bool onColor = false)
+{
+    if (!btn || name.isEmpty())
+        return;
+    const QColor color = onColor ? QColor(Qt::white)
+                                 : QColor(QStringLiteral("#595959"));
+    btn->setIcon(Theme::icon(name, color, Theme::Grid::IconSm));
+    btn->setIconSize(QSize(Theme::Grid::IconSm, Theme::Grid::IconSm));
+}
+} // namespace
+
 QWidget* RobotProgramPanel::buildTopBar()
 {
     auto* bar = new QFrame;
@@ -589,8 +605,9 @@ QWidget* RobotProgramPanel::buildTopBar()
         "QFrame#rpTopBar { background:#ffffff; border-radius:8px; }"));
 
     auto* row = new QHBoxLayout(bar);
-    row->setContentsMargins(20, 10, 20, 10);
-    row->setSpacing(10);
+    row->setContentsMargins(Theme::Grid::Margin, Theme::Grid::Row,
+                            Theme::Grid::Margin, Theme::Grid::Row);
+    row->setSpacing(Theme::Grid::Row);
 
     m_statusDot = new QLabel;
     m_statusDot->setFixedSize(12, 12);
@@ -631,11 +648,12 @@ QWidget* RobotProgramPanel::buildTopBar()
 
     row->addWidget(m_motionBar);
 
-    m_enableButton = new QPushButton(QStringLiteral("⚡ 开启使能"));
+    m_enableButton = new QPushButton(QStringLiteral("开启使能"));
     m_enableButton->setObjectName(QStringLiteral("robot_program_enable"));
     m_enableButton->setCheckable(true);
     m_enableButton->setCursor(Qt::PointingHandCursor);
-    m_enableButton->setMinimumHeight(34);
+    m_enableButton->setMinimumHeight(Theme::Grid::ControlH);
+    setRobotButtonIcon(m_enableButton, QStringLiteral("power"), true);
     m_enableButton->setStyleSheet(enableButtonStyle());
     m_enableButton->setToolTip(QStringLiteral(
         "软件运动许可；真机还要求控制器本身可运动：UR 处于 RUNNING，"
@@ -646,7 +664,8 @@ QWidget* RobotProgramPanel::buildTopBar()
     m_stopButton = new QPushButton(QStringLiteral("停止 (STOP)"));
     m_stopButton->setObjectName(QStringLiteral("robot_program_stop"));
     m_stopButton->setCursor(Qt::PointingHandCursor);
-    m_stopButton->setMinimumHeight(34);
+    m_stopButton->setMinimumHeight(Theme::Grid::ControlH);
+    setRobotButtonIcon(m_stopButton, QStringLiteral("stop"), true);
     m_stopButton->setMinimumWidth(100);
     m_stopButton->setStyleSheet(stopButtonStyle());
     m_stopButton->setToolTip(
@@ -686,7 +705,8 @@ QWidget* RobotProgramPanel::buildLeftCard()
         " border-top-left-radius:8px; border-top-right-radius:8px;"
         " border-bottom:1px solid #eeeeee; }"));
     auto* headerRow = new QHBoxLayout(header);
-    headerRow->setContentsMargins(15, 14, 15, 14);
+    headerRow->setContentsMargins(Theme::Grid::Gutter, Theme::Grid::Gutter,
+                                  Theme::Grid::Gutter, Theme::Grid::Gutter);
     headerRow->addWidget(
         textLabel(QStringLiteral("流程节点列表"), 14, kTextMain, true));
     headerRow->addStretch(1);
@@ -708,8 +728,9 @@ QWidget* RobotProgramPanel::buildLeftCard()
     m_listContainer = new QWidget;
     m_listContainer->setStyleSheet(QStringLiteral("background:transparent;"));
     m_listLayout = new QVBoxLayout(m_listContainer);
-    m_listLayout->setContentsMargins(10, 10, 10, 10);
-    m_listLayout->setSpacing(8);
+    m_listLayout->setContentsMargins(Theme::Grid::Row, Theme::Grid::Row,
+                                     Theme::Grid::Row, Theme::Grid::Row);
+    m_listLayout->setSpacing(Theme::Grid::Row);
     m_listLayout->setAlignment(Qt::AlignTop);
     m_listScroll->setWidget(m_listContainer);
     column->addWidget(m_listScroll, 1);
@@ -722,18 +743,25 @@ QWidget* RobotProgramPanel::buildLeftCard()
         " border-top:1px solid #eeeeee; }"));
     // 五个按钮用流式布局：宽时一行，窄时自动换行，不把文字挤掉。
     auto* bottomRow = new FlowLayout(bottom, 8, 8);
-    bottomRow->setContentsMargins(12, 10, 12, 10);
+    bottomRow->setContentsMargins(Theme::Grid::Gutter, Theme::Grid::Row,
+                                  Theme::Grid::Gutter, Theme::Grid::Row);
 
-    m_addMoveButton = new QPushButton(QStringLiteral("＋ 添加移动"));
+    m_addMoveButton = new QPushButton(QStringLiteral("添加移动"));
     m_addMoveButton->setObjectName(QStringLiteral("robot_program_add_move"));
-    m_addPhotoButton = new QPushButton(QStringLiteral("📷 拍照采集"));
+    m_addPhotoButton = new QPushButton(QStringLiteral("拍照采集"));
     m_addPhotoButton->setObjectName(QStringLiteral("robot_program_add_photo"));
-    m_addWaitButton = new QPushButton(QStringLiteral("⏱ 等待时间"));
+    m_addWaitButton = new QPushButton(QStringLiteral("等待时间"));
     m_addWaitButton->setObjectName(QStringLiteral("robot_program_add_wait"));
-    m_deleteButton = new QPushButton(QStringLiteral("🗑 删除选中"));
+    m_deleteButton = new QPushButton(QStringLiteral("删除选中"));
     m_deleteButton->setObjectName(QStringLiteral("robot_program_delete"));
-    m_saveProgramButton = new QPushButton(QStringLiteral("💾 保存流程"));
+    m_saveProgramButton = new QPushButton(QStringLiteral("保存流程"));
     m_saveProgramButton->setObjectName(QStringLiteral("robot_program_save"));
+    setRobotButtonIcon(m_addMoveButton, QStringLiteral("move"));
+    setRobotButtonIcon(m_addPhotoButton, QStringLiteral("camera"));
+    setRobotButtonIcon(m_addWaitButton, QStringLiteral("clock"));
+    setRobotButtonIcon(m_deleteButton, QStringLiteral("trash"));
+    setRobotButtonIcon(m_saveProgramButton, QStringLiteral("save"));
+
     m_saveProgramButton->setToolTip(QStringLiteral(
         "把当前流程保存为独立文件（*.program.json），换会话/换机器都能导入。"
         "导入在「设置 → 机器人流程」。"));
@@ -741,13 +769,13 @@ QWidget* RobotProgramPanel::buildLeftCard()
     for (auto* button : { m_addMoveButton, m_addPhotoButton,
                           m_addWaitButton }) {
         button->setCursor(Qt::PointingHandCursor);
-        button->setMinimumHeight(36);
+        button->setMinimumHeight(Theme::Grid::ControlH);
         button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         button->setStyleSheet(outlineButtonStyle(false));
         bottomRow->addWidget(button);
     }
     m_deleteButton->setCursor(Qt::PointingHandCursor);
-    m_deleteButton->setMinimumHeight(36);
+    m_deleteButton->setMinimumHeight(Theme::Grid::ControlH);
     m_deleteButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     m_deleteButton->setStyleSheet(outlineButtonStyle(true));
     bottomRow->addWidget(m_deleteButton);
@@ -755,7 +783,7 @@ QWidget* RobotProgramPanel::buildLeftCard()
     // 与「删除选中」同一套按钮样式/尺寸，但用普通（非危险）配色——保存不是
     // 破坏性动作，红色描边会让人以为点下去会删东西。
     m_saveProgramButton->setCursor(Qt::PointingHandCursor);
-    m_saveProgramButton->setMinimumHeight(36);
+    m_saveProgramButton->setMinimumHeight(Theme::Grid::ControlH);
     m_saveProgramButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     m_saveProgramButton->setStyleSheet(outlineButtonStyle(false));
     bottomRow->addWidget(m_saveProgramButton);
@@ -789,11 +817,16 @@ QWidget* RobotProgramPanel::buildCommSection()
         .arg(kBorder));
 
     auto* column = new QVBoxLayout(section);
-    column->setContentsMargins(10, 8, 10, 10);
-    column->setSpacing(8);
+    column->setContentsMargins(Theme::Grid::Row, Theme::Grid::Row,
+                               Theme::Grid::Row, Theme::Grid::Row);
+    column->setSpacing(Theme::Grid::Row);
 
     m_commHeader = new QToolButton;
-    m_commHeader->setText(QStringLiteral("⚙️ 机器人连接配置"));
+    m_commHeader->setText(QStringLiteral("机器人连接配置"));
+    m_commHeader->setIcon(Theme::icon(QStringLiteral("settings"),
+                                      QColor(QString::fromLatin1(kPrimary)),
+                                      Theme::Grid::IconSm));
+    m_commHeader->setIconSize(QSize(Theme::Grid::IconSm, Theme::Grid::IconSm));
     m_commHeader->setCheckable(true);
     m_commHeader->setChecked(true);
     m_commHeader->setAutoRaise(true);
@@ -906,10 +939,11 @@ QWidget* RobotProgramPanel::buildCommSection()
     m_modbusFields->hide();
     body->addWidget(m_modbusFields);
 
-    m_connectButton = new QPushButton(QStringLiteral("🔌 连接"));
+    m_connectButton = new QPushButton(QStringLiteral("连接"));
     m_connectButton->setObjectName(QStringLiteral("robot_program_connect"));
     m_connectButton->setCursor(Qt::PointingHandCursor);
-    m_connectButton->setMinimumHeight(32);
+    m_connectButton->setMinimumHeight(Theme::Grid::ControlH);
+    setRobotButtonIcon(m_connectButton, QStringLiteral("link"), true);
     m_connectButton->setStyleSheet(QStringLiteral(
         "QPushButton { background:%1; color:#ffffff; border:none;"
         " border-radius:4px; font-size:14px; font-weight:bold;"
@@ -970,8 +1004,9 @@ QWidget* RobotProgramPanel::buildRightCard()
     auto* body = new QWidget;
     body->setStyleSheet(QStringLiteral("background:transparent;"));
     auto* bodyColumn = new QVBoxLayout(body);
-    bodyColumn->setContentsMargins(15, 15, 15, 15);
-    bodyColumn->setSpacing(15);
+    bodyColumn->setContentsMargins(Theme::Grid::Margin, Theme::Grid::Margin,
+                                   Theme::Grid::Margin, Theme::Grid::Margin);
+    bodyColumn->setSpacing(Theme::Grid::Gutter);
 
     m_commSection = buildCommSection();
     bodyColumn->addWidget(m_commSection);
@@ -983,7 +1018,8 @@ QWidget* RobotProgramPanel::buildRightCard()
         "QFrame#rpEditBanner { background:#e6f7ff; border:1px solid #91d5ff;"
         " border-radius:4px; }"));
     auto* bannerRow = new QHBoxLayout(m_editBanner);
-    bannerRow->setContentsMargins(15, 10, 10, 10);
+    bannerRow->setContentsMargins(Theme::Grid::Gutter, Theme::Grid::Row,
+                                  Theme::Grid::Row, Theme::Grid::Row);
     bannerRow->setSpacing(8);
     m_editBannerText =
         textLabel(QStringLiteral("正在编辑节点"), 14, kPrimary, true);
@@ -997,10 +1033,18 @@ QWidget* RobotProgramPanel::buildRightCard()
         "QPushButton:hover:enabled { background:#bae7ff; }"
         "QPushButton:disabled { border-color:#d9d9d9; color:#bfbfbf; }")
         .arg(kPrimary));
+    m_captureButton->setIcon(
+        Theme::icon(QStringLiteral("crosshair"), QColor(QString::fromLatin1(kPrimary)),
+                    Theme::Grid::IconSm));
+    m_captureButton->setIconSize(QSize(Theme::Grid::IconSm, Theme::Grid::IconSm));
     bannerRow->addWidget(m_captureButton);
     m_cancelEditButton = new QPushButton(QStringLiteral("取消编辑"));
     m_cancelEditButton->setCursor(Qt::PointingHandCursor);
     m_cancelEditButton->setStyleSheet(m_captureButton->styleSheet());
+    m_cancelEditButton->setIcon(
+        Theme::icon(QStringLiteral("close"), QColor(QString::fromLatin1(kPrimary)),
+                    Theme::Grid::IconSm));
+    m_cancelEditButton->setIconSize(QSize(Theme::Grid::IconSm, Theme::Grid::IconSm));
     bannerRow->addWidget(m_cancelEditButton);
     m_editBanner->hide();
     bodyColumn->addWidget(m_editBanner);
@@ -1054,13 +1098,15 @@ QWidget* RobotProgramPanel::buildRightCard()
         " border-bottom-left-radius:8px; border-bottom-right-radius:8px;"
         " border-top:1px solid #eeeeee; }"));
     auto* footerColumn = new QVBoxLayout(footer);
-    footerColumn->setContentsMargins(15, 12, 15, 12);
-    footerColumn->setSpacing(10);
+    footerColumn->setContentsMargins(Theme::Grid::Gutter, Theme::Grid::Gutter,
+                                     Theme::Grid::Gutter, Theme::Grid::Gutter);
+    footerColumn->setSpacing(Theme::Grid::Row);
 
-    m_saveButton = new QPushButton(QStringLiteral("💾 保存当前节点修改"));
+    m_saveButton = new QPushButton(QStringLiteral("保存当前节点修改"));
     m_saveButton->setObjectName(QStringLiteral("robot_program_save_node"));
     m_saveButton->setCursor(Qt::PointingHandCursor);
-    m_saveButton->setMinimumHeight(42);
+    m_saveButton->setMinimumHeight(Theme::Grid::ActionH);
+    setRobotButtonIcon(m_saveButton, QStringLiteral("save"), true);
     m_saveButton->setStyleSheet(QStringLiteral(
         "QPushButton { background:%1; color:#ffffff; border:none;"
         " border-radius:4px; padding:12px; font-size:15px;"
@@ -1096,16 +1142,18 @@ QWidget* RobotProgramPanel::buildRightCard()
 
     auto* runRow = new QHBoxLayout;
     runRow->setSpacing(10);
-    m_runSelectedButton = new QPushButton(QStringLiteral("▶ 运行当前节点"));
+    m_runSelectedButton = new QPushButton(QStringLiteral("运行当前节点"));
     m_runSelectedButton->setObjectName(QStringLiteral("robot_program_run_one"));
     m_runSelectedButton->setCursor(Qt::PointingHandCursor);
-    m_runSelectedButton->setMinimumHeight(44);
+    m_runSelectedButton->setMinimumHeight(Theme::Grid::ActionH);
+    setRobotButtonIcon(m_runSelectedButton, QStringLiteral("play"), true);
     m_runSelectedButton->setStyleSheet(
         runButtonStyle(kPrimary, "#40a9ff"));
-    m_runAllButton = new QPushButton(QStringLiteral("▶ 运行列表"));
+    m_runAllButton = new QPushButton(QStringLiteral("运行列表"));
     m_runAllButton->setObjectName(QStringLiteral("robot_program_run_all"));
     m_runAllButton->setCursor(Qt::PointingHandCursor);
-    m_runAllButton->setMinimumHeight(44);
+    m_runAllButton->setMinimumHeight(Theme::Grid::ActionH);
+    setRobotButtonIcon(m_runAllButton, QStringLiteral("play"), true);
     m_runAllButton->setStyleSheet(runButtonStyle(kSuccess, "#73d13d"));
     runRow->addWidget(m_runSelectedButton, 1);
     runRow->addWidget(m_runAllButton, 1);
@@ -1327,7 +1375,9 @@ QWidget* RobotProgramPanel::buildPhotoPad()
     column->setContentsMargins(10, 30, 10, 30);
     column->setSpacing(6);
 
-    auto* icon = textLabel(QStringLiteral("📷"), 40, "#666666");
+    auto* icon = new QLabel;
+    icon->setPixmap(Theme::icon(QStringLiteral("camera"), QColor(QStringLiteral("#666666")),
+                                40).pixmap(40, 40));
     icon->setAlignment(Qt::AlignCenter);
     column->addWidget(icon);
     auto* title = textLabel(QStringLiteral("拍照采集动作"), 15, "#555555",
@@ -1683,7 +1733,7 @@ void RobotProgramPanel::applyEditMode()
                 .arg(RobotProgram::kindLabel(kind)));
         m_captureButton->setVisible(kind == RobotProgram::NodeKind::Move);
         m_saveButton->setText(
-            QStringLiteral("💾 保存节点 %1 的修改").arg(m_selectedIndex + 1));
+            QStringLiteral("保存节点 %1 的修改").arg(m_selectedIndex + 1));
 
         if (kind == RobotProgram::NodeKind::Move) {
             m_pad->setCurrentWidget(
@@ -1897,13 +1947,16 @@ void RobotProgramPanel::refreshActions()
         const QSignalBlocker blocker(m_enableButton);
         m_enableButton->setChecked(m_enabled);
     }
-    m_enableButton->setText(m_enabled ? QStringLiteral("⚡ 已使能")
-                                      : QStringLiteral("⚡ 开启使能"));
+    m_enableButton->setText(m_enabled ? QStringLiteral("已使能")
+                                      : QStringLiteral("开启使能"));
     m_stopButton->setEnabled(bound && (m_connected || running));
 
     m_connectButton->setEnabled(bound && !running);
-    m_connectButton->setText(m_connected ? QStringLiteral("🔌 断开连接")
-                                         : QStringLiteral("🔌 连接"));
+    m_connectButton->setText(m_connected ? QStringLiteral("断开连接")
+                                         : QStringLiteral("连接"));
+    setRobotButtonIcon(m_connectButton,
+                       m_connected ? QStringLiteral("unplug") : QStringLiteral("link"),
+                       true);
     m_backendCombo->setEnabled(bound && !running);
     const bool addressEditable = realBackend && !m_connected && !running;
     m_hostEdit->setEnabled(addressEditable);

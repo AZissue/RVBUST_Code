@@ -89,6 +89,7 @@ $mustShip = @(
     "HandEyeSDK.dll",
     "Qt5Core.dll",
     "Qt5Widgets.dll",
+    "Qt5Svg.dll",               # Theme::icon() 渲染 SVG 图标
     "platforms\qwindows.dll"
 )
 $missing = @($mustShip | Where-Object { -not (Test-Path -LiteralPath (Join-Path $pkgDir $_)) })

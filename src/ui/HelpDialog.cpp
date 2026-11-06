@@ -4,8 +4,10 @@
 #include "logic/HelpContent.h"
 #include "ui/Theme.h"
 
+#include <QColor>
 #include <QDesktopServices>
 #include <QHBoxLayout>
+#include <QSize>
 #include <QLabel>
 #include <QListWidget>
 #include <QPushButton>
@@ -18,10 +20,12 @@ HelpDialog::HelpDialog(QWidget* parent)
     : QDialog(parent)
 {
     setWindowTitle(QStringLiteral("使用说明 — ") + AppInfo::title());
+    setWindowIcon(Theme::icon(QStringLiteral("logo"),
+                              QColor(QString::fromLatin1(Theme::PRIMARY)), 32));
     // 同 ToolsPanel：非模态、可自由缩放/最大化。说明文字很多，窗口不能被内容
     // 尺寸锁死；右栏自己会滚动。
-    setMinimumSize(760, 480);
-    resize(1000, 700);
+    setMinimumSize(768, 480);
+    resize(992, Theme::Grid::ToolsHeight);
     setWindowFlags(windowFlags() | Qt::WindowMinMaxButtonsHint);
     setAttribute(Qt::WA_DeleteOnClose, false);
     buildUi();
@@ -30,8 +34,9 @@ HelpDialog::HelpDialog(QWidget* parent)
 void HelpDialog::buildUi()
 {
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(16, 16, 16, 16);
-    layout->setSpacing(12);
+    layout->setContentsMargins(Theme::Grid::Margin, Theme::Grid::Margin,
+                               Theme::Grid::Margin, Theme::Grid::Margin);
+    layout->setSpacing(Theme::Grid::Gutter);
 
     auto* header = new QLabel(AppInfo::summary(), this);
     header->setWordWrap(true);
@@ -45,7 +50,8 @@ void HelpDialog::buildUi()
     m_chapterList = new QListWidget(this);
     // 与 ToolsPanel 一样给稳定 objectName：UI 自动化按名字找控件。
     m_chapterList->setObjectName(QStringLiteral("help_chapter_list"));
-    m_chapterList->setFixedWidth(168);
+    m_chapterList->setFixedWidth(
+        Theme::Grid::spanWidth(992 - 2 * Theme::Grid::Margin, 2));
     m_chapterList->setStyleSheet(QStringLiteral(
         "QListWidget { background: %1; border: 1px solid %2; border-radius: %3px;"
         " font-size: %4px; }"
@@ -89,7 +95,10 @@ void HelpDialog::buildUi()
     btnRow->addStretch();
 
     auto* btnClose = new QPushButton(QStringLiteral("关闭"), this);
-    btnClose->setFixedSize(80, 32);
+    btnClose->setFixedSize(80, Theme::Grid::ControlH);
+    btnClose->setIcon(Theme::icon(QStringLiteral("close"), QColor(QString::fromLatin1(Theme::TEXT_BODY)),
+                                  Theme::Grid::IconSm));
+    btnClose->setIconSize(QSize(Theme::Grid::IconSm, Theme::Grid::IconSm));
     btnClose->setStyleSheet(QStringLiteral(R"(
         QPushButton { color: %1; background: transparent; border: 1px solid %2;
                       border-radius: 4px; font-size: %3px; }

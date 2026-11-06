@@ -37,6 +37,9 @@ private:
     void applyPreviewStyle();
     void applyBaseStyle(QPushButton* btn);
     void flash(QPushButton* btn);
+    QString iconNameFor(QPushButton* btn) const;
+    void setIconOnPrimary(QPushButton* btn);
+    void restoreIcon(QPushButton* btn);
 
     QPushButton* m_btnPreview;
     QPushButton* m_btnCapture;

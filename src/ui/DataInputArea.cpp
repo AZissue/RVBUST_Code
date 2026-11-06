@@ -5,13 +5,13 @@
 DataInputArea::DataInputArea(QWidget* parent)
     : QWidget(parent)
 {
-    // Locked height — 2 cards get ~68px each, 3 cards get ~44px each.
+    // Locked height — 18 行（8px 基线）；2 张卡各 ~68px，3 张卡各 ~42px。
     // Changing card count never alters this value, so views stay stable.
-    setFixedHeight(140);
+    setFixedHeight(18 * Theme::Grid::Row);
 
     m_layout = new QVBoxLayout(this);
-    m_layout->setContentsMargins(24, 0, 24, 0);
-    m_layout->setSpacing(4);
+    m_layout->setContentsMargins(0, 0, 0, 0);
+    m_layout->setSpacing(Theme::Grid::Row);
 
     m_cardCamTarget = new DataInputCard(
         QStringLiteral("camera_target_xyz"),

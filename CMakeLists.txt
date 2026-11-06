@@ -20,7 +20,7 @@ endif()
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 # ── Qt5 ──
-find_package(Qt5 REQUIRED COMPONENTS Widgets Core Gui Concurrent Network)
+find_package(Qt5 REQUIRED COMPONENTS Widgets Core Gui Concurrent Network Svg)
 
 # ── RVC X2 SDK ──
 find_package(RVC REQUIRED)

@@ -9,16 +9,18 @@
 #include <QScrollBar>
 #include <QFormLayout>
 #include <sstream>
+#include <QPixmap>
 
 SidePanel::SidePanel(QWidget* parent)
     : QWidget(parent)
 {
-    setFixedWidth(408);
+    // 右栏宽 4 栅格列；宽度由主窗口 8:4 分栏决定，这里只保底 360。
+    setMinimumWidth(360);
     setStyleSheet(QStringLiteral("background-color: %1;").arg(Theme::BG_MAIN));
 
     auto* mainLayout = new QVBoxLayout(this);
-    mainLayout->setContentsMargins(0, 0, 24, 0);
-    mainLayout->setSpacing(12);
+    mainLayout->setContentsMargins(0, 0, Theme::Grid::Margin, 0);
+    mainLayout->setSpacing(Theme::Grid::Gutter);
 
     // ── Top area: merged "操作日志" (notes + tips + pose guide + quality) ──
     // Elastic (shares vertical space equally with the file preview card
@@ -29,17 +31,31 @@ SidePanel::SidePanel(QWidget* parent)
     m_timelineCard->setStyleSheet(QStringLiteral("background: %1; border: 1px solid %2; border-radius: %3px;")
                                   .arg(Theme::BG_MAIN).arg(Theme::BORDER_DEFAULT).arg(Theme::BORDER_RADIUS));
     auto* tlLayout = new QVBoxLayout(m_timelineCard);
-    tlLayout->setContentsMargins(12, 10, 12, 10);
-    tlLayout->setSpacing(6);
+    tlLayout->setContentsMargins(Theme::Grid::Gutter, Theme::Grid::Gutter,
+                                 Theme::Grid::Gutter, Theme::Grid::Gutter);
+    tlLayout->setSpacing(Theme::Grid::Row);
 
     auto* tlHeader = new QHBoxLayout();
+    tlHeader->setSpacing(8);
+    auto* tlIcon = new QLabel(m_timelineCard);
+    tlIcon->setFixedSize(Theme::Grid::IconSm, Theme::Grid::IconSm);
+    tlIcon->setPixmap(Theme::icon(QStringLiteral("history"),
+                                  QColor(QString::fromLatin1(Theme::PRIMARY)),
+                                  Theme::Grid::IconSm).pixmap(Theme::Grid::IconSm,
+                                                              Theme::Grid::IconSm));
+    tlIcon->setStyleSheet(QStringLiteral("border: none; background: transparent;"));
+    tlHeader->addWidget(tlIcon);
     auto* tlTitle = new QLabel(QStringLiteral("操作日志"), m_timelineCard);
     tlTitle->setStyleSheet(QStringLiteral("font-size: %1px; font-weight: 600; color: %2; border: none;")
                            .arg(Theme::FONT_BODY).arg(Theme::PRIMARY));
     tlHeader->addWidget(tlTitle);
     tlHeader->addStretch();
     m_btnRunQuality = new QPushButton(QStringLiteral("运行质检"), m_timelineCard);
-    m_btnRunQuality->setFixedHeight(26);
+    m_btnRunQuality->setFixedHeight(Theme::Grid::ControlH);
+    m_btnRunQuality->setIcon(Theme::icon(QStringLiteral("shield-check"),
+                                         QColor(QString::fromLatin1(Theme::PRIMARY)),
+                                         Theme::Grid::IconSm));
+    m_btnRunQuality->setIconSize(QSize(Theme::Grid::IconSm, Theme::Grid::IconSm));
     m_btnRunQuality->setCursor(Qt::PointingHandCursor);
     m_btnRunQuality->setStyleSheet(QStringLiteral(R"(
         QPushButton { color: %1; background: %2; border: 1px solid %1; border-radius: 4px;
@@ -76,13 +92,26 @@ SidePanel::SidePanel(QWidget* parent)
     m_previewCard->setStyleSheet(QStringLiteral("background: %1; border: 1px solid %2; border-radius: %3px;")
                                  .arg(Theme::BG_MAIN).arg(Theme::BORDER_DEFAULT).arg(Theme::BORDER_RADIUS));
     auto* previewLayout = new QVBoxLayout(m_previewCard);
-    previewLayout->setContentsMargins(12, 10, 12, 10);
-    previewLayout->setSpacing(6);
+    previewLayout->setContentsMargins(Theme::Grid::Gutter, Theme::Grid::Gutter,
+                                      Theme::Grid::Gutter, Theme::Grid::Gutter);
+    previewLayout->setSpacing(Theme::Grid::Row);
 
+    auto* previewHeader = new QHBoxLayout();
+    previewHeader->setSpacing(8);
+    auto* previewIcon = new QLabel(m_previewCard);
+    previewIcon->setFixedSize(Theme::Grid::IconSm, Theme::Grid::IconSm);
+    previewIcon->setPixmap(Theme::icon(QStringLiteral("database"),
+                                       QColor(QString::fromLatin1(Theme::TEXT_TITLE)),
+                                       Theme::Grid::IconSm).pixmap(Theme::Grid::IconSm,
+                                                                   Theme::Grid::IconSm));
+    previewIcon->setStyleSheet(QStringLiteral("border: none; background: transparent;"));
+    previewHeader->addWidget(previewIcon);
     auto* previewTitle = new QLabel(QStringLiteral("文件预览"), m_previewCard);
     previewTitle->setStyleSheet(QStringLiteral("font-size: %1px; font-weight: 600; color: %2; border: none;")
                                 .arg(Theme::FONT_BODY).arg(Theme::TEXT_TITLE));
-    previewLayout->addWidget(previewTitle);
+    previewHeader->addWidget(previewTitle);
+    previewHeader->addStretch();
+    previewLayout->addLayout(previewHeader);
 
     // Tab buttons
     auto* tabLayout = new QHBoxLayout();
@@ -91,7 +120,7 @@ SidePanel::SidePanel(QWidget* parent)
     auto makeTab = [&](const QString& text) -> QPushButton* {
         auto* b = new QPushButton(text, m_previewCard);
         b->setCheckable(true);
-        b->setFixedHeight(22);
+        b->setFixedHeight(Theme::Grid::ControlH);
         b->setStyleSheet(QStringLiteral(R"(
             QPushButton { color: %1; background: transparent; border: 1px solid %2;
                           border-radius: 3px; font-size: %3px; padding: 0 8px; }

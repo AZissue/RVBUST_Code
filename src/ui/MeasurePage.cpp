@@ -88,7 +88,9 @@ void MeasurePage::buildUi()
 {
     const QString id = QString::fromUtf8(m_spec.id);
     auto* layout = new QVBoxLayout(this);
-    layout->setSpacing(10);
+    layout->setContentsMargins(Theme::Grid::Margin, Theme::Grid::Margin,
+                               Theme::Grid::Margin, Theme::Grid::Margin);
+    layout->setSpacing(Theme::Grid::Gutter);
 
     // ── 数据源 + ROI（P3：ROI 需求由方法自己声明）──
     auto* cloudGroup = new QGroupBox(QStringLiteral("数据源"), this);
@@ -125,6 +127,8 @@ void MeasurePage::buildUi()
     m_roiClearBtn = new QPushButton(QStringLiteral("清除区域"), cloudGroup);
     m_roiClearBtn->setObjectName(QStringLiteral("measure_roi_clear_%1").arg(id));
     m_roiClearBtn->setStyleSheet(Theme::secondaryButtonStyle());
+    m_roiClearBtn->setIcon(Theme::icon(QStringLiteral("eraser"), QColor(QString::fromLatin1(Theme::TEXT_BODY)), Theme::Grid::IconSm));
+    m_roiClearBtn->setIconSize(QSize(Theme::Grid::IconSm, Theme::Grid::IconSm));
     cloudForm->addRow(QString(), m_roiClearBtn);
     layout->addWidget(cloudGroup);
 
@@ -137,9 +141,13 @@ void MeasurePage::buildUi()
     auto* saveFrameBtn = new QPushButton(QStringLiteral("保存测量帧"), frameGroup);
     saveFrameBtn->setObjectName(QStringLiteral("measure_frame_save_%1").arg(id));
     saveFrameBtn->setStyleSheet(Theme::secondaryButtonStyle());
+    saveFrameBtn->setIcon(Theme::icon(QStringLiteral("save"), QColor(QString::fromLatin1(Theme::TEXT_BODY)), Theme::Grid::IconSm));
+    saveFrameBtn->setIconSize(QSize(Theme::Grid::IconSm, Theme::Grid::IconSm));
     auto* openFrameBtn = new QPushButton(QStringLiteral("打开测量帧"), frameGroup);
     openFrameBtn->setObjectName(QStringLiteral("measure_frame_open_%1").arg(id));
     openFrameBtn->setStyleSheet(Theme::secondaryButtonStyle());
+    openFrameBtn->setIcon(Theme::icon(QStringLiteral("folder-open"), QColor(QString::fromLatin1(Theme::TEXT_BODY)), Theme::Grid::IconSm));
+    openFrameBtn->setIconSize(QSize(Theme::Grid::IconSm, Theme::Grid::IconSm));
     frameRow->addWidget(saveFrameBtn);
     frameRow->addWidget(openFrameBtn);
     frameRow->addStretch();
@@ -202,10 +210,14 @@ void MeasurePage::buildUi()
                                methodGroup);
     m_runBtn->setObjectName(QStringLiteral("measure_run_%1").arg(id));
     m_runBtn->setStyleSheet(Theme::primaryButtonStyle());
+    m_runBtn->setIcon(Theme::icon(QStringLiteral("play"), QColor(Qt::white), Theme::Grid::IconSm));
+    m_runBtn->setIconSize(QSize(Theme::Grid::IconSm, Theme::Grid::IconSm));
     btnRow->addWidget(m_runBtn);
     m_repeatAddBtn = new QPushButton(QStringLiteral("加入重复性"), methodGroup);
     m_repeatAddBtn->setObjectName(QStringLiteral("measure_repeat_add_%1").arg(id));
     m_repeatAddBtn->setStyleSheet(Theme::secondaryButtonStyle());
+    m_repeatAddBtn->setIcon(Theme::icon(QStringLiteral("plus"), QColor(QString::fromLatin1(Theme::TEXT_BODY)), Theme::Grid::IconSm));
+    m_repeatAddBtn->setIconSize(QSize(Theme::Grid::IconSm, Theme::Grid::IconSm));
     // 重复性页本身就是消费序列的，不需要"把自己加进去"。
     m_repeatAddBtn->setVisible(m_spec.roiCount > 0);
     btnRow->addWidget(m_repeatAddBtn);
@@ -257,6 +269,8 @@ void MeasurePage::buildUi()
     auto* clearSeriesBtn = new QPushButton(QStringLiteral("清空序列"), seriesGroup);
     clearSeriesBtn->setObjectName(QStringLiteral("measure_series_clear_%1").arg(id));
     clearSeriesBtn->setStyleSheet(Theme::secondaryButtonStyle());
+    clearSeriesBtn->setIcon(Theme::icon(QStringLiteral("eraser"), QColor(QString::fromLatin1(Theme::TEXT_BODY)), Theme::Grid::IconSm));
+    clearSeriesBtn->setIconSize(QSize(Theme::Grid::IconSm, Theme::Grid::IconSm));
     seriesForm->addRow(QString(), clearSeriesBtn);
     layout->addWidget(seriesGroup);
 

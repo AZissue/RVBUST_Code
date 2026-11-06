@@ -493,6 +493,211 @@
 - 回退：发布包只由编译开关控制；把 `HANDEYE_HIDE_MEASUREMENT_TOOLS` 置 OFF
   重新打包即得到含测量工具的版本，测量代码本身未删。
 
+## 阶段 29：架构规范化（五层，**任务已定，待施工**）
+
+- 背景：`logic/` 现有 87 个文件、被 164 处 include，混合了纯算法、设备网关、采集
+  编排、持久化与诊断；`ui→app`、`infra→algo` 等反向依赖已出现。目标不是重写，
+  而是按职责归位，并用构建系统把边界固定住，方便后续优化、扩展和问题定位。
+- 原则：**逻辑五层 + 共享内核 + 构建强制；不做运行时插件 DLL**。现有
+  `MotionBackend`、`MeasureMethods` 已是策略模式，补静态注册表即可。
+
+### 29.1 目标目录（最终形态，阶段 1 只做 rename）
+
+```text
+src/
+├─ main.cpp
+├─ common/                      # 共享内核：值类型、纯几何/格式换算、跨层契约
+│  ├─ AppInfo.h
+│  ├─ models/       CalibrationMode.h  CaptureRecord.h
+│  ├─ buffering/    FrameBuffer.*
+│  ├─ geometry/     TransformTools.h  GeometryTools.h
+│  ├─ robot/        RobotDataFormats.*  RobotPose.*（拆出 Modbus 后）
+│  ├─ measure/      MeasurementSnapshot.h
+│  └─ content/      HelpContent.h
+├─ infrastructure/              # 配置、日志、会话存储、测量帧、诊断
+│  ├─ config/       AppConfig.*
+│  ├─ logging/      LogManager.*  RuntimeLog.*
+│  ├─ data/         DataManager.*  BackupDocument.h  MeasureFrame.*
+│  ├─ io/           PlyPointReader.h
+│  └─ diagnostics/  UiStallWatchdog.*  CrashInject.h
+├─ algorithm/                   # 纯计算；可单测、可被外部工具复用
+│  ├─ geometry/     PointCloudUtils.*
+│  ├─ board/        BoardPoseFit.h
+│  ├─ capture/      AutoFlowPolicy.h
+│  ├─ measure/      MeasureTools.*  MeasureMethods.h
+│  ├─ pixel/        PixelTo3DTools.h  PixelTo3DService.*
+│  ├─ robot/        RobotPoseSource.h  JogPolicy.h  PoseGuide.h
+│  ├─ text/         GuidanceText.h
+│  └─ parse/        ToolInputParser.h
+├─ gateway/                     # 外部世界适配器：SDK / 网络 / 协议
+│  ├─ camera/       CameraManager.*  CameraFrameCache.*  CaptureLifecycle.h
+│  │                CameraHealthMonitor.*  CameraNetworkInventory.h
+│  │                CameraRelease.h  CameraConnectDiagnosis.h
+│  ├─ vision/       HandEyeSDKBridge.*  DetectionEngine.*
+│  └─ robot/
+│     ├─ RobotMotionBackend.h
+│     ├─ ur/        UrMotionBackend.*  URRealtimeReader.*  UrMotionMath.h
+│     ├─ fairino/   FairinoMotionBackend.*  FairinoRealtime.*  FairinoPoseReader.*
+│     │             FairinoXmlRpc.*  FairinoXmlRpcClient.*  FairinoMath.h  FairinoCommand.h
+│     ├─ modbus/    ModbusReader.*（从 RobotPose.h 拆出）
+│     ├─ nrc/       NrcJsonReader.*
+│     ├─ efort/     EfortPoseReader.*
+│     ├─ readonly/  PoseOnlyMotionBackend.*
+│     └─ simulated/ SimulatedMotionBackend.*
+├─ core/                        # 编排与业务规则，不碰控件/协议
+│  ├─ capture/      CaptureFlow.*
+│  ├─ calibration/  CalibrationService.*
+│  ├─ program/      ProgramRunner.*  RobotProgram.*
+│  ├─ quality/      DataQualityCheck.h
+│  └─ application/  CalibrationController.*  CameraConnectionFlow.*
+│                   RobotProgramController.*（从 app/ 下沉）
+└─ presentation/
+   ├─ MainWindow.*
+   ├─ views/        Image2DView.*  VisSceneView.*  Hole3DPage.*  ViewOverlay.h
+   ├─ panels/       SidePanel.*  ToolsPanel.*  RobotProgramPanel.*  DataInputArea.*
+   │                DataInputCard.*  ActionButtons.*  TopNavBar.*  ModeSelector.*
+   │                ArrowComboBox.h
+   ├─ dialogs/      SettingsDialog.*  DeviceListDialog.*  HelpDialog.*
+   ├─ measure/      MeasurePage.*  MeasurePages.*
+   ├─ theme/        Theme.*
+   ├─ overlay/      ToastOverlay.*
+   └─ text/         LogPresentation.h
+```
+
+### 29.2 允许依赖矩阵（行 = 发起方，列 = 被依赖方）
+
+| 从 \ 到 | presentation | core | gateway | algorithm | infrastructure | common |
+|---|---|---|---|---|---|---|
+| presentation | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| core | — | ✓ | ✓ | ✓ | ✓ | ✓ |
+| gateway | — | — | ✓ | ✓ | ✓ | ✓ |
+| algorithm | — | — | — | ✓ | — | ✓ |
+| infrastructure | — | — | — | — | ✓ | ✓ |
+| common | — | — | — | — | — | ✓ |
+
+额外硬规则：
+
+- `algorithm` / `infrastructure` / `common` 禁止 `<RVC/…>`、`HandEyeSDK`、
+  `EfortSDK`、`<RVBUST/…>`、`Qt5::Network`、`Qt5::Widgets`。
+- `core` 禁止 `Qt5::Widgets` 与厂商 SDK；`gateway` 禁止 `Qt5::Widgets`。
+- `core` 可依赖 `gateway`（采集编排持有 `CameraManager`、控制器持有运动后端）；
+  `gateway` 不得反向依赖 `core`。`CaptureLifecycle`/`CameraFrameCache` 等只被
+  `CameraManager` 使用的状态机留在 `gateway/camera`。
+
+### 29.3 CMake 强制
+
+```cmake
+add_library(handeye_common STATIC ${COMMON_SOURCES})   # Qt5::Core Gui
+add_library(handeye_infra  STATIC ${INFRA_SOURCES})    # + common
+add_library(handeye_algo   STATIC ${ALGO_SOURCES})     # + common
+add_library(handeye_gateway STATIC ${GATEWAY_SOURCES}) # + algo infra Qt5::Network
+                                                       # + RVC / HandEyeSDK / Efort
+add_library(handeye_core   STATIC ${CORE_SOURCES})     # + gateway algo infra Qt5::Concurrent
+add_library(handeye_ui     STATIC ${UI_SOURCES})       # + core gateway algo infra Qt5::Widgets Vis
+add_executable(HandEyeCalibrationTool main.cpp)        # + handeye_ui
+```
+
+- `RVBUSTVis` 的链接库用 `PUBLIC` 传播，避免 `VisSceneView` 链接失败。
+- 静态库只约束**链接**边界；header-only 模块需要
+  `cmake/check_layers.cmake` 扫描 include 前缀与 SDK 头文件，注册为 ctest 用例
+  `layer_boundaries`（不应依赖网络或硬件）。
+- `tests/CMakeLists.txt` 在阶段 3 改为链接对应静态库；三个测试入口
+  （`unit_tests` / `measurement_truth` / `circle_truth`）保持不变。
+
+### 29.4 迁移步骤（每步构建 + ctest + 同步 AICode）
+
+| 步骤 | 内容 | 完成标准 |
+|---|---|---|
+| 29-A 基线 | 记录 ctest 3/3、exe 时间戳；确认绿色包可打 | 不改代码 |
+| 29-B 机械搬迁 | `git mv` 到目标目录；统一 include 前缀；更新 CMake 源路径 | `git diff` 仅 rename + include；构建 0、ctest 3/3 |
+| 29-C 边界修正 | 拆 `RobotPose`（值/格式化 vs Modbus）；三个 Controller 下沉 `core/application`；`DetectionEngine` 进 `gateway/vision`；`TransformTools/RobotDataFormats` 进 `common` | `ui→app`、`infra→algo` 违规归零 |
+| 29-D 构建强制 | 拆静态库；加入 `layer_boundaries`；测试改链接库 | 故意违规 include 会使 ctest 失败 |
+| 29-E 可选注册表 | `algorithm/registry` 静态工厂（测量方法/求解器） | 仅在测量工具回归时做 |
+
+- 风险与对策：
+  - include 批量替换：先生成清单 dry-run，diff 只允许路径变化。
+  - `RobotPose` 拆分：只拆 Modbus 部分，`Status`/格式化/`Reader` 签名不变。
+  - 静态库链接顺序：所有层 `PUBLIC` 传播，一次只拆一层。
+  - 行为回归：搬迁阶段禁止改函数体；阶段 C 只做拆分；按 30.5 的手工清单回归。
+- 回退：每步独立提交（`refactor(handeye-tools): …`），失败只回退该步。
+- 明确不做：运行时插件扫描/加载、把算法层做成 DLL、为了分层拆
+  `CameraManager` 1821 行的内部类（另立重构任务）。
+
+## 阶段 30：表现层 12 栅格 + SVG 图标（**已完成，待人工验收**）
+
+- 目标：主界面、工具界面（含机器人控制页/测量页）与各对话框统一到 12 栅格；
+  标题、LOGO、功能按钮使用单色线性 SVG 图标，去掉 emoji/卡通风格。
+- 硬约束：**不增删组件、不改变组件大致位置、不改业务逻辑**；只调整边距、
+  间距、尺寸、对齐与图标。
+
+### 30.1 栅格系统（Theme）
+
+```text
+列数 12；页边距 24；列间距 16；行基线 8
+主窗口设计宽 1280 → 内容宽 1232，列宽 88；右栏 4 列 = 400
+工具窗口设计宽 1040 → 内容宽 992，列宽 64；左列表 2 列 = 144，内容 10 列 = 784
+```
+
+- `Theme::Grid` 提供 `Columns / Margin / Gutter / Row / snap / columnWidth /
+  spanWidth`；所有新老布局优先使用这些常量，不再出现 10/14/15/20 等散值。
+- 主窗口：`QSplitter` 左右按 8:4；2D/3D 各 4 列；顶栏 48 高、模式栏
+  32 高控件、数据卡区 144 高、动作区 56 高。
+- 工具窗口：左列表固定 144，右侧内容区 10 列；页面内页边距 24、组间距 16、
+  表单行距 8。
+- 对话框宽度按 `224 + 12×列宽` 取整：设置 608、设备列表 512、帮助 992。
+
+### 30.2 图标系统
+
+- 新增 `src/resources/icons/*.svg`（24×24 viewBox，`fill="none"`，
+  `stroke-width` 1.6–1.8，单色）与 `src/resources/resources.qrc`。
+- `Theme::icon(name, color = TEXT_BODY, size = 18)`：用 `QSvgRenderer` 渲染到
+  透明 pixmap，再以 `CompositionMode_SourceIn` 着色；按 (name,color,size,dpr)
+  缓存。主色按钮用白色图标，次级按钮用 `TEXT_BODY`，标题用 `TEXT_TITLE`。
+- 新增 `Qt5::Svg` 依赖；CMake 后置步骤部署 `Qt5Svg.dll`（源为
+  `$<TARGET_FILE:Qt5::Svg>`），打包脚本的 `mustShip` 同步加入该 DLL。
+- 图标清单（按语义复用）：logo、tools、camera、camera-off、plug、unplug、
+  scan、eye、eye-off、save、save-as、folder、folder-open、copy、calculator、
+  undo、refresh、check、close、play、stop、plus、trash、clock、power、robot、
+  crosshair、ruler、repeat、image、file-import、history、shield-check、
+  grid、axes、settings、help、chevron。
+- 替换范围：顶栏 LOGO 与连接/新建会话/设置/帮助；模式栏「工具」；
+  动作区全部 8 个按钮；数据卡「复制」；工具列表条目与各页计算/复制/浏览/
+  应用/保存/打开按钮；机器人控制页全部按钮（去掉 📷/⚙️/💾/🗑/▶/➕/⏱/⚡/🔌）；
+  测量页与 3D 孔洞页操作按钮；设置/设备列表/帮助对话框按钮。
+- 标题：主窗口 LOGO 旁标题、工具窗口标题、各工具页一级标题、侧栏卡片标题
+  与对话框标题统一图标 + 字重 600；QGroupBox 标题受 Qt 样式限制只做字重/
+  字号统一，不强塞图标。
+
+### 30.3 实施步骤
+
+1. Theme 增加栅格常量、`icon()` 与 SVG 资源；CMake 接入 AUTORCC 与 Qt5::Svg。
+2. 主窗口壳层：顶栏、模式栏、splitter 8:4、2D/3D 4+4、数据区、动作区。
+3. 工具窗口壳层：1040×720、左列表 144、页面统一 24/16/8。
+4. 机器人控制页与测量页：边距/间距/按钮高度归一到栅格；替换 emoji。
+5. 对话框：设置 608、设备列表 512、帮助 992；按钮图标。
+6. 移除全部 emoji 图标字符；逐个按钮设置图标与 `iconSize`。
+
+### 30.4 验证（DoD）
+
+- [x] `cmake --build … --config Release` exit 0（2026-11-06 构建通过）。
+- [x] `ctest` 3/3（`unit_tests` / `measurement_truth` / `circle_truth`）。
+- [x] 代码检查：`src/ui`、`src/app` 内无 emoji 图标字符；所有功能按钮有
+      `setIcon`；无新增/删除控件（`git diff` 只含布局属性与图标调用）。
+- [x] 45 个 SVG 全部通过 XML 解析；`Theme::icon()` 引用的图标名全部存在；
+      qrc 已编入 exe，`Qt5Svg.dll` 已随构建部署。
+- [ ] 1280×720 与 1600×900 下无控件重叠/截断；100% 与 150% DPI 图标清晰
+      （**待用户手工验收**）。
+- [ ] 手工清单（用户执行）：
+      1. 启动 → LOGO/标题/顶栏图标显示正常，无 emoji；
+      2. 连接相机 → 按钮图标与状态一致；
+      3. 拍照/识别/保存/计算/撤销 → 图标与文字不重叠，按钮宽度不跳变；
+      4. 打开工具窗口 → 左侧列表图标齐全，页面边距一致，滚动无横向溢出；
+      5. 机器人控制页 → 连接/使能/停止/添加/删除/保存/运行图标正确；
+      6. 打开测量页/3D 孔洞 → 保存/打开/计算/清空按钮图标正确；
+      7. 设置/设备列表/帮助 → 图标与窗口宽度一致，关闭无异常。
+- 回退：主题/图标改动独立提交；若图标资源导致启动失败，移除 qrc 与
+  `Theme::icon()` 调用即可恢复纯文字按钮，不影响业务逻辑。
+
 ## 阶段依赖关系表
 
 | 阶段 | 依赖 | 状态（2026-10-22） | 完成后解锁 |
@@ -510,6 +715,8 @@
 | 10 | 3 | **部分实现** | 11 |
 | 11 | 3/4/7/8/9 + 10 收口 + T-012/T-013（**5/6 不阻塞**） | **已完成**（2026-10-22 现场实测通过；测量工具隐藏交付） | 12 |
 | 12 | 11 | 未开始（当前在 3.0 分支 `HandEyeTools-3.0`） | — |
+| 29 | 3.1（独立，不阻塞现场） | **任务已定，待施工** | 30（表现层先行，不依赖 29） |
+| 30 | 3.1 | **已完成，待人工验收**（2026-11-06） | 29-B 的目录调整需同步 include |
 
 ## 当前进行到
 
@@ -537,6 +744,11 @@
   本仓库源码未改动，主线不受影响。真件帧两边通用。
 - **3.1 正式包（2026-11-05）**：已按「3.0 主线 + 隐藏 7 个测量工具」打包
   `dist\HandEyeCalibrationTool_v3.1.zip`，待用户现场确认。
+- **阶段 29（2026-11-06 新增）**：架构规范化五层，任务与目标目录已写入
+  本文件上方；**待施工**，不影响当前 3.1 包。
+- **阶段 30（2026-11-06 当前）**：表现层 12 栅格 + SVG 图标，代码与构建
+  已完成（45 个 SVG、`Theme::icon()` 运行时着色、主/工具/对话框按栅格重排）；
+  **待用户按 §30.4 手工清单验收**，通过后再进入阶段 29。
 - **下一项任务（3.0）**：见 `reports/3.0-规划.md` §4。
   1. **M-02（等现场数据）**：5 个特征（Ø26/Ø5/Ø9/Ø6/Ø63.5）的可重放会话，
      每个至少 3 次拍照；放 `tests/data/`（不入库）。

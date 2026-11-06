@@ -2,6 +2,8 @@
 #include "ui/Theme.h"
 #include "AppInfo.h"
 #include <QHBoxLayout>
+#include <QLabel>
+#include <QPixmap>
 
 TopNavBar::TopNavBar(QWidget* parent)
     : QWidget(parent)
@@ -11,8 +13,17 @@ TopNavBar::TopNavBar(QWidget* parent)
                   .arg(Theme::BG_MAIN).arg(Theme::BORDER_DEFAULT));
 
     auto* layout = new QHBoxLayout(this);
-    layout->setContentsMargins(24, 0, 24, 0);
-    layout->setSpacing(16);
+    layout->setContentsMargins(Theme::Grid::Margin, 0, Theme::Grid::Margin, 0);
+    layout->setSpacing(Theme::Grid::Gutter);
+
+    // LOGO：12 栅格顶栏的品牌位，24×24 单色线性标（镜头 + 四角定位框）。
+    auto* logo = new QLabel(this);
+    logo->setFixedSize(Theme::Grid::LogoSize, Theme::Grid::LogoSize);
+    logo->setPixmap(Theme::icon(QStringLiteral("logo"), QColor(QString::fromLatin1(Theme::PRIMARY)),
+                               Theme::Grid::LogoSize).pixmap(Theme::Grid::LogoSize,
+                                                             Theme::Grid::LogoSize));
+    logo->setStyleSheet(QStringLiteral("border: none; background: transparent;"));
+    layout->addWidget(logo);
 
     // Title
     m_title = new QLabel(AppInfo::title(), this);
@@ -27,7 +38,7 @@ TopNavBar::TopNavBar(QWidget* parent)
     layout->addWidget(m_progressLabel);
 
     m_progressBar = new QProgressBar(this);
-    m_progressBar->setFixedSize(120, 6);
+    m_progressBar->setFixedSize(120, Theme::Grid::Row);
     m_progressBar->setRange(0, Theme::RECOMMENDED_COUNT);
     m_progressBar->setValue(0);
     m_progressBar->setTextVisible(false);
@@ -47,7 +58,11 @@ TopNavBar::TopNavBar(QWidget* parent)
     layout->addWidget(m_cameraLabel);
 
     m_btnConnect = new QPushButton(QStringLiteral("连接"), this);
-    m_btnConnect->setFixedSize(60, 28);
+    m_btnConnect->setFixedSize(64, Theme::Grid::ControlH);
+    m_btnConnect->setIcon(Theme::icon(QStringLiteral("plug"),
+                                      QColor(QString::fromLatin1(Theme::PRIMARY)),
+                                      Theme::Grid::IconSm));
+    m_btnConnect->setIconSize(QSize(Theme::Grid::IconSm, Theme::Grid::IconSm));
     m_btnConnect->setStyleSheet(QStringLiteral(R"(
         QPushButton { color: %1; background: transparent; border: 1px solid %1;
                       border-radius: 4px; font-size: %2px; }
@@ -58,7 +73,11 @@ TopNavBar::TopNavBar(QWidget* parent)
     // 新建会话 —— 「标定完一组、再起一组」的入口。从前只能靠启动程序或切换
     // 标定类型这个副作用开新会话，现场没有别的路可走。
     m_btnNewSession = new QPushButton(QStringLiteral("新建会话"), this);
-    m_btnNewSession->setFixedSize(76, 28);
+    m_btnNewSession->setFixedSize(96, Theme::Grid::ControlH);
+    m_btnNewSession->setIcon(Theme::icon(QStringLiteral("plus"),
+                                         QColor(QString::fromLatin1(Theme::PRIMARY)),
+                                         Theme::Grid::IconSm));
+    m_btnNewSession->setIconSize(QSize(Theme::Grid::IconSm, Theme::Grid::IconSm));
     m_btnNewSession->setToolTip(
         QStringLiteral("开始一组新的标定数据（已采集的记录保留在磁盘上，不会删除）"));
     m_btnNewSession->setStyleSheet(QStringLiteral(R"(
@@ -73,11 +92,19 @@ TopNavBar::TopNavBar(QWidget* parent)
 
     // Settings / Help
     m_btnSettings = new QPushButton(QStringLiteral("设置"), this);
-    m_btnSettings->setFixedSize(48, 28);
+    m_btnSettings->setFixedSize(64, Theme::Grid::ControlH);
+    m_btnSettings->setIcon(Theme::icon(QStringLiteral("settings"),
+                                       QColor(QString::fromLatin1(Theme::TEXT_HINT)),
+                                       Theme::Grid::IconSm));
+    m_btnSettings->setIconSize(QSize(Theme::Grid::IconSm, Theme::Grid::IconSm));
     m_btnSettings->setStyleSheet(QStringLiteral("color: %1; background: transparent; border: none; font-size: %2px;")
                                  .arg(Theme::TEXT_HINT).arg(Theme::FONT_HINT));
     m_btnHelp = new QPushButton(QStringLiteral("帮助"), this);
-    m_btnHelp->setFixedSize(48, 28);
+    m_btnHelp->setFixedSize(64, Theme::Grid::ControlH);
+    m_btnHelp->setIcon(Theme::icon(QStringLiteral("help"),
+                                   QColor(QString::fromLatin1(Theme::TEXT_HINT)),
+                                   Theme::Grid::IconSm));
+    m_btnHelp->setIconSize(QSize(Theme::Grid::IconSm, Theme::Grid::IconSm));
     m_btnHelp->setStyleSheet(QStringLiteral("color: %1; background: transparent; border: none; font-size: %2px;")
                              .arg(Theme::TEXT_HINT).arg(Theme::FONT_HINT));
 
@@ -113,12 +140,18 @@ void TopNavBar::setCameraStatus(bool connected, const QString& deviceName)
         m_cameraLabel->setStyleSheet(QStringLiteral("font-size: %1px; color: %2; border: none;")
                                      .arg(Theme::FONT_HINT).arg(Theme::SUCCESS));
         m_btnConnect->setText(QStringLiteral("断开"));
+        m_btnConnect->setIcon(Theme::icon(QStringLiteral("unplug"),
+                                          QColor(QString::fromLatin1(Theme::PRIMARY)),
+                                          Theme::Grid::IconSm));
     } else {
         m_cameraDot->setStyleSheet(QStringLiteral("background-color: %1; border-radius: 5px;").arg(Theme::TEXT_HINT));
         m_cameraLabel->setText(QStringLiteral("未连接"));
         m_cameraLabel->setStyleSheet(QStringLiteral("font-size: %1px; color: %2; border: none;")
                                      .arg(Theme::FONT_HINT).arg(Theme::TEXT_HINT));
         m_btnConnect->setText(QStringLiteral("连接"));
+        m_btnConnect->setIcon(Theme::icon(QStringLiteral("plug"),
+                                          QColor(QString::fromLatin1(Theme::PRIMARY)),
+                                          Theme::Grid::IconSm));
     }
 }
 

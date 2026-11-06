@@ -17,8 +17,8 @@ DataInputCard::DataInputCard(const QString& cardId, const QString& label,
         .arg(Theme::BG_CARD).arg(Theme::BORDER_RADIUS));
 
     auto* layout = new QHBoxLayout(this);
-    layout->setContentsMargins(12, 4, 12, 4);
-    layout->setSpacing(8);
+    layout->setContentsMargins(Theme::Grid::Gutter, 4, Theme::Grid::Gutter, 4);
+    layout->setSpacing(Theme::Grid::Row);
     layout->setAlignment(Qt::AlignVCenter);
 
     // Status dot
@@ -40,13 +40,18 @@ DataInputCard::DataInputCard(const QString& cardId, const QString& label,
 
     // Input — adaptive font via resizeEvent
     m_input = new QLineEdit(this);
+    m_input->setMinimumHeight(Theme::Grid::ControlH);
     m_input->setPlaceholderText(hint);
     m_input->setStyleSheet(Theme::inputStyle());
     layout->addWidget(m_input, 1);
 
     // Copy button
     m_btnCopy = new QPushButton(QStringLiteral("复制"), this);
-    m_btnCopy->setFixedSize(56, 30);
+    m_btnCopy->setFixedSize(64, Theme::Grid::ControlH);
+    m_btnCopy->setIcon(Theme::icon(QStringLiteral("copy"),
+                                   QColor(QString::fromLatin1(Theme::PRIMARY)),
+                                   Theme::Grid::IconSm));
+    m_btnCopy->setIconSize(QSize(Theme::Grid::IconSm, Theme::Grid::IconSm));
     m_btnCopy->setStyleSheet(QStringLiteral(R"(
         QPushButton {
             background-color: #FFFFFF;

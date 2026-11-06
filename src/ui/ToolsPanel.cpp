@@ -20,6 +20,7 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QCheckBox>
+#include <QColor>
 #include <QDateTime>
 #include <QDir>
 #include <QFileDialog>
@@ -38,6 +39,7 @@
 #include <QPolygon>
 #include <QScrollArea>
 #include <QSignalBlocker>
+#include <QSize>
 #include <QStandardPaths>
 #include <QTextEdit>
 #include <QVBoxLayout>
@@ -119,6 +121,26 @@ bool parseRotationTriple(const QString& text, std::array<double, 3>& out)
     return false;
 }
 
+// 按钮图标：主色底（primaryButtonStyle）用白色，其余用正文色。
+void setButtonIcon(QPushButton* btn, const QString& name, bool onPrimary = false)
+{
+    if (!btn || name.isEmpty())
+        return;
+    const QColor color = onPrimary ? QColor(Qt::white)
+                                   : QColor(QString::fromLatin1(Theme::TEXT_BODY));
+    btn->setIcon(Theme::icon(name, color, Theme::Grid::IconSm));
+    btn->setIconSize(QSize(Theme::Grid::IconSm, Theme::Grid::IconSm));
+}
+
+QListWidgetItem* addToolItem(QListWidget* list, const QString& text,
+                             const QString& iconName)
+{
+    auto* item = new QListWidgetItem(text, list);
+    item->setIcon(Theme::icon(iconName, QColor(QString::fromLatin1(Theme::TEXT_BODY)),
+                              Theme::Grid::IconMd));
+    return item;
+}
+
 QLineEdit* makeTextInput(QWidget* parent)
 {
     auto* edit = new QLineEdit(parent);
@@ -168,10 +190,12 @@ ToolsPanel::ToolsPanel(QWidget* parent)
     : QDialog(parent)
 {
     setWindowTitle(QStringLiteral("工具"));
+    setWindowIcon(Theme::icon(QStringLiteral("logo"),
+                              QColor(QString::fromLatin1(Theme::PRIMARY)), 32));
     // 与主窗口一样可自由缩放/最大化；内容超出时由各页自己的滚动区消化，
-    // 所以最小值只保证左列表 + 一页基本信息还看得见。
-    setMinimumSize(640, 440);
-    resize(820, 620);
+    // 所以最小值只保证左列表 + 一页基本信息还看得见（按 8 的倍数取整）。
+    setMinimumSize(800, 560);
+    resize(Theme::Grid::ToolsWidth, Theme::Grid::ToolsHeight);
     setWindowFlags(windowFlags() | Qt::WindowMinMaxButtonsHint);
     setAttribute(Qt::WA_DeleteOnClose, false);
     buildUi();
@@ -180,22 +204,26 @@ ToolsPanel::ToolsPanel(QWidget* parent)
 void ToolsPanel::buildUi()
 {
     auto* layout = new QHBoxLayout(this);
-    layout->setContentsMargins(16, 16, 16, 16);
-    layout->setSpacing(16);
+    layout->setContentsMargins(Theme::Grid::Margin, Theme::Grid::Margin,
+                               Theme::Grid::Margin, Theme::Grid::Margin);
+    layout->setSpacing(Theme::Grid::Margin);
 
     m_toolList = new QListWidget(this);
     // Codex 的 UIA 驱动靠 objectName 找控件；测量方法页（P3）也是从这一个
     // 列表里选中的，所以给它一个稳定的名字。列表项的文本 = 方法名。
     m_toolList->setObjectName(QStringLiteral("tool_list"));
-    m_toolList->setFixedWidth(140);
-    m_toolList->addItem(QStringLiteral("欧氏距离"));
-    m_toolList->addItem(QStringLiteral("像素→3D"));
-    m_toolList->addItem(QStringLiteral("手眼标定"));
-    m_toolList->addItem(QStringLiteral("坐标转换"));
-    m_toolList->addItem(QStringLiteral("机器人数据格式推算"));
+    // 左列表 2 列（1040 宽下 992 内容宽 → 每列 68，2 列 = 152）。
+    m_toolList->setFixedWidth(
+        Theme::Grid::spanWidth(Theme::Grid::ToolsWidth - 2 * Theme::Grid::Margin, 2));
+    addToolItem(m_toolList, QStringLiteral("欧氏距离"), QStringLiteral("ruler"));
+    addToolItem(m_toolList, QStringLiteral("像素→3D"), QStringLiteral("crosshair"));
+    addToolItem(m_toolList, QStringLiteral("手眼标定"), QStringLiteral("target"));
+    addToolItem(m_toolList, QStringLiteral("坐标转换"), QStringLiteral("axes"));
+    addToolItem(m_toolList, QStringLiteral("机器人数据格式推算"),
+                QStringLiteral("calculator"));
     // 「机器人通信」已合并进「机器人控制」：连接、位姿读取、程序节点与
     // 点动共用同一个后端；原来的通信页（含 UR RTDE / 模拟连接）不再单列。
-    m_toolList->addItem(QStringLiteral("机器人控制"));
+    addToolItem(m_toolList, QStringLiteral("机器人控制"), QStringLiteral("robot"));
     // 测量方法不再是一个"测量页 + 方法下拉框"，而是下面 buildMeasurePages()
     // 加进来的 7 个独立列表项（P3；「3D 孔洞」合并了原圆环拟合与孔径）。
     m_toolList->setStyleSheet(QStringLiteral(
@@ -361,9 +389,11 @@ void ToolsPanel::buildDistancePage(QStackedWidget* stack)
     resultRow->addStretch();
     m_calcBtn = new QPushButton(QStringLiteral("计算"), group);
     m_calcBtn->setStyleSheet(Theme::primaryButtonStyle());
+    setButtonIcon(m_calcBtn, QStringLiteral("calculator"), true);
     resultRow->addWidget(m_calcBtn);
     m_copyBtn = new QPushButton(QStringLiteral("复制"), group);
     m_copyBtn->setStyleSheet(Theme::secondaryButtonStyle());
+    setButtonIcon(m_copyBtn, QStringLiteral("copy"));
     resultRow->addWidget(m_copyBtn);
     form->addRow(QStringLiteral("结果"), resultRow);
 
@@ -445,6 +475,7 @@ void ToolsPanel::buildPixelTo3DPage(QStackedWidget* stack)
     dirRow->addWidget(m_p2dDir, 1);
     auto* browseBtn = new QPushButton(QStringLiteral("浏览"), dirWrap);
     browseBtn->setStyleSheet(Theme::secondaryButtonStyle());
+    setButtonIcon(browseBtn, QStringLiteral("folder"));
     dirRow->addWidget(browseBtn);
     form->addRow(QStringLiteral("数据文件夹"), dirWrap);
 
@@ -501,9 +532,11 @@ void ToolsPanel::buildPixelTo3DPage(QStackedWidget* stack)
     resultRow->addWidget(m_p2dResult, 1);
     auto* calcBtn = new QPushButton(QStringLiteral("计算"), group);
     calcBtn->setStyleSheet(Theme::primaryButtonStyle());
+    setButtonIcon(calcBtn, QStringLiteral("calculator"), true);
     resultRow->addWidget(calcBtn);
     m_p2dCopyBtn = new QPushButton(QStringLiteral("复制"), group);
     m_p2dCopyBtn->setStyleSheet(Theme::secondaryButtonStyle());
+    setButtonIcon(m_p2dCopyBtn, QStringLiteral("copy"));
     resultRow->addWidget(m_p2dCopyBtn);
     form->addRow(resultRow);
 
@@ -845,6 +878,7 @@ void ToolsPanel::buildCalibrationPage(QStackedWidget* stack)
     dirRow->addWidget(m_calibDir, 1);
     auto* browseBtn = new QPushButton(QStringLiteral("浏览"), group);
     browseBtn->setStyleSheet(Theme::secondaryButtonStyle());
+    setButtonIcon(browseBtn, QStringLiteral("folder"));
     dirRow->addWidget(browseBtn);
     form->addRow(QStringLiteral("数据文件夹"), dirRow);
 
@@ -870,6 +904,7 @@ void ToolsPanel::buildCalibrationPage(QStackedWidget* stack)
         row->addWidget(edit, 1);
         auto* browse = new QPushButton(QStringLiteral("浏览"), group);
         browse->setStyleSheet(Theme::secondaryButtonStyle());
+        setButtonIcon(browse, QStringLiteral("folder"));
         row->addWidget(browse);
         rowWidget = new QWidget(group);
         rowWidget->setLayout(row);
@@ -929,6 +964,7 @@ void ToolsPanel::buildCalibrationPage(QStackedWidget* stack)
     m_calibApplyBtn = new QPushButton(QStringLiteral("应用"), group);
     m_calibApplyBtn->setObjectName(QStringLiteral("calib_apply_format"));
     m_calibApplyBtn->setStyleSheet(Theme::secondaryButtonStyle());
+    setButtonIcon(m_calibApplyBtn, QStringLiteral("check"));
     m_calibApplyBtn->setToolTip(QStringLiteral(
         "把这个格式设为全局预设：主界面「计算」按它算，重启后仍生效"));
     fmtRow->addWidget(m_calibApplyBtn);
@@ -974,12 +1010,15 @@ void ToolsPanel::buildCalibrationPage(QStackedWidget* stack)
     m_calibSessionBtn = new QPushButton(QStringLiteral("用当前会话"), group);
     m_calibSessionBtn->setObjectName(QStringLiteral("calib_session_btn"));
     m_calibSessionBtn->setStyleSheet(Theme::secondaryButtonStyle());
+    setButtonIcon(m_calibSessionBtn, QStringLiteral("history"));
     btnRow->addWidget(m_calibSessionBtn);
     m_calibCalcBtn = new QPushButton(QStringLiteral("计算"), group);
     m_calibCalcBtn->setStyleSheet(Theme::primaryButtonStyle());
+    setButtonIcon(m_calibCalcBtn, QStringLiteral("calculator"), true);
     btnRow->addWidget(m_calibCalcBtn);
     m_calibCopyBtn = new QPushButton(QStringLiteral("复制结果"), group);
     m_calibCopyBtn->setStyleSheet(Theme::secondaryButtonStyle());
+    setButtonIcon(m_calibCopyBtn, QStringLiteral("copy"));
     btnRow->addWidget(m_calibCopyBtn);
     form->addRow(QString(), btnRow);
 
@@ -1590,9 +1629,11 @@ void ToolsPanel::buildTransformPage(QStackedWidget* stack)
     resultRow->addStretch();
     m_transformCalcBtn = new QPushButton(QStringLiteral("计算"), group);
     m_transformCalcBtn->setStyleSheet(Theme::primaryButtonStyle());
+    setButtonIcon(m_transformCalcBtn, QStringLiteral("calculator"), true);
     resultRow->addWidget(m_transformCalcBtn);
     m_transformCopyBtn = new QPushButton(QStringLiteral("复制"), group);
     m_transformCopyBtn->setStyleSheet(Theme::secondaryButtonStyle());
+    setButtonIcon(m_transformCopyBtn, QStringLiteral("copy"));
     resultRow->addWidget(m_transformCopyBtn);
     form->addRow(resultRow);
 
@@ -1874,6 +1915,7 @@ void ToolsPanel::buildFormatInferencePage(QStackedWidget* stack)
     inferDirRow->addWidget(m_inferDirEdit, 1);
     auto* inferDirBrowse = new QPushButton(QStringLiteral("浏览"), dataGroup);
     inferDirBrowse->setStyleSheet(Theme::secondaryButtonStyle());
+    setButtonIcon(inferDirBrowse, QStringLiteral("folder"));
     inferDirRow->addWidget(inferDirBrowse);
     dataForm->addRow(QStringLiteral("数据文件夹"), inferDirRow);
 
@@ -1889,6 +1931,7 @@ void ToolsPanel::buildFormatInferencePage(QStackedWidget* stack)
         row->addWidget(edit, 1);
         auto* browse = new QPushButton(QStringLiteral("浏览"), dataGroup);
         browse->setStyleSheet(Theme::secondaryButtonStyle());
+        setButtonIcon(browse, QStringLiteral("folder"));
         row->addWidget(browse);
         rowWidget = new QWidget(dataGroup);
         rowWidget->setLayout(row);
@@ -1947,11 +1990,13 @@ void ToolsPanel::buildFormatInferencePage(QStackedWidget* stack)
     residualButtons->setSpacing(8);
     m_inferSessionBtn = new QPushButton(QStringLiteral("用当前会话"), residual);
     m_inferSessionBtn->setStyleSheet(Theme::secondaryButtonStyle());
+    setButtonIcon(m_inferSessionBtn, QStringLiteral("history"));
     m_inferSessionBtn->setToolTip(QStringLiteral(
         "载入当前会话的数据，载入后直接开始试算"));
     residualButtons->addWidget(m_inferSessionBtn);
     m_inferTryAllBtn = new QPushButton(QStringLiteral("试算各格式"), residual);
     m_inferTryAllBtn->setStyleSheet(Theme::primaryButtonStyle());
+    setButtonIcon(m_inferTryAllBtn, QStringLiteral("repeat"), true);
     m_inferTryAllBtn->setToolTip(QStringLiteral(
         "同一份数据把 5 种常见位姿格式 x 度/弧度 各算一遍，按总平均误差排序"));
     residualButtons->addWidget(m_inferTryAllBtn);
@@ -1964,9 +2009,11 @@ void ToolsPanel::buildFormatInferencePage(QStackedWidget* stack)
     btnRow->setSpacing(8);
     m_inferRunBtn = new QPushButton(QStringLiteral("推算"), group);
     m_inferRunBtn->setStyleSheet(Theme::primaryButtonStyle());
+    setButtonIcon(m_inferRunBtn, QStringLiteral("calculator"), true);
     btnRow->addWidget(m_inferRunBtn);
     m_inferApplyBtn = new QPushButton(QStringLiteral("应用为全局预设"), group);
     m_inferApplyBtn->setStyleSheet(Theme::secondaryButtonStyle());
+    setButtonIcon(m_inferApplyBtn, QStringLiteral("check"));
     m_inferApplyBtn->setEnabled(false);
     m_inferApplyBtn->setToolTip(QStringLiteral(
         "把唯一判定的格式写进 AppConfig：手眼标定页与主界面「计算」都按它读卡片"));
@@ -2213,7 +2260,7 @@ void ToolsPanel::updateFormatInference()
         m_inferBest = matched.front().id;
         m_inferBestValid = true;
         m_inferBestUnit = unit;
-        out += QStringLiteral("✔ 唯一匹配：%1\n   %2\n")
+        out += QStringLiteral("[OK] 唯一匹配：%1\n   %2\n")
                    .arg(name(m_inferBest), matched.front().detail);
         out += QStringLiteral(
             "\n判定依据：按这个约定读那 3 个数时，两次姿态的相对旋转正好绕基轴/工具轴，"
@@ -2223,12 +2270,12 @@ void ToolsPanel::updateFormatInference()
             const int n = std::min<int>(3, static_cast<int>(missed.size()));
             for (int i = 0; i < n; ++i) {
                 const auto& c = missed[static_cast<std::size_t>(i)];
-                out += QStringLiteral("  ✘ %1 — %2\n").arg(name(c.id), c.detail);
+                out += QStringLiteral("  [X] %1 — %2\n").arg(name(c.id), c.detail);
             }
         }
     } else if (matched.empty()) {
         out += QStringLiteral(
-            "✘ 24 种欧拉约定里没有一种能让相对旋转落在基轴/工具轴上。\n\n"
+            "[X] 24 种欧拉约定里没有一种能让相对旋转落在基轴/工具轴上。\n\n"
             "按顺序检查：\n"
             "  1. 角度单位选对了吗（度 / 弧度）？\n"
             "  2. 点动方式选对了吗（基坐标 / 工具坐标）？\n"
@@ -2245,10 +2292,10 @@ void ToolsPanel::updateFormatInference()
             }
         }
     } else {
-        out += QStringLiteral("⚠ 有 %1 种约定都通过了判据，还不能唯一确定：\n")
+        out += QStringLiteral("[注意] 有 %1 种约定都通过了判据，还不能唯一确定：\n")
                    .arg(matched.size());
         for (const auto& c : matched)
-            out += QStringLiteral("  ✔ %1 — %2\n").arg(name(c.id), c.detail);
+            out += QStringLiteral("  [OK] %1 — %2\n").arg(name(c.id), c.detail);
         out += QStringLiteral(
             "\n再做一组点动：绕另一根基轴（这次绕 X，下次就绕 Z），"
             "转角仍取 15°~60°，起始姿态让三轴都不为 0。\n"
@@ -2389,7 +2436,13 @@ void ToolsPanel::buildMeasurePages(QStackedWidget* stack)
     const MeasureTools::MethodSpec* specs = MeasureTools::methodSpecs(n);
     for (int i = 0; i < n; ++i) {
         // 左侧列表项与页面一一对应（顺序 = methodSpecs()）。
-        m_toolList->addItem(QString::fromUtf8(specs[i].name));
+        static const char* kMeasureIcons[] = {
+            "ruler", "crosshair", "repeat", "target", "grid", "move", "scan"
+        };
+        const QString iconName = QString::fromLatin1(
+            kMeasureIcons[static_cast<std::size_t>(i)
+                          % (sizeof(kMeasureIcons) / sizeof(kMeasureIcons[0]))]);
+        addToolItem(m_toolList, QString::fromUtf8(specs[i].name), iconName);
         MeasurePage* page = MeasurePages::create(specs[i].method, stack);
         page->setObjectName(QStringLiteral("measure_page_%1")
                                 .arg(QString::fromUtf8(specs[i].id)));

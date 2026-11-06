@@ -43,6 +43,7 @@ class ToastOverlay;
 class ToolsPanel;
 class HelpDialog;
 class QShowEvent;
+class QSplitter;
 class QTimer;
 struct DeviceEntry;
 
@@ -203,6 +204,7 @@ private:
 
     // Owned UI widgets
     TopNavBar*      m_topNav        = nullptr;
+    QSplitter*      m_hSplitter      = nullptr;
     ModeSelector*   m_modeSelector  = nullptr;
     Image2DView*    m_view2d        = nullptr;
     VisSceneView*   m_view3d        = nullptr;

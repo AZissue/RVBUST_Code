@@ -4,6 +4,7 @@
 #include "logic/DataManager.h"
 #include "ui/Theme.h"
 
+#include <QColor>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QFormLayout>
@@ -38,8 +39,10 @@ SettingsDialog::SettingsDialog(AppConfig& config, DataManager* data, QWidget* pa
     setWindowTitle(QStringLiteral("设置"));
     // 用户反馈：内容一多，对话框跟着长高，确定按钮被任务栏挡住。 现在内容装在
     // 滚动区里，窗口本身可以任意缩放；最小值只保证还能看，不再随内容增长。
-    setMinimumSize(520, 360);
-    resize(600, 560);
+    setWindowIcon(Theme::icon(QStringLiteral("logo"),
+                              QColor(QString::fromLatin1(Theme::PRIMARY)), 32));
+    setMinimumSize(512, 360);
+    resize(608, 560);
     setWindowFlags(windowFlags() | Qt::WindowMinMaxButtonsHint);
 
     m_saveBaseDir = m_config->saveBaseDir();
@@ -69,6 +72,8 @@ SettingsDialog::SettingsDialog(AppConfig& config, DataManager* data, QWidget* pa
     auto* pathLayout = new QHBoxLayout(pathGroup);
     m_pathEdit = new QLineEdit(m_saveBaseDir, pathGroup);
     auto* browseBtn = new QPushButton(QStringLiteral("浏览..."), pathGroup);
+    browseBtn->setIcon(Theme::icon(QStringLiteral("folder"), QColor(QString::fromLatin1(Theme::TEXT_BODY)), Theme::Grid::IconSm));
+    browseBtn->setIconSize(QSize(Theme::Grid::IconSm, Theme::Grid::IconSm));
     pathLayout->addWidget(m_pathEdit, 1);
     pathLayout->addWidget(browseBtn);
     connect(browseBtn, &QPushButton::clicked, this, [this]() {
@@ -146,6 +151,8 @@ SettingsDialog::SettingsDialog(AppConfig& config, DataManager* data, QWidget* pa
     maintLayout->addRow(QStringLiteral("相机在线检查间隔"), m_healthIntervalSpin);
 
     auto* releaseBtn = new QPushButton(QStringLiteral("释放相机"), maintGroup);
+    releaseBtn->setIcon(Theme::icon(QStringLiteral("camera-off"), QColor(QString::fromLatin1(Theme::TEXT_BODY)), Theme::Grid::IconSm));
+    releaseBtn->setIconSize(QSize(Theme::Grid::IconSm, Theme::Grid::IconSm));
     maintLayout->addRow(QString(), releaseBtn);
     m_releaseStatus = new QLabel(
         QStringLiteral("用于\"相机被占用/状态异常\"时一键清理：立即断开并重新扫描设备。"),
@@ -163,6 +170,8 @@ SettingsDialog::SettingsDialog(AppConfig& config, DataManager* data, QWidget* pa
     auto* restoreGroup = new QGroupBox(QStringLiteral("数据恢复"), content);
     auto* restoreLayout = new QVBoxLayout(restoreGroup);
     auto* restoreBtn = new QPushButton(QStringLiteral("从备份恢复..."), restoreGroup);
+    restoreBtn->setIcon(Theme::icon(QStringLiteral("history"), QColor(QString::fromLatin1(Theme::TEXT_BODY)), Theme::Grid::IconSm));
+    restoreBtn->setIconSize(QSize(Theme::Grid::IconSm, Theme::Grid::IconSm));
     restoreLayout->addWidget(restoreBtn);
     m_restoreStatus = new QLabel(QStringLiteral("选择备份文件后将恢复会话记录"), restoreGroup);
     m_restoreStatus->setStyleSheet(hintStyle());
@@ -177,6 +186,8 @@ SettingsDialog::SettingsDialog(AppConfig& config, DataManager* data, QWidget* pa
     auto* programGroup = new QGroupBox(QStringLiteral("机器人流程"), content);
     auto* programLayout = new QVBoxLayout(programGroup);
     auto* importBtn = new QPushButton(QStringLiteral("导入流程..."), programGroup);
+    importBtn->setIcon(Theme::icon(QStringLiteral("file-import"), QColor(QString::fromLatin1(Theme::TEXT_BODY)), Theme::Grid::IconSm));
+    importBtn->setIconSize(QSize(Theme::Grid::IconSm, Theme::Grid::IconSm));
     programLayout->addWidget(importBtn);
     m_programStatus = new QLabel(
         QStringLiteral("从 *.program.json 导入「机器人控制」页的流程节点；"

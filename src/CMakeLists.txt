@@ -94,6 +94,8 @@ set(SOURCES
     ui/SettingsDialog.cpp
     # 使用说明窗口（左侧章节 + 右侧正文）；正文在 logic/HelpContent.h
     ui/HelpDialog.cpp
+    # 12 栅格 + 单色 SVG 图标（Theme::icon 用 QSvgRenderer 着色）
+    resources/resources.qrc
 )
 
 add_executable(${PROJECT_NAME} ${SOURCES})
@@ -115,6 +117,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt5::Gui
     Qt5::Concurrent
     Qt5::Network
+    Qt5::Svg
     RVC::RVC
     HandEyeSDK::HandEyeSDK
     EfortSDK::EfortSDK
@@ -168,6 +171,9 @@ if(WIN32)
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         # Qt5 runtime DLLs (Release + Debug)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different ${QT5_DLLS} $<TARGET_FILE_DIR:${PROJECT_NAME}>
+        # Qt5Svg 不在 third_party/Qt5/bin 的裁剪副本里，按目标路径显式部署
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:Qt5::Svg>" "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
         # Qt5 platform plugin
         COMMAND ${CMAKE_COMMAND} -E make_directory
             "$<TARGET_FILE_DIR:${PROJECT_NAME}>/platforms"

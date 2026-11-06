@@ -1,7 +1,13 @@
 #include "ui/Theme.h"
 
 #include <QColor>
+#include <QGuiApplication>
+#include <QHash>
+#include <QPainter>
+#include <QPixmap>
+#include <QRectF>
 #include <QString>
+#include <QSvgRenderer>
 
 namespace Theme {
 
@@ -407,6 +413,46 @@ QString viewOverlayButtonStyle()
     .arg(FONT_HINT)
     .arg(withAlpha(PRIMARY, 0.30))
     .arg(withAlpha(PRIMARY, 0.34));
+}
+
+QIcon icon(const QString& name, const QColor& color, int size)
+{
+    if (name.isEmpty() || size <= 0)
+        return {};
+
+    // 高 DPI：按设备像素比渲染，QIcon 再按逻辑尺寸使用。缓存键包含 dpr，
+    // 因为同一逻辑尺寸在 100% / 150% 下需要不同像素密度。
+    const qreal dpr = qGuiApp ? qGuiApp->devicePixelRatio() : 1.0;
+    const QString key = QStringLiteral("%1|%2|%3|%4")
+                            .arg(name, color.name(QColor::HexArgb))
+                            .arg(size)
+                            .arg(dpr);
+
+    static QHash<QString, QIcon> cache;
+    const auto it = cache.constFind(key);
+    if (it != cache.constEnd())
+        return it.value();
+
+    QSvgRenderer renderer(QStringLiteral(":/icons/%1.svg").arg(name));
+    if (!renderer.isValid())
+        return {};
+
+    QPixmap pm(qRound(size * dpr), qRound(size * dpr));
+    pm.setDevicePixelRatio(dpr);
+    pm.fill(Qt::transparent);
+
+    QPainter painter(&pm);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
+    renderer.render(&painter, QRectF(0, 0, size, size));
+    // 保留 alpha 通道，把整张图统一染成目标色；SVG 本身只需单色描边。
+    painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
+    painter.fillRect(QRectF(0, 0, size, size), color);
+    painter.end();
+
+    const QIcon result(pm);
+    cache.insert(key, result);
+    return result;
 }
 
 } // namespace Theme

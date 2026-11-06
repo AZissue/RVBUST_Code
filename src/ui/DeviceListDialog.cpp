@@ -1,5 +1,7 @@
 #include "ui/DeviceListDialog.h"
 #include "ui/Theme.h"
+#include <QColor>
+#include <QSize>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -13,10 +15,12 @@ DeviceListDialog::DeviceListDialog(QWidget* parent,
     , m_refreshFn(std::move(refreshFn))
 {
     setWindowTitle(QStringLiteral("选择相机设备"));
+    setWindowIcon(Theme::icon(QStringLiteral("logo"),
+                              QColor(QString::fromLatin1(Theme::PRIMARY)), 32));
     // 与主窗口一样可缩放/最大化（用户反馈：窗口不该被内容尺寸锁死）。 设备表
     // 本身就是滚动区，行数再多也不会把按钮顶出屏幕。
-    setMinimumSize(420, 260);
-    resize(520, 340);
+    setMinimumSize(420, 280);
+    resize(512, 344);
     setWindowFlags(windowFlags() | Qt::WindowMinMaxButtonsHint);
     m_refreshWatcher = new QFutureWatcher<std::vector<DeviceEntry>>(this);
     connect(m_refreshWatcher, &QFutureWatcher<std::vector<DeviceEntry>>::finished,
@@ -27,8 +31,9 @@ DeviceListDialog::DeviceListDialog(QWidget* parent,
 void DeviceListDialog::buildUi(const std::vector<DeviceEntry>& devices)
 {
     auto* mainLayout = new QVBoxLayout(this);
-    mainLayout->setContentsMargins(20, 16, 20, 16);
-    mainLayout->setSpacing(12);
+    mainLayout->setContentsMargins(Theme::Grid::Margin, Theme::Grid::Gutter,
+                                   Theme::Grid::Margin, Theme::Grid::Gutter);
+    mainLayout->setSpacing(Theme::Grid::Row);
 
     // Header row: title + refresh button
     auto* headerRow = new QHBoxLayout();
@@ -39,7 +44,11 @@ void DeviceListDialog::buildUi(const std::vector<DeviceEntry>& devices)
     headerRow->addStretch();
 
     m_btnRefresh = new QPushButton(QStringLiteral("刷新"), this);
-    m_btnRefresh->setFixedSize(64, 28);
+    m_btnRefresh->setFixedSize(64, Theme::Grid::ControlH);
+    m_btnRefresh->setIcon(Theme::icon(QStringLiteral("refresh"),
+                                      QColor(QString::fromLatin1(Theme::PRIMARY)),
+                                      Theme::Grid::IconSm));
+    m_btnRefresh->setIconSize(QSize(Theme::Grid::IconSm, Theme::Grid::IconSm));
     m_btnRefresh->setStyleSheet(QStringLiteral(R"(
         QPushButton { color: %1; background: transparent; border: 1px solid %1;
                       border-radius: 4px; font-size: %2px; }
@@ -88,7 +97,10 @@ void DeviceListDialog::buildUi(const std::vector<DeviceEntry>& devices)
     btnRow->addStretch();
 
     m_btnOk = new QPushButton(QStringLiteral("确定"), this);
-    m_btnOk->setFixedSize(80, 32);
+    m_btnOk->setFixedSize(80, Theme::Grid::ControlH);
+    m_btnOk->setIcon(Theme::icon(QStringLiteral("check"), QColor(Qt::white),
+                                 Theme::Grid::IconSm));
+    m_btnOk->setIconSize(QSize(Theme::Grid::IconSm, Theme::Grid::IconSm));
     m_btnOk->setEnabled(false);
     m_btnOk->setStyleSheet(QStringLiteral(R"(
         QPushButton { color: #FFF; background-color: %1; border: none;
@@ -100,7 +112,10 @@ void DeviceListDialog::buildUi(const std::vector<DeviceEntry>& devices)
     btnRow->addWidget(m_btnOk);
 
     auto* btnCancel = new QPushButton(QStringLiteral("取消"), this);
-    btnCancel->setFixedSize(80, 32);
+    btnCancel->setFixedSize(80, Theme::Grid::ControlH);
+    btnCancel->setIcon(Theme::icon(QStringLiteral("close"), QColor(QString::fromLatin1(Theme::TEXT_BODY)),
+                                   Theme::Grid::IconSm));
+    btnCancel->setIconSize(QSize(Theme::Grid::IconSm, Theme::Grid::IconSm));
     btnCancel->setStyleSheet(QStringLiteral(R"(
         QPushButton { color: %1; background: transparent; border: 1px solid %2;
                       border-radius: 4px; font-size: %3px; }

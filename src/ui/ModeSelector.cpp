@@ -1,7 +1,9 @@
 #include "ui/ModeSelector.h"
 #include "ui/Theme.h"
+#include <QColor>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QSize>
 #include <cmath>
 #include <algorithm>
 
@@ -11,17 +13,21 @@ ModeSelector::ModeSelector(QWidget* parent)
     setStyleSheet(QStringLiteral("background-color: %1;").arg(Theme::BG_MAIN));
 
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(24, 4, 24, 4);
+    layout->setContentsMargins(Theme::Grid::Margin, 4, Theme::Grid::Margin, 4);
     layout->setSpacing(0);
 
     // Single row: 手眼模式 + 标定方法 + 标记物类型
     auto* row1 = new QHBoxLayout();
-    row1->setSpacing(14);
+    row1->setSpacing(Theme::Grid::Gutter);
 
     // Tools entry lives next to the mode row (left), pushing the calibration
     // selectors to the right.
     m_btnTools = new QPushButton(QStringLiteral("工具"), this);
-    m_btnTools->setFixedSize(56, 28);
+    m_btnTools->setFixedSize(64, Theme::Grid::ControlH);
+    m_btnTools->setIcon(Theme::icon(QStringLiteral("tools"),
+                                    QColor(QString::fromLatin1(Theme::TEXT_BODY)),
+                                    Theme::Grid::IconSm));
+    m_btnTools->setIconSize(QSize(Theme::Grid::IconSm, Theme::Grid::IconSm));
     m_btnTools->setStyleSheet(QStringLiteral(
         "QPushButton { color: %1; background: transparent; border: 1px solid %2;"
         " border-radius: 4px; font-size: %3px; font-weight: 600; }"
@@ -29,7 +35,7 @@ ModeSelector::ModeSelector(QWidget* parent)
         .arg(Theme::TEXT_BODY).arg(Theme::BORDER_DEFAULT)
         .arg(Theme::FONT_HINT).arg(Theme::PRIMARY));
     row1->addWidget(m_btnTools);
-    row1->addSpacing(25);
+    row1->addSpacing(Theme::Grid::Margin);
     connect(m_btnTools, &QPushButton::clicked, this, &ModeSelector::toolsClicked);
 
     // Group 1: Eye-hand mode
@@ -161,7 +167,7 @@ QPushButton* ModeSelector::makeToggle(const QString& text, QButtonGroup* group, 
     btn->setCheckable(true);
     // Adaptive width: fit the label tightly so the buttons read as one group
     // instead of looking like separate controls.
-    btn->setFixedHeight(32);
+    btn->setFixedHeight(Theme::Grid::ControlH);
     const int textW = btn->fontMetrics().horizontalAdvance(text);
     btn->setFixedWidth(std::max(72, textW + 24));
     btn->setChecked(selected);

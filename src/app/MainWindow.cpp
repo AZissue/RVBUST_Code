@@ -100,6 +100,8 @@ MainWindow::MainWindow(QWidget* parent)
     m_config.load();
 
     setWindowTitle(AppInfo::title());
+    setWindowIcon(Theme::icon(QStringLiteral("logo"),
+                              QColor(QString::fromLatin1(Theme::PRIMARY)), 32));
     // Size/position is finalized in showEvent() (after the window frame exists)
     // so the window is centered and its title bar is never stranded off-screen.
     setMinimumSize(1280, 720);
@@ -273,33 +275,40 @@ void MainWindow::buildUi()
     auto* central = new QWidget(this);
     setCentralWidget(central);
     auto* mainLayout = new QVBoxLayout(central);
-    mainLayout->setContentsMargins(0, 24, 0, 24);
+    // 12 栅格：上下页边距 24；纵向节奏只用 8 的倍数。
+    mainLayout->setContentsMargins(0, Theme::Grid::Margin, 0, Theme::Grid::Margin);
     mainLayout->setSpacing(0);
 
     m_topNav = new TopNavBar(this);
     mainLayout->addWidget(m_topNav);
 
-    mainLayout->addSpacing(16);
+    mainLayout->addSpacing(Theme::Grid::Gutter);
 
     m_modeSelector = new ModeSelector(this);
     mainLayout->addWidget(m_modeSelector);
 
-    mainLayout->addSpacing(24);
+    mainLayout->addSpacing(Theme::Grid::Margin);
 
-    auto* hSplitter = new QSplitter(Qt::Horizontal, this);
-    hSplitter->setStyleSheet(QStringLiteral("QSplitter::handle { background-color: %1; width: 2px; }")
-                            .arg(Theme::BORDER_DEFAULT));
+    m_hSplitter = new QSplitter(Qt::Horizontal, this);
+    // 8:4 分栏；16px 手柄 = 栅格列间距，视觉上由两栏自己的边距承担分隔，
+    // 不再画一条 2px 灰线（旧实现让 2D/3D 与右栏的间隙既不是 16 也不稳定）。
+    m_hSplitter->setHandleWidth(Theme::Grid::Gutter);
+    m_hSplitter->setStyleSheet(QStringLiteral("QSplitter::handle { background: transparent; }"));
+    m_hSplitter->setChildrenCollapsible(false);
 
     auto* leftPanel = new QWidget(this);
     auto* leftLayout = new QVBoxLayout(leftPanel);
-    leftLayout->setContentsMargins(24, 0, 24, 0);
-    leftLayout->setSpacing(12);
+    // 左侧内容左页边距 24，右页边距由 16px 手柄承担，正好落在 8/4 列边界。
+    leftLayout->setContentsMargins(Theme::Grid::Margin, 0, 0, 0);
+    leftLayout->setSpacing(Theme::Grid::Gutter);
 
     auto* viewRow = new QHBoxLayout();
+    viewRow->setSpacing(Theme::Grid::Gutter);
     m_view2d = new Image2DView(this);
     m_view3d = new VisSceneView(this);
-    viewRow->addWidget(m_view2d, 1);
-    viewRow->addWidget(m_view3d, 1);
+    // 2D / 3D 各占 4 列（左半区 8 列 = 4 + 4）。
+    viewRow->addWidget(m_view2d, 4);
+    viewRow->addWidget(m_view3d, 4);
     leftLayout->addLayout(viewRow, 1);
 
     m_dataInput = new DataInputArea(this);
@@ -308,19 +317,21 @@ void MainWindow::buildUi()
     m_actionButtons = new ActionButtons(this);
     leftLayout->addWidget(m_actionButtons);
 
-    hSplitter->addWidget(leftPanel);
+    m_hSplitter->addWidget(leftPanel);
 
     auto* rightPanel = new QWidget(this);
     auto* rightLayout = new QVBoxLayout(rightPanel);
     rightLayout->setContentsMargins(0, 0, 0, 0);
     m_sidePanel = new SidePanel(this);
     rightLayout->addWidget(m_sidePanel);
-    hSplitter->addWidget(rightPanel);
+    m_hSplitter->addWidget(rightPanel);
 
-    hSplitter->setStretchFactor(0, 3);
-    hSplitter->setStretchFactor(1, 1);
+    // 右栏 4 列、左栏 8 列；拉伸时保持 2:1。
+    m_hSplitter->setStretchFactor(0, 8);
+    m_hSplitter->setStretchFactor(1, 4);
+    m_hSplitter->setSizes({840, 424});
 
-    mainLayout->addWidget(hSplitter, 1);
+    mainLayout->addWidget(m_hSplitter, 1);
 
     m_toast = new ToastOverlay(this);
 

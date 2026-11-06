@@ -1,6 +1,9 @@
 #include "ui/Hole3DPage.h"
+#include "ui/Theme.h"
 
 #include <QAbstractButton>
+#include <QColor>
+#include <QSize>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QEvent>
@@ -317,8 +320,9 @@ void Hole3DPage::buildUi()
         " background:transparent; border:none; }"));
 
     auto* root = new QVBoxLayout(this);
-    root->setContentsMargins(12, 12, 12, 12);
-    root->setSpacing(12);
+    root->setContentsMargins(Theme::Grid::Gutter, Theme::Grid::Gutter,
+                             Theme::Grid::Gutter, Theme::Grid::Gutter);
+    root->setSpacing(Theme::Grid::Gutter);
     root->addWidget(buildHeader());
     root->addWidget(m_tabs, 1);
     root->addWidget(buildFooter());
@@ -336,8 +340,12 @@ QWidget* Hole3DPage::buildHeader()
     auto* th = new QHBoxLayout(titleBox);
     th->setContentsMargins(0, 0, 0, 0);
     th->setSpacing(10);
-    auto* icon = new QLabel(QStringLiteral("⭕"), titleBox);
+    auto* icon = new QLabel(titleBox);
     icon->setObjectName(QStringLiteral("hole3dIcon"));
+    icon->setPixmap(Theme::icon(QStringLiteral("target"),
+                                QColor(QString::fromLatin1(Theme::PRIMARY)),
+                                Theme::Grid::IconLg)
+                        .pixmap(Theme::Grid::IconLg, Theme::Grid::IconLg));
     auto* title = new QLabel(QStringLiteral("3D 孔洞测量"), titleBox);
     title->setObjectName(QStringLiteral("hole3dTitle"));
     th->addWidget(icon);
@@ -735,25 +743,39 @@ QWidget* Hole3DPage::buildFooter()
                               .arg(kTextSub));
     h->addWidget(m_hint, 1);
 
-    auto* measure = new QPushButton(QStringLiteral("▶ 开始测量"), footer);
+    auto* measure = new QPushButton(QStringLiteral("开始测量"), footer);
     measure->setObjectName(QStringLiteral("hole3dBtnPrimary"));
     measure->setCursor(Qt::PointingHandCursor);
+    measure->setIcon(Theme::icon(QStringLiteral("play"), QColor(Qt::white),
+                                 Theme::Grid::IconSm));
+    measure->setIconSize(QSize(Theme::Grid::IconSm, Theme::Grid::IconSm));
     h->addWidget(measure);
 
-    m_addButton = new QPushButton(QStringLiteral("➕ 添加到序列"), footer);
+    m_addButton = new QPushButton(QStringLiteral("添加到序列"), footer);
     m_addButton->setObjectName(QStringLiteral("hole3dBtnSuccess"));
     m_addButton->setCursor(Qt::PointingHandCursor);
     m_addButton->setEnabled(false);
+    m_addButton->setIcon(Theme::icon(QStringLiteral("plus"), QColor(Qt::white),
+                                     Theme::Grid::IconSm));
+    m_addButton->setIconSize(QSize(Theme::Grid::IconSm, Theme::Grid::IconSm));
     h->addWidget(m_addButton);
 
     // 测量帧：本页是自绘界面，不经过基类的通用表单，所以按钮在这里各一份。
     auto* saveFrame = new QPushButton(QStringLiteral("保存测量帧"), footer);
     saveFrame->setObjectName(QStringLiteral("hole3dBtnFrameSave"));
     saveFrame->setCursor(Qt::PointingHandCursor);
+    saveFrame->setIcon(Theme::icon(QStringLiteral("save"),
+                                   QColor(QString::fromLatin1(Theme::TEXT_BODY)),
+                                   Theme::Grid::IconSm));
+    saveFrame->setIconSize(QSize(Theme::Grid::IconSm, Theme::Grid::IconSm));
     h->addWidget(saveFrame);
     auto* openFrame = new QPushButton(QStringLiteral("打开测量帧"), footer);
     openFrame->setObjectName(QStringLiteral("hole3dBtnFrameOpen"));
     openFrame->setCursor(Qt::PointingHandCursor);
+    openFrame->setIcon(Theme::icon(QStringLiteral("folder-open"),
+                                   QColor(QString::fromLatin1(Theme::TEXT_BODY)),
+                                   Theme::Grid::IconSm));
+    openFrame->setIconSize(QSize(Theme::Grid::IconSm, Theme::Grid::IconSm));
     h->addWidget(openFrame);
 
     connect(cancel, &QPushButton::clicked, this, &Hole3DPage::onCancel);
