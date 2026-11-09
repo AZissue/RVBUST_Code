@@ -1,86 +1,30 @@
 # 工业风离线拼接原型
 
-独立离线验证工具：复用主程序工业风、2D/3D 组件与 `ChainStitcher`，不连接相机，不并入主程序，也不修改主程序版本号或更新日志。
+当前入口复用正式 `MainWindowShell + BackendBridge`、工业功能栏、DB树、属性、共享2D/3D画布及显式拼接流程。实验功能“离线链式拼接”和独立启动脚本均进入此界面；不再使用简化帧列表作为默认入口。
 
-## 功能
+## 操作
 
-- 扫描同名图像与 PLY 文件对，支持递归子目录及 `_color` / `_depth` 等常见后缀。
-- 左侧帧树显示检测与入链状态；选择帧查看原始 2D 标记和 3D 点云。
-- 后台执行检测、配准和拼接，显示合并结果、节点/边统计与失败原因。
-- 至少两个机位成功入链后，才可原子导出合并 PLY。
-- 内置凳子第 1、2 帧示例，直接回放已有标记，不初始化相机 SDK。
+1. 点击“加载离线数据 → 加载数据目录”。同目录 `1.png / 1.ply`、`2.png / 2.ply` 按数字编号配对，递归扫描子目录。
+2. 数据复制到私有临时DB，原文件只读；树中每帧含图像与点云子项，可选择预览、勾选叠加、查看属性与识别结果。
+3. 勾选至少两帧原始点云执行拼接；未勾选时按正式流程使用所有原始帧。结果写入DB“拼接结果”，支持正式导出与后处理。
+4. 需要保留时显式保存会话，默认位于 `outputs/experiments`。关闭使用正式未保存提示。
 
-## 运行
-
-在仓库根目录执行：
-
-```bash
-"D:/Program Files/Anaconda/envs/rvc/python.exe" prototypes/industrial_offline_stitch/app/main.py
-```
-
-启动后自动加载凳子示例：
-
-```bash
-"D:/Program Files/Anaconda/envs/rvc/python.exe" prototypes/industrial_offline_stitch/app/main.py --stool
-```
-
-无显示器时：
-
-```bash
-export QT_QPA_PLATFORM=offscreen
-export PYTHONUTF8=1
-"D:/Program Files/Anaconda/envs/rvc/python.exe" prototypes/industrial_offline_stitch/app/main.py --stool
-```
-
-## 输入格式
-
-目录中图像和点云按文件名配对：
-
-```text
-data/
-├── 1.png
-├── 1.ply
-├── 2_color.png
-├── 2_depth.ply
-└── nested/
-    ├── 3.jpg
-    └── 3.ply
-```
-
-支持 `.png`、`.jpg`、`.jpeg`、`.bmp` 与 `.ply`。图像与 PLY 必须位于同一目录；递归模式下同名帧也按各自子目录独立配对，歧义候选会明确拒绝。
-
-点云必须与图像同分辨率，按 row-major 像素顺序组织，单位为 mm。检测前会校验 `点数 = 图像宽 × 图像高`；普通非有组织 PLY 或点序未知的文件不能直接用于当前像素索引映射。图像与点云必须来自同一采集坐标体系，能够获得有效的 2D/3D 标记。原始文件只读，不会在数据目录生成配置或会话文件，导出也禁止覆盖任一输入 PLY。
-
-## 验证
-
-```bash
-export PYTHONUTF8=1
-export QT_QPA_PLATFORM=offscreen
-PY="D:/Program Files/Anaconda/envs/rvc/python.exe"
-"$PY" prototypes/industrial_offline_stitch/tests/test_offline_workflow.py
-"$PY" prototypes/industrial_offline_stitch/tests/test_ui_smoke.py
-```
-
-测试覆盖文件配对、真实链式拼接、失败门禁、PLY 导出、凳子标记回放、目录到拼接的 UI 端到端，以及 1440×900 / 1050×650 布局截图。UI 截图输出到 `tmp_skill_logs/industrial_offline_stitch/`，不作为原型源码提交。
-
-## 边界
-
-- 只做独立原型验证，不注册到主程序模式栈，不修改 `src/`、`src/version.py` 或根目录 `CHANGELOG.md`。
-- 配准使用真实 `ChainStitcher`，但合成测试只验证接口和数学链路；凳子示例不作为现场拼接精度验收。
-- 当前不包含闭环优化、手动参考帧、真实相机采集或客户机打包。硬件 GPU 性能需另行实测。
-
-## 2026-11-09 离线数据入口与 weifeng 验证
-
-主程序“实验功能 → 离线链式拼接”打开本专用原型，不复制移动工作区，不显示设备连接与设备管理。顶部按“加载离线数据 / 拼接与导出 / 视图”分组。点击“加载数据目录”选择同名文件目录；数字编号按 1、2、…、10 顺序排列。递归扫描选项在 GUI 线程捕获后传给后台。
-
-可直接打开数据：
+不显示设备连接、设备管理、采集功能区、相机2D预览及拍摄参数标签；识别参数保留。正式会话与原型旧版凳子示例不是同名文件对格式，不再提供“加载凳子”入口。
 
 ```powershell
 & 'D:/Program Files/Anaconda/envs/rvc/python.exe' prototypes/industrial_offline_stitch/app/main.py --directory 'E:/jingz/Desktop/weifeng'
 ```
 
-实际数据验证：发现 `1`、`2`、`3` 三对 PNG/PLY。有效标记分别为 30、34、34；1 为参考帧，2 与 1 有 30 个共有标记，配准内点率 90%，标记 RMS 约 0.00696 mm。3 因内点率 61.8% 低于 70% 门禁未入链；未降低阈值。导出仅含成功的 1、2 两帧，共 9,191,378 点，不是三帧全部成功。标记残差不等于现场整云精度。
+## 输入和失败说明
 
-本机结果、日志和截图位于 `outputs/weifeng_validation/`，合并点云为 `weifeng_merged.ply`，不提交原始数据或大型产物。验证范围为源码环境离线运行；客户机打包与原生 GPU 未验收。
+图像支持PNG/JPG/JPEG/BMP，点云为PLY，同目录同名配对，兼容已有常见后缀；歧义候选明确拒绝。点云单位mm，必须与图像同分辨率、按row-major像素顺序组织。点数等于像素数仅是必要检查，不能证明像素映射正确。
 
-第二次通过实际UI加载、检测及拼接：3帧均入链，合并13,933,687点，截图见 ui_1440x900.png / ui_1050x650.png。两次结果不同，表明随机RANSAC配准在此数据上存在波动；当前不能作为稳定三帧通过的验收。首次导出的weifeng_merged.ply仍仅包含1、2帧，未用第二次结果覆盖它。
+“未入链”表示该帧的标记配准未通过，无法确定到参考帧的可靠变换；不是文件未加载。可能原因包括共有标记不足、内点率不足、残差超限或无效点云。此前简化原型允许两帧成功时发布部分结果；当前复用正式拼接门禁，失败弹窗与日志显示具体帧、原因和建议，整批失败不会发布不完整结果。原始数据仍在DB中，可检查后重新选择输入。
+
+## weifeng 核验（2026-11-09）
+
+共3对PNG/PLY，每帧5,013,504个原始点，图像2448×2048。此前简化原型多次运行有2帧/3帧入链的波动，截图中1节点/0边即只有参考帧，无可用拼接结果。不能只凭该截图断定2、3帧各自的具体失败原因。
+
+本次正式工业DB界面实际加载3帧，每帧包含2D/PLY子项；执行正式拼接流程，3帧均通过并发布独立DB结果13,933,687点。此次通过不证明随机配准的重复稳定性或现场精度。此前首次导出的 `outputs/weifeng_validation/weifeng_merged.ply` 仅含1、2帧，不能当作新结果。
+
+当前实际界面截图：`outputs/weifeng_validation/production_1440x900.png`。回归：`test_experiments.py`（包含离线入口、无SDK初始化和关闭释放验证）；旧版独立算法/布局测试仍在 `tests/`，不代替当前DB界面验收。原生GPU、客户机打包与现场精度未验证。源码运行需要原型目录随项目保留。

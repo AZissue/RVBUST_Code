@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import QApplication
 from ui_v2.theme import GLOBAL_QSS
-from app.window import OfflineStitchWindow
+from app.production_window import OfflineProductionWindow
 
 
 def main():
@@ -22,12 +22,11 @@ def main():
     if font.is_file():
         QFontDatabase.addApplicationFont(str(font))
     app.setStyleSheet(GLOBAL_QSS)
-    window = OfflineStitchWindow()
+    window = OfflineProductionWindow()
     window.show()
     if '--directory' in sys.argv:
         window.load_directory(sys.argv[sys.argv.index('--directory') + 1])
-    elif '--stool' in sys.argv:
-        window.load_stool()
+
     return app.exec()
 
 

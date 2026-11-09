@@ -204,21 +204,12 @@ def open_validation(owner, project, workflow, feature, identifiers):
 
 
 def open_offline_prototype(owner):
-    """Open the file-pair prototype without device controls or source-session cloning."""
+    """Open the production industrial DB shell with offline-only commands."""
     import importlib.util
-    path = PROJECT_ROOT / 'prototypes' / 'industrial_offline_stitch' / 'app' / 'window.py'
-    spec = importlib.util.spec_from_file_location('mcc_offline_prototype_window', path)
+    path = PROJECT_ROOT / 'prototypes' / 'industrial_offline_stitch' / 'app' / 'production_window.py'
+    spec = importlib.util.spec_from_file_location('mcc_offline_production_window', path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-
-    class OfflineValidationWindow(module.OfflineStitchWindow):
-        def closeEvent(self, event):
-            super().closeEvent(event)
-            if event.isAccepted():
-                owner._validation_shell = None
-
-    shell = OfflineValidationWindow()
-    shell.setParent(owner.shell, Qt.Window)
-    shell.setAttribute(Qt.WA_DeleteOnClose, True)
+    shell = module.OfflineProductionWindow(owner)
     shell.show()
     return shell
