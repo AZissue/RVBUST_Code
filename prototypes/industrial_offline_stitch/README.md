@@ -68,3 +68,19 @@ PY="D:/Program Files/Anaconda/envs/rvc/python.exe"
 - 只做独立原型验证，不注册到主程序模式栈，不修改 `src/`、`src/version.py` 或根目录 `CHANGELOG.md`。
 - 配准使用真实 `ChainStitcher`，但合成测试只验证接口和数学链路；凳子示例不作为现场拼接精度验收。
 - 当前不包含闭环优化、手动参考帧、真实相机采集或客户机打包。硬件 GPU 性能需另行实测。
+
+## 2026-11-09 离线数据入口与 weifeng 验证
+
+主程序“实验功能 → 离线链式拼接”打开本专用原型，不复制移动工作区，不显示设备连接与设备管理。顶部按“加载离线数据 / 拼接与导出 / 视图”分组。点击“加载数据目录”选择同名文件目录；数字编号按 1、2、…、10 顺序排列。递归扫描选项在 GUI 线程捕获后传给后台。
+
+可直接打开数据：
+
+```powershell
+& 'D:/Program Files/Anaconda/envs/rvc/python.exe' prototypes/industrial_offline_stitch/app/main.py --directory 'E:/jingz/Desktop/weifeng'
+```
+
+实际数据验证：发现 `1`、`2`、`3` 三对 PNG/PLY。有效标记分别为 30、34、34；1 为参考帧，2 与 1 有 30 个共有标记，配准内点率 90%，标记 RMS 约 0.00696 mm。3 因内点率 61.8% 低于 70% 门禁未入链；未降低阈值。导出仅含成功的 1、2 两帧，共 9,191,378 点，不是三帧全部成功。标记残差不等于现场整云精度。
+
+本机结果、日志和截图位于 `outputs/weifeng_validation/`，合并点云为 `weifeng_merged.ply`，不提交原始数据或大型产物。验证范围为源码环境离线运行；客户机打包与原生 GPU 未验收。
+
+第二次通过实际UI加载、检测及拼接：3帧均入链，合并13,933,687点，截图见 ui_1440x900.png / ui_1050x650.png。两次结果不同，表明随机RANSAC配准在此数据上存在波动；当前不能作为稳定三帧通过的验收。首次导出的weifeng_merged.ply仍仅包含1、2帧，未用第二次结果覆盖它。

@@ -75,6 +75,15 @@ class ExperimentHub(QDialog):
             previous.raise_()
             previous.activateWindow()
             return
+        if feature == 'mobile_chain':
+            try:
+                shell = open_offline_prototype(self.bridge)
+            except Exception as exc:
+                self.status.setText('打开离线原型失败：' + str(exc))
+                return
+            self.bridge._validation_shell = shell
+            self.hide()
+            return
         mode = mode or self.bridge.shell.current_mode()
         # Capture workflow metadata on the UI thread; disk copy runs in background.
         try:
@@ -192,3 +201,24 @@ def open_validation(owner, project, workflow, feature, identifiers):
         shell.close()
         shell.deleteLater()
         raise
+
+
+def open_offline_prototype(owner):
+    """Open the file-pair prototype without device controls or source-session cloning."""
+    import importlib.util
+    path = PROJECT_ROOT / 'prototypes' / 'industrial_offline_stitch' / 'app' / 'window.py'
+    spec = importlib.util.spec_from_file_location('mcc_offline_prototype_window', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    class OfflineValidationWindow(module.OfflineStitchWindow):
+        def closeEvent(self, event):
+            super().closeEvent(event)
+            if event.isAccepted():
+                owner._validation_shell = None
+
+    shell = OfflineValidationWindow()
+    shell.setParent(owner.shell, Qt.Window)
+    shell.setAttribute(Qt.WA_DeleteOnClose, True)
+    shell.show()
+    return shell

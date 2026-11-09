@@ -114,12 +114,23 @@ class OfflineStitchWindow(QMainWindow):
         layout = QHBoxLayout(bar)
         layout.setContentsMargins(10, 5, 10, 5)
         layout.setSpacing(8)
-        self.btn_directory = self._ribbon_button(bar, layout, '选择目录', 'folder_open', self.select_directory)
-        self.btn_stool = self._ribbon_button(bar, layout, '加载凳子', 'layers', self.load_stool)
-        self.btn_stitch = self._ribbon_button(bar, layout, '开始拼接', 'stitch', self.start_stitch, primary=True)
-        self.btn_export = self._ribbon_button(bar, layout, '导出 PLY', 'save', self.export_merged)
-        self.btn_clear = self._ribbon_button(bar, layout, '清空项目', 'trash', self.clear_project)
-        self.btn_fit = self._ribbon_button(bar, layout, '适配视图', 'reset_view', self.viewer.reset_view)
+        def group(title):
+            box = QGroupBox(title)
+            row = QHBoxLayout(box)
+            row.setContentsMargins(8, 8, 8, 6)
+            layout.addWidget(box)
+            return box, row
+
+        box, row = group('加载离线数据')
+        self.btn_directory = self._ribbon_button(box, row, '加载数据目录', 'folder_open', self.select_directory)
+        self.btn_stool = self._ribbon_button(box, row, '示例数据', 'layers', self.load_stool)
+        self.btn_directory.setToolTip('选择目录：1.png 对应 1.ply，2.png 对应 2.ply；按数字编号排序')
+        box, row = group('拼接与导出')
+        self.btn_stitch = self._ribbon_button(box, row, '开始拼接', 'stitch', self.start_stitch, primary=True)
+        self.btn_export = self._ribbon_button(box, row, '导出 PLY', 'save', self.export_merged)
+        self.btn_clear = self._ribbon_button(box, row, '清空项目', 'trash', self.clear_project)
+        box, row = group('视图')
+        self.btn_fit = self._ribbon_button(box, row, '适配视图', 'reset_view', self.viewer.reset_view)
         layout.addStretch(1)
         return bar
 
@@ -134,12 +145,15 @@ class OfflineStitchWindow(QMainWindow):
         return button
 
     def _build_frame_panel(self):
-        panel = QGroupBox('离线帧 / 拼接状态')
+        panel = QGroupBox('离线数据 / 配对与拼接状态')
         layout = QVBoxLayout(panel)
         self.directory_label = QLabel('未选择数据目录')
         self.directory_label.setWordWrap(True)
         self.directory_label.setStyleSheet(f'color:{TEXT_MUTED};')
         layout.addWidget(self.directory_label)
+        hint = QLabel('同名配对：1.png / 1.ply\n按数字编号依次拼接；原始数据只读')
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
         self.recursive = QCheckBox('递归扫描子目录')
         self.recursive.setChecked(True)
         layout.addWidget(self.recursive)
@@ -234,8 +248,9 @@ class OfflineStitchWindow(QMainWindow):
             self.load_directory(directory)
 
     def load_directory(self, directory):
+        recursive = self.recursive.isChecked()
         def work():
-            return self.workflow.load_directory(directory, self.recursive.isChecked())
+            return self.workflow.load_directory(directory, recursive)
 
         def done(pairs, error):
             if error:
@@ -381,7 +396,7 @@ class OfflineStitchWindow(QMainWindow):
             '2. 点击左侧帧查看原始 2D 标记与 3D 点云。\n'
             '3. 开始拼接后，真实 ChainStitcher 逐帧检测、配准并合并；失败帧会标明原因。\n'
             '4. 至少两个机位成功入链才允许导出 PLY。\n\n'
-            '本原型不初始化相机 SDK，不并入主程序，也不修改主程序版本。')
+            '本原型不连接相机；也可从主程序实验功能进入。源图像与点云保持只读。')
 
     def closeEvent(self, event):
         self._closing = True

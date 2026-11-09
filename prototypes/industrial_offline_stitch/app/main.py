@@ -24,7 +24,9 @@ def main():
     app.setStyleSheet(GLOBAL_QSS)
     window = OfflineStitchWindow()
     window.show()
-    if '--stool' in sys.argv:
+    if '--directory' in sys.argv:
+        window.load_directory(sys.argv[sys.argv.index('--directory') + 1])
+    elif '--stool' in sys.argv:
         window.load_stool()
     return app.exec()
 

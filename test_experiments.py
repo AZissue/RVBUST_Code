@@ -14,6 +14,21 @@ class ExperimentTests(unittest.TestCase):
     tearDown = fixture.FrameBrowserTests.tearDown
     wait = fixture.FrameBrowserTests.wait
     source = fixture.FrameBrowserTests.source
+    def test_offline_entry_opens_file_pair_ui_without_devices(self):
+        from PySide6.QtWidgets import QGroupBox, QPushButton
+        hub = ExperimentHub(self.bridge)
+        with patch.object(CameraManager, 'initialize', side_effect=AssertionError('SDK forbidden')):
+            hub.launch('mobile_chain', 'mobile_chain')
+            shell = self.bridge._validation_shell
+            self.assertIsNotNone(shell)
+            self.assertEqual(shell.pairs, [])
+            self.assertIn('加载离线数据', [box.title() for box in shell.findChildren(QGroupBox)])
+            self.assertFalse(any('设备' in button.text() for button in shell.findChildren(QPushButton)))
+            self.assertFalse(shell.btn_stitch.isEnabled())
+            shell.close()
+            self.assertIsNone(self.bridge._validation_shell)
+        hub.deleteLater()
+
     def test_copy_live_database_and_save_isolation(self):
         uid = self.db.ingest(self.source())
         original = (self.db.directory/'frames'/uid/'pointmap.ply').read_bytes()

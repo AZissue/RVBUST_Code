@@ -68,6 +68,13 @@ class StaticDetector:
 
 
 class OfflineWorkflowTests(unittest.TestCase):
+    def test_numeric_filename_order(self):
+        with tempfile.TemporaryDirectory() as folder:
+            for name in ('10', '2', '1'):
+                for extension in ('.png', '.ply'):
+                    (Path(folder) / (name + extension)).touch()
+            self.assertEqual([p.name for p in collect_frame_pairs(folder)], ['1', '2', '10'])
+
     def test_collect_pairs_with_suffixes_and_recursion(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

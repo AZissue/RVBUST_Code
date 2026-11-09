@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import os
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -67,7 +68,9 @@ def collect_frame_pairs(directory, recursive=True):
         elif suffix == '.ply':
             clouds.setdefault(key, []).append(path)
     pairs = []
-    for key in sorted(set(images) & set(clouds), key=lambda item: (str(item[0]), item[1])):
+    for key in sorted(set(images) & set(clouds), key=lambda item: (str(item[0]), tuple(
+            (0, int(part)) if part.isdigit() else (1, part.lower())
+            for part in re.split(r'(\d+)', item[1])))):
         if len(images[key]) != 1 or len(clouds[key]) != 1:
             raise ValueError(f'文件配对歧义: {key[0]}/{key[1]} 存在多个图像或点云候选')
         image, cloud = images[key][0], clouds[key][0]
