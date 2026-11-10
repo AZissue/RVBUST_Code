@@ -49,6 +49,8 @@ class LauncherDialog(QDialog):
     connect_requested = Signal(str, list)
     """连接设备：(mode, List[DeviceInfo])。全部成功后由调用方 accept() 本对话框。"""
 
+    offline_stitch_requested = Signal()
+
     offline_requested = Signal(str)
     """使用项目自带数据进入新版工作区，不连接相机。"""
 
@@ -161,6 +163,10 @@ class LauncherDialog(QDialog):
         bottom = QHBoxLayout()
         self._selection_label = QLabel("未选择设备")
         bottom.addWidget(self._selection_label, 1)
+        self._btn_offline_stitch = QPushButton('离线拼接 · 本地文件')
+        self._btn_offline_stitch.setToolTip('无需相机，加载自己的同名图像/PLY并保存正式会话')
+        self._btn_offline_stitch.clicked.connect(self.offline_stitch_requested)
+        bottom.addWidget(self._btn_offline_stitch)
         self._btn_offline = QPushButton("离线预览 · 凳子数据")
         self._btn_offline.setToolTip("无需相机，自动加载项目内的第 1、2 帧原始图像和点云")
         self._btn_offline.clicked.connect(self._on_offline)
@@ -382,7 +388,7 @@ class LauncherDialog(QDialog):
         busy = self._is_busy()
         for widget in (self._mode_choices, self._search_edit, self._table,
                        self._btn_refresh, self._btn_auto_ip,
-                       self._btn_cancel):
+                       self._btn_cancel, self._btn_offline_stitch):
             widget.setEnabled(not busy)
         self._refresh_connect_state()
 

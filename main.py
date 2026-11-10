@@ -136,13 +136,19 @@ def main(*, composition=None):
                 launcher.log_summary.append(message, 'error')
         bridge.open_offline_preview(mode, finished)
     launcher.offline_requested.connect(on_offline)
+    def on_offline_stitch():
+        if main_window.open_offline_stitch() is not None:
+            launcher.accept()
+    launcher.offline_stitch_requested.connect(on_offline_stitch)
     bridge.connection_finished.connect(on_connection_finished)
     # 事件循环退出前统一收口清理（此时事件循环仍可处理线程退出信号）
     app.aboutToQuit.connect(bridge.cleanup)
 
     # Hardware discovery is explicit so offline entry does not initialize the SDK.
     launcher.set_devices([])
-    if '--offline-preview' in sys.argv:
+    if '--offline-stitch' in sys.argv:
+        QTimer.singleShot(0, on_offline_stitch)
+    elif '--offline-preview' in sys.argv:
         index = sys.argv.index('--offline-preview')
         mode = sys.argv[index + 1] if index + 1 < len(sys.argv) else 'multi_cam'
         if mode not in LauncherDialog.MODE_NAMES:

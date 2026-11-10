@@ -541,6 +541,10 @@ class MainWindowShell(QMainWindow):
             elif not self._dirty or self._confirm_discard():
                 load()
         dialog.offline_requested.connect(_open_offline)
+        def open_formal_offline():
+            if self.open_offline_stitch() is not None:
+                dialog.accept()
+        dialog.offline_stitch_requested.connect(open_formal_offline)
 
         if dialog.exec() == QDialog.Accepted and connected["mode"]:
             # 与 backend 的 camera_id 分配顺序对齐：真实设备在前，测试设备在后
@@ -790,7 +794,27 @@ class MainWindowShell(QMainWindow):
             "  当前不包含品牌机器人 TCP 连接或运动控制；判别下限约 1 mm。\n\n"
             "提示：无真实多机环境时，可在启动小窗点击『+ 测试设备』临时添加虚拟相机。")
 
+    def open_offline_stitch(self):
+        bridge = self._backend_bridge
+        if bridge is None or not bridge.can_change_workspace():
+            return None
+        previous = getattr(self, '_offline_stitch_window', None)
+        if previous is not None:
+            previous.show()
+            previous.raise_()
+            previous.activateWindow()
+            return previous
+        from .offline_stitch import OfflineStitchWindow
+        window = OfflineStitchWindow(bridge)
+        self._offline_stitch_window = window
+        window.show()
+        return window
+
     def closeEvent(self, event):
+        offline = getattr(self, '_offline_stitch_window', None)
+        if offline is not None and not offline.close():
+            event.ignore()
+            return
         validation = getattr(self._backend_bridge, '_validation_shell', None)
         if validation is not None:
             if not validation.close():

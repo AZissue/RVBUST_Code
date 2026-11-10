@@ -16,18 +16,17 @@ class ExperimentTests(unittest.TestCase):
     source = fixture.FrameBrowserTests.source
     def test_offline_entry_opens_file_pair_ui_without_devices(self):
         from PySide6.QtWidgets import QGroupBox, QPushButton
-        hub = ExperimentHub(self.bridge)
         with patch.object(CameraManager, 'initialize', side_effect=AssertionError('SDK forbidden')):
-            hub.launch('mobile_chain', 'mobile_chain')
-            shell = self.bridge._validation_shell
+            shell = self.win.open_offline_stitch()
             self.assertIsNotNone(shell)
+            self.assertIsNone(getattr(shell._backend_bridge, 'validation_root', None))
             self.assertEqual(shell._frame_databases['mobile_chain'].records, {})
             self.assertEqual(shell.workspace_mobile()._industrial.frame_browser.database, shell._frame_databases['mobile_chain'])
             self.assertTrue(shell._btn_devices.isHidden())
             self.assertFalse(shell._industrial_ribbon.commands[('mobile_chain', 'stitch')].isEnabled())
+            self.assertIs(self.win.open_offline_stitch(), shell)
             shell.close()
-            self.assertIsNone(self.bridge._validation_shell)
-        hub.deleteLater()
+            self.assertIsNone(self.win._offline_stitch_window)
 
     def test_copy_live_database_and_save_isolation(self):
         uid = self.db.ingest(self.source())

@@ -130,6 +130,9 @@ class IndustrialRibbon(QWidget):
         line.addWidget(self.workflow_status)
         self.badge = QLabel(objectName='studioBadge')
         line.addWidget(self.badge)
+        self.offline_button = self._header_button('离线拼接', 'folder_open', shell.open_offline_stitch)
+        self.offline_button.setToolTip('加载本地图像与PLY，在正式离线工作区拼接并保存会话')
+        line.addWidget(self.offline_button)
         self.experiment_button = self._header_button('实验功能', 'layers',
             lambda: shell._backend_bridge and shell._backend_bridge.open_experiments())
         self.experiment_button.setToolTip('使用正式工作区验证功能，数据写入隔离副本')
@@ -313,12 +316,13 @@ class IndustrialRibbon(QWidget):
 
     def update_status(self):
         shell = self.shell
-        self.mode_label.setText(LauncherDialog.MODE_NAMES[shell.current_mode()])
+        self.mode_label.setText('离线拼接' if getattr(shell, '_offline_stitch', False) else LauncherDialog.MODE_NAMES[shell.current_mode()])
         multi = shell.current_mode() == 'multi_cam'
         self.camera_status.setVisible(multi)
         self.workflow_status.setVisible(multi)
         self.badge.setVisible(not multi or getattr(shell, '_offline_preview', False))
         self.badge.setText('正在断开连接…' if getattr(shell._backend_bridge, '_disconnecting', False) else
+                           '本地文件 · mm' if getattr(shell, '_offline_stitch', False) else
                            '离线预览' if getattr(shell, '_offline_preview', False) else
                            f'已连接 {len(shell._devices)} 台设备' if shell._devices else '未连接相机')
         self.badge.setProperty('offline', bool(getattr(shell, '_offline_preview', False) or not shell._devices))
@@ -334,6 +338,7 @@ class IndustrialRibbon(QWidget):
             '优先拼接DB勾选的至少两帧原始点云；按当前模式使用标记配准或标定参数，生成独立拼接帧。未勾选时沿用当前工作流。')
         bridge = shell._backend_bridge
         ready = bool(bridge and bridge.can_change_workspace())
+        self.offline_button.setEnabled(ready and not getattr(bridge, 'validation_root', None))
         self.experiment_button.setEnabled(ready and not getattr(bridge, 'validation_root', None))
         for mode in self._pages:
             self.commands[(mode, 'save')].setEnabled(ready)

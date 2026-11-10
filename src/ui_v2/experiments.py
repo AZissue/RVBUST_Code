@@ -13,7 +13,6 @@ FEATURES = (
     ('geometry', '几何后处理 / 框选 / 下采样 / ICP', None),
     ('circle_triangle', '普通圆点识别 / 三角形几何匹配拼接', None),
     ('multi_cam', '固定多相机外参及拼接', 'multi_cam'),
-    ('mobile_chain', '离线链式拼接', 'mobile_chain'),
     ('robot_stitch', '机器人手眼变换与戳点验证', 'robot_stitch'),
 )
 
@@ -75,15 +74,6 @@ class ExperimentHub(QDialog):
         if previous is not None:
             previous.raise_()
             previous.activateWindow()
-            return
-        if feature == 'mobile_chain':
-            try:
-                shell = open_offline_prototype(self.bridge)
-            except Exception as exc:
-                self.status.setText('打开离线原型失败：' + str(exc))
-                return
-            self.bridge._validation_shell = shell
-            self.hide()
             return
         mode = mode or self.bridge.shell.current_mode()
         # Capture workflow metadata on the UI thread; disk copy runs in background.
@@ -205,15 +195,3 @@ def open_validation(owner, project, workflow, feature, identifiers):
         shell.close()
         shell.deleteLater()
         raise
-
-
-def open_offline_prototype(owner):
-    """Open the production industrial DB shell with offline-only commands."""
-    import importlib.util
-    path = PROJECT_ROOT / 'prototypes' / 'industrial_offline_stitch' / 'app' / 'production_window.py'
-    spec = importlib.util.spec_from_file_location('mcc_offline_production_window', path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    shell = module.OfflineProductionWindow(owner)
-    shell.show()
-    return shell
