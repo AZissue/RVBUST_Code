@@ -51,7 +51,8 @@ class OfflineStitchWindow(MainWindowShell):
             ('export', '导出点云', 'layers', lambda: bridge.stitching.export()),
         ], 'mobile_chain')
         ribbon._group(row, '拼接', [
-            ('stitch', '执行拼接', 'stitch', lambda: bridge.stitching.execute()),
+            ('stitch', '标记物拼接', 'stitch', lambda: bridge.stitching.execute()),
+            ('fpfh', 'FPFH几何匹配', 'cloud_register', self.open_fpfh),
         ], 'mobile_chain')
         ribbon._group(row, '视图', [
             ('restore', '返回视图', 'undo', ribbon.restore_view),
@@ -80,6 +81,15 @@ class OfflineStitchWindow(MainWindowShell):
         self.setMinimumSize(1050, 650)
         self.log('正式离线拼接：会话手动保存到 sessions；可载入旧实验会话。')
         self.log('加载离线数据：同名 PNG / PLY 配对，数字编号排序；在DB选择图像或点云检查，勾选原始点云执行拼接。源文件只读。')
+
+    def open_fpfh(self):
+        if not self._backend_bridge.can_change_workspace():
+            self.log('请等待当前任务完成后再进入FPFH几何匹配。', 'warn')
+            return None
+        editor = self._backend_bridge.open_postprocess()
+        if editor is not None:
+            editor.request_fpfh()
+        return editor
 
     def select_directory(self):
         directory = QFileDialog.getExistingDirectory(self, '加载离线数据：同编号 PNG / PLY')

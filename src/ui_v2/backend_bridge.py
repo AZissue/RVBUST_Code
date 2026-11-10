@@ -231,7 +231,10 @@ class BackendBridge(QObject):
                 and row.status != '来源数据已变更，请重新拼接']
             if candidates:
                 identifiers = [max(candidates,key=lambda row:(row.created,row.frame_id)).uid]
-        if getattr(self, 'validation_color', False):
+        if getattr(self.shell, '_offline_stitch', False):
+            from .postprocess.fpfh_editor import FPFHEditor
+            window = FPFHEditor(self, mode)
+        elif getattr(self, 'validation_color', False):
             class ValidationEditor(PostprocessWindow):
                 COLOR_VALIDATION = True
             window = ValidationEditor(self, mode)

@@ -338,6 +338,8 @@ class IndustrialRibbon(QWidget):
             '优先拼接DB勾选的至少两帧原始点云；按当前模式使用标记配准或标定参数，生成独立拼接帧。未勾选时沿用当前工作流。')
         bridge = shell._backend_bridge
         ready = bool(bridge and bridge.can_change_workspace())
+        if (shell.current_mode(), 'fpfh') in self.commands:
+            self.commands[(shell.current_mode(), 'fpfh')].setEnabled(ready)
         self.offline_button.setEnabled(ready and not getattr(bridge, 'validation_root', None))
         self.experiment_button.setEnabled(ready and not getattr(bridge, 'validation_root', None))
         for mode in self._pages:
