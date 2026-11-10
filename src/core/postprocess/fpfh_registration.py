@@ -143,3 +143,50 @@ def merge(reference,moving,result):
     moving_points=moving.points[np.any(moving.points!=0,axis=1)]
     colors=(np.vstack((reference.colors[np.any(reference.points!=0,axis=1)],moving.colors[np.any(moving.points!=0,axis=1)])) if reference.colors is not None else None)
     return CloudLayer(reference.name+' + '+moving.name+' · FPFH',np.vstack((reference_points,moving_points@matrix[:3,:3].T+matrix[:3,3])),colors,origins=reference.origins+moving.origins,parent_transforms={reference.origins[0][0]:np.eye(4).tolist(),moving.origins[0][0]:matrix.tolist()})
+
+
+def solve_chain(layers, parameters, progress=None):
+    """Adjacent-frame registration; T_i_to_first = T_previous_to_first @ T_i_to_previous."""
+    validate(parameters)
+    if len(layers) < 2:
+        raise ValueError('链式配准至少需要两帧')
+    poses = [np.eye(4)]
+    edges = []
+    started = time.perf_counter()
+    for i in range(1, len(layers)):
+        if progress:
+            progress(f'FPFH链式配准 {i}/{len(layers)-1}：{layers[i].name} → {layers[i-1].name}')
+        try:
+            edge = solve(layers[i-1].points, layers[i].points, parameters)
+        except Exception as exc:
+            raise ValueError(f'链式配准在第{i+1}帧失败：{layers[i].name} → {layers[i-1].name}；{exc}。整批未发布，请检查相邻重叠或调整顺序/参数。') from exc
+        poses.append(validate_transform(poses[-1] @ np.asarray(edge['transform'])))
+        edges.append(dict(reference_index=i-1, moving_index=i, reference_name=layers[i-1].name,
+                          moving_name=layers[i].name, **edge))
+    return dict(mode='chain', parameters=parameters.copy(), frame_names=[layer.name for layer in layers],
+                transforms_to_reference=[pose.tolist() for pose in poses], edges=edges,
+                unit='mm', direction='each_frame_to_first', total_seconds=time.perf_counter()-started,
+                warning='相邻帧链式累积，未执行闭环或全局优化；几何歧义及累计漂移仍需检查。')
+
+
+def merge_chain(layers, result):
+    from .session import CloudLayer
+    poses=result.get('transforms_to_reference', [])
+    if len(layers)<2 or len(poses)!=len(layers):
+        raise ValueError('链式结果与输入帧数不一致，请重新计算')
+    colored=[layer.colors is not None for layer in layers]
+    if len(set(colored))!=1:
+        raise ValueError('各帧颜色属性不一致，请先统一输入')
+    points=[]; colors=[]; parents={}; origins=[]
+    for layer,pose in zip(layers,poses):
+        matrix=validate_transform(pose)
+        valid=np.any(layer.points!=0,axis=1)
+        points.append(layer.points[valid] @ matrix[:3,:3].T + matrix[:3,3])
+        if colored[0]:colors.append(layer.colors[valid])
+        if len(layer.origins)!=1 or layer.origins[0][0] in parents:
+            raise ValueError('链式输入必须是互不重复的DB点云记录')
+        parents[layer.origins[0][0]]=matrix.tolist()
+        origins.extend(layer.origins)
+    return CloudLayer(f'FPFH链式拼接 ({len(layers)}帧)', np.vstack(points),
+                      np.vstack(colors) if colored[0] else None,
+                      origins=tuple(origins), parent_transforms=parents)

@@ -56,6 +56,7 @@ class FPFHOfflineTests(unittest.TestCase):
         self.assertEqual(len(dialog.controls),34)
         self.assertEqual(dialog.parameters(),DEFAULTS)
         self.assertTrue(all(control.toolTip() for control in dialog.controls.values()))
+        dialog.mode.setCurrentIndex(0)
         dialog.reference.setCurrentIndex(dialog.reference.findData(ids[0]))
         dialog.moving.setCurrentIndex(dialog.moving.findData(ids[1]))
         for key,value in dict(voxel_mm=3,normal_radius_mm=8,feature_radius_mm=20,min_consensus=20).items():dialog.controls[key].setValue(value)
@@ -71,6 +72,37 @@ class FPFHOfflineTests(unittest.TestCase):
         self.assertTrue(bridge.projects.projects['mobile_chain'].dirty)
         self.assertEqual(set(output.source_ids),set(ids))
         self.assertEqual(len(db.records),len(before)+1)
+        editor.close()
+
+    def test_three_frame_chain_order_and_actual_db_result(self):
+        from PySide6.QtCore import Qt
+        window=self.open();bridge=window._backend_bridge;db=bridge.frame_db.databases['mobile_chain']
+        raw=[db.ingest(fixture.FrameBrowserTests.source(self,i)) for i in (1,2,3)]
+        points=np.random.default_rng(17).normal(size=(1000,3))*[35,19,11]+[100,100,100]
+        ids=[]
+        for i,uid in enumerate(raw):
+            cloud=o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points-i*np.array([15,-9,6])))
+            ids.append(db.publish_result(cloud,[uid],name=f'cloud{i+1}'))
+        editor=bridge.open_postprocess();self.wait(lambda:editor._worker is None)
+        dialog=FPFHDialog(editor);self.assertEqual(dialog.mode.currentData(),'chain')
+        for i in range(dialog.chain_list.count()):
+            item=dialog.chain_list.item(i);item.setCheckState(Qt.Checked if item.data(Qt.UserRole) in ids else Qt.Unchecked)
+        self.assertEqual(dialog.chain_ids(),ids)
+        row=next(i for i in range(dialog.chain_list.count()) if dialog.chain_list.item(i).data(Qt.UserRole)==ids[1])
+        dialog.chain_list.setCurrentRow(row);dialog.move_item(1);self.assertIsNone(dialog.result)
+        self.assertEqual(dialog.chain_ids(),[ids[0],ids[2],ids[1]])
+        dialog.move_item(-1)
+        for key,value in dict(voxel_mm=3,normal_radius_mm=8,feature_radius_mm=20,min_consensus=20).items():dialog.controls[key].setValue(value)
+        dialog.controls['icp'].setChecked(True)
+        dialog.analyze();self.wait(lambda:not dialog.busy)
+        self.assertIsNotNone(dialog.result,dialog.report.toPlainText())
+        self.assertEqual(len(dialog.result['edges']),2)
+        for i,matrix in enumerate(dialog.result['transforms_to_reference']):
+            np.testing.assert_allclose(np.asarray(matrix)[:3,3],i*np.array([15,-9,6]),atol=.4)
+        before=set(db.records);dialog.confirm.setChecked(True);dialog.publish_result();self.wait(lambda:editor._worker is None)
+        added=set(db.records)-before;self.assertEqual(len(added),1)
+        output=db.records[added.pop()];self.assertEqual(output.points,3000)
+        self.assertEqual(set(output.source_ids),set(ids))
         editor.close()
 
 if __name__=='__main__':unittest.main()
