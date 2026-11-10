@@ -36,6 +36,13 @@ class OfflineTests(unittest.TestCase):
     def test_formal_entrance_and_no_prototype_runtime_dependency(self):
         window=self.open();b=window._backend_bridge
         self.assertIsNone(getattr(b,'validation_root',None))
+        log=window._log_panel.toPlainText()
+        self.assertIn('已进入「离线拼接」工作区（本地文件 · mm）',log)
+        self.assertNotIn('已进入「单相机移动拼接」',log)
+        window.set_presentation('industrial')
+        self.assertIn('离线拼接',window.windowTitle())
+        self.assertEqual(window._st_mode.text(),'离线拼接')
+        self.assertEqual(self.win.workspace_name('mobile_chain'),'单相机移动拼接')
         self.assertEqual(b.projects.projects['mobile_chain'].save_root,DEFAULT_SESSIONS)
         self.assertTrue(window._industrial_ribbon.offline_button.isHidden())
         window._industrial_ribbon.update_status()

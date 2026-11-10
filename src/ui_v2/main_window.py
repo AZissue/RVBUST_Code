@@ -366,8 +366,14 @@ class MainWindowShell(QMainWindow):
 
         self._refresh_statusbar()
         self._apply_presentation()
-        self.log(f"已进入「{LauncherDialog.MODE_NAMES[mode]}」工作区"
-                 f"（{len(devices)} 台设备）", "success")
+        context = '（本地文件 · mm）' if getattr(self, '_offline_stitch', False) else f'（{len(devices)} 台设备）'
+        self.log(f"已进入「{self.workspace_name(mode)}」工作区" + context, "success")
+
+    def workspace_name(self, mode=None):
+        mode = mode or self._mode
+        if getattr(self, '_offline_stitch', False) and mode == LauncherDialog.MODE_MOBILE_CHAIN:
+            return '离线拼接'
+        return LauncherDialog.MODE_NAMES.get(mode, mode)
 
     def current_mode(self) -> str:
         return self._mode
@@ -413,7 +419,7 @@ class MainWindowShell(QMainWindow):
                 self._log_panel.setMinimumHeight(0)
                 self._log_panel.setMaximumHeight(16777215)
                 self._log_panel.resize(540, 320)
-        self.setWindowTitle('MCC · ' + LauncherDialog.MODE_NAMES[self._mode] +
+        self.setWindowTitle('MCC · ' + self.workspace_name() +
                             (' · 新版工作区' if industrial else ''))
 
     def workspace_multi(self) -> MultiCamWorkspace:
@@ -683,7 +689,7 @@ class MainWindowShell(QMainWindow):
         self._refresh_chain_summary()
         if hasattr(self, '_industrial_ribbon'):
             self._industrial_ribbon.update_status()
-        mode_name = LauncherDialog.MODE_NAMES.get(self._mode, self._mode)
+        mode_name = self.workspace_name()
         self._st_mode.setText(mode_name)
         online = sum(1 for d in self._devices if d.online)
         total = len(self._devices)
