@@ -74,6 +74,9 @@ class ExperimentTests(unittest.TestCase):
                 self.assertFalse(child._sdk_initialized)
                 editor = getattr(child, '_postprocess_window', None)
                 if editor:
+                    if feature == 'fpfh':
+                        self.assertEqual(editor.fpfh_button.text(), 'FPFH几何匹配')
+                        self.assertEqual(type(editor).__name__, 'FPFHEditor')
                     self.assertEqual(editor.COLOR_VALIDATION, feature == 'color')
                     editor.close()
                 child.projects.closed = True

@@ -9,6 +9,7 @@ from core.session_project import SessionProject, PROJECT_ROOT
 OUTPUT = PROJECT_ROOT / 'outputs' / 'experiments'
 FEATURES = (
     ('color', '颜色统一 / 原色对比 / 原始2D融合', None),
+    ('fpfh', 'FPFH + 几何特征匹配 / 参数调试', None),
     ('geometry', '几何后处理 / 框选 / 下采样 / ICP', None),
     ('circle_triangle', '普通圆点识别 / 三角形几何匹配拼接', None),
     ('multi_cam', '固定多相机外参及拼接', 'multi_cam'),
@@ -175,9 +176,12 @@ def open_validation(owner, project, workflow, feature, identifiers):
         banner.setStyleSheet('background:#573d20;color:#ffe1a6;padding:8px;')
         shell.centralWidget().layout().insertWidget(0, banner)
         shell.show()
-        if feature in ('color', 'geometry', 'circle_triangle'):
+        if feature in ('color', 'geometry', 'circle_triangle', 'fpfh'):
             class ValidationEditor(PostprocessWindow):
                 COLOR_VALIDATION = feature == 'color'
+            if feature == 'fpfh':
+                from prototypes.fpfh_geometry_match.editor import FPFHEditor
+                ValidationEditor = FPFHEditor
             editor = ValidationEditor(bridge, project.mode)
             bridge._postprocess_window = editor
             editor.setWindowTitle('MCC · 实验副本后处理 · ' + project.name)
