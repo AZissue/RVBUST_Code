@@ -129,6 +129,7 @@ class MultiCamWorkspace(QWidget):
 
     calibrate_requested = Signal()
     calibration_topology_changed = Signal(str)
+    calibration_settings_changed = Signal(str, str, bool)
     """计算外参。# TODO(BACKEND): CalibrationEngine，完成后回 on_calibrate_done"""
 
     calibration_visualization_requested = Signal()
@@ -485,7 +486,7 @@ class MultiCamWorkspace(QWidget):
         # 拍摄控制
         # locked 状态下允许点击「重新标定」，返回标定阶段
         self._btn_capture.setEnabled(connected)
-        self._btn_capture.setText("重新标定" if locked else "拍摄标定帧")
+        self._btn_capture.setText("重新标定" if locked else "全部拍标定")
         self._btn_capture.setObjectName("danger" if locked else "primary")
         ui_icons.apply(
             self._btn_capture, "camera",
@@ -607,17 +608,39 @@ class MultiCamWorkspace(QWidget):
     def set_calibration_topology(self, topology):
         self._calibration_topology = topology
         self._btn_topology.setText('链式标定' if topology == 'chain' else '星型标定')
-        self._btn_topology.setToolTip(self._btn_topology.text() + '：切换方式后保留标定帧，重新计算外参')
+        self._btn_topology.setToolTip(self._btn_topology.text() + '：设置参考相机、标定方式与拍摄时序；批量拍摄全部已连接相机')
 
     def _choose_topology(self):
         dialog = QDialog(self)
-        dialog.setWindowTitle('多相机标定方式')
+        dialog.setWindowTitle('多相机标定与采集设置')
         layout = QVBoxLayout(dialog)
         choice = QComboBox()
         choice.addItem('星型标定', 'star')
         choice.addItem('链式标定（自动共视连接）', 'chain')
         choice.setCurrentIndex(choice.findData(self._calibration_topology))
         layout.addWidget(choice)
+        reference = QComboBox()
+        reference.setObjectName('calibrationReference')
+        ids = self._camera_grid.camera_ids()
+        current = getattr(self, '_calibration_reference', None) or self.current_reference_id()
+        for cid in ids:
+            index = int(cid[3:]) if cid.startswith('cam') and cid[3:].isdigit() else -1
+            device = self._devices[index] if 0 <= index < len(self._devices) else None
+            title = f'{cid} · {device.model} · SN:{device.serial}' if device else f'{cid} · 离线标定数据'
+            reference.addItem(title, cid)
+        reference.setCurrentIndex(max(0, reference.findData(current)))
+        layout.addWidget(QLabel('参考坐标系相机（所有点云最终变换到此相机坐标系）'))
+        layout.addWidget(reference)
+        scope = QLabel('标定帧 / 扫描帧：拍摄全部已连接相机。\n' + '\n'.join(reference.itemText(i) for i in range(reference.count())))
+        scope.setWordWrap(True)
+        layout.addWidget(scope)
+        timing = QComboBox()
+        timing.setObjectName('calibrationTiming')
+        timing.addItem('同步标定拍摄（软件同步调度，非硬件同步）', True)
+        timing.addItem('异步标定拍摄', False)
+        timing.setCurrentIndex(0 if self._rb_sync.isChecked() else 1)
+        layout.addWidget(timing)
+        layout.addWidget(QLabel('扫描帧固定使用软件同步调度；离线数据仅供标定与查看，不执行实时拍摄。'))
         note = QLabel('星型：每台相机都需要与参考相机共视。\n'
                       '链式：自动检测共视配对，选择合格连接树，沿路径统一坐标。\n'
                       '链式误差会沿路径累积；本模式不执行闭环全局优化。\n'
@@ -630,8 +653,9 @@ class MultiCamWorkspace(QWidget):
         buttons.accepted.connect(dialog.accept)
         buttons.rejected.connect(dialog.reject)
         layout.addWidget(buttons)
-        if dialog.exec() == QDialog.Accepted and choice.currentData() != self._calibration_topology:
-            self.calibration_topology_changed.emit(choice.currentData())
+        buttons.button(QDialogButtonBox.Ok).setEnabled(reference.count() > 0)
+        if dialog.exec() == QDialog.Accepted:
+            self.calibration_settings_changed.emit(choice.currentData(), reference.currentData(), timing.currentData())
 
     def current_reference_id(self) -> Optional[str]:
         """返回当前参考相机下拉选中的 camera_id。"""

@@ -1126,12 +1126,38 @@ class BackendBridge(QObject):
         from core.multi_camera_topology import calibration_paths
         ws = self.shell.workspace_multi()
         ws.set_calibration_topology(self.calibration_engine.topology)
+        reference = self.fixed_workflow.reference_id or self.calibration_engine.reference_id
+        ws._calibration_reference = reference
+        if reference:
+            ws._ref_combo.blockSignals(True)
+            ws._ref_combo.setCurrentIndex(ws._ref_combo.findData(reference))
+            ws._ref_combo.blockSignals(False)
+        ws._btn_capture.setToolTip('拍摄全部已连接相机的标定帧；参考坐标系：' + str(reference or '未设置'))
+        ws._btn_scan_capture.setToolTip('拍摄全部已连接相机的扫描帧；参考坐标系：' + str(reference or '未设置'))
         paths = calibration_paths(self.calibration_engine)
         routes = [' → '.join(path) for cid, path in sorted(paths.items())
                   if cid != self.calibration_engine.reference_id]
         missing = set(self.calibration_engine.required_cameras) - paths.keys()
         routes.extend(cid + ' → 无合格路径' for cid in sorted(missing))
-        ws._path_summary.setText('\n'.join(routes))
+        ws._path_summary.setText('参考坐标系：' + str(reference or '未设置') + '\n批量拍摄：全部已连接相机\n' + '\n'.join(routes))
+
+    def _on_multi_settings_changed(self, topology, reference, synchronous):
+        ws = self.shell.workspace_multi()
+        if not self.can_change_workspace() or reference not in ws.camera_grid().camera_ids():
+            self.shell.log('当前任务尚未完成或参考相机已变化，请重新打开标定设置。', 'warn')
+            return
+        if topology != self.calibration_engine.topology:
+            self._on_multi_topology_changed(topology)
+        if reference != self.fixed_workflow.reference_id:
+            frames = dict(self.fixed_workflow.frames_calib)
+            ws.viewer().clear_all()
+            self._on_multi_reference_changed(reference, calibration_frames=frames)
+            if self.fixed_workflow.reference_id is None:
+                self.fixed_workflow.start_calibration(reference)
+        ws._rb_sync.setChecked(synchronous)
+        ws._rb_async.setChecked(not synchronous)
+        self._sync_multi_topology()
+        self.shell.set_dirty(True)
 
     def _on_multi_topology_changed(self, topology):
         if not self.can_change_workspace():
@@ -1369,22 +1395,23 @@ class BackendBridge(QObject):
         ws = self.shell.workspace_multi()
         if self.offline_preview or calibration_frames:
             frames = dict(calibration_frames or self.fixed_workflow.frames_calib)
-            if camera_id not in frames and frames:
+            if camera_id not in frames and frames and calibration_frames is None:
                 camera_id = next(iter(frames))
             self.fixed_workflow.reset()
             self.fixed_workflow.start_calibration(camera_id)
             for frame in frames.values():
                 self.fixed_workflow.add_calibration_frame(frame)
             ws.clear_calibration_results()
-            for cid, cloud in self._offline_clouds.items():
+            for cid, cloud in getattr(self, '_offline_clouds', {}).items():
                 ws.viewer().set_pointcloud(cid, cloud)
-            ready = len(frames) >= 2 and all(len(f.markers) >= 3 for f in frames.values())
+            ready = camera_id in frames and len(frames) >= 2 and all(len(f.markers) >= 3 for f in frames.values())
             ws.set_state('detected' if ready else 'captured')
             if calibration_frames:
-                self.shell.log(f'设备已连接，保留 {len(frames)} 路标定帧，'
+                self.shell.log(f'保留 {len(frames)} 路标定帧，参考相机 {camera_id}，'
                                + ('可直接计算外参。' if ready else '请先检测标记再计算外参。'), 'info')
             ws.viewer().set_reference(camera_id)
             self.shell._refresh_statusbar()
+            self._sync_multi_topology()
             return
         state = self.fixed_workflow.get_state()
         if state in (self.fixed_workflow.STATE_CALIBRATING,
@@ -1405,6 +1432,7 @@ class BackendBridge(QObject):
             self.shell.log(f"参考相机: {camera_id}", "info")
         self.calibration_engine.reference_id = camera_id
         ws.viewer().set_reference(camera_id)
+        self._sync_multi_topology()
 
     def _on_multi_step_back(self, index: int):
         """步骤回退。"""
@@ -2508,7 +2536,10 @@ class BackendBridge(QObject):
                 self.shell.log(f"会话标定结果恢复失败: {msg}", "warn")
 
         # 2. 确定参考相机并进入标定阶段
-        ref_id = self.calibration_engine.reference_id if calib_ok else None
+        ref_id = self.calibration_engine.reference_id if calib_ok else session.get_meta('calibration_reference')
+        synchronous = bool(session.get_meta('capture_synchronous', True))
+        ws._rb_sync.setChecked(synchronous)
+        ws._rb_async.setChecked(not synchronous)
         camera_ids = sorted(set(calib_latest) | set(scan_latest))
         if not camera_ids and calib_ok:
             camera_ids = sorted({cid for pair in self.calibration_engine.pair_results for cid in pair})

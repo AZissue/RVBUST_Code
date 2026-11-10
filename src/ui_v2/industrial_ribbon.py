@@ -225,7 +225,7 @@ class IndustrialRibbon(QWidget):
                 ('detect', '检测标记', 'detect', multi._btn_detect),
                 ('calibrate', '计算外参', 'calibrate', multi._btn_calibrate)]),
                 ('扫描采集', [('scan_preview', '2D实时预览', 'video', multi._btn_scan_preview),
-                             ('scan', '拍摄扫描帧', 'camera', multi._btn_scan_capture)])]
+                             ('scan', '全部拍扫描', 'camera', multi._btn_scan_capture)])]
         elif mode == 'mobile_chain':
             groups = [('采集', [('preview', '实时取景', 'video', mobile._btn_preview),
                               ('capture', '拍摄机位', 'camera', mobile._btn_capture),

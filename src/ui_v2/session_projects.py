@@ -241,6 +241,8 @@ class SessionProjects(QObject):
         if mode == 'multi_cam':
             return dict(calibration=bridge.calibration_engine.to_dict() if bridge.calibration_engine.pair_results else None,
                 calibration_topology=bridge.calibration_engine.topology,
+                calibration_reference=bridge.fixed_workflow.reference_id,
+                capture_synchronous=bridge.shell.workspace_multi()._rb_sync.isChecked(),
                 frames_calib={cid: desc(f) for cid, f in bridge.fixed_workflow.frames_calib.items()} if include_raw else {},
                 frames_scan={cid: desc(f) for cid, f in bridge.fixed_workflow.frames_scan.items()} if include_raw else {},
                 devices=[dict(serial=d.serial, model=d.model) for d in bridge.shell._devices])
@@ -549,6 +551,8 @@ class SessionProjects(QObject):
             session = OfflineSession()
             session._meta['calibration'] = data.get('calibration')
             session._meta['calibration_topology'] = data.get('calibration_topology', 'star')
+            session._meta['calibration_reference'] = data.get('calibration_reference')
+            session._meta['capture_synchronous'] = data.get('capture_synchronous', True)
             bridge._load_fixed_session(session, prepared)
         else:
             session, first = prepared
