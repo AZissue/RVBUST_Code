@@ -3,6 +3,7 @@ import argparse
 import json
 from pathlib import Path
 
+import cv2
 import numpy as np
 import open3d as o3d
 
@@ -33,9 +34,29 @@ def generate(root):
     payload = dict(unit='mm', frames=frames, calibration=dict(reference_id='cam0', pairs=pairs),
                    fpfh=dict(voxel_mm=3., normal_radius_mm=8., feature_radius_mm=20.,
                              min_consensus=20, min_fscore=.85, icp=True))
+    (root / 'cam1_to_cam0.json').write_text(
+        json.dumps(pairs['cam0|cam1']['T'], indent=2), encoding='utf-8')
+    make_board_pair(root)
     manifest = root / 'input.json'
     manifest.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
     return manifest
+
+
+def make_board_pair(root):
+    """Render a 7×11 circle grid with a synthetic, pixel-aligned depth plane."""
+    image = np.zeros((200, 240), dtype=np.uint8)
+    for row in range(11):
+        for col in range(7):
+            cv2.circle(image, (50 + (2 * col + row % 2) * 8, 45 + row * 8), 3, 255, -1)
+    y, x = np.indices(image.shape)
+    points = np.column_stack((x.ravel() * .5, y.ravel() * .5, np.full(x.size, 500.)))
+    cloud = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points))
+    ok, png = cv2.imencode('.png', image)
+    if not ok:
+        raise OSError('示例标定板图像编码失败')
+    (root / 'board.png').write_bytes(png.tobytes())
+    if not o3d.io.write_point_cloud(str(root / 'board.ply'), cloud):
+        raise OSError('示例标定板点云写入失败')
 
 
 if __name__ == '__main__':

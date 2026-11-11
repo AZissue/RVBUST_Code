@@ -45,7 +45,8 @@ a = Analysis(
     binaries=rvc_binaries,
     datas=[
         ('assets/icons', 'assets/icons'),
-    ] + pyside6_datas + open3d_datas + ([('tools/customer_trial/trial.marker', '.')] if trial else []),
+    ] + [(f'tools/customer_trial/{name}', 'sdk_examples') for name in
+         ('transform_cloud.py', 'recognize_markers.py', 'capture_rvc.py', 'stitch.py', 'README.md')] + pyside6_datas + open3d_datas + ([('tools/customer_trial/trial.marker', '.')] if trial else []),
     hiddenimports=hidden_imports,
     hookspath=[],
     hooksconfig={},

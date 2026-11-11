@@ -19,7 +19,8 @@ CORE_MODULES = (
 def stage(target):
     target = Path(target)
     target.mkdir(parents=True, exist_ok=False)
-    for filename in ('stitch.py', 'capture_rvc.py', 'make_demo.py', 'requirements.txt', 'README.md'):
+    for filename in ('stitch.py', 'capture_rvc.py', 'transform_cloud.py', 'recognize_markers.py',
+                     'make_demo.py', 'requirements.txt', 'README.md'):
         shutil.copy2(HERE / filename, target / filename)
     for module in CORE_MODULES:
         file = Path('core') / (module + '.py')

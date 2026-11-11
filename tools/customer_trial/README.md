@@ -20,6 +20,17 @@ py -3.10 -m venv .venv
 
 用 demo/input.json 作模板。路径相对于清单所在目录。所有坐标与矩阵平移均为毫米，矩阵方向为局部帧到参考帧，列向量公式为 p_ref = T @ p_local。FPFH 的 fpfh 字段覆盖默认参数，完整参数定义位于 core/postprocess/fpfh_registration.py 的 DEFAULTS。需要调用代码时可导入 stitch.run(mode, manifest, output)，或使用 stitch_fixed、stitch_markers、stitch_fpfh。输入不满足条件时会报告错误。
 
+## 点云转换和标记物识别
+
+桌面软件的“SDK 源码”菜单可直接打开这些脚本。以下命令使用随包的合成输入：
+
+```powershell
+.\.venv\Scripts\python.exe transform_cloud.py demo/cam1.ply demo/cam1_to_cam0.json aligned.ply
+.\.venv\Scripts\python.exe recognize_markers.py demo/board.png demo/board.ply board-markers.json
+```
+
+点云转换把 cam1 的 1000 点转换到 cam0 坐标系，并保留颜色。识别示例用 OpenCV 识别非对称圆标定板，通过有序 PLY 获取三维坐标，预期输出 77 个有效标记。客户自己的编码圆可传入 `--type coded_circle --bits 8 --r1 2 --r2 3`，需要安装与 Python 对应的 PyRVC。不同标记物使用各自的识别参数。
+
 ## 连接实体相机
 
 先从 RVC 官方渠道安装与相机匹配的 RVC SDK，再按其说明在同一个 Python 环境安装匹配 Python 3.10 x64 的 PyRVC。下列命令会按序列号连接设备并拍摄一帧，确认设备可使用后再执行：

@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (QFileDialog, QFrame, QHBoxLayout, QLabel,
     QStackedWidget, QToolButton, QVBoxLayout, QWidget, QSizePolicy)
 
 from .customer_trial import is_customer_trial
+from .sdk_examples import make_examples_button
 from . import icons
 from .launcher_dialog import LauncherDialog
 
@@ -143,6 +144,8 @@ class IndustrialRibbon(QWidget):
         self.log_button.setCheckable(True)
         shell._btn_log.toggled.connect(self.log_button.setChecked)
         line.addWidget(self.log_button)
+        self.sdk_examples_button = make_examples_button(shell)
+        line.addWidget(self.sdk_examples_button)
         line.addWidget(self._header_button('帮助', 'help', shell._show_help))
         root.addWidget(header)
         self.pages = QStackedWidget()
