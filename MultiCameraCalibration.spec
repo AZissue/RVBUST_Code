@@ -5,25 +5,24 @@ import sys
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 block_cipher = None
+trial = os.environ.get("MCC_CUSTOMER_TRIAL") == "1"
 
 # 项目根目录
 ROOT = os.path.dirname(os.path.abspath(SPEC))
 RVC_RUNTIME = r"D:\Program Files\RVBUST\RVC\RVCSDK\runtime"
 
 # 收集 PySide6 数据文件（插件、翻译等）
-pyside6_datas = collect_data_files('PySide6')
+pyside6_datas = [] if trial else collect_data_files('PySide6')
 
 # 收集 open3d 数据文件
 open3d_datas = collect_data_files('open3d')
 
 # 收集所有子模块
-hidden_imports = []
-hidden_imports += collect_submodules('PySide6')
+hidden_imports = ['OpenGL.platform.win32', 'OpenGL.arrays.numpymodule']
 hidden_imports += collect_submodules('open3d')
-hidden_imports += collect_submodules('cv2')
-hidden_imports += collect_submodules('numpy')
-hidden_imports += collect_submodules('scipy')
-hidden_imports += collect_submodules('OpenGL')
+if not trial:
+    for package in ('PySide6', 'cv2', 'numpy', 'scipy', 'OpenGL'):
+        hidden_imports += collect_submodules(package)
 
 # Production UI is exclusively ui_v2 + ui_common.
 # Explicit collection covers lazy composition/component factories.
@@ -35,7 +34,7 @@ hidden_imports += collect_submodules('ui_common')
 
 # RVC 运行时 DLL
 rvc_binaries = []
-if os.path.isdir(RVC_RUNTIME):
+if not trial and os.path.isdir(RVC_RUNTIME):
     for f in os.listdir(RVC_RUNTIME):
         if f.lower().endswith(('.dll', '.ax', '.ini')):
             rvc_binaries.append((os.path.join(RVC_RUNTIME, f), '.'))
@@ -46,7 +45,7 @@ a = Analysis(
     binaries=rvc_binaries,
     datas=[
         ('assets/icons', 'assets/icons'),
-    ] + pyside6_datas + open3d_datas,
+    ] + pyside6_datas + open3d_datas + ([('tools/customer_trial/trial.marker', '.')] if trial else []),
     hiddenimports=hidden_imports,
     hookspath=[],
     hooksconfig={},
@@ -55,12 +54,18 @@ a = Analysis(
         'ui',  # Retired legacy UI must never enter production bundles.
         'matplotlib', 'pandas', 'tkinter', 'PyQt5', 'PyQt6',
         'IPython', 'jupyter', 'notebook',
-    ],
+    ] + (['torch', 'tensorflow', 'PySide6.QtWebEngineWidgets', 'PySide6.QtWebEngineCore'] if trial else []),
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
     noarchive=False,
 )
+
+if trial:
+    # Qt imports the unversioned Windows ICU entry points. Conda's icuuc
+    # exports versioned symbols and shadows System32 when bundled at root.
+    a.binaries = [entry for entry in a.binaries
+                  if entry[0].lower() not in ('icuuc.dll', 'icudt78.dll')]
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 

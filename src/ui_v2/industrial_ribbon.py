@@ -10,6 +10,7 @@ from PySide6.QtCore import QEvent, QSize, Qt
 from PySide6.QtWidgets import (QFileDialog, QFrame, QHBoxLayout, QLabel,
     QStackedWidget, QToolButton, QVBoxLayout, QWidget, QSizePolicy)
 
+from .customer_trial import is_customer_trial
 from . import icons
 from .launcher_dialog import LauncherDialog
 
@@ -137,6 +138,7 @@ class IndustrialRibbon(QWidget):
             lambda: shell._backend_bridge and shell._backend_bridge.open_experiments())
         self.experiment_button.setToolTip('使用正式工作区验证功能，数据写入隔离副本')
         line.addWidget(self.experiment_button)
+        self.experiment_button.setVisible(not is_customer_trial())
         self.log_button = self._header_button('运行日志', 'terminal', shell._btn_log.click)
         self.log_button.setCheckable(True)
         shell._btn_log.toggled.connect(self.log_button.setChecked)

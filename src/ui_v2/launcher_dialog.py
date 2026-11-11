@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QPushButton, QVBoxLayout, QGroupBox, QScrollArea, QWidget,
 )
 
+from .customer_trial import is_customer_trial
 from .theme import (
     ACCENT, LAUNCHER_QSS, STATUS_OK, TEXT_MUTED, TEXT_SECONDARY,
 )
@@ -302,7 +303,7 @@ class LauncherDialog(QDialog):
         self._selection_label.setText(hint)
         self._selection_label.setStyleSheet(f"color: {color}; font-size: 12px;")
         self._btn_connect.setEnabled(ok and not self._is_busy())
-        self._btn_offline.setVisible(self._presentation == 'industrial')
+        self._btn_offline.setVisible(self._presentation == 'industrial' and not is_customer_trial())
         self._btn_offline.setEnabled(not self._is_busy())
 
     # ------------------------------------------------------------ 事件
