@@ -32,12 +32,26 @@ if _src_path not in sys.path:
 hidden_imports += collect_submodules('ui_v2')
 hidden_imports += collect_submodules('ui_common')
 
-# RVC 运行时 DLL
+# The SDK opens transport modules at runtime. PyInstaller's static import
+# scan cannot discover those DLLs or the GenTL CTI producers.
 rvc_binaries = []
-if not trial and os.path.isdir(RVC_RUNTIME):
-    for f in os.listdir(RVC_RUNTIME):
-        if f.lower().endswith(('.dll', '.ax', '.ini')):
-            rvc_binaries.append((os.path.join(RVC_RUNTIME, f), '.'))
+rvc_datas = []
+if trial:
+    required = ('RVC.dll', 'MVGigEVisionSDK.dll', 'MvUsb3vTL.dll',
+                'MvProducerGEV.cti', 'MvProducerU3V.cti')
+    missing = [name for name in required if not os.path.isfile(os.path.join(RVC_RUNTIME, name))]
+    if missing:
+        raise SystemExit(f'Incomplete RVC runtime at {RVC_RUNTIME}: {", ".join(missing)}')
+if os.path.isdir(RVC_RUNTIME):
+    for name in sorted(os.listdir(RVC_RUNTIME)):
+        path = os.path.join(RVC_RUNTIME, name)
+        if not os.path.isfile(path):
+            continue
+        suffix = os.path.splitext(name)[1].lower()
+        if suffix in ('.dll', '.ax', '.cti'):
+            rvc_binaries.append((path, '.'))
+        elif suffix in ('.ini', '.manifest'):
+            rvc_datas.append((path, '.'))
 
 a = Analysis(
     ['main.py'],
@@ -46,7 +60,7 @@ a = Analysis(
     datas=[
         ('assets/icons', 'assets/icons'),
     ] + [(f'tools/customer_trial/{name}', 'sdk_examples') for name in
-         ('transform_cloud.py', 'recognize_markers.py', 'capture_rvc.py', 'stitch.py', 'README.md')] + pyside6_datas + open3d_datas + ([('tools/customer_trial/trial.marker', '.')] if trial else []),
+         ('transform_cloud.py', 'recognize_markers.py', 'capture_rvc.py', 'stitch.py', 'README.md')] + rvc_datas + pyside6_datas + open3d_datas + ([('tools/customer_trial/trial.marker', '.')] if trial else []),
     hiddenimports=hidden_imports,
     hookspath=[],
     hooksconfig={},
