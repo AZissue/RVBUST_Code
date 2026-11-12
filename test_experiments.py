@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 import unittest
 import test_ui_frame_database as fixture
+import test_ui_session_projects as session_fixture
 from core.camera_manager import CameraManager
 from ui_v2.experiments import ExperimentHub, clone_project, open_validation, FEATURES
 from core.session_project import SessionProject
@@ -176,6 +177,31 @@ class ExperimentTests(unittest.TestCase):
         shell.close()
         self.app.processEvents()
         hub.close()
+
+    def test_color_entry_opens_mobile_project_with_three_stations(self):
+        _, project = session_fixture.SessionUiTests.mobile(self, station_count=3)
+        workflow = self.bridge.mobile_workflow
+        ids = [frame.database_id for frame in workflow.station_manager.get_frames().values()]
+        result = project.database.publish_result(workflow.get_merged_pointcloud(), ids)
+        self.win._industrial_ribbon.experiment_button.click()
+        hub = self.bridge._experiment_hub
+        try:
+            hub.buttons['color'].click()
+            self.wait(lambda: not hub._preparing)
+            shell = getattr(self.bridge, '_validation_shell', None)
+            self.assertIsNotNone(shell, hub.status.text())
+            child = shell._backend_bridge
+            editor = child._postprocess_window
+            self.wait(lambda: editor._worker is None)
+            self.assertTrue(editor.isVisible())
+            self.assertIn(result, editor._display_ids)
+            self.assertTrue(editor.COLOR_VALIDATION)
+        finally:
+            shell = getattr(self.bridge, '_validation_shell', None)
+            if shell is not None:
+                shell._backend_bridge.projects.closed = True
+                shell.close()
+            hub.close()
 
 if __name__ == '__main__':
     unittest.main()

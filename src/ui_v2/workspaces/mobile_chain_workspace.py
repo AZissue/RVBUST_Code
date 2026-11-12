@@ -42,7 +42,7 @@ from ..widgets.device_table import DeviceInfo
 class MobileChainWorkspace(QWidget):
     """模式 B 工作区（展示 + 操作门控）。"""
 
-    STATES = ("idle", "connected", "capturing", "evaluating", "chaining")
+    STATES = ("idle", "connected", "capturing", "evaluating", "chaining", "ready")
 
     # ---------------------------------------------------------------- 信号（接口预留）
     capture_station_requested = Signal()

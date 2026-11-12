@@ -82,7 +82,7 @@ class SessionUiTests(unittest.TestCase):
         index = json.loads((project.saved_path / 'data' / 'index.json').read_text(encoding='utf-8'))
         self.assertIn(uid, [row['uid'] for row in index['records']])
 
-    def mobile(self):
+    def mobile(self, station_count=2):
         self.win.set_mode('mobile_chain', [])
         self.bridge._current_mode = 'mobile_chain'
         controller = self.bridge.projects
@@ -91,7 +91,7 @@ class SessionUiTests(unittest.TestCase):
         self.bridge.mobile_workflow.start_chaining()
         controller.prepare('mobile_chain')
         chain = self.bridge.mobile_workflow._chain_stitcher
-        for i in (1, 2):
+        for i in range(1, station_count + 1):
             source = Path(self.temp.name) / f'frame{i}.ply'
             source.write_bytes(PLY)
             frame = FrameData(i, 'cam0', image_np=np.full((2, 2, 3), i, np.uint8),
@@ -105,10 +105,12 @@ class SessionUiTests(unittest.TestCase):
             chain.pose_graph.add_node(sid, transform)
             self.bridge.mobile_workflow.station_manager._stations[sid] = frame
         chain._reference_id = 'station_1'
-        edge = ChainEdge('station_2', 'station_1', chain.nodes['station_2'].T_world.copy(), .01, 1., 5)
-        chain.edges.append(edge)
-        chain.pose_graph.add_edge(edge.from_id, edge.to_id, edge.T)
-        self.bridge.mobile_workflow.station_manager._station_seq = 2
+        for i in range(2, station_count + 1):
+            sid = f'station_{i}'
+            edge = ChainEdge(sid, 'station_1', chain.nodes[sid].T_world.copy(), .01, 1., 5)
+            chain.edges.append(edge)
+            chain.pose_graph.add_edge(edge.from_id, edge.to_id, edge.T)
+        self.bridge.mobile_workflow.station_manager._station_seq = station_count
         ws = self.win.workspace_mobile()
         ws.set_stations(self.bridge.mobile_workflow.get_station_evaluations())
         ws.viewer().set_pointcloud_merged(self.bridge.mobile_workflow.get_merged_pointcloud())
