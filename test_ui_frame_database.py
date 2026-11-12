@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import threading
 import time
 from types import SimpleNamespace
 import unittest
@@ -72,6 +73,58 @@ class FrameBrowserTests(unittest.TestCase):
         path.write_bytes(PLY)
         return FrameData(number, 'cam0', image_np=np.zeros((2, 2, 3), np.uint8),
                          is_offline=True, offline_pointmap_path=str(path), kind='calib')
+
+    def test_checked_mobile_cloud_and_image_show_same_frame_without_row_selection(self):
+        self.bridge._current_mode = 'mobile_chain'
+        self.win.set_mode('mobile_chain', [])
+        owner = self.bridge.frame_db
+        workspace = self.win.workspace_mobile()
+        db = owner.databases['mobile_chain']
+        frame = self.source()
+        frame.image_np[:] = (12, 34, 56)
+        frame.markers = [dict(code=1, marker_type='unencoded_circle', x_2d=.5, y_2d=.5,
+                              x_3d=1., y_3d=2., z_3d=400., valid_3d=True)]
+        uid = db.ingest(frame)
+        browser = owner.browsers['mobile_chain']
+        presentation = workspace._industrial
+        presentation.view_pages.set_view('joint')
+        for order in (('cloud', 'image'), ('image', 'cloud')):
+            with self.subTest(order=order):
+                for component in order:
+                    browser.set_component_checked(uid, component)
+                self.wait(lambda: any(uid in key for key in workspace.viewer()._database_clouds))
+                self.wait(lambda: not any(worker.isRunning() for worker in self.bridge._workers))
+                image = presentation.inspector.image_view.image
+                self.assertFalse(image.isNull())
+                self.assertEqual(image.pixelColor(0, 0).getRgb()[:3], (56, 34, 12))
+                self.assertEqual(len(presentation.inspector.display.rows), 1)
+                self.assertEqual(presentation.view_pages.current_view(), 'joint')
+                self.assertEqual(browser.selected_ids(), [])
+                browser.set_component_checked(uid, 'image', False)
+                self.assertTrue(presentation.inspector.image_view.image.isNull())
+                self.assertTrue(any(uid in key for key in workspace.viewer()._database_clouds))
+                browser.set_component_checked(uid, 'cloud', False)
+
+        load = db.load_frame
+        started, release = threading.Event(), threading.Event()
+
+        def delayed_load(identifier, component):
+            if component == 'image':
+                started.set()
+                if not release.wait(5):
+                    raise TimeoutError('image read was not released')
+            return load(identifier, component)
+
+        with patch.object(db, 'load_frame', side_effect=delayed_load):
+            try:
+                browser.set_component_checked(uid, 'cloud')
+                browser.set_component_checked(uid, 'image')
+                self.wait(started.is_set)
+                browser.set_component_checked(uid, 'image', False)
+            finally:
+                release.set()
+            self.wait(lambda: any(uid in key for key in workspace.viewer()._database_clouds))
+            self.assertTrue(presentation.inspector.image_view.image.isNull())
 
     def test_mobile_db_recognition_stays_visible_during_live_preview(self):
         from PySide6.QtGui import QPixmap

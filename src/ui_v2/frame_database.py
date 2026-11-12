@@ -741,6 +741,7 @@ class FrameDatabaseController(QObject):
         if not bridge.can_change_workspace():
             bridge.shell.log('正在处理数据，请完成后查看DB单帧。', 'warn')
             return
+        self.overlay.prefer_explicit_image(mode)
         self._selection += 1
         token = self._selection
         bridge.shell.show_loading('正在读取DB原始单帧...')
@@ -768,7 +769,7 @@ class FrameDatabaseController(QObject):
         image_triangle = tuple(pixels.get(point) for point in triangle)
         return (triangle, image_triangle) if all(point is not None for point in image_triangle) else ((), ())
 
-    def display_frame(self, mode, uid, frame, cloud, component='frame', *, switch_view=True):
+    def display_frame(self, mode, uid, frame, cloud, component='frame', *, switch_view=True, highlight=True):
         record = self.databases[mode].records[uid]
         if mode == 'mobile_chain' and record.kind == 'raw' and record.recognition:
             # Recognition can finish while the preview worker is loading this frame.
@@ -777,7 +778,7 @@ class FrameDatabaseController(QObject):
         self._displayed[mode] = (uid, frame, component)
         self._preview_modes.add(mode)
         browser = self.browsers.get(mode)
-        if browser:
+        if browser and highlight:
             browser.show_frame(uid, frame, component)
             browser.tree.blockSignals(True)
             browser.tree.setCurrentItem(browser._component_items.get((uid, component)) if component != 'frame' else browser._items.get(uid))

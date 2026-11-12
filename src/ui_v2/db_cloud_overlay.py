@@ -10,6 +10,8 @@ class DbCloudOverlay(QObject):
         self.bridge = owner.bridge
         self.requested = {}
         self.cache = {}
+        self._attempted_images = {}
+        self._linked_images = {}
         self._running = False
         self._suppress = False
 
@@ -55,6 +57,8 @@ class DbCloudOverlay(QObject):
         had_request = bool(self.requested.get(mode))
         self.requested.pop(mode, None)
         self.cache.pop(mode, None)
+        self._attempted_images.pop(mode, None)
+        self._clear_linked_image(mode)
         self._set_checks(mode, [])
         if had_request and self._active(mode):
             self.bridge.shell._st_hint.setText('已返回工作视图')
@@ -71,10 +75,17 @@ class DbCloudOverlay(QObject):
         browser = self.owner.browsers[mode]
         ids = [uid for uid, _ in browser.checked_components('cloud')]
         previous = self.requested.get(mode, [])
-        if (ids == previous and not refresh) or (not ids and not previous):
+        if not ids and not previous:
+            return
+        if ids == previous and not refresh and mode != 'mobile_chain':
             return
         if not self._active(mode):
             self.drop_inactive(mode)
+            return
+        if ids == previous and not refresh:
+            self._sync_linked_image(mode)
+            if not self._busy():
+                QTimer.singleShot(0, lambda: self._dispatch(mode))
             return
         if self._busy():
             self._set_checks(mode, self.requested.get(mode, []))
@@ -82,6 +93,7 @@ class DbCloudOverlay(QObject):
             return
         self.owner._selection += 1  # Invalidate an older single-frame read.
         self.requested[mode] = ids
+        self._sync_linked_image(mode)
         if not ids:
             self.owner.restore(mode)
             return
@@ -92,6 +104,36 @@ class DbCloudOverlay(QObject):
         self.cache[mode] = {key: cloud for key, cloud in cache.items() if key in valid}
         self._apply(mode)
         QTimer.singleShot(40, lambda: self._dispatch(mode))
+
+    def _image_key(self, mode):
+        if mode != 'mobile_chain':
+            return None
+        database = self.owner.databases[mode]
+        checked_clouds = self.requested.get(mode, ())
+        for uid, _ in self.owner.browsers[mode].checked_components('image'):
+            if uid in checked_clouds:
+                return (id(database), uid, database.records[uid].revision)
+        return None
+
+    def _clear_linked_image(self, mode):
+        linked = self._linked_images.pop(mode, None)
+        shown = self.owner._displayed.get(mode)
+        if linked and shown and shown[1] is linked[1]:
+            self.owner._displayed.pop(mode, None)
+            self._workspace(mode)._industrial.restore_business_image()
+
+    def _sync_linked_image(self, mode):
+        key = self._image_key(mode)
+        linked = self._linked_images.get(mode)
+        if linked and linked[0] != key:
+            self._clear_linked_image(mode)
+        if self._attempted_images.get(mode) != key:
+            self._attempted_images.pop(mode, None)
+
+    def prefer_explicit_image(self, mode):
+        key = self._image_key(mode)
+        if key:
+            self._attempted_images[mode] = key
 
     def _apply(self, mode):
         if not self._active(mode):
@@ -126,7 +168,9 @@ class DbCloudOverlay(QObject):
         if displayed.keys() != clouds.keys() or any(displayed[key] is not cloud for key, cloud in clouds.items()):
             viewer.show_database_clouds(clouds)
         viewer.set_cloud_markers(markers, triangles=triangles)
-        self._workspace(mode)._industrial.show_database_result()
+        shown = self.owner._displayed.get(mode)
+        if not shown or shown[1].image_np is None:
+            self._workspace(mode)._industrial.show_database_result()
         text = f'DB叠加预览：{len(clouds)} 帧点云'
         if raw:
             text += ' · 原始帧按各自相机坐标显示，未应用标定变换'
@@ -150,10 +194,17 @@ class DbCloudOverlay(QObject):
         missing = [(uid, database.records[uid].revision) for uid in self.requested[mode]
                    if uid in database.records and
                    (id(database), uid, database.records[uid].revision) not in self.cache.get(mode, {})]
-        if not missing:
+        image_key = self._image_key(mode)
+        if image_key == self._attempted_images.get(mode):
+            image_key = None
+        shown = self.owner._displayed.get(mode)
+        if image_key and shown and shown[0] == image_key[1] and shown[1].image_np is not None:
+            self._attempted_images[mode] = image_key
+            image_key = None
+        if not missing and image_key is None:
             return
         self._running = True
-        self.bridge.shell._st_hint.setText(f'正在读取DB叠加点云：{len(missing)} 帧…')
+        self.bridge.shell._st_hint.setText('正在读取DB叠加预览…')
 
         def work():
             results = []
@@ -163,7 +214,13 @@ class DbCloudOverlay(QObject):
                     results.append((uid, revision, cloud, None))
                 except Exception as exc:
                     results.append((uid, revision, None, str(exc)))
-            return results
+            image, image_error = None, None
+            if image_key:
+                try:
+                    image, _ = database.load_frame(image_key[1], 'image')
+                except Exception as exc:
+                    image_error = str(exc)
+            return results, image, image_error
 
         def done(results, error):
             self._running = False
@@ -175,7 +232,8 @@ class DbCloudOverlay(QObject):
                 self.drop_inactive(mode)
             elif self.owner.databases[mode] is database and self.requested.get(mode):
                 failures = []
-                for uid, revision, cloud, failure in results or []:
+                clouds, image, image_error = results or ([], None, None)
+                for uid, revision, cloud, failure in clouds:
                     record = database.records.get(uid)
                     if uid not in self.requested[mode] or record is None or record.revision != revision:
                         continue
@@ -192,6 +250,15 @@ class DbCloudOverlay(QObject):
                     self._set_checks(mode, self.requested[mode])
                 if self.requested[mode]:
                     self._apply(mode)
+                    if (image_key and image_key == self._image_key(mode)
+                            and self._attempted_images.get(mode) != image_key):
+                        self._attempted_images[mode] = image_key
+                        if image_error:
+                            self.bridge.shell.log('DB关联2D图像读取失败：' + image_error, 'error')
+                        elif image is not None:
+                            self._linked_images[mode] = (image_key, image)
+                            self.owner.display_frame(mode, image_key[1], image, None, 'image',
+                                                     switch_view=False, highlight=False)
                 else:
                     self.owner.restore(mode)
                     self.bridge.shell._st_hint.setText('DB点云读取失败，已返回工作视图')
