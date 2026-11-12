@@ -31,8 +31,26 @@ class CircleTests(unittest.TestCase):
         image,points=self.frame()
         with self.assertRaises(ValueError):detect_circles(image,points.reshape(-1,3)[:-1])
         with self.assertRaises(ValueError):detect_circles(image,points.reshape(-1,3),CircleParameters(min_radius=100,max_radius=3))
-        cv2.circle(image,(200,130),12,0,2)
+        cv2.circle(image,(200,130),15,0,-1)
+        cv2.circle(image,(206,130),7,191,-1)
         self.assertEqual(len(detect_circles(image,points.reshape(-1,3))),3)
+
+    def test_gray_center_thin_rings_emit_one_center_per_marker(self):
+        image, points = self.frame()
+        image.fill(255)
+        centres = [(35, 35), (170, 40), (65, 130)]
+        for centre in centres:
+            cv2.ellipse(image, centre, (15, 10), 20, 0, 360, 0, -1, cv2.LINE_AA)
+            cv2.ellipse(image, centre, (12, 8), 20, 0, 360, 191, -1, cv2.LINE_AA)
+        cv2.circle(image, (0, 90), 15, 0, -1)
+        cv2.circle(image, (0, 90), 12, 191, -1)
+        points[125:136, 60:71] = 0
+        for threshold in (-1, 128):
+            with self.subTest(threshold=threshold):
+                dots = detect_circles(image, points.reshape(-1, 3), CircleParameters(threshold=threshold))
+                self.assertEqual(len(dots), 3)
+                np.testing.assert_allclose([dot['pixel'] for dot in dots], centres, atol=.3)
+                self.assertEqual([dot['valid_3d'] for dot in dots], [True, True, False])
 
 class TriangleTests(unittest.TestCase):
     def scene(self):

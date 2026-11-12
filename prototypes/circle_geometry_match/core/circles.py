@@ -24,6 +24,25 @@ class CircleParameters:
             raise ValueError('深度邻域或深度离散阈值无效')
 
 
+def _is_concentric_ring(contours, hierarchy, hole, outer_area, centre, axes, min_circularity):
+    if hole == -1 or hierarchy[hole, 0] != -1:
+        return False
+    inner = contours[hole]
+    area = cv2.contourArea(inner)
+    perimeter = cv2.arcLength(inner, True)
+    if len(inner) < 5 or perimeter <= 0 or not .16 <= area / outer_area < 1:
+        return False
+    if 4 * np.pi * area / perimeter**2 < min_circularity:
+        return False
+    inner_centre, inner_axes, _ = cv2.fitEllipse(inner)
+    outer_aspect = min(axes) / max(axes)
+    inner_aspect = min(inner_axes) / max(inner_axes)
+    return (
+        abs(inner_aspect - outer_aspect) <= .25
+        and np.linalg.norm(np.subtract(inner_centre, centre)) <= max(1., .15 * min(axes))
+    )
+
+
 def detect_circles(image, pointmap, params=CircleParameters()):
     params.validate()
     image=np.asarray(image)
@@ -41,9 +60,15 @@ def detect_circles(image, pointmap, params=CircleParameters()):
     points=points.reshape(h,w,3)
     flag=cv2.THRESH_BINARY_INV if params.polarity=='dark' else cv2.THRESH_BINARY
     _,binary=cv2.threshold(gray,max(0,params.threshold),255,flag|(cv2.THRESH_OTSU if params.threshold<0 else 0))
-    contours,_=cv2.findContours(binary,cv2.RETR_LIST,cv2.CHAIN_APPROX_NONE)
+    contours, hierarchy = cv2.findContours(binary, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)
+    if hierarchy is None:
+        return []
+    hierarchy = hierarchy[0]
     dots=[]
-    for contour in contours:
+    for index, contour in enumerate(contours):
+        _, _, hole, parent = hierarchy[index]
+        if parent != -1:
+            continue
         area=cv2.contourArea(contour); perimeter=cv2.arcLength(contour,True)
         radius=np.sqrt(area/np.pi)
         if not params.min_radius<=radius<=params.max_radius or perimeter<=0:
@@ -54,9 +79,12 @@ def detect_circles(image, pointmap, params=CircleParameters()):
         left,top,ww,hh=cv2.boundingRect(contour)
         if left<=0 or top<=0 or left+ww>=w or top+hh>=h or min(a,b)<.45*max(a,b):
             continue
-        # Reject hollow rings: an ordinary dot must be filled at its centre.
         cx,cy=int(round(x)),int(round(y))
-        if not 0<=cx<w or not 0<=cy<h or binary[cy,cx]==0:
+        if not 0<=cx<w or not 0<=cy<h:
+            continue
+        if binary[cy, cx] == 0 and not _is_concentric_ring(
+            contours, hierarchy, hole, area, (x, y), (a, b), params.circularity
+        ):
             continue
         r=max(1,min(params.depth_radius,int(max(1,min(a,b)*.25))))
         x0,x1=max(0,cx-r),min(w,cx+r+1);y0,y1=max(0,cy-r),min(h,cy+r+1)

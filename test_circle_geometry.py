@@ -25,7 +25,7 @@ class CircleIntegrationTests(unittest.TestCase):
         self.editor=self.bridge.open_postprocess()
         self.app.processEvents()
 
-    def inputs(self):
+    def inputs(self, *, rings=False):
         ids=[]
         rotation=cv2.Rodrigues(np.array([.1,-.15,.07]))[0];translation=np.array([11,-5,30])
         self.transform=np.eye(4);self.transform[:3,:3]=rotation;self.transform[:3,3]=translation
@@ -33,6 +33,8 @@ class CircleIntegrationTests(unittest.TestCase):
             image=np.full((180,240,3),255,np.uint8)
             for pixel in np.array([[35,35],[170,40],[65,130]])+shift:
                 cv2.circle(image,tuple(pixel),9,(0,0,0),-1)
+                if rings:
+                    cv2.circle(image,tuple(pixel),7,(191,191,191),-1)
             yy,xx=np.mgrid[:180,:240]
             points=np.stack((xx-shift[0],yy-shift[1],np.full_like(xx,400)),axis=-1).reshape(-1,3).astype(float)
             if index:points=(points-translation)@rotation
@@ -45,7 +47,7 @@ class CircleIntegrationTests(unittest.TestCase):
         return ids
 
     def test_real_detection_confirm_publish_preserves_sources_and_transforms(self):
-        ids=self.inputs()
+        ids=self.inputs(rings=True)
         originals={uid:(self.db.directory/'frames'/uid/'pointmap.ply').read_bytes() for uid in ids}
         dialog=CircleMatchDialog(self.editor);dialog.show();self.app.processEvents()
         dialog.analyze()

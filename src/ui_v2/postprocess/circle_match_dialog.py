@@ -40,7 +40,7 @@ class CircleMatchDialog(QDialog):
         self.setWindowTitle('圆点识别 · 三角形几何匹配拼接（实验）')
         self.resize(1080,820)
         layout=QVBoxLayout(self)
-        note=QLabel('两帧原始2D图像 + 逐像素有序点云（mm）。识别普通无编码黑/白圆点，按3D三角边长匹配。\n'
+        note=QLabel('两帧原始2D图像 + 逐像素有序点云（mm）。支持实心圆点和灰心黑环，按3D三角边长匹配。\n'
             '图像内序号不是编码；匹配成功后两侧相同编号才是对应圆点。等边/重复图案多解时拒绝拼接。')
         note.setWordWrap(True);layout.addWidget(note)
         form=QFormLayout();layout.addLayout(form)
