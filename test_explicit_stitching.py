@@ -71,7 +71,8 @@ class ExplicitStitchingTests(unittest.TestCase):
             self.assertTrue(o3d.io.write_point_cloud(frame.offline_pointmap_path, cloud))
             ids.append(self.db.ingest(frame))
         self.execute()
-        self.wait(lambda: any(row.kind == 'result' for row in self.db.records.values()))
+        self.wait(lambda: self.bridge.mobile_workflow._chain_stitcher is not None)
+        self.assertEqual(sum(row.kind == 'result' for row in self.db.records.values()), 1)
         chain = self.bridge.mobile_workflow._chain_stitcher
         self.assertEqual(len(chain.edges), 3)
         self.assertTrue(all(edge.point_pairs is not None for edge in chain.edges))
