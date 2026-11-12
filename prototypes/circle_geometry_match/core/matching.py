@@ -50,6 +50,12 @@ def _pairs(reference,moving,transform,tolerance):
     return np.column_stack((ri,mi)).astype(int)
 
 
+def display_triangle_indices(points):
+    """Select the largest-area triangle among the accepted reference centres."""
+    return max(combinations(range(len(points)), 3), key=lambda ids: np.linalg.norm(np.cross(
+        points[ids[1]] - points[ids[0]], points[ids[2]] - points[ids[0]])))
+
+
 def match_triangles(reference,moving,params=MatchParameters()):
     params.validate()
     reference=np.asarray(reference,float);moving=np.asarray(moving,float)
@@ -103,9 +109,7 @@ def match_triangles(reference,moving,params=MatchParameters()):
     best=ranked[0]
     if any(len(other['pairs'])==len(best['pairs']) and other['rms']<=max(best['rms']+.1,best['rms']*1.2) for other in ranked[1:]):
         raise ValueError('存在多个同等可信匹配（等边/等腰三角形或重复图案）；请增加不对称圆点，不能唯一确定拼接')
-    triangle=max(combinations(range(len(best['pairs'])),3), key=lambda ids: np.linalg.norm(np.cross(
-        reference[best['pairs'][ids[1],0]]-reference[best['pairs'][ids[0],0]],
-        reference[best['pairs'][ids[2],0]]-reference[best['pairs'][ids[0],0]])))
+    triangle = display_triangle_indices(reference[best['pairs'][:, 0]])
     return dict(**best,hypotheses=hypotheses,shape='triangle',triangle_pairs=best['pairs'][list(triangle)])
 
 # Future polygon strategies share this callable contract and result structure.

@@ -99,6 +99,7 @@ class DbCloudOverlay(QObject):
         database = self.owner.databases[mode]
         clouds = {}
         markers = []
+        triangles = []
         raw = 0
         for uid in self.requested.get(mode, []):
             record = database.records.get(uid)
@@ -113,6 +114,9 @@ class DbCloudOverlay(QObject):
                     # Each frame keeps its stored camera coordinates, including
                     # repeated codes at different positions across raw frames.
                     markers.extend(display.cloud_points())
+                    triangle, _ = self.owner.match_geometry(mode, uid, record.markers)
+                    if triangle:
+                        triangles.append(triangle)
         if not clouds:
             if self._viewer(mode)._database_clouds:
                 self._viewer(mode).show_database_clouds({})
@@ -121,7 +125,7 @@ class DbCloudOverlay(QObject):
         displayed = viewer._database_clouds
         if displayed.keys() != clouds.keys() or any(displayed[key] is not cloud for key, cloud in clouds.items()):
             viewer.show_database_clouds(clouds)
-        viewer.set_cloud_markers(markers)
+        viewer.set_cloud_markers(markers, triangles=triangles)
         self._workspace(mode)._industrial.show_database_result()
         text = f'DB叠加预览：{len(clouds)} 帧点云'
         if raw:

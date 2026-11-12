@@ -2,7 +2,7 @@
 from html import escape
 import numpy as np
 from PySide6.QtCore import Qt, QEvent, QPointF, QRectF
-from PySide6.QtGui import QImage, QPainter, QColor, QPen
+from PySide6.QtGui import QImage, QPainter, QColor, QPen, QPolygonF
 from PySide6.QtWidgets import (
     QWidget, QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QToolButton, QDialog, QTableWidget, QTableWidgetItem, QHeaderView,
@@ -33,6 +33,7 @@ class MarkerImage(QWidget):
         super().__init__(parent)
         self.image = QImage()
         self.display = MarkerDisplay((), frozenset(), frozenset(), False)
+        self.match_triangle = ()
         self.setFixedHeight(175)
         self.zoom = 1.0
         self.pan = QPointF()
@@ -66,6 +67,10 @@ class MarkerImage(QWidget):
         painter.setRenderHint(QPainter.SmoothPixmapTransform)
         painter.drawImage(QRectF(x, y, width, height), self.image)
         painter.setRenderHint(QPainter.Antialiasing)
+        if self.match_triangle:
+            painter.setPen(QPen(QColor(YELLOW), 2, Qt.DashLine))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawPolygon(QPolygonF([QPointF(x+px*scale, y+py*scale) for px, py in self.match_triangle]))
         for row in self.display.rows:
             px, py = x+row.xy[0]*scale, y+row.xy[1]*scale
             if not 0 <= row.xy[0] < self.image.width() or not 0 <= row.xy[1] < self.image.height():
@@ -73,6 +78,8 @@ class MarkerImage(QWidget):
             painter.setPen(QPen(QColor(row.color), 2))
             painter.setBrush(Qt.NoBrush)
             painter.drawEllipse(QPointF(px, py), 4, 4)
+            if row.marker.get('marker_type') == 'unencoded_circle':
+                painter.drawText(QPointF(px+6, py-6), str(row.code))
 
 
 class WorldMarkerOverlay(QWidget):
@@ -226,7 +233,7 @@ class MarkerInspector(QFrame):
     def set_frame(self, image, markers, *, frame_id=None, reference_id=None,
                   reference_markers=None, used_codes=None, rejected_codes=(),
                   registration_accepted=None, history=(), current_visible=True,
-                  recognition_state='', recognition_message='', marker_type=''):
+                  recognition_state='', recognition_message='', marker_type='', match_triangle=()):
         loaded = load_image(image)
         if reference_id is None or reference_id == frame_id:
             reference_markers = None
@@ -234,11 +241,14 @@ class MarkerInspector(QFrame):
                                         rejected_codes=rejected_codes, registration_accepted=registration_accepted)
         self.image_view.image = loaded
         self.image_view.display = self.display
+        self.image_view.match_triangle = match_triangle
         self.image_view.update()
         self.is_board = marker_type in ('asymmetric_grid', 'calib_board')
-        marker_name = '非对称圆板' if self.is_board else '编码圆'
+        unencoded = marker_type == 'unencoded_circle' or any(
+            row.marker.get('marker_type') == 'unencoded_circle' for row in self.display.rows)
+        self.marker_name = '普通圆点 / 圆环' if unencoded else '非对称圆板' if self.is_board else '编码圆'
         self.details_button.setText('标记物数据')
-        self.title.setText(f'当前帧 {frame_id if frame_id is not None else "—"} · {marker_name}')
+        self.title.setText(f'当前帧 {frame_id if frame_id is not None else "—"} · {self.marker_name}')
         self.counts.setText(f'<span style="color:{GREEN}">● 绿 {self.display.green_count}</span>　'
                             f'<span style="color:{RED}">● 红 {self.display.red_count}</span>　'
                             f'<span style="color:{YELLOW}">● 仅2D {self.display.yellow_count}</span>')
@@ -251,12 +261,16 @@ class MarkerInspector(QFrame):
                 f'标定板圆心：2D检出 {len(self.display.rows)} / 3D有效 '
                 f'{self.display.green_count+self.display.red_count}\n'
                 '序号为网格圆心索引；黄圈表示无有效3D。')
+        elif unencoded:
+            description = '虚线：配准圆心三角形' if match_triangle else '序号对应当前帧圆心'
+            self.pair_label.setText(f'2D检出 {len(self.display.rows)} / 3D有效 '
+                                    f'{self.display.green_count}\n{description}；黄圈：无有效3D')
         parts = []
         for color, label in [(GREEN, '有效'), (RED, '共有'), (YELLOW, '仅2D')]:
             codes = [str(row.code) for row in self.display.rows if row.color == color]
             text = ' · '.join(codes[:14]) + (' …' if len(codes) > 14 else '')
             if codes:
-                parts.append(f'<span style="color:{color}">{label} {"圆心序号" if self.is_board else "ID"}：{escape(text)}</span>')
+                parts.append(f'<span style="color:{color}">{label} {"圆心序号" if self.is_board or unencoded else "ID"}：{escape(text)}</span>')
         self.ids.setText('<br>'.join(parts) or '尚无检测结果')
         diagnosis = {'running': '正在后台识别…', 'error': '识别失败：' + recognition_message}.get(
             recognition_state, recognition_message)
@@ -273,7 +287,7 @@ class MarkerInspector(QFrame):
 
     def show_details(self):
         dialog = QDialog(self.window())
-        dialog.setWindowTitle('当前帧' + ('标定板圆心' if getattr(self, 'is_board', False) else '编码圆') + '数据（相机坐标 mm）')
+        dialog.setWindowTitle('当前帧' + self.marker_name + '数据（相机坐标 mm）')
         dialog.resize(900, 450)
         layout = QVBoxLayout(dialog)
         table = QTableWidget(len(self.display.rows), 8)

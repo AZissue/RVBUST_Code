@@ -43,6 +43,7 @@ class ViewerPanel(QFrame):
         self._reference = None
         self._rotation_geometry = (None, None)
         self._cloud_markers = []
+        self._match_triangles = []
         self._industrial_enabled = False
         self._retired = []
 
@@ -99,7 +100,7 @@ class ViewerPanel(QFrame):
         candidate.set_reference(self._reference)
         if enabled:
             candidate.set_rotation_geometry(*self._rotation_geometry)
-            candidate.set_cloud_markers(self._cloud_markers)
+            candidate.set_cloud_markers(self._cloud_markers, triangles=self._match_triangles)
         for key, pcd in self._clouds.items():
             candidate.set_pointcloud(key, pcd)
         if self._merged is not None and (not enabled or self._latest_display_merged):
@@ -192,10 +193,14 @@ class ViewerPanel(QFrame):
         if hasattr(self._viewer, 'set_rotation_geometry'):
             self._viewer.set_rotation_geometry(axis, center)
 
-    def set_cloud_markers(self, points):
+    def set_cloud_markers(self, points, *, triangles=()):
         self._cloud_markers = list(points)
+        self._match_triangles = list(triangles)
         if hasattr(self._viewer, 'set_cloud_markers'):
-            self._viewer.set_cloud_markers(points)
+            if self._industrial_enabled:
+                self._viewer.set_cloud_markers(self._cloud_markers, triangles=self._match_triangles)
+            else:
+                self._viewer.set_cloud_markers(self._cloud_markers)
 
     def set_highlight(self, camera_id: str, indices: Optional[list] = None):
         """高亮指定相机的部分点。"""

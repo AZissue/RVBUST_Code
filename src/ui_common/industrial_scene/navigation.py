@@ -1,9 +1,10 @@
 """One mouse contract for GPU and software canvases; no drag-distance threshold."""
 import numpy as np
-from PySide6.QtCore import Qt, QEvent, QTimer
+from PySide6.QtCore import Qt, QEvent, QTimer, QPointF
 from PySide6.QtWidgets import QWidget
-from PySide6.QtGui import QPainter
+from PySide6.QtGui import QPainter, QColor, QPen, QPolygonF
 from .trackball import Trackball
+from .marker_display import YELLOW
 
 
 class _RotationOverlay(QWidget):
@@ -27,6 +28,7 @@ class NavigationMixin:
     def _init_navigation(self):
         self._rotation_geometry = None
         self._cloud_markers = []
+        self._match_triangles = []
         self.marker_centers = True
         self._rotation_overlay = _RotationOverlay(self)
         self._rotation_overlay.setGeometry(self.rect())
@@ -42,7 +44,7 @@ class NavigationMixin:
         self.setFocusPolicy(Qt.StrongFocus)
 
     def _notify_view_changed(self):
-        self._rotation_overlay.setVisible(self._rotation_geometry is not None or bool(self._cloud_markers)
+        self._rotation_overlay.setVisible(self._rotation_geometry is not None or bool(self._cloud_markers or self._match_triangles)
             or self._navigation_pivot_visible())
         self._rotation_overlay.raise_()
         self._rotation_overlay.update()
@@ -56,31 +58,36 @@ class NavigationMixin:
             axis, center = np.asarray(axis, dtype=float), np.asarray(center, dtype=float)
             if axis.shape == (3,) and center.shape == (3,) and np.isfinite(axis).all() and np.isfinite(center).all() and np.linalg.norm(axis) > 1e-9:
                 self._rotation_geometry = (axis / np.linalg.norm(axis), center.copy())
-        self._rotation_overlay.setVisible(self._rotation_geometry is not None or bool(self._cloud_markers)
+        self._rotation_overlay.setVisible(self._rotation_geometry is not None or bool(self._cloud_markers or self._match_triangles)
             or self._navigation_pivot_visible())
         self._rotation_overlay.raise_()
         self._rotation_overlay.update()
         self.update()
 
-    def set_cloud_markers(self, points):
+    def set_cloud_markers(self, points, *, triangles=()):
         self._cloud_markers = list(points)
-        self._rotation_overlay.setVisible(self._rotation_geometry is not None or bool(self._cloud_markers)
+        self._match_triangles = list(triangles)
+        self._rotation_overlay.setVisible(self._rotation_geometry is not None or bool(self._cloud_markers or self._match_triangles)
             or self._navigation_pivot_visible())
         self._rotation_overlay.raise_()
         self._rotation_overlay.update()
 
     def _paint_cloud_markers(self, painter):
-        if not self.marker_centers or not self._cloud_markers:
+        if not self.marker_centers or not (self._cloud_markers or self._match_triangles):
             return
-        from PySide6.QtCore import QPointF
-        from PySide6.QtGui import QColor, QPen
-        xyz = np.asarray([item[1][0] for item in self._cloud_markers], dtype=float)
-        camera = (xyz-self.center) @ self.rotation.matrix.T
         scale = min(self.width(), self.height())*1.65/self.extent*self.zoom
-        pixels = camera[:, :2]*[scale, -scale] + [self.width()/2+self.pan[0], self.height()/2+self.pan[1]]
+        def project(points):
+            xyz = np.asarray(points, dtype=float).reshape(-1, 3)
+            camera = (xyz-self.center) @ self.rotation.matrix.T
+            return camera[:, :2]*[scale, -scale] + [self.width()/2+self.pan[0], self.height()/2+self.pan[1]]
+
+        pixels = project([item[1][0] for item in self._cloud_markers])
         painter.save()
         painter.setClipRect(self.rect())
         painter.setBrush(Qt.NoBrush)
+        painter.setPen(QPen(QColor(YELLOW), 2, Qt.DashLine))
+        for triangle in self._match_triangles:
+            painter.drawPolygon(QPolygonF([QPointF(x, y) for x, y in project(triangle)]))
         occupied = [child.geometry() for child in self.children() if isinstance(child, QWidget)
                     and child.objectName() == 'markerInspector' and child.isVisible()]
         for (code, (_, color)), (x, y) in zip(self._cloud_markers, pixels):

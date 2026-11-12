@@ -134,7 +134,7 @@ class IndustrialViewer(QWidget):
         self.canvas.set_layers(self._layers, fit=True)
         geometry = getattr(old, '_rotation_geometry', None)
         self.canvas.set_rotation_geometry(*(geometry or (None, None)))
-        self.canvas.set_cloud_markers(getattr(old, '_cloud_markers', []))
+        self.canvas.set_cloud_markers(old._cloud_markers, triangles=old._match_triangles)
         self.canvas.marker_centers = getattr(old, 'marker_centers', True)
         self.canvas.set_policy(self.quality.currentText())
         self.canvas.color_mode = self.color_mode.currentText()
@@ -295,8 +295,8 @@ class IndustrialViewer(QWidget):
     def set_rotation_geometry(self, axis=None, center=None):
         self.canvas.set_rotation_geometry(axis, center)
 
-    def set_cloud_markers(self, points):
-        self.canvas.set_cloud_markers(points)
+    def set_cloud_markers(self, points, *, triangles=()):
+        self.canvas.set_cloud_markers(points, triangles=triangles)
 
     def set_highlight(self, camera_id, indices=None):
         self._highlights[camera_id] = list(indices or [])

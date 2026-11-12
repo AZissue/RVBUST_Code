@@ -449,6 +449,24 @@ class MobileChainWorkflow(WorkflowBase):
                     f"全局标记 RMS {before_mm:.6f}mm -> {after_mm:.6f}mm")
         return True, f"全局优化完成，锚点 {self.calibration_engine.display_name(ref_id)}", before_mm, after_mm
 
+    def match_triangle(self, uid):
+        """Return the registration triangle in a DB source frame's camera coordinates."""
+        chain = self._chain_stitcher
+        if chain is None:
+            return ()
+        station = next((sid for sid, node in chain.nodes.items() if node.frame.database_id == uid), None)
+        if station is None:
+            return ()
+        incoming = [edge for edge in chain.edges if edge.point_pairs is not None and edge.from_id == station]
+        reference = [edge for edge in chain.edges if edge.point_pairs is not None and edge.to_id == station]
+        if not incoming and not reference:
+            return ()
+        edge = (incoming or reference)[0]
+        source, target = edge.point_pairs
+        from prototypes.circle_geometry_match.core.matching import display_triangle_indices
+        vertices = list(display_triangle_indices(target))
+        return tuple(map(tuple, (source if incoming else target)[vertices]))
+
     def _marker_constraints(self):
         """Freeze pair inliers using measured edges, never candidate world poses."""
         constraints = []

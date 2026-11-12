@@ -220,6 +220,7 @@ class IndustrialPresentation:
         self.inspector = None
         self._business_marker_image = None
         self._database_result = False
+        self._database_image_selected = False
         self.grid = None
         self._multi_view = '3d'
         self._view_before_focus = None
@@ -503,6 +504,8 @@ class IndustrialPresentation:
     def _preview_frame(self, pixmap):
         if self.inspector:
             self.set_marker_image(pixmap.toImage() if pixmap is not None else None, [])
+            if self._database_image_selected:
+                return
             if self.active and self.mode == 'mobile_chain' and pixmap is not None:
                 self._database_result = False
                 self.inspector.show()
@@ -642,24 +645,25 @@ class IndustrialPresentation:
                          *, frame_id='—', reference_id='参考帧', **recognition):
         self._business_marker_image = ((image, markers, reference, accepted),
                                        dict(frame_id=frame_id, reference_id=reference_id, **recognition))
-        if self.inspector:
+        if self.inspector and not self._database_image_selected:
             self.view_pages.set_context(('实时取景' if self.mode == 'mobile_chain' and self.workspace.is_preview_enabled() else '采集帧')+f' · {frame_id}')
             self.inspector.set_frame(image, markers or [], frame_id=frame_id,
                 reference_id=reference_id if reference is not None else None,
                 reference_markers=reference, registration_accepted=accepted,
                 current_visible=False, **recognition)
 
-    def show_database_image(self, frame):
+    def show_database_image(self, frame, *, match_triangle=()):
         self._database_result = False
         self.view_pages.set_context(f'DB · {frame.camera_name} · 帧{frame.frame_id:03d}')
         if self.mode == 'multi_cam':
             self.workspace._camera_grid.show_database_frame(frame)
             self.all_cameras_button.setEnabled(False)
             return
+        self._database_image_selected = self.mode == 'mobile_chain'
         self.inspector.set_frame(frame.image_np, frame.markers_all or frame.markers,
             frame_id=f'DB原始帧 {frame.frame_id:03d}', current_visible=False,
             recognition_state=frame.recognition_state, recognition_message=frame.recognition_message,
-            marker_type=frame.recognition_type)
+            marker_type=frame.recognition_type, match_triangle=match_triangle)
         self.inspector.show()
         self.inspector.raise_()
 
@@ -671,12 +675,14 @@ class IndustrialPresentation:
             self._size_preview()
             self.view_pages.set_context('当前为点云结果，无关联2D图像')
         elif self.inspector:
+            self._database_image_selected = self.mode == 'mobile_chain'
             self.view_pages.set_context('当前为点云结果，无关联2D图像')
             self.inspector.set_frame(None,[],current_visible=False)
             self.inspector.show()
 
     def restore_business_image(self):
         self._database_result = False
+        self._database_image_selected = False
         if self.mode == 'multi_cam':
             self.workspace._camera_grid.show_database_frame(None)
             self._size_preview()

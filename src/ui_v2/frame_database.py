@@ -464,7 +464,8 @@ class FrameBrowser(QWidget):
                 record.recognition.get('state'), '等待后台识别')
             if record.recognition.get('state') == 'done':
                 values['有效三维标记'] = sum(row.get('valid_3d', True) for row in record.markers)
-                values['识别类型'] = {'coded_circle': '编码圆', 'asymmetric_grid': '非对称圆标定板'}.get(
+                values['识别类型'] = {'coded_circle': '编码圆', 'asymmetric_grid': '非对称圆标定板',
+                                  'unencoded_circle': '普通圆点 / 圆环'}.get(
                     record.recognition.get('marker_type'), record.recognition.get('marker_type', '—'))
             if record.recognition.get('error'):
                 values['识别错误'] = record.recognition['error']
@@ -754,7 +755,25 @@ class FrameDatabaseController(QObject):
             self.display_frame(mode, uid, frame, cloud, component, switch_view=follow_view and requested_component in ('cloud','image'))
         bridge._run_background(lambda: self.databases[mode].load_frame(uid, component), done, name='db_frame_preview')
 
+    def match_geometry(self, mode, uid, markers):
+        """Resolve one saved triangle against the current recognition for this raw frame."""
+        if mode != 'mobile_chain':
+            return (), ()
+        from ui_common.industrial_scene.marker_display import position_2d, valid_xyz
+        triangle = self.bridge.mobile_workflow.match_triangle(uid)
+        if not triangle:
+            return (), ()
+        pixels = {valid_xyz(row): position_2d(row) for row in markers
+                  if row.get('marker_type') == 'unencoded_circle'}
+        image_triangle = tuple(pixels.get(point) for point in triangle)
+        return (triangle, image_triangle) if all(point is not None for point in image_triangle) else ((), ())
+
     def display_frame(self, mode, uid, frame, cloud, component='frame', *, switch_view=True):
+        record = self.databases[mode].records[uid]
+        if mode == 'mobile_chain' and record.kind == 'raw' and record.recognition:
+            # Recognition can finish while the preview worker is loading this frame.
+            from core.frame_recognition import apply
+            apply(frame, record.recognition)
         self._displayed[mode] = (uid, frame, component)
         self._preview_modes.add(mode)
         browser = self.browsers.get(mode)
@@ -766,21 +785,23 @@ class FrameDatabaseController(QObject):
             browser._selection_changed()
         workspace = self.bridge.shell._stack.currentWidget()
         viewer = workspace.viewer() if callable(workspace.viewer) else workspace.viewer
+        markers = frame.markers_all or frame.markers
+        triangle, image_triangle = self.match_geometry(mode, uid, markers)
         if component != 'image':
             viewer.show_database_frame(cloud)
             from ui_common.industrial_scene.marker_display import classify_markers
-            display = classify_markers(frame.markers_all or frame.markers)
+            display = classify_markers(markers)
             viewer.set_cloud_markers(display.cloud_points()
-                                    if self.databases[mode].records[uid].kind == 'raw' else [])
+                                    if record.kind == 'raw' else [],
+                                    triangles=[triangle] if triangle else [])
             viewer.reset_view()
-        if self.databases[mode].records[uid].kind == 'result':
+        if record.kind == 'result':
             workspace._industrial.show_database_result(clear_image=True)
         else:
-            workspace._industrial.show_database_image(frame)
+            workspace._industrial.show_database_image(frame, match_triangle=image_triangle)
         pages = getattr(workspace._industrial,'view_pages',None)
         if pages is not None and switch_view and component in ('cloud','image'):
             pages.set_view('2d' if component == 'image' else '3d')
-        record = self.databases[mode].records[uid]
         hint = (f'正在查看：{record.logical_name} · {record.points:,} 个有效点' if record.kind == 'result' else
                 f'正在查看：原始帧 {record.frame_id:03d} · {record.points:,} 个槽位（含无效深度）')
         if component == 'image':

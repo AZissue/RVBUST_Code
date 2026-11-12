@@ -73,6 +73,47 @@ class FrameBrowserTests(unittest.TestCase):
         return FrameData(number, 'cam0', image_np=np.zeros((2, 2, 3), np.uint8),
                          is_offline=True, offline_pointmap_path=str(path), kind='calib')
 
+    def test_mobile_db_recognition_stays_visible_during_live_preview(self):
+        from PySide6.QtGui import QPixmap
+        self.bridge._current_mode = 'mobile_chain'
+        self.win.set_mode('mobile_chain', [])
+        db = self.bridge.frame_db.databases['mobile_chain']
+        workspace = self.win.workspace_mobile()
+        workflow = self.bridge.mobile_workflow
+        workflow.start_chaining()
+        for index in range(2):
+            frame = self.source(index + 1)
+            frame.markers = [
+                dict(code=i, marker_type='unencoded_circle', x_2d=x, y_2d=y,
+                     x_3d=x * 50 - index, y_3d=y * 50, z_3d=400., valid_3d=True)
+                for i, (x, y) in enumerate(((.2, .2), (1.4, .4), (.5, 1.6)), 1)
+            ]
+            uid = db.ingest(frame)
+            frame, cloud = db.load_frame(uid)
+            frame.camera_name = f'station_{index + 1}'
+            ok, message, _ = workflow._chain_stitcher.add_frame(frame, detect_markers=False)
+            self.assertTrue(ok, message)
+        owner = self.bridge.frame_db
+        owner.display_frame('mobile_chain', uid, frame, cloud)
+        inspector = workspace._industrial.inspector
+        self.assertEqual(len(inspector.display.rows), 3)
+        workspace.live_view().set_frame(QPixmap(8, 8))
+        self.assertEqual(len(inspector.display.rows), 3)
+        self.assertIn('普通圆点', inspector.title.text())
+        self.assertEqual(len(inspector.image_view.match_triangle), 3)
+        self.assertEqual(len(workspace.viewer().viewer().canvas._match_triangles), 1)
+        owner.browsers['mobile_chain'].set_component_checked(uid, 'cloud')
+        self.wait(lambda: any(uid in key for key in workspace.viewer()._database_clouds))
+        self.assertEqual(len(workspace.viewer().viewer().canvas._match_triangles), 1)
+        owner.select('mobile_chain', uid, 'image')
+        self.wait(lambda: owner._displayed['mobile_chain'][2] == 'image')
+        workspace.live_view().set_frame(QPixmap(8, 8))
+        self.assertEqual(len(inspector.image_view.match_triangle), 3)
+        owner.restore('mobile_chain')
+        self.assertEqual(len(inspector.display.rows), 0)
+        self.assertFalse(inspector.image_view.match_triangle)
+        self.assertFalse(workspace.viewer().viewer().canvas._match_triangles)
+
     def test_calibration_and_scan_labels_have_independent_display_numbers(self):
         identifiers=[]
         for number, purpose in ((1,'标定数据'), (2,'标定数据'), (3,'扫描数据'), (4,'扫描数据')):

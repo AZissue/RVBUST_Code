@@ -87,6 +87,9 @@ class ExplicitStitchingTests(unittest.TestCase):
             workflow, _ = self.bridge.projects.prepare_loaded(loaded, data)
             self.assertTrue(workflow.optimize_global()[0])
             self.assertEqual(len(workflow._marker_constraints()), 3)
+            self.assertEqual(workflow.match_triangle(ids[0]),
+                             self.bridge.mobile_workflow.match_triangle(ids[0]))
+            self.assertEqual(len(workflow.match_triangle(ids[0])), 3)
         finally:
             loaded.dispose()
 

@@ -340,12 +340,14 @@ class BackgroundRecognition(QObject):
                     ws._display_2d(latest.image_np, latest.markers_all, reference_markers=ws.current_markers0)
         if shown and shown[0] == uid:
             _, frame, component = shown
+            triangle, image_triangle = owner.match_geometry(mode, uid, frame.markers_all or frame.markers)
             if component != 'cloud':
-                bridge.shell._stack.currentWidget()._industrial.show_database_image(frame)
+                bridge.shell._stack.currentWidget()._industrial.show_database_image(frame, match_triangle=image_triangle)
             if component != 'image' and not owner.overlay.active(mode):
                 from ui_common.industrial_scene.marker_display import classify_markers
                 viewer = owner.overlay._viewer(mode)
-                viewer.set_cloud_markers(classify_markers(frame.markers_all).cloud_points())
+                viewer.set_cloud_markers(classify_markers(frame.markers_all).cloud_points(),
+                                         triangles=[triangle] if triangle else [])
         if owner.overlay.active(mode):
             owner.overlay._apply(mode)
 
