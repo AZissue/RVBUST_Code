@@ -35,6 +35,22 @@ class CircleTests(unittest.TestCase):
         cv2.circle(image,(206,130),7,191,-1)
         self.assertEqual(len(detect_circles(image,points.reshape(-1,3))),3)
 
+    def test_bright_rim_and_core_emit_one_center_without_merging_neighbor(self):
+        image, points = self.frame('light')
+        image.fill(15)
+        # A bright rim and a bright centre separated by a dark annulus.
+        for radius, intensity in ((17, 245), (14, 35), (11, 235)):
+            cv2.circle(image, (65, 80), radius, intensity, -1)
+        cv2.circle(image, (89, 80), 5, 235, -1)
+        for polarity in ('light', 'dark'):
+            with self.subTest(polarity=polarity):
+                pixels = image if polarity == 'light' else 255 - image
+                dots = detect_circles(pixels, points.reshape(-1, 3), CircleParameters(polarity=polarity))
+                self.assertEqual(len(dots), 2)
+                dots.sort(key=lambda dot: dot['pixel'][0])
+                np.testing.assert_allclose([dot['pixel'] for dot in dots], [(65, 80), (89, 80)], atol=.2)
+                self.assertGreater(dots[0]['radius'], 15)
+
     def test_gray_center_thin_rings_emit_one_center_per_marker(self):
         image, points = self.frame()
         image.fill(255)

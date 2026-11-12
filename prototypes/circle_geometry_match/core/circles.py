@@ -1,5 +1,6 @@
 """Ordinary unencoded circle centres from image + organized point map, millimetres."""
 from dataclasses import dataclass
+from math import hypot
 import cv2
 import numpy as np
 
@@ -64,7 +65,7 @@ def detect_circles(image, pointmap, params=CircleParameters()):
     if hierarchy is None:
         return []
     hierarchy = hierarchy[0]
-    dots=[]
+    candidates = []
     for index, contour in enumerate(contours):
         _, _, hole, parent = hierarchy[index]
         if parent != -1:
@@ -86,7 +87,23 @@ def detect_circles(image, pointmap, params=CircleParameters()):
             contours, hierarchy, hole, area, (x, y), (a, b), params.circularity
         ):
             continue
-        r=max(1,min(params.depth_radius,int(max(1,min(a,b)*.25))))
+        candidates.append((float(radius), float(x), float(y), min(a, b)))
+
+    # A rim and a separated inner disk can both be foreground components.
+    # Prefer the outer ellipse when the centres are close and one encloses the other.
+    unique = []
+    for radius, x, y, minor_axis in sorted(candidates, key=lambda item: item[0], reverse=True):
+        if any(hypot(x - ox, y - oy) <= min(.25 * outer, outer - radius + 1.)
+               for outer, ox, oy, _ in unique):
+            continue
+        unique.append((radius, x, y, minor_axis))
+        if len(unique) > 24:
+            raise ValueError('圆点候选超过24个，请缩小半径范围或调整灰度阈值；本版不截断候选后猜测匹配')
+
+    dots=[]
+    for radius, x, y, minor_axis in unique:
+        cx, cy = int(round(x)), int(round(y))
+        r=max(1,min(params.depth_radius,int(max(1,minor_axis*.25))))
         x0,x1=max(0,cx-r),min(w,cx+r+1);y0,y1=max(0,cy-r),min(h,cy+r+1)
         patch=points[y0:y1,x0:x1]
         yy,xx=np.mgrid[y0:y1,x0:x1]
@@ -98,8 +115,6 @@ def detect_circles(image, pointmap, params=CircleParameters()):
             stable=np.abs(samples[:,2]-median[2])<=params.depth_spread
             if stable.sum()>=3 and stable.mean()>=.7:
                 xyz=np.median(samples[stable],axis=0)
-        dots.append(dict(pixel=[float(x),float(y)],radius=float(radius),xyz=xyz,valid_3d=xyz is not None))
+        dots.append(dict(pixel=[x,y],radius=radius,xyz=xyz,valid_3d=xyz is not None))
     dots.sort(key=lambda dot:(round(dot['pixel'][1],1),dot['pixel'][0]))
-    if len(dots)>24:
-        raise ValueError('圆点候选超过24个，请缩小半径范围或调整灰度阈值；本版不截断候选后猜测匹配')
     return dots

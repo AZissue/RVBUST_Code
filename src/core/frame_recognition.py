@@ -12,6 +12,7 @@ def configuration(source, marker_type):
         circle=source.get_params(),
         boards=copy.deepcopy(source.get_board_specs()), gamma=source._board_detector.gamma)
     if marker_type == MARKER_TYPE_UNENCODED_CIRCLE:
+        config['algorithm'] = 3
         config['unencoded'] = asdict(source.unencoded_parameters)
     return config
 
