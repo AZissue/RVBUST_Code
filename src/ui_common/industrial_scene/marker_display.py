@@ -84,11 +84,13 @@ class MarkerDisplay:
 def classify_markers(markers, reference_markers=None, *, used_codes=None,
                      rejected_codes=(), registration_accepted=None):
     current = [(dict(m), code_key(m.get('code')), position_2d(m), valid_xyz(m)) for m in markers]
-    reference = [(code_key(m.get('code')), position_2d(m), valid_xyz(m)) for m in (reference_markers or ())]
+    reference = [(code_key(m.get('code')), position_2d(m), valid_xyz(m))
+                 for m in (reference_markers or ()) if m.get('marker_type') != 'unencoded_circle']
     counts = Counter(code for _, code, xy, _ in current if xy is not None and code is not None)
     ref_counts = Counter(code for code, xy, _ in reference if xy is not None and code is not None)
-    available = {code for _, code, xy, xyz in current if xy is not None and xyz is not None
-                 and code is not None and counts[code] == 1}
+    available = {code for marker, code, xy, xyz in current if xy is not None and xyz is not None
+                 and code is not None and counts[code] == 1
+                 and marker.get('marker_type') != 'unencoded_circle'}
     ref_available = {code for code, xy, xyz in reference if xy is not None and xyz is not None
                      and code is not None and ref_counts[code] == 1}
     paired = available & ref_available

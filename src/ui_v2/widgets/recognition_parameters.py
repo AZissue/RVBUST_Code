@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QFormLayout, QComboBox,
                               QGroupBox, QLabel, QPushButton, QLayout, QScrollArea,
                               QSpinBox, QDoubleSpinBox)
 from core.calib_board_detector import DEFAULT_BOARD_SPECS
+from core.marker_detector import MARKER_TYPE_UNENCODED_CIRCLE, CircleParameters
 
 
 class RecognitionParameters(QWidget):
@@ -63,6 +64,33 @@ class RecognitionParameters(QWidget):
         self.auto_button.clicked.connect(self._auto_detect)
         circle.addRow(self.auto_button)
         layout.addWidget(self.circle_group)
+        self.unencoded_group = QGroupBox('普通圆点 / 圆环')
+        unencoded = QFormLayout(self.unencoded_group)
+        self.dot_polarity = QComboBox()
+        self.dot_polarity.addItem('黑圆点 / 浅色背景', 'dark')
+        self.dot_polarity.addItem('白圆点 / 深色背景', 'light')
+        self.dot_polarity.currentIndexChanged.connect(self._changed)
+        unencoded.addRow('圆点极性', self.dot_polarity)
+        self.dot_threshold = QSpinBox()
+        self.dot_threshold.setRange(-1, 255)
+        self.dot_threshold.setSpecialValueText('自动 Otsu')
+        unencoded.addRow('灰度阈值', self.dot_threshold)
+        self.dot_min_radius = QDoubleSpinBox()
+        self.dot_max_radius = QDoubleSpinBox()
+        self.dot_circularity = QDoubleSpinBox()
+        for label, spin, low, high in (
+            ('最小半径（像素）', self.dot_min_radius, 1, 999),
+            ('最大半径（像素）', self.dot_max_radius, 2, 1000),
+            ('最小圆度', self.dot_circularity, .1, 1),
+        ):
+            spin.setRange(low, high)
+            unencoded.addRow(label, spin)
+        self.dot_fields = dict(threshold=self.dot_threshold, min_radius=self.dot_min_radius,
+                               max_radius=self.dot_max_radius, circularity=self.dot_circularity)
+        for spin in self.dot_fields.values():
+            spin.setKeyboardTracking(False)
+            spin.valueChanged.connect(self._changed)
+        layout.addWidget(self.unencoded_group)
         self.board_group = QGroupBox('非对称圆标定板')
         board = QFormLayout(self.board_group)
         board.setContentsMargins(8, 14, 8, 8)
@@ -106,6 +134,12 @@ class RecognitionParameters(QWidget):
         self.mode = mode
         self._loaded = None
         self._edited = False
+        index = self.marker_type.findData(MARKER_TYPE_UNENCODED_CIRCLE)
+        with QSignalBlocker(self.marker_type):
+            if mode == 'mobile_chain' and index < 0:
+                self.marker_type.addItem('普通圆点 / 圆环（几何匹配）', MARKER_TYPE_UNENCODED_CIRCLE)
+            elif mode != 'mobile_chain' and index >= 0:
+                self.marker_type.removeItem(index)
         self.refresh()
 
     def showEvent(self, event):
@@ -138,6 +172,7 @@ class RecognitionParameters(QWidget):
                         self.circle_n, self.circle_r1, self.circle_r2):
             control.setEnabled(idle and self._search_cancel is None)
         self.auto_button.setEnabled(idle or self._search_cancel is not None)
+        self.unencoded_group.setEnabled(idle)
 
     def _load(self, config):
         self._loading = True
@@ -159,6 +194,10 @@ class RecognitionParameters(QWidget):
         n, r1, r2 = config['circle']
         for spin, value in zip((self.circle_n, self.circle_r1, self.circle_r2), (n, r1, r2)):
             spin.setValue(value)
+        dot_params = CircleParameters(**config.get('unencoded', {}))
+        self.dot_polarity.setCurrentIndex(self.dot_polarity.findData(dot_params.polarity))
+        for key, spin in self.dot_fields.items():
+            spin.setValue(getattr(dot_params, key))
         self._loaded = copy.deepcopy(config)
         self._edited = False
         self._loading = False
@@ -167,8 +206,10 @@ class RecognitionParameters(QWidget):
 
     def _update_groups(self):
         board = self.marker_type.currentData() == 'asymmetric_grid'
-        self.circle_group.setVisible(not board)
+        dots = self.marker_type.currentData() == MARKER_TYPE_UNENCODED_CIRCLE
+        self.circle_group.setVisible(not board and not dots)
         self.board_group.setVisible(board)
+        self.unencoded_group.setVisible(dots)
         specs = self.board_spec.currentData() or []
         details = '\n'.join(f"{spec['rows']} × {spec['cols']} · {spec['rows'] * spec['cols']} 圆心" for spec in specs)
         self.board_details.setToolTip(details)
@@ -204,9 +245,14 @@ class RecognitionParameters(QWidget):
                 circle[index] = config['circle'][index]
         if self.marker_type.currentData() != 'coded_circle':
             circle = config['circle']
+        dots = None
+        if self.marker_type.currentData() == MARKER_TYPE_UNENCODED_CIRCLE:
+            dots = {key: spin.value() for key, spin in self.dot_fields.items()}
+            dots['polarity'] = self.dot_polarity.currentData()
         try:
             self.bridge.recognition.configure(self.mode, self.marker_type.currentData(),
-                                              self.board_spec.currentData(), config['gamma'], circle=circle)
+                                              self.board_spec.currentData(), config['gamma'],
+                                              circle=circle, **({'unencoded': dots} if dots is not None else {}))
         except ValueError as exc:
             self.status.setText(str(exc))
             return

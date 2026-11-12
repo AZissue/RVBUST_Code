@@ -49,10 +49,14 @@ class CircleIntegrationTests(unittest.TestCase):
     def test_real_detection_confirm_publish_preserves_sources_and_transforms(self):
         ids=self.inputs(rings=True)
         originals={uid:(self.db.directory/'frames'/uid/'pointmap.ply').read_bytes() for uid in ids}
-        dialog=CircleMatchDialog(self.editor);dialog.show();self.app.processEvents()
+        dialog=CircleMatchDialog(self.editor);dialog.resize(800,600);dialog.show();self.app.processEvents()
+        self.assertLessEqual(dialog.height(), 600)
+        self.assertLess(dialog.execute_button.mapTo(dialog, dialog.execute_button.rect().bottomLeft()).y(), dialog.height())
         dialog.analyze()
         self.wait(lambda:not dialog._busy)
         self.assertIsNotNone(dialog.analysis['match'],dialog.report.toPlainText())
+        scroll = dialog.scroll.verticalScrollBar()
+        self.assertEqual(scroll.value(), scroll.maximum())
         self.assertFalse(dialog.execute_button.isEnabled())
         self.assertEqual(len(dialog.images[0].triangle),3)
         dialog.confirm.setChecked(True)

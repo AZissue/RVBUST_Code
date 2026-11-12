@@ -1,15 +1,19 @@
 """Independent detector instances and portable per-frame recognition results."""
 import copy
+from dataclasses import asdict
 import hashlib
 import json
 import numpy as np
-from .marker_detector import MarkerDetector
+from .marker_detector import MarkerDetector, MARKER_TYPE_UNENCODED_CIRCLE, CircleParameters
 
 
 def configuration(source, marker_type):
-    return dict(algorithm=2, marker_type=marker_type,
+    config = dict(algorithm=2, marker_type=marker_type,
         circle=source.get_params(),
         boards=copy.deepcopy(source.get_board_specs()), gamma=source._board_detector.gamma)
+    if marker_type == MARKER_TYPE_UNENCODED_CIRCLE:
+        config['unencoded'] = asdict(source.unencoded_parameters)
+    return config
 
 
 def fingerprint(config):
@@ -27,12 +31,17 @@ def detect(frame, config):
     detector.set_params(*config['circle'])
     detector.set_board_specs(config['boards'])
     detector.set_board_gamma(config['gamma'])
+    if config['marker_type'] == MARKER_TYPE_UNENCODED_CIRCLE:
+        detector.unencoded_parameters = CircleParameters(**config.get('unencoded', {}))
     markers = detector.detect_3d(frame.image_np, offline_ply_path=frame.offline_pointmap_path,
                                  include_invalid=True)
     board = detector.last_board_result
     diagnostic = getattr(detector, 'last_board_diagnostic', None)
+    empty_message = ('普通圆点未检出；请检查圆点极性、半径范围与图像曝光。'
+                     if config['marker_type'] == MARKER_TYPE_UNENCODED_CIRCLE else
+                     '编码圆未检出；请确认识别类型、编码参数与图像曝光。')
     return dict(state='done', key=fingerprint(config), marker_type=config['marker_type'],
-        message=diagnostic['message'] if diagnostic else ('编码圆未检出；请确认识别类型、编码参数与图像曝光。' if not markers else ''),
+        message=diagnostic['message'] if diagnostic else (empty_message if not markers else ''),
         board_success=diagnostic['success'] if diagnostic else None,
         markers=markers, board_pose=board['T_board_in_cam'].tolist() if board else None,
         board_pattern=list(board['pattern_size']) if board else None,

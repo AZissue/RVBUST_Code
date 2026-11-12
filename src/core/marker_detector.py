@@ -19,6 +19,7 @@ import cv2
 
 from .utils import logger, rvc_sdk_lock
 from .calib_board_detector import CalibBoardDetector, DEFAULT_BOARD_SPECS
+from prototypes.circle_geometry_match.core.circles import CircleParameters, detect_circles
 
 if TYPE_CHECKING:
     import PyRVC as RVC
@@ -31,9 +32,11 @@ except ImportError:
 # 标记物类型常量
 MARKER_TYPE_CODED_CIRCLE = "coded_circle"
 MARKER_TYPE_ASYMMETRIC_GRID = "asymmetric_grid"
+MARKER_TYPE_UNENCODED_CIRCLE = "unencoded_circle"
 
 # 有效标记物类型集合
-SUPPORTED_MARKER_TYPES = (MARKER_TYPE_CODED_CIRCLE, MARKER_TYPE_ASYMMETRIC_GRID)
+SUPPORTED_MARKER_TYPES = (MARKER_TYPE_CODED_CIRCLE, MARKER_TYPE_ASYMMETRIC_GRID,
+                          MARKER_TYPE_UNENCODED_CIRCLE)
 
 # 编码圆检测尺度回退阶梯：SDK 检测器对标记像素尺度敏感，全分辨率下 r0 超过
 # 约 15px 时常返回 0（实测 2448×2048 现场图 1.0x 检出 0 个，0.75x 检出 4 个）；
@@ -50,6 +53,7 @@ class MarkerDetector:
         self._marker_type = marker_type
         self._coded_marker_type = None
         self._circle_params = (8, 2., 3.)
+        self.unencoded_parameters = CircleParameters()
         if RVC is not None:
             self._coded_marker_type = RVC.CodedCircleMarkerType()
             self._coded_marker_type.N = 8
@@ -289,6 +293,9 @@ class MarkerDetector:
         self.last_board_result = None
         self.last_board_diagnostic = None
 
+        if self._marker_type == MARKER_TYPE_UNENCODED_CIRCLE:
+            return self._detect_unencoded(image_np, pointmap, rvc_image, offline_ply_path, include_invalid)
+
         if self._marker_type == MARKER_TYPE_ASYMMETRIC_GRID:
             result = self._board_detector.detect(image_np, pointmap, rvc_image, offline_ply_path)
             self.last_board_diagnostic = result
@@ -298,6 +305,36 @@ class MarkerDetector:
         # 编码圆模式（原有逻辑）
         return self._detect_3d_coded_circle(image_np, pointmap, rvc_image, offline_ply_path,
                                             include_invalid=include_invalid)
+
+    def _detect_unencoded(self, image, pointmap, rvc_image, offline_ply_path, include_invalid):
+        temporary = None
+        try:
+            path, temporary = self._board_detector._get_ply_path(pointmap, rvc_image, offline_ply_path)
+            if path is None:
+                raise ValueError('普通圆点识别需要原始图像和逐像素对齐的有序点云')
+            points = self._board_detector._read_ply_points(path)
+            dots = detect_circles(image, points, self.unencoded_parameters)
+            rows = []
+            for index, dot in enumerate(dots, 1):
+                valid = dot['valid_3d']
+                if not valid and not include_invalid:
+                    continue
+                x, y = dot['pixel']
+                # The overlay label is local to this image. Registration uses XYZ geometry.
+                row = dict(code=index, marker_type=MARKER_TYPE_UNENCODED_CIRCLE,
+                           x_2d=x, y_2d=y, valid_3d=valid)
+                if valid:
+                    row.update(zip(('x_3d', 'y_3d', 'z_3d'), map(float, dot['xyz'])))
+                rows.append(row)
+            return rows
+        except (ValueError, OSError, RuntimeError, cv2.error) as exc:
+            if self.raise_errors:
+                raise
+            logger.warning(f'普通圆点识别失败: {exc}')
+            return []
+        finally:
+            if temporary:
+                os.unlink(temporary)
 
     def _detect_3d_coded_circle(self, image_np: np.ndarray, pointmap: 'RVC.PointMap' = None, rvc_image: 'RVC.Image' = None, offline_ply_path: str = None, include_invalid: bool = False) -> List[Dict]:
         """编码圆 2D+3D 检测（原 detect_3d 逻辑）。"""

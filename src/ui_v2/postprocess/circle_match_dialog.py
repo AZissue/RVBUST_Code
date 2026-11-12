@@ -4,7 +4,8 @@ import numpy as np
 from PySide6.QtCore import Qt,QTimer,QPointF
 from PySide6.QtGui import QPainter,QColor,QPen,QPolygonF
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QFormLayout,QComboBox,
-    QSpinBox,QDoubleSpinBox,QPushButton,QLabel,QCheckBox,QDialogButtonBox,QPlainTextEdit)
+    QSpinBox,QDoubleSpinBox,QPushButton,QLabel,QCheckBox,QDialogButtonBox,QPlainTextEdit,
+    QScrollArea,QWidget)
 from ui_common.image_preview import AspectRatioLabel,numpy_to_qpixmap
 from .parameter_guard import ParameterGuard
 from ..dialogs import localize_buttons
@@ -38,8 +39,16 @@ class CircleMatchDialog(QDialog):
         self.tokens=None
         self._busy=False
         self.setWindowTitle('圆点识别 · 三角形几何匹配拼接（实验）')
-        self.resize(1080,820)
-        layout=QVBoxLayout(self)
+        available = self.screen().availableGeometry()
+        self.resize(min(1080, available.width() - 32), min(820, available.height() - 48))
+        outer = QVBoxLayout(self)
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.scroll.setWidget(content)
+        outer.addWidget(self.scroll, 1)
         note=QLabel('两帧原始2D图像 + 逐像素有序点云（mm）。支持实心圆点和灰心黑环，按3D三角边长匹配。\n'
             '图像内序号不是编码；匹配成功后两侧相同编号才是对应圆点。等边/重复图案多解时拒绝拼接。')
         note.setWordWrap(True);layout.addWidget(note)
@@ -83,12 +92,12 @@ class CircleMatchDialog(QDialog):
         self.report=QPlainTextEdit();self.report.setReadOnly(True);self.report.setMinimumHeight(110);self.report.setMaximumHeight(170)
         layout.addWidget(self.report)
         self.confirm=QCheckBox('我已核对两侧相同编号对应同一物理圆点，并确认单位为毫米')
-        self.confirm.toggled.connect(self.refresh);layout.addWidget(self.confirm)
+        self.confirm.toggled.connect(self.refresh);outer.addWidget(self.confirm)
         buttons=QDialogButtonBox(QDialogButtonBox.Ok|QDialogButtonBox.Cancel);localize_buttons(buttons)
         self.execute_button=buttons.button(QDialogButtonBox.Ok);self.execute_button.setText('确认并生成拼接结果')
         self.execute_button.setAutoDefault(False)
         self.cancel_button=buttons.button(QDialogButtonBox.Cancel);self.cancel_button.setDefault(True)
-        buttons.accepted.connect(self.accept);buttons.rejected.connect(self.reject);layout.addWidget(buttons)
+        buttons.accepted.connect(self.accept);buttons.rejected.connect(self.reject);outer.addWidget(buttons)
         self.controls=[self.reference,self.moving,self.polarity,self.auto,self.threshold,self.min_radius,
                        self.max_radius,self.circularity,self.edge,self.point,self.relative,self.short_edge,self.minimum]
         self.guard=ParameterGuard(self)
@@ -195,6 +204,8 @@ class CircleMatchDialog(QDialog):
                       for i,((r,m),error) in enumerate(zip(match['pairs'],match['errors']),1)]
             self.report.setPlainText('\n'.join(lines))
         else:self.report.setPlainText('\n'.join(counts+['未通过：'+result['error']]))
+        scrollbar = self.scroll.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum())
 
     def accept(self):
         self.refresh()

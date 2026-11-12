@@ -28,12 +28,13 @@ import open3d as o3d
 
 from .pcd_utils import merge_pointclouds
 
-from .marker_detector import MarkerDetector
+from .marker_detector import MarkerDetector, MARKER_TYPE_UNENCODED_CIRCLE
 from .calibration_engine import CalibrationEngine
 from .stitch_engine import StitchEngine
 from .pose_graph import PoseGraph
 from .frame_data import FrameData
 from .utils import logger
+from prototypes.circle_geometry_match.core.matching import MatchParameters, match_geometry
 
 
 @dataclass
@@ -48,6 +49,7 @@ class ChainEdge:
     quality: str = "unknown"     # 质量评级：good / ok / poor
     inlier_count: int = 0        # RANSAC 内点数
     total_common: int = 0        # 与 common_markers 同义，保留以便显式区分
+    point_pairs: Optional[Tuple[np.ndarray, np.ndarray]] = None  # source, target XYZ
 
 
 @dataclass
@@ -58,6 +60,10 @@ class ChainNode:
     markers: List[Dict] = field(default_factory=list)
     T_world: Optional[np.ndarray] = None  # 机位到世界参考系的 4x4 变换
     cum_rms_mm: float = 0.0      # 累计误差
+
+    @property
+    def unencoded(self):
+        return bool(self.markers and self.markers[0].get('marker_type') == MARKER_TYPE_UNENCODED_CIRCLE)
 
 
 class ChainStitcher:
@@ -122,6 +128,10 @@ class ChainStitcher:
 
         station_id = frame.camera_name
         node = ChainNode(station_id=station_id, frame=frame, markers=markers)
+        if node.unencoded and len(markers) < self.min_common_markers:
+            return False, f'有效三维圆心不足 {self.min_common_markers} 个，请调整视角后重拍', None
+        if self._reference_id and node.unencoded != self.nodes[self._reference_id].unencoded:
+            return False, '普通圆点和编码标记不能混用，请统一识别类型后重建拼接链', None
         self.nodes[station_id] = node
 
         # 2. 首个机位：设为参考系
@@ -137,10 +147,13 @@ class ChainStitcher:
         # 3. 与已有节点匹配共有标记（最近 N 个 + 参考节点）
         best_edge = None
         best_score = -1
-        for prev_id, prev_node in self.nodes.items():
+        previous = reversed(self.nodes.items()) if node.unencoded else self.nodes.items()
+        for prev_id, prev_node in previous:
             if prev_id == station_id:
                 continue
             edge = self._try_register(node, prev_node)
+            if node.unencoded and edge is not None and not self._evaluate_edge(edge)[0]:
+                continue
             if edge is not None and edge.common_markers > best_score:
                 best_score = edge.common_markers
                 best_edge = edge
@@ -261,9 +274,11 @@ class ChainStitcher:
 
     def detect_loop_closure(self, new_station_id: str) -> List[str]:
         """检测闭环：新帧与早期机位（非最近 3 个）共有标记足够时提示。"""
+        new_node = self.nodes.get(new_station_id)
+        if new_node and new_node.unencoded:
+            return [edge.to_id for edge in self._cross_frame_edges(new_node)]
         if len(self.nodes) < 4:
             return []
-        new_node = self.nodes.get(new_station_id)
         if new_node is None or not new_node.markers:
             return []
         new_codes = {m['code'] for m in new_node.markers}
@@ -279,25 +294,34 @@ class ChainStitcher:
 
     def add_cross_frame_constraints(self):
         """Retain quality-gated non-tree edges for global pose optimization."""
-        existing = {frozenset((edge.from_id, edge.to_id)) for edge in self.edges}
-        nodes = list(self.nodes.values())
         added = 0
-        for index, node in enumerate(nodes):
-            codes = {marker['code'] for marker in node.markers}
-            for previous in nodes[:index]:
-                pair = frozenset((node.station_id, previous.station_id))
-                if pair in existing or len(codes & {marker['code'] for marker in previous.markers}) < self.min_common_markers:
-                    continue
-                edge = self._try_register(node, previous)
-                if edge is None or not self._evaluate_edge(edge)[0]:
-                    continue
-                self.edges.append(edge)
-                self.pose_graph.add_edge(edge.from_id, edge.to_id, edge.T,
-                    rms_mm=edge.rms_mm, inlier_ratio=edge.inlier_ratio, common_markers=edge.common_markers)
-                existing.add(pair)
-                added += 1
+        for edge in self._cross_frame_edges():
+            self.edges.append(edge)
+            self.pose_graph.add_edge(edge.from_id, edge.to_id, edge.T,
+                rms_mm=edge.rms_mm, inlier_ratio=edge.inlier_ratio, common_markers=edge.common_markers)
+            added += 1
         logger.info(f'跨帧约束补充完成：新增 {added} 条，共 {len(self.edges)} 条有效约束')
         return added
+
+    def _cross_frame_edges(self, newest=None):
+        existing = {frozenset((edge.from_id, edge.to_id)) for edge in self.edges}
+        nodes = list(self.nodes.values())
+        for index, node in enumerate(nodes):
+            if newest is not None and node is not newest:
+                continue
+            codes = {marker['code'] for marker in node.markers} if not node.unencoded else set()
+            for previous in nodes[:index]:
+                pair = frozenset((node.station_id, previous.station_id))
+                if pair in existing:
+                    continue
+                if not node.unencoded and len(codes & {m['code'] for m in previous.markers}) < self.min_common_markers:
+                    continue
+                edge = self._try_register(node, previous)
+                if edge is not None and self._evaluate_edge(edge)[0]:
+                    yield edge
+
+    def has_cross_frame_constraints(self):
+        return len(self.edges) >= len(self.nodes)
 
     def invalidate_cache(self):
         """清空增量合并缓存，强制下次 get_merged_pointcloud 全量重算。"""
@@ -462,6 +486,8 @@ class ChainStitcher:
     # ------------------------------------------------------------------
     def _try_register(self, new_node: ChainNode, prev_node: ChainNode) -> Optional[ChainEdge]:
         """尝试把新机位配准到已有位姿图。"""
+        if new_node.unencoded and prev_node.unencoded:
+            return self._register_unencoded(new_node, prev_node)
         result = self.calibration_engine.calibrate_pair(
             prev_node.station_id, new_node.station_id,
             prev_node.markers, new_node.markers,
@@ -482,6 +508,21 @@ class ChainStitcher:
             inlier_count=int(result.get('inlier_count', 0)),
             total_common=total_common,
         )
+
+    def _register_unencoded(self, new_node, prev_node):
+        axes = ('x_3d', 'y_3d', 'z_3d')
+        source = np.array([[row.get(key, np.nan) for key in axes] for row in new_node.markers], dtype=float)
+        target = np.array([[row.get(key, np.nan) for key in axes] for row in prev_node.markers], dtype=float)
+        try:
+            result = match_geometry(target, source, MatchParameters(min_matches=self.min_common_markers))
+        except ValueError as exc:
+            logger.debug(f'普通圆点 {new_node.station_id} → {prev_node.station_id}: {exc}')
+            return None
+        ref_ids, src_ids = np.asarray(result['pairs']).T
+        count = len(src_ids)
+        return ChainEdge(new_node.station_id, prev_node.station_id, result['transform'],
+                         result['rms'], 1., count, inlier_count=count, total_common=count,
+                         point_pairs=(source[src_ids], target[ref_ids]))
 
     def _evaluate_edge(self, edge: ChainEdge) -> Tuple[bool, str]:
         """评估配准质量，返回 (ok, message)。"""

@@ -8,6 +8,8 @@ from PySide6.QtCore import Qt, QSignalBlocker
 import unittest
 
 import numpy as np
+import cv2
+import open3d as o3d
 from PySide6.QtWidgets import QMessageBox
 import test_ui_frame_database as fixture
 from core.session_project import SessionProject
@@ -39,6 +41,53 @@ class ExplicitStitchingTests(unittest.TestCase):
     def execute(self):
         self.win._industrial_ribbon.commands[('mobile_chain', 'stitch')].click()
         self.wait(lambda: not any(w.isRunning() for w in self.bridge._workers))
+
+    def test_ring_recognition_settings_and_three_frame_stitch(self):
+        self.bridge._current_mode = 'mobile_chain'
+        self.win.set_mode('mobile_chain', [])
+        self.db = self.bridge.frame_db.databases['mobile_chain']
+        self.bridge.projects.prepare('mobile_chain')
+        props = self.win.workspace_mobile()._industrial.frame_browser.properties
+        props.tabs.setCurrentWidget(props.recognition)
+        self.app.processEvents()
+        page = props.recognition
+        page.marker_type.setCurrentIndex(page.marker_type.findData('unencoded_circle'))
+        page.dot_polarity.setCurrentIndex(page.dot_polarity.findData('light'))
+        page.dot_threshold.setValue(170)
+        page._apply()
+        self.assertEqual(self.bridge.recognition.config('mobile_chain')['unencoded']['polarity'], 'light')
+        self.bridge.recognition.enabled = True
+
+        ids = []
+        yy, xx = np.mgrid[:120, :180]
+        for number in range(3):
+            frame = self.source(number + 1)
+            frame.image_np = np.full((120, 180, 3), 20, np.uint8)
+            for x, y in ((25, 24), (140, 31), (58, 90), (121, 87)):
+                cv2.circle(frame.image_np, (x + number, y), 8, (230, 230, 230), -1)
+                cv2.circle(frame.image_np, (x + number, y), 6, (120, 120, 120), -1)
+            xyz = np.stack((xx - number * 5., yy, np.full_like(xx, 400)), axis=-1)
+            cloud = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(xyz.reshape(-1, 3)))
+            self.assertTrue(o3d.io.write_point_cloud(frame.offline_pointmap_path, cloud))
+            ids.append(self.db.ingest(frame))
+        self.execute()
+        self.wait(lambda: any(row.kind == 'result' for row in self.db.records.values()))
+        chain = self.bridge.mobile_workflow._chain_stitcher
+        self.assertEqual(len(chain.edges), 3)
+        self.assertTrue(all(edge.point_pairs is not None for edge in chain.edges))
+        self.assertTrue(all(self.db.records[uid].recognition['marker_type'] == 'unencoded_circle' for uid in ids))
+        for i, node in enumerate(chain.nodes.values()):
+            np.testing.assert_allclose(node.T_world[:3, 3], [i * 4., 0., 0.], atol=1e-8)
+        project = self.bridge.projects.projects['mobile_chain']
+        project.save_root = Path(self.temp.name) / 'saved-rings'
+        saved = project.save(self.bridge.projects.describe('mobile_chain', True), include_raw=True)
+        loaded, data = SessionProject.load(saved, 'mobile_chain', project.save_root)
+        try:
+            workflow, _ = self.bridge.projects.prepare_loaded(loaded, data)
+            self.assertTrue(workflow.optimize_global()[0])
+            self.assertEqual(len(workflow._marker_constraints()), 3)
+        finally:
+            loaded.dispose()
 
     def test_manual_result_leaves_sources_intact_and_roundtrips_with_session(self):
         ws = self.mobile()

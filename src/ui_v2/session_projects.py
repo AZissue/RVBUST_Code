@@ -39,7 +39,7 @@ def frame_description(database, frame):
         board_pattern_name=frame.board_pattern_name, board_rms_mm=frame.board_rms_mm))
 
 
-def read_frame(project, entry):
+def read_frame(project, entry, *, refresh_recognition=True):
     if entry is None:
         return None, None
     uid = entry['uid']
@@ -62,7 +62,7 @@ def read_frame(project, entry):
         board_pattern=tuple(entry['board_pattern']) if entry.get('board_pattern') else None,
         board_pattern_name=entry.get('board_pattern_name'), board_rms_mm=entry.get('board_rms_mm', 0))
     record = db.records.get(uid)
-    if record and record.recognition.get('state') == 'done':
+    if refresh_recognition and record and record.recognition.get('state') == 'done':
         from core.frame_recognition import apply
         apply(frame, record.recognition)
     cloud = frame.load_pointcloud_o3d()
@@ -434,7 +434,10 @@ class SessionProjects(QObject):
                 sid = entry['station_id']
                 if sid in chain.nodes or not sid.startswith('station_') or not sid[8:].isdigit():
                     raise ValueError('机位名称无效或重复')
-                frame, cloud = read_frame(project, entry['frame'])
+                saved_frame = entry['frame']
+                geometric = any(row.get('marker_type') == 'unencoded_circle'
+                                for row in (saved_frame or {}).get('markers', []))
+                frame, cloud = read_frame(project, saved_frame, refresh_recognition=not geometric)
                 if frame.camera_name != sid:
                     raise ValueError('机位和原始帧不匹配')
                 transform = matrix(entry['T_world'])
@@ -454,6 +457,13 @@ class SessionProjects(QObject):
                 raise ValueError('参考机位缺失')
             for entry in data['edges']:
                 entry = dict(entry, T=matrix(entry['T']))
+                pairs = entry.get('point_pairs')
+                if pairs is not None:
+                    xyz = np.asarray(pairs, dtype=float)
+                    if (xyz.ndim != 3 or xyz.shape[0] != 2 or xyz.shape[2] != 3
+                            or not 3 <= xyz.shape[1] <= 24 or not np.isfinite(xyz).all()):
+                        raise ValueError('普通圆点配准边的圆心对应数据无效')
+                    entry['point_pairs'] = (xyz[0], xyz[1])
                 edge = ChainEdge(**entry)
                 if edge.from_id not in chain.nodes or edge.to_id not in chain.nodes:
                     raise ValueError('位姿关系引用了缺失的机位')

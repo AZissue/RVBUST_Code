@@ -61,6 +61,47 @@ def measured_rms(chain, poses):
 
 
 class MobileGlobalAlignmentTests(unittest.TestCase):
+    def test_unencoded_markers_build_chain_and_close_geometry_loop(self):
+        wf = MobileChainWorkflow(CameraManager(), MarkerDetector(), CalibrationEngine(), StitchEngine())
+        wf.start_chaining()
+        points = np.array([[0, 0, 400], [47, 0, 400], [13, 32, 400], [69, 65, 401], [5, 81, 410]])
+        chain = wf._chain_stitcher
+        for index, order in enumerate(([0, 1, 2, 3, 4], [4, 3, 0, 2, 1], [2, 0, 1, 4, 3])):
+            translation = np.array([7, -3, 10]) * index
+            markers = [dict(code=k, marker_type='unencoded_circle', x_3d=x, y_3d=y, z_3d=z)
+                       for k, (x, y, z) in enumerate(points[list(order)] - translation)]
+            sid = f'station_{index + 1}'
+            frame = FrameData(index, sid, is_offline=True, markers=markers)
+            ok, message, _ = chain.add_frame(frame, detect_markers=False)
+            self.assertTrue(ok, message)
+            np.testing.assert_allclose(chain.nodes[sid].T_world[:3, 3], translation, atol=1e-8)
+        self.assertTrue(chain.detect_loop_closure('station_3'))
+        self.assertEqual(len(chain.edges), 2)
+        ok, message, before, after = wf.optimize_global()
+        self.assertTrue(ok, message)
+        self.assertEqual(len(chain.edges), 3)
+        self.assertLess(after, 1e-8)
+        self.assertLessEqual(after, before + 1e-8)
+
+    def test_unencoded_chain_with_no_cross_frame_overlap_keeps_initial_poses(self):
+        wf = MobileChainWorkflow(CameraManager(), MarkerDetector(), CalibrationEngine(), StitchEngine())
+        wf.start_chaining()
+        left = np.array([[0, 0, 400], [47, 0, 400], [13, 32, 400]])
+        right = np.array([[200, 0, 400], [280, 0, 400], [229, 60, 400]])
+        chain = wf._chain_stitcher
+        for index, points in enumerate((left, np.vstack((left, right)), right)):
+            markers = [dict(code=k, marker_type='unencoded_circle', x_3d=x-index, y_3d=y, z_3d=z)
+                       for k, (x, y, z) in enumerate(points)]
+            frame = FrameData(index, f'station_{index+1}', is_offline=True, markers=markers)
+            ok, message, _ = chain.add_frame(frame, detect_markers=False)
+            self.assertTrue(ok, message)
+        before = {key: node.T_world.copy() for key, node in chain.nodes.items()}
+        self.assertFalse(chain.detect_loop_closure('station_3'))
+        self.assertFalse(wf.optimize_global()[0])
+        self.assertEqual(len(chain.edges), 2)
+        for key, node in chain.nodes.items():
+            np.testing.assert_array_equal(node.T_world, before[key])
+
     def test_global_fit_and_merged_geometry_do_not_degrade(self):
         wf, source = fixture()
         chain = wf._chain_stitcher

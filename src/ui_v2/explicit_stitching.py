@@ -393,10 +393,17 @@ class ExplicitStitching:
                     manager._stations[sid] = frame
                     manager._station_seq = number
                     workflow._last_edge = edge
+                geometry = chain.nodes[chain._reference_id].unencoded
                 if len(chain.nodes) >= 3:
                     ok, message, before_mm, after_mm = workflow.optimize_global()
-                    if not ok:
+                    if geometry and not chain.has_cross_frame_constraints():
+                        stitch_report.append(message)
+                    elif not ok:
                         raise ValueError(message)
+                    elif geometry:
+                        stitch_report.append(f'{message}，圆心 RMS {before_mm:.3f} → {after_mm:.3f} mm。')
+                elif geometry:
+                    stitch_report.append('普通圆点链式拼接完成，尚无通过几何验证的闭环共视帧。')
                 source_transforms = {node.frame.database_id: node.T_world.tolist()
                     for node in workflow._chain_stitcher.nodes.values()}
                 merged = workflow._chain_stitcher.get_merged_pointcloud()

@@ -3,6 +3,7 @@ import copy
 from concurrent.futures import ThreadPoolExecutor
 from PySide6.QtCore import QObject, QTimer
 from core import frame_recognition
+from core.marker_detector import MARKER_TYPE_UNENCODED_CIRCLE
 
 
 class BackgroundRecognition(QObject):
@@ -17,6 +18,7 @@ class BackgroundRecognition(QObject):
         self.forced = set()
         self.available = set()
         self.commit_errors = set()
+        self._mobile_marker_type = None
         self.timer = QTimer(self)
         self.timer.setInterval(150)
         self.timer.timeout.connect(self.tick)
@@ -29,18 +31,27 @@ class BackgroundRecognition(QObject):
             marker_type = bridge._map_detect_method(bridge.shell.workspace_multi().current_detect_method())
         elif mode == 'turntable':
             marker_type = bridge.shell.workspace_turntable().combo_marker_type.currentData()
+        elif mode == 'mobile_chain' and self._mobile_marker_type is not None:
+            marker_type = self._mobile_marker_type
+        elif mode != 'mobile_chain' and marker_type == MARKER_TYPE_UNENCODED_CIRCLE:
+            marker_type = 'coded_circle'
         return frame_recognition.configuration(bridge.marker_detector, marker_type)
 
-    def configure(self, mode, marker_type, boards, gamma, circle=None):
+    def configure(self, mode, marker_type, boards, gamma, circle=None, unencoded=None):
         """Apply UI settings between foreground tasks; running jobs own copies."""
         import math
         from core.marker_detector import SUPPORTED_MARKER_TYPES
-        from core.marker_detector import MarkerDetector
+        from core.marker_detector import MarkerDetector, CircleParameters
         bridge = self.bridge
         if mode != bridge._current_mode or not bridge.can_change_workspace():
             raise ValueError('当前任务进行中或工作区已切换，请稍后再试。')
         if marker_type not in SUPPORTED_MARKER_TYPES:
             raise ValueError('不支持的识别类型。')
+        if marker_type == MARKER_TYPE_UNENCODED_CIRCLE and mode != 'mobile_chain':
+            raise ValueError('普通圆点几何匹配用于单相机移动链式拼接。')
+        parameters = CircleParameters(**unencoded) if unencoded is not None else None
+        if parameters is not None:
+            parameters.validate()
         if circle is not None:
             MarkerDetector.validate_params(circle)
         if not math.isfinite(gamma) or not .1 <= gamma <= 10:
@@ -57,7 +68,11 @@ class BackgroundRecognition(QObject):
                 bridge.marker_detector.set_params(*circle)
             bridge.marker_detector.set_board_specs(copy.deepcopy(boards))
             bridge.marker_detector.set_board_gamma(gamma)
+            if parameters is not None:
+                bridge.marker_detector.unencoded_parameters = parameters
             bridge.marker_detector.set_marker_type(marker_type)
+            if mode == 'mobile_chain':
+                self._mobile_marker_type = marker_type
             if mode == 'multi_cam':
                 combo = bridge.shell.workspace_multi()._detect_combo
                 combo.setCurrentIndex(combo.findData('calib_board' if marker_type == 'asymmetric_grid' else marker_type))

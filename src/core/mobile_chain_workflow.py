@@ -412,6 +412,9 @@ class MobileChainWorkflow(WorkflowBase):
         # Candidate matching alone retained only a spanning tree. Use all
         # accepted shared-code pairs (including nonadjacent frames) for BA.
         self._chain_stitcher.add_cross_frame_constraints()
+        chain = self._chain_stitcher
+        if chain.nodes[ref_id].unencoded and not chain.has_cross_frame_constraints():
+            return False, '没有通过几何验证的闭环共视帧，已保留链式拼接结果', 0.0, 0.0
 
         constraints = self._marker_constraints()
         if not constraints:
@@ -451,6 +454,10 @@ class MobileChainWorkflow(WorkflowBase):
         constraints = []
         chain = self._chain_stitcher
         for edge in chain.edges:
+            if edge.point_pairs is not None:
+                source, target = edge.point_pairs
+                constraints.append((edge.from_id, edge.to_id, source, target))
+                continue
             _, target, source = self.calibration_engine._match_markers(
                 chain.nodes[edge.to_id].markers, chain.nodes[edge.from_id].markers)
             if len(source) < 3:
