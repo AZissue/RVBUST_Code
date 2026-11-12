@@ -509,6 +509,20 @@ class SessionUiTests(unittest.TestCase):
                 self.assertIn((uid, 'cloud'), browser._component_items)
                 self.assertIn((uid, 'image'), browser._component_items)
 
+    def test_mobile_connect_then_save_closes_without_prompt_for_empty_calibration(self):
+        devices = [fixture.DeviceInfo(serial='MOCK', backend_ref=0)]
+        with patch.object(self.bridge, '_ensure_sdk', return_value=True), \
+                patch.object(self.bridge.camera_manager, 'connect', return_value=(True, 'ok')):
+            self.bridge.connect_devices('mobile_chain', devices, show_loading=False)
+            self.wait(lambda: not self.bridge._workers)
+        self.assertEqual(self.bridge._current_mode, 'mobile_chain')
+        controller, project = self.mobile()
+        self.save_ui()
+        self.assertTrue((project.saved_path / 'session.json').is_file())
+        with patch('ui_v2.session_projects.QMessageBox.warning', return_value=QMessageBox.Cancel) as warning:
+            self.assertTrue(controller.request_close(), warning.call_args)
+            warning.assert_not_called()
+
     def test_close_save_covers_dirty_projects_in_inactive_workspaces(self):
         controller, mobile = self.mobile()
         multi = controller.projects['multi_cam']

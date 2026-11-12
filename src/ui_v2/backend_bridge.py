@@ -895,7 +895,7 @@ class BackendBridge(QObject):
                 f"设备连接完成: {ok_count}/{real_count} 台真实相机成功"
                 f"（测试设备 {test_count} 台）")
 
-        self._run_background(_connect, _done)
+        self._run_background(_connect, _done, name='device_connect')
 
     # ------------------------------------------------------------------
     # 模式 A（多相机外参标定）
@@ -2662,7 +2662,10 @@ class BackendBridge(QObject):
             import traceback
             name = traceback.extract_stack()[-2].name
         project_task = name.startswith('project_')
-        inspection = name in ('calibration_inspection', 'capture_parameters', 'device_disconnect', 'recognition_parameters', 'device_status', 'robot_2d_preview')
+        inspection = name in (
+            'calibration_inspection', 'capture_parameters', 'device_connect',
+            'device_disconnect', 'recognition_parameters', 'device_status', 'robot_2d_preview',
+        )
         if self.shell._presentation == 'industrial' and not project_task and not inspection:
             self.projects.prepare(self._current_mode)
         if name not in ('offline_preview', 'db_frame_preview', 'db_open_project', 'db_mutation') and not project_task and not inspection and self.shell._presentation == 'industrial':
