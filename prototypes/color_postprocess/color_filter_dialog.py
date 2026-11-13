@@ -4,8 +4,8 @@ from PySide6.QtCore import Qt, QPointF
 from PySide6.QtGui import QPainter, QColor, QPen
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QFormLayout,
     QLabel, QComboBox, QSpinBox, QCheckBox, QDialogButtonBox, QWidget)
-from ..dialogs import localize_buttons
-from .parameter_guard import ParameterGuard
+from ui_v2.dialogs import localize_buttons
+from ui_v2.postprocess.parameter_guard import ParameterGuard
 
 class FilterPreview(QWidget):
     def __init__(self, data, parent=None):

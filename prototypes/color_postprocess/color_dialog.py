@@ -3,8 +3,8 @@ from dataclasses import asdict
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QWidget, QScrollArea, QFormLayout,
     QLabel, QComboBox, QDoubleSpinBox, QSpinBox, QCheckBox, QDialogButtonBox)
-from core.postprocess.color_correction import ColorParameters
-from .parameter_guard import ParameterGuard
+from .core.color_correction import ColorParameters
+from ui_v2.postprocess.parameter_guard import ParameterGuard
 
 
 class ColorDialog(QDialog):

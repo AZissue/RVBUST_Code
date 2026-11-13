@@ -52,7 +52,6 @@ class OfflineTests(unittest.TestCase):
         Path('outputs/offline_promotion').mkdir(exist_ok=True)
         window.grab().save('outputs/offline_promotion/formal_1050.png')
         self.assertLessEqual(window.width(),1050)
-        self.assertNotIn('mobile_chain',[key for key,_,_ in __import__('ui_v2.experiments',fromlist=['FEATURES']).FEATURES])
         dialog=LauncherDialog();calls=[]
         dialog.offline_stitch_requested.connect(lambda:calls.append(1))
         dialog._btn_offline_stitch.click();self.assertEqual(calls,[1])

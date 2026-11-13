@@ -10,7 +10,6 @@ from PySide6.QtCore import QEvent, QSize, Qt
 from PySide6.QtWidgets import (QFileDialog, QFrame, QHBoxLayout, QLabel,
     QStackedWidget, QToolButton, QVBoxLayout, QWidget, QSizePolicy)
 
-from .customer_trial import is_customer_trial
 from .sdk_examples import make_examples_button
 from . import icons
 from .launcher_dialog import LauncherDialog
@@ -135,11 +134,6 @@ class IndustrialRibbon(QWidget):
         self.offline_button = self._header_button('离线拼接', 'folder_open', shell.open_offline_stitch)
         self.offline_button.setToolTip('加载本地图像与PLY，在正式离线工作区拼接并保存会话')
         line.addWidget(self.offline_button)
-        self.experiment_button = self._header_button('实验功能', 'layers',
-            lambda: shell._backend_bridge and shell._backend_bridge.open_experiments())
-        self.experiment_button.setToolTip('使用正式工作区验证功能，数据写入隔离副本')
-        line.addWidget(self.experiment_button)
-        self.experiment_button.setVisible(not is_customer_trial())
         self.log_button = self._header_button('运行日志', 'terminal', shell._btn_log.click)
         self.log_button.setCheckable(True)
         shell._btn_log.toggled.connect(self.log_button.setChecked)
@@ -349,7 +343,6 @@ class IndustrialRibbon(QWidget):
         if (shell.current_mode(), 'fpfh') in self.commands:
             self.commands[(shell.current_mode(), 'fpfh')].setEnabled(ready)
         self.offline_button.setEnabled(ready and not getattr(bridge, 'validation_root', None))
-        self.experiment_button.setEnabled(ready and not getattr(bridge, 'validation_root', None))
         for mode in self._pages:
             self.commands[(mode, 'save')].setEnabled(ready)
             self.commands[(mode, 'postprocess')].setEnabled(ready)

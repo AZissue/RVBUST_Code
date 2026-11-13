@@ -27,6 +27,8 @@ class SegmentationToolbar(QFrame):
                 ('delete', '快捷删除：保留框内时删除框外，保留框外时删除框内；原始数据保留', 'trash'),
                 ('color_filter', '颜色过滤：仅剔除框内超出颜色阈值的点，框外保留', 'color_palette'),
                 ('cancel', '取消框选（Esc）', 'close')):
+            if key == 'color_filter' and callbacks[key] is None:
+                continue
             button = QToolButton()
             button.setIcon(icon(glyph, '#dddddd', 21))
             button.setIconSize(QSize(21, 21))
@@ -66,8 +68,9 @@ class SegmentationToolbar(QFrame):
         for key in ('inside', 'outside'):
             self.buttons[key].setEnabled(ready and available)
         self.buttons['delete'].setEnabled(ready and staged and available)
-        self.buttons['color_filter'].setVisible(color_available)
-        self.buttons['color_filter'].setEnabled(ready and staged and available and color_available)
+        color = self.buttons.get('color_filter')
+        if color is not None:
+            color.setEnabled(ready and staged and color_available)
         self.adjustSize()
         self._position()
         self.buttons['cancel'].setEnabled(overlay.active)

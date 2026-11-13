@@ -8,7 +8,7 @@ import open3d as o3d
 import test_postprocess as fixture
 from PySide6.QtCore import QTimer,QEvent
 from core.frame_data import FrameData
-from ui_v2.postprocess.circle_match_dialog import CircleMatchDialog
+from prototypes.circle_geometry_match.circle_match_dialog import CircleMatchDialog
 from prototypes.circle_geometry_match.core.pipeline import analyze_pair,merged_layer
 
 class CircleIntegrationTests(unittest.TestCase):
@@ -22,7 +22,9 @@ class CircleIntegrationTests(unittest.TestCase):
         fixture.PostprocessTests.setUp(self)
         self.bridge.validation_root=Path(self.temp.name)/'validation'
         self.editor.close()
-        self.editor=self.bridge.open_postprocess()
+        from prototypes.circle_geometry_match.editor import CircleMatchEditor
+        self.editor = CircleMatchEditor(self.bridge, self.bridge._current_mode)
+        self.editor.show()
         self.app.processEvents()
 
     def inputs(self, *, rings=False):

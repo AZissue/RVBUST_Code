@@ -55,7 +55,7 @@ def refine_icp(reference, moving, params):
 
 def refine_stitched(database, uid, reference_uid, params):
     """Rebuild a stitch from its raw frames; fix one frame and grow the reference."""
-    from .image_color_fusion import source_poses
+    from .source_poses import source_poses
     from ..point_cloud_processor import PointCloudProcessor
     row = database.records[uid]
     if row.kind != 'result' or row.purpose == '后处理结果':

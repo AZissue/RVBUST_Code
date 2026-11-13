@@ -73,7 +73,6 @@ class OfflineStitchWindow(MainWindowShell):
         presentation.view_pages.preview_button.hide()
         properties = presentation.frame_browser.properties
         properties.tabs.setTabVisible(properties.tabs.indexOf(properties.capture), False)
-        ribbon.experiment_button.hide()
         ribbon.offline_button.hide()
         ribbon.mode_label.setText('离线拼接')
         # Hidden acquisition workspaces must not impose their widths on this file-only window.
@@ -81,6 +80,10 @@ class OfflineStitchWindow(MainWindowShell):
         self.setMinimumSize(1050, 650)
         self.log('正式离线拼接：会话手动保存到 sessions；可载入旧实验会话。')
         self.log('加载离线数据：同名 PNG / PLY 配对，数字编号排序；在DB选择图像或点云检查，勾选原始点云执行拼接。源文件只读。')
+
+    def postprocess_editor_type(self):
+        from .postprocess.fpfh_editor import FPFHEditor
+        return FPFHEditor
 
     def open_fpfh(self):
         if not self._backend_bridge.can_change_workspace():

@@ -7,8 +7,8 @@ from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QFormLayout,QComb
     QSpinBox,QDoubleSpinBox,QPushButton,QLabel,QCheckBox,QDialogButtonBox,QPlainTextEdit,
     QScrollArea,QWidget)
 from ui_common.image_preview import AspectRatioLabel,numpy_to_qpixmap
-from .parameter_guard import ParameterGuard
-from ..dialogs import localize_buttons
+from ui_v2.postprocess.parameter_guard import ParameterGuard
+from ui_v2.dialogs import localize_buttons
 
 class GeometryImagePreview(AspectRatioLabel):
     def __init__(self):

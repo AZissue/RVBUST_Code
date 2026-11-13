@@ -4,9 +4,9 @@ from unittest.mock import patch
 from pathlib import Path
 import numpy as np
 import test_postprocess as fixture
-from core.postprocess.color_filter import color_values, threshold_rejection, preview_data
+from prototypes.color_postprocess.core.color_filter import color_values, threshold_rejection, preview_data
 from core.postprocess.session import CloudLayer
-from ui_v2.postprocess.color_filter_dialog import ColorFilterDialog
+from prototypes.color_postprocess.color_filter_dialog import ColorFilterDialog
 
 class ThresholdTests(unittest.TestCase):
     def test_threshold_inclusive_and_outside_untouched(self):
@@ -44,7 +44,7 @@ class FilterUiTests(unittest.TestCase):
     def setUp(self):
         fixture.PostprocessTests.setUp(self)
         self.editor.close()
-        from prototypes.industrial_pointcloud_postprocess.color_validation import ColorValidationWindow
+        from prototypes.color_postprocess.editor import ColorValidationWindow
         self.editor=ColorValidationWindow(self.bridge,self.bridge._current_mode)
         self.editor.show()
         self.app.processEvents()
@@ -90,7 +90,7 @@ class FilterUiTests(unittest.TestCase):
         self.assertEqual(self.editor._display_ids,[source])
         self.assertTrue(set(outputs).issubset(self.db.removed))
 
-    def test_empty_no_color_view_change_and_production_gates(self):
+    def test_empty_no_color_and_view_change(self):
         _,source,layer,mask=self.inputs()
         before=set(self.db.records)
         self.editor.apply_color_filter(dict(low=0,high=255,metric='value'))
@@ -102,12 +102,6 @@ class FilterUiTests(unittest.TestCase):
         self.editor.apply_color_filter(dict(low=40,high=255,metric='value'))
         self.assertEqual(set(self.db.records),before)
         self.assertIn('重新框选',self.editor.status.text())
-        self.editor.COLOR_VALIDATION=False
-        self.editor._refresh_controls()
-        self.assertTrue(self.editor.segment_tools.buttons['color_filter'].isHidden())
-        self.editor._segment=(source,layer,mask,self.editor._view())
-        self.editor.apply_color_filter(dict(low=40,high=255,metric='value'))
-        self.assertEqual(set(self.db.records),before)
         _,_,_,_=self.inputs(colored=False)
         self.assertFalse(self.editor.segment_tools.buttons['color_filter'].isEnabled())
 

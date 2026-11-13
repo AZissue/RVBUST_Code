@@ -95,15 +95,8 @@ class PostprocessTests(unittest.TestCase):
         self.app.processEvents()
 
     def test_color_entries_are_unavailable_in_production(self):
-        for key in ('color','compare'):
-            self.assertTrue(self.editor.actions[key].isHidden())
-            self.assertFalse(self.editor.actions[key].isEnabled())
-        before=set(self.db.records)
-        self.editor.open_color_dialog()
-        self.editor.correct_colors()
-        self.editor.compare_color_source()
-        self.assertEqual(set(self.db.records),before)
-        self.assertIsNone(self.editor._worker)
+        self.assertFalse({'color', 'compare', 'triangle'} & self.editor.actions.keys())
+        self.assertNotIn('color_filter', self.editor.segment_tools.buttons)
 
     def test_log_entry_history_live_filter_and_close(self):
         panel = self.editor._log_panel

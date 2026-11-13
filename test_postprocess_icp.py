@@ -54,7 +54,7 @@ class ICPUiTests(unittest.TestCase):
 
     def test_entry_publishes_persistent_transform_and_undo(self):
         from core.frame_database import FrameDatabase
-        from core.postprocess.image_color_fusion import source_poses
+        from core.postprocess.source_poses import source_poses
         from ui_v2.postprocess.icp_dialog import ICPDialog
         raw=self.db.ingest(self.source(1))
         xyz=np.random.default_rng(13).uniform(10,30,(1000,3))
@@ -115,7 +115,7 @@ class ICPUiTests(unittest.TestCase):
         self.assertEqual(len(self.db.records),count)
 
     def test_extract_intermediates_and_probe_context(self):
-        from core.postprocess.image_color_fusion import source_poses
+        from core.postprocess.source_poses import source_poses
         from ui_v2.postprocess.icp_dialog import ICPDialog
         from PySide6.QtWidgets import QLabel,QPushButton
         raw=[self.db.ingest(self.source(n)) for n in (1,2)]
@@ -160,7 +160,7 @@ class ICPUiTests(unittest.TestCase):
         self.assertTrue(all(self.db.records[uid].status == STALE_RESULT for uid in outputs))
 
     def test_single_stitch_rebuild_preserves_raws_and_publishes_poses(self):
-        from core.postprocess.image_color_fusion import source_poses
+        from core.postprocess.source_poses import source_poses
         from core.frame_database import FrameDatabase
         rng=np.random.default_rng(28)
         xyz=rng.uniform(10,30,(800,3))

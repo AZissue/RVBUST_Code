@@ -1,4 +1,4 @@
-> v1.13.44：颜色统一、原色对比及2D颜色融合已撤出正式程序入口，以下颜色说明仅用于独立原型验证。运行 `prototypes/industrial_pointcloud_postprocess/color_validation.py`，可用 `--session` 读取会话副本；结果单独保存到验证目录。
+> v1.13.44：颜色统一、原色对比及2D颜色融合已撤出正式程序入口，以下颜色说明仅用于独立原型验证。运行 `prototypes/color_postprocess/run.py`，可用 `--session` 读取会话副本；结果单独保存到验证目录。
 
 # 点云后处理工作区
 

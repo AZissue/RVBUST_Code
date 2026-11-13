@@ -22,7 +22,7 @@ class ViewportTests(unittest.TestCase):
     def use_color_validation_editor(self):
         # Colour dialogs moved to prototype validation in v1.13.44.
         self.editor.close()
-        from prototypes.industrial_pointcloud_postprocess.color_validation import ColorValidationWindow
+        from prototypes.color_postprocess.editor import ColorValidationWindow
         self.editor = ColorValidationWindow(self.bridge, self.bridge._current_mode)
         self.editor.show()
         self.app.processEvents()

@@ -7,8 +7,8 @@ import open3d as o3d
 from core.frame_data import FrameData
 from core.frame_database import FrameDatabase
 from core.postprocess.session import CloudLayer
-from core.postprocess.color_correction import ColorParameters
-from core.postprocess.image_color_fusion import source_poses,fuse_image_colors
+from prototypes.color_postprocess.core.color_correction import ColorParameters
+from prototypes.color_postprocess.core.image_color_fusion import source_poses,fuse_image_colors
 
 class FusionTests(unittest.TestCase):
     def setUp(self):
@@ -74,7 +74,7 @@ class FusionUiTests(unittest.TestCase):
     setUpClass=classmethod(ui_fixture.PostprocessTests.setUpClass.__func__)
     def setUp(self):
         ui_fixture.PostprocessTests.setUp(self)
-        from prototypes.industrial_pointcloud_postprocess.color_validation import ColorValidationWindow
+        from prototypes.color_postprocess.editor import ColorValidationWindow
         self.editor.close()
         self.editor = ColorValidationWindow(self.bridge,self.bridge._current_mode)
         self.editor.show()

@@ -54,7 +54,7 @@ class ManualUiTests(unittest.TestCase):
 
     def test_dialog_pairs_publish_pose_and_undo(self):
         from ui_v2.postprocess.manual_registration_dialog import ManualRegistrationDialog
-        from core.postprocess.image_color_fusion import source_poses
+        from core.postprocess.source_poses import source_poses
         raw=self.db.ingest(self.source(1));self.db.records[raw].pointcloud_aligned=True
         raw2=self.db.ingest(self.source(2));self.db.records[raw2].pointcloud_aligned=True
         xyz=np.random.default_rng(7).uniform(10,30,(500,3))

@@ -775,6 +775,10 @@ class MainWindowShell(QMainWindow):
             "  当前不包含品牌机器人 TCP 连接或运动控制；判别下限约 1 mm。\n\n"
             "提示：无真实多机环境时，可在启动小窗点击『+ 测试设备』临时添加虚拟相机。")
 
+    def postprocess_editor_type(self):
+        from .postprocess.window import PostprocessWindow
+        return PostprocessWindow
+
     def open_offline_stitch(self):
         bridge = self._backend_bridge
         if bridge is None or not bridge.can_change_workspace():
@@ -796,11 +800,6 @@ class MainWindowShell(QMainWindow):
         if offline is not None and not offline.close():
             event.ignore()
             return
-        validation = getattr(self._backend_bridge, '_validation_shell', None)
-        if validation is not None:
-            if not validation.close():
-                event.ignore()
-                return
         self._close_event_impl(event)
         if event.isAccepted():
             for workspace in (self._ws_multi, self._ws_mobile, self._ws_turntable, self._ws_robot):

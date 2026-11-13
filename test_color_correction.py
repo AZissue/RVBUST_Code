@@ -7,7 +7,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent/'src'))
 from core.postprocess.session import CloudLayer
-from core.postprocess.color_correction import ColorParameters, NoColorCorrection, unify_colors, correct_color_layers
+from prototypes.color_postprocess.core.color_correction import ColorParameters, NoColorCorrection, unify_colors, correct_color_layers
 
 
 def scene(gray=False):

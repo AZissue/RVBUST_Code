@@ -272,8 +272,8 @@ def _single(points, colors, gray, params):
 
 def correct_color_layers(layers, *, reference=0, params=None):
     """Optional voxel averaging BEFORE estimation/application, with provenance."""
-    from .session import CloudLayer
-    from .processing import voxel_downsample
+    from core.postprocess.session import CloudLayer
+    from core.postprocess.processing import voxel_downsample
     params = params or ColorParameters()
     params.validate()
     if params.algorithm == 'image_fusion':

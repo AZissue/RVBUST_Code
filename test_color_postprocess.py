@@ -16,7 +16,7 @@ class ColorPostprocessTests(unittest.TestCase):
     setUpClass = classmethod(fixture.PostprocessTests.setUpClass.__func__)
     def setUp(self):
         fixture.PostprocessTests.setUp(self)
-        from prototypes.industrial_pointcloud_postprocess.color_validation import ColorValidationWindow
+        from prototypes.color_postprocess.editor import ColorValidationWindow
         self.editor.close()
         self.editor = ColorValidationWindow(self.bridge,self.bridge._current_mode)
         self.editor.show()
@@ -289,11 +289,11 @@ class ColorPostprocessTests(unittest.TestCase):
         _, sources = self.inputs()
         before = set(self.db.records)
         entered, release = threading.Event(), threading.Event()
-        from core.postprocess.color_correction import correct_color_layers
+        from prototypes.color_postprocess.core.color_correction import correct_color_layers
         def delayed(*args, **kwargs):
             entered.set(); release.wait(5)
             return correct_color_layers(*args, **kwargs)
-        with patch('ui_v2.postprocess.window.correct_color_layers', delayed):
+        with patch('prototypes.color_postprocess.editor.correct_color_layers', delayed):
             self.editor.correct_colors()
             self.assertTrue(entered.wait(2))
             try:
