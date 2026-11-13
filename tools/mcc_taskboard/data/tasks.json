@@ -173,14 +173,14 @@
     "priority": "P2",
     "evidence": "industrial_offline_stitch 在 worker 内调用 self.recursive.isChecked()，跨线程访问 QWidget。",
     "scope": [
-      "prototypes/industrial_offline_stitch/app/window.py",
-      "prototypes/industrial_offline_stitch/tests/test_ui_smoke.py"
+      "archive/prototypes/industrial_offline_stitch/app/window.py",
+      "archive/prototypes/industrial_offline_stitch/tests/test_ui_smoke.py"
     ],
     "requirements": [
       "启动任务前在 GUI 线程读取布尔值并传入闭包；保持后台加载与忙碌门禁。"
     ],
     "acceptance": [
-      "\"D:/Program Files/Anaconda/envs/rvc/python.exe\" prototypes/industrial_offline_stitch/tests/test_ui_smoke.py"
+      "\"D:/Program Files/Anaconda/envs/rvc/python.exe\" archive/prototypes/industrial_offline_stitch/tests/test_ui_smoke.py"
     ],
     "dependencies": [],
     "status": "open",
@@ -204,15 +204,15 @@
     "priority": "P2",
     "evidence": "MarkerDetector.save_debug_images 默认开启，失败检测可能在当前工作目录写 debug_detect_*.png，污染输入目录。",
     "scope": [
-      "prototypes/industrial_offline_stitch/core/offline_workflow.py",
-      "prototypes/industrial_offline_stitch/README.md",
-      "prototypes/industrial_offline_stitch/tests/test_offline_workflow.py"
+      "archive/prototypes/industrial_offline_stitch/core/offline_workflow.py",
+      "archive/prototypes/industrial_offline_stitch/README.md",
+      "archive/prototypes/industrial_offline_stitch/tests/test_offline_workflow.py"
     ],
     "requirements": [
       "默认不向输入目录写调试文件；需要调试时显式指定独立输出目录，并验证原始目录无新增文件。"
     ],
     "acceptance": [
-      "\"D:/Program Files/Anaconda/envs/rvc/python.exe\" prototypes/industrial_offline_stitch/tests/test_offline_workflow.py"
+      "\"D:/Program Files/Anaconda/envs/rvc/python.exe\" archive/prototypes/industrial_offline_stitch/tests/test_offline_workflow.py"
     ],
     "dependencies": [],
     "status": "open",
@@ -267,15 +267,15 @@
     "priority": "P3",
     "evidence": "离线原型当前覆盖活跃任务关闭和输入覆盖保护，但缺少关闭等待超时与已有导出目标写失败的明确回归。",
     "scope": [
-      "prototypes/industrial_offline_stitch/tests/test_ui_smoke.py",
-      "prototypes/industrial_offline_stitch/tests/test_offline_workflow.py"
+      "archive/prototypes/industrial_offline_stitch/tests/test_ui_smoke.py",
+      "archive/prototypes/industrial_offline_stitch/tests/test_offline_workflow.py"
     ],
     "requirements": [
       "验证超时关闭被忽略、回调不失效；写失败保留旧目标文件且无临时文件残留。"
     ],
     "acceptance": [
-      "\"D:/Program Files/Anaconda/envs/rvc/python.exe\" prototypes/industrial_offline_stitch/tests/test_ui_smoke.py",
-      "\"D:/Program Files/Anaconda/envs/rvc/python.exe\" prototypes/industrial_offline_stitch/tests/test_offline_workflow.py"
+      "\"D:/Program Files/Anaconda/envs/rvc/python.exe\" archive/prototypes/industrial_offline_stitch/tests/test_ui_smoke.py",
+      "\"D:/Program Files/Anaconda/envs/rvc/python.exe\" archive/prototypes/industrial_offline_stitch/tests/test_offline_workflow.py"
     ],
     "dependencies": [],
     "status": "open",

@@ -11,8 +11,8 @@ from PySide6.QtWidgets import (
     QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
-ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(ROOT / 'src'))
+ROOT = Path(__file__).resolve().parents[4]
+sys.path[:0] = [str(ROOT / 'src'), str(ROOT)]
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'core'))
 
 from offline_workflow import (

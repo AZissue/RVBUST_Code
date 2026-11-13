@@ -68,9 +68,7 @@ DualCameraFusion 保持不动，本项目为全新工程。
   每个站位注册为虚拟相机（`station_N`）参与自动配准与拼接；拍摄后立即存盘
   （防止 RVC 句柄被后续拍摄覆盖），支持离线加载会话目录重放拼接
 - **转台 360° 拼接**：手动旋转、步进/定时采集、标记链式配准、ICP 精修与导出过滤
-- **离线拼接重放（D）**：主程序支持会话加载；独立文件对工具
-  `prototypes/offline_stitch/` 可选择本地图像/点云文件夹，
-  自动检测编码圆并拼接导出
+- **离线拼接（D）**：从正式离线拼接窗口加载本地 PNG/PLY 文件对，支持标记物拼接、FPFH 配准和保存会话。
 - **机器人手眼标定配合拼接（模式 E，core 已落地）**：
   `src/core/handeye.py` + `robot_interface.py` + `robot_stitch_workflow.py`，
   用机器人位姿 + 手眼标定结果直接变换点云，无需标记物；UI 尚未接线
@@ -118,10 +116,7 @@ $env:PYTHONIOENCODING = 'utf-8'
 `QT_QPA_PLATFORM=offscreen`。PyRVC 从本机 SDK 或匹配 Python ABI 的安装包获取，
 不能通过普通 PyPI 依赖安装替代。
 
-离线拼接原型测试目前有已知接口漂移：
-`prototypes/offline_stitch/tests/test_offline_stitch.py` 的
-`MockMarkerDetector.detect_3d()` 缺少主链路传入的 `include_invalid` 参数；
-修复前该脚本不能作为通过的回归基线。机器人原型另遵循
+正式离线拼接使用 `test_offline_stitch.py` 和 `test_offline_fpfh.py` 回归。机器人原型另遵循
 [回归手册](prototypes/robot_handeye_transform/REGRESSION.md) 的 DLL oracle 等判据。
 历史验收数字不代表本次或本机最新回归结果。
 
@@ -178,28 +173,9 @@ offline_data/stations/session_YYYYMMDD_HHMMSS/
 
 「自动采集」只控制定时拍摄，当前主程序不负责驱动转台电机。
 
-### 离线拼接（D）：会话重放与独立文件对工具
+### 离线拼接（D）
 
-不连相机，直接加载本地图像/点云文件夹做检测→标定→拼接→导出。
-
-- 主程序会话：进入对应工作区后，通过顶部「打开会话」恢复已保存的数据；A 恢复标定/扫描帧，C 恢复转台标定及采集序列。
-- 模式 B 的站位重放使用工作区「离线加载会话」；顶部通用「打开会话」目前不恢复 B 的时间线。
-- 启动器只有 A/B/C 三张卡片；独立文件对工具不作为 D 卡片出现在模式栈中。
-- 独立测试 UI：`prototypes/offline_stitch/app/simple_ui.py`，支持：
-  - 选择本地图像/点云文件夹（递归/模糊匹配文件对）
-  - 输入编码圆参数以确保正确识别
-  - 自动检测、配准、合并
-  - 缓存合并结果，切换单个文件对后仍可恢复显示
-  - 显示级下采样，实际交互性能需结合数据量与显卡验证
-
-独立文件对工具启动命令（项目根目录）：
-
-```bash
-python prototypes/offline_stitch/app/simple_ui.py
-```
-
-图像与 PLY 按文件名前缀配对；检测需匹配的标记参数与 PyRVC。
-适合现场数据复盘与离线处理。
+从启动小窗或主工作区顶部打开「离线拼接」，选择本地 PNG/PLY 文件对所在目录，在 DB 中检查数据并执行标记物拼接或 FPFH 配准。通过「保存会话」保留结果。详见 [正式离线拼接说明](docs/离线拼接正式功能_1.14.0.md)。
 
 ### 模式 E：机器人手眼配合拼接（core 已落地，UI 未接线）
 

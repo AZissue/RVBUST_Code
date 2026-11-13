@@ -26,8 +26,8 @@ def default_commands():
         'test_robot_workspace.py',
         'test_robot_session.py',
         'src/ui_v2/smoke_test.py',
-        'prototypes/industrial_offline_stitch/tests/test_offline_workflow.py',
-        'prototypes/industrial_offline_stitch/tests/test_ui_smoke.py',
+        'test_offline_stitch.py',
+        'test_offline_fpfh.py',
         'tools/mcc_taskboard/tests/test_store.py',
         'tools/mcc_taskboard/tests/test_server.py',
     ]
