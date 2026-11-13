@@ -160,6 +160,7 @@ class IndustrialRibbon(QWidget):
             self.pages.addWidget(page)
             self._build_mode(mode, row)
             row.addStretch(1)
+        shell.workspace_turntable().btn_auto_capture.toggled.connect(self.update_status)
         self.hide()
 
     def _header_button(self, title, glyph, callback):
@@ -195,6 +196,8 @@ class IndustrialRibbon(QWidget):
                 button.setToolTip('会话占用 / 管理：查看磁盘占用、管理已保存会话与回收数据')
             elif key == 'disconnect':
                 button.setToolTip('停止实时预览并断开当前所有已连接相机，保留DB、标定和采集结果')
+            elif key == 'parameters':
+                button.setToolTip('断开当前相机并打开 RVCManager，保留当前会话；调试后可从设备管理重新连接')
             elif key == 'postprocess':
                 button.setToolTip('打开点云后处理，直接使用当前项目DB数据')
             elif key == 'stitch':
@@ -336,13 +339,13 @@ class IndustrialRibbon(QWidget):
         database = shell._frame_databases[shell.current_mode()]
         raw = sum(row.kind == 'raw' for row in database.records.values())
         robot = shell.current_mode() == 'robot_stitch'
+        bridge = shell._backend_bridge
+        ready = bool(bridge and bridge.can_change_workspace())
         if not robot:
-            self.commands[(shell.current_mode(), 'stitch')].setEnabled(raw >= 2)
+            self.commands[(shell.current_mode(), 'stitch')].setEnabled(ready and raw >= 2)
         self.commands[(shell.current_mode(), 'stitch')].setToolTip(
             '将当前基座系合并点云发布为独立DB结果，保留原始帧及来源关系。' if robot else
             '优先拼接DB勾选的至少两帧原始点云；按当前模式使用标记配准或标定参数，生成独立拼接帧。未勾选时沿用当前工作流。')
-        bridge = shell._backend_bridge
-        ready = bool(bridge and bridge.can_change_workspace())
         if (shell.current_mode(), 'fpfh') in self.commands:
             self.commands[(shell.current_mode(), 'fpfh')].setEnabled(ready)
         self.offline_button.setEnabled(ready and not getattr(bridge, 'validation_root', None))
@@ -352,12 +355,8 @@ class IndustrialRibbon(QWidget):
             self.commands[(mode, 'postprocess')].setEnabled(ready)
             self.commands[(mode, 'disconnect')].setEnabled(
                 bool(ready and bridge.camera_manager.get_connected_ids()))
-            if getattr(bridge, '_disconnecting', False):
-                self.commands[(mode, 'devices')].setEnabled(False)
-                self.commands[(mode, 'parameters')].setEnabled(False)
-            else:
-                self.commands[(mode, 'devices')].setEnabled(True)
-                self.commands[(mode, 'parameters')].setEnabled(True)
+            for key in ('select', 'new', 'open', 'manage', 'devices', 'parameters'):
+                self.commands[(mode, key)].setEnabled(bridge is None or ready)
         presentation = getattr(shell._stack.currentWidget(), '_industrial', None)
         browser = presentation.frame_browser if presentation is not None else None
         self.commands[(shell.current_mode(), 'export')].setEnabled(

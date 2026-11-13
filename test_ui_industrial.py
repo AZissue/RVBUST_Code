@@ -57,7 +57,8 @@ class IndustrialTests(unittest.TestCase):
             for _, slot in actions:setattr(controller,slot,Mock())
         for view,actions in [(original[0],MULTI_ACTIONS),(original[1],MOBILE_ACTIONS),(self.win,SHELL_ACTIONS)]:
             connect_actions(view,controller,actions)
-        args={'calibration_topology_changed':('star',), 'capture_requested':(True,), 'detect_requested':('coded_circle',),
+        args={'calibration_topology_changed':('star',), 'calibration_settings_changed':('star','cam0',True),
+              'capture_requested':(True,), 'detect_requested':('coded_circle',), 'auto_mode_changed':(True,),
               'batch_scan_requested':(2,), 'reference_changed':('cam0',),'step_back_requested':(0,),
               'card_preview_toggled':('cam0',True), 'card_capture_requested':('cam0',),
               'card_detect_requested':('cam0',), 'preview_toggled':(True,),

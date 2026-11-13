@@ -159,16 +159,67 @@ class DisconnectTests(unittest.TestCase):
 
     def test_parameter_debug_uses_safe_disconnect_and_launches_only_after_release(self):
         self.connect_fake()
-        with patch.object(self.bridge, '_launch_param_debug') as launch:
-            self.bridge._on_param_debug()
+        workspace = self.win.workspace_multi()
+        workspace.set_state('captured')
+        with patch.object(self.bridge, '_launch_param_debug') as launch, \
+             patch.object(self.win, 'open_device_manager') as manager:
+            self.win._industrial_ribbon.commands['multi_cam', 'parameters'].click()
             self.finish()
             launch.assert_called_once()
+            manager.assert_not_called()
             self.assertFalse(self.bridge.camera_manager.get_connected_ids())
+        self.assertEqual(workspace.current_state(), 'captured')
         self.connect_fake()
         with patch.object(self.bridge.camera_manager, 'disconnect_all', side_effect=OSError('failure')), \
              patch.object(self.bridge, '_launch_param_debug') as launch:
             self.bridge._on_param_debug();self.finish()
             launch.assert_not_called()
+
+    def test_parameter_debug_button_keeps_workspace_state_on_disconnect_failure(self):
+        self.connect_fake()
+        workspace = self.win.workspace_multi()
+        workspace.set_state('captured')
+        self.win.set_dirty(True)
+        button = self.win._industrial_ribbon.commands['multi_cam', 'parameters']
+        with patch.object(self.win, '_confirm_discard') as discard, \
+             patch.object(self.win, 'open_device_manager') as manager, \
+             patch.object(self.bridge, '_launch_param_debug') as launch, \
+             patch.object(self.bridge.camera_manager, 'disconnect_all', side_effect=OSError('failure')):
+            button.click()
+            self.finish()
+            discard.assert_not_called()
+            manager.assert_not_called()
+            launch.assert_not_called()
+        self.assertEqual(workspace.current_state(), 'captured')
+        self.assertTrue(self.win._dirty)
+        self.assertEqual([device.serial for device in self.win._devices], ['MOCK0'])
+
+    def test_busy_ribbon_disables_commands_that_require_an_idle_workspace(self):
+        self.connect_fake()
+        ribbon = self.win._industrial_ribbon
+        self.db.ingest(self.source())
+        self.db.ingest(self.source(2))
+        commands = [(mode, key) for mode in ribbon._pages
+                    for key in ('select', 'new', 'open', 'save', 'manage', 'devices', 'parameters')]
+        commands.append(('multi_cam', 'stitch'))
+        with patch.object(self.bridge, 'can_change_workspace', return_value=False):
+            ribbon.update_status()
+            for command in commands:
+                with self.subTest(command=command):
+                    self.assertFalse(ribbon.commands[command].isEnabled())
+        ribbon.update_status()
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertTrue(ribbon.commands[command].isEnabled())
+
+    def test_ribbon_updates_when_turntable_auto_capture_stops_between_steps(self):
+        self.win.set_mode('turntable', [])
+        workspace = self.win.workspace_turntable()
+        save = self.win._industrial_ribbon.commands['turntable', 'save']
+        workspace.btn_auto_capture.setChecked(True)
+        self.assertFalse(save.isEnabled())
+        workspace.btn_auto_capture.setChecked(False)
+        self.assertTrue(save.isEnabled())
 
     def test_reconnect_attempt_is_rejected_during_disconnect_before_sdk_init(self):
         self.bridge._disconnecting = True

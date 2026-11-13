@@ -116,13 +116,23 @@ class RibbonTests(unittest.TestCase):
         finally:
             self.win._backend_bridge = None
 
-    def test_turntable_save_uses_workspace_gate_and_shell_signal_once(self):
+    def test_turntable_save_uses_project_gate_and_shell_signal_once(self):
         ws = self.enter('turntable')
         button = self.ribbon.commands[('turntable', 'save')]
         spy = QSignalSpy(self.win.save_session_requested)
         self.assertFalse(button.isEnabled())
-        ws.btn_save_session.setEnabled(True)
-        button.click()
+        bridge = SimpleNamespace(
+            can_change_workspace=Mock(return_value=False),
+            camera_manager=SimpleNamespace(get_connected_ids=lambda: []),
+        )
+        with patch.object(self.win, '_backend_bridge', bridge):
+            ws.btn_save_session.setEnabled(True)
+            self.ribbon.update_status()
+            button.click()
+            self.assertEqual(spy.count(), 0)
+            bridge.can_change_workspace.return_value = True
+            self.ribbon.update_status()
+            button.click()
         self.assertEqual(spy.count(), 1)
         self.assertTrue(ws.btn_save_session.isHidden())
 

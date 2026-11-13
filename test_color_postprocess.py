@@ -161,7 +161,8 @@ class ColorPostprocessTests(unittest.TestCase):
         for size in ((1440, 900), (1050, 650)):
             editor.resize(*size); self.app.processEvents()
             for button in editor.actions.values():
-                self.assertTrue(editor.operation_bar.rect().contains(button.geometry()))
+                if button.isVisible():
+                    self.assertTrue(editor.operation_bar.rect().contains(button.geometry()), button.text())
             observed = []
             def cancel():
                 dialog = self.app.activeModalWidget()

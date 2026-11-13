@@ -37,7 +37,8 @@ class TurntablePresentationTests(unittest.TestCase):
         panel = workspace._industrial.calibration_panel
         browser = workspace._industrial.frame_browser
         self.assertFalse(panel.isVisible())
-        self.assertEqual(workspace._industrial.side_column.count(), 2)
+        self.assertEqual(workspace._industrial.side_column.count(), 1)
+        self.assertIs(workspace._industrial.side_column.widget(0), browser)
         def find_parameters():
             from PySide6.QtWidgets import QTreeWidgetItemIterator
             iterator = QTreeWidgetItemIterator(browser.tree)
@@ -53,7 +54,7 @@ class TurntablePresentationTests(unittest.TestCase):
         self.assertEqual(browser.properties.tabs.currentIndex(), 0)
         self.assertIn('未标定', panel.status.text())
         self.assertFalse(panel.locate.isEnabled())
-        self.assertTrue(workspace._industrial.sidebar.isHidden())
+        self.assertIsNone(workspace._industrial.sidebar)
         workspace.session.calib.set_calibration([0, 0, 1], [10, 20, 30], 30., 12)
         workspace.session.calibrated = True
         workspace._update_online_ui()
@@ -100,7 +101,7 @@ class TurntablePresentationTests(unittest.TestCase):
         second_id = self.db.ingest(second, purpose='扫描数据')
         category = self.browser._items[first_id].parent()
         self.assertEqual(category.text(0), '标定会话数据')
-        self.assertEqual(self.browser._items[second_id].parent().text(0), '扫描原始帧')
+        self.assertEqual(self.browser._items[second_id].parent().text(0), '扫描帧数据')
         self.browser.tree.clearSelection()
         category.setSelected(True)
         self.assertEqual(self.browser.selected_ids(), [first_id])

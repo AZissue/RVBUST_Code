@@ -30,7 +30,7 @@ class RobotWorkspaceTests(unittest.TestCase):
         self.assertTrue(hasattr(dialog, 'MODE_ROBOT'))
         mode = dialog.MODE_ROBOT
         self.assertIn(mode, dialog._industrial_cards)
-        self.assertNotIn(mode, dialog._cards)
+        self.assertIs(dialog._cards, dialog._industrial_cards)
         dialog._industrial_cards[mode].clicked.emit()
         self.assertEqual(dialog.selected_presentation(), 'industrial')
         dialog.set_devices([DeviceInfo(serial='A', checked=True, backend_ref=0)])
