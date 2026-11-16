@@ -10,7 +10,7 @@ import unittest
 import numpy as np
 import cv2
 import open3d as o3d
-from PySide6.QtWidgets import QCheckBox, QDialog, QMessageBox
+from PySide6.QtWidgets import QCheckBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QMessageBox
 import test_ui_frame_database as fixture
 from core.session_project import SessionProject
 
@@ -58,7 +58,8 @@ class ExplicitStitchingTests(unittest.TestCase):
                         dict(code=index, x_2d=1, y_2d=1, x_3d=x, y_3d=y, z_3d=200)
                         for index, (x, y) in enumerate(((-30,-30), (30,-30), (30,30), (-30,30)))
                     ]
-                    points = [[1, 3, 193], [1, 3, 198], [1, 3, 200], [1, 3, 208]]
+                    points = [[1, 3, 193], [1, 3, 198.8], [1.3, 3, 199.2],
+                              [1.9, 3, 199.2], [1, 3, 199.7], [1, 3, 208]]
                     cloud = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points))
                     self.assertTrue(o3d.io.write_point_cloud(frame.offline_pointmap_path, cloud))
                     uid = db.ingest(frame)
@@ -71,7 +72,18 @@ class ExplicitStitchingTests(unittest.TestCase):
                     session.sequence_pcds = [cloud, cloud]
                     session.sequence_markers = [frame.markers for frame in frames]
                 def accept_filter(dialog):
-                    dialog.findChild(QCheckBox).setChecked(True)
+                    active, bottom = dialog.findChildren(QCheckBox)
+                    self.assertFalse(bottom.isEnabled())
+                    active.setChecked(True)
+                    self.assertTrue(bottom.isEnabled())
+                    self.assertFalse(bottom.isChecked())
+                    bottom.setChecked(True)
+                    height, lower, _ = dialog.findChildren(QDoubleSpinBox)
+                    ok = dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok)
+                    lower.setValue(height.value())
+                    self.assertFalse(ok.isEnabled())
+                    lower.setValue(.5)
+                    self.assertTrue(ok.isEnabled())
                     return QDialog.Accepted
                 filter_button = self.win._industrial_ribbon.commands[(mode, 'plane_filter')]
                 with patch.object(QDialog, 'exec', accept_filter):
@@ -81,7 +93,7 @@ class ExplicitStitchingTests(unittest.TestCase):
                 results = [row for row in db.records.values() if row.kind == 'result']
                 self.assertEqual(len(results), 1, self.win._st_hint.text())
                 result = results[0]
-                self.assertEqual(result.points, 4)
+                self.assertEqual(result.points, 6)
                 self.assertEqual(set(result.source_planes), set(original))
                 reopened = FrameDatabase(mode)
                 reopened.open_project(db.directory/'index.json')
@@ -89,7 +101,8 @@ class ExplicitStitchingTests(unittest.TestCase):
                 self.assertEqual(restored.source_planes, result.source_planes)
                 for uid, expected in original.items():
                     self.assertEqual((db.directory/'frames'/uid/'pointmap.ply').read_bytes(), expected)
-                    self.assertEqual(len(load_stitch_source(reopened, restored, uid).points), 2)
+                    np.testing.assert_allclose(np.asarray(load_stitch_source(reopened, restored, uid).points),
+                                               points[:3])
 
     def test_ring_recognition_settings_and_three_frame_stitch(self):
         self.bridge._current_mode = 'mobile_chain'

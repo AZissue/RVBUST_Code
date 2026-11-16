@@ -17,7 +17,7 @@ from core.mobile_chain_workflow import MobileChainWorkflow
 class ExplicitStitching:
     def __init__(self, bridge):
         self.bridge = bridge
-        self.plane_clearance = {}
+        self.plane_filters = {}
 
     def configure_plane_filter(self):
         bridge = self.bridge
@@ -27,33 +27,66 @@ class ExplicitStitching:
         dialog = QDialog(bridge.shell)
         dialog.setWindowTitle('标记物平面过滤')
         layout = QFormLayout(dialog)
+        settings = self.plane_filters.get(mode, {})
+
+        def mm_input(value, minimum=0.0):
+            spin = QDoubleSpinBox()
+            spin.setRange(minimum, 1000)
+            spin.setDecimals(2)
+            spin.setSingleStep(.25)
+            spin.setSuffix(' mm')
+            spin.setValue(value)
+            return spin
+
         active = QCheckBox('启用平面过滤')
-        active.setChecked(mode in self.plane_clearance)
-        height = QDoubleSpinBox()
-        height.setRange(0, 1000)
-        height.setDecimals(2)
-        height.setSingleStep(.25)
-        height.setSuffix(' mm')
-        height.setValue(self.plane_clearance.get(mode, 1.0))
-        height.setEnabled(active.isChecked())
-        active.toggled.connect(height.setEnabled)
+        active.setChecked(bool(settings))
+        height = mm_input(settings.get('clearance_mm', 1.0))
+        bottom = QCheckBox('保留底边')
+        bottom.setChecked('bottom_height_mm' in settings)
+        lower = mm_input(settings.get('bottom_height_mm', .5))
+        radius = mm_input(settings.get('radius_mm', .75), .01)
         layout.addRow(active)
-        layout.addRow('距平面最小高度', height)
+        layout.addRow('主体保留高度', height)
+        layout.addRow(bottom)
+        layout.addRow('底边最低高度', lower)
+        layout.addRow('补点半径', radius)
         note = QLabel('适用于标记物与工件底面共面的平台。相机应始终从工件侧拍摄。\n'
-                      '只合并平面上方超过设定高度的点。原始帧仍保留在 DB 中。')
+                      '保留高于主体高度的点；开启保留底边后，只补回靠近主体的低处点。原始帧不受影响。')
         note.setWordWrap(True)
         layout.addRow(note)
+        error = QLabel('底边最低高度须低于主体保留高度。')
+        layout.addRow(error)
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         localize_buttons(buttons)
         buttons.accepted.connect(dialog.accept)
         buttons.rejected.connect(dialog.reject)
         layout.addRow(buttons)
+
+        def refresh():
+            enabled = active.isChecked()
+            restore_bottom = enabled and bottom.isChecked()
+            valid = not restore_bottom or lower.value() < height.value()
+            height.setEnabled(enabled)
+            bottom.setEnabled(enabled)
+            lower.setEnabled(restore_bottom)
+            radius.setEnabled(restore_bottom)
+            error.setVisible(not valid)
+            buttons.button(QDialogButtonBox.Ok).setEnabled(valid)
+
+        active.toggled.connect(refresh)
+        bottom.toggled.connect(refresh)
+        height.valueChanged.connect(refresh)
+        lower.valueChanged.connect(refresh)
+        refresh()
         if dialog.exec() != QDialog.Accepted:
             return
         if active.isChecked():
-            self.plane_clearance[mode] = height.value()
+            settings = dict(clearance_mm=height.value())
+            if bottom.isChecked():
+                settings.update(bottom_height_mm=lower.value(), radius_mm=radius.value())
+            self.plane_filters[mode] = settings
         else:
-            self.plane_clearance.pop(mode, None)
+            self.plane_filters.pop(mode, None)
         button = bridge.shell._industrial_ribbon.commands[(mode, 'plane_filter')]
         button.setText('平面过滤 · 开' if active.isChecked() else '平面过滤')
 
@@ -338,7 +371,7 @@ class ExplicitStitching:
         browser = bridge.frame_db.browsers[mode]
         checked = [uid for uid, _ in browser.checked_components('cloud')]
         explicit = bool(checked)
-        clearance = self.plane_clearance.get(mode)
+        plane_filter = self.plane_filters.get(mode)
         selected = browser.selected_ids()
         selected = [uid for uid in selected if uid in raw_ids]
         if mode == 'mobile_chain' and len(selected) >= 2:
@@ -350,7 +383,7 @@ class ExplicitStitching:
                 return
             raw_ids = prepared[1]
             explicit = prepared[2]
-            clearance = prepared[3]
+            plane_filter = prepared[3]
         if any(uid not in database.records or database.records[uid].kind != 'raw' for uid in raw_ids):
             bridge.shell.log('请仅勾选原始点云执行拼接；拼接结果不能作为原始帧输入。', 'warn')
             return
@@ -381,8 +414,8 @@ class ExplicitStitching:
         # remain useful for inspection but are not an input to this stitch.
         recognize_turntable_dots = (mode == 'turntable' and
             turn.combo_marker_type.currentData() == 'unencoded_circle')
-        if mode != 'multi_cam' and (not explicit or use_chain or recognize_turntable_dots or clearance is not None) and not bridge.recognition.ensure(mode, recognition_inputs,
-                lambda: self.execute((mode, raw_ids, explicit, clearance)),
+        if mode != 'multi_cam' and (not explicit or use_chain or recognize_turntable_dots or plane_filter) and not bridge.recognition.ensure(mode, recognition_inputs,
+                lambda: self.execute((mode, raw_ids, explicit, plane_filter)),
                 on_error=lambda error: show_stitch_failure(bridge, mode, error)):
             return
         voxel = turn.spin_voxel.value() or None
@@ -403,14 +436,19 @@ class ExplicitStitching:
             sources = raw_ids
             import sys
             process_sources = raw_ids if explicit else [frame.database_id for frame in turn.session.get_all_frames()]
-            if clearance is not None:
+            if plane_filter:
                 from core.marker_plane import fit_marker_plane
+                details = f"主体保留高度 > {plane_filter['clearance_mm']:g} mm"
+                if 'bottom_height_mm' in plane_filter:
+                    details += (f"，底边最低高度 > {plane_filter['bottom_height_mm']:g} mm"
+                                f"，补点半径 {plane_filter['radius_mm']:g} mm")
+                stitch_report.append(f'标记物平面过滤：{details}。')
                 for uid in raw_ids if use_chain else process_sources:
                     row = database.records.get(uid)
                     if row is None:
                         raise ValueError('转台扫描帧已从DB删除，请重新采集后拼接')
                     try:
-                        source_planes[uid] = fit_marker_plane(row.markers, clearance)
+                        source_planes[uid] = fit_marker_plane(row.markers, **plane_filter)
                     except ValueError as exc:
                         raise ValueError(f'帧{row.frame_id:03d}：{exc}') from exc
             plane_options = dict(planes=[source_planes[uid] for uid in process_sources]) if source_planes and not use_chain else {}
@@ -470,7 +508,7 @@ class ExplicitStitching:
                 if source_planes:
                     counts = chain.filter_counts.values()
                     before, kept = map(sum, zip(*counts))
-                    stitch_report.append(f'标记物平面过滤（高度 > {clearance:g} mm）：{before:,} → {kept:,} 点。')
+                    stitch_report.append(f'标记物平面过滤点数：{before:,} → {kept:,} 点。')
                 if mode != 'mobile_chain':
                     workflow = None
             elif explicit and mode == 'multi_cam':

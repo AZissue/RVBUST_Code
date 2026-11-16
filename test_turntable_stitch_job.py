@@ -59,6 +59,18 @@ class StitchJobTests(unittest.TestCase):
             self.assertIn('6 → 2 点', metadata['message'])
             self.assertEqual([p.read_bytes() for p in paths], before)
 
+            edge = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(
+                [[1, 2, 3.8], [1, 2, 4.2], [1.8, 2, 4.2], [1, 2, 4.7]]))
+            for path in paths:
+                o3d.io.write_point_cloud(str(path), edge)
+            filtered, metadata = run_job(paths,
+                dict(axis=[0,0,1], center=[0,0,0], angle_deg=90, step_count=4),
+                [[], []], [0, 2],
+                planes=[dict(plane=[0, 0, -1, 4], bottom_band_mm=.5, radius_mm=.75)] * 2)
+            self.assertEqual(len(filtered.points), 4)
+            self.assertIn('8 → 4 点', metadata['message'])
+            np.testing.assert_allclose(np.asarray(filtered.points)[:2], np.asarray(edge.points)[:2])
+
 
 if __name__ == '__main__':
     unittest.main()
