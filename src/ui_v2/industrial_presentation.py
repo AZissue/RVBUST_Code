@@ -515,6 +515,10 @@ class IndustrialPresentation:
         if not enabled or not self.active:
             return
         self._database_result = False
+        if self._database_image_selected:
+            self._database_image_selected = False
+            self.inspector.set_frame(None, [], current_visible=False)
+        self.view_pages.set_context('实时取景')
         self.workspace._viewer.set_maximized(False)
         self.view_pages.set_view('2d')
         self.inspector.collapse.setChecked(False)
@@ -652,7 +656,10 @@ class IndustrialPresentation:
                 reference_markers=reference, registration_accepted=accepted,
                 current_visible=False, **recognition)
 
-    def show_database_image(self, frame, *, match_triangle=()):
+    def show_database_image(self, frame, *, match_triangle=(), refresh=False):
+        # Recognition may finish after the user has switched back to live 2D.
+        if refresh and self.mode == 'mobile_chain' and not self._database_image_selected:
+            return
         self._database_result = False
         self.view_pages.set_context(f'DB · {frame.camera_name} · 帧{frame.frame_id:03d}')
         if self.mode == 'multi_cam':

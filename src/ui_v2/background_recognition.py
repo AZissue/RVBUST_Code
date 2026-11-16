@@ -361,7 +361,8 @@ class BackgroundRecognition(QObject):
             _, frame, component = shown
             triangle, image_triangle = owner.match_geometry(mode, uid, frame.markers_all or frame.markers)
             if component != 'cloud':
-                bridge.shell._stack.currentWidget()._industrial.show_database_image(frame, match_triangle=image_triangle)
+                bridge.shell._stack.currentWidget()._industrial.show_database_image(
+                    frame, match_triangle=image_triangle, refresh=True)
             if component != 'image' and not owner.overlay.active(mode):
                 from ui_common.industrial_scene.marker_display import classify_markers
                 viewer = owner.overlay._viewer(mode)

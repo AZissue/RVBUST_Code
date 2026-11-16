@@ -1691,6 +1691,7 @@ class BackendBridge(QObject):
             self.shell.log("没有已连接相机，无法取景", "warn")
             self.shell.workspace_mobile().set_preview_enabled(False)
             return
+        self.frame_db._cancel_selection('mobile_chain')
         self._start_preview_thread(connected[0])
 
     def _start_preview_thread(self, camera_id: str):

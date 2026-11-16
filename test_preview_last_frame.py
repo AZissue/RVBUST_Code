@@ -57,6 +57,28 @@ class LastFrameTests(unittest.TestCase):
         thread.frame_ready.emit(pixmap)
         return thread, pixmap
 
+    def test_start_preview_replaces_selected_database_image(self):
+        from core.frame_data import FrameData
+        import numpy as np
+
+        presentation = self.ws._industrial
+        frame = FrameData(1, 'cam0', image_np=np.zeros((8, 8, 3), dtype=np.uint8))
+        presentation.show_database_image(frame)
+        self.assertEqual(presentation.inspector.image_view.image.width(), 8)
+
+        thread, _ = self.start_frame()
+        self.assertEqual(presentation.inspector.image_view.image.pixelColor(0, 0), QColor('red'))
+        later = QPixmap(64, 48)
+        later.fill(QColor('blue'))
+        thread.frame_ready.emit(later)
+        self.assertEqual(presentation.inspector.image_view.image.pixelColor(0, 0), QColor('blue'))
+        presentation.show_database_image(frame, refresh=True)
+        self.assertEqual(presentation.inspector.image_view.image.pixelColor(0, 0), QColor('blue'))
+
+        presentation.show_database_image(frame)
+        thread.frame_ready.emit(later)
+        self.assertEqual(presentation.inspector.image_view.image.width(), 8)
+
     def test_stop_retains_last_frame_and_rejects_old_thread_frames_after_restart(self):
         old, pixmap = self.start_frame()
         self.button.click()
