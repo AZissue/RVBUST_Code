@@ -1,10 +1,13 @@
 """Industrial raw acquisition and explicit, independently archived stitching."""
 from pathlib import Path
 import copy
+from time import perf_counter
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QFileDialog
+from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
+                              QFileDialog, QFormLayout, QLabel)
 from .dialogs import ChineseMessageBox as QMessageBox
+from .dialogs import localize_buttons
 from .stitch_failure import show_stitch_failure
 from core.frame_database import STALE_RESULT
 from core.calibration_engine import CalibrationEngine
@@ -14,6 +17,45 @@ from core.mobile_chain_workflow import MobileChainWorkflow
 class ExplicitStitching:
     def __init__(self, bridge):
         self.bridge = bridge
+        self.plane_clearance = {}
+
+    def configure_plane_filter(self):
+        bridge = self.bridge
+        mode = bridge._current_mode
+        if mode not in ('mobile_chain', 'turntable') or not bridge.can_change_workspace():
+            return
+        dialog = QDialog(bridge.shell)
+        dialog.setWindowTitle('标记物平面过滤')
+        layout = QFormLayout(dialog)
+        active = QCheckBox('启用平面过滤')
+        active.setChecked(mode in self.plane_clearance)
+        height = QDoubleSpinBox()
+        height.setRange(0, 1000)
+        height.setDecimals(2)
+        height.setSingleStep(.25)
+        height.setSuffix(' mm')
+        height.setValue(self.plane_clearance.get(mode, 1.0))
+        height.setEnabled(active.isChecked())
+        active.toggled.connect(height.setEnabled)
+        layout.addRow(active)
+        layout.addRow('距平面最小高度', height)
+        note = QLabel('适用于标记物与工件底面共面的平台。相机应始终从工件侧拍摄。\n'
+                      '只合并平面上方超过设定高度的点。原始帧仍保留在 DB 中。')
+        note.setWordWrap(True)
+        layout.addRow(note)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        localize_buttons(buttons)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addRow(buttons)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        if active.isChecked():
+            self.plane_clearance[mode] = height.value()
+        else:
+            self.plane_clearance.pop(mode, None)
+        button = bridge.shell._industrial_ribbon.commands[(mode, 'plane_filter')]
+        button.setText('平面过滤 · 开' if active.isChecked() else '平面过滤')
 
     def selected_raw(self, mode):
         browser = self.bridge.frame_db.browsers.get(mode)
@@ -296,6 +338,7 @@ class ExplicitStitching:
         browser = bridge.frame_db.browsers[mode]
         checked = [uid for uid, _ in browser.checked_components('cloud')]
         explicit = bool(checked)
+        clearance = self.plane_clearance.get(mode)
         selected = browser.selected_ids()
         selected = [uid for uid in selected if uid in raw_ids]
         if mode == 'mobile_chain' and len(selected) >= 2:
@@ -307,6 +350,7 @@ class ExplicitStitching:
                 return
             raw_ids = prepared[1]
             explicit = prepared[2]
+            clearance = prepared[3]
         if any(uid not in database.records or database.records[uid].kind != 'raw' for uid in raw_ids):
             bridge.shell.log('请仅勾选原始点云执行拼接；拼接结果不能作为原始帧输入。', 'warn')
             return
@@ -337,8 +381,8 @@ class ExplicitStitching:
         # remain useful for inspection but are not an input to this stitch.
         recognize_turntable_dots = (mode == 'turntable' and
             turn.combo_marker_type.currentData() == 'unencoded_circle')
-        if mode != 'multi_cam' and (not explicit or use_chain or recognize_turntable_dots) and not bridge.recognition.ensure(mode, recognition_inputs,
-                lambda: self.execute((mode, raw_ids, explicit)),
+        if mode != 'multi_cam' and (not explicit or use_chain or recognize_turntable_dots or clearance is not None) and not bridge.recognition.ensure(mode, recognition_inputs,
+                lambda: self.execute((mode, raw_ids, explicit, clearance)),
                 on_error=lambda error: show_stitch_failure(bridge, mode, error)):
             return
         voxel = turn.spin_voxel.value() or None
@@ -352,11 +396,24 @@ class ExplicitStitching:
         bridge.shell.show_loading('正在执行拼接；原始帧保持独立...')
         stitch_report = []
         def work():
+            started = perf_counter()
             workflow = None
             source_transforms = {}
+            source_planes = {}
             sources = raw_ids
             import sys
             process_sources = raw_ids if explicit else [frame.database_id for frame in turn.session.get_all_frames()]
+            if clearance is not None:
+                from core.marker_plane import fit_marker_plane
+                for uid in raw_ids if use_chain else process_sources:
+                    row = database.records.get(uid)
+                    if row is None:
+                        raise ValueError('转台扫描帧已从DB删除，请重新采集后拼接')
+                    try:
+                        source_planes[uid] = fit_marker_plane(row.markers, clearance)
+                    except ValueError as exc:
+                        raise ValueError(f'帧{row.frame_id:03d}：{exc}') from exc
+            plane_options = dict(planes=[source_planes[uid] for uid in process_sources]) if source_planes and not use_chain else {}
             isolated = (mode == 'turntable' and not use_chain and not getattr(sys, 'frozen', False)
                         and all(uid in database.records for uid in process_sources)
                         and sum(database.records[uid].points or 0 for uid in process_sources) >= 1_000_000)
@@ -370,9 +427,9 @@ class ExplicitStitching:
                     angle_deg=float(np.degrees(calib.angle_rad)), step_count=calib.step_count)
                 markers = [[m for m in database.records[uid].markers if valid_xyz(m) is not None] for uid in sources]
                 merged, metadata = run_job([database.directory/'frames'/uid/'pointmap.ply' for uid in sources],
-                    config, markers, step_indices if explicit else None, voxel, refine)
+                    config, markers, step_indices if explicit else None, voxel, refine, **plane_options)
                 source_transforms = {uid: t for uid, t in zip(sources, metadata['transforms']) if t is not None}
-                if recognize_turntable_dots:
+                if recognize_turntable_dots or source_planes:
                     stitch_report.append(metadata['message'])
                 stitch_report.append('独立进程拼接：' + '、'.join(
                     f'帧{database.records[uid].frame_id:03d} 有效{count:,}点'
@@ -380,20 +437,17 @@ class ExplicitStitching:
             elif use_chain:
                 workflow = MobileChainWorkflow(bridge.camera_manager, bridge.marker_detector,
                     CalibrationEngine(display_names=frame_names), bridge.stitch_engine, bridge.processor)
-                workflow.start_chaining()
+                workflow.start_chaining(defer_cloud=True)
                 manager = workflow.station_manager
                 manager.managed_frames = True
                 for number, uid in enumerate(raw_ids, 1):
-                    frame, _ = database.load_frame(uid)
+                    frame, _ = database.load_frame(uid, 'image')
                     frame.camera_name = sid = f'station_{number}'
                     chain = workflow._chain_stitcher
                     ok, message, edge = chain.add_frame(frame,
                         detect_markers=not bool(frame.recognition_key or frame.markers_all or frame.markers))
                     if not ok:
                         raise ValueError(f'{frame_names[sid]}：{message}；未生成结果，请移除质量不佳的帧后重试')
-                    cached = chain._node_pcd_cache.get(sid)
-                    if cached is None or not len(cached.points):
-                        raise ValueError(f'{frame_names[sid]} 没有有效3D点，未生成拼接结果')
                     manager._stations[sid] = frame
                     manager._station_seq = number
                     workflow._last_edge = edge
@@ -410,7 +464,13 @@ class ExplicitStitching:
                     stitch_report.append('普通圆点链式拼接完成，尚无通过几何验证的闭环共视帧。')
                 source_transforms = {node.frame.database_id: node.T_world.tolist()
                     for node in workflow._chain_stitcher.nodes.values()}
-                merged = workflow._chain_stitcher.get_merged_pointcloud()
+                poses_done = perf_counter()
+                merged = chain.finish_batch(source_planes)
+                stitch_report.append(f'位姿计算 {poses_done - started:.2f} 秒，点云读取与合并 {perf_counter() - poses_done:.2f} 秒。')
+                if source_planes:
+                    counts = chain.filter_counts.values()
+                    before, kept = map(sum, zip(*counts))
+                    stitch_report.append(f'标记物平面过滤（高度 > {clearance:g} mm）：{before:,} → {kept:,} 点。')
                 if mode != 'mobile_chain':
                     workflow = None
             elif explicit and mode == 'multi_cam':
@@ -443,14 +503,16 @@ class ExplicitStitching:
             elif explicit and mode == 'turntable':
                 frames_clouds = [database.load_frame(uid) for uid in raw_ids]
                 from core.point_cloud_processor import PointCloudProcessor
-                clouds = [PointCloudProcessor._filter_valid(cloud)[0] for _, cloud in frames_clouds]
+                clouds = [cloud if source_planes else PointCloudProcessor._filter_valid(cloud)[0]
+                          for _, cloud in frames_clouds]
                 if any(not len(cloud.points) for cloud in clouds):
                     raise ValueError('勾选帧没有有效点云')
                 from ui_common.industrial_scene.marker_display import valid_xyz
                 markers = [[m for m in frame.markers if valid_xyz(m) is not None] for frame, _ in frames_clouds]
                 color_calib = copy.deepcopy(turn.session.calib)
                 merged, message = color_calib.stitch_pointclouds(clouds,
-                    downsample_voxel=voxel, icp_refine=refine, markers=markers, step_indices=step_indices)
+                    downsample_voxel=voxel, icp_refine=refine, markers=markers, step_indices=step_indices,
+                    **plane_options)
                 if merged is None:
                     raise ValueError(message)
                 source_transforms = {uid: t.tolist() for uid, t in zip(raw_ids, color_calib.last_stitch_transforms) if t is not None}
@@ -469,13 +531,15 @@ class ExplicitStitching:
                 sources = [frame.database_id for frame in turn.session.get_all_frames()]
                 if any(uid not in database.records for uid in sources):
                     raise ValueError('转台扫描帧已从DB删除，请重新采集后拼接')
-                merged, message = turn.session.stitch(downsample_voxel=voxel, icp_refine=refine)
+                merged, message = turn.session.stitch(downsample_voxel=voxel, icp_refine=refine, **plane_options)
                 if merged is None:
                     raise ValueError(message)
                 source_transforms = {uid: t.tolist() for uid, t in zip(sources, turn.session.calib.last_stitch_transforms) if t is not None}
-            if recognize_turntable_dots and not (isolated or use_chain):
+            if (recognize_turntable_dots or source_planes) and not (isolated or use_chain):
                 stitch_report.append(message)
-            uid = database.publish_result(merged, sources, source_transforms=source_transforms)
+            publishing = perf_counter()
+            uid = database.publish_result(merged, sources, source_transforms=source_transforms, source_planes=source_planes)
+            stitch_report.append(f'结果写入 DB {perf_counter() - publishing:.2f} 秒，后台拼接总计 {perf_counter() - started:.2f} 秒。')
             return uid, merged, workflow
         def done(result, error):
             bridge.shell.hide_loading()

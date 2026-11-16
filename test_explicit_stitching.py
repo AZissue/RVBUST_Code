@@ -10,7 +10,7 @@ import unittest
 import numpy as np
 import cv2
 import open3d as o3d
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QCheckBox, QDialog, QMessageBox
 import test_ui_frame_database as fixture
 from core.session_project import SessionProject
 
@@ -41,6 +41,55 @@ class ExplicitStitchingTests(unittest.TestCase):
     def execute(self):
         self.win._industrial_ribbon.commands[('mobile_chain', 'stitch')].click()
         self.wait(lambda: not any(w.isRunning() for w in self.bridge._workers))
+
+    def test_mobile_and_turntable_plane_filter_roundtrip_and_preserve_raw(self):
+        from core.frame_database import FrameDatabase
+        from core.postprocess.source_poses import load_stitch_source
+
+        for mode in ('mobile_chain', 'turntable'):
+            with self.subTest(mode=mode):
+                self.win.set_mode(mode, [])
+                self.bridge._current_mode = mode
+                db = self.bridge.frame_db.databases[mode]
+                frames, original = [], {}
+                for number in (1, 2):
+                    frame = self.source(number)
+                    frame.markers = [
+                        dict(code=index, x_2d=1, y_2d=1, x_3d=x, y_3d=y, z_3d=200)
+                        for index, (x, y) in enumerate(((-30,-30), (30,-30), (30,30), (-30,30)))
+                    ]
+                    points = [[1, 3, 193], [1, 3, 198], [1, 3, 200], [1, 3, 208]]
+                    cloud = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points))
+                    self.assertTrue(o3d.io.write_point_cloud(frame.offline_pointmap_path, cloud))
+                    uid = db.ingest(frame)
+                    original[uid] = (db.directory/'frames'/uid/'pointmap.ply').read_bytes()
+                    frames.append(frame)
+                if mode == 'turntable':
+                    session = self.win.workspace_turntable().session
+                    session.apply_calibration([0,0,1], [0,0,0], 90, 4)
+                    session.sequence = frames
+                    session.sequence_pcds = [cloud, cloud]
+                    session.sequence_markers = [frame.markers for frame in frames]
+                def accept_filter(dialog):
+                    dialog.findChild(QCheckBox).setChecked(True)
+                    return QDialog.Accepted
+                filter_button = self.win._industrial_ribbon.commands[(mode, 'plane_filter')]
+                with patch.object(QDialog, 'exec', accept_filter):
+                    filter_button.click()
+                self.assertIn('开', filter_button.text())
+                self.run_mode(mode)
+                results = [row for row in db.records.values() if row.kind == 'result']
+                self.assertEqual(len(results), 1, self.win._st_hint.text())
+                result = results[0]
+                self.assertEqual(result.points, 4)
+                self.assertEqual(set(result.source_planes), set(original))
+                reopened = FrameDatabase(mode)
+                reopened.open_project(db.directory/'index.json')
+                restored = reopened.records[result.uid]
+                self.assertEqual(restored.source_planes, result.source_planes)
+                for uid, expected in original.items():
+                    self.assertEqual((db.directory/'frames'/uid/'pointmap.ply').read_bytes(), expected)
+                    self.assertEqual(len(load_stitch_source(reopened, restored, uid).points), 2)
 
     def test_ring_recognition_settings_and_three_frame_stitch(self):
         self.bridge._current_mode = 'mobile_chain'

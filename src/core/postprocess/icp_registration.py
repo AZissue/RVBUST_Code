@@ -55,8 +55,7 @@ def refine_icp(reference, moving, params):
 
 def refine_stitched(database, uid, reference_uid, params):
     """Rebuild a stitch from its raw frames; fix one frame and grow the reference."""
-    from .source_poses import source_poses
-    from ..point_cloud_processor import PointCloudProcessor
+    from .source_poses import load_stitch_source, source_poses
     row = database.records[uid]
     if row.kind != 'result' or row.purpose == '后处理结果':
         raise ValueError('请选择原始拼接结果；裁剪/下采样后的结果不能直接按原始帧重建')
@@ -69,8 +68,7 @@ def refine_stitched(database, uid, reference_uid, params):
         raw = database.records.get(key)
         if raw is None or raw.revision != revision:
             raise ValueError('原始帧已变化，请重新执行拼接')
-        _, cloud = database.load_frame(key, 'cloud')
-        cloud, _ = PointCloudProcessor._filter_valid(cloud)
+        cloud = load_stitch_source(database, row, key)
         return CloudLayer(raw.logical_name,
             np.asarray(cloud.points) @ pose[:3,:3].T + pose[:3,3],
             np.asarray(cloud.colors) if cloud.has_colors() else None,

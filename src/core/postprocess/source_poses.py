@@ -2,6 +2,16 @@
 import numpy as np
 
 
+def load_stitch_source(database, result, source_uid):
+    """Load the same source geometry that participated in this stitch."""
+    _, cloud = database.load_frame(source_uid, 'cloud')
+    if result.source_planes:
+        from ..marker_plane import filter_source_cloud
+        return filter_source_cloud(cloud, result.source_planes[source_uid])[0]
+    from ..point_cloud_processor import PointCloudProcessor
+    return PointCloudProcessor._filter_valid(cloud)[0]
+
+
 def source_poses(database, uid, path=()):
     if uid in path or uid not in database.records:
         raise ValueError('原始帧来源缺失或循环，请重新拼接')

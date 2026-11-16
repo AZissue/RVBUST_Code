@@ -5,6 +5,8 @@ from .dialogs import ChineseMessageBox
 
 def advice(error, marker_type):
     text = str(error)
+    if any(word in text for word in ('标记物平面', '标记物在平面', '圆心近似共线', '圆心未形成可靠的共面分布')):
+        return '请确认各帧有至少四个分布开且共面的有效三维圆心，相机从工件侧拍摄。若工件贴近平台，请降低“拼接 → 平面过滤”的最小高度，也可关闭过滤后重试。'
     if '未与2D对齐' in text:
         return '请在“属性 → 拍摄参数”开启“点云对应2D”，在DB树中选中黄色原始帧后点击顶部“重拍当前”。修改相机设置不会修复旧帧；请完成重拍后再执行拼接。'
     if any(word in text for word in ('写入DB', '存储', '磁盘', '文件', 'disk', 'Permission')):

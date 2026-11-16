@@ -85,7 +85,7 @@ class MobileChainWorkflow(WorkflowBase):
     # ------------------------------------------------------------------
     # 链式拼接流程
     # ------------------------------------------------------------------
-    def start_chaining(self) -> Tuple[bool, str]:
+    def start_chaining(self, *, defer_cloud=False) -> Tuple[bool, str]:
         """开始链式拼接：初始化 ChainStitcher 和 StationManager。
 
         注意：会话目录不再在启动时创建，而是延迟到首次拍摄机位时，
@@ -100,6 +100,7 @@ class MobileChainWorkflow(WorkflowBase):
             min_common_markers=3,
             min_inlier_ratio=0.6,
             max_rms_mm=2.0,
+            defer_cloud=defer_cloud,
         )
         self._station_manager = StationManager(self.camera_manager)
         # 延迟创建会话目录，首次拍摄时 StationManager.capture_station 会自动创建

@@ -74,6 +74,7 @@ class FrameRecord:
     registration_transform: list | None = None
     parent_transforms: dict | None = None
     intermediate_of: str = ""
+    source_planes: dict = field(default_factory=dict)
 
 
 class FrameDatabase:
@@ -97,10 +98,10 @@ class FrameDatabase:
         self.directory.mkdir(parents=True, exist_ok=True)
         # Keep the schema-1 record shape readable by older MCC versions. The
         # optional top-level cache can be ignored without losing raw assets.
-        records = [{key: value for key, value in vars(row).items() if key not in ('recognition', 'operation_id', 'output_role')}
+        records = [{key: value for key, value in vars(row).items() if key not in ('recognition', 'operation_id', 'output_role', 'source_planes')}
                    for row in self.records.values()]
         removed = {uid: {**entry, 'record': {key: value for key, value in entry['record'].items()
-                                            if key not in ('recognition', 'operation_id', 'output_role')}} for uid, entry in self.removed.items()}
+                                            if key not in ('recognition', 'operation_id', 'output_role', 'source_planes')}} for uid, entry in self.removed.items()}
         recognition = {uid: row.recognition for uid, row in self.records.items() if row.recognition}
         recognition.update({uid: entry['record']['recognition'] for uid, entry in self.removed.items()
                             if entry['record'].get('recognition')})
@@ -110,9 +111,13 @@ class FrameDatabase:
                                 for key in ('operation_id', 'output_role')}
                            for uid, entry in self.removed.items()
                            if entry['record'].get('operation_id')})
+        source_planes = {row.uid: row.source_planes for row in self.records.values() if row.source_planes}
+        source_planes.update({uid: entry['record']['source_planes'] for uid, entry in self.removed.items()
+                              if entry['record'].get('source_planes')})
         write_json_atomic(str(self.directory / 'index.json'), _json_value(dict(
             schema=1, mode=self.mode, sessions=self.sessions,
-            records=records, removed=removed, recognition=recognition, operations=operations)), ensure_ascii=False, indent=2)
+            records=records, removed=removed, recognition=recognition, operations=operations,
+            source_planes=source_planes)), ensure_ascii=False, indent=2)
 
     def _notify(self):
         if self.on_changed:
@@ -393,11 +398,12 @@ class FrameDatabase:
                     temporary.unlink(missing_ok=True)
         return str(target)
 
-    def publish_result(self, cloud, source_ids, *, postprocess=False, name=None, source_transforms=None):
+    def publish_result(self, cloud, source_ids, *, postprocess=False, name=None, source_transforms=None, source_planes=None):
         """Commit a separate immutable result; never change raw frame geometry."""
-        return self.publish_results([(cloud, source_ids, name)], postprocess=postprocess, source_transforms=source_transforms)[0]
+        return self.publish_results([(cloud, source_ids, name)], postprocess=postprocess,
+            source_transforms=source_transforms, source_planes=source_planes)[0]
 
-    def publish_results(self, results, *, postprocess=False, output_roles=None, source_transforms=None, registration_transform=None, parent_transforms=None, per_source_transforms=None, intermediate_of=""):
+    def publish_results(self, results, *, postprocess=False, output_roles=None, source_transforms=None, registration_transform=None, parent_transforms=None, per_source_transforms=None, intermediate_of="", source_planes=None):
         """Atomically commit related (cloud, source_ids, name) result branches.
 
         In particular, polygon keep/discard branches must both succeed or neither
@@ -444,6 +450,7 @@ class FrameDatabase:
                         operation_id=operation_id, output_role=output_role,
                         source_transforms=copy.deepcopy(per_source_transforms[output_index] if per_source_transforms is not None else source_transforms or {}),
                         intermediate_of=intermediate_of,
+                        source_planes=copy.deepcopy(source_planes or {}),
                         registration_transform=copy.deepcopy(registration_transform),
                         parent_transforms=copy.deepcopy(parent_transforms))
                     identifiers.append(uid)
@@ -564,12 +571,16 @@ class FrameDatabase:
         if not isinstance(recognition, dict) or not all(isinstance(value, dict) for value in recognition.values()):
             raise ValueError('DB识别缓存格式无效')
         operations = data.get('operations', {})
+        source_planes = data.get('source_planes', {})
+        if not isinstance(source_planes, dict) or not all(isinstance(value, dict) for value in source_planes.values()):
+            raise ValueError('DB标记物平面过滤记录无效')
         if (not isinstance(operations, dict) or any(
                 not isinstance(value, dict) or not isinstance(value.get('operation_id', ''), str)
                 or value.get('output_role', '') not in ('', 'inside', 'outside', 'color_kept', 'color_rejected')
                 for value in operations.values())):
             raise ValueError('DB后处理分组格式无效')
         for uid, entry in removed.items():
+            entry['record']['source_planes'] = source_planes.get(uid, {})
             entry['record'].update({key: operations.get(uid, {}).get(key, '')
                                     for key in ('operation_id', 'output_role')})
             entry['record']['recognition'] = recognition.get(uid, entry['record'].get('recognition', {}))
@@ -580,6 +591,7 @@ class FrameDatabase:
                 raise ValueError('DB回收区索引无效')
         for values in data['records']:
             row = FrameRecord(**values)
+            row.source_planes = source_planes.get(row.uid, {})
             row.operation_id = operations.get(row.uid, {}).get('operation_id', '')
             row.output_role = operations.get(row.uid, {}).get('output_role', '')
             row.recognition = recognition.get(row.uid, row.recognition)

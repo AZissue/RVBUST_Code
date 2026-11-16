@@ -840,8 +840,7 @@ class PostprocessWindow(QDialog):
         directory = self.directory
         tokens = self._clouds[uid].origins
         def work():
-            from core.postprocess.source_poses import source_poses
-            from core.point_cloud_processor import PointCloudProcessor
+            from core.postprocess.source_poses import load_stitch_source, source_poses
             self._validate_source(directory,tokens)
             row = self.database.records[uid]
             if row.kind != 'result' or row.purpose == '后处理结果' or row.intermediate_of:
@@ -849,8 +848,7 @@ class PostprocessWindow(QDialog):
             poses = source_poses(self.database,uid)
             layers = []
             for index,(key,(revision,pose)) in enumerate(poses.items(),1):
-                frame, cloud = self.database.load_frame(key,'cloud')
-                cloud,_ = PointCloudProcessor._filter_valid(cloud)
+                cloud = load_stitch_source(self.database, row, key)
                 raw = self.database.records[key]
                 layers.append(CloudLayer(f'配准中间帧 {index:03d} · {raw.camera} · 原帧{raw.frame_id:03d}',
                     np.asarray(cloud.points) @ pose[:3,:3].T + pose[:3,3],

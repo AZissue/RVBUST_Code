@@ -267,6 +267,7 @@ class TurntableCalibrator:
         marker_chain: bool = True,
         step_indices: Optional[List[int]] = None,
         remove_outliers: bool = False,
+        planes=None,
     ) -> Tuple[Optional[o3d.geometry.PointCloud], str]:
         """按标定角度把多帧点云变换到参考系并合并。
 
@@ -326,6 +327,23 @@ class TurntableCalibrator:
                 chain_msgs.append(f"帧{i}=标定等角变换{reason}")
             T_worlds.append(T_world)
 
+        filter_message = ""
+        if planes is not None:
+            from .marker_plane import filter_source_cloud
+            if len(planes) != len(pcds):
+                return None, "标记物平面与转台帧数不一致"
+            filtered, valid_count = [], 0
+            for index, (pcd, plane) in enumerate(zip(pcds, planes)):
+                if pcd is None:
+                    return None, f"转台帧 {index + 1:03d} 没有点云"
+                try:
+                    kept, valid = filter_source_cloud(pcd, plane)
+                except ValueError as exc:
+                    return None, f"转台帧 {index + 1:03d}：{exc}"
+                filtered.append(kept)
+                valid_count += valid
+            pcds = filtered
+            filter_message = f"标记物平面过滤：{valid_count:,} → {sum(len(p.points) for p in pcds):,} 点，"
         ref = pcds[0]
         ref_down = None
         if icp_refine:
@@ -374,7 +392,7 @@ class TurntableCalibrator:
         n_removed = before_filter - len(merged.points)
 
         valid_pcds = [p for p in pcds if p is not None]
-        msg = (f"合并 {len(valid_pcds)} 帧，原始共 {sum(len(p.points) for p in valid_pcds)} 点，"
+        msg = (filter_message + f"合并 {len(valid_pcds)} 帧，输入共 {sum(len(p.points) for p in valid_pcds)} 点，"
                f"配准方式: {'; '.join(chain_msgs)}，")
         if icp_refine:
             msg += f"ICP 精修 {n_refined} 帧，"
@@ -621,14 +639,14 @@ class OnlineTurntableSession:
 
     def stitch(self, downsample_voxel: Optional[float] = None,
                 icp_refine: bool = False,
-                marker_chain: bool = True) -> Tuple[Optional[o3d.geometry.PointCloud], str]:
+                marker_chain: bool = True, *, planes=None) -> Tuple[Optional[o3d.geometry.PointCloud], str]:
         if not self.can_stitch():
             return None, "尚未标定或帧数不足"
         return self.calib.stitch_pointclouds(self.get_all_pcds(),
                                              downsample_voxel=downsample_voxel,
                                              icp_refine=icp_refine,
                                              markers=self.get_all_markers(),
-                                             marker_chain=marker_chain)
+                                             marker_chain=marker_chain, planes=planes)
 
     def reset(self):
         """重置会话（保留 session_dir）。"""

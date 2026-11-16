@@ -75,7 +75,7 @@ class ChainStitcher:
                  stitch_engine: StitchEngine,
                  min_common_markers: int = 6,
                  min_inlier_ratio: float = 0.6,
-                 max_rms_mm: float = 2.0):
+                 max_rms_mm: float = 2.0, *, defer_cloud: bool = False):
         self.marker_detector = marker_detector
         self.calibration_engine = calibration_engine
         self.stitch_engine = stitch_engine
@@ -93,6 +93,9 @@ class ChainStitcher:
         self._node_pcd_cache: Dict[str, o3d.geometry.PointCloud] = {}
         self._node_T_cache: Dict[str, np.ndarray] = {}
         self._merged_pcd_cache: Optional[o3d.geometry.PointCloud] = None
+        self._batch_matches = {} if defer_cloud else None
+        self.plane_filters = {}
+        self.filter_counts = {}
 
     # ------------------------------------------------------------------
     # 公共接口
@@ -139,8 +142,9 @@ class ChainStitcher:
             self._reference_id = station_id
             node.T_world = np.eye(4, dtype=np.float64)
             self.pose_graph.add_node(station_id, T=np.eye(4, dtype=np.float64))
-            self._cache_node_pcd(node)
-            self._add_node_to_merged(station_id)
+            if self._batch_matches is None:
+                self._cache_node_pcd(node)
+                self._add_node_to_merged(station_id)
             logger.info(f"链式拼接：机位 {self.calibration_engine.display_name(station_id)} 设为参考系")
             return True, f"机位 {self.calibration_engine.display_name(station_id)} 设为参考系，{len(markers)} 个标记", None
 
@@ -188,8 +192,9 @@ class ChainStitcher:
             return False, "位姿图不连通，请检查链式结构", None
 
         # 6. 缓存新机位变换后的点云并增量合并
-        self._cache_node_pcd(node)
-        self._add_node_to_merged(station_id)
+        if self._batch_matches is None:
+            self._cache_node_pcd(node)
+            self._add_node_to_merged(station_id)
 
         # 7. 更新累计误差
         node.cum_rms_mm = self._compute_cumulative_rms(station_id)
@@ -199,6 +204,13 @@ class ChainStitcher:
                f"累计误差 {node.cum_rms_mm:.3f}mm")
         logger.info(msg)
         return True, msg, best_edge
+
+    def finish_batch(self, plane_filters):
+        """Load each cloud once after the batch's final poses are available."""
+        self._batch_matches = None
+        self.plane_filters = plane_filters
+        self._rebuild_merged_cache(require_all=True)
+        return self.get_merged_pointcloud()
 
     def get_merged_pointcloud(self, processor=None):
         """获取当前拼接点云（优先使用增量缓存，缺失时回退全量重算）。"""
@@ -454,12 +466,17 @@ class ChainStitcher:
             self._node_pcd_cache.pop(sid, None)
             self._node_T_cache.pop(sid, None)
             return None
-        # 复制一份避免污染原始 FrameData 中的点云数据
-        pcd = o3d.geometry.PointCloud(pcd)
         # Invalid organized pixels must be removed before translation, otherwise
         # zero placeholders become a dense, apparently valid point at the pose.
-        from .point_cloud_processor import PointCloudProcessor
-        pcd, _ = PointCloudProcessor._filter_valid(pcd)
+        plane = self.plane_filters.get(node.frame.database_id)
+        if plane is not None:
+            from .marker_plane import filter_source_cloud
+            pcd, valid = filter_source_cloud(pcd, plane)
+            self.filter_counts[sid] = (valid, len(pcd.points))
+        else:
+            from .point_cloud_processor import PointCloudProcessor
+            filtered, _ = PointCloudProcessor._filter_valid(pcd)
+            pcd = o3d.geometry.PointCloud(pcd) if filtered is pcd else filtered
         if T is not None:
             pcd.transform(T.astype(np.float64))
         self._node_pcd_cache[sid] = pcd
@@ -475,13 +492,18 @@ class ChainStitcher:
             self._merged_pcd_cache = o3d.geometry.PointCloud()
         merge_pointclouds(self._merged_pcd_cache, pcd)
 
-    def _rebuild_merged_cache(self):
+    def _rebuild_merged_cache(self, *, require_all=False):
         """根据当前所有节点重建缓存（回退路径）。"""
         self._node_pcd_cache.clear()
         self._node_T_cache.clear()
         self._merged_pcd_cache = o3d.geometry.PointCloud()
         for sid, node in self.nodes.items():
-            self._cache_node_pcd(node)
+            try:
+                cloud = self._cache_node_pcd(node)
+            except ValueError as exc:
+                raise ValueError(f'{self.calibration_engine.display_name(sid)}：{exc}') from exc
+            if require_all and (cloud is None or not len(cloud.points)):
+                raise ValueError(f'{self.calibration_engine.display_name(sid)}：没有有效3D点，未生成拼接结果')
             self._add_node_to_merged(sid)
 
     # ------------------------------------------------------------------
@@ -490,7 +512,12 @@ class ChainStitcher:
     def _try_register(self, new_node: ChainNode, prev_node: ChainNode) -> Optional[ChainEdge]:
         """尝试把新机位配准到已有位姿图。"""
         if new_node.unencoded and prev_node.unencoded:
-            return self._register_unencoded(new_node, prev_node)
+            if self._batch_matches is None:
+                return self._register_unencoded(new_node, prev_node)
+            pair = (new_node.station_id, prev_node.station_id)
+            if pair not in self._batch_matches:
+                self._batch_matches[pair] = self._register_unencoded(new_node, prev_node)
+            return self._batch_matches[pair]
         result = self.calibration_engine.calibrate_pair(
             prev_node.station_id, new_node.station_id,
             prev_node.markers, new_node.markers,

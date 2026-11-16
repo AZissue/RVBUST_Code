@@ -202,6 +202,8 @@ class IndustrialRibbon(QWidget):
                 button.setToolTip('打开点云后处理，直接使用当前项目DB数据')
             elif key == 'stitch':
                 button.setProperty('primaryAction', True)
+            elif key == 'plane_filter':
+                button.setToolTip('配置拼接前的标记物平面过滤及工件保留高度')
             self.commands[(mode, key)] = button
             actions.addWidget(button)
         col.addLayout(actions)
@@ -264,7 +266,11 @@ class IndustrialRibbon(QWidget):
             self._group(row, '帧编辑', [('recapture', '重拍选中帧', 'refresh',
                 lambda: self._stitch_action('recapture_selected'))], mode)
         stitch_source = robot.panel.btn_publish if mode == 'robot_stitch' else lambda: self._stitch_action('execute')
-        self._group(row, '拼接', [('stitch', '执行拼接', 'stitch', stitch_source)], mode)
+        stitch_entries = [('stitch', '执行拼接', 'stitch', stitch_source)]
+        if mode in ('mobile_chain', 'turntable'):
+            stitch_entries.append(('plane_filter', '平面过滤', 'sliders',
+                                   lambda: self._stitch_action('configure_plane_filter')))
+        self._group(row, '拼接', stitch_entries, mode)
         self._group(row, '视图', [('restore', '返回视图', 'undo', self.restore_view),
                                  ('fit', '适配视图', 'reset_view', self.fit_view),
                                  ('screenshot', '视图截图', 'video', self.screenshot)], mode)
@@ -352,6 +358,9 @@ class IndustrialRibbon(QWidget):
         if self.return_button is not None:
             self.return_button.setEnabled(ready)
         for mode in self._pages:
+            plane_filter = self.commands.get((mode, 'plane_filter'))
+            if plane_filter is not None:
+                plane_filter.setEnabled(ready)
             self.commands[(mode, 'save')].setEnabled(ready)
             self.commands[(mode, 'postprocess')].setEnabled(ready)
             self.commands[(mode, 'disconnect')].setEnabled(

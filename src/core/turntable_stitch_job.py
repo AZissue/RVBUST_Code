@@ -11,12 +11,12 @@ import sys
 import tempfile
 
 
-def run_job(paths, calibration, markers, steps, voxel=None, refine=False):
+def run_job(paths, calibration, markers, steps, voxel=None, refine=False, *, planes=None):
     import open3d as o3d
     with tempfile.TemporaryDirectory(prefix='MCC_turntable_stitch_') as folder:
         root = Path(folder)
         request = dict(paths=list(map(str, paths)), calibration=calibration, markers=markers,
-                       steps=steps, voxel=voxel, refine=refine)
+                       steps=steps, voxel=voxel, refine=refine, planes=planes)
         (root/'request.json').write_text(json.dumps(request), encoding='utf-8')
         env = os.environ.copy()
         env['PYTHONPATH'] = str(Path(__file__).resolve().parents[1])
@@ -36,18 +36,29 @@ def run_job(paths, calibration, markers, steps, voxel=None, refine=False):
 
 def child(root):
     import open3d as o3d
+    from .marker_plane import filter_source_cloud
     from .point_cloud_processor import PointCloudProcessor
     from .turntable_calibrator import TurntableCalibrator
     root = Path(root)
     request = json.loads((root/'request.json').read_text(encoding='utf-8'))
     clouds, counts = [], []
-    for path in request['paths']:
+    planes = request.get('planes')
+    if planes is not None and len(planes) != len(request['paths']):
+        raise ValueError('标记物平面与转台帧数不一致')
+    for index, path in enumerate(request['paths']):
         cloud = o3d.io.read_point_cloud(path)
-        cloud, _ = PointCloudProcessor._filter_valid(cloud)
+        if planes is None:
+            cloud, _ = PointCloudProcessor._filter_valid(cloud)
+            valid = len(cloud.points)
+        else:
+            try:
+                cloud, valid = filter_source_cloud(cloud, planes[index])
+            except ValueError as exc:
+                raise ValueError(f'转台帧 {index + 1:03d}：{exc}') from exc
         if not len(cloud.points):
             raise ValueError('输入帧无有效点：' + path)
         clouds.append(cloud)
-        counts.append(len(cloud.points))
+        counts.append(valid)
     calib = TurntableCalibrator()
     calib.set_calibration(**request['calibration'])
     merged, message = calib.stitch_pointclouds(clouds, downsample_voxel=request['voxel'],
@@ -56,6 +67,8 @@ def child(root):
         raise ValueError(message)
     if not o3d.io.write_point_cloud(str(root/'result.ply'), merged):
         raise IOError('独立拼接结果保存失败')
+    if planes is not None:
+        message = f'标记物平面过滤：{sum(counts):,} → {sum(len(p.points) for p in clouds):,} 点，' + message
     (root/'result.json').write_text(json.dumps(dict(message=message, counts=counts,
         transforms=[t.tolist() if t is not None else None for t in calib.last_stitch_transforms])), encoding='utf-8')
 
