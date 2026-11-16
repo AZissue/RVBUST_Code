@@ -216,6 +216,35 @@ class RecognitionPageTests(unittest.TestCase):
         self.assertIn('未稳定检出', page.status.text())
         self.assertEqual(self.bridge.recognition.config('multi_cam'), before)
 
+    def test_auto_settings_applies_plain_dot_parameters_from_displayed_raw_frame(self):
+        self.bridge._current_mode = 'mobile_chain'
+        self.win.set_mode('mobile_chain', [])
+        page = self.page()
+        page.marker_type.setCurrentIndex(page.marker_type.findData('unencoded_circle'))
+        self.applied(page)
+        page.dot_auto_button.click()
+        self.assertIn('没有原始图像', page.status.text())
+        db = self.bridge.frame_db.databases['mobile_chain']
+        uid = db.ingest(self.source())
+        frame, _ = db.load_frame(uid, 'image')
+        self.bridge.frame_db.display_frame('mobile_chain', uid, frame, None, 'image')
+        before = self.bridge.recognition.config('mobile_chain')['unencoded']
+        outcome = dict(unencoded=dict(before, polarity='light', threshold=86, max_radius=80.),
+                       stable_count=6)
+        with patch.object(MarkerDetector, 'search_unencoded_params', return_value=outcome) as search:
+            page.dot_auto_button.click()
+            self.wait(lambda: page.dot_threshold.value() == 86)
+            self.applied(page)
+            self.wait(lambda: not self.bridge._workers)
+        self.assertEqual(search.call_args.args[1], frame.offline_pointmap_path)
+        self.assertEqual(self.bridge.recognition.config('mobile_chain')['unencoded'], outcome['unencoded'])
+        self.assertIn('稳定检出 6 个', page.status.text())
+        with patch.object(MarkerDetector, 'search_unencoded_params', side_effect=ValueError('未稳定检出')):
+            page.dot_auto_button.click()
+            self.wait(lambda: not self.bridge._workers)
+        self.assertIn('未稳定检出', page.status.text())
+        self.assertEqual(self.bridge.recognition.config('mobile_chain')['unencoded'], outcome['unencoded'])
+
     def test_cancel_or_deleted_source_drops_late_search_results(self):
         page = self.page()
         uid = self.search_frame()

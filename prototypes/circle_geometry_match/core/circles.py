@@ -1,5 +1,5 @@
 """Ordinary unencoded circle centres from image + organized point map, millimetres."""
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, replace
 from math import hypot
 import cv2
 import numpy as np
@@ -44,8 +44,7 @@ def _is_concentric_ring(contours, hierarchy, hole, outer_area, centre, axes, min
     )
 
 
-def detect_circles(image, pointmap, params=CircleParameters()):
-    params.validate()
+def _grayscale(image):
     image=np.asarray(image)
     if image.dtype==np.uint16:
         image=(image/256).astype(np.uint8)
@@ -54,6 +53,16 @@ def detect_circles(image, pointmap, params=CircleParameters()):
     gray=cv2.cvtColor(image,cv2.COLOR_BGR2GRAY) if image.ndim==3 and image.shape[2]==3 else image
     if gray.ndim!=2:
         raise ValueError('仅支持灰度或三通道BGR图像')
+    return gray
+
+
+class _TooManyCircles(ValueError):
+    pass
+
+
+def detect_circles(image, pointmap, params=CircleParameters(), *, candidate_limit=24):
+    params.validate()
+    gray = _grayscale(image)
     h,w=gray.shape
     points=np.asarray(pointmap,float)
     if points.shape!=(h*w,3):
@@ -74,7 +83,8 @@ def detect_circles(image, pointmap, params=CircleParameters()):
         radius=np.sqrt(area/np.pi)
         if not params.min_radius<=radius<=params.max_radius or perimeter<=0:
             continue
-        if 4*np.pi*area/perimeter**2<params.circularity or len(contour)<5:
+        circularity = 4 * np.pi * area / perimeter**2
+        if circularity < params.circularity or len(contour) < 5:
             continue
         (x,y),(a,b),_=cv2.fitEllipse(contour)
         left,top,ww,hh=cv2.boundingRect(contour)
@@ -87,21 +97,21 @@ def detect_circles(image, pointmap, params=CircleParameters()):
             contours, hierarchy, hole, area, (x, y), (a, b), params.circularity
         ):
             continue
-        candidates.append((float(radius), float(x), float(y), min(a, b)))
+        candidates.append((float(radius), float(x), float(y), min(a, b), circularity))
 
     # A rim and a separated inner disk can both be foreground components.
     # Prefer the outer ellipse when the centres are close and one encloses the other.
     unique = []
-    for radius, x, y, minor_axis in sorted(candidates, key=lambda item: item[0], reverse=True):
+    for radius, x, y, minor_axis, circularity in sorted(candidates, key=lambda item: item[0], reverse=True):
         if any(hypot(x - ox, y - oy) <= min(.25 * outer, outer - radius + 1.)
-               for outer, ox, oy, _ in unique):
+               for outer, ox, oy, _, _ in unique):
             continue
-        unique.append((radius, x, y, minor_axis))
-        if len(unique) > 24:
-            raise ValueError('圆点候选超过24个，请缩小半径范围或调整灰度阈值；本版不截断候选后猜测匹配')
+        unique.append((radius, x, y, minor_axis, circularity))
+        if len(unique) > candidate_limit:
+            raise _TooManyCircles(f'圆点候选超过{candidate_limit}个，请缩小半径范围或调整灰度阈值；本版不截断候选后猜测匹配')
 
     dots=[]
-    for radius, x, y, minor_axis in unique:
+    for radius, x, y, minor_axis, circularity in unique:
         cx, cy = int(round(x)), int(round(y))
         r=max(1,min(params.depth_radius,int(max(1,minor_axis*.25))))
         x0,x1=max(0,cx-r),min(w,cx+r+1);y0,y1=max(0,cy-r),min(h,cy+r+1)
@@ -115,6 +125,69 @@ def detect_circles(image, pointmap, params=CircleParameters()):
             stable=np.abs(samples[:,2]-median[2])<=params.depth_spread
             if stable.sum()>=3 and stable.mean()>=.7:
                 xyz=np.median(samples[stable],axis=0)
-        dots.append(dict(pixel=[x,y],radius=radius,xyz=xyz,valid_3d=xyz is not None))
+        dots.append(dict(pixel=[x,y],radius=radius,circularity=circularity,xyz=xyz,valid_3d=xyz is not None))
     dots.sort(key=lambda dot:(round(dot['pixel'][1],1),dot['pixel'][0]))
     return dots
+
+
+def search_circle_parameters(image, pointmap, current=CircleParameters(), *, cancelled=None):
+    """Find a comparable-size group with stable 3D centres across nearby thresholds."""
+    current.validate()
+    gray = _grayscale(image)
+    points = np.asarray(pointmap, dtype=float)
+    if points.shape != (gray.size, 3):
+        raise ValueError('自动设置需要与图像逐像素对应的原始有序点云')
+
+    def detect(parameters, limit=24):
+        if cancelled is not None and cancelled.is_set():
+            raise ValueError('自动设置已取消')
+        try:
+            return detect_circles(gray, points, parameters, candidate_limit=limit)
+        except _TooManyCircles:
+            return []
+
+    otsu, _ = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+    thresholds = dict.fromkeys(int(np.clip(value, 8, 247)) for value in (
+        otsu + 16, otsu, otsu - 16, 64, 96, 128, 160, 192, 224,
+        current.threshold if current.threshold >= 0 else otsu))
+    best = None
+    best_score = (0, 0.)
+    for polarity in (current.polarity, 'light' if current.polarity == 'dark' else 'dark'):
+        broad = replace(current, polarity=polarity, min_radius=2., max_radius=1000., circularity=.45)
+        for threshold in thresholds:
+            parameters = replace(broad, threshold=threshold)
+            dots = detect(parameters, limit=256)
+            radii = sorted(dot['radius'] for dot in dots if dot['valid_3d'])
+            if len(radii) < 3:
+                continue
+            # Radius clustering excludes small reflections and large background contours.
+            group = max(([other for other in radii if radius <= other <= 1.8 * radius]
+                         for radius in radii), key=len)
+            if len(group) < 3 or len(group) < best_score[0]:
+                continue
+            circularity = min(dot['circularity'] for dot in dots if dot['valid_3d']
+                              and group[0] <= dot['radius'] <= group[-1])
+            parameters = replace(parameters, min_radius=round(max(1., .82 * group[0]), 2),
+                                 max_radius=round(min(1000., 1.18 * group[-1]), 2),
+                                 circularity=round(max(.45, circularity - .08), 2))
+            hits = detect(parameters)
+            valid = [dot for dot in hits if dot['valid_3d']]
+            if len(valid) < 3 or len(valid) < best_score[0]:
+                continue
+            pixels = np.array([dot['pixel'] for dot in valid])
+            stable = np.ones(len(valid), dtype=bool)
+            for offset in (-8, 8):
+                nearby = [dot['pixel'] for dot in detect(replace(parameters, threshold=threshold + offset))
+                          if dot['valid_3d']]
+                if not nearby:
+                    stable[:] = False
+                    break
+                distances = np.linalg.norm(pixels[:, None] - np.array(nearby)[None, :], axis=2)
+                stable &= distances.min(axis=1) <= 2.
+            count = int(stable.sum())
+            score = (count, count / len(hits))
+            if count >= 3 and score[1] >= .75 and score > best_score:
+                best, best_score = parameters, score
+    if best is None:
+        raise ValueError('未稳定检出至少 3 个有效 3D 圆心，识别参数保持不变。')
+    return dict(unencoded=asdict(best), stable_count=best_score[0])

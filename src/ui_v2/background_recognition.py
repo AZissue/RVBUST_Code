@@ -128,27 +128,46 @@ class BackgroundRecognition(QObject):
         frame, source = self._search_source(mode)
         image = frame.image_np.copy()
         config = copy.deepcopy(self.config(mode))
+        ply_path = None
+        if config['marker_type'] == MARKER_TYPE_UNENCODED_CIRCLE:
+            if frame.pointcloud_aligned is False:
+                raise ValueError('原始点云未与 2D 图像对齐，无法自动设置圆点参数。')
+            ply_path = frame.offline_pointmap_path
+            if not ply_path and frame.database_id:
+                ply_path = str(source[1] / 'frames' / frame.database_id / 'pointmap.ply')
+            if not ply_path:
+                raise ValueError('请在 DB 选择一帧含 2D 图像和有序点云的原始帧。')
         cancel = threading.Event()
         self.search_cancel = cancel
+
         def work():
             if not bridge._detect_lock.acquire(blocking=False):
                 raise ValueError('识别器正在使用，请稍后自动识别。')
             try:
+                if ply_path:
+                    return MarkerDetector.search_unencoded_params(image, ply_path, config['unencoded'], cancelled=cancel)
                 return MarkerDetector.search_params(image, config['circle'], cancelled=cancel)
             finally:
                 bridge._detect_lock.release()
+
         def done(result, error):
             if getattr(bridge, '_cleaned', False):
                 return
             if error is None:
                 try:
-                    if cancel.is_set() or self.config(mode) != config or self._search_source(mode)[1] != source:
+                    if cancel.is_set() or self.config(mode) != config:
                         raise ValueError('原始帧或识别配置已变化，自动识别结果已放弃。')
+                    self.validate_search_source(mode, source)
+                    result = dict(result, source=source)
                 except ValueError as exc:
                     error = exc
             callback(result, error)
         bridge._run_background(work, done, name='recognition_parameters')
         return cancel
+
+    def validate_search_source(self, mode, source):
+        if self._search_source(mode)[1] != source:
+            raise ValueError('当前原始帧已变化，自动识别结果已放弃。')
 
     def ensure(self, mode, identifiers, callback, on_error=None):
         """Continue an explicit action once only its input frames are ready."""

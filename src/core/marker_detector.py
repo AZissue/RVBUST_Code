@@ -19,7 +19,7 @@ import cv2
 
 from .utils import logger, rvc_sdk_lock
 from .calib_board_detector import CalibBoardDetector, DEFAULT_BOARD_SPECS
-from prototypes.circle_geometry_match.core.circles import CircleParameters, detect_circles
+from prototypes.circle_geometry_match.core.circles import CircleParameters, detect_circles, search_circle_parameters
 
 if TYPE_CHECKING:
     import PyRVC as RVC
@@ -305,6 +305,13 @@ class MarkerDetector:
         # 编码圆模式（原有逻辑）
         return self._detect_3d_coded_circle(image_np, pointmap, rvc_image, offline_ply_path,
                                             include_invalid=include_invalid)
+
+    @staticmethod
+    def search_unencoded_params(image, ply_path, current, *, cancelled=None):
+        points = CalibBoardDetector._read_ply_points(ply_path)
+        if points is None or not len(points):
+            raise ValueError('无法读取当前原始帧的有序点云。')
+        return search_circle_parameters(image, points, CircleParameters(**current), cancelled=cancelled)
 
     def _detect_unencoded(self, image, pointmap, rvc_image, offline_ply_path, include_invalid):
         temporary = None

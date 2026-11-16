@@ -18,6 +18,7 @@ class RecognitionParameters(QWidget):
         self._loading = False
         self._revision = 0
         self._search_cancel = None
+        self._search_result = None
         self.apply_timer = QTimer(self)
         self.apply_timer.setSingleShot(True)
         self.apply_timer.setInterval(250)
@@ -90,6 +91,10 @@ class RecognitionParameters(QWidget):
         for spin in self.dot_fields.values():
             spin.setKeyboardTracking(False)
             spin.valueChanged.connect(self._changed)
+        self.dot_auto_button = QPushButton('自动设置')
+        self.dot_auto_button.setToolTip('使用当前原始帧的图像和有序点云搜索参数，优先保留稳定的 3D 圆心。')
+        self.dot_auto_button.clicked.connect(self._auto_detect)
+        unencoded.addRow(self.dot_auto_button)
         layout.addWidget(self.unencoded_group)
         self.board_group = QGroupBox('非对称圆标定板')
         board = QFormLayout(self.board_group)
@@ -168,11 +173,11 @@ class RecognitionParameters(QWidget):
         if config != self._loaded and not self._edited:
             self._load(config)
         idle = self.bridge.can_change_workspace()
-        for control in (self.marker_type, self.board_spec,
-                        self.circle_n, self.circle_r1, self.circle_r2):
+        for control in (self.marker_type, self.board_spec, self.circle_n, self.circle_r1, self.circle_r2,
+                        self.dot_polarity, *self.dot_fields.values()):
             control.setEnabled(idle and self._search_cancel is None)
         self.auto_button.setEnabled(idle or self._search_cancel is not None)
-        self.unencoded_group.setEnabled(idle)
+        self.dot_auto_button.setEnabled(idle or self._search_cancel is not None)
 
     def _load(self, config):
         self._loading = True
@@ -235,10 +240,19 @@ class RecognitionParameters(QWidget):
         # A change in the legacy controls must not silently overwrite new settings.
         if self.bridge.recognition.config(self.mode) != self._loaded:
             self._edited = False
+            self._search_result = None
             self.refresh()
             self.status.setText('识别配置已在其他入口变化，已重新读取；请重新修改。')
             return
         config = self._loaded
+        search_result, self._search_result = self._search_result, None
+        if search_result is not None:
+            try:
+                self.bridge.recognition.validate_search_source(self.mode, search_result['source'])
+            except ValueError as exc:
+                self._load(config)
+                self.status.setText(str(exc))
+                return
         circle = [self.circle_n.value(), self.circle_r1.value(), self.circle_r2.value()]
         for index, spin in enumerate((self.circle_r1, self.circle_r2), 1):
             if circle[index] == round(config['circle'][index], spin.decimals()):
@@ -247,18 +261,23 @@ class RecognitionParameters(QWidget):
             circle = config['circle']
         dots = None
         if self.marker_type.currentData() == MARKER_TYPE_UNENCODED_CIRCLE:
-            dots = {key: spin.value() for key, spin in self.dot_fields.items()}
+            dots = dict(config.get('unencoded', {}), **{key: spin.value() for key, spin in self.dot_fields.items()})
             dots['polarity'] = self.dot_polarity.currentData()
         try:
             self.bridge.recognition.configure(self.mode, self.marker_type.currentData(),
                                               self.board_spec.currentData(), config['gamma'],
                                               circle=circle, **({'unencoded': dots} if dots is not None else {}))
         except ValueError as exc:
+            if search_result is not None:
+                self._load(config)
             self.status.setText(str(exc))
             return
         self._edited = False
         self.refresh()
-        self.status.setText('已自动应用；原始帧将按新参数后台识别。')
+        if search_result and 'unencoded' in search_result:
+            self.status.setText(f"已应用参数，稳定检出 {search_result['stable_count']} 个有效 3D 圆心。")
+        else:
+            self.status.setText('已自动应用；原始帧将按新参数后台识别。')
 
     def _validate_input(self, *_):
         if self.marker_type.currentData() == 'coded_circle' and not all(
@@ -269,11 +288,13 @@ class RecognitionParameters(QWidget):
         return True
 
     def _cancel_search(self):
+        self._search_result = None
         if self._search_cancel is not None:
             self._search_cancel.set()
             self._search_cancel = None
         if hasattr(self, 'auto_button'):
             self.auto_button.setText('自动识别')
+            self.dot_auto_button.setText('自动设置')
 
     def _auto_detect(self):
         if self._search_cancel is not None:
@@ -285,26 +306,38 @@ class RecognitionParameters(QWidget):
             self.status.setText('请等待手动参数自动应用，或修正无效参数后重试。')
             return
         revision, mode = self._revision, self.mode
+        dots = self.marker_type.currentData() == MARKER_TYPE_UNENCODED_CIRCLE
+        button = self.dot_auto_button if dots else self.auto_button
+        label = button.text()
         def done(result, error):
             if revision != self._revision or mode != self.mode:
                 return
             self._search_cancel = None
-            self.auto_button.setText('自动识别')
+            button.setText(label)
             if error:
                 self.refresh()
                 self.status.setText(str(error))
                 return
             self._loading = True
-            for spin, value in zip((self.circle_n, self.circle_r1, self.circle_r2), result['circle']):
-                spin.setValue(value)
+            if dots:
+                parameters = result['unencoded']
+                self.dot_polarity.setCurrentIndex(self.dot_polarity.findData(parameters['polarity']))
+                for key, spin in self.dot_fields.items():
+                    spin.setValue(parameters[key])
+            else:
+                for spin, value in zip((self.circle_n, self.circle_r1, self.circle_r2), result['circle']):
+                    spin.setValue(value)
             self._loading = False
             self._changed()
-            self.status.setText(f"稳定检出 {result['stable_count']} 个编码圆，整数参数正在自动应用…")
+            self._search_result = result
+            marker = '个有效 3D 圆心' if dots else '个编码圆'
+            self.status.setText(f"稳定检出 {result['stable_count']} {marker}，正在应用参数…")
         try:
             self._search_cancel = self.bridge.recognition.search_current(mode, done)
         except ValueError as exc:
             self.status.setText(str(exc))
             return
-        self.auto_button.setText('取消自动识别')
-        self.status.setText('正在搜索整数参数，比较不同亮度下的稳定检出…')
+        button.setText('取消' + label)
+        self.status.setText('正在搜索极性、灰度和半径，比较 3D 圆心稳定性…' if dots else
+                            '正在搜索整数参数，比较不同亮度下的稳定检出…')
         self.refresh()
