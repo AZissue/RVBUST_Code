@@ -92,31 +92,94 @@ class OfflineTests(unittest.TestCase):
             (root/'1.jpg').unlink();self.pair(root,'1',(1,1))
             with self.assertRaisesRegex(ValueError,'分辨率'):OfflinePairLoader().load_pair(collect_frame_pairs(root)[0])
     def test_direct_startup_without_sdk_and_process_exits_on_close(self):
+        self.exercise_startup(return_to_launcher=False)
+
+    def test_direct_startup_can_return_and_reenter_offline(self):
+        self.exercise_startup(return_to_launcher=True)
+
+    def test_launcher_entry_can_return_to_mode_selection(self):
+        self.exercise_startup(return_to_launcher=True, from_launcher=True)
+
+    def exercise_startup(self, return_to_launcher, from_launcher=False):
         import subprocess,sys
-        code = """
+        code = f"return_to_launcher = {return_to_launcher!r}\nfrom_launcher = {from_launcher!r}\n" + """
 import sys
 sys.path.insert(0,'src')
-sys.argv=['main.py','--offline-stitch']
+sys.argv = ['main.py'] if from_launcher else ['main.py', '--offline-stitch']
 import main
+from contextlib import ExitStack
 from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QToolButton
 from unittest.mock import patch
 from core.camera_manager import CameraManager
 from ui_v2.composition import UiComposition
+from ui_v2.launcher_dialog import LauncherDialog
 seen=[]
 class Composition(UiComposition):
     def configure(self,app):
         super().configure(app)
         def check():
-            windows=[w for w in app.topLevelWidgets() if type(w).__name__=='OfflineStitchWindow']
+            windows = [w for w in app.topLevelWidgets()
+                       if type(w).__name__ == 'OfflineStitchWindow' and w.isVisible()]
             if not windows:
-                app.quit();return
+                QTimer.singleShot(100, check)
+                return
             window=windows[0]
             seen.append(window.isVisible() and not window._backend_bridge._sdk_initialized)
-            window.close()
-        QTimer.singleShot(1500,check)
-with patch.object(CameraManager,'initialize',side_effect=AssertionError('SDK forbidden')):
-    result=main.main(composition=Composition())
-assert result==0 and seen==[True],(result,seen)
+            if not return_to_launcher:
+                window.close()
+                return
+            button = next((b for b in window.findChildren(QToolButton)
+                           if b.text() == '返回模式选择' and b.isVisible()), None)
+            if button is None:
+                window.close()
+                return
+            from ui_v2.dialogs import ChineseMessageBox as QMessageBox
+            project = window._backend_bridge.projects.projects['mobile_chain']
+            project.dirty = True
+            with patch.object(QMessageBox, 'warning', return_value=QMessageBox.Cancel):
+                button.click()
+            seen.append(window.isVisible() and project.dirty)
+            with patch.object(QMessageBox, 'warning', return_value=QMessageBox.Discard):
+                button.click()
+            QTimer.singleShot(0, check_launcher)
+
+        def check_launcher():
+            launcher = next(w for w in app.topLevelWidgets() if isinstance(w, LauncherDialog))
+            seen.append(launcher.isVisible())
+            launcher._btn_offline_stitch.click()
+            windows = [w for w in app.topLevelWidgets()
+                       if type(w).__name__ == 'OfflineStitchWindow' and w.isVisible()]
+            seen.append(len(windows) == 1 and not launcher.isVisible())
+            if windows:
+                windows[0].close()
+            else:
+                app.quit()
+
+        QTimer.singleShot(100, check)
+        def timeout():
+            seen.append('event loop did not exit')
+            app.quit()
+        QTimer.singleShot(15000, timeout)
+    def create_shell(self, parent=None):
+        from ui_v2.backend_bridge import BackendBridge
+        initial_refresh = True
+
+        def refresh(bridge, launcher):
+            nonlocal initial_refresh
+            if initial_refresh and from_launcher:
+                QTimer.singleShot(0, launcher._btn_offline_stitch.click)
+            initial_refresh = False
+
+        patches.enter_context(patch.object(BackendBridge, 'refresh_launcher_devices', new=refresh))
+        return super().create_shell(parent)
+
+with ExitStack() as patches:
+    patches.enter_context(patch.object(CameraManager, 'initialize',
+                                       side_effect=AssertionError('SDK forbidden')))
+    result = main.main(composition=Composition())
+expected = [True, True, True, True] if return_to_launcher else [True]
+assert result==0 and seen==expected,(result,seen)
 """
         result=subprocess.run([sys.executable,'-c',code],capture_output=True,text=True,timeout=40)
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)

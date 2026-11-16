@@ -779,7 +779,7 @@ class MainWindowShell(QMainWindow):
         from .postprocess.window import PostprocessWindow
         return PostprocessWindow
 
-    def open_offline_stitch(self):
+    def open_offline_stitch(self, *, on_return=None):
         bridge = self._backend_bridge
         if bridge is None or not bridge.can_change_workspace():
             return None
@@ -790,7 +790,7 @@ class MainWindowShell(QMainWindow):
             previous.activateWindow()
             return previous
         from .offline_stitch import OfflineStitchWindow
-        window = OfflineStitchWindow(bridge)
+        window = OfflineStitchWindow(bridge, on_return=on_return)
         self._offline_stitch_window = window
         window.show()
         return window

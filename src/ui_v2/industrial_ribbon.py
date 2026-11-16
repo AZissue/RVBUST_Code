@@ -134,6 +134,12 @@ class IndustrialRibbon(QWidget):
         self.offline_button = self._header_button('离线拼接', 'folder_open', shell.open_offline_stitch)
         self.offline_button.setToolTip('加载本地图像与PLY，在正式离线工作区拼接并保存会话')
         line.addWidget(self.offline_button)
+        self.return_button = None
+        return_to_launcher = getattr(shell, 'return_to_launcher', None)
+        if return_to_launcher is not None:
+            self.return_button = self._header_button('返回模式选择', 'undo', return_to_launcher)
+            self.return_button.setToolTip('关闭离线拼接并打开模式选择窗口')
+            line.addWidget(self.return_button)
         self.log_button = self._header_button('运行日志', 'terminal', shell._btn_log.click)
         self.log_button.setCheckable(True)
         shell._btn_log.toggled.connect(self.log_button.setChecked)
@@ -343,6 +349,8 @@ class IndustrialRibbon(QWidget):
         if (shell.current_mode(), 'fpfh') in self.commands:
             self.commands[(shell.current_mode(), 'fpfh')].setEnabled(ready)
         self.offline_button.setEnabled(ready and not getattr(bridge, 'validation_root', None))
+        if self.return_button is not None:
+            self.return_button.setEnabled(ready)
         for mode in self._pages:
             self.commands[(mode, 'save')].setEnabled(ready)
             self.commands[(mode, 'postprocess')].setEnabled(ready)

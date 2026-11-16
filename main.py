@@ -136,8 +136,15 @@ def main(*, composition=None):
                 launcher.log_summary.append(message, 'error')
         bridge.open_offline_preview(mode, finished)
     launcher.offline_requested.connect(on_offline)
+
+    def show_launcher():
+        launcher.show()
+        launcher.raise_()
+        launcher.activateWindow()
+        on_refresh()
+
     def on_offline_stitch():
-        if main_window.open_offline_stitch() is not None:
+        if main_window.open_offline_stitch(on_return=show_launcher) is not None:
             launcher.accept()
     launcher.offline_stitch_requested.connect(on_offline_stitch)
     bridge.connection_finished.connect(on_connection_finished)

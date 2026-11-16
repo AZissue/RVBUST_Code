@@ -8,9 +8,12 @@ from version import get_version
 
 
 class OfflineStitchWindow(MainWindowShell):
-    def __init__(self, owner=None):
+    def __init__(self, owner=None, *, on_return=None):
         super().__init__(owner.shell if owner else None)
         self.owner = owner
+        self._on_return = on_return if on_return is not None else (
+            owner.shell.open_device_manager if owner else None)
+        self._returning_to_launcher = False
         self._offline_stitch = True
         self.setWindowFlags(Qt.Window)
         self.setAttribute(Qt.WA_DeleteOnClose, True)
@@ -74,6 +77,7 @@ class OfflineStitchWindow(MainWindowShell):
         properties = presentation.frame_browser.properties
         properties.tabs.setTabVisible(properties.tabs.indexOf(properties.capture), False)
         ribbon.offline_button.hide()
+        ribbon.return_button.setVisible(self._on_return is not None)
         ribbon.mode_label.setText('离线拼接')
         # Hidden acquisition workspaces must not impose their widths on this file-only window.
         self._stack.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
@@ -143,6 +147,15 @@ class OfflineStitchWindow(MainWindowShell):
     def open_device_manager(self):
         self.log('离线拼接使用本地文件，无需连接设备。', 'info')
 
+    def return_to_launcher(self):
+        if self._on_return is None or self._returning_to_launcher:
+            return
+        self._returning_to_launcher = True
+        if self.close():
+            self._on_return()
+        else:
+            self._returning_to_launcher = False
+
     def closeEvent(self, event):
         if not self._backend_bridge.can_change_workspace():
             self.log('请等待当前离线任务完成后关闭。', 'warn')
@@ -159,7 +172,7 @@ class OfflineStitchWindow(MainWindowShell):
             self._backend_bridge.cleanup()
             if self.owner:
                 self.owner.shell._offline_stitch_window = None
-                if not self.owner.shell.isVisible():
+                if not self._returning_to_launcher and not self.owner.shell.isVisible():
                     # Startup can enter this owned window while its host stays hidden.
                     # Qt does not emit lastWindowClosed for an owned secondary window.
                     QApplication.instance().quit()
