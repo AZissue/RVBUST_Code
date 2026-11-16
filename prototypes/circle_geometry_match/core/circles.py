@@ -86,7 +86,7 @@ def detect_circles(image, pointmap, params=CircleParameters(), *, candidate_limi
         circularity = 4 * np.pi * area / perimeter**2
         if circularity < params.circularity or len(contour) < 5:
             continue
-        (x,y),(a,b),_=cv2.fitEllipse(contour)
+        (x,y),(a,b),angle=cv2.fitEllipse(contour)
         left,top,ww,hh=cv2.boundingRect(contour)
         if left<=0 or top<=0 or left+ww>=w or top+hh>=h or min(a,b)<.45*max(a,b):
             continue
@@ -97,22 +97,23 @@ def detect_circles(image, pointmap, params=CircleParameters(), *, candidate_limi
             contours, hierarchy, hole, area, (x, y), (a, b), params.circularity
         ):
             continue
-        candidates.append((float(radius), float(x), float(y), min(a, b), circularity))
+        candidates.append((float(radius), float(x), float(y), (a, b, angle), circularity))
 
     # A rim and a separated inner disk can both be foreground components.
     # Prefer the outer ellipse when the centres are close and one encloses the other.
     unique = []
-    for radius, x, y, minor_axis, circularity in sorted(candidates, key=lambda item: item[0], reverse=True):
+    for radius, x, y, ellipse, circularity in sorted(candidates, key=lambda item: item[0], reverse=True):
         if any(hypot(x - ox, y - oy) <= min(.25 * outer, outer - radius + 1.)
                for outer, ox, oy, _, _ in unique):
             continue
-        unique.append((radius, x, y, minor_axis, circularity))
+        unique.append((radius, x, y, ellipse, circularity))
         if len(unique) > candidate_limit:
             raise _TooManyCircles(f'圆点候选超过{candidate_limit}个，请缩小半径范围或调整灰度阈值；本版不截断候选后猜测匹配')
 
     dots=[]
-    for radius, x, y, minor_axis, circularity in unique:
+    for radius, x, y, ellipse, circularity in unique:
         cx, cy = int(round(x)), int(round(y))
+        minor_axis = min(ellipse[:2])
         r=max(1,min(params.depth_radius,int(max(1,minor_axis*.25))))
         x0,x1=max(0,cx-r),min(w,cx+r+1);y0,y1=max(0,cy-r),min(h,cy+r+1)
         patch=points[y0:y1,x0:x1]
@@ -125,7 +126,8 @@ def detect_circles(image, pointmap, params=CircleParameters(), *, candidate_limi
             stable=np.abs(samples[:,2]-median[2])<=params.depth_spread
             if stable.sum()>=3 and stable.mean()>=.7:
                 xyz=np.median(samples[stable],axis=0)
-        dots.append(dict(pixel=[x,y],radius=radius,circularity=circularity,xyz=xyz,valid_3d=xyz is not None))
+        dots.append(dict(pixel=[x,y], radius=radius, ellipse_2d=list(ellipse),
+                         circularity=circularity, xyz=xyz, valid_3d=xyz is not None))
     dots.sort(key=lambda dot:(round(dot['pixel'][1],1),dot['pixel'][0]))
     return dots
 

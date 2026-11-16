@@ -329,7 +329,7 @@ class MarkerDetector:
                 x, y = dot['pixel']
                 # The overlay label is local to this image. Registration uses XYZ geometry.
                 row = dict(code=index, marker_type=MARKER_TYPE_UNENCODED_CIRCLE,
-                           x_2d=x, y_2d=y, valid_3d=valid)
+                           x_2d=x, y_2d=y, ellipse_2d=dot['ellipse_2d'], valid_3d=valid)
                 if valid:
                     row.update(zip(('x_3d', 'y_3d', 'z_3d'), map(float, dot['xyz'])))
                 rows.append(row)

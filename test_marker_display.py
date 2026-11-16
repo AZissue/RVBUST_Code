@@ -4,7 +4,11 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent / 'src'))
-from ui_common.industrial_scene.marker_display import classify_markers, GREEN, RED
+from ui_common.industrial_scene.marker_display import classify_markers, GREEN, RED, YELLOW
+from ui_common.industrial_scene.marker_inspector import MarkerImage
+from PySide6.QtCore import QPointF
+from PySide6.QtGui import QColor, QImage
+from PySide6.QtWidgets import QApplication
 
 
 class MarkerDisplayTests(unittest.TestCase):
@@ -24,6 +28,35 @@ class MarkerDisplayTests(unittest.TestCase):
         self.assertEqual(markers[0]['world'], [100, 200, 300])
         self.assertEqual(markers[0]['z_3d'], 30)
         self.assertEqual(classify_markers([]).cloud_points(), [])
+
+    def test_circle_outline_tracks_position_at_fixed_zoom_size(self):
+        app = QApplication.instance() or QApplication([])
+        view = MarkerImage()
+        view.resize(240, 175)
+        view.image = QImage(240, 175, QImage.Format_RGB32)
+        view.image.fill(QColor('black'))
+        view.display = classify_markers([
+            dict(code=7, x_2d=100, y_2d=85, marker_type='unencoded_circle',
+                 ellipse_2d=[16, 28, 90], valid_3d=False),
+        ])
+        view.show()
+        app.processEvents()
+
+        def assert_outline(center_x, center_y):
+            rendered = view.grab().toImage()
+            for x, y in ((center_x - 14, center_y), (center_x, center_y + 8)):
+                pixel = rendered.pixelColor(x, y)
+                self.assertGreater(pixel.greenF(), 0.85)
+                self.assertLess(pixel.redF(), 0.35)
+            self.assertEqual(rendered.pixelColor(center_x, center_y), QColor(YELLOW))
+            self.assertEqual(rendered.pixelColor(center_x - 28, center_y), QColor('black'))
+
+        assert_outline(100, 85)
+        view.zoom = 2
+        view.pan = QPointF(10, 2.5)
+        view.update()
+        assert_outline(90, 85)
+        view.close()
 
 
 if __name__ == '__main__':

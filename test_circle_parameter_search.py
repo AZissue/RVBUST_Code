@@ -27,6 +27,16 @@ class CircleSearchTests(unittest.TestCase):
         self.assertEqual(parameters.polarity, 'light')
         dots = circles.detect_circles(image, points, parameters)
         self.assertEqual({tuple(dot['pixel']) for dot in dots}, set(centers))
+        detector = MarkerDetector('unencoded_circle')
+        detector.unencoded_parameters = parameters
+        with patch.object(detector._board_detector, '_get_ply_path', return_value=('organized.ply', None)), \
+             patch.object(detector._board_detector, '_read_ply_points', return_value=points):
+            rows = detector.detect_3d(image, offline_ply_path='organized.ply', include_invalid=True)
+        self.assertEqual(len(rows), len(centers))
+        for row, dot in zip(rows, dots):
+            self.assertEqual(row['ellipse_2d'], dot['ellipse_2d'])
+            width, height, _ = row['ellipse_2d']
+            np.testing.assert_allclose([width, height], [46, 46], atol=1.5)
         with self.assertRaisesRegex(ValueError, '未稳定检出'):
             circles.search_circle_parameters(image, np.zeros_like(points), current)
         cancel = threading.Event()

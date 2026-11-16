@@ -1,5 +1,6 @@
 """Top-right image/marker inspector. Reusable by the workbench and replay."""
 from html import escape
+from math import isfinite
 import numpy as np
 from PySide6.QtCore import Qt, QEvent, QPointF, QRectF
 from PySide6.QtGui import QImage, QPainter, QColor, QPen, QPolygonF
@@ -61,7 +62,8 @@ class MarkerImage(QWidget):
             painter.setPen(QColor('#aaaaaa'))
             painter.drawText(self.rect(), Qt.AlignCenter, '未关联当前帧2D图像')
             return
-        scale = min(self.width()/self.image.width(), self.height()/self.image.height())*self.zoom
+        fit_scale = min(self.width()/self.image.width(), self.height()/self.image.height())
+        scale = fit_scale*self.zoom
         width, height = self.image.width()*scale, self.image.height()*scale
         x, y = (self.width()-width)/2+self.pan.x(), (self.height()-height)/2+self.pan.y()
         painter.setRenderHint(QPainter.SmoothPixmapTransform)
@@ -75,11 +77,42 @@ class MarkerImage(QWidget):
             px, py = x+row.xy[0]*scale, y+row.xy[1]*scale
             if not 0 <= row.xy[0] < self.image.width() or not 0 <= row.xy[1] < self.image.height():
                 continue
-            painter.setPen(QPen(QColor(row.color), 2))
-            painter.setBrush(Qt.NoBrush)
-            painter.drawEllipse(QPointF(px, py), 4, 4)
+            center = QPointF(px, py)
             if row.marker.get('marker_type') == 'unencoded_circle':
-                painter.drawText(QPointF(px+6, py-6), str(row.code))
+                self._draw_circle(painter, row, center, fit_scale)
+            else:
+                painter.setPen(QPen(QColor(row.color), 2))
+                painter.setBrush(Qt.NoBrush)
+                painter.drawEllipse(center, 4, 4)
+
+    @staticmethod
+    def _draw_circle(painter, row, center, fit_scale):
+        radius_x = radius_y = 6.0
+        angle = 0.0
+        try:
+            width, height, rotation = map(float, row.marker.get('ellipse_2d', ()))
+            if width > 0 and height > 0 and all(map(isfinite, (width, height, rotation))):
+                radius_x, radius_y = width*fit_scale/2, height*fit_scale/2
+                angle = rotation
+        except (TypeError, ValueError):
+            pass  # Older rows can lack ellipse data.
+
+        painter.save()
+        painter.translate(center)
+        painter.rotate(angle)
+        painter.setPen(QPen(QColor(GREEN), 2))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawEllipse(QPointF(), radius_x, radius_y)
+        painter.restore()
+
+        color = QColor(row.color)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(color)
+        painter.drawEllipse(center, 2, 2)
+        if row.code is not None:
+            offset = max(6.0, radius_x + 3.0, radius_y + 3.0)
+            painter.setPen(color)
+            painter.drawText(center + QPointF(offset, -offset), str(row.code))
 
 
 class WorldMarkerOverlay(QWidget):
@@ -264,7 +297,7 @@ class MarkerInspector(QFrame):
         elif unencoded:
             description = '虚线：配准圆心三角形' if match_triangle else '序号对应当前帧圆心'
             self.pair_label.setText(f'2D检出 {len(self.display.rows)} / 3D有效 '
-                                    f'{self.display.green_count}\n{description}；黄圈：无有效3D')
+                                    f'{self.display.green_count}\n{description}；黄点：无有效3D')
         parts = []
         for color, label in [(GREEN, '有效'), (RED, '共有'), (YELLOW, '仅2D')]:
             codes = [str(row.code) for row in self.display.rows if row.color == color]
