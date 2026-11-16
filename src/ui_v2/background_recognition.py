@@ -47,8 +47,8 @@ class BackgroundRecognition(QObject):
             raise ValueError('当前任务进行中或工作区已切换，请稍后再试。')
         if marker_type not in SUPPORTED_MARKER_TYPES:
             raise ValueError('不支持的识别类型。')
-        if marker_type == MARKER_TYPE_UNENCODED_CIRCLE and mode != 'mobile_chain':
-            raise ValueError('普通圆点几何匹配用于单相机移动链式拼接。')
+        if marker_type == MARKER_TYPE_UNENCODED_CIRCLE and mode not in ('mobile_chain', 'turntable'):
+            raise ValueError('普通圆点几何匹配用于单相机移动拼接和转台拼接。')
         parameters = CircleParameters(**unencoded) if unencoded is not None else None
         if parameters is not None:
             parameters.validate()

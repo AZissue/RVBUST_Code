@@ -43,7 +43,8 @@ from ui_common.worker_thread import WorkerThread
 
 from core.camera_manager import CameraManager
 from core.utils import write_point_cloud_atomic
-from core.marker_detector import MarkerDetector, MARKER_TYPE_CODED_CIRCLE, MARKER_TYPE_ASYMMETRIC_GRID
+from core.marker_detector import (MarkerDetector, MARKER_TYPE_CODED_CIRCLE,
+                                  MARKER_TYPE_ASYMMETRIC_GRID, MARKER_TYPE_UNENCODED_CIRCLE)
 from core.frame_data import FrameData
 from core.turntable_calibrator import TurntableCalibrator, OnlineTurntableSession
 
@@ -234,6 +235,7 @@ class TurntableWorkspace(QWidget):
         self.combo_marker_type = QComboBox()
         self.combo_marker_type.addItem("编码圆", MARKER_TYPE_CODED_CIRCLE)
         self.combo_marker_type.addItem("非对称圆标定板", MARKER_TYPE_ASYMMETRIC_GRID)
+        self.combo_marker_type.addItem("普通圆点 / 圆环（几何匹配）", MARKER_TYPE_UNENCODED_CIRCLE)
         self.combo_marker_type.currentIndexChanged.connect(self._on_marker_type_changed)
         h.addWidget(self.combo_marker_type)
         v.addLayout(h)
@@ -740,7 +742,7 @@ class TurntableWorkspace(QWidget):
                 # 直接变成拼接残差（实测 3 对场景帧间残差达 4.8°/30mm）
                 codes0 = {m.get('code') for m in (self.current_markers0 or [])}
                 codes1 = {m.get('code') for m in (self.current_markers1 or [])}
-                n_common = len(codes0 & codes1)
+                n_common = info.get("matched_count", len(codes0 & codes1))
                 if n_common < 5:
                     self.log(
                         f"警告: 标定仅基于 {n_common} 对共有标记（<5 对），"

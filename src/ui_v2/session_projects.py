@@ -5,7 +5,7 @@ import json
 
 import numpy as np
 import open3d as o3d
-from PySide6.QtCore import QObject, QEventLoop, QTimer, Qt
+from PySide6.QtCore import QObject, QEventLoop, QSignalBlocker, QTimer, Qt
 from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QInputDialog,
     QLabel, QLineEdit, QVBoxLayout, QProgressDialog)
 from .dialogs import ChineseMessageBox as QMessageBox, localize_buttons
@@ -19,6 +19,7 @@ from core.robot_stitch_workflow import RobotStitchWorkflow
 from core.calibration_engine import CalibrationEngine
 from core.offline_session import OfflineSession
 from core.turntable_calibrator import OnlineTurntableSession
+from core.marker_detector import CircleParameters, MARKER_TYPE_UNENCODED_CIRCLE
 
 
 def matrix(value):
@@ -259,6 +260,8 @@ class SessionProjects(QObject):
                 angle_deg=float(np.degrees(session.calib.angle_rad)), step_count=session.step_count())
         return dict(calibration=calibration, frame0=desc(ws.current_frame0), frame1=desc(ws.current_frame1),
             calibration_result=session.calibration_result,
+            unencoded_parameters=(asdict(bridge.marker_detector.unencoded_parameters)
+                if ws.combo_marker_type.currentData() == MARKER_TYPE_UNENCODED_CIRCLE else None),
             sequence=[desc(f) for f in session.sequence] if include_raw else [], current_step=session.current_step if include_raw else 0)
 
     def save(self, mode=None, callback=None):
@@ -499,6 +502,8 @@ class SessionProjects(QObject):
                     frame.kind = 'calib' if kind == 'frames_calib' else 'scan'
                     frames.setdefault(cid, []).append(frame)
             return frames
+        if data.get('unencoded_parameters') is not None:
+            CircleParameters(**data['unencoded_parameters']).validate()
         session = OnlineTurntableSession()
         if data.get('calibration'):
             calibration = data['calibration']
@@ -567,6 +572,14 @@ class SessionProjects(QObject):
         else:
             session, first = prepared
             ws = bridge.shell.workspace_turntable()
+            parameters = data.get('unencoded_parameters')
+            if parameters is not None:
+                bridge.marker_detector.unencoded_parameters = CircleParameters(**parameters)
+                with QSignalBlocker(ws.combo_marker_type):
+                    ws.combo_marker_type.setCurrentIndex(ws.combo_marker_type.findData(MARKER_TYPE_UNENCODED_CIRCLE))
+            elif ws.combo_marker_type.currentData() == MARKER_TYPE_UNENCODED_CIRCLE:
+                with QSignalBlocker(ws.combo_marker_type):
+                    ws.combo_marker_type.setCurrentIndex(ws.combo_marker_type.findData('coded_circle'))
             if data.get('calibration'):
                 ws.apply_loaded_calibration(data['calibration'])
             ws.session = session

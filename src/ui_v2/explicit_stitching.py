@@ -335,7 +335,9 @@ class ExplicitStitching:
         recognition_inputs = raw_ids if explicit else ([frame.database_id for frame in turn.session.get_all_frames()] if mode == 'turntable' else raw_ids)
         # Fixed-camera scans already have calibrated extrinsics; their markers
         # remain useful for inspection but are not an input to this stitch.
-        if mode != 'multi_cam' and (not explicit or use_chain) and not bridge.recognition.ensure(mode, recognition_inputs,
+        recognize_turntable_dots = (mode == 'turntable' and
+            turn.combo_marker_type.currentData() == 'unencoded_circle')
+        if mode != 'multi_cam' and (not explicit or use_chain or recognize_turntable_dots) and not bridge.recognition.ensure(mode, recognition_inputs,
                 lambda: self.execute((mode, raw_ids, explicit)),
                 on_error=lambda error: show_stitch_failure(bridge, mode, error)):
             return
@@ -370,6 +372,8 @@ class ExplicitStitching:
                 merged, metadata = run_job([database.directory/'frames'/uid/'pointmap.ply' for uid in sources],
                     config, markers, step_indices if explicit else None, voxel, refine)
                 source_transforms = {uid: t for uid, t in zip(sources, metadata['transforms']) if t is not None}
+                if recognize_turntable_dots:
+                    stitch_report.append(metadata['message'])
                 stitch_report.append('独立进程拼接：' + '、'.join(
                     f'帧{database.records[uid].frame_id:03d} 有效{count:,}点'
                     for uid, count in zip(sources, metadata['counts'])) + f'；输出 {len(merged.points):,} 点。')
@@ -469,6 +473,8 @@ class ExplicitStitching:
                 if merged is None:
                     raise ValueError(message)
                 source_transforms = {uid: t.tolist() for uid, t in zip(sources, turn.session.calib.last_stitch_transforms) if t is not None}
+            if recognize_turntable_dots and not (isolated or use_chain):
+                stitch_report.append(message)
             uid = database.publish_result(merged, sources, source_transforms=source_transforms)
             return uid, merged, workflow
         def done(result, error):

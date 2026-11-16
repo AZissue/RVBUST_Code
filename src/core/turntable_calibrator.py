@@ -299,12 +299,15 @@ class TurntableCalibrator:
         chain_msgs = ["帧0=参考系"]
         for i in range(1, len(pcds)):
             T_world = None
+            match_failure = None
             if marker_chain and markers is not None and i < len(markers):
                 for j in range(i - 1, -1, -1):
                     if j >= len(markers) or not markers[j] or not markers[i]:
                         continue
                     pts_j, pts_i, match_msg = match_markers_pair(markers[j], markers[i])
                     if pts_j is None:
+                        if _has_unencoded(markers[j]) or _has_unencoded(markers[i]):
+                            match_failure = match_failure or match_msg
                         continue
                     try:
                         R, t, mask, errors = robust_rigid_transform(pts_i, pts_j)
@@ -314,11 +317,13 @@ class TurntableCalibrator:
                     T_ij[:3, :3] = R
                     T_ij[:3, 3] = t
                     T_world = T_worlds[j] @ T_ij
-                    chain_msgs.append(f"帧{i}=标记链(与帧{j}内点{int(mask.sum())}/{len(pts_j)}对，RMS {np.sqrt(np.mean(errors[mask]**2)):.3f}mm)")
+                    method = "普通圆点几何匹配" if _has_unencoded(markers[i]) else "标记链"
+                    chain_msgs.append(f"帧{i}={method}(与帧{j}内点{int(mask.sum())}/{len(pts_j)}对，RMS {np.sqrt(np.mean(errors[mask]**2)):.3f}mm)")
                     break
             if T_world is None:
                 T_world = self.get_transform_for_step(step_indices[i] - step_indices[0])
-                chain_msgs.append(f"帧{i}=标定等角变换")
+                reason = f"（{match_failure}）" if match_failure else ""
+                chain_msgs.append(f"帧{i}=标定等角变换{reason}")
             T_worlds.append(T_world)
 
         ref = pcds[0]
@@ -387,6 +392,33 @@ class TurntableCalibrator:
 # ---------------------------------------------------------------------------
 # 标记点匹配与在线会话管理
 # ---------------------------------------------------------------------------
+def _has_unencoded(markers):
+    return any(row.get('marker_type') == 'unencoded_circle' for row in markers)
+
+
+def _match_unencoded(markers0, markers1):
+    from prototypes.circle_geometry_match.core.matching import MatchParameters, match_geometry
+
+    def valid_rows(markers):
+        if any(row.get('marker_type') != 'unencoded_circle' for row in markers):
+            raise ValueError('普通圆点与编码标记不能混合配准')
+        axes = ('x_3d', 'y_3d', 'z_3d')
+        rows, points = [], []
+        for row in markers:
+            point = [row.get(axis, np.nan) for axis in axes]
+            if row.get('valid_3d') and np.isfinite(point).all():
+                rows.append(row)
+                points.append(point)
+        return rows, np.asarray(points, dtype=float)
+
+    reference_rows, reference = valid_rows(markers0)
+    _, moving = valid_rows(markers1)
+    result = match_geometry(reference, moving, MatchParameters(point_tolerance=1.0))
+    reference_indices, moving_indices = np.asarray(result['pairs']).T
+    codes = [reference_rows[i]['code'] for i in reference_indices]
+    return reference[reference_indices], moving[moving_indices], codes
+
+
 def match_markers_pair(
     markers0: List[Dict],
     markers1: List[Dict],
@@ -399,6 +431,13 @@ def match_markers_pair(
     """
     if not markers0 or not markers1:
         return None, None, "标记点为空"
+
+    if _has_unencoded(markers0) or _has_unencoded(markers1):
+        try:
+            pts0, pts1, codes = _match_unencoded(markers0, markers1)
+        except ValueError as exc:
+            return None, None, str(exc)
+        return pts0, pts1, f'普通圆点几何匹配 {len(codes)} 对'
 
     def _get_code(m: Dict, idx: int) -> int:
         if key == "index":
@@ -457,7 +496,15 @@ class OnlineTurntableSession:
         标定成功后，清空 frame0/frame1 的拍摄数据（它们仅用于计算角度），
         让步进采集从 step 1 重新开始，总步数为 step_count + 1。
         """
-        pts0, pts1, match_msg = match_markers_pair(self.markers0, self.markers1, marker_key)
+        geometric = _has_unencoded(self.markers0) or _has_unencoded(self.markers1)
+        if geometric:
+            try:
+                pts0, pts1, codes = _match_unencoded(self.markers0, self.markers1)
+            except ValueError as exc:
+                return False, str(exc), {}
+            match_msg = f'普通圆点几何匹配 {len(codes)} 对'
+        else:
+            pts0, pts1, match_msg = match_markers_pair(self.markers0, self.markers1, marker_key)
         if pts0 is None:
             return False, match_msg, {}
         ok, msg, info = self.calib.calibrate_from_markers(pts0, pts1)
@@ -466,9 +513,11 @@ class OnlineTurntableSession:
         if ok:
             transform = self.calib.get_transform_for_step(1)
             transformed = pts1 @ transform[:3, :3].T + transform[:3, 3]
-            ids0 = {i if marker_key == 'index' else m.get(marker_key, m.get('code', i)) for i, m in enumerate(self.markers0)}
-            ids1 = {i if marker_key == 'index' else m.get(marker_key, m.get('code', i)) for i, m in enumerate(self.markers1)}
-            codes = sorted(ids0 & ids1)
+            if not geometric:
+                ids0 = {i if marker_key == 'index' else m.get(marker_key, m.get('code', i)) for i, m in enumerate(self.markers0)}
+                ids1 = {i if marker_key == 'index' else m.get(marker_key, m.get('code', i)) for i, m in enumerate(self.markers1)}
+                codes = sorted(ids0 & ids1)
+            info['matched_count'] = len(codes)
             self.calibration_result = dict(
                 confidence=self.calib.confidence,
                 source_ids=[getattr(frame, 'database_id', None) for frame in (self.frame0, self.frame1)],

@@ -136,9 +136,9 @@ class RecognitionParameters(QWidget):
         self._edited = False
         index = self.marker_type.findData(MARKER_TYPE_UNENCODED_CIRCLE)
         with QSignalBlocker(self.marker_type):
-            if mode == 'mobile_chain' and index < 0:
+            if mode in ('mobile_chain', 'turntable') and index < 0:
                 self.marker_type.addItem('普通圆点 / 圆环（几何匹配）', MARKER_TYPE_UNENCODED_CIRCLE)
-            elif mode != 'mobile_chain' and index >= 0:
+            elif mode not in ('mobile_chain', 'turntable') and index >= 0:
                 self.marker_type.removeItem(index)
         self.refresh()
 

@@ -53,6 +53,25 @@ class RecognitionPageTests(unittest.TestCase):
             self.assertEqual(self.bridge.recognition.config(mode)['marker_type'], 'coded_circle')
         self.assertFalse(self.bridge.camera_manager.get_connected_ids())
 
+    def test_turntable_plain_dots_apply_and_survive_session_restore(self):
+        self.bridge._current_mode = 'turntable'
+        self.win.set_mode('turntable', [])
+        page = self.page()
+        index = page.marker_type.findData('unencoded_circle')
+        self.assertGreaterEqual(index, 0)
+        page.marker_type.setCurrentIndex(index)
+        self.applied(page)
+        projects = self.bridge.projects
+        project = projects.projects['turntable']
+        data = projects.describe('turntable', True)
+        service = self.bridge.recognition
+        config = service.config('turntable')
+        self.assertEqual(config['marker_type'], 'unencoded_circle')
+        self.assertEqual(data['unencoded_parameters'], config['unencoded'])
+        service.configure('turntable', 'coded_circle', config['boards'], config['gamma'])
+        projects.apply_loaded('turntable', data, projects.prepare_loaded(project, data))
+        self.assertEqual(service.config('turntable')['marker_type'], 'unencoded_circle')
+
     def test_busy_invalid_and_external_changes_do_not_apply_stale_parameters(self):
         service = self.bridge.recognition
         before = copy.deepcopy(service.config('multi_cam'))
