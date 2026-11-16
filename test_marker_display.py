@@ -29,7 +29,7 @@ class MarkerDisplayTests(unittest.TestCase):
         self.assertEqual(markers[0]['z_3d'], 30)
         self.assertEqual(classify_markers([]).cloud_points(), [])
 
-    def test_circle_outline_tracks_position_at_fixed_zoom_size(self):
+    def test_circle_outline_tracks_image_edges_with_fixed_stroke_and_center(self):
         app = QApplication.instance() or QApplication([])
         view = MarkerImage()
         view.resize(240, 175)
@@ -42,20 +42,23 @@ class MarkerDisplayTests(unittest.TestCase):
         view.show()
         app.processEvents()
 
-        def assert_outline(center_x, center_y):
+        def assert_outline(center_x, center_y, zoom):
             rendered = view.grab().toImage()
-            for x, y in ((center_x - 14, center_y), (center_x, center_y + 8)):
+            edge_x = center_x - 14 * zoom
+            for x, y in ((edge_x, center_y), (center_x, center_y + 8 * zoom)):
                 pixel = rendered.pixelColor(x, y)
                 self.assertGreater(pixel.greenF(), 0.85)
                 self.assertLess(pixel.redF(), 0.35)
             self.assertEqual(rendered.pixelColor(center_x, center_y), QColor(YELLOW))
-            self.assertEqual(rendered.pixelColor(center_x - 28, center_y), QColor('black'))
+            for offset in (-3, 3):
+                self.assertEqual(rendered.pixelColor(edge_x + offset, center_y), QColor('black'))
+            self.assertEqual(rendered.pixelColor(center_x - 3, center_y), QColor('black'))
 
-        assert_outline(100, 85)
+        assert_outline(100, 85, 1)
         view.zoom = 2
         view.pan = QPointF(10, 2.5)
         view.update()
-        assert_outline(90, 85)
+        assert_outline(90, 85, 2)
         view.close()
 
 

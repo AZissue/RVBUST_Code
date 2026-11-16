@@ -62,8 +62,7 @@ class MarkerImage(QWidget):
             painter.setPen(QColor('#aaaaaa'))
             painter.drawText(self.rect(), Qt.AlignCenter, '未关联当前帧2D图像')
             return
-        fit_scale = min(self.width()/self.image.width(), self.height()/self.image.height())
-        scale = fit_scale*self.zoom
+        scale = min(self.width()/self.image.width(), self.height()/self.image.height())*self.zoom
         width, height = self.image.width()*scale, self.image.height()*scale
         x, y = (self.width()-width)/2+self.pan.x(), (self.height()-height)/2+self.pan.y()
         painter.setRenderHint(QPainter.SmoothPixmapTransform)
@@ -79,20 +78,20 @@ class MarkerImage(QWidget):
                 continue
             center = QPointF(px, py)
             if row.marker.get('marker_type') == 'unencoded_circle':
-                self._draw_circle(painter, row, center, fit_scale)
+                self._draw_circle(painter, row, center, scale)
             else:
                 painter.setPen(QPen(QColor(row.color), 2))
                 painter.setBrush(Qt.NoBrush)
                 painter.drawEllipse(center, 4, 4)
 
     @staticmethod
-    def _draw_circle(painter, row, center, fit_scale):
+    def _draw_circle(painter, row, center, scale):
         radius_x = radius_y = 6.0
         angle = 0.0
         try:
             width, height, rotation = map(float, row.marker.get('ellipse_2d', ()))
             if width > 0 and height > 0 and all(map(isfinite, (width, height, rotation))):
-                radius_x, radius_y = width*fit_scale/2, height*fit_scale/2
+                radius_x, radius_y = width*scale/2, height*scale/2
                 angle = rotation
         except (TypeError, ValueError):
             pass  # Older rows can lack ellipse data.
@@ -110,9 +109,8 @@ class MarkerImage(QWidget):
         painter.setBrush(color)
         painter.drawEllipse(center, 2, 2)
         if row.code is not None:
-            offset = max(6.0, radius_x + 3.0, radius_y + 3.0)
             painter.setPen(color)
-            painter.drawText(center + QPointF(offset, -offset), str(row.code))
+            painter.drawText(center + QPointF(6, -6), str(row.code))
 
 
 class WorldMarkerOverlay(QWidget):
