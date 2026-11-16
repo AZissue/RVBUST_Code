@@ -161,6 +161,9 @@ class ChainStitcher:
         if best_edge is None:
             # 配准失败：清理已加入的当前节点，避免残留影响后续匹配
             self.nodes.pop(station_id, None)
+            if node.unencoded:
+                return False, (f'无法确认唯一朝向或有效共视圆点不足（需 ≥{self.min_common_markers} 个）。'
+                               '请让相邻帧拍到更多共同、非对称分布的圆点。'), None
             return False, f"未找到足够共有标记（需 ≥{self.min_common_markers}），请减小移动距离", None
 
         # 4. 评估质量
@@ -514,7 +517,8 @@ class ChainStitcher:
         source = np.array([[row.get(key, np.nan) for key in axes] for row in new_node.markers], dtype=float)
         target = np.array([[row.get(key, np.nan) for key in axes] for row in prev_node.markers], dtype=float)
         try:
-            result = match_geometry(target, source, MatchParameters(min_matches=self.min_common_markers))
+            result = match_geometry(target, source, MatchParameters(
+                min_matches=self.min_common_markers, same_camera_side=True))
         except ValueError as exc:
             logger.debug(f'普通圆点 {new_node.station_id} → {prev_node.station_id}: {exc}')
             return None

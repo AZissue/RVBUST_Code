@@ -13,6 +13,7 @@ class MatchParameters:
     min_matches: int = 3
     min_edge: float = 5.
     max_hypotheses: int = 5000
+    same_camera_side: bool = False
 
     def validate(self):
         values=[self.edge_tolerance,self.relative_tolerance,self.point_tolerance,self.min_edge]
@@ -56,6 +57,20 @@ def display_triangle_indices(points):
         points[ids[1]] - points[ids[0]], points[ids[2]] - points[ids[0]])))
 
 
+def _opposite_camera_side(reference, transform, tolerance):
+    """Detect a planar match that places the two camera origins on opposite sides."""
+    center = reference.mean(axis=0)
+    centered = reference - center
+    _, _, axes = np.linalg.svd(centered, full_matrices=False)
+    normal = axes[-1]
+    if np.max(np.abs(centered @ normal)) > tolerance:
+        return False
+    reference_distance = -center @ normal
+    moving_distance = (transform[:3, 3] - center) @ normal
+    return (min(abs(reference_distance), abs(moving_distance)) > tolerance
+            and reference_distance * moving_distance < 0)
+
+
 def match_triangles(reference,moving,params=MatchParameters()):
     params.validate()
     reference=np.asarray(reference,float);moving=np.asarray(moving,float)
@@ -70,6 +85,7 @@ def match_triangles(reference,moving,params=MatchParameters()):
         raise ValueError('没有有效三角形：圆心过近、近共线或分布退化')
     tree=cKDTree(rd)
     candidates={};hypotheses=0
+    rejected_view_count = 0
     for moving_ids,descriptor in zip(mt,md):
         tolerance=params.edge_tolerance+params.relative_tolerance*descriptor.max()
         for index in tree.query_ball_point(descriptor,np.sqrt(3)*tolerance):
@@ -99,11 +115,17 @@ def match_triangles(reference,moving,params=MatchParameters()):
                 errors=np.linalg.norm(moving[pairs[:,1]]@transform[:3,:3].T+transform[:3,3]-reference[pairs[:,0]],axis=1)
                 if errors.max()>params.point_tolerance:
                     continue
+                if params.same_camera_side and _opposite_camera_side(
+                        reference[pairs[:, 0]], transform, params.point_tolerance):
+                    rejected_view_count = max(rejected_view_count, len(pairs))
+                    continue
                 key=tuple(map(tuple,pairs.tolist()))
                 old=candidates.get(key)
                 if old is None or rms<old['rms']:
                     candidates[key]=dict(transform=transform,pairs=pairs,rms=rms,errors=errors)
     ranked=sorted(candidates.values(),key=lambda result:(-len(result['pairs']),result['rms']))
+    if rejected_view_count and (not ranked or rejected_view_count > len(ranked[0]['pairs'])):
+        raise ValueError('圆点配准会将相机翻到靶板背面，无法确认正确朝向')
     if not ranked:
         raise ValueError('没有足够一致的圆心匹配，请检查共同圆点、单位和容差')
     best=ranked[0]

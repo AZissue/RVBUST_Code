@@ -61,6 +61,40 @@ def measured_rms(chain, poses):
 
 
 class MobileGlobalAlignmentTests(unittest.TestCase):
+    def test_unencoded_planar_match_rejects_opposite_camera_side(self):
+        wf = MobileChainWorkflow(CameraManager(), MarkerDetector(), CalibrationEngine(), StitchEngine())
+        wf.start_chaining()
+        chain = wf._chain_stitcher
+        reference = np.array([[0, 0, 400], [47, 0, 400], [13, 32, 400], [69, 65, 400]])
+        mirrored = reference * [-1, 1, 1]
+        for index, points in enumerate((reference, mirrored), 1):
+            markers = [dict(code=k, marker_type='unencoded_circle', x_3d=x, y_3d=y, z_3d=z)
+                       for k, (x, y, z) in enumerate(points)]
+            frame = FrameData(index, f'station_{index}', is_offline=True, markers=markers)
+            ok, message, _ = chain.add_frame(frame, detect_markers=False)
+            if index == 1:
+                self.assertTrue(ok, message)
+            else:
+                self.assertFalse(ok, message)
+                self.assertIn('朝向', message)
+        self.assertEqual(list(chain.nodes), ['station_1'])
+        self.assertEqual(chain.edges, [])
+
+    def test_unencoded_planar_match_allows_camera_roll_with_unique_pattern(self):
+        wf = MobileChainWorkflow(CameraManager(), MarkerDetector(), CalibrationEngine(), StitchEngine())
+        wf.start_chaining()
+        chain = wf._chain_stitcher
+        reference = np.array([[0, 0, 400], [47, 0, 400], [13, 32, 400], [69, 65, 400]])
+        rotation = np.diag([-1, -1, 1])
+        for index, points in enumerate((reference, reference @ rotation), 1):
+            markers = [dict(code=k, marker_type='unencoded_circle', x_3d=x, y_3d=y, z_3d=z)
+                       for k, (x, y, z) in enumerate(points)]
+            frame = FrameData(index, f'station_{index}', is_offline=True, markers=markers)
+            ok, message, edge = chain.add_frame(frame, detect_markers=False)
+            self.assertTrue(ok, message)
+        self.assertEqual(edge.common_markers, 4)
+        np.testing.assert_allclose(edge.T[:3, :3], rotation, atol=1e-8)
+
     def test_unencoded_markers_build_chain_and_close_geometry_loop(self):
         wf = MobileChainWorkflow(CameraManager(), MarkerDetector(), CalibrationEngine(), StitchEngine())
         wf.start_chaining()
