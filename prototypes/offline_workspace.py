@@ -115,10 +115,15 @@ def launch(*, key, title, mode=None, editor_type=None):
     parser.add_argument('--session', type=Path, help='已保存的 MCC 会话目录或 session.json')
     parser.add_argument('--output', type=Path, help='实验会话保存目录')
     args = parser.parse_args()
+    return launch_session(key=key, title=title, path=args.session, mode=mode,
+                          editor_type=editor_type, output=args.output)
+
+
+def launch_session(*, key, title, path=None, mode=None, editor_type=None, output=None):
     app = QApplication(sys.argv[:1])
     app.setApplicationName('MultiCameraCalibration')
     UiComposition().configure(app)
-    path = args.session
+    interactive = path is None
     if path is None:
         selected, _ = QFileDialog.getOpenFileName(
             None, '选择 MCC 离线会话', str(ROOT / 'sessions'), 'MCC 会话 (session.json)')
@@ -129,12 +134,12 @@ def launch(*, key, title, mode=None, editor_type=None):
     try:
         project, workflow = load_session(path, mode)
         window = OfflineWorkspace(project, workflow, key=key, title=title, editor_type=editor_type,
-                                  output=args.output)
+                                  output=output)
     except Exception as exc:
         if project is not None:
             project.dispose()
         print(f'打开离线会话失败：{exc}', file=sys.stderr)
-        if args.session is None:
+        if interactive:
             QMessageBox.critical(None, '打开离线会话失败', str(exc))
         return 1
     window.show()

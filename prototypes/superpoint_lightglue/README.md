@@ -1,13 +1,15 @@
 # SuperPoint + LightGlue 无标记拼接原型
 
-从 MCC 仓库根目录用本机 rvc Python 启动。打开保存的 MCC 会话后，程序进入原来的工业工作区，并打开后处理窗口。
+从 MCC 仓库根目录用本机 rvc Python 启动。默认进入与主程序相同的启动小窗，可以搜索相机、选择工作模式并连接设备。建议用「单相机移动拼接」做第一轮实机验证。
 
 ```powershell
 $rvcPython = 'D:/Program Files/Anaconda/envs/rvc/python.exe'
 & $rvcPython prototypes/superpoint_lightglue/run.py
 ```
 
-也可以指定会话目录或 `session.json`。
+连接后，在拍摄参数里开启 **点云对应2D**。用 **拍摄机位** 从两个有重叠的视角采集同一个工件，等待原图和点云写入当前 DB，再打开 **点云后处理**。
+
+使用保存的数据复验时，显式传入会话目录或 `session.json`，原型会打开离线工作区和后处理窗口。
 
 ```powershell
 $earbudSession = (Get-ChildItem sessions -Directory -Filter '*0dc20d90').FullName
