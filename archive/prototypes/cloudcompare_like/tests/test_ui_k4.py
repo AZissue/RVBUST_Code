@@ -15,11 +15,12 @@ K4 UI 级验证（G-S5-lite 续）：裁切 / ROI 保留剔除 / 门禁 / 工具
 
 运行方式：
     cd D:/RVC_SRC/Python/MultiCameraCalibration
-    QT_QPA_PLATFORM=offscreen python -m unittest prototypes.cloudcompare_like.tests.test_ui_k4 -v
+    QT_QPA_PLATFORM=offscreen python -m unittest archive.prototypes.cloudcompare_like.tests.test_ui_k4 -v
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 import os
 import sys
 import tempfile
@@ -27,8 +28,7 @@ import unittest
 
 import numpy as np
 
-_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(
-    os.path.dirname(os.path.abspath(__file__)))))
+_PROJECT_ROOT = str(Path(__file__).resolve().parents[4])
 for _p in (_PROJECT_ROOT, os.path.join(_PROJECT_ROOT, "src")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
@@ -39,7 +39,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")  # noqa: E402
 
 try:
     from PySide6.QtWidgets import QApplication
-    from prototypes.cloudcompare_like.app.cc_workspace import CloudCompareWorkspace
+    from archive.prototypes.cloudcompare_like.app.cc_workspace import CloudCompareWorkspace
     _HAS_APP = True
     _APP_IMPORT_ERR = ""
 except Exception as _e:
@@ -333,7 +333,7 @@ class TestToolbarAndExportName(_K4UiBase):
             captured["default"] = default
             return "", ""
 
-        import prototypes.cloudcompare_like.app.cc_workspace as ws_mod
+        import archive.prototypes.cloudcompare_like.app.cc_workspace as ws_mod
         orig = ws_mod.QFileDialog.getSaveFileName
         ws_mod.QFileDialog.getSaveFileName = staticmethod(fake_dialog)
         try:

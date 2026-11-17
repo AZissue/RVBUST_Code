@@ -1,15 +1,11 @@
 # MCC 离线实验项目
 
-各项目复用主程序的工业工作区、DB 树和点云视图。使用本机 rvc Python，从 MCC 仓库根目录运行对应脚本。
+各项目复用主程序的工业工作区、DB 树和点云视图。使用本机 rvc Python，从 MCC 仓库根目录运行对应脚本。已归档项目及正式入口见 [原型归档](../archive/prototypes/README.md)。
 
 | 项目 | 脚本 | 输入 |
 |---|---|---|
 | 颜色统一、原色对比、2D 融合、框内颜色过滤 | `prototypes/color_postprocess/run.py` | 有色点云会话。2D 融合还需要原始图像、有序点云及来源位姿 |
-| FPFH 几何匹配 | `prototypes/fpfh_geometry_match/run.py` | 包含待配准点云的会话 |
-| 几何后处理 | `prototypes/industrial_pointcloud_postprocess/offline.py` | 点云会话，可在后处理中补充导入 PLY |
 | 普通圆点三角形匹配 | `prototypes/circle_geometry_match/run.py` | 至少两帧原始图像和对应的有序点云 |
-| 固定多相机外参与拼接 | `prototypes/fixed_multi_camera/run.py` | 固定多相机会话 |
-| 机器人手眼变换与戳点验证 | `prototypes/robot_handeye_transform/run.py` | 含手眼矩阵的机器人会话，未使用的原始帧可供离线变换 |
 
 启动时选择已保存会话的 `session.json`，也可通过命令直接加载：
 

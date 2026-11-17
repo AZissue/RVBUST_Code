@@ -16,6 +16,7 @@ C++ 调用，全程持有 GIL——放进 QThread 主线程事件循环仍被饿
 """
 
 import json
+from pathlib import Path
 import os
 import sys
 import time
@@ -28,15 +29,14 @@ def main() -> int:
     radius = float(sys.argv[2])
     max_nn = int(sys.argv[3])
 
-    # 复用 core 的点距口径：项目根与 src/ 上 path（本文件在 prototypes/cloudcompare_like/app/）
-    _root = os.path.dirname(os.path.dirname(os.path.dirname(
-        os.path.dirname(os.path.abspath(__file__)))))
+    # 复用 core 的点距口径：项目根与 src/ 上 path（本文件在 archive/prototypes/cloudcompare_like/app/）
+    _root = str(Path(__file__).resolve().parents[4])
     for _p in (_root, os.path.join(_root, "src")):
         if _p not in sys.path:
             sys.path.insert(0, _p)
 
     import open3d as o3d
-    from prototypes.cloudcompare_like.core.cc_workflow import _median_point_spacing
+    from archive.prototypes.cloudcompare_like.core.cc_workflow import _median_point_spacing
 
     pts = np.load(os.path.join(workdir, "pts.npy"))
     pcd = o3d.geometry.PointCloud()

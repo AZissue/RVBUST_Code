@@ -7,11 +7,12 @@ K3 UI 冒烟测试（G-K3，offscreen，不涉 ROI）。
 
 运行方式：
     cd D:/RVC_SRC/Python/MultiCameraCalibration
-    QT_QPA_PLATFORM=offscreen python -m unittest prototypes.cloudcompare_like.tests.test_ui_smoke -v
+    QT_QPA_PLATFORM=offscreen python -m unittest archive.prototypes.cloudcompare_like.tests.test_ui_smoke -v
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 import os
 import sys
 import tempfile
@@ -21,8 +22,7 @@ from unittest import mock
 import numpy as np
 
 # 包路径导入：与 tests/test_cc.py 同口径（项目根 + src/ 上 path）。
-_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(
-    os.path.dirname(os.path.abspath(__file__)))))
+_PROJECT_ROOT = str(Path(__file__).resolve().parents[4])
 for _p in (_PROJECT_ROOT, os.path.join(_PROJECT_ROOT, "src")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
@@ -33,7 +33,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")  # noqa: E402
 
 try:
     from PySide6.QtWidgets import QApplication
-    from prototypes.cloudcompare_like.app.cc_workspace import CloudCompareWorkspace
+    from archive.prototypes.cloudcompare_like.app.cc_workspace import CloudCompareWorkspace
     _HAS_APP = True
     _APP_IMPORT_ERR = ""
 except Exception as _e:  # PySide6/open3d-GUI 缺失时整组跳过
@@ -82,7 +82,7 @@ class TestUiSmokeExport(unittest.TestCase):
     def _save_dialog(self, path: str):
         """mock getSaveFileName：注入路径，绕过对话框。"""
         return mock.patch(
-            "prototypes.cloudcompare_like.app.cc_workspace.QFileDialog.getSaveFileName",
+            "archive.prototypes.cloudcompare_like.app.cc_workspace.QFileDialog.getSaveFileName",
             return_value=(path, "PLY 文件 (*.ply)"))
 
     # ------------------------------------------------------------ 端到端主链
@@ -287,7 +287,7 @@ class TestUiNormalsWorker(unittest.TestCase):
         from unittest import mock
 
         from PySide6.QtCore import QEventLoop, QTimer
-        from prototypes.cloudcompare_like.app import cc_normals_worker as nw
+        from archive.prototypes.cloudcompare_like.app import cc_normals_worker as nw
 
         nid = self._inject_inf_cloud()
         fake = mock.Mock()
@@ -407,7 +407,7 @@ class TestUiExitRace(unittest.TestCase):
                 sys.path.insert(0, p)
             import numpy as np, open3d as o3d
             from PySide6.QtWidgets import QApplication
-            from prototypes.cloudcompare_like.app.cc_workspace import CloudCompareWorkspace
+            from archive.prototypes.cloudcompare_like.app.cc_workspace import CloudCompareWorkspace
             app = QApplication([])
             ws = CloudCompareWorkspace()
             pts = np.random.default_rng(4).normal(size=(1_500_000, 3)) * 100.0

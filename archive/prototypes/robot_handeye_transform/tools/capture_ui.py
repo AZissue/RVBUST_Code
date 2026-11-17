@@ -9,7 +9,7 @@ S3 集合补 Microsoft YaHei UI / S4 采状态标签像素 / S5 删③ / S6·S7 
 跑法（真实桌面会话，主组；**不设 QT_QPA_PLATFORM**）：
   cd D:\\RVC_SRC\\Python\\MultiCameraCalibration
   unset PYTHONPATH
-  "D:/Program Files/Anaconda/envs/rvc/python.exe" prototypes/robot_handeye_transform/tools/capture_ui.py
+  "D:/Program Files/Anaconda/envs/rvc/python.exe" archive/prototypes/robot_handeye_transform/tools/capture_ui.py
 副组（色值回归，字体/中文类判据豁免）：
   ... capture_ui.py --offscreen          # 图存 docs/ui_review/offscreen/
 

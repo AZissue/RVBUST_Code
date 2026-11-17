@@ -18,8 +18,8 @@ REPO = "D:/RVC_SRC/Python/MultiCameraCalibration"
 OUT = os.path.join(REPO, "docs", "ui_review")
 os.makedirs(OUT, exist_ok=True)
 sys.path.insert(0, os.path.join(REPO, "src"))
-sys.path.insert(0, os.path.join(REPO, "prototypes", "robot_handeye_transform", "app"))
-os.chdir(os.path.join(REPO, "prototypes", "robot_handeye_transform"))
+sys.path.insert(0, os.path.join(REPO, "archive", "prototypes", "robot_handeye_transform", "app"))
+os.chdir(os.path.join(REPO, "archive", "prototypes", "robot_handeye_transform"))
 
 from PySide6.QtWidgets import QApplication, QGroupBox, QPushButton, QLabel  # noqa: E402
 

@@ -12,33 +12,33 @@ K4 测试：裁切（AABB/球/OBB）+ ROI 保留/剔除 + 历史扩展 + 选区�
 
 运行方式：
     cd D:/RVC_SRC/Python/MultiCameraCalibration
-    QT_QPA_PLATFORM=offscreen python -m unittest prototypes.cloudcompare_like.tests.test_cc_k4 -v
+    QT_QPA_PLATFORM=offscreen python -m unittest archive.prototypes.cloudcompare_like.tests.test_cc_k4 -v
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 import os
 import sys
 import unittest
 
 import numpy as np
 
-_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(
-    os.path.dirname(os.path.abspath(__file__)))))
+_PROJECT_ROOT = str(Path(__file__).resolve().parents[4])
 for _p in (_PROJECT_ROOT, os.path.join(_PROJECT_ROOT, "src")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
 import open3d as o3d  # noqa: E402
 
-from prototypes.cloudcompare_like.core.cc_workflow import (  # noqa: E402
+from archive.prototypes.cloudcompare_like.core.cc_workflow import (  # noqa: E402
     CloudCompareWorkflow, CCNode)
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")  # noqa: E402
 
 try:
     from PySide6.QtCore import QRect  # noqa: E402
-    from prototypes.cloudcompare_like.app.cc_gl_viewer import (  # noqa: E402
+    from archive.prototypes.cloudcompare_like.app.cc_gl_viewer import (  # noqa: E402
         roi_project_indices, roi_apply_depth_filter, PointCloudViewerLOD)
     _HAS_QT = True
     _QT_ERR = ""

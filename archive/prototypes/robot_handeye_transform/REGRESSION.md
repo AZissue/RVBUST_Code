@@ -21,8 +21,8 @@ cd D:/RVC_SRC/Python/MultiCameraCalibration
 unset PYTHONPATH; export QT_QPA_PLATFORM=offscreen
 PY="D:/Program Files/Anaconda/envs/rvc/python.exe"
 for t in test_unit_guard test_handeye_result test_handeye_file test_matrix_guard test_pose_source test_transform_chain test_validation_degenerate test_pose_table test_order_detect test_session test_ui_smoke; do
-  "$PY" prototypes/robot_handeye_transform/tests/$t.py; echo "$t exit=$?"; done
-"$PY" prototypes/robot_handeye_transform/app/main.py --smoke 3; echo "smoke exit=$?"
+  "$PY" archive/prototypes/robot_handeye_transform/tests/$t.py; echo "$t exit=$?"; done
+"$PY" archive/prototypes/robot_handeye_transform/app/main.py --smoke 3; echo "smoke exit=$?"
 ```
 
 ---
@@ -59,7 +59,7 @@ for t in test_unit_guard test_handeye_result test_handeye_file test_matrix_guard
 
 ## RG-03 测试套件不可迁移（只拷原型目录必失败）
 
-- **现象（旧版）**：只 `cp -r prototypes/robot_handeye_transform` 到别处运行 → `ModuleNotFoundError: No module named 'core'`，**exit=1 + 堆栈**，死在 §[4]，**§[5] 与"oracle 必需"判据永远执行不到**。
+- **现象（旧版）**：只 `cp -r archive/prototypes/robot_handeye_transform` 到别处运行 → `ModuleNotFoundError: No module named 'core'`，**exit=1 + 堆栈**，死在 §[4]，**§[5] 与"oracle 必需"判据永远执行不到**。
 - **成因（旧版）**：`tests/*.py` 用 `dirname(__file__)/../../../src` 硬编码相对位置定位仓库 `src`。
 - **状态**：✅ **已修复**（批 1.5 第 ⑥ 项）：改为向上查找含 `src/core/pcd_utils.py` 的仓库根，或读 `MCC_REPO_ROOT`；找不到时打印明确原因，且**不连累 §[5]**。
 - **@feas 迁移台架 `feas_r12_reloc.py` 结果**（只 `copytree` 原型目录到 scratch、oracle 置空）：A 无 `MCC_REPO_ROOT` + `--allow-skip-oracle` → `exit=0` 且 §[4]/§[5] **都执行到**；B 加 `MCC_REPO_ROOT` → 仓库根认对（`D:\RVC_SRC\Python\MultiCameraCalibration`）；C 同 B 不给降级 flag → `exit=1 + [FAILED] 1 项失败`；D oracle 恢复 → `nn_max` 三元组与仓库内逐位一致。
@@ -172,7 +172,7 @@ for t in test_unit_guard test_handeye_result test_handeye_file test_matrix_guard
 
 ## RG-12 锚点表时效性：禁止"量工作树比历史值"（新，2026-09-23）
 
-- **现象**：`BASELINE.md` 批 1.5 哈希表第 94 行记 `tests/test_matrix_guard.py f275647d688a5570be7ca7d3efe47d593d06eb30`，而磁盘实值 `1a1862ba9bc99fab8ac2a18f4fa1c005687be86f`。取证：`git show 15cedf0:prototypes/robot_handeye_transform/tests/test_matrix_guard.py | sha1sum` = `f275647d…`（记录**当时**正确）、`05fd446` / `384615c` / HEAD = `1a1862ba…` → 批 2 改过这个文件（即 @arch 那条禁兜底窗口的 `inspect.getsource()` 断言 + 歧义值用例），而 `384615c` 只回填了 `app/` 三个文件，批 1.5 那张表没跟更新。@scribe v3 复核 12 个文件哈希：**11 行一致、1 行不符**。
+- **现象**：`BASELINE.md` 批 1.5 哈希表第 94 行记 `tests/test_matrix_guard.py f275647d688a5570be7ca7d3efe47d593d06eb30`，而磁盘实值 `1a1862ba9bc99fab8ac2a18f4fa1c005687be86f`。取证：`git show 15cedf0:archive/prototypes/robot_handeye_transform/tests/test_matrix_guard.py | sha1sum` = `f275647d…`（记录**当时**正确）、`05fd446` / `384615c` / HEAD = `1a1862ba…` → 批 2 改过这个文件（即 @arch 那条禁兜底窗口的 `inspect.getsource()` 断言 + 歧义值用例），而 `384615c` 只回填了 `app/` 三个文件，批 1.5 那张表没跟更新。@scribe v3 复核 12 个文件哈希：**11 行一致、1 行不符**。
 - **后果**：照 BASELINE 复核的人会在这一行判"文件被改过"（**假阳性**）；几次之后就会学会忽略这张表 → 锚点等于没有。
 - **规则（@arch 新增 §10.1）**：哈希表一律**按 commit 分节**，取值命令钉死 `git show <commit>:<path> | sha1sum`；**禁止"量工作树比历史值"**（`BASELINE.md` 原文给的 `sha1sum core/*.py tests/*.py` 量的是工作树，与 `15cedf0` 时刻的值比必然假阳性）。批 2.1 第 ⑤ 项按此改，**不是**把 `f275647d` 换成 `1a1862ba` 了事。
 - **`.gitignore` 盲区**：原型目录运行会落一个被忽略的 `MultiCameraCalibration.log`（81 B）——**`.gitignore` 不构成"零写入"证据**，A8 污染检查天然漏这类产物（量级无害，但口径要写对）。

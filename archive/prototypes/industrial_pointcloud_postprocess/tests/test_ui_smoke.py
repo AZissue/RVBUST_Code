@@ -7,7 +7,7 @@ import tempfile
 import numpy as np
 
 HERE = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(HERE.parents[1] / 'src'))
+sys.path.insert(0, str(HERE.parents[2] / 'src'))
 sys.path.insert(0, str(HERE.parent))
 
 

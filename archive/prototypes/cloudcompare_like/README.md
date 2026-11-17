@@ -1,6 +1,6 @@
 # CloudCompare-Like 后处理原型 v2
 
-> 位置：`prototypes/cloudcompare_like/`  
+> 位置：`archive/prototypes/cloudcompare_like/`
 > 目标：不基于 `postprocess_test`，全新设计高性能点云后处理原型，深度参考 CloudCompare 功能，方便后期合入主 `src/`。
 
 ---
@@ -98,7 +98,7 @@ cloudcompare_like/
 
 ```bash
 cd D:/RVC_SRC/Python/MultiCameraCalibration
-"D:/Program Files/Anaconda/envs/rvc/python.exe" prototypes/cloudcompare_like/app/main.py
+"D:/Program Files/Anaconda/envs/rvc/python.exe" archive/prototypes/cloudcompare_like/app/main.py
 ```
 
 ## 测试
@@ -107,7 +107,7 @@ cd D:/RVC_SRC/Python/MultiCameraCalibration
 cd D:/RVC_SRC/Python/MultiCameraCalibration
 export QT_QPA_PLATFORM=offscreen          # 无显示器 / CI
 unset PYTHONPATH
-"D:/Program Files/Anaconda/envs/rvc/python.exe" -m unittest discover -s prototypes/cloudcompare_like/tests -t .
+"D:/Program Files/Anaconda/envs/rvc/python.exe" -m unittest discover -s archive/prototypes/cloudcompare_like/tests
 ```
 
 判据看**进程退出码**（`OK` + exit 0）。当前基线：**118 测试全绿**（2026-10-10 实测，含
@@ -123,6 +123,6 @@ Windows 中文控制台、未设 `PYTHONIOENCODING`）。
 真机截图验收脚本（S1~S9）：
 
 ```bash
-"D:/Program Files/Anaconda/envs/rvc/python.exe" prototypes/cloudcompare_like/tools/capture_ui.py
+"D:/Program Files/Anaconda/envs/rvc/python.exe" archive/prototypes/cloudcompare_like/tools/capture_ui.py
 ```
 

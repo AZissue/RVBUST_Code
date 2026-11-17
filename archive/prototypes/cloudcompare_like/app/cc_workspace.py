@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (
 
 # 让原型能引用 src/ 下的模块
 _APP_DIR = os.path.dirname(os.path.abspath(__file__))
-_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(_APP_DIR)))
+_PROJECT_ROOT = os.path.abspath(os.path.join(_APP_DIR, "..", "..", "..", ".."))
 if os.path.join(_PROJECT_ROOT, "src") not in sys.path:
     sys.path.insert(0, os.path.join(_PROJECT_ROOT, "src"))
 

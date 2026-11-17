@@ -7,17 +7,13 @@
 | 项目 | 启动脚本 | 验证范围 |
 |---|---|---|
 | [颜色后处理](color_postprocess/) | `color_postprocess/run.py` | 颜色统一、原色对比、2D 融合和框内颜色过滤 |
-| [FPFH 几何匹配](fpfh_geometry_match/) | `fpfh_geometry_match/run.py` | 独立调参及多帧配准，正式离线拼接也提供 FPFH |
-| [几何后处理](industrial_pointcloud_postprocess/) | `industrial_pointcloud_postprocess/offline.py` | 框选、下采样、ICP 和结果分支 |
 | [普通圆点三角形匹配](circle_geometry_match/) | `circle_geometry_match/run.py` | 圆点检测、配对预览和拼接。主程序也复用本项目的识别与匹配核心 |
-| [固定多相机](fixed_multi_camera/) | `fixed_multi_camera/run.py` | 固定多相机外参及拼接的离线复验 |
-| [机器人手眼变换](robot_handeye_transform/) | `robot_handeye_transform/run.py` | 手眼矩阵、位姿变换和戳点门禁的离线复验 |
+| [SuperPoint + LightGlue 无标记拼接](superpoint_lightglue/) | `superpoint_lightglue/run.py` | 2D 特征匹配、3D 刚体配准及工件选区拼接 |
 
 ## 专项验证
 
 | 项目 | 验证范围 |
 |---|---|
-| [高级点云后处理](cloudcompare_like/) | 标量场、形状检测、法线、LOD 和大点云交互 |
 | [编码圆标定板](coded_circle_ui/) | 参数化生成、预览及导出标定板 |
 | [双目离线重建](stereo_2d_to_pointcloud/) | 双目图像与内外参重建、帧率与标定实验 |
 | [并发采集诊断](sync_capture_stress/) | 多相机并发污染复现，需要实体设备 |

@@ -5,7 +5,7 @@ import unittest
 import numpy as np
 
 HERE = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(HERE.parents[1] / 'src'))
+sys.path.insert(0, str(HERE.parents[2] / 'src'))
 sys.path.insert(0, str(HERE.parent))
 from industrial_pointcloud_postprocess.core.processing import (
     ortho_project, point_in_polygon, polygon_crop_mask, voxel_downsample, random_downsample)

@@ -4,11 +4,12 @@ CloudCompare-Like 原型单元测试（无 UI 依赖）。
 
 运行方式：
     cd D:/RVC_SRC/Python/MultiCameraCalibration
-    python prototypes/cloudcompare_like/tests/test_cc.py
+    python archive/prototypes/cloudcompare_like/tests/test_cc.py
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 import os
 import sys
 import tempfile
@@ -18,22 +19,21 @@ import numpy as np
 # 包路径导入：prototypes 无 __init__.py，依赖命名空间包（PEP 420）。
 # 项目根目录需在 sys.path 上（直接运行本脚本时自动满足：sys.path[0] 为 tests/ 的父链
 # 不可依赖，这里显式插入项目根），src/ 也在 path 上供原型引用 core.utils 等主源码模块。
-_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(
-    os.path.dirname(os.path.abspath(__file__)))))
+_PROJECT_ROOT = str(Path(__file__).resolve().parents[4])
 for _p in (_PROJECT_ROOT, os.path.join(_PROJECT_ROOT, "src")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
 import open3d as o3d
-from prototypes.cloudcompare_like.core.cc_workflow import CloudCompareWorkflow, CCNode, ScalarField
-from prototypes.cloudcompare_like.core.cc_scalar_field import compute_scalar_field, apply_colormap
-from prototypes.cloudcompare_like.core.cc_geometry import detect_shape
-from prototypes.cloudcompare_like.core.cc_octree_lod import PointCloudOctree, MultiCloudLODManager
+from archive.prototypes.cloudcompare_like.core.cc_workflow import CloudCompareWorkflow, CCNode, ScalarField
+from archive.prototypes.cloudcompare_like.core.cc_scalar_field import compute_scalar_field, apply_colormap
+from archive.prototypes.cloudcompare_like.core.cc_geometry import detect_shape
+from archive.prototypes.cloudcompare_like.core.cc_octree_lod import PointCloudOctree, MultiCloudLODManager
 
 # app 层（结果标签/局部极小口径）在无显示环境下也要可导入：先钉 offscreen 再导入 Qt。
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 try:
-    from prototypes.cloudcompare_like.app.cc_workspace import (
+    from archive.prototypes.cloudcompare_like.app.cc_workspace import (
         judge_icp_result, avg_point_spacing, rotation_angle_deg)
     _HAS_APP = True
     _APP_IMPORT_ERR = ""
@@ -684,7 +684,7 @@ class TestICPResultReport(unittest.TestCase):
         源 = 当前选中点云，目标由下拉提供，结果标签须含四项指标。
         """
         from PySide6.QtWidgets import QApplication
-        from prototypes.cloudcompare_like.app.cc_workspace import CloudCompareWorkspace
+        from archive.prototypes.cloudcompare_like.app.cc_workspace import CloudCompareWorkspace
 
         app = QApplication.instance() or QApplication([])  # noqa: F841
         ws = CloudCompareWorkspace()
@@ -730,7 +730,7 @@ class TestMergeWiring(unittest.TestCase):
         if not _HAS_APP:
             self.skipTest(f"app 层不可导入: {_APP_IMPORT_ERR}")
         from PySide6.QtWidgets import QApplication
-        from prototypes.cloudcompare_like.app.cc_workspace import CloudCompareWorkspace
+        from archive.prototypes.cloudcompare_like.app.cc_workspace import CloudCompareWorkspace
         self._QApplication = QApplication
         self._Workspace = CloudCompareWorkspace
 
@@ -868,7 +868,7 @@ class TestMergeWiring(unittest.TestCase):
     def test_judge_icp_result_low_fitness_warns(self):
         """G-S3-d：0 < fitness < 0.90 必须告警且文案含 fitness 值（不依赖点距）。"""
         from types import SimpleNamespace
-        from prototypes.cloudcompare_like.app.cc_workspace import (
+        from archive.prototypes.cloudcompare_like.app.cc_workspace import (
             ICP_LOCAL_MIN_FITNESS, judge_icp_result)
 
         result = SimpleNamespace(
@@ -895,7 +895,7 @@ class TestLoadFilesWiring(unittest.TestCase):
         if not _HAS_APP:
             self.skipTest(f"app 层不可导入: {_APP_IMPORT_ERR}")
         from PySide6.QtWidgets import QApplication
-        from prototypes.cloudcompare_like.app.cc_workspace import CloudCompareWorkspace
+        from archive.prototypes.cloudcompare_like.app.cc_workspace import CloudCompareWorkspace
         self._QApplication = QApplication
         self._Workspace = CloudCompareWorkspace
 
@@ -1030,7 +1030,7 @@ class TestDBTreeDisplay(unittest.TestCase):
         if not _HAS_APP:
             self.skipTest(f"app 层不可导入: {_APP_IMPORT_ERR}")
         from PySide6.QtWidgets import QApplication
-        from prototypes.cloudcompare_like.app.cc_workspace import CloudCompareWorkspace
+        from archive.prototypes.cloudcompare_like.app.cc_workspace import CloudCompareWorkspace
         self._QApplication = QApplication
         self._Workspace = CloudCompareWorkspace
 
@@ -1137,7 +1137,7 @@ class TestShellOffscreen(unittest.TestCase):
         if not _HAS_APP:
             self.skipTest(f"app 层不可导入: {_APP_IMPORT_ERR}")
         from PySide6.QtWidgets import QApplication, QScrollArea
-        from prototypes.cloudcompare_like.app.cc_workspace import CloudCompareWindow
+        from archive.prototypes.cloudcompare_like.app.cc_workspace import CloudCompareWindow
         self._QApplication = QApplication
         self._QScrollArea = QScrollArea
         self._Window = CloudCompareWindow
@@ -1202,7 +1202,7 @@ class TestSanitizeCloud(unittest.TestCase):
         return pcd
 
     def test_mixed_nan_inf_rows_dropped_with_attributes(self):
-        from prototypes.cloudcompare_like.core.cc_workflow import sanitize_cloud
+        from archive.prototypes.cloudcompare_like.core.cc_workflow import sanitize_cloud
         pts = np.arange(20, dtype=np.float64).reshape(10, 2) * 1.0
         pts = np.hstack([pts, np.zeros((10, 1))])
         colors = np.tile([0.1, 0.2, 0.3], (10, 1))
@@ -1226,13 +1226,13 @@ class TestSanitizeCloud(unittest.TestCase):
         self.assertTrue(np.array_equal(np.asarray(pcd.points), before_ref, equal_nan=True))
 
     def test_all_nonfinite_rejected(self):
-        from prototypes.cloudcompare_like.core.cc_workflow import compute_normals
+        from archive.prototypes.cloudcompare_like.core.cc_workflow import compute_normals
         pts = np.full((50, 3), np.inf)
         with self.assertRaises(ValueError):
             compute_normals(self._pcd(pts))
 
     def test_all_nan_and_clean_passthrough(self):
-        from prototypes.cloudcompare_like.core.cc_workflow import sanitize_cloud
+        from archive.prototypes.cloudcompare_like.core.cc_workflow import sanitize_cloud
         nan_pcd = self._pcd(np.full((10, 3), np.nan))
         clean, dropped = sanitize_cloud(nan_pcd)
         self.assertEqual((len(clean.points), dropped), (0, 10))
@@ -1243,7 +1243,7 @@ class TestSanitizeCloud(unittest.TestCase):
         self.assertEqual(dropped, 0)
 
     def test_empty_cloud(self):
-        from prototypes.cloudcompare_like.core.cc_workflow import sanitize_cloud
+        from archive.prototypes.cloudcompare_like.core.cc_workflow import sanitize_cloud
         pcd = o3d.geometry.PointCloud()
         clean, dropped = sanitize_cloud(pcd)
         self.assertEqual((len(clean.points), dropped), (0, 0))
@@ -1306,7 +1306,7 @@ class TestEstimateNormalsRobustness(unittest.TestCase):
 
     def test_adaptive_radius_scales_with_units(self):
         """V4 开发侧口径：半径自适应随点云量级走（毫米级 mm 半径 / 米制 m 半径）。"""
-        from prototypes.cloudcompare_like.core.cc_workflow import compute_normals
+        from archive.prototypes.cloudcompare_like.core.cc_workflow import compute_normals
         rng = np.random.default_rng(11)
         mm_pcd = o3d.geometry.PointCloud()
         mm_pcd.points = o3d.utility.Vector3dVector(rng.normal(size=(3000, 3)) * 100.0)

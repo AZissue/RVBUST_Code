@@ -33,8 +33,8 @@ DualCameraFusion 保持不动，本项目为全新工程。
 | B 单相机移动链式拼接 | 启动器「单相机移动拼接」 | 主程序工作区；1 台相机；支持增量配准与闭环优化 |
 | C 转台 360° 拼接 | 启动器「转台 360° 拼接」 | 主程序工作区；1 台相机，手动旋转转台，支持定时采集 |
 | D 离线拼接 | 主窗口「打开会话」/ 模式 B「离线加载会话」；文件对工具见下文 | 会话重放与独立文件对工具分开使用；启动器没有 D 卡片 |
-| E 机器人配合拼接 | `src/core/handeye.py` 等；独立变换原型 | core 有手眼求解与 mock 工作流；主 UI 尚未接线，启动器没有 E 卡片 |
-| 点云后处理 v2 | `prototypes/cloudcompare_like/` | 独立原型；主程序集成与实机性能验收待完成 |
+| E 机器人配合拼接 | 启动器「机器人手眼拼接」 | 导入手眼矩阵，录入绝对位姿，完成戳点验证后导出拼接结果 |
+| 点云后处理 | 主程序「后处理」 | CloudCompare 风格实验见 [原型归档](archive/prototypes/cloudcompare_like/README.md) |
 
 ### v1.7–v1.9.1 近期改进
 
@@ -117,7 +117,7 @@ $env:PYTHONIOENCODING = 'utf-8'
 不能通过普通 PyPI 依赖安装替代。
 
 正式离线拼接使用 `test_offline_stitch.py` 和 `test_offline_fpfh.py` 回归。机器人原型另遵循
-[回归手册](prototypes/robot_handeye_transform/REGRESSION.md) 的 DLL oracle 等判据。
+[回归手册](archive/prototypes/robot_handeye_transform/REGRESSION.md) 的 DLL oracle 等判据。
 历史验收数字不代表本次或本机最新回归结果。
 
 ## 使用指南
@@ -177,14 +177,14 @@ offline_data/stations/session_YYYYMMDD_HHMMSS/
 
 从启动小窗或主工作区顶部打开「离线拼接」，选择本地 PNG/PLY 文件对所在目录，在 DB 中检查数据并执行标记物拼接或 FPFH 配准。通过「保存会话」保留结果。详见 [正式离线拼接说明](docs/离线拼接正式功能_1.14.0.md)。
 
-### 模式 E：机器人手眼配合拼接（core 已落地，UI 未接线）
+### 模式 E：机器人手眼配合拼接
 
 相机配合工业机器人做多视角扫描拼接：
 用机器人位姿 + 手眼标定结果直接给出每帧变换，**不依赖标记物**。
 核心模块 `src/core/handeye.py`、`robot_interface.py`、`robot_stitch_workflow.py`
-已提供求解、抽象接口与 mock 端到端测试，UI 卡片与 bridge 接线待补充。
+提供手眼求解、机器人接口和拼接工作流。启动器「机器人手眼拼接」提供正式操作入口。
 
-另有 [robot_handeye_transform](prototypes/robot_handeye_transform/README.md)
+另有 [robot_handeye_transform](archive/prototypes/robot_handeye_transform/README.md)
 独立工作区：读取手眼矩阵与机器人位姿，把点云变换到基座系，**只做变换，不做标定求解**。
 矩阵单位、位姿类型和欧拉顺序须显式选择；加载矩阵后为 UNVERIFIED，
 戳点验证通过才允许导出。两帧重合或内部拟合 RMS 不能替代该验证，也不构成亚毫米精度保证。
@@ -229,11 +229,8 @@ MultiCameraCalibration/
 │   └── version.py                  # 版本号管理（自动附加 Git commit hash）
 ├── prototypes/                     # 独立原型与保留参照，部分测试有跨目录依赖
 │   ├── coded_circle_ui/            # 编码圆标定板生成器原型
-│   ├── offline_stitch/             # 独立图像/点云文件对拼接工具
-│   ├── cloudcompare_like/          # 点云后处理 v2（尚未并入）
-│   ├── robot_handeye_transform/    # 机器人坐标变换独立工作区
-│   ├── sync_capture_stress/        # 多相机并发采集诊断
-│   └── turntable_360_stitch/       # 转台原型，只读参照；主实现位于 src/core
+│   └── sync_capture_stress/        # 多相机并发采集诊断
+├── archive/prototypes/             # 已归档原型
 ├── docs/                           # 文档索引与对外资料；历史方案位于 archived/
 └── test_*.py                       # 回归测试
 ```
@@ -330,7 +327,7 @@ MultiCameraCalibration/
 
 - [文档索引](docs/README.md)：当前资料与历史归档位置。
 - [原型索引](prototypes/README.md)：独立原型、并入状态与运行约定。
-- [后处理 v2](prototypes/cloudcompare_like/README.md)：ROI 默认包含投影框内全部点；实机大点云性能须单独验证。
+- [后处理 v2](archive/prototypes/cloudcompare_like/README.md)：ROI 默认包含投影框内全部点；实机大点云性能须单独验证。
 - 转台主程序修复定位 `src/core/turntable_calibrator.py`，不要继续修改冻结原型副本。
 - `test_marker_detector.py` 仍依赖 `prototypes/coded_circle_ui` 的生成器，清理原型前必须检查运行时依赖。
 - 新实验功能先独立验证，再按工作区契约合入；主程序缺陷在对应 `src/` 实现中修复。

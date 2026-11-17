@@ -5,7 +5,7 @@ import sys, pathlib, json
 import numpy as np
 from scipy.spatial.transform import Rotation as Rot
 
-ROOT = pathlib.Path(r"D:/RVC_SRC/Python/MultiCameraCalibration/prototypes/robot_handeye_transform")
+ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT)); sys.path.insert(0, str(ROOT / "core"))
 try:
     from core.order_detect import detect_order, candidate_cardinality

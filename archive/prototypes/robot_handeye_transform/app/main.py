@@ -4,7 +4,7 @@
 
   cd D:\\RVC_SRC\\Python\\MultiCameraCalibration
   unset PYTHONPATH && export QT_QPA_PLATFORM=offscreen      # 无显示器时
-  "D:/Program Files/Anaconda/envs/rvc/python.exe" prototypes/robot_handeye_transform/app/main.py
+  "D:/Program Files/Anaconda/envs/rvc/python.exe" archive/prototypes/robot_handeye_transform/app/main.py
   "D:/Program Files/Anaconda/envs/rvc/python.exe" prototypes/robot_handeye_transform/app/main.py --smoke 3
 
   --smoke N   无人值守：自动加载手眼矩阵（手动 4×4）+ Mock 位姿序列，连拍 N 帧，

@@ -32,19 +32,19 @@
 
 ```bash
 # 交互界面（可带点云文件直接打开，假定 mm）
-python prototypes/industrial_pointcloud_postprocess/run.py [cloud.ply ...]
-python prototypes/industrial_pointcloud_postprocess/run.py --renderer software
+python archive/prototypes/industrial_pointcloud_postprocess/run.py [cloud.ply ...]
+python archive/prototypes/industrial_pointcloud_postprocess/run.py --renderer software
 ```
 
 ## 验收判据（在仓库根目录执行，全部退出码 0 为通过）
 
 ```bash
-python prototypes/industrial_pointcloud_postprocess/tests/test_processing.py
-QT_QPA_PLATFORM=offscreen python prototypes/industrial_pointcloud_postprocess/tests/test_ui_smoke.py
-QT_QPA_PLATFORM=offscreen python prototypes/industrial_pointcloud_postprocess/run.py --screenshot tmp_proto_shot.png
-python prototypes/industrial_pointcloud_postprocess/run.py --self-test-io
-QT_QPA_PLATFORM=offscreen python prototypes/industrial_pointcloud_postprocess/tools/shot_selection_mode.py tmp_proto_shot_selection.png
-QT_QPA_PLATFORM=offscreen python prototypes/industrial_pointcloud_postprocess/tools/shot_selection_mode.py tmp_proto_shot_segment.png --segment
+python archive/prototypes/industrial_pointcloud_postprocess/tests/test_processing.py
+QT_QPA_PLATFORM=offscreen python archive/prototypes/industrial_pointcloud_postprocess/tests/test_ui_smoke.py
+QT_QPA_PLATFORM=offscreen python archive/prototypes/industrial_pointcloud_postprocess/run.py --screenshot tmp_proto_shot.png
+python archive/prototypes/industrial_pointcloud_postprocess/run.py --self-test-io
+QT_QPA_PLATFORM=offscreen python archive/prototypes/industrial_pointcloud_postprocess/tools/shot_selection_mode.py tmp_proto_shot_selection.png
+QT_QPA_PLATFORM=offscreen python archive/prototypes/industrial_pointcloud_postprocess/tools/shot_selection_mode.py tmp_proto_shot_segment.png --segment
 ```
 
 通过线：六条命令退出码均为 0；第 2、4 条打印 `[OK]` 标记（第 2 条覆盖分割暂存 /
@@ -71,9 +71,9 @@ segment in / segment out / 撤销回滚 / 分支回收 / 多选合并 / Alt 撤�
 正式后处理暂时关闭颜色统一及原色对比，颜色算法保留用于原型验证。
 
 ```powershell
-& 'D:/Program Files/Anaconda/envs/rvc/python.exe' prototypes/industrial_pointcloud_postprocess/color_validation.py
+& 'D:/Program Files/Anaconda/envs/rvc/python.exe' archive/prototypes/industrial_pointcloud_postprocess/color_validation.py
 # 读取保存会话的私有副本，验证原始2D颜色融合等功能
-& 'D:/Program Files/Anaconda/envs/rvc/python.exe' prototypes/industrial_pointcloud_postprocess/color_validation.py --session '会话目录路径'
+& 'D:/Program Files/Anaconda/envs/rvc/python.exe' archive/prototypes/industrial_pointcloud_postprocess/color_validation.py --session '会话目录路径'
 ```
 
 无会话时可以使用“导入点云”。已有会话通过私有工作区副本读取，不启动相机SDK，也不自动后台识别。原型顶部提供颜色统一和原色对比，参数及算法沿用已有实现，包括有完整来源/位姿时的原始2D颜色融合。

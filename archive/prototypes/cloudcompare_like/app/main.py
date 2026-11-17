@@ -4,24 +4,25 @@ CloudCompare-Like 后处理原型 — 独立运行入口。
 
 使用方式：
     cd D:/RVC_SRC/Python/MultiCameraCalibration
-    "D:/Program Files/Anaconda/envs/rvc/python.exe" prototypes/cloudcompare_like/app/main.py
+    "D:/Program Files/Anaconda/envs/rvc/python.exe" archive/prototypes/cloudcompare_like/app/main.py
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 import os
 import sys
 
 # 让原型能引用 src/ 下的模块，以及以包形式导入原型自身
 # （app/ 内部使用包相对导入，如 from ..core.cc_workflow import ...，
-#   因此必须走 prototypes.cloudcompare_like.app 包路径，不能扁平导入）
-_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+#   因此必须走 archive.prototypes.cloudcompare_like.app 包路径，不能扁平导入）
+_PROJECT_ROOT = str(Path(__file__).resolve().parents[4])
 for _p in (os.path.join(_PROJECT_ROOT, "src"), _PROJECT_ROOT):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
 from ui_v2.theme import GLOBAL_QSS
-from prototypes.cloudcompare_like.app.cc_workspace import CloudCompareWindow
+from archive.prototypes.cloudcompare_like.app.cc_workspace import CloudCompareWindow
 
 from PySide6.QtWidgets import QApplication
 

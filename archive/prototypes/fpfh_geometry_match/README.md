@@ -4,7 +4,7 @@
 
 1.14.1起，正式入口：离线拼接窗口 → FPFH几何匹配。直接使用正式会话DB及显式保存流程，34项参数全部保留。算法/参数面板位于src，当前目录保留兼容导入及历史验证记录。
 
-独立离线入口：运行 `prototypes/fpfh_geometry_match/run.py --session <会话目录>`。打开工业后处理窗口后点击“FPFH几何匹配”。
+独立离线入口：运行 `archive/prototypes/fpfh_geometry_match/run.py --session <会话目录>`。打开工业后处理窗口后点击“FPFH几何匹配”。
 
 后处理窗口可导入PLY/PCD等点云，按实际文件单位选择mm或m；MCC内部统一毫米。点击“FPFH几何匹配”，选择参考与移动点云，计算候选，阅读诊断并确认后生成DB结果，在3D视图检查。移动帧变换到参考帧，刚体变换不拟合尺度。去平面和下采样仅用于计算，输出保留完整有效点与颜色。颜色属性不一致时拒绝合并。
 
@@ -63,4 +63,4 @@ FPFH描述子固定为Open3D 33维定义；点到点刚体估计不允许尺度�
 
 2026-11-10：3项专用测试通过（已知位姿、全点颜色保留、非法参数/退化数据、参数面板及失效）；6项现有实验功能测试通过。凳子1/2.ply实际双帧、保留背景、默认参数加ICP，本次约19.44秒，粗/精覆盖F值80.83%/81.05%，内点RMSE 2.922/2.730mm。仅单次CPU观测，不是性能承诺，未提供参考真值，不能作为真实位姿精度。
 
-测试：`D:/Program Files/Anaconda/envs/rvc/python.exe prototypes/fpfh_geometry_match/test_fpfh.py`；`test_experiments.py`。原生GPU交互、现场精度与客户机打包未验证。
+测试：`D:/Program Files/Anaconda/envs/rvc/python.exe archive/prototypes/fpfh_geometry_match/test_fpfh.py`；`test_experiments.py`。原生GPU交互、现场精度与客户机打包未验证。

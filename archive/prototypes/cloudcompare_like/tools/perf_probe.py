@@ -18,7 +18,7 @@ def rss():
 def peak():
     return _mem()[1]
 
-P = r"D:\RVC_SRC\Python\MultiCameraCalibration\prototypes\cloudcompare_like\core\cc_octree_lod.py"
+P = r"D:\RVC_SRC\Python\MultiCameraCalibration\archive\prototypes\cloudcompare_like\core\cc_octree_lod.py"
 spec = importlib.util.spec_from_file_location("cc_octree_lod", P)
 m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
 

@@ -14,7 +14,7 @@ import numpy as np
 from PySide6.QtCore import QEventLoop, QTimer
 from PySide6.QtWidgets import QApplication
 
-from prototypes.cloudcompare_like.app.cc_workspace import CloudCompareWorkspace
+from archive.prototypes.cloudcompare_like.app.cc_workspace import CloudCompareWorkspace
 
 PLY = "D:/RVC_SRC/Python/MultiCameraCalibration/叶片拼接.ply"
 

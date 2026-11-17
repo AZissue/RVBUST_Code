@@ -1,6 +1,6 @@
 # robot_handeye_transform —— 手眼矩阵 + 机器人位姿 → 点云转基座系
 
-> 落位：`prototypes/robot_handeye_transform/` ｜ 方案：`docs/机器人手眼变换原型方案_20260922.md`（v4.3）
+> 落位：`archive/prototypes/robot_handeye_transform/` ｜ 方案：`docs/机器人手眼变换原型方案_20260922.md`（v4.3）
 > 范围（D1）：**只做变换不做标定求解**。手眼矩阵来自独立工具（RVHandEyeCalibration v3.9.0）
 > 或 `src/core/handeye.py`；本原型吃它的输出。
 
@@ -58,14 +58,14 @@ REGRESSION.md 回归手册（@scribe，RG-01…RG-13）
 cd D:\RVC_SRC\Python\MultiCameraCalibration
 unset PYTHONPATH && export QT_QPA_PLATFORM=offscreen
 PY="D:/Program Files/Anaconda/envs/rvc/python.exe"
-"$PY" prototypes/robot_handeye_transform/tests/test_unit_guard.py       # A2
-"$PY" prototypes/robot_handeye_transform/tests/test_handeye_result.py   # A7
-"$PY" prototypes/robot_handeye_transform/tests/test_matrix_guard.py     # 共用校验层
-"$PY" prototypes/robot_handeye_transform/tests/test_pose_source.py      # A2 位姿侧
-"$PY" prototypes/robot_handeye_transform/tests/test_transform_chain.py  # A1（含 DLL oracle）
-"$PY" prototypes/robot_handeye_transform/tests/test_validation_degenerate.py  # A3/A9/R2/R3
-"$PY" prototypes/robot_handeye_transform/tests/test_session.py          # A6 会话往返
-"$PY" prototypes/robot_handeye_transform/tests/test_ui_smoke.py         # A4/A5（offscreen）
+"$PY" archive/prototypes/robot_handeye_transform/tests/test_unit_guard.py       # A2
+"$PY" archive/prototypes/robot_handeye_transform/tests/test_handeye_result.py   # A7
+"$PY" archive/prototypes/robot_handeye_transform/tests/test_matrix_guard.py     # 共用校验层
+"$PY" archive/prototypes/robot_handeye_transform/tests/test_pose_source.py      # A2 位姿侧
+"$PY" archive/prototypes/robot_handeye_transform/tests/test_transform_chain.py  # A1（含 DLL oracle）
+"$PY" archive/prototypes/robot_handeye_transform/tests/test_validation_degenerate.py  # A3/A9/R2/R3
+"$PY" archive/prototypes/robot_handeye_transform/tests/test_session.py          # A6 会话往返
+"$PY" archive/prototypes/robot_handeye_transform/tests/test_ui_smoke.py         # A4/A5（offscreen）
 ```
 
 判 pass/fail 看**进程退出码**（不要用 pytest）。DLL oracle 默认**必需**：缺失时
@@ -76,8 +76,8 @@ oracle 会打印 DLL 路径 / 版本 / sha256（跨机比对基线，禁止人�
 ```bash
 # UI（无相机、无机器人；无显示器加 QT_QPA_PLATFORM=offscreen）
 PY="D:/Program Files/Anaconda/envs/rvc/python.exe"
-"$PY" prototypes/robot_handeye_transform/app/main.py            # 交互
-"$PY" prototypes/robot_handeye_transform/app/main.py --smoke 3  # 无人值守，退出码 0 = 全过
+"$PY" archive/prototypes/robot_handeye_transform/app/main.py            # 交互
+"$PY" archive/prototypes/robot_handeye_transform/app/main.py --smoke 3  # 无人值守，退出码 0 = 全过
 ```
 
 **入口结构（批 4.5 起）**：`app/main.py` → `app/host.py`（独立宿主：QMainWindow 壳 + 日志面板

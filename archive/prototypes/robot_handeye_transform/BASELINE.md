@@ -119,7 +119,7 @@ A5 计时口径为"单帧"：累加器重建在计时外，被测段只有 `tran
 
 ```bash
 cd D:/RVC_SRC/Python/MultiCameraCalibration
-git show <commit>:prototypes/robot_handeye_transform/core/<file> | sha1sum
+git show <commit>:archive/prototypes/robot_handeye_transform/core/<file> | sha1sum
 ```
 
 按 commit 分节（每条都是 `git show` 取出的**当时**内容）：

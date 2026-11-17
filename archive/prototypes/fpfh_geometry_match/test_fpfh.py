@@ -1,9 +1,9 @@
 import os,sys,unittest
 from pathlib import Path
-sys.path[:0]=[str(Path(__file__).resolve().parents[2]),str(Path(__file__).resolve().parents[2]/'src')]
+sys.path[:0]=[str(Path(__file__).resolve().parents[3]),str(Path(__file__).resolve().parents[3]/'src')]
 os.environ['QT_QPA_PLATFORM']='offscreen'
 import numpy as np
-from prototypes.fpfh_geometry_match.algorithm import DEFAULTS,SPECS,validate,solve,merge
+from archive.prototypes.fpfh_geometry_match.algorithm import DEFAULTS,SPECS,validate,solve,merge
 from core.postprocess.session import CloudLayer
 
 class AlgorithmTests(unittest.TestCase):
@@ -29,7 +29,7 @@ class AlgorithmTests(unittest.TestCase):
     def test_dialog_parameters_and_invalidation(self):
         from types import SimpleNamespace
         from PySide6.QtWidgets import QApplication,QWidget
-        from prototypes.fpfh_geometry_match.dialog import FPFHDialog
+        from archive.prototypes.fpfh_geometry_match.dialog import FPFHDialog
         app=QApplication.instance() or QApplication([])
         from PySide6.QtGui import QFontDatabase
         QFontDatabase.addApplicationFont('C:/Windows/Fonts/msyh.ttc')

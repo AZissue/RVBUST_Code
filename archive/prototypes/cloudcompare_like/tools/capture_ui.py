@@ -9,7 +9,7 @@ cloudcompare_like 原型 UI 复刻 —— 运行实测截图 + S1~S7/S9 脚本�
 跑法（真实桌面会话，主组；**不设 QT_QPA_PLATFORM**）：
   cd D:\\RVC_SRC\\Python\\MultiCameraCalibration
   unset PYTHONPATH
-  "D:/Program Files/Anaconda/envs/rvc/python.exe" prototypes/cloudcompare_like/tools/capture_ui.py
+  "D:/Program Files/Anaconda/envs/rvc/python.exe" archive/prototypes/cloudcompare_like/tools/capture_ui.py
 副组（色值回归，字体/中文类判据豁免）：
   ... capture_ui.py --offscreen          # 图存 docs/ui_review/offscreen/
 
@@ -34,7 +34,7 @@ else:
 
 _TOOLS = os.path.dirname(os.path.abspath(__file__))
 _PROTO = os.path.dirname(_TOOLS)
-REPO = os.path.abspath(os.path.join(_PROTO, "..", ".."))
+REPO = os.path.abspath(os.path.join(_PROTO, "..", "..", ".."))
 # app 包内是相对导入（from ..core.cc_workflow / from .cc_gl_viewer），必须走
 # 全限定包路径导入（与 tests 同法）；_PROTO 自身不上 path，避免原型自带 core/
 # 包抢占 src/core。
@@ -47,7 +47,7 @@ from PySide6.QtCore import QRect, Qt                            # noqa: E402
 from PySide6.QtGui import QColor, QFont, QImage, QPainter       # noqa: E402
 from PySide6.QtWidgets import QApplication, QPushButton, QScrollArea  # noqa: E402
 
-from prototypes.cloudcompare_like.app.cc_workspace import CloudCompareWindow  # noqa: E402
+from archive.prototypes.cloudcompare_like.app.cc_workspace import CloudCompareWindow  # noqa: E402
 from ui_v2.launcher_dialog import LauncherDialog                # noqa: E402
 from ui_v2.main_window import MainWindowShell                   # noqa: E402
 from ui_v2.theme import (ACCENT, ACCENT_DIM, BG_CARD, BG_PANEL,         # noqa: E402
