@@ -7,6 +7,7 @@
 | 项目 | 启动脚本 | 验证范围 |
 |---|---|---|
 | [颜色后处理](color_postprocess/) | `color_postprocess/run.py` | 颜色统一、原色对比、2D 融合和框内颜色过滤 |
+| [FPFH 几何匹配](fpfh_geometry_match/) | `fpfh_geometry_match/run.py` | 独立调参与多帧配准，继续开发中 |
 | [普通圆点三角形匹配](circle_geometry_match/) | `circle_geometry_match/run.py` | 圆点检测、配对预览和拼接。主程序也复用本项目的识别与匹配核心 |
 | [SuperPoint + LightGlue 无标记拼接](superpoint_lightglue/) | `superpoint_lightglue/run.py` | 2D 特征匹配、3D 刚体配准及工件选区拼接 |
 

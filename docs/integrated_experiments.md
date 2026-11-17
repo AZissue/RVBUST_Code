@@ -5,6 +5,7 @@
 | 项目 | 脚本 | 输入 |
 |---|---|---|
 | 颜色统一、原色对比、2D 融合、框内颜色过滤 | `prototypes/color_postprocess/run.py` | 有色点云会话。2D 融合还需要原始图像、有序点云及来源位姿 |
+| FPFH 几何匹配 | `prototypes/fpfh_geometry_match/run.py` | 包含待配准点云的会话 |
 | 普通圆点三角形匹配 | `prototypes/circle_geometry_match/run.py` | 至少两帧原始图像和对应的有序点云 |
 
 启动时选择已保存会话的 `session.json`，也可通过命令直接加载：

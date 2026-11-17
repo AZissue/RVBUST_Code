@@ -12,7 +12,6 @@
 | [task_workbench](task_workbench/) | 使用模拟数据的操作流程样机 |
 | [turntable_360_stitch](turntable_360_stitch/) | 转台拼接已进入主程序转台工作区 |
 | [cloudcompare_like](cloudcompare_like/) | CloudCompare 风格独立工作区。主程序「后处理」提供分割、合并、下采样和 ICP。标量场、形状拟合、独立法线计算和八叉树 LOD 保存在此实验中。 |
-| [fpfh_geometry_match](fpfh_geometry_match/) | 主程序「离线拼接 → FPFH几何匹配」，支持两帧与多帧链式配准 |
 | [industrial_pointcloud_postprocess](industrial_pointcloud_postprocess/) | 主程序「后处理」，提供多边形分割、合并、下采样、ICP、撤销与导出 |
 | [fixed_multi_camera](fixed_multi_camera/) | 主程序「多相机外参标定拼接」，可打开已保存的固定多相机会话 |
 | [robot_handeye_transform](robot_handeye_transform/) | 主程序「机器人手眼拼接」，提供手眼矩阵、绝对位姿、基座系拼接和戳点验证 |
