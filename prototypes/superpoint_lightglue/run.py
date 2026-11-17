@@ -12,22 +12,22 @@ def main():
     parser.add_argument('--output', type=Path, help='离线实验会话保存目录（与 --session 一起使用）')
     args = parser.parse_args()
     if args.session is not None:
-        from prototypes.offline_workspace import launch_session
-        from prototypes.superpoint_lightglue.editor import FeatureMatchEditor
+        from prototypes.offline_workspace import OfflineWorkspace, launch_session
+
+        class OfflineFeatureWindow(OfflineWorkspace):
+            feature_recognition_enabled = True
 
         return launch_session(key='superpoint_lightglue', title='SuperPoint + LightGlue 无标记拼接',
-                              path=args.session, editor_type=FeatureMatchEditor, output=args.output)
+                              path=args.session, workspace_type=OfflineFeatureWindow, output=args.output)
     if args.output is not None:
         parser.error('--output 需要和 --session 一起使用')
 
     from main import main as launch_mcc
     from ui_v2.composition import UiComposition
     from ui_v2.main_window import MainWindowShell
-    from prototypes.superpoint_lightglue.editor import FeatureMatchEditor
 
     class LiveFeatureWindow(MainWindowShell):
-        def postprocess_editor_type(self):
-            return FeatureMatchEditor
+        feature_recognition_enabled = True
 
     return launch_mcc(composition=UiComposition(shell_factory=LiveFeatureWindow))
 

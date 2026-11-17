@@ -119,7 +119,8 @@ def launch(*, key, title, mode=None, editor_type=None):
                           editor_type=editor_type, output=args.output)
 
 
-def launch_session(*, key, title, path=None, mode=None, editor_type=None, output=None):
+def launch_session(*, key, title, path=None, mode=None, editor_type=None, output=None,
+                   workspace_type=OfflineWorkspace):
     app = QApplication(sys.argv[:1])
     app.setApplicationName('MultiCameraCalibration')
     UiComposition().configure(app)
@@ -133,8 +134,8 @@ def launch_session(*, key, title, path=None, mode=None, editor_type=None, output
     project = None
     try:
         project, workflow = load_session(path, mode)
-        window = OfflineWorkspace(project, workflow, key=key, title=title, editor_type=editor_type,
-                                  output=output)
+        window = workspace_type(project, workflow, key=key, title=title, editor_type=editor_type,
+                                output=output)
     except Exception as exc:
         if project is not None:
             project.dispose()

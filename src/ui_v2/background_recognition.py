@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from PySide6.QtCore import QObject, QTimer
 from core import frame_recognition
 from core.marker_detector import MARKER_TYPE_UNENCODED_CIRCLE
+from .feature_recognition import FEATURE_RECOGNITION
 
 
 class BackgroundRecognition(QObject):
@@ -45,6 +46,11 @@ class BackgroundRecognition(QObject):
         bridge = self.bridge
         if mode != bridge._current_mode or not bridge.can_change_workspace():
             raise ValueError('当前任务进行中或工作区已切换，请稍后再试。')
+        if marker_type == FEATURE_RECOGNITION:
+            if mode != 'mobile_chain' or not getattr(bridge.shell, 'feature_recognition_enabled', False):
+                raise ValueError('2D 特征识别用于单相机移动拼接原型。')
+            self._mobile_marker_type = marker_type
+            return
         if marker_type not in SUPPORTED_MARKER_TYPES:
             raise ValueError('不支持的识别类型。')
         if marker_type == MARKER_TYPE_UNENCODED_CIRCLE and mode not in ('mobile_chain', 'turntable'):
@@ -246,7 +252,8 @@ class BackgroundRecognition(QObject):
                 self.commit_errors.add(token)
                 bridge.shell.log('保存帧识别结果失败：' + str(exc), 'error')
         # Preview/capture/DB file reads take priority over starting more work.
-        if bridge.shell._presentation == 'industrial':
+        if (bridge.shell._presentation == 'industrial'
+                and self.config(bridge._current_mode)['marker_type'] != FEATURE_RECOGNITION):
             mode = bridge._current_mode
             db = bridge.frame_db.databases[mode]
             config = self.config(mode)

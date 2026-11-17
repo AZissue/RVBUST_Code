@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QFormLayout, QComboBox,
                               QSpinBox, QDoubleSpinBox)
 from core.calib_board_detector import DEFAULT_BOARD_SPECS
 from core.marker_detector import MARKER_TYPE_UNENCODED_CIRCLE, CircleParameters
+from ..feature_recognition import FEATURE_RECOGNITION
 
 
 class RecognitionParameters(QWidget):
@@ -145,6 +146,13 @@ class RecognitionParameters(QWidget):
                 self.marker_type.addItem('普通圆点 / 圆环（几何匹配）', MARKER_TYPE_UNENCODED_CIRCLE)
             elif mode not in ('mobile_chain', 'turntable') and index >= 0:
                 self.marker_type.removeItem(index)
+            feature = self.marker_type.findData(FEATURE_RECOGNITION)
+            supported = mode == 'mobile_chain' and getattr(getattr(bridge, 'shell', None),
+                                                           'feature_recognition_enabled', False)
+            if supported and feature < 0:
+                self.marker_type.addItem('SuperPoint + LightGlue（2D 特征）', FEATURE_RECOGNITION)
+            elif not supported and feature >= 0:
+                self.marker_type.removeItem(feature)
         self.refresh()
 
     def showEvent(self, event):
@@ -207,12 +215,14 @@ class RecognitionParameters(QWidget):
         self._edited = False
         self._loading = False
         self._update_groups()
-        self.status.setText('修改后自动应用；无需连接相机。')
+        self.status.setText(
+            '对齐的原始帧拍摄后自动匹配并拼接。请保持工件固定并移动相机。'
+            if config['marker_type'] == FEATURE_RECOGNITION else '修改后自动应用；无需连接相机。')
 
     def _update_groups(self):
         board = self.marker_type.currentData() == 'asymmetric_grid'
         dots = self.marker_type.currentData() == MARKER_TYPE_UNENCODED_CIRCLE
-        self.circle_group.setVisible(not board and not dots)
+        self.circle_group.setVisible(not board and not dots and self.marker_type.currentData() != FEATURE_RECOGNITION)
         self.board_group.setVisible(board)
         self.unencoded_group.setVisible(dots)
         specs = self.board_spec.currentData() or []
@@ -229,6 +239,10 @@ class RecognitionParameters(QWidget):
         self._cancel_search()
         self._edited = True
         self._update_groups()
+        if self.marker_type.currentData() == FEATURE_RECOGNITION or self._loaded['marker_type'] == FEATURE_RECOGNITION:
+            self.apply_timer.stop()
+            self._apply()
+            return
         self.status.setText('正在等待参数自动应用…')
         self.apply_timer.start()
 
@@ -276,7 +290,7 @@ class RecognitionParameters(QWidget):
         self.refresh()
         if search_result and 'unencoded' in search_result:
             self.status.setText(f"已应用参数，稳定检出 {search_result['stable_count']} 个有效 3D 圆心。")
-        else:
+        elif self.marker_type.currentData() != FEATURE_RECOGNITION:
             self.status.setText('已自动应用；原始帧将按新参数后台识别。')
 
     def _validate_input(self, *_):
