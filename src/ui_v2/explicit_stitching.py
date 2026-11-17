@@ -1,5 +1,7 @@
 """Industrial raw acquisition and explicit, independently archived stitching."""
+from collections import deque
 from pathlib import Path
+from weakref import WeakKeyDictionary
 import copy
 from time import perf_counter
 
@@ -9,7 +11,7 @@ from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QDoubleSpin
 from .dialogs import ChineseMessageBox as QMessageBox
 from .dialogs import localize_buttons
 from .stitch_failure import show_stitch_failure
-from .feature_recognition import FEATURE_RECOGNITION
+from .feature_recognition import FEATURE_RECOGNITION, FEATURE_RESULT_PREFIX
 from core.frame_database import STALE_RESULT
 from core.calibration_engine import CalibrationEngine
 from core.mobile_chain_workflow import MobileChainWorkflow
@@ -20,9 +22,13 @@ class ExplicitStitching:
         self.bridge = bridge
         self.plane_filters = {}
         self._feature_stitcher = None
+        self._feature_queue = deque()
+        self._feature_observations = WeakKeyDictionary()
+        self.feature_busy = False
 
     def _uses_features(self, mode):
         return (mode == 'mobile_chain'
+                and getattr(self.bridge.shell, 'feature_recognition_enabled', False)
                 and self.bridge.recognition.config(mode)['marker_type'] == FEATURE_RECOGNITION)
 
     def _features(self):
@@ -31,42 +37,111 @@ class ExplicitStitching:
             self._feature_stitcher = FeatureStitching()
         return self._feature_stitcher
 
-    def _show_feature_result(self, result):
-        from core.frame_data import FrameData
+    def feature_summary(self):
+        database = self.bridge.frame_db.databases['mobile_chain']
+        result = next((row for row in reversed(database.records.copy().values())
+                       if row.kind == 'result' and row.status != STALE_RESULT
+                       and row.logical_name.startswith(FEATURE_RESULT_PREFIX)), None)
+        count = len(result.source_ids) if result else 0
+        activity = f' | 后台处理中（待处理 {len(self._feature_queue)} 帧）' if self.feature_busy else ''
+        return f'已拼接 {count} 帧{activity}'
+
+    def feature_observation(self, mode, uid):
+        if not self._uses_features(mode):
+            return None
+        database = self.bridge.frame_db.databases[mode]
+        row = database.records.get(uid)
+        entry = self._feature_observations.get(database, {}).get(uid)
+        if not row or not entry or row.revision != entry.revision:
+            return None
+        if entry.reference_uid is not None:
+            reference = database.records.get(entry.reference_uid)
+            if not reference or reference.revision != entry.reference_revision:
+                return None
+        return entry
+
+    def _record_feature_observations(self, database, entries):
+        cache = self._feature_observations.setdefault(database, {})
+        cache.update((entry.uid, entry) for entry in entries)
+        displayed = self.bridge.frame_db._displayed.get('mobile_chain')
+        if displayed and displayed[0] in cache and displayed[1].image_np is not None:
+            uid, frame, _ = displayed
+            self.bridge.shell.workspace_mobile()._industrial.show_database_image(
+                frame, refresh=True, feature_mode=True, feature=self.feature_observation('mobile_chain', uid))
+
+    def _show_feature_result(self, database, result):
         bridge = self.bridge
-        mode = 'mobile_chain'
-        database = bridge.frame_db.databases[mode]
         row = database.records[result.uid]
         ws = bridge.shell.workspace_mobile()
         ws.viewer().set_pointcloud_merged(result.cloud)
-        bridge.frame_db.overlay.reset(mode)
-        bridge.frame_db.browsers[mode].refresh()
-        frame = FrameData(row.frame_id, row.logical_name, database_id=row.uid)
-        bridge.frame_db.display_frame(mode, row.uid, frame, result.cloud)
-        details = (f'{len(row.source_ids)} 帧已拼接，最后一步 {result.inliers}/{result.shared} 对 3D 内点，'
-                   f'拟合 RMS {result.rms:.3f} mm')
+        details = (f'{len(row.source_ids)} 帧已拼接，最近一步使用 {result.references} 个参考机位，'
+                   f'{result.inliers}/{result.shared} 对 3D 内点，拟合 RMS {result.rms:.3f} mm')
         ws.set_evaluation(result.shared, result.inliers / result.shared, result.rms, 'ok',
                           details, scope='2D 特征')
-        ws.set_state('chaining')
+        if ws.current_state() not in ('capturing', 'evaluating'):
+            ws.set_state('chaining')
+        self._record_feature_observations(database, result.observations)
         bridge.shell.set_dirty(True)
         bridge.shell.log(f'SuperPoint + LightGlue：{details}。', 'success')
         bridge.shell._refresh_statusbar()
 
-    def _execute_features(self, database, raw_ids):
+    def _enqueue_feature_capture(self, database, uid):
+        self._feature_queue.append((database, uid))
+        if not self.feature_busy:
+            self._start_feature_capture()
+        self.bridge.shell._refresh_statusbar()
+
+    def _start_feature_capture(self):
+        from prototypes.superpoint_lightglue.automatic import FeatureObservation
+
         bridge = self.bridge
-        preview = bridge._pause_2d_preview()
-        bridge.shell.show_loading('正在执行 SuperPoint + LightGlue 拼接…')
+        database, uid = self._feature_queue.popleft()
+        revision = database.records[uid].revision
+        self.feature_busy = True
 
         def done(result, error):
-            bridge.shell.hide_loading()
-            bridge._resume_2d_preview(preview)
+            try:
+                if result is not None:
+                    self._show_feature_result(database, result)
+                elif error is not None:
+                    message = str(error)
+                    entry = getattr(error, 'observation', FeatureObservation(uid, revision, None, (), message))
+                    self._record_feature_observations(database, (entry,))
+                    bridge.shell.workspace_mobile().set_evaluation(0, 0, None, 'fail', message, scope='2D 特征')
+                    bridge.shell.log(f'原始帧已入 DB。2D 特征配准失败：{message}', 'warn')
+                else:
+                    message = '已设置为参考帧，请移动相机并拍摄下一帧。'
+                    self._record_feature_observations(database, (FeatureObservation(uid, revision, None, (), message),))
+                    bridge.shell.log('2D 特征识别：' + message, 'info')
+            finally:
+                self.feature_busy = False
+                if self._feature_queue:
+                    self._start_feature_capture()
+                bridge.shell._refresh_statusbar()
+
+        bridge._run_background(lambda: self._features().append(database, uid), done,
+                               must_finish=True, name='feature_stitch')
+
+    def _execute_features(self, database, raw_ids):
+        bridge = self.bridge
+        self.feature_busy = True
+        bridge.shell._refresh_statusbar()
+        bridge.shell.log(f'正在后台对 {len(raw_ids)} 帧执行 SuperPoint + LightGlue 拼接…', 'info')
+
+        def done(result, error):
+            self.feature_busy = False
             if error:
-                show_stitch_failure(bridge, 'mobile_chain', error)
+                if hasattr(error, 'observation'):
+                    self._record_feature_observations(database, (error.observation,))
+                bridge.shell.log(f'SuperPoint + LightGlue 拼接失败：{error}', 'warn')
             else:
-                self._show_feature_result(result)
+                self._show_feature_result(database, result)
+            if self._feature_queue:
+                self._start_feature_capture()
+            bridge.shell._refresh_statusbar()
 
         bridge._run_background(lambda: self._features().stitch(database, raw_ids), done,
-                               must_finish=True, name='explicit_stitch')
+                               must_finish=True, name='feature_stitch')
 
     def configure_plane_filter(self):
         bridge = self.bridge
@@ -374,7 +449,9 @@ class ExplicitStitching:
 
     def capture_mobile(self):
         bridge = self.bridge
-        if not bridge.can_change_workspace():
+        mode = 'mobile_chain'
+        features = self._uses_features(mode)
+        if not (bridge.can_change_workspace(allow_feature=True) if features else bridge.can_change_workspace()):
             return
         cameras = bridge.camera_manager.get_connected_ids()
         if not cameras:
@@ -382,44 +459,36 @@ class ExplicitStitching:
             return
         preview = bridge._pause_2d_preview()
         ws = bridge.shell.workspace_mobile()
-        features = self._uses_features('mobile_chain')
-        database = bridge.frame_db.databases['mobile_chain']
+        database = bridge.frame_db.databases[mode]
+        show_cloud = not features or not any(row.kind == 'raw' for row in database.records.values())
         ws.set_state('capturing')
         bridge.shell.show_loading('正在拍摄原始帧并存入DB...')
+
         def work():
             frame = bridge.camera_manager.capture(cameras[0])
             if frame is None:
                 raise ValueError('拍摄失败，请查看设备日志')
-            cloud = frame.load_pointcloud_o3d()
-            registration, failure = None, None
-            if features and frame.pointcloud_aligned is not False:
-                try:
-                    registration = self._features().append(database, frame.database_id)
-                except Exception as exc:
-                    failure = str(exc)
-            return frame, cloud, registration, failure
+            return frame, frame.load_pointcloud_o3d() if show_cloud else None
+
         def done(result, error):
             bridge.shell.hide_loading()
-            ws.set_state('chaining' if ws._station_count else 'connected')
+            ws.set_state('chaining' if ws._station_count or ws.viewer()._merged is not None else 'connected')
             bridge._resume_2d_preview(preview)
             if error:
                 bridge.shell.log('原始帧采集失败：' + str(error), 'error')
                 return
-            frame, cloud, registration, failure = result
-            bridge.frame_db.display_frame('mobile_chain', frame.database_id, frame, cloud)
+            frame, cloud = result
+            bridge.frame_db.display_frame(mode, frame.database_id, frame, cloud,
+                                          'frame' if show_cloud else 'image', switch_view=False)
             bridge.shell.set_dirty(True)
             if frame.pointcloud_aligned is False:
                 bridge.shell.log('原始点云与2D图像已保存；该帧未对齐，已标黄。请开启“点云对应2D”后重拍当前帧，暂不能参与拼接。', 'warn')
-            elif registration is not None:
-                self._show_feature_result(registration)
-            elif failure is not None:
-                ws.set_evaluation(0, 0, None, 'fail', failure, scope='2D 特征')
-                bridge.shell.log(f'原始帧已入 DB；2D 特征配准失败：{failure}', 'warn')
             elif features:
-                bridge.shell.log('2D 特征识别：原始参考帧已入 DB，请移动相机后拍摄下一帧。', 'info')
+                self._enqueue_feature_capture(database, frame.database_id)
             else:
                 bridge.shell.log('原始点云与2D图像已入DB；点击“执行拼接”生成结果。', 'success')
             bridge.shell._refresh_statusbar()
+
         bridge._run_background(work, done, must_finish=True, name='raw_capture')
 
     def execute(self, prepared=None):

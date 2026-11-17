@@ -35,6 +35,7 @@ class MarkerImage(QWidget):
         self.image = QImage()
         self.display = MarkerDisplay((), frozenset(), frozenset(), False)
         self.match_triangle = ()
+        self.feature_points = ()
         self.setFixedHeight(175)
         self.zoom = 1.0
         self.pan = QPointF()
@@ -72,6 +73,11 @@ class MarkerImage(QWidget):
             painter.setPen(QPen(QColor(YELLOW), 2, Qt.DashLine))
             painter.setBrush(Qt.NoBrush)
             painter.drawPolygon(QPolygonF([QPointF(x+px*scale, y+py*scale) for px, py in self.match_triangle]))
+        colors = (YELLOW, RED, GREEN)
+        for px, py, category in self.feature_points:
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(colors[category]))
+            painter.drawEllipse(QPointF(x + px * scale, y + py * scale), 2.5, 2.5)
         for row in self.display.rows:
             px, py = x+row.xy[0]*scale, y+row.xy[1]*scale
             if not 0 <= row.xy[0] < self.image.width() or not 0 <= row.xy[1] < self.image.height():
@@ -264,8 +270,12 @@ class MarkerInspector(QFrame):
     def set_frame(self, image, markers, *, frame_id=None, reference_id=None,
                   reference_markers=None, used_codes=None, rejected_codes=(),
                   registration_accepted=None, history=(), current_visible=True,
-                  recognition_state='', recognition_message='', marker_type='', match_triangle=()):
+                  recognition_state='', recognition_message='', marker_type='', match_triangle=(),
+                  feature_mode=False, feature=None, feature_message=''):
         loaded = load_image(image)
+        self.image_view.feature_points = feature.points if feature_mode and feature else ()
+        if feature_mode:
+            markers, match_triangle = (), ()
         if reference_id is None or reference_id == frame_id:
             reference_markers = None
         self.display = classify_markers(markers, reference_markers, used_codes=used_codes,
@@ -308,13 +318,32 @@ class MarkerInspector(QFrame):
         if diagnosis:
             self.ids.setText(escape(diagnosis) + ('<br>' + '<br>'.join(parts) if parts else ''))
         self.ids.setToolTip(diagnosis)
+        self.details_button.setVisible(not feature_mode)
         self.details_button.setEnabled(bool(self.display.rows))
         points = cumulative_world_markers(self.display, history, current_visible)
         self.world_overlay.set_points(points)
+        if feature_mode:
+            self._show_feature_summary(frame_id, feature, feature_message)
         self.world_counts.setText('累积3D标记：绿 %d / 红 %d' % (
             sum(item[1][1] == GREEN for item in points), sum(item[1][1] == RED for item in points)))
         self._position()
         self.raise_()
+
+    def _show_feature_summary(self, frame_id, feature, message):
+        self.title.setText(f'当前帧 {frame_id} · SuperPoint + LightGlue')
+        points = self.image_view.feature_points
+        color_counts = [0, 0, 0]
+        for _, _, category in points:
+            color_counts[category] += 1
+        yellow, red, green = color_counts
+        self.counts.setText(f'<span style="color:{GREEN}">● 内点 {green}</span>　'
+                            f'<span style="color:{RED}">● 外点 {red}</span>　'
+                            f'<span style="color:{YELLOW}">● 无有效深度 {yellow}</span>')
+        self.pair_label.setText(f'与帧 {feature.reference_number:03d} 的匹配 · 共 {len(points)} 对'
+                                if feature and feature.reference_number is not None else '')
+        status = feature.message if feature else message or '等待配准结果。'
+        self.ids.setText(escape(status))
+        self.ids.setToolTip(status)
 
     def show_details(self):
         dialog = QDialog(self.window())

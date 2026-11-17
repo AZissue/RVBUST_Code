@@ -27,6 +27,7 @@ class Analysis:
     errors: np.ndarray
     pose: np.ndarray | None
     reason: str = ''
+    xyz: tuple = ()
 
 
 def frame_image(directory, record):
@@ -146,7 +147,8 @@ def analyze_pair(frames, boxes, matcher, threshold, depth_jump):
     (reference, valid_a), (moving, valid_b) = [
         lift_pixels(frame.grid, coordinates, depth_jump) for frame, coordinates in zip(frames, pixels)]
     valid = valid_a & valid_b
-    result = Analysis(pixels, valid, np.zeros(len(valid), dtype=bool), np.full(len(valid), np.nan), None)
+    result = Analysis(pixels, valid, np.zeros(len(valid), dtype=bool), np.full(len(valid), np.nan), None,
+                      xyz=(reference, moving))
     try:
         result.pose, mask, errors = estimate_pose(moving[valid], reference[valid], threshold)
         result.inliers[valid] = mask

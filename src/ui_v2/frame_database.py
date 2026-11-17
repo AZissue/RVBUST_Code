@@ -718,11 +718,17 @@ class FrameDatabaseController(QObject):
             workspace._industrial.restore_business_image()
         self._preview_modes.discard(mode)
 
+    def _can_inspect(self, mode):
+        bridge = self.bridge
+        if mode == 'mobile_chain' and getattr(getattr(bridge, 'stitching', None), 'feature_busy', False):
+            return bridge.can_change_workspace(allow_feature=True)
+        return bridge.can_change_workspace()
+
     def _page_selected(self, mode, view):
         if mode != self.bridge._current_mode or view not in ('2d','joint'):
             return
         displayed = self._displayed.get(mode)
-        if displayed is None or not self.bridge.can_change_workspace():
+        if displayed is None or not self._can_inspect(mode):
             return
         uid, frame, component = displayed
         row = self.databases[mode].records.get(uid)
@@ -738,7 +744,7 @@ class FrameDatabaseController(QObject):
                 if pages is not None and component == 'cloud':pages.set_view('3d')
                 return
             component = 'image'
-        if not bridge.can_change_workspace():
+        if not self._can_inspect(mode):
             bridge.shell.log('正在处理数据，请完成后查看DB单帧。', 'warn')
             return
         self.overlay.prefer_explicit_image(mode)
@@ -799,7 +805,10 @@ class FrameDatabaseController(QObject):
         if record.kind == 'result':
             workspace._industrial.show_database_result(clear_image=True)
         else:
-            workspace._industrial.show_database_image(frame, match_triangle=image_triangle)
+            feature_mode = mode == 'mobile_chain' and self.bridge.stitching._uses_features(mode)
+            workspace._industrial.show_database_image(
+                frame, match_triangle=image_triangle, feature_mode=feature_mode,
+                feature=self.bridge.stitching.feature_observation(mode, uid) if feature_mode else None)
         pages = getattr(workspace._industrial,'view_pages',None)
         if pages is not None and switch_view and component in ('cloud','image'):
             pages.set_view('2d' if component == 'image' else '3d')

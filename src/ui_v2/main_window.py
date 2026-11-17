@@ -712,7 +712,11 @@ class MainWindowShell(QMainWindow):
         self._st_quality.setVisible(visible)
         ws = self._ws_mobile
         card = ws._eval_card
-        text = f'{card.summary()} | 已接 {ws._station_count} 机位 | 累计 {ws._total_error_mm:.2f}mm'
+        stitching = getattr(self._backend_bridge, 'stitching', None)
+        if visible and stitching and stitching._uses_features(self._mode):
+            text = f'{card.summary()} | {stitching.feature_summary()}'
+        else:
+            text = f'{card.summary()} | 已接 {ws._station_count} 机位 | 累计 {ws._total_error_mm:.2f}mm'
         details = f'{card.summary()}\n{card._suggestion.text()}\n{ws._stats_label.text()}'
         self._st_quality.set_summary(text, details)
         color = {'ok': STATUS_OK, 'warn': STATUS_WARN, 'fail': STATUS_ERR}.get(card._level, TEXT_MUTED)

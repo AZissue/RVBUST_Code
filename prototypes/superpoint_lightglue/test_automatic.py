@@ -12,9 +12,13 @@ from prototypes.superpoint_lightglue.automatic import FeatureStitching
 
 
 class SyntheticMatcher:
+    def __init__(self):
+        self.pairs = []
+
     def match(self, images, boxes):
+        self.pairs.append(tuple(int(image[0, 0, 0]) for image in images))
         pixels = np.array([[x, y] for y in (8, 20, 32) for x in (8, 20, 32)], dtype=float)
-        if images[1][0, 0, 0] == 0:
+        if self.pairs[-1][1] == 0 or self.pairs[-1] == (120, 140):
             pixels = pixels[:0]
         return pixels, pixels
 
@@ -39,18 +43,26 @@ class AutomaticStitchingTests(unittest.TestCase):
                 return database.ingest(frame)
 
             first = capture(1, 0, 100)
+            second = capture(2, 3, 120)
             self.assertIsNone(service.append(database, first))
-            second = capture(2, 3, 100)
             result = service.append(database, second)
             self.assertEqual(database.records[result.uid].source_ids, [first, second])
             self.assertEqual(result.inliers, 9)
             rejected = capture(3, 6, 0)
             with self.assertRaisesRegex(ValueError, '有效深度 0'):
                 service.append(database, rejected)
-            fourth = capture(4, 9, 100)
+            fourth = capture(4, 9, 140)
             result = service.append(database, fourth)
+            self.assertIn((120, 140), service.matcher.pairs)
+            self.assertIn((100, 140), service.matcher.pairs)
+            self.assertEqual(result.observations[-1].reference_number, 1)
+            self.assertEqual(len(result.observations[-1].points), 9)
             row = database.records[result.uid]
             self.assertIn(rejected, database.records)
             self.assertEqual(row.source_ids, [first, second, fourth])
             self.assertEqual(len(result.cloud.points), 3 * x.size)
+            fifth = capture(5, 12, 160)
+            combined = service.append(database, fifth)
+            self.assertEqual(combined.inliers, 27)
+            self.assertEqual(database.records[combined.uid].source_ids, [first, second, fourth, fifth])
             np.testing.assert_allclose(np.asarray(row.source_transforms[fourth])[:3, 3], [-9, 0, 0], atol=1e-8)

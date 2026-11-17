@@ -276,8 +276,11 @@ class BackendBridge(QObject):
         """Public startup/reconnection command, independent of launcher layout."""
         return self._on_device_manager_reopened(mode, devices, show_loading=show_loading)
 
-    def can_change_workspace(self):
-        return (not self._disconnecting and not any(worker.isRunning() for worker in self._workers)
+    def can_change_workspace(self, *, allow_feature=False):
+        feature_busy = getattr(getattr(self, 'stitching', None), 'feature_busy', False)
+        return (not self._disconnecting and (allow_feature or not feature_busy)
+                and not any(worker.isRunning() for worker in self._workers
+                            if not (allow_feature and getattr(worker, '_task_name', '') == 'feature_stitch'))
                 and not self.shell.workspace_turntable().btn_auto_capture.isChecked()
                 and not self.shell.workspace_turntable()._busy)
 
@@ -2642,6 +2645,7 @@ class BackendBridge(QObject):
         inspection = name in (
             'calibration_inspection', 'capture_parameters', 'device_connect',
             'device_disconnect', 'recognition_parameters', 'device_status', 'robot_2d_preview',
+            'feature_stitch',
         )
         if self.shell._presentation == 'industrial' and not project_task and not inspection:
             self.projects.prepare(self._current_mode)

@@ -656,7 +656,7 @@ class IndustrialPresentation:
                 reference_markers=reference, registration_accepted=accepted,
                 current_visible=False, **recognition)
 
-    def show_database_image(self, frame, *, match_triangle=(), refresh=False):
+    def show_database_image(self, frame, *, match_triangle=(), refresh=False, feature_mode=False, feature=None):
         # Recognition may finish after the user has switched back to live 2D.
         if refresh and self.mode == 'mobile_chain' and not self._database_image_selected:
             return
@@ -670,7 +670,9 @@ class IndustrialPresentation:
         self.inspector.set_frame(frame.image_np, frame.markers_all or frame.markers,
             frame_id=f'DB原始帧 {frame.frame_id:03d}', current_visible=False,
             recognition_state=frame.recognition_state, recognition_message=frame.recognition_message,
-            marker_type=frame.recognition_type, match_triangle=match_triangle)
+            marker_type=frame.recognition_type, match_triangle=match_triangle,
+            feature_mode=feature_mode, feature=feature,
+            feature_message='该帧的点云未与 2D 图像对齐。' if frame.pointcloud_aligned is False else '')
         self.inspector.show()
         self.inspector.raise_()
 

@@ -42,6 +42,71 @@ class ExplicitStitchingTests(unittest.TestCase):
         self.win._industrial_ribbon.commands[('mobile_chain', 'stitch')].click()
         self.wait(lambda: not any(w.isRunning() for w in self.bridge._workers))
 
+    def test_feature_capture_continues_while_matching_and_updates_selected_image(self):
+        from threading import Event
+        from prototypes.superpoint_lightglue.automatic import FeatureStitching
+        from prototypes.superpoint_lightglue.test_automatic import SyntheticMatcher
+        from ui_v2.feature_recognition import FEATURE_RECOGNITION
+
+        mode = 'mobile_chain'
+        self.win.feature_recognition_enabled = True
+        self.bridge._current_mode = mode
+        self.win.set_mode(mode, [])
+        self.bridge.projects.prepare(mode)
+        self.db = self.bridge.frame_db.databases[mode]
+        config = self.bridge.recognition.config(mode)
+        self.bridge.recognition.configure(mode, FEATURE_RECOGNITION, config['boards'], config['gamma'])
+        self.bridge.camera_manager.get_connected_ids = lambda: ['cam0']
+        started, release = Event(), Event()
+        class DelayedMatcher(SyntheticMatcher):
+            def match(self, images, boxes):
+                started.set()
+                if not release.wait(5):
+                    raise TimeoutError('matching was not released')
+                return super().match(images, boxes)
+
+        identifiers = []
+        def capture(_camera):
+            number = len(identifiers) + 1
+            frame = self.source(number)
+            y, x = np.indices((48, 48))
+            grid = np.stack((x + number * 3, y, 400 + (x % 4) * .1), axis=-1)
+            cloud = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(grid.reshape(-1, 3)))
+            self.assertTrue(o3d.io.write_point_cloud(frame.offline_pointmap_path, cloud))
+            frame.image_np = np.full(x.shape, 100, dtype=np.uint8)
+            frame.pointcloud_aligned = True
+            frame.database_id = self.db.ingest(frame)
+            identifiers.append(frame.database_id)
+            return frame
+
+        self.bridge.camera_manager.capture = capture
+        stitch = self.bridge.stitching
+        stitch._feature_stitcher = FeatureStitching(DelayedMatcher())
+        inspector = self.win.workspace_mobile()._industrial.inspector
+        try:
+            stitch.capture_mobile()
+            self.wait(self.bridge.can_change_workspace)
+            stitch.capture_mobile()
+            self.wait(started.is_set)
+            self.assertFalse(self.win._overlay.isVisible())
+            self.assertIn('后台处理中', self.win._st_quality.full_text)
+            self.win.workspace_mobile()._btn_capture.click()
+            self.wait(lambda: len(identifiers) == 3)
+            self.assertFalse(any(row.kind == 'result' for row in self.db.records.values()))
+        finally:
+            release.set()
+
+        self.wait(lambda: self.bridge.can_change_workspace() and any(
+            row.source_ids == identifiers for row in self.db.records.values() if row.kind == 'result'))
+        self.assertIn('已拼接 3 帧', self.win._st_quality.full_text)
+        self.assertEqual(self.bridge.frame_db._displayed[mode][0], identifiers[-1])
+        self.assertEqual(len(inspector.image_view.feature_points), 9)
+        self.assertEqual({point[2] for point in inspector.image_view.feature_points}, {2})
+        self.assertIn('SuperPoint + LightGlue', inspector.title.text())
+        self.bridge.frame_db.select(mode, identifiers[0], 'image')
+        self.wait(lambda: self.bridge.frame_db._displayed[mode][0] == identifiers[0])
+        self.assertEqual(len(inspector.image_view.feature_points), 9)
+
     def test_mobile_and_turntable_plane_filter_roundtrip_and_preserve_raw(self):
         from core.frame_database import FrameDatabase
         from core.postprocess.source_poses import load_stitch_source
