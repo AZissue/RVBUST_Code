@@ -129,7 +129,10 @@ class ExplicitStitching:
         row = database.records[result.uid]
         ws = bridge.shell.workspace_mobile()
         ws.viewer().set_pointcloud_merged(result.cloud)
-        details = (f'{len(row.source_ids)} 帧已拼接，最近一步使用 {result.references} 个参考机位，'
+        moving, anchor = result.links[-1]
+        path = '、'.join(f'{source:03d}→{target:03d}' for source, target in result.links)
+        details = (f'{len(row.source_ids)} 帧已拼接，帧 {moving:03d} 接到 {anchor:03d}，'
+                   f'本步使用 {result.references} 个参考，'
                    f'{result.inliers}/{result.shared} 对 3D 内点，拟合 RMS {result.rms:.3f} mm')
         ws.set_evaluation(result.shared, result.inliers / result.shared, result.rms, 'ok',
                           details, scope='2D 特征')
@@ -137,7 +140,7 @@ class ExplicitStitching:
             ws.set_state('chaining')
         self._record_feature_observations(database, result.observations)
         bridge.shell.set_dirty(True)
-        bridge.shell.log(f'SuperPoint + LightGlue：{details}。', 'success')
+        bridge.shell.log(f'SuperPoint + LightGlue：{details}。本次接入关系 {path}。', 'success')
         bridge.shell._refresh_statusbar()
 
     def _enqueue_feature_capture(self, database, uid):
@@ -587,7 +590,8 @@ class ExplicitStitching:
             bridge.shell.log('执行拼接至少需要两帧原始数据。', 'warn')
             return
         if self._uses_features(mode):
-            self._execute_features(database, raw_ids)
+            selected_ids = set(raw_ids)
+            self._execute_features(database, [uid for uid in database.records if uid in selected_ids])
             return
         turn = bridge.shell.workspace_turntable()
         step_indices = None

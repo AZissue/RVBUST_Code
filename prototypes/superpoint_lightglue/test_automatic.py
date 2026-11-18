@@ -63,6 +63,7 @@ class AutomaticStitchingTests(unittest.TestCase):
             result = service.append(database, fourth)
             self.assertIn((120, 140), service.matcher.pairs)
             self.assertIn((100, 140), service.matcher.pairs)
+            self.assertEqual(result.links, ((4, 1),))
             self.assertEqual(result.observations[-1].reference_number, 1)
             self.assertEqual(len(result.observations[-1].points), 9)
             row = database.records[result.uid]
@@ -73,4 +74,19 @@ class AutomaticStitchingTests(unittest.TestCase):
             combined = service.append(database, fifth)
             self.assertEqual(combined.inliers, 27)
             self.assertEqual(database.records[combined.uid].source_ids, [first, second, fourth, fifth])
+            # Force a plausible pair fit to an old frame that conflicts with the adjacent link.
+            class ConflictingMatcher(SyntheticMatcher):
+                def match(self, images, boxes):
+                    ref, moving = super().match(images, boxes)
+                    if self.pairs[-1][0] in (120, 140):
+                        ref = ref + [7, 0]
+                    return ref, moving
+
+            service.matcher = ConflictingMatcher()
+            sixth = capture(6, 15, 180)
+            result = service.append(database, sixth)
+            self.assertEqual(result.links, ((6, 5),))
+            self.assertEqual(result.references, 1)
+            np.testing.assert_allclose(np.asarray(database.records[result.uid].source_transforms[sixth])[:3, 3],
+                                       [-15, 0, 0], atol=1e-8)
             np.testing.assert_allclose(np.asarray(row.source_transforms[fourth])[:3, 3], [-9, 0, 0], atol=1e-8)

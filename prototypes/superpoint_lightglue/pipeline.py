@@ -133,27 +133,44 @@ class PretrainedMatcher:
             self.models = torch, extractor, matcher
         return self.models
 
-    def match(self, images, boxes, *, settings=FeatureSettings()):
+    def match(self, images, boxes, *, settings=FeatureSettings(), rotation=0):
         torch, extractor, matcher = self._load()
         extractor.conf.max_num_keypoints = settings.max_keypoints
         matcher.conf.filter_threshold = settings.match_score
         with torch.inference_mode():
             features = []
-            for image, (x0, y0, x1, y1) in zip(images, boxes):
+            for side, (image, (x0, y0, x1, y1)) in enumerate(zip(images, boxes)):
                 crop = image[y0:y1, x0:x1]
                 gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+                if side == 1 and rotation:
+                    gray = np.ascontiguousarray(np.rot90(gray, rotation))
                 tensor = torch.from_numpy(gray).float()[None] / 255
                 features.append(extractor.extract(tensor, resize=min(settings.image_size, max(gray.shape))))
             result = matcher({'image0': features[0], 'image1': features[1]})
             pairs = result['matches'][0].numpy()
-            return tuple(feature['keypoints'][0].numpy()[pairs[:, side]] + box[:2]
-                         for side, (feature, box) in enumerate(zip(features, boxes)))
+            coordinates = [feat['keypoints'][0].numpy()[pairs[:, side]]
+                           for side, feat in enumerate(features)]
+            x0, y0, x1, y1 = boxes[1]
+            coordinates[1] = original_crop_pixels(coordinates[1], x1-x0, y1-y0, rotation)
+            return tuple(points + box[:2] for points, box in zip(coordinates, boxes))
 
 
-def analyze_pair(frames, boxes, matcher, threshold, depth_jump, *, settings=None):
+def original_crop_pixels(points, width, height, rotation):
+    """Undo the rotation in inference so depth lookup stays in sensor pixels."""
+    u, v = points.T
+    if rotation == 1:
+        return np.column_stack((width - 1 - v, u))
+    if rotation == 2:
+        return np.column_stack((width - 1 - u, height - 1 - v))
+    if rotation == 3:
+        return np.column_stack((v, height - 1 - u))
+    return points
+
+
+def analyze_pair(frames, boxes, matcher, threshold, depth_jump, *, settings=None, rotation=0):
     images = [frame.image for frame in frames]
-    pixels = (matcher.match(images, boxes, settings=settings) if isinstance(matcher, PretrainedMatcher) and settings
-              else matcher.match(images, boxes))
+    pixels = (matcher.match(images, boxes, settings=settings or FeatureSettings(), rotation=rotation)
+              if isinstance(matcher, PretrainedMatcher) else matcher.match(images, boxes))
     min_ratio = settings.inlier_percent / 100 if settings else .6
     (reference, valid_a), (moving, valid_b) = [
         lift_pixels(frame.grid, coordinates, depth_jump) for frame, coordinates in zip(frames, pixels)]

@@ -9,6 +9,19 @@ from prototypes.superpoint_lightglue.pipeline import lift_pixels, estimate_pose
 
 
 class RegistrationTest(unittest.TestCase):
+    def test_rotated_crop_pixels_return_to_original_sensor_axes(self):
+        from prototypes.superpoint_lightglue.pipeline import original_crop_pixels
+
+        image = np.arange(48).reshape(6, 8)
+        y, x = np.indices(image.shape)
+        for turns in (1, 2, 3):
+            rotated = np.rot90(image, turns)
+            v, u = np.indices(rotated.shape)
+            points = np.column_stack((u.ravel(), v.ravel())) + .0
+            recovered = original_crop_pixels(points, 8, 6, turns).astype(int)
+            np.testing.assert_array_equal(x.ravel()[rotated.ravel()], recovered[:, 0])
+            np.testing.assert_array_equal(y.ravel()[rotated.ravel()], recovered[:, 1])
+
     def test_lifting_rejects_depth_edges_and_missing_samples(self):
         y, x = np.indices((9, 9))
         grid = np.stack((x, y, np.full_like(x, 500)), axis=-1).astype(float)

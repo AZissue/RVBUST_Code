@@ -57,13 +57,16 @@ class RecognitionParameters(QWidget):
         layout.addWidget(self.feature_group)
         self.feature_tuning = QGroupBox('2D 检测与 3D 配准')
         tuning_form = QFormLayout(self.feature_tuning)
+        tuning_hint = QLabel('匹配点少：先框住工件，再试提高检测细节。转角太大：补拍有重叠的中间角度。')
+        tuning_hint.setWordWrap(True)
+        tuning_form.addRow(tuning_hint)
         fields = (
-            ('image_size', '检测长边', ' px', '输入图像的最长边上限。小工件可提高上限来保留更多细节。'),
-            ('max_keypoints', '特征点上限', '', '每帧最多提取的特征点数。增加数量会增加计算开销。'),
-            ('match_score', '匹配分数下限', '', '越高越严格。提高可过滤低分匹配，也可能减少有效对应。'),
-            ('depth_jump', '深度跳变上限', ' mm', '超过上限的像素邻域不取 3D 点。放宽会接纳更多深度边缘。'),
-            ('tolerance', '3D 内点容差', ' mm', '配准后两点的距离在这个范围内才算内点。'),
-            ('inlier_percent', '最低内点比例', ' %', '以有效 3D 对应点为分母，并始终要求至少 6 对内点。'),
+            ('image_size', '检测细节', ' px', '数值越高，保留的图像细节越多。工件小或纹理少时可调高，计算也会更慢。'),
+            ('max_keypoints', '每帧最多找点', '', '工件上找点太少时可调高。建议先用 ROI 框住工件，避免背景占用点数。'),
+            ('match_score', '图像匹配严格度', '', '调高会过滤低分匹配，但也会减少候选点。调低后请检查是否出现错配。'),
+            ('depth_jump', '允许的深度落差', ' mm', '调小可避开轮廓和背景交界。调大只会放宽连续性检查，无法补出缺失的深度。'),
+            ('tolerance', '允许的对齐误差', ' mm', '两点对齐后相距不超过此值才计为内点。放宽会更容易通过，也可能接纳错配。'),
+            ('inlier_percent', '至少多少点对齐', ' %', '在有有效深度的匹配里，至少要有这个比例对齐，同时至少需要 6 对。'),
         )
         self.feature_fields = {}
         for key, label, suffix, hint in fields:
@@ -75,7 +78,10 @@ class RecognitionParameters(QWidget):
             spin.setToolTip(hint)
             spin.setKeyboardTracking(False)
             spin.valueChanged.connect(self._apply_feature_settings)
-            tuning_form.addRow(label, spin)
+            caption = QLabel(label)
+            caption.setToolTip(hint)
+            caption.setBuddy(spin)
+            tuning_form.addRow(caption, spin)
             self.feature_fields[key] = spin
         self.reset_feature_tuning = QPushButton('恢复默认参数')
         self.reset_feature_tuning.clicked.connect(self._reset_feature_settings)

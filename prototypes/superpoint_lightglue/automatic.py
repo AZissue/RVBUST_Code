@@ -40,6 +40,7 @@ class FeatureStitchResult:
     rms: float
     observations: tuple
     references: int
+    links: tuple
 
 
 class FeatureStitching:
@@ -82,7 +83,7 @@ class FeatureStitching:
             first = len(prior.source_ids)
             _, merged = database.load_frame(prior.uid, 'cloud')
             poses = dict(prior.source_transforms)
-        observations = {}
+        observations, links = {}, []
         for index in range(first, len(rows)):
             row = rows[index]
             moving = read_frame(database.directory, row)
@@ -90,63 +91,78 @@ class FeatureStitching:
             pose, shared, inliers, rms, visible, used = self._register(
                 database.directory, references, row, moving, poses, roi, settings)
             observations.update((entry.uid, entry) for entry in visible)
+            links.append((row.frame_id, visible[-1].reference_number))
             poses[row.uid] = pose.tolist()
             merge_pointclouds(merged, frame_cloud(moving).transform(pose))
         uid = database.publish_result(merged, identifiers,
             name=f'{FEATURE_RESULT_PREFIX} · {len(identifiers)} 帧', source_transforms=poses)
-        return FeatureStitchResult(uid, merged, shared, inliers, rms, tuple(observations.values()), used)
+        return FeatureStitchResult(uid, merged, shared, inliers, rms, tuple(observations.values()), used, tuple(links))
 
     def _register(self, directory, references, row, moving, poses, roi, settings):
         threshold = settings.tolerance
-        pairs, moving_support, world_support = [], [], []
+        pairs = []
         for anchor in reversed(references):
             reference = read_frame(directory, anchor)
             frames = (reference, moving)
             boxes = [feature_box(frame.image.shape, roi) for frame in frames]
             pair = analyze_pair(frames, boxes, self.matcher, threshold=threshold,
                                 depth_jump=settings.depth_jump, settings=settings)
+            if not pairs and pair.pose is None and isinstance(self.matcher, PretrainedMatcher):
+                for rotation in (1, 3, 2):
+                    retry = analyze_pair(frames, boxes, self.matcher, threshold=threshold,
+                                         depth_jump=settings.depth_jump, settings=settings, rotation=rotation)
+                    if retry.pose is not None:
+                        pair = retry
+                        break
             anchor_pose = np.asarray(poses[anchor.uid])
             anchor_xyz, moving_xyz = pair.xyz
             world = anchor_xyz @ anchor_pose[:3, :3].T + anchor_pose[:3, 3]
             pairs.append((anchor, pair, world))
-            if pair.pose is not None:
-                moving_support.append(moving_xyz[pair.inliers])
-                world_support.append(world[pair.inliers])
-        if not moving_support:
-            anchor, pair, _ = max(pairs, key=lambda item: (item[1].valid.sum(), len(item[1].valid)))
-            reason = (f'帧 {row.frame_id:03d}：{pair.reason}'
-                      f'（像素匹配 {len(pair.valid)} 对，有效深度 {pair.valid.sum()} 对）')
-            raise FeatureRegistrationError(reason, observation(row, anchor, pair, 1, pair.inliers, reason))
-        if len(moving_support) == 1:
-            anchor, pair, _ = next(item for item in pairs if item[1].pose is not None)
-            pose = np.asarray(poses[anchor.uid]) @ pair.pose
-            visible = (observation(anchor, row, pair, 0, pair.inliers),
-                       observation(row, anchor, pair, 1, pair.inliers))
-            rms = float(np.sqrt(np.mean(np.square(pair.errors[pair.inliers]))))
-            return pose, int(pair.valid.sum()), int(pair.inliers.sum()), rms, visible, 1
-        try:
-            pose, _, _ = estimate_pose(np.vstack(moving_support), np.vstack(world_support), threshold,
-                                       min_ratio=settings.inlier_percent / 100)
-        except ValueError as exc:
-            anchor, pair, _ = max(pairs, key=lambda item: item[1].inliers.sum())
-            reason = f'帧 {row.frame_id:03d}：多个参考机位的 3D 约束不一致（{exc}）'
-            raise FeatureRegistrationError(reason, observation(row, anchor, pair, 1, np.zeros_like(pair.valid), reason)) from exc
 
-        ranked, errors, used = [], [], 0
-        for anchor, pair, world in pairs:
-            if pair.pose is None:
-                continue
-            delta = pair.xyz[1] @ pose[:3, :3].T + pose[:3, 3] - world
-            error = np.linalg.norm(delta, axis=1)
-            mask = pair.valid & (error <= threshold)
-            ranked.append((anchor, pair, mask))
-            errors.extend(error[mask])
-            used += int(mask.sum() >= 6)
-        anchor, pair, mask = max(ranked, key=lambda item: item[2].sum())
+        accepted = [entry for entry in pairs if entry[1].pose is not None]
+        if not accepted:
+            anchor, pair, _ = max(pairs, key=lambda item: (item[1].valid.sum(), len(item[1].valid)))
+            reason = (f'帧 {row.frame_id:03d}：最近 {len(pairs)} 个机位均无法接入。{pair.reason}'
+                      f'（帧 {anchor.frame_id:03d}：像素匹配 {len(pair.valid)} 对，有效深度 {pair.valid.sum()} 对）。'
+                      '转角较大时请补拍与两侧都重叠的中间机位。')
+            raise FeatureRegistrationError(reason, observation(row, anchor, pair, 1, pair.inliers, reason))
+
+        # Anchor the chain at the newest accepted frame. Older, independently
+        # fitted links can refine it only if they agree in the common 3D space.
+        anchor, pair, _ = accepted[0]
+        pose = np.asarray(poses[anchor.uid]) @ pair.pose
+        ranked = [(pair.inliers, pair.errors)]
+        support = [accepted[0]]
+        ratio = settings.inlier_percent / 100
+        for candidate in accepted[1:]:
+            matches, _ = residuals(candidate, pose, threshold)
+            if matches.sum() >= max(6, np.ceil(ratio * candidate[1].valid.sum())):
+                support.append(candidate)
+
+        if len(support) > 1:
+            sources = np.vstack([entry.xyz[1][entry.inliers] for _, entry, _ in support])
+            targets = np.vstack([world[entry.inliers] for _, entry, world in support])
+            try:
+                refined, _, _ = estimate_pose(sources, targets, threshold, min_ratio=ratio)
+            except ValueError:
+                pass
+            else:
+                refined_ranked = [residuals(entry, refined, threshold) for entry in support]
+                if all(mask.sum() >= max(6, np.ceil(ratio * entry[1].valid.sum()))
+                       for (mask, _), entry in zip(refined_ranked, support)):
+                    pose, ranked = refined, refined_ranked
+        mask = ranked[0][0]
         visible = (observation(anchor, row, pair, 0, mask), observation(row, anchor, pair, 1, mask))
-        shared = sum(int(pair.valid.sum()) for _, pair, _ in pairs if pair.pose is not None)
-        rms = float(np.sqrt(np.mean(np.square(errors))))
-        return pose, shared, len(errors), rms, visible, used
+        errors = np.concatenate([error[inliers] for inliers, error in ranked])
+        shared = sum(int(entry[1].valid.sum()) for entry in support[:len(ranked)])
+        return pose, shared, len(errors), float(np.sqrt(np.mean(errors**2))), visible, len(ranked)
+
+
+def residuals(entry, pose, threshold):
+    _, pair, world = entry
+    transformed = pair.xyz[1] @ pose[:3, :3].T + pose[:3, 3]
+    errors = np.linalg.norm(transformed - world, axis=1)
+    return pair.valid & (errors <= threshold), errors
 
 
 def observation(row, reference, pair, side, inliers, message=''):
