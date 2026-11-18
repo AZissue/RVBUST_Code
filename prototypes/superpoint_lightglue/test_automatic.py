@@ -24,6 +24,14 @@ class SyntheticMatcher:
 
 
 class AutomaticStitchingTests(unittest.TestCase):
+    def test_roi_scales_to_each_original_image_size(self):
+        from ui_v2.feature_recognition import feature_box
+
+        roi = (.25, .25, .75, .75)
+        self.assertEqual(feature_box((1536, 2048, 3), roi), (512, 384, 1536, 1152))
+        self.assertEqual(feature_box((768, 1024, 3), roi), (256, 192, 768, 576))
+        self.assertEqual(feature_box((768, 1024, 3), None), (0, 0, 1024, 768))
+
     def test_rejected_capture_does_not_become_the_next_reference(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

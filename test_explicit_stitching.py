@@ -42,6 +42,51 @@ class ExplicitStitchingTests(unittest.TestCase):
         self.win._industrial_ribbon.commands[('mobile_chain', 'stitch')].click()
         self.wait(lambda: not any(w.isRunning() for w in self.bridge._workers))
 
+    def test_feature_roi_draws_on_raw_image_and_roundtrips(self):
+        from PySide6.QtCore import QPoint
+        from PySide6.QtTest import QTest
+        from prototypes.superpoint_lightglue.dialog import RegionPreview
+        from ui_v2.feature_recognition import FEATURE_RECOGNITION
+
+        mode = 'mobile_chain'
+        self.win.feature_recognition_enabled = True
+        self.bridge._current_mode = mode
+        self.win.set_mode(mode, [])
+        self.bridge.projects.prepare(mode)
+        project = self.bridge.projects.projects[mode]
+        project.save_root = Path(self.temp.name) / 'sessions'
+        frame = self.source()
+        frame.image_np = np.zeros((384, 512, 3), dtype=np.uint8)
+        project.database.ingest(frame)
+        params = self.win.workspace_mobile()._industrial.frame_browser.properties.recognition
+        params.refresh()
+        params.marker_type.setCurrentIndex(params.marker_type.findData(FEATURE_RECOGNITION))
+
+        def draw(dialog):
+            dialog.show()
+            self.app.processEvents()
+            preview = dialog.findChild(RegionPreview)
+            image = preview._image_rect()
+            start = QPoint(round(image.left() + .25 * image.width()), round(image.top() + .25 * image.height()))
+            end = QPoint(round(image.left() + .75 * image.width()), round(image.top() + .75 * image.height()))
+            QTest.mousePress(preview, Qt.LeftButton, pos=start)
+            QTest.mouseMove(preview, end)
+            QTest.mouseRelease(preview, Qt.LeftButton, pos=end)
+            self.assertTrue(dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok).isEnabled())
+            dialog.hide()
+            return QDialog.Accepted
+
+        with patch.object(QDialog, 'exec', draw):
+            params.draw_roi.click()
+        roi = self.bridge.stitching.feature_roi()
+        np.testing.assert_allclose(roi, [.25, .25, .75, .75], atol=.005)
+        self.assertIn('已框选', params.roi_label.text())
+        saved, _ = SessionProject.load(project.save({}), mode)
+        self.addCleanup(saved.dispose)
+        self.assertEqual(saved.feature_roi, roi)
+        params.clear_roi.click()
+        self.assertIsNone(self.bridge.stitching.feature_roi())
+
     def test_feature_capture_continues_while_matching_and_updates_selected_image(self):
         from threading import Event
         from prototypes.superpoint_lightglue.automatic import FeatureStitching
@@ -58,8 +103,10 @@ class ExplicitStitchingTests(unittest.TestCase):
         self.bridge.recognition.configure(mode, FEATURE_RECOGNITION, config['boards'], config['gamma'])
         self.bridge.camera_manager.get_connected_ids = lambda: ['cam0']
         started, release = Event(), Event()
+        boxes_seen = []
         class DelayedMatcher(SyntheticMatcher):
             def match(self, images, boxes):
+                boxes_seen.extend(boxes)
                 started.set()
                 if not release.wait(5):
                     raise TimeoutError('matching was not released')
@@ -81,6 +128,7 @@ class ExplicitStitchingTests(unittest.TestCase):
 
         self.bridge.camera_manager.capture = capture
         stitch = self.bridge.stitching
+        stitch.set_feature_roi((.125, .125, .875, .875))
         stitch._feature_stitcher = FeatureStitching(DelayedMatcher())
         inspector = self.win.workspace_mobile()._industrial.inspector
         try:
@@ -98,6 +146,7 @@ class ExplicitStitchingTests(unittest.TestCase):
 
         self.wait(lambda: self.bridge.can_change_workspace() and any(
             row.source_ids == identifiers for row in self.db.records.values() if row.kind == 'result'))
+        self.assertEqual(set(boxes_seen), {(6, 6, 42, 42)})
         self.assertIn('已拼接 3 帧', self.win._st_quality.full_text)
         self.assertEqual(self.bridge.frame_db._displayed[mode][0], identifiers[-1])
         self.assertEqual(len(inspector.image_view.feature_points), 9)

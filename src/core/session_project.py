@@ -61,6 +61,7 @@ class SessionProject:
         self.dirty = False
         self.change_version = 0
         self.include_raw = True
+        self.feature_roi = None
         self.database = FrameDatabase(mode)
         self.database.directory = self.directory / 'data'
 
@@ -141,6 +142,8 @@ class SessionProject:
             manifest = dict(format='MCC_SESSION', schema=1, id=self.uid, mode=self.mode,
                 name=saved_name, created=self.created, saved=datetime.now().isoformat(timespec='seconds'),
                 units='mm', include_raw=bool(include_raw), workflow=workflow)
+            if self.mode == 'mobile_chain' and self.feature_roi is not None:
+                manifest['feature_roi'] = self.feature_roi
             write_json_atomic(str(staging / 'session.json'), _json_value(manifest), ensure_ascii=False, indent=2)
             if source_directory.exists():
                 source_directory.rename(backup)
@@ -174,6 +177,13 @@ class SessionProject:
         try:
             project.directory.mkdir(parents=True)
             project.include_raw = bool(data['include_raw'])
+            roi = data.get('feature_roi')
+            if mode == 'mobile_chain' and roi is not None:
+                if (not isinstance(roi, list) or len(roi) != 4
+                        or not all(type(v) in (int, float) and 0 <= v <= 1 for v in roi)
+                        or roi[0] >= roi[2] or roi[1] >= roi[3]):
+                    raise ValueError('会话中的匹配 ROI 无效。')
+                project.feature_roi = tuple(roi)
             if project.include_raw:
                 if (path / 'data').is_symlink() or any(item.is_symlink() for item in (path / 'data').rglob('*')):
                     raise ValueError('会话数据目录不能包含符号链接')

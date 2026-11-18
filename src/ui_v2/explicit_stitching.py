@@ -37,6 +37,52 @@ class ExplicitStitching:
             self._feature_stitcher = FeatureStitching()
         return self._feature_stitcher
 
+    def feature_roi(self):
+        return self.bridge.projects.projects['mobile_chain'].feature_roi
+
+    def set_feature_roi(self, roi):
+        bridge = self.bridge
+        mode = 'mobile_chain'
+        if bridge._current_mode != mode or not self._uses_features(mode) or not bridge.can_change_workspace():
+            return
+        project = bridge.projects.projects[mode]
+        if project.feature_roi == roi:
+            return
+        project.feature_roi = roi
+        self._feature_observations.pop(project.database, None)
+        bridge.projects.mark_changed(mode)
+        displayed = bridge.frame_db._displayed.get(mode)
+        row = project.database.records.get(displayed[0]) if displayed else None
+        if row and row.kind == 'raw':
+            bridge.shell.workspace_mobile()._industrial.show_database_image(
+                displayed[1], refresh=True, feature_mode=True)
+        bridge.shell.log('已更新 2D 匹配 ROI。已有帧可点击「执行拼接」重新匹配。', 'info')
+
+    def configure_feature_roi(self):
+        from prototypes.superpoint_lightglue.dialog import choose_matching_region
+        from prototypes.superpoint_lightglue.pipeline import frame_image
+
+        bridge = self.bridge
+        mode = 'mobile_chain'
+        if bridge._current_mode != mode or not self._uses_features(mode) or not bridge.can_change_workspace():
+            return
+        database = bridge.frame_db.databases[mode]
+        selected = self._mobile_selection()
+        row = (database.records[selected[0]] if len(selected) == 1 else
+               next((r for r in reversed(database.records.values()) if r.kind == 'raw'
+                     and r.pointcloud_aligned is not False), None))
+        if row is None:
+            bridge.shell.log('请先拍摄一帧，或打开包含原始 2D 图像的会话，再绘制匹配 ROI。', 'warn')
+            return
+        try:
+            image = frame_image(database.directory, row)
+        except ValueError as exc:
+            bridge.shell.log(f'无法绘制匹配 ROI：{exc}', 'warn')
+            return
+        roi = choose_matching_region(bridge.shell, image, row.frame_id, self.feature_roi())
+        if roi is not None:
+            self.set_feature_roi(roi)
+
     def feature_summary(self):
         database = self.bridge.frame_db.databases['mobile_chain']
         result = next((row for row in reversed(database.records.copy().values())
@@ -96,6 +142,7 @@ class ExplicitStitching:
 
         bridge = self.bridge
         database, uid = self._feature_queue.popleft()
+        roi = self.feature_roi()
         revision = database.records[uid].revision
         self.feature_busy = True
 
@@ -119,11 +166,12 @@ class ExplicitStitching:
                     self._start_feature_capture()
                 bridge.shell._refresh_statusbar()
 
-        bridge._run_background(lambda: self._features().append(database, uid), done,
+        bridge._run_background(lambda: self._features().append(database, uid, roi=roi), done,
                                must_finish=True, name='feature_stitch')
 
     def _execute_features(self, database, raw_ids):
         bridge = self.bridge
+        roi = self.feature_roi()
         self.feature_busy = True
         bridge.shell._refresh_statusbar()
         bridge.shell.log(f'正在后台对 {len(raw_ids)} 帧执行 SuperPoint + LightGlue 拼接…', 'info')
@@ -140,7 +188,7 @@ class ExplicitStitching:
                 self._start_feature_capture()
             bridge.shell._refresh_statusbar()
 
-        bridge._run_background(lambda: self._features().stitch(database, raw_ids), done,
+        bridge._run_background(lambda: self._features().stitch(database, raw_ids, roi=roi), done,
                                must_finish=True, name='feature_stitch')
 
     def configure_plane_filter(self):

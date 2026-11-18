@@ -6,7 +6,7 @@ import numpy as np
 from core.frame_database import STALE_RESULT
 from core.pcd_utils import merge_pointclouds
 from core.point_cloud_processor import PointCloudProcessor
-from ui_v2.feature_recognition import FEATURE_RESULT_PREFIX
+from ui_v2.feature_recognition import FEATURE_RESULT_PREFIX, feature_box
 
 from .pipeline import PretrainedMatcher, analyze_pair, estimate_pose, read_frame
 
@@ -45,7 +45,7 @@ class FeatureStitching:
     def __init__(self, matcher=None):
         self.matcher = matcher if matcher is not None else PretrainedMatcher()
 
-    def append(self, database, uid):
+    def append(self, database, uid, *, roi=None):
         """Use the newest valid feature result as the accepted chain."""
         records = database.records.copy()
         raw = []
@@ -61,12 +61,12 @@ class FeatureStitching:
                       and row.source_ids and set(row.source_ids) == set(row.source_transforms)]
         prior = candidates[-1] if candidates else None
         if prior is not None:
-            return self.stitch(database, [*prior.source_ids, uid], prior=prior)
+            return self.stitch(database, [*prior.source_ids, uid], prior=prior, roi=roi)
         if not raw:
             return None
-        return self.stitch(database, [raw[0].uid, uid])
+        return self.stitch(database, [raw[0].uid, uid], roi=roi)
 
-    def stitch(self, database, identifiers, *, prior=None):
+    def stitch(self, database, identifiers, *, prior=None, roi=None):
         rows = [database.records[uid] for uid in identifiers]
         if len(rows) < 2:
             raise ValueError('至少需要两帧原始数据。')
@@ -87,7 +87,7 @@ class FeatureStitching:
             moving = read_frame(database.directory, row)
             references = rows[max(0, index - MAX_REFERENCES):index]
             pose, shared, inliers, rms, visible, used = self._register(
-                database.directory, references, row, moving, poses)
+                database.directory, references, row, moving, poses, roi)
             observations.update((entry.uid, entry) for entry in visible)
             poses[row.uid] = pose.tolist()
             merge_pointclouds(merged, frame_cloud(moving).transform(pose))
@@ -95,13 +95,13 @@ class FeatureStitching:
             name=f'{FEATURE_RESULT_PREFIX} · {len(identifiers)} 帧', source_transforms=poses)
         return FeatureStitchResult(uid, merged, shared, inliers, rms, tuple(observations.values()), used)
 
-    def _register(self, directory, references, row, moving, poses):
+    def _register(self, directory, references, row, moving, poses, roi):
         threshold = 2.
         pairs, moving_support, world_support = [], [], []
         for anchor in reversed(references):
             reference = read_frame(directory, anchor)
             frames = (reference, moving)
-            boxes = [(0, 0, frame.image.shape[1], frame.image.shape[0]) for frame in frames]
+            boxes = [feature_box(frame.image.shape, roi) for frame in frames]
             pair = analyze_pair(frames, boxes, self.matcher, threshold=threshold, depth_jump=5.)
             anchor_pose = np.asarray(poses[anchor.uid])
             anchor_xyz, moving_xyz = pair.xyz

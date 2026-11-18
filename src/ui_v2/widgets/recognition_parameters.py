@@ -41,6 +41,19 @@ class RecognitionParameters(QWidget):
         self.marker_type.addItem('非对称圆标定板', 'asymmetric_grid')
         form.addRow('识别类型', self.marker_type)
         layout.addLayout(form)
+        self.feature_group = QGroupBox('匹配区域（ROI）')
+        roi_layout = QVBoxLayout(self.feature_group)
+        self.roi_label = QLabel('整幅图像')
+        self.roi_label.setWordWrap(True)
+        self.draw_roi = QPushButton('绘制 ROI…')
+        self.draw_roi.setToolTip('使用选中的原始帧图像绘制，未选中时使用最近一帧。')
+        self.clear_roi = QPushButton('恢复整图')
+        roi_layout.addWidget(self.roi_label)
+        roi_layout.addWidget(self.draw_roi)
+        roi_layout.addWidget(self.clear_roi)
+        self.draw_roi.clicked.connect(self._draw_feature_roi)
+        self.clear_roi.clicked.connect(self._clear_feature_roi)
+        layout.addWidget(self.feature_group)
         self.circle_group = QGroupBox('编码圆')
         circle = QFormLayout(self.circle_group)
         circle.setContentsMargins(8, 14, 8, 8)
@@ -186,6 +199,22 @@ class RecognitionParameters(QWidget):
             control.setEnabled(idle and self._search_cancel is None)
         self.auto_button.setEnabled(idle or self._search_cancel is not None)
         self.dot_auto_button.setEnabled(idle or self._search_cancel is not None)
+        if config['marker_type'] == FEATURE_RECOGNITION:
+            roi = self.bridge.stitching.feature_roi()
+            text = ('整幅图像' if roi is None else
+                    '已框选：横向 %.0f%%–%.0f%%，纵向 %.0f%%–%.0f%%' %
+                    (roi[0]*100, roi[2]*100, roi[1]*100, roi[3]*100))
+            self.roi_label.setText(text)
+            self.draw_roi.setEnabled(idle)
+            self.clear_roi.setEnabled(idle and roi is not None)
+
+    def _draw_feature_roi(self):
+        self.bridge.stitching.configure_feature_roi()
+        self.refresh()
+
+    def _clear_feature_roi(self):
+        self.bridge.stitching.set_feature_roi(None)
+        self.refresh()
 
     def _load(self, config):
         self._loading = True
@@ -223,6 +252,7 @@ class RecognitionParameters(QWidget):
         board = self.marker_type.currentData() == 'asymmetric_grid'
         dots = self.marker_type.currentData() == MARKER_TYPE_UNENCODED_CIRCLE
         self.circle_group.setVisible(not board and not dots and self.marker_type.currentData() != FEATURE_RECOGNITION)
+        self.feature_group.setVisible(self.marker_type.currentData() == FEATURE_RECOGNITION)
         self.board_group.setVisible(board)
         self.unencoded_group.setVisible(dots)
         specs = self.board_spec.currentData() or []

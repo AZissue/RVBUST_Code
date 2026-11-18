@@ -88,6 +88,33 @@ class RegionPreview(AspectRatioLabel):
         painter.end()
 
 
+def choose_matching_region(parent, image, frame_number, roi):
+    dialog = QDialog(parent)
+    dialog.setWindowTitle('绘制 2D 匹配 ROI')
+    dialog.resize(820, 640)
+    layout = QVBoxLayout(dialog)
+    hint = QLabel(f'参考图像：DB 帧 {frame_number:03d}。拖动鼠标框住各帧共同覆盖的工件区域。')
+    hint.setWordWrap(True)
+    layout.addWidget(hint)
+    preview = RegionPreview()
+    preview.reset(image)
+    if roi is not None:
+        preview.region = QRectF(QPointF(*roi[:2]), QPointF(*roi[2:]))
+    layout.addWidget(preview, 1)
+    buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+    localize_buttons(buttons)
+    buttons.accepted.connect(dialog.accept)
+    buttons.rejected.connect(dialog.reject)
+    ok = buttons.button(QDialogButtonBox.Ok)
+    ok.setEnabled(preview.region is not None)
+    preview.region_changed.connect(lambda: ok.setEnabled(preview.region is not None))
+    layout.addWidget(buttons)
+    if dialog.exec() != QDialog.Accepted or preview.region is None:
+        return None
+    box = preview.region
+    return box.left(), box.top(), box.right(), box.bottom()
+
+
 class FeatureMatchDialog(QDialog):
     def __init__(self, editor, matcher):
         super().__init__(editor)
