@@ -62,7 +62,14 @@ def kabsch_rigid_transform(
     return R.astype(np.float64), t.astype(np.float64)
 
 
-def robust_rigid_transform(src, dst, threshold_mm=1.0):
+class RigidConsensusError(ValueError):
+    def __init__(self, message, count, required):
+        super().__init__(message)
+        self.count = count
+        self.required = required
+
+
+def robust_rigid_transform(src, dst, threshold_mm=1.0, *, min_ratio=.6, min_inliers=3):
     """Deterministic consensus fit; reject non-rigid/degenerate correspondences."""
     import itertools
     import math
@@ -85,8 +92,11 @@ def robust_rigid_transform(src, dst, threshold_mm=1.0):
         score = (int(mask.sum()), -float(np.sum(errors[mask]**2)))
         if best is None or score > best[0]:
             best = score, mask
-    if best is None or best[0][0] < max(3, math.ceil(.6*n)):
-        raise ValueError('标记几何不一致：无足够非共线内点，请复核编码及3D坐标')
+    required = max(min_inliers, math.ceil(min_ratio * n))
+    count = best[0][0] if best is not None else 0
+    if count < required:
+        raise RigidConsensusError('标记几何不一致：无足够非共线内点，请复核编码及3D坐标',
+                                  count, required)
     mask = best[1]
     for _ in range(3):
         R, t = kabsch_rigid_transform(src[mask], dst[mask])
@@ -95,7 +105,9 @@ def robust_rigid_transform(src, dst, threshold_mm=1.0):
         if np.array_equal(updated, mask):
             break
         mask = updated
-    if mask.sum() < max(3, math.ceil(.6*n)) or any(np.linalg.matrix_rank(p[mask]-p[mask].mean(0), tol=1e-6) < 2 for p in (src, dst)):
+    if mask.sum() < required:
+        raise RigidConsensusError('标记内点不足，拒绝配准', int(mask.sum()), required)
+    if any(np.linalg.matrix_rank(p[mask]-p[mask].mean(0), tol=1e-6) < 2 for p in (src, dst)):
         raise ValueError('标记内点不足或退化，拒绝配准')
     R, t = kabsch_rigid_transform(src[mask], dst[mask])
     errors = np.linalg.norm(src @ R.T + t - dst, axis=1)

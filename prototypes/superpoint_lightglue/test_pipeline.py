@@ -30,3 +30,14 @@ class RegistrationTest(unittest.TestCase):
         self.assertLess(errors[mask].max(), 1e-8)
         with self.assertRaises(ValueError):
             estimate_pose(moving[:5], reference[:5], 1)
+
+    def test_configured_consensus_accepts_only_when_support_clears_gate(self):
+        rng = np.random.default_rng(4)
+        target = rng.uniform(-100, 100, size=(20, 3))
+        source = target + [7, 3, -2]
+        source[10:] += rng.uniform(30, 90, size=(10, 3))
+        with self.assertRaisesRegex(ValueError, r'10/20.*至少 12'):
+            estimate_pose(source, target, 2.)
+        pose, mask, _ = estimate_pose(source, target, 2., min_ratio=.45)
+        self.assertEqual(mask.sum(), 10)
+        np.testing.assert_allclose(pose[:3, 3], [-7, -3, 2], atol=1e-8)

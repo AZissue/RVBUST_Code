@@ -4,6 +4,7 @@ from PySide6.QtCore import Qt, QTimer, QSignalBlocker
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QFormLayout, QComboBox,
                               QGroupBox, QLabel, QPushButton, QLayout, QScrollArea,
                               QSpinBox, QDoubleSpinBox)
+from core.feature_settings import FEATURE_SETTING_LIMITS, FeatureSettings
 from core.calib_board_detector import DEFAULT_BOARD_SPECS
 from core.marker_detector import MARKER_TYPE_UNENCODED_CIRCLE, CircleParameters
 from ..feature_recognition import FEATURE_RECOGNITION
@@ -54,6 +55,32 @@ class RecognitionParameters(QWidget):
         self.draw_roi.clicked.connect(self._draw_feature_roi)
         self.clear_roi.clicked.connect(self._clear_feature_roi)
         layout.addWidget(self.feature_group)
+        self.feature_tuning = QGroupBox('2D 检测与 3D 配准')
+        tuning_form = QFormLayout(self.feature_tuning)
+        fields = (
+            ('image_size', '检测长边', ' px', '输入图像的最长边上限。小工件可提高上限来保留更多细节。'),
+            ('max_keypoints', '特征点上限', '', '每帧最多提取的特征点数。增加数量会增加计算开销。'),
+            ('match_score', '匹配分数下限', '', '越高越严格。提高可过滤低分匹配，也可能减少有效对应。'),
+            ('depth_jump', '深度跳变上限', ' mm', '超过上限的像素邻域不取 3D 点。放宽会接纳更多深度边缘。'),
+            ('tolerance', '3D 内点容差', ' mm', '配准后两点的距离在这个范围内才算内点。'),
+            ('inlier_percent', '最低内点比例', ' %', '以有效 3D 对应点为分母，并始终要求至少 6 对内点。'),
+        )
+        self.feature_fields = {}
+        for key, label, suffix, hint in fields:
+            low, high, step = FEATURE_SETTING_LIMITS[key]
+            spin = QSpinBox() if isinstance(low, int) else QDoubleSpinBox()
+            spin.setRange(low, high)
+            spin.setSingleStep(step)
+            spin.setSuffix(suffix)
+            spin.setToolTip(hint)
+            spin.setKeyboardTracking(False)
+            spin.valueChanged.connect(self._apply_feature_settings)
+            tuning_form.addRow(label, spin)
+            self.feature_fields[key] = spin
+        self.reset_feature_tuning = QPushButton('恢复默认参数')
+        self.reset_feature_tuning.clicked.connect(self._reset_feature_settings)
+        tuning_form.addRow(self.reset_feature_tuning)
+        layout.addWidget(self.feature_tuning)
         self.circle_group = QGroupBox('编码圆')
         circle = QFormLayout(self.circle_group)
         circle.setContentsMargins(8, 14, 8, 8)
@@ -207,6 +234,23 @@ class RecognitionParameters(QWidget):
             self.roi_label.setText(text)
             self.draw_roi.setEnabled(idle)
             self.clear_roi.setEnabled(idle and roi is not None)
+            settings = self.bridge.stitching.feature_settings()
+            self.feature_tuning.setEnabled(idle)
+            for key, spin in self.feature_fields.items():
+                if spin.value() != getattr(settings, key):
+                    with QSignalBlocker(spin):
+                        spin.setValue(getattr(settings, key))
+            self.reset_feature_tuning.setEnabled(settings != FeatureSettings())
+
+    def _apply_feature_settings(self):
+        if self.bridge is not None and self.marker_type.currentData() == FEATURE_RECOGNITION:
+            settings = FeatureSettings(**{key: spin.value() for key, spin in self.feature_fields.items()})
+            self.bridge.stitching.set_feature_settings(settings)
+            self.refresh()
+
+    def _reset_feature_settings(self):
+        self.bridge.stitching.set_feature_settings(FeatureSettings())
+        self.refresh()
 
     def _draw_feature_roi(self):
         self.bridge.stitching.configure_feature_roi()
@@ -252,7 +296,9 @@ class RecognitionParameters(QWidget):
         board = self.marker_type.currentData() == 'asymmetric_grid'
         dots = self.marker_type.currentData() == MARKER_TYPE_UNENCODED_CIRCLE
         self.circle_group.setVisible(not board and not dots and self.marker_type.currentData() != FEATURE_RECOGNITION)
-        self.feature_group.setVisible(self.marker_type.currentData() == FEATURE_RECOGNITION)
+        features = self.marker_type.currentData() == FEATURE_RECOGNITION
+        self.feature_group.setVisible(features)
+        self.feature_tuning.setVisible(features)
         self.board_group.setVisible(board)
         self.unencoded_group.setVisible(dots)
         specs = self.board_spec.currentData() or []

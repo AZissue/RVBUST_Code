@@ -2,6 +2,7 @@
 
 Saved projects are changed exclusively by save(). No startup/exit autosave.
 """
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 import json
@@ -14,6 +15,7 @@ import uuid
 
 from .utils import write_json_atomic
 from .frame_database import FrameDatabase, _json_value
+from .feature_settings import FeatureSettings, load_feature_settings
 
 PROJECT_ROOT = Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parents[2]
 DEFAULT_SESSIONS = PROJECT_ROOT / 'sessions'
@@ -62,6 +64,7 @@ class SessionProject:
         self.change_version = 0
         self.include_raw = True
         self.feature_roi = None
+        self.feature_settings = FeatureSettings()
         self.database = FrameDatabase(mode)
         self.database.directory = self.directory / 'data'
 
@@ -144,6 +147,8 @@ class SessionProject:
                 units='mm', include_raw=bool(include_raw), workflow=workflow)
             if self.mode == 'mobile_chain' and self.feature_roi is not None:
                 manifest['feature_roi'] = self.feature_roi
+            if self.mode == 'mobile_chain' and self.feature_settings != FeatureSettings():
+                manifest['feature_settings'] = asdict(self.feature_settings)
             write_json_atomic(str(staging / 'session.json'), _json_value(manifest), ensure_ascii=False, indent=2)
             if source_directory.exists():
                 source_directory.rename(backup)
@@ -184,6 +189,8 @@ class SessionProject:
                         or roi[0] >= roi[2] or roi[1] >= roi[3]):
                     raise ValueError('会话中的匹配 ROI 无效。')
                 project.feature_roi = tuple(roi)
+            if mode == 'mobile_chain':
+                project.feature_settings = load_feature_settings(data.get('feature_settings', {}))
             if project.include_raw:
                 if (path / 'data').is_symlink() or any(item.is_symlink() for item in (path / 'data').rglob('*')):
                     raise ValueError('会话数据目录不能包含符号链接')

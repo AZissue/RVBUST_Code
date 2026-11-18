@@ -3,6 +3,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from core.feature_settings import FeatureSettings
 from core.frame_database import STALE_RESULT
 from core.pcd_utils import merge_pointclouds
 from core.point_cloud_processor import PointCloudProcessor
@@ -45,7 +46,7 @@ class FeatureStitching:
     def __init__(self, matcher=None):
         self.matcher = matcher if matcher is not None else PretrainedMatcher()
 
-    def append(self, database, uid, *, roi=None):
+    def append(self, database, uid, *, roi=None, settings=FeatureSettings()):
         """Use the newest valid feature result as the accepted chain."""
         records = database.records.copy()
         raw = []
@@ -61,12 +62,12 @@ class FeatureStitching:
                       and row.source_ids and set(row.source_ids) == set(row.source_transforms)]
         prior = candidates[-1] if candidates else None
         if prior is not None:
-            return self.stitch(database, [*prior.source_ids, uid], prior=prior, roi=roi)
+            return self.stitch(database, [*prior.source_ids, uid], prior=prior, roi=roi, settings=settings)
         if not raw:
             return None
-        return self.stitch(database, [raw[0].uid, uid], roi=roi)
+        return self.stitch(database, [raw[0].uid, uid], roi=roi, settings=settings)
 
-    def stitch(self, database, identifiers, *, prior=None, roi=None):
+    def stitch(self, database, identifiers, *, prior=None, roi=None, settings=FeatureSettings()):
         rows = [database.records[uid] for uid in identifiers]
         if len(rows) < 2:
             raise ValueError('至少需要两帧原始数据。')
@@ -87,7 +88,7 @@ class FeatureStitching:
             moving = read_frame(database.directory, row)
             references = rows[max(0, index - MAX_REFERENCES):index]
             pose, shared, inliers, rms, visible, used = self._register(
-                database.directory, references, row, moving, poses, roi)
+                database.directory, references, row, moving, poses, roi, settings)
             observations.update((entry.uid, entry) for entry in visible)
             poses[row.uid] = pose.tolist()
             merge_pointclouds(merged, frame_cloud(moving).transform(pose))
@@ -95,14 +96,15 @@ class FeatureStitching:
             name=f'{FEATURE_RESULT_PREFIX} · {len(identifiers)} 帧', source_transforms=poses)
         return FeatureStitchResult(uid, merged, shared, inliers, rms, tuple(observations.values()), used)
 
-    def _register(self, directory, references, row, moving, poses, roi):
-        threshold = 2.
+    def _register(self, directory, references, row, moving, poses, roi, settings):
+        threshold = settings.tolerance
         pairs, moving_support, world_support = [], [], []
         for anchor in reversed(references):
             reference = read_frame(directory, anchor)
             frames = (reference, moving)
             boxes = [feature_box(frame.image.shape, roi) for frame in frames]
-            pair = analyze_pair(frames, boxes, self.matcher, threshold=threshold, depth_jump=5.)
+            pair = analyze_pair(frames, boxes, self.matcher, threshold=threshold,
+                                depth_jump=settings.depth_jump, settings=settings)
             anchor_pose = np.asarray(poses[anchor.uid])
             anchor_xyz, moving_xyz = pair.xyz
             world = anchor_xyz @ anchor_pose[:3, :3].T + anchor_pose[:3, 3]
@@ -123,7 +125,8 @@ class FeatureStitching:
             rms = float(np.sqrt(np.mean(np.square(pair.errors[pair.inliers]))))
             return pose, int(pair.valid.sum()), int(pair.inliers.sum()), rms, visible, 1
         try:
-            pose, _, _ = estimate_pose(np.vstack(moving_support), np.vstack(world_support), threshold)
+            pose, _, _ = estimate_pose(np.vstack(moving_support), np.vstack(world_support), threshold,
+                                       min_ratio=settings.inlier_percent / 100)
         except ValueError as exc:
             anchor, pair, _ = max(pairs, key=lambda item: item[1].inliers.sum())
             reason = f'帧 {row.frame_id:03d}：多个参考机位的 3D 约束不一致（{exc}）'

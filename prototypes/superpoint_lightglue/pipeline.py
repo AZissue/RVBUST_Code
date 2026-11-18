@@ -6,6 +6,8 @@ import sys
 import cv2
 import numpy as np
 
+from core.feature_settings import FeatureSettings
+
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MODELS = ROOT / 'outputs' / 'experiments' / 'superpoint_lightglue'
 
@@ -76,19 +78,23 @@ def lift_pixels(grid, pixels, depth_jump):
     return xyz, valid
 
 
-def estimate_pose(moving, reference, threshold):
-    # The project solver requires at least 60% consensus and non-collinear support.
+def estimate_pose(moving, reference, threshold, *, min_ratio=.6):
     if len(moving) < 6:
         raise ValueError('连续深度对应不足 6 对。')
-    from core.turntable_calibrator import robust_rigid_transform
+    from core.turntable_calibrator import RigidConsensusError, robust_rigid_transform
 
     try:
-        rotation, translation, _, errors = robust_rigid_transform(moving, reference, threshold)
+        rotation, translation, _, errors = robust_rigid_transform(
+            moving, reference, threshold, min_ratio=min_ratio, min_inliers=6)
+    except RigidConsensusError as exc:
+        raise ValueError(f'3D 共识不足：{threshold:g} mm 内得到 {exc.count}/{len(moving)} 对内点，'
+                         f'至少 {exc.required} 对才可配准。') from exc
     except ValueError as exc:
         raise ValueError('3D 对应点未形成足够的非共线刚体共识。') from exc
     mask = errors <= threshold
-    if mask.sum() < max(6, np.ceil(.6 * len(moving))):
-        raise ValueError('3D 刚体内点不足。')
+    required = max(6, int(np.ceil(min_ratio * len(moving))))
+    if mask.sum() < required:
+        raise ValueError(f'3D 精拟合后只剩 {mask.sum()}/{len(moving)} 对内点，至少需要 {required} 对。')
     # Reject near-collinear or very concentrated support relative to the residual threshold.
     for points in (moving[mask], reference[mask]):
         spread = np.linalg.svd(points - points.mean(axis=0), compute_uv=False) / np.sqrt(len(points))
@@ -127,30 +133,35 @@ class PretrainedMatcher:
             self.models = torch, extractor, matcher
         return self.models
 
-    def match(self, images, boxes):
+    def match(self, images, boxes, *, settings=FeatureSettings()):
         torch, extractor, matcher = self._load()
+        extractor.conf.max_num_keypoints = settings.max_keypoints
+        matcher.conf.filter_threshold = settings.match_score
         with torch.inference_mode():
             features = []
             for image, (x0, y0, x1, y1) in zip(images, boxes):
                 crop = image[y0:y1, x0:x1]
                 gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
                 tensor = torch.from_numpy(gray).float()[None] / 255
-                features.append(extractor.extract(tensor, resize=min(1024, max(gray.shape))))
+                features.append(extractor.extract(tensor, resize=min(settings.image_size, max(gray.shape))))
             result = matcher({'image0': features[0], 'image1': features[1]})
             pairs = result['matches'][0].numpy()
             return tuple(feature['keypoints'][0].numpy()[pairs[:, side]] + box[:2]
                          for side, (feature, box) in enumerate(zip(features, boxes)))
 
 
-def analyze_pair(frames, boxes, matcher, threshold, depth_jump):
-    pixels = matcher.match([frame.image for frame in frames], boxes)
+def analyze_pair(frames, boxes, matcher, threshold, depth_jump, *, settings=None):
+    images = [frame.image for frame in frames]
+    pixels = (matcher.match(images, boxes, settings=settings) if isinstance(matcher, PretrainedMatcher) and settings
+              else matcher.match(images, boxes))
+    min_ratio = settings.inlier_percent / 100 if settings else .6
     (reference, valid_a), (moving, valid_b) = [
         lift_pixels(frame.grid, coordinates, depth_jump) for frame, coordinates in zip(frames, pixels)]
     valid = valid_a & valid_b
     result = Analysis(pixels, valid, np.zeros(len(valid), dtype=bool), np.full(len(valid), np.nan), None,
                       xyz=(reference, moving))
     try:
-        result.pose, mask, errors = estimate_pose(moving[valid], reference[valid], threshold)
+        result.pose, mask, errors = estimate_pose(moving[valid], reference[valid], threshold, min_ratio=min_ratio)
         result.inliers[valid] = mask
         result.errors[valid] = errors
     except ValueError as exc:

@@ -40,15 +40,24 @@ class ExplicitStitching:
     def feature_roi(self):
         return self.bridge.projects.projects['mobile_chain'].feature_roi
 
+    def feature_settings(self):
+        return self.bridge.projects.projects['mobile_chain'].feature_settings
+
     def set_feature_roi(self, roi):
+        self._set_feature_parameter('feature_roi', roi, '2D 匹配 ROI')
+
+    def set_feature_settings(self, settings):
+        self._set_feature_parameter('feature_settings', settings, '2D 特征配准参数')
+
+    def _set_feature_parameter(self, name, value, label):
         bridge = self.bridge
         mode = 'mobile_chain'
         if bridge._current_mode != mode or not self._uses_features(mode) or not bridge.can_change_workspace():
             return
         project = bridge.projects.projects[mode]
-        if project.feature_roi == roi:
+        if getattr(project, name) == value:
             return
-        project.feature_roi = roi
+        setattr(project, name, value)
         self._feature_observations.pop(project.database, None)
         bridge.projects.mark_changed(mode)
         displayed = bridge.frame_db._displayed.get(mode)
@@ -56,7 +65,7 @@ class ExplicitStitching:
         if row and row.kind == 'raw':
             bridge.shell.workspace_mobile()._industrial.show_database_image(
                 displayed[1], refresh=True, feature_mode=True)
-        bridge.shell.log('已更新 2D 匹配 ROI。已有帧可点击「执行拼接」重新匹配。', 'info')
+        bridge.shell.log(f'已更新{label}。已有帧可点击「执行拼接」重新匹配。', 'info')
 
     def configure_feature_roi(self):
         from prototypes.superpoint_lightglue.dialog import choose_matching_region
@@ -142,7 +151,7 @@ class ExplicitStitching:
 
         bridge = self.bridge
         database, uid = self._feature_queue.popleft()
-        roi = self.feature_roi()
+        roi, settings = self.feature_roi(), self.feature_settings()
         revision = database.records[uid].revision
         self.feature_busy = True
 
@@ -166,12 +175,12 @@ class ExplicitStitching:
                     self._start_feature_capture()
                 bridge.shell._refresh_statusbar()
 
-        bridge._run_background(lambda: self._features().append(database, uid, roi=roi), done,
+        bridge._run_background(lambda: self._features().append(database, uid, roi=roi, settings=settings), done,
                                must_finish=True, name='feature_stitch')
 
     def _execute_features(self, database, raw_ids):
         bridge = self.bridge
-        roi = self.feature_roi()
+        roi, settings = self.feature_roi(), self.feature_settings()
         self.feature_busy = True
         bridge.shell._refresh_statusbar()
         bridge.shell.log(f'正在后台对 {len(raw_ids)} 帧执行 SuperPoint + LightGlue 拼接…', 'info')
@@ -181,6 +190,7 @@ class ExplicitStitching:
             if error:
                 if hasattr(error, 'observation'):
                     self._record_feature_observations(database, (error.observation,))
+                bridge.shell.workspace_mobile().set_evaluation(0, 0, None, 'fail', str(error), scope='2D 特征')
                 bridge.shell.log(f'SuperPoint + LightGlue 拼接失败：{error}', 'warn')
             else:
                 self._show_feature_result(database, result)
@@ -188,7 +198,7 @@ class ExplicitStitching:
                 self._start_feature_capture()
             bridge.shell._refresh_statusbar()
 
-        bridge._run_background(lambda: self._features().stitch(database, raw_ids, roi=roi), done,
+        bridge._run_background(lambda: self._features().stitch(database, raw_ids, roi=roi, settings=settings), done,
                                must_finish=True, name='feature_stitch')
 
     def configure_plane_filter(self):
