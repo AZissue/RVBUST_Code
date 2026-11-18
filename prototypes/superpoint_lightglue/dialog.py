@@ -23,12 +23,14 @@ class RegionPreview(AspectRatioLabel):
         self.region = None
         self._anchor = None
         self._drag = None
+        self._guide_position = None
+        self.setMouseTracking(True)
         self.setMinimumSize(260, 230)
         self.setAccessibleName('拖动选择工件图像区域')
         self.setCursor(Qt.CrossCursor)
 
     def reset(self, image=None):
-        self.region = self._anchor = self._drag = None
+        self.region = self._anchor = self._drag = self._guide_position = None
         self.clear_image()
         if image is not None:
             self.setPixmap(numpy_to_qpixmap(image))
@@ -60,9 +62,15 @@ class RegionPreview(AspectRatioLabel):
             self.update()
 
     def mouseMoveEvent(self, event):
+        self._guide_position = event.position()
         if self._anchor is not None:
-            self._drag = QRectF(self._anchor, self._normalized(event.position())).normalized()
-            self.update()
+            self._drag = QRectF(self._anchor, self._normalized(self._guide_position)).normalized()
+        self.update()
+
+    def leaveEvent(self, event):
+        self._guide_position = None
+        self.update()
+        super().leaveEvent(event)
 
     def mouseReleaseEvent(self, event):
         if self._anchor is None or event.button() != Qt.LeftButton:
@@ -78,13 +86,21 @@ class RegionPreview(AspectRatioLabel):
     def paintEvent(self, event):
         super().paintEvent(event)
         region = self._drag if self._drag is not None else self.region
-        if region is None or self._pixmap is None:
+        if self._pixmap is None or self._pixmap.isNull():
             return
         r = self._image_rect()
         painter = QPainter(self)
-        painter.setPen(QPen(QColor('#56c9ff'), 2))
-        painter.drawRect(QRectF(r.x() + region.x() * r.width(), r.y() + region.y() * r.height(),
-                                region.width() * r.width(), region.height() * r.height()))
+        painter.setClipRect(r)
+        position = self._guide_position
+        if position is not None and r.contains(position):
+            for pen in (QPen(QColor(0, 0, 0, 170), 3), QPen(QColor(255, 255, 255, 205), 1)):
+                painter.setPen(pen)
+                painter.drawLine(QPointF(r.left(), position.y()), QPointF(r.right(), position.y()))
+                painter.drawLine(QPointF(position.x(), r.top()), QPointF(position.x(), r.bottom()))
+        if region is not None:
+            painter.setPen(QPen(QColor('#56c9ff'), 2))
+            painter.drawRect(QRectF(r.x() + region.x() * r.width(), r.y() + region.y() * r.height(),
+                                    region.width() * r.width(), region.height() * r.height()))
         painter.end()
 
 
