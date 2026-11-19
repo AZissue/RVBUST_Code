@@ -24,6 +24,8 @@ class RegionPreview(AspectRatioLabel):
         self._anchor = None
         self._drag = None
         self._guide_position = None
+        self.context_roi = None
+        self.region_color = '#56c9ff'
         self.setMouseTracking(True)
         self.setMinimumSize(260, 230)
         self.setAccessibleName('拖动选择工件图像区域')
@@ -100,23 +102,33 @@ class RegionPreview(AspectRatioLabel):
                 painter.setPen(pen)
                 painter.drawLine(QPointF(r.left(), position.y()), QPointF(r.right(), position.y()))
                 painter.drawLine(QPointF(position.x(), r.top()), QPointF(position.x(), r.bottom()))
+        if self.context_roi is not None:
+            box = self.context_roi
+            painter.setPen(QPen(QColor('#56c9ff' if self.region_color == '#ffb45c' else '#ffb45c'), 2, Qt.DashLine))
+            painter.drawRect(QRectF(r.x() + box[0]*r.width(), r.y() + box[1]*r.height(),
+                                    (box[2]-box[0])*r.width(), (box[3]-box[1])*r.height()))
         if region is not None:
-            painter.setPen(QPen(QColor('#56c9ff'), 2))
+            painter.setPen(QPen(QColor(self.region_color), 2))
             painter.drawRect(QRectF(r.x() + region.x() * r.width(), r.y() + region.y() * r.height(),
                                     region.width() * r.width(), region.height() * r.height()))
         painter.end()
 
 
-def choose_matching_region(parent, image, frame_number, roi):
+def choose_matching_region(parent, image, frame_number, roi, *, title='绘制 2D 匹配 ROI',
+                           context_roi=None, workpiece=False):
     dialog = QDialog(parent)
-    dialog.setWindowTitle('绘制 2D 匹配 ROI')
+    dialog.setWindowTitle(title)
     dialog.resize(820, 640)
     layout = QVBoxLayout(dialog)
-    hint = QLabel(f'参考图像：DB 帧 {frame_number:03d}。拖动鼠标框住各帧共同覆盖的工件区域。')
+    instruction = ('橙框限定工件，青色虚线是匹配范围。请留出工件移动的余量。' if workpiece else
+                   '青框限定特征匹配范围，橙色虚线是工件范围。')
+    hint = QLabel(f'DB 帧 {frame_number:03d}。{instruction}')
     hint.setWordWrap(True)
     layout.addWidget(hint)
     preview = RegionPreview()
     preview.reset(image)
+    preview.context_roi = context_roi
+    preview.region_color = '#ffb45c' if workpiece else '#56c9ff'
     if roi is not None:
         preview.region = QRectF(QPointF(*roi[:2]), QPointF(*roi[2:]))
     layout.addWidget(preview, 1)

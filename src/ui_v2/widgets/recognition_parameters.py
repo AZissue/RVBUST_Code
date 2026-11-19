@@ -2,8 +2,9 @@
 import copy
 from PySide6.QtCore import Qt, QTimer, QSignalBlocker
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QFormLayout, QComboBox,
-                              QGroupBox, QLabel, QPushButton, QLayout, QScrollArea,
+                              QGroupBox, QLabel, QPushButton, QLayout, QScrollArea, QCheckBox,
                               QSpinBox, QDoubleSpinBox)
+from core.feature_masks import WorkpieceMaskSettings
 from core.feature_settings import FEATURE_SETTING_LIMITS, FeatureSettings
 from core.calib_board_detector import DEFAULT_BOARD_SPECS
 from core.marker_detector import MARKER_TYPE_UNENCODED_CIRCLE, CircleParameters
@@ -42,11 +43,11 @@ class RecognitionParameters(QWidget):
         self.marker_type.addItem('非对称圆标定板', 'asymmetric_grid')
         form.addRow('识别类型', self.marker_type)
         layout.addLayout(form)
-        self.feature_group = QGroupBox('匹配区域（ROI）')
+        self.feature_group = QGroupBox('① 特征匹配区域（ROI）')
         roi_layout = QVBoxLayout(self.feature_group)
         self.roi_label = QLabel('整幅图像')
         self.roi_label.setWordWrap(True)
-        self.draw_roi = QPushButton('绘制 ROI…')
+        self.draw_roi = QPushButton('绘制匹配 ROI…')
         self.draw_roi.setToolTip('使用选中的原始帧图像绘制，未选中时使用最近一帧。')
         self.clear_roi = QPushButton('恢复整图')
         roi_layout.addWidget(self.roi_label)
@@ -55,6 +56,37 @@ class RecognitionParameters(QWidget):
         self.draw_roi.clicked.connect(self._draw_feature_roi)
         self.clear_roi.clicked.connect(self._clear_feature_roi)
         layout.addWidget(self.feature_group)
+        self.workpiece_group = QGroupBox('② 工件区域与二值化掩膜')
+        mask_layout = QFormLayout(self.workpiece_group)
+        self.workpiece_label = QLabel('工件区域未限定')
+        self.workpiece_label.setWordWrap(True)
+        self.draw_workpiece_roi = QPushButton('绘制工件 ROI…')
+        self.clear_workpiece_roi = QPushButton('清除工件框')
+        self.mask_enabled = QCheckBox('用二值化掩膜筛选特征点')
+        self.mask_polarity = QComboBox()
+        self.mask_polarity.addItem('亮工件 / 暗背景', 'bright')
+        self.mask_polarity.addItem('暗工件 / 亮背景', 'dark')
+        self.mask_threshold = QSpinBox()
+        self.mask_threshold.setRange(-1, 255)
+        self.mask_threshold.setSpecialValueText('自动 Otsu')
+        self.mask_threshold.setKeyboardTracking(False)
+        self.mask_threshold.setToolTip('自动按两个 ROI 的重叠区域计算阈值，或输入 0～255 手动调整。')
+        self.mask_overlay = QCheckBox('在原始 2D 图像上显示掩膜')
+        mask_note = QLabel('青框是匹配范围，橙框是工件范围。开启掩膜后，绿色区域参与匹配，红色区域被排除。')
+        mask_note.setWordWrap(True)
+        for control in (self.workpiece_label, self.draw_workpiece_roi, self.clear_workpiece_roi, self.mask_enabled):
+            mask_layout.addRow(control)
+        mask_layout.addRow('工件明暗', self.mask_polarity)
+        mask_layout.addRow('二值化阈值', self.mask_threshold)
+        mask_layout.addRow(self.mask_overlay)
+        mask_layout.addRow(mask_note)
+        self.draw_workpiece_roi.clicked.connect(self._draw_workpiece_roi)
+        self.clear_workpiece_roi.clicked.connect(self._clear_workpiece_roi)
+        self.mask_enabled.toggled.connect(self._apply_workpiece_mask)
+        self.mask_polarity.currentIndexChanged.connect(self._apply_workpiece_mask)
+        self.mask_threshold.valueChanged.connect(self._apply_workpiece_mask)
+        self.mask_overlay.toggled.connect(self._toggle_mask_overlay)
+        layout.addWidget(self.workpiece_group)
         self.feature_tuning = QGroupBox('2D 检测与 3D 配准')
         tuning_form = QFormLayout(self.feature_tuning)
         tuning_hint = QLabel('匹配点少：先框住工件，再试提高检测细节。转角太大：补拍有重叠的中间角度。')
@@ -240,6 +272,23 @@ class RecognitionParameters(QWidget):
             self.roi_label.setText(text)
             self.draw_roi.setEnabled(idle)
             self.clear_roi.setEnabled(idle and roi is not None)
+            stitch = self.bridge.stitching
+            workpiece = stitch.workpiece_roi()
+            self.workpiece_label.setText('工件区域未限定' if workpiece is None else
+                '已框选：横向 %.0f%%–%.0f%%，纵向 %.0f%%–%.0f%%' %
+                (workpiece[0]*100, workpiece[2]*100, workpiece[1]*100, workpiece[3]*100))
+            self.draw_workpiece_roi.setEnabled(idle)
+            self.clear_workpiece_roi.setEnabled(idle and workpiece is not None)
+            mask = stitch.workpiece_mask()
+            self.mask_enabled.setEnabled(idle)
+            self.mask_polarity.setEnabled(idle)
+            self.mask_threshold.setEnabled(idle)
+            with QSignalBlocker(self.mask_enabled), QSignalBlocker(self.mask_polarity), QSignalBlocker(self.mask_threshold), QSignalBlocker(self.mask_overlay):
+                self.mask_enabled.setChecked(mask.enabled)
+                self.mask_polarity.setCurrentIndex(self.mask_polarity.findData(mask.polarity))
+                if self.mask_threshold.value() != mask.threshold:
+                    self.mask_threshold.setValue(mask.threshold)
+                self.mask_overlay.setChecked(stitch.show_feature_mask())
             settings = self.bridge.stitching.feature_settings()
             self.feature_tuning.setEnabled(idle)
             for key, spin in self.feature_fields.items():
@@ -247,6 +296,27 @@ class RecognitionParameters(QWidget):
                     with QSignalBlocker(spin):
                         spin.setValue(getattr(settings, key))
             self.reset_feature_tuning.setEnabled(settings != FeatureSettings())
+
+    def _draw_workpiece_roi(self):
+        self.bridge.stitching.configure_feature_roi(workpiece=True)
+        self.refresh()
+
+    def _clear_workpiece_roi(self):
+        self.bridge.stitching.set_workpiece_roi(None)
+        self.refresh()
+
+    def _apply_workpiece_mask(self):
+        if self.bridge is None or self.marker_type.currentData() != FEATURE_RECOGNITION:
+            return
+        settings = WorkpieceMaskSettings(enabled=self.mask_enabled.isChecked(),
+            polarity=self.mask_polarity.currentData(), threshold=self.mask_threshold.value())
+        self.bridge.stitching.set_workpiece_mask(settings)
+        self.refresh()
+
+    def _toggle_mask_overlay(self, enabled):
+        if self.bridge is not None and self.marker_type.currentData() == FEATURE_RECOGNITION:
+            self.bridge.stitching.set_show_feature_mask(enabled)
+            self.refresh()
 
     def _apply_feature_settings(self):
         if self.bridge is not None and self.marker_type.currentData() == FEATURE_RECOGNITION:
@@ -305,6 +375,7 @@ class RecognitionParameters(QWidget):
         features = self.marker_type.currentData() == FEATURE_RECOGNITION
         self.feature_group.setVisible(features)
         self.feature_tuning.setVisible(features)
+        self.workpiece_group.setVisible(features)
         self.board_group.setVisible(board)
         self.unencoded_group.setVisible(dots)
         specs = self.board_spec.currentData() or []

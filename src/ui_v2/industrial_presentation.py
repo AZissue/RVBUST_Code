@@ -673,6 +673,10 @@ class IndustrialPresentation:
             marker_type=frame.recognition_type, match_triangle=match_triangle,
             feature_mode=feature_mode, feature=feature,
             feature_message='该帧的点云未与 2D 图像对齐。' if frame.pointcloud_aligned is False else '')
+        if feature_mode:
+            stitch = self.workspace.window()._backend_bridge.stitching
+            self.inspector.set_feature_regions(frame.image_np, stitch.feature_roi(),
+                stitch.workpiece_roi(), stitch.workpiece_mask(), stitch.show_feature_mask())
         self.inspector.show()
         self.inspector.raise_()
 

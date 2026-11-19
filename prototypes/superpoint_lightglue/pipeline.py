@@ -7,6 +7,7 @@ import cv2
 import numpy as np
 
 from core.feature_settings import FeatureSettings
+from core.feature_masks import mask_keypoints
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MODELS = ROOT / 'outputs' / 'experiments' / 'superpoint_lightglue'
@@ -133,7 +134,7 @@ class PretrainedMatcher:
             self.models = torch, extractor, matcher
         return self.models
 
-    def match(self, images, boxes, *, settings=FeatureSettings(), rotation=0):
+    def match(self, images, boxes, *, settings=FeatureSettings(), rotation=0, masks=None):
         torch, extractor, matcher = self._load()
         extractor.conf.max_num_keypoints = settings.max_keypoints
         matcher.conf.filter_threshold = settings.match_score
@@ -146,6 +147,17 @@ class PretrainedMatcher:
                     gray = np.ascontiguousarray(np.rot90(gray, rotation))
                 tensor = torch.from_numpy(gray).float()[None] / 255
                 features.append(extractor.extract(tensor, resize=min(settings.image_size, max(gray.shape))))
+            if masks is not None:
+                for side, (feat, mask, box) in enumerate(zip(features, masks, boxes)):
+                    local = feat['keypoints'][0].numpy()
+                    if side == 1:
+                        local = original_crop_pixels(local, box[2]-box[0], box[3]-box[1], rotation)
+                    keep = mask_keypoints(mask, local + box[:2])
+                    indices = torch.from_numpy(np.flatnonzero(keep))
+                    for key in ('keypoints', 'keypoint_scores', 'descriptors'):
+                        feat[key] = feat[key].index_select(1, indices)
+                if any(feat['keypoints'].shape[1] == 0 for feat in features):
+                    return np.empty((0, 2)), np.empty((0, 2))
             result = matcher({'image0': features[0], 'image1': features[1]})
             pairs = result['matches'][0].numpy()
             coordinates = [feat['keypoints'][0].numpy()[pairs[:, side]]
@@ -167,10 +179,13 @@ def original_crop_pixels(points, width, height, rotation):
     return points
 
 
-def analyze_pair(frames, boxes, matcher, threshold, depth_jump, *, settings=None, rotation=0):
+def analyze_pair(frames, boxes, matcher, threshold, depth_jump, *, settings=None, rotation=0, masks=None):
     images = [frame.image for frame in frames]
-    pixels = (matcher.match(images, boxes, settings=settings or FeatureSettings(), rotation=rotation)
+    pixels = (matcher.match(images, boxes, settings=settings or FeatureSettings(), rotation=rotation, masks=masks)
               if isinstance(matcher, PretrainedMatcher) else matcher.match(images, boxes))
+    if masks is not None:
+        keep = mask_keypoints(masks[0], pixels[0]) & mask_keypoints(masks[1], pixels[1])
+        pixels = tuple(points[keep] for points in pixels)
     min_ratio = settings.inlier_percent / 100 if settings else .6
     (reference, valid_a), (moving, valid_b) = [
         lift_pixels(frame.grid, coordinates, depth_jump) for frame, coordinates in zip(frames, pixels)]

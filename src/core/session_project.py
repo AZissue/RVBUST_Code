@@ -15,6 +15,7 @@ import uuid
 
 from .utils import write_json_atomic
 from .frame_database import FrameDatabase, _json_value
+from .feature_masks import WorkpieceMaskSettings, load_mask_settings
 from .feature_settings import FeatureSettings, load_feature_settings
 
 PROJECT_ROOT = Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parents[2]
@@ -64,6 +65,9 @@ class SessionProject:
         self.change_version = 0
         self.include_raw = True
         self.feature_roi = None
+        self.workpiece_roi = None
+        self.workpiece_mask = WorkpieceMaskSettings()
+        self.show_feature_mask = False
         self.feature_settings = FeatureSettings()
         self.database = FrameDatabase(mode)
         self.database.directory = self.directory / 'data'
@@ -147,6 +151,10 @@ class SessionProject:
                 units='mm', include_raw=bool(include_raw), workflow=workflow)
             if self.mode == 'mobile_chain' and self.feature_roi is not None:
                 manifest['feature_roi'] = self.feature_roi
+            if self.mode == 'mobile_chain':
+                manifest['workpiece_roi'] = self.workpiece_roi
+                manifest['workpiece_mask'] = asdict(self.workpiece_mask)
+                manifest['show_feature_mask'] = self.show_feature_mask
             if self.mode == 'mobile_chain' and self.feature_settings != FeatureSettings():
                 manifest['feature_settings'] = asdict(self.feature_settings)
             write_json_atomic(str(staging / 'session.json'), _json_value(manifest), ensure_ascii=False, indent=2)
@@ -182,14 +190,19 @@ class SessionProject:
         try:
             project.directory.mkdir(parents=True)
             project.include_raw = bool(data['include_raw'])
-            roi = data.get('feature_roi')
-            if mode == 'mobile_chain' and roi is not None:
-                if (not isinstance(roi, list) or len(roi) != 4
-                        or not all(type(v) in (int, float) and 0 <= v <= 1 for v in roi)
-                        or roi[0] >= roi[2] or roi[1] >= roi[3]):
-                    raise ValueError('会话中的匹配 ROI 无效。')
-                project.feature_roi = tuple(roi)
             if mode == 'mobile_chain':
+                for field in ('feature_roi', 'workpiece_roi'):
+                    roi = data.get(field)
+                    if roi is not None:
+                        if (not isinstance(roi, list) or len(roi) != 4
+                                or not all(type(v) in (int, float) and 0 <= v <= 1 for v in roi)
+                                or roi[0] >= roi[2] or roi[1] >= roi[3]):
+                            raise ValueError('会话中的匹配或工件 ROI 无效。')
+                        setattr(project, field, tuple(roi))
+                project.workpiece_mask = load_mask_settings(data.get('workpiece_mask', {}))
+                project.show_feature_mask = data.get('show_feature_mask', False)
+                if type(project.show_feature_mask) is not bool:
+                    raise ValueError('会话中的掩膜显示设置无效。')
                 project.feature_settings = load_feature_settings(data.get('feature_settings', {}))
             if project.include_raw:
                 if (path / 'data').is_symlink() or any(item.is_symlink() for item in (path / 'data').rglob('*')):

@@ -43,6 +43,45 @@ class ExplicitStitching:
     def feature_settings(self):
         return self.bridge.projects.projects['mobile_chain'].feature_settings
 
+    def workpiece_roi(self):
+        return self.bridge.projects.projects['mobile_chain'].workpiece_roi
+
+    def workpiece_mask(self):
+        return self.bridge.projects.projects['mobile_chain'].workpiece_mask
+
+    def show_feature_mask(self):
+        return self.bridge.projects.projects['mobile_chain'].show_feature_mask
+
+    def set_workpiece_roi(self, roi):
+        self._set_feature_parameter('workpiece_roi', roi, '工件 ROI')
+
+    def set_workpiece_mask(self, settings):
+        self._set_feature_parameter('workpiece_mask', settings, '二值化掩膜')
+
+    def set_show_feature_mask(self, enabled):
+        # Rendering never changes the input constraints used by queued matching jobs.
+        bridge = self.bridge
+        if bridge._current_mode != 'mobile_chain' or not self._uses_features('mobile_chain'):
+            return
+        project = bridge.projects.projects['mobile_chain']
+        project.show_feature_mask = enabled
+        self.bridge.projects.mark_changed('mobile_chain')
+        self._refresh_feature_image(select_latest=enabled)
+
+    def _refresh_feature_image(self, *, select_latest=False):
+        bridge = self.bridge
+        database = bridge.frame_db.databases['mobile_chain']
+        displayed = bridge.frame_db._displayed.get('mobile_chain')
+        row = database.records.get(displayed[0]) if displayed else None
+        if row and row.kind == 'raw' and displayed[1].image_np is not None:
+            bridge.shell.workspace_mobile()._industrial.show_database_image(
+                displayed[1], refresh=True, feature_mode=True,
+                feature=self.feature_observation('mobile_chain', row.uid))
+        elif select_latest:
+            latest = next((r for r in reversed(database.records.values()) if r.kind == 'raw'), None)
+            if latest:
+                bridge.frame_db.select('mobile_chain', latest.uid, 'image')
+
     def set_feature_roi(self, roi):
         self._set_feature_parameter('feature_roi', roi, '2D 匹配 ROI')
 
@@ -60,14 +99,10 @@ class ExplicitStitching:
         setattr(project, name, value)
         self._feature_observations.pop(project.database, None)
         bridge.projects.mark_changed(mode)
-        displayed = bridge.frame_db._displayed.get(mode)
-        row = project.database.records.get(displayed[0]) if displayed else None
-        if row and row.kind == 'raw':
-            bridge.shell.workspace_mobile()._industrial.show_database_image(
-                displayed[1], refresh=True, feature_mode=True)
+        self._refresh_feature_image()
         bridge.shell.log(f'已更新{label}。已有帧可点击「执行拼接」重新匹配。', 'info')
 
-    def configure_feature_roi(self):
+    def configure_feature_roi(self, *, workpiece=False):
         from prototypes.superpoint_lightglue.dialog import choose_matching_region
         from prototypes.superpoint_lightglue.pipeline import frame_image
 
@@ -88,9 +123,13 @@ class ExplicitStitching:
         except ValueError as exc:
             bridge.shell.log(f'无法绘制匹配 ROI：{exc}', 'warn')
             return
-        roi = choose_matching_region(bridge.shell, image, row.frame_id, self.feature_roi())
+        roi = self.workpiece_roi() if workpiece else self.feature_roi()
+        context = self.feature_roi() if workpiece else self.workpiece_roi()
+        title = '绘制工件 ROI' if workpiece else '绘制特征匹配 ROI'
+        roi = choose_matching_region(bridge.shell, image, row.frame_id, roi, title=title,
+                                     context_roi=context, workpiece=workpiece)
         if roi is not None:
-            self.set_feature_roi(roi)
+            (self.set_workpiece_roi if workpiece else self.set_feature_roi)(roi)
 
     def feature_summary(self):
         database = self.bridge.frame_db.databases['mobile_chain']
@@ -155,6 +194,7 @@ class ExplicitStitching:
         bridge = self.bridge
         database, uid = self._feature_queue.popleft()
         roi, settings = self.feature_roi(), self.feature_settings()
+        workpiece_roi, mask_settings = self.workpiece_roi(), self.workpiece_mask()
         revision = database.records[uid].revision
         self.feature_busy = True
 
@@ -178,12 +218,14 @@ class ExplicitStitching:
                     self._start_feature_capture()
                 bridge.shell._refresh_statusbar()
 
-        bridge._run_background(lambda: self._features().append(database, uid, roi=roi, settings=settings), done,
+        bridge._run_background(lambda: self._features().append(database, uid, roi=roi, settings=settings,
+                                workpiece_roi=workpiece_roi, mask_settings=mask_settings), done,
                                must_finish=True, name='feature_stitch')
 
     def _execute_features(self, database, raw_ids):
         bridge = self.bridge
         roi, settings = self.feature_roi(), self.feature_settings()
+        workpiece_roi, mask_settings = self.workpiece_roi(), self.workpiece_mask()
         self.feature_busy = True
         bridge.shell._refresh_statusbar()
         bridge.shell.log(f'正在后台对 {len(raw_ids)} 帧执行 SuperPoint + LightGlue 拼接…', 'info')
@@ -201,7 +243,8 @@ class ExplicitStitching:
                 self._start_feature_capture()
             bridge.shell._refresh_statusbar()
 
-        bridge._run_background(lambda: self._features().stitch(database, raw_ids, roi=roi, settings=settings), done,
+        bridge._run_background(lambda: self._features().stitch(database, raw_ids, roi=roi, settings=settings,
+                                workpiece_roi=workpiece_roi, mask_settings=mask_settings), done,
                                must_finish=True, name='feature_stitch')
 
     def configure_plane_filter(self):

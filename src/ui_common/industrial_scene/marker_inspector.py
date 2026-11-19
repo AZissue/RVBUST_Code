@@ -36,6 +36,8 @@ class MarkerImage(QWidget):
         self.display = MarkerDisplay((), frozenset(), frozenset(), False)
         self.match_triangle = ()
         self.feature_points = ()
+        self.feature_overlay = QImage()
+        self.feature_regions = ()
         self.setFixedHeight(175)
         self.zoom = 1.0
         self.pan = QPointF()
@@ -68,7 +70,15 @@ class MarkerImage(QWidget):
         x, y = (self.width()-width)/2+self.pan.x(), (self.height()-height)/2+self.pan.y()
         painter.setRenderHint(QPainter.SmoothPixmapTransform)
         painter.drawImage(QRectF(x, y, width, height), self.image)
+        if not self.feature_overlay.isNull():
+            painter.setRenderHint(QPainter.SmoothPixmapTransform, False)
+            painter.drawImage(QRectF(x, y, width, height), self.feature_overlay)
         painter.setRenderHint(QPainter.Antialiasing)
+        for box, color in self.feature_regions:
+            painter.setPen(QPen(QColor(color), 2, Qt.DashLine))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRect(QRectF(x+box[0]*scale, y+box[1]*scale,
+                                    (box[2]-box[0])*scale, (box[3]-box[1])*scale))
         if self.match_triangle:
             painter.setPen(QPen(QColor(YELLOW), 2, Qt.DashLine))
             painter.setBrush(Qt.NoBrush)
@@ -189,6 +199,10 @@ class MarkerInspector(QFrame):
         self.pair_label = QLabel('参考帧：未指定；不显示共有红圈')
         self.pair_label.setWordWrap(True)
         content.addWidget(self.pair_label)
+        self.mask_summary = QLabel()
+        self.mask_summary.setWordWrap(True)
+        self.mask_summary.hide()
+        content.addWidget(self.mask_summary)
         self.world_counts = QLabel()
         content.addWidget(self.world_counts)
         self.ids = QLabel('尚无检测结果')
@@ -273,6 +287,9 @@ class MarkerInspector(QFrame):
                   recognition_state='', recognition_message='', marker_type='', match_triangle=(),
                   feature_mode=False, feature=None, feature_message=''):
         loaded = load_image(image)
+        self.image_view.feature_overlay = QImage()
+        self.image_view.feature_regions = ()
+        self.mask_summary.hide()
         self.image_view.feature_points = feature.points if feature_mode and feature else ()
         if feature_mode:
             markers, match_triangle = (), ()
@@ -328,6 +345,39 @@ class MarkerInspector(QFrame):
             sum(item[1][1] == GREEN for item in points), sum(item[1][1] == RED for item in points)))
         self._position()
         self.raise_()
+
+    def set_feature_regions(self, image, matching_roi, workpiece_roi, settings, show_mask):
+        from dataclasses import replace
+        from core.feature_masks import build_feature_mask, roi_pixels
+
+        if image is None:
+            return
+        regions = []
+        if matching_roi is not None:
+            regions.append((roi_pixels(image.shape, matching_roi), '#56c9ff'))
+        if workpiece_roi is not None:
+            regions.append((roi_pixels(image.shape, workpiece_roi), '#ffb45c'))
+        self.image_view.feature_regions = tuple(regions)
+        if show_mask:
+            self.mask_summary.show()
+            try:
+                result = build_feature_mask(image, matching_roi, workpiece_roi, replace(settings, enabled=True))
+            except ValueError as exc:
+                self.mask_summary.setText(str(exc))
+            else:
+                rgba = np.zeros((*image.shape[:2], 4), dtype=np.uint8)
+                x0, y0, x1, y1 = result.box
+                rgba[y0:y1, x0:x1] = (255, 75, 75, 55)
+                rgba[result.mask] = (40, 220, 130, 95)
+                h, w = result.mask.shape
+                self.image_view.feature_overlay = QImage(
+                    rgba.data, w, h, rgba.strides[0], QImage.Format_RGBA8888).copy()
+                state = '已用于特征筛选' if settings.enabled else '预览，特征筛选未启用'
+                retained = int(result.mask.sum())
+                self.mask_summary.setText(
+                    f'二值化掩膜 · 阈值 {result.threshold:g} · 保留 {retained:,} 像素 · {state}'
+                    + ('。请调整明暗类型、阈值或工件框。' if retained == 0 else ''))
+        self.image_view.update()
 
     def _show_feature_summary(self, frame_id, feature, message):
         self.title.setText(f'当前帧 {frame_id} · SuperPoint + LightGlue')

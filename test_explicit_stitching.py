@@ -94,6 +94,55 @@ class ExplicitStitchingTests(unittest.TestCase):
         params.clear_roi.click()
         self.assertIsNone(self.bridge.stitching.feature_roi())
 
+    def test_workpiece_mask_overlay_and_session_settings(self):
+        from core.feature_masks import WorkpieceMaskSettings
+        from ui_v2.feature_recognition import FEATURE_RECOGNITION
+
+        mode = 'mobile_chain'
+        self.win.feature_recognition_enabled = True
+        self.bridge._current_mode = mode
+        self.win.set_mode(mode, [])
+        self.bridge.projects.prepare(mode)
+        project = self.bridge.projects.projects[mode]
+        project.save_root = Path(self.temp.name) / 'mask_sessions'
+        frame = self.source()
+        frame.image_np = np.full((96, 128, 3), 20, dtype=np.uint8)
+        frame.image_np[30:60, 50:90] = 180
+        uid = project.database.ingest(frame)
+        frame.database_id = uid
+        page = self.win.workspace_mobile()._industrial.frame_browser.properties.recognition
+        page.refresh()
+        page.marker_type.setCurrentIndex(page.marker_type.findData(FEATURE_RECOGNITION))
+        stitch = self.bridge.stitching
+        stitch.set_feature_roi((.25, .125, .875, .875))
+        stitch.set_workpiece_roi((.375, .25, .8125, .75))
+        page.refresh()
+        self.assertIn('已框选', page.workpiece_label.text())
+        self.bridge.frame_db.display_frame(mode, uid, frame, None, 'image')
+        page.mask_threshold.setValue(100)
+        page.mask_enabled.setChecked(True)
+        page.mask_overlay.setChecked(True)
+        inspector = self.win.workspace_mobile()._industrial.inspector
+        view = inspector.image_view
+        self.assertEqual(len(view.feature_regions), 2)
+        self.assertFalse(view.feature_overlay.isNull())
+        self.assertEqual(view.feature_overlay.pixelColor(65, 40).green(), 220)
+        self.assertEqual(view.feature_overlay.pixelColor(50, 25).red(), 255)
+        self.assertEqual(view.feature_overlay.pixelColor(110, 40).alpha(), 0)
+        self.assertIn('1,200', inspector.mask_summary.text())
+        self.assertIn('已用于特征筛选', inspector.mask_summary.text())
+        saved, _ = SessionProject.load(project.save({}), mode)
+        self.addCleanup(saved.dispose)
+        self.assertEqual(saved.workpiece_roi, project.workpiece_roi)
+        self.assertEqual(saved.workpiece_mask, WorkpieceMaskSettings(True, 'bright', 100))
+        self.assertTrue(saved.show_feature_mask)
+        before = stitch.workpiece_mask()
+        page.mask_overlay.setChecked(False)
+        self.assertTrue(view.feature_overlay.isNull())
+        self.assertEqual(stitch.workpiece_mask(), before)
+        page.mask_enabled.setChecked(False)
+        self.assertEqual(int(frame.image_np[40, 65, 0]), 180)
+
     def test_feature_capture_continues_while_matching_and_updates_selected_image(self):
         from threading import Event
         from prototypes.superpoint_lightglue.automatic import FeatureStitching

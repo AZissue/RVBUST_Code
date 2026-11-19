@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from core.feature_settings import FeatureSettings
+from core.feature_masks import WorkpieceMaskSettings, build_feature_mask
 from core.frame_database import STALE_RESULT
 from core.pcd_utils import merge_pointclouds
 from core.point_cloud_processor import PointCloudProcessor
@@ -47,7 +48,8 @@ class FeatureStitching:
     def __init__(self, matcher=None):
         self.matcher = matcher if matcher is not None else PretrainedMatcher()
 
-    def append(self, database, uid, *, roi=None, settings=FeatureSettings()):
+    def append(self, database, uid, *, roi=None, settings=FeatureSettings(), workpiece_roi=None,
+               mask_settings=WorkpieceMaskSettings()):
         """Use the newest valid feature result as the accepted chain."""
         records = database.records.copy()
         raw = []
@@ -63,12 +65,15 @@ class FeatureStitching:
                       and row.source_ids and set(row.source_ids) == set(row.source_transforms)]
         prior = candidates[-1] if candidates else None
         if prior is not None:
-            return self.stitch(database, [*prior.source_ids, uid], prior=prior, roi=roi, settings=settings)
+            return self.stitch(database, [*prior.source_ids, uid], prior=prior, roi=roi, settings=settings,
+                               workpiece_roi=workpiece_roi, mask_settings=mask_settings)
         if not raw:
             return None
-        return self.stitch(database, [raw[0].uid, uid], roi=roi, settings=settings)
+        return self.stitch(database, [raw[0].uid, uid], roi=roi, settings=settings,
+                           workpiece_roi=workpiece_roi, mask_settings=mask_settings)
 
-    def stitch(self, database, identifiers, *, prior=None, roi=None, settings=FeatureSettings()):
+    def stitch(self, database, identifiers, *, prior=None, roi=None, settings=FeatureSettings(), workpiece_roi=None,
+               mask_settings=WorkpieceMaskSettings()):
         rows = [database.records[uid] for uid in identifiers]
         if len(rows) < 2:
             raise ValueError('至少需要两帧原始数据。')
@@ -89,7 +94,7 @@ class FeatureStitching:
             moving = read_frame(database.directory, row)
             references = rows[max(0, index - MAX_REFERENCES):index]
             pose, shared, inliers, rms, visible, used = self._register(
-                database.directory, references, row, moving, poses, roi, settings)
+                database.directory, references, row, moving, poses, roi, settings, workpiece_roi, mask_settings)
             observations.update((entry.uid, entry) for entry in visible)
             links.append((row.frame_id, visible[-1].reference_number))
             poses[row.uid] = pose.tolist()
@@ -98,19 +103,29 @@ class FeatureStitching:
             name=f'{FEATURE_RESULT_PREFIX} · {len(identifiers)} 帧', source_transforms=poses)
         return FeatureStitchResult(uid, merged, shared, inliers, rms, tuple(observations.values()), used, tuple(links))
 
-    def _register(self, directory, references, row, moving, poses, roi, settings):
+    def _register(self, directory, references, row, moving, poses, roi, settings, workpiece_roi, mask_settings):
         threshold = settings.tolerance
         pairs = []
         for anchor in reversed(references):
             reference = read_frame(directory, anchor)
             frames = (reference, moving)
             boxes = [feature_box(frame.image.shape, roi) for frame in frames]
+            masks = None
+            if workpiece_roi is not None or mask_settings.enabled:
+                selections = [build_feature_mask(frame.image, roi, workpiece_roi, mask_settings)
+                              for frame in frames]
+                boxes = [selection.box for selection in selections]
+                if any(min(box[2]-box[0], box[3]-box[1]) < 32 for box in boxes):
+                    raise ValueError('两个 ROI 的重叠区域至少需要 32 × 32 像素。')
+                if any(not selection.mask.any() for selection in selections):
+                    raise ValueError('工件掩膜没有保留任何像素，请调整明暗类型、阈值或工件框。')
+                masks = [selection.mask for selection in selections]
             pair = analyze_pair(frames, boxes, self.matcher, threshold=threshold,
-                                depth_jump=settings.depth_jump, settings=settings)
+                                depth_jump=settings.depth_jump, settings=settings, masks=masks)
             if not pairs and pair.pose is None and isinstance(self.matcher, PretrainedMatcher):
                 for rotation in (1, 3, 2):
                     retry = analyze_pair(frames, boxes, self.matcher, threshold=threshold,
-                                         depth_jump=settings.depth_jump, settings=settings, rotation=rotation)
+                                         depth_jump=settings.depth_jump, settings=settings, rotation=rotation, masks=masks)
                     if retry.pose is not None:
                         pair = retry
                         break
