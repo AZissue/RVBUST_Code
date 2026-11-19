@@ -1,6 +1,6 @@
 """Automatic feature registration for the mobile capture and stitch flow."""
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 
@@ -8,11 +8,13 @@ from core.feature_settings import FeatureSettings
 from core.feature_masks import WorkpieceMaskSettings
 from core.frame_database import STALE_RESULT
 from core.pcd_utils import merge_pointclouds
+from core.postprocess.session import CloudLayer
 from core.point_cloud_processor import PointCloudProcessor
 from ui_v2.feature_recognition import FEATURE_RESULT_PREFIX
 
 from .pipeline import PretrainedMatcher, analyze_pair, estimate_pose, frame_image, read_frame
 from .matching import PixelMatchCache
+from .refinement import feature_surface, refine_feature_pose
 
 MAX_REFERENCES = 3
 
@@ -45,7 +47,8 @@ class FeatureStitchResult:
     observations: tuple
     references: int
     links: tuple
-
+    icp_reports: tuple = ()
+    icp_accepted: int = 0
 
 class FeatureStitching:
     def __init__(self, matcher=None):
@@ -123,9 +126,14 @@ class FeatureStitching:
         if any(row.kind != 'raw' or row.pointcloud_aligned is False for row in rows):
             raise ValueError('请先开启「点云对应2D」并拍摄两帧对齐的原始数据。')
 
+        surfaces = {}
+        icp_reports, icp_accepted = [], 0
         if prior is None:
             first = 1
-            merged = frame_cloud(read_frame(database.directory, rows[0]))
+            initial = read_frame(database.directory, rows[0])
+            merged = frame_cloud(initial)
+            if settings.icp_enabled:
+                surfaces[rows[0].uid] = feature_surface(initial,roi,workpiece_roi,settings.icp_voxel)
             poses = {rows[0].uid: np.eye(4).tolist()}
         else:
             first = len(prior.source_ids)
@@ -136,15 +144,37 @@ class FeatureStitching:
             row = rows[index]
             moving = read_frame(database.directory, row)
             references = rows[max(0, index - MAX_REFERENCES):index]
-            pose, shared, inliers, rms, visible, used = self._register(
+            pose, shared, inliers, rms, visible, used, evidence = self._register(
                 database, references, row, moving, poses, roi, settings, workpiece_roi, mask_settings)
+            if settings.icp_enabled:
+                for reference in references:
+                    if reference.uid not in surfaces:
+                        previous = read_frame(database.directory,reference)
+                        local = feature_surface(previous,roi,workpiece_roi,settings.icp_voxel)
+                        previous_pose = np.asarray(poses[reference.uid])
+                        surfaces[reference.uid] = local @ previous_pose[:3,:3].T + previous_pose[:3,3]
+                local = feature_surface(moving,roi,workpiece_roi,settings.icp_voxel)
+                try:
+                    target = CloudLayer('最近已拼接工件',np.vstack([surfaces[r.uid] for r in references]))
+                    pose, report, accepted = refine_feature_pose(target,local,pose,evidence,settings)
+                except ValueError as exc:
+                    report, accepted = f'ICP 未采用，保留特征配准位姿。{exc}', False
+                icp_reports.append(f'帧 {row.frame_id:03d} 工件 ROI：{report}')
+                icp_accepted += int(accepted)
+                surfaces[row.uid] = local @ pose[:3,:3].T + pose[:3,3]
+                keep = {r.uid for r in rows[max(0, index-MAX_REFERENCES+1):index+1]}
+                surfaces = {key: value for key, value in surfaces.items() if key in keep}
+                if accepted:
+                    visible = tuple(replace(entry,
+                        message='特征初始配准分类。该帧已采用 ICP 精修，几何误差对比见运行日志。')
+                        for entry in visible)
             observations.update((entry.uid, entry) for entry in visible)
             links.append((row.frame_id, visible[-1].reference_number))
             poses[row.uid] = pose.tolist()
             merge_pointclouds(merged, frame_cloud(moving).transform(pose))
         uid = database.publish_result(merged, identifiers,
             name=f'{FEATURE_RESULT_PREFIX} · {len(identifiers)} 帧', source_transforms=poses)
-        return FeatureStitchResult(uid, merged, shared, inliers, rms, tuple(observations.values()), used, tuple(links))
+        return FeatureStitchResult(uid, merged, shared, inliers, rms, tuple(observations.values()), used, tuple(links), tuple(icp_reports), icp_accepted)
 
     def _register(self, database, references, row, moving, poses, roi, settings, workpiece_roi, mask_settings):
         threshold = settings.tolerance
@@ -206,7 +236,9 @@ class FeatureStitching:
         visible = (observation(anchor, row, pair, 0, mask), observation(row, anchor, pair, 1, mask))
         errors = np.concatenate([error[inliers] for inliers, error in ranked])
         shared = sum(int(entry[1].valid.sum()) for entry in support[:len(ranked)])
-        return pose, shared, len(errors), float(np.sqrt(np.mean(errors**2))), visible, len(ranked)
+        evidence = (np.vstack([entry[1].xyz[1][mask] for entry,(mask,_) in zip(support,ranked)]),
+                    np.vstack([entry[2][mask] for entry,(mask,_) in zip(support,ranked)]))
+        return pose, shared, len(errors), float(np.sqrt(np.mean(errors**2))), visible, len(ranked), evidence
 
 
 def residuals(entry, pose, threshold):

@@ -10,6 +10,11 @@ class FeatureSettings:
     depth_jump: float = 5.
     tolerance: float = 2.
     inlier_percent: int = 60
+    icp_enabled: bool = True
+    icp_distance: float = 2.
+    icp_voxel: float = .5
+    icp_iterations: int = 50
+    icp_overlap: int = 30
 
 
 # Bounds also drive the corresponding controls in the recognition panel.
@@ -20,14 +25,22 @@ FEATURE_SETTING_LIMITS = {
     'depth_jump': (.5, 20., .5),
     'tolerance': (.1, 10., .1),
     'inlier_percent': (35, 100, 5),
+    'icp_distance': (.1, 20., .1),
+    'icp_voxel': (.05, 5., .05),
+    'icp_iterations': (10, 200, 10),
+    'icp_overlap': (10, 100, 5),
 }
 
 
 def load_feature_settings(values):
-    if not isinstance(values, dict) or values.keys() - FEATURE_SETTING_LIMITS.keys():
+    if not isinstance(values, dict) or values.keys() - (FEATURE_SETTING_LIMITS.keys() | {'icp_enabled'}):
         raise ValueError('会话中的 2D 特征配准参数无效。')
     defaults = FeatureSettings()
     for key, value in values.items():
+        if key == 'icp_enabled':
+            if type(value) is not bool:
+                raise ValueError('ICP 开关必须为布尔值。')
+            continue
         low, high, _ = FEATURE_SETTING_LIMITS[key]
         types = (int,) if isinstance(getattr(defaults, key), int) else (int, float)
         if type(value) not in types or not low <= value <= high:

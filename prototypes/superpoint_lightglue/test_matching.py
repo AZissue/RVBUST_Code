@@ -42,7 +42,8 @@ class PixelCacheTests(TestCase):
             self.assertEqual(len(matcher.pairs), 1)
             service.stitch(db, ids)
             self.assertEqual(len(matcher.pairs), 1)
-            settings = replace(FeatureSettings(), tolerance=1., inlier_percent=65)
+            settings = replace(FeatureSettings(), tolerance=1., inlier_percent=65,
+                               icp_enabled=False,icp_voxel=.25)
             service.prepare(db, ids[1], settings=settings)
             self.assertEqual(len(matcher.pairs), 1)
             settings = replace(settings, max_keypoints=1024)

@@ -1,5 +1,6 @@
 """Shared offline-capable recognition settings for all industrial workspaces."""
 import copy
+from dataclasses import replace
 from PySide6.QtCore import Qt, QTimer, QSignalBlocker
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QFormLayout, QComboBox,
                               QGroupBox, QLabel, QPushButton, QLayout, QScrollArea, QCheckBox,
@@ -116,9 +117,36 @@ class RecognitionParameters(QWidget):
             tuning_form.addRow(caption, spin)
             self.feature_fields[key] = spin
         self.reset_feature_tuning = QPushButton('恢复默认参数')
+        self.reset_feature_tuning.setToolTip('恢复 2D 检测、特征配准和 ICP 的默认参数。')
         self.reset_feature_tuning.clicked.connect(self._reset_feature_settings)
         tuning_form.addRow(self.reset_feature_tuning)
         layout.addWidget(self.feature_tuning)
+        self.feature_icp = QGroupBox('ICP 点云精配准')
+        icp_form = QFormLayout(self.feature_icp)
+        self.icp_enabled = QCheckBox('拼接时启用 ICP 优化')
+        self.icp_enabled.toggled.connect(self._apply_feature_icp)
+        icp_form.addRow(self.icp_enabled)
+        icp_note = QLabel('用工件 ROI 的点云精修特征初始位姿，匹配到最近三帧工件。建议框紧工件，避开静止台面和背景。')
+        icp_note.setWordWrap(True)
+        icp_form.addRow(icp_note)
+        self.feature_icp_fields = {}
+        for key, label, suffix, hint in (
+            ('icp_distance', '允许寻找的距离', ' mm', 'ICP 寻找相邻点的最大距离，同时限制精修修正幅度。超出时保留特征初值。'),
+            ('icp_voxel', '计算采样间距', ' mm', '越小保留越多细节，计算越慢。只影响精配准计算用的点。'),
+            ('icp_iterations', '最多优化次数', '', 'ICP 迭代上限。'),
+            ('icp_overlap', '最低工件重叠率', ' %', '最终必须有这个比例的移动点找到近邻，并通过原有特征对应检查。'),
+        ):
+            low, high, step = FEATURE_SETTING_LIMITS[key]
+            spin = QSpinBox() if isinstance(low,int) else QDoubleSpinBox()
+            spin.setRange(low,high)
+            spin.setSingleStep(step)
+            spin.setSuffix(suffix)
+            spin.setToolTip(hint)
+            spin.setKeyboardTracking(False)
+            spin.valueChanged.connect(self._apply_feature_icp)
+            icp_form.addRow(label,spin)
+            self.feature_icp_fields[key] = spin
+        layout.addWidget(self.feature_icp)
         self.circle_group = QGroupBox('编码圆')
         circle = QFormLayout(self.circle_group)
         circle.setContentsMargins(8, 14, 8, 8)
@@ -296,6 +324,14 @@ class RecognitionParameters(QWidget):
                     with QSignalBlocker(spin):
                         spin.setValue(getattr(settings, key))
             self.reset_feature_tuning.setEnabled(settings != FeatureSettings())
+            self.feature_icp.setEnabled(idle)
+            with QSignalBlocker(self.icp_enabled):
+                self.icp_enabled.setChecked(settings.icp_enabled)
+            for key, spin in self.feature_icp_fields.items():
+                with QSignalBlocker(spin):
+                    if spin.value() != getattr(settings,key):
+                        spin.setValue(getattr(settings,key))
+                spin.setEnabled(idle and settings.icp_enabled)
 
     def _draw_workpiece_roi(self):
         self.bridge.stitching.configure_feature_roi(workpiece=True)
@@ -320,7 +356,16 @@ class RecognitionParameters(QWidget):
 
     def _apply_feature_settings(self):
         if self.bridge is not None and self.marker_type.currentData() == FEATURE_RECOGNITION:
-            settings = FeatureSettings(**{key: spin.value() for key, spin in self.feature_fields.items()})
+            settings = replace(self.bridge.stitching.feature_settings(),
+                **{key: spin.value() for key, spin in self.feature_fields.items()})
+            self.bridge.stitching.set_feature_settings(settings)
+            self.refresh()
+
+    def _apply_feature_icp(self):
+        if self.bridge is not None and self.marker_type.currentData() == FEATURE_RECOGNITION:
+            settings = replace(self.bridge.stitching.feature_settings(),
+                icp_enabled=self.icp_enabled.isChecked(),
+                **{key: spin.value() for key, spin in self.feature_icp_fields.items()})
             self.bridge.stitching.set_feature_settings(settings)
             self.refresh()
 
@@ -375,6 +420,7 @@ class RecognitionParameters(QWidget):
         features = self.marker_type.currentData() == FEATURE_RECOGNITION
         self.feature_group.setVisible(features)
         self.feature_tuning.setVisible(features)
+        self.feature_icp.setVisible(features)
         self.workpiece_group.setVisible(features)
         self.board_group.setVisible(board)
         self.unencoded_group.setVisible(dots)
