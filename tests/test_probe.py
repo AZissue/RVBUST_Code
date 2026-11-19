@@ -1,0 +1,161 @@
+"""Probe numerical and production read-only lifecycle regressions."""
+
+import _bootstrap  # Configure project and sibling-test imports.
+import unittest
+from unittest.mock import patch
+import threading
+import numpy as np
+import test_postprocess as fixture
+from core.postprocess.probe import spacing, coverage, source_reason
+from core.frame_database import STALE_RESULT
+
+
+class ProbeMathTests(unittest.TestCase):
+    def test_reference_values_and_unreliable_spacing(self):
+        from ui_v2.postprocess.probe_panel import reference_text
+        text = reference_text(dict(p50=.146344, ratio=1.27))
+        self.assertIn('体素尺寸：0.22 mm', text)
+        self.assertIn('计算体素：0.220 mm', text)
+        self.assertIn('最大对应距离：0.439 mm', text)
+        self.assertIn('已粗略对齐', text)
+        for value in (0, float('nan')):
+            self.assertIn('暂无可靠参考值', reference_text(dict(p50=value)))
+        self.assertIn('超出可设置范围', reference_text(dict(p50=.0001)))
+
+    def test_grid_and_determinism(self):
+        xyz = np.array([[x, y, 0] for x in range(10) for y in range(10)])*2
+        s = spacing(xyz)
+        for k in ('p50', 'mean', 'p90', 'p95'):
+            self.assertEqual(s[k], 2)
+        self.assertEqual(spacing(xyz, 10)['p50'], spacing(xyz, 10)['p50'])
+        self.assertTrue(spacing(xyz, 10)['estimated'])
+
+    def test_degenerate(self):
+        for points in ([], [[0, 0, 0]], [[np.nan, 0, 0]]):
+            self.assertIn('reason', spacing(points))
+        self.assertEqual(spacing([[0, 0, 0]]*3)['p50'], 0)
+        s = spacing([[0, 0, 0], [1, 0, 0], [100, 0, 0]])
+        self.assertEqual(s['p50'], 1)
+        self.assertGreater(s['mean'], s['p50'])
+        self.assertGreater(s['p90'], s['p50'])
+
+    def test_translation(self):
+        a = np.array([[0, 0, 0], [10, 0, 0], [20, 0, 0]])
+        b = a+[0, 0, 2]
+        for x, y in ((a,b), (b,a)):
+            self.assertEqual(coverage(x, y, 3)['coverage'], 1)
+            self.assertEqual(coverage(x, y, 3)['rms'], 2)
+            self.assertEqual(coverage(x, y, 1)['coverage'], 0)
+            self.assertIsNone(coverage(x, y, 1)['rms'])
+
+
+class ProbeUiTests(unittest.TestCase):
+    setUpClass = classmethod(fixture.PostprocessTests.setUpClass.__func__)
+    setUp = fixture.PostprocessTests.setUp
+    tearDown = fixture.PostprocessTests.tearDown
+    wait = fixture.PostprocessTests.wait
+    source = fixture.PostprocessTests.source
+    finish = fixture.PostprocessTests.finish
+
+    def inputs(self):
+        uid = self.db.ingest(self.source())
+        self.editor.source_browser.refresh()
+        self.editor.load_selected([uid]); self.finish()
+        return uid
+
+    def test_toolbar_dialog_is_manual_reusable_and_busy_gated(self):
+        self.assertFalse(self.editor.actions['probe'].isEnabled())
+        self.inputs()
+        with patch.object(self.editor, 'analyze_probe') as analyze:
+            self.editor.actions['probe'].click()
+            self.app.processEvents()
+            self.assertTrue(self.editor.probe_dialog.isVisible())
+            self.assertFalse(self.editor.properties.isAncestorOf(self.editor.probe))
+            analyze.assert_not_called()
+            self.editor.probe_dialog.close()
+            self.editor.actions['probe'].click()
+            self.assertTrue(self.editor.probe_dialog.isVisible())
+        self.editor.analyze_probe()
+        self.assertFalse(self.editor.actions['probe'].isEnabled())
+        self.assertFalse(self.editor.probe.isEnabled())
+        self.editor.probe_dialog.close()
+        self.finish()
+        self.editor.actions['probe'].click()
+        self.assertIn('典型点间距', self.editor.probe_properties.text())
+        self.assertFalse(self.editor.probe_reference.isHidden())
+        self.assertIn('ICP · 最大对应距离', self.editor.probe_reference_text.text())
+        self.assertIs(self.editor.properties.data_layout.itemAt(0).widget(), self.editor.probe_reference)
+        self.assertTrue(self.editor.probe.isEnabled())
+
+    def test_reasons(self):
+        uid = self.inputs()
+        row = self.db.records[uid]
+        self.assertTrue(source_reason([], True))
+        self.assertTrue(source_reason([row], True))
+        self.assertTrue(source_reason([row, row], True))
+        self.assertTrue(source_reason([None, row], True))
+        row.kind = 'result'
+        self.assertTrue(source_reason([row, row], False))
+        self.assertFalse(source_reason([row, row], True))
+        row.status = STALE_RESULT
+        self.assertTrue(source_reason([row, row], True))
+
+    def test_readonly_report_in_properties(self):
+        self.inputs()
+        before = (self.db.directory/'index.json').read_bytes()
+        before_parameters = dict(self.editor._downsample_state)
+        with patch.object(self.db, 'publish_results', side_effect=AssertionError('DB write')), patch.object(self.bridge.shell, 'set_dirty', side_effect=AssertionError('dirty')), patch('core.frame_data._import_rvc', side_effect=AssertionError('SDK')):
+            self.editor.analyze_probe(); self.finish()
+        self.assertEqual(before, (self.db.directory/'index.json').read_bytes())
+        self.assertIsNotNone(self.editor._probe_report)
+        self.assertTrue(self.editor.properties.isAncestorOf(self.editor.probe_properties))
+        self.assertIn('典型点间距', self.editor.probe_properties.text())
+        self.assertFalse(hasattr(self.editor.probe, 'apply'))
+        self.assertFalse(hasattr(self.editor, 'adopt_probe_voxel'))
+        self.assertEqual(self.editor._downsample_state, before_parameters)
+        self.editor.properties.show_values({'test': 'metadata'})
+        self.assertIsNotNone(self.editor.probe.parent())
+
+    def test_reports_follow_cloud_revision(self):
+        uid = self.inputs()
+        self.editor.analyze_probe(); self.finish()
+        text = self.editor.probe_properties.text()
+        self.assertIn('典型点间距', text)
+        other = self.db.ingest(self.source(2))
+        self.editor.source_browser.refresh()
+        self.editor.load_selected([other]); self.finish()
+        self.assertNotIn('典型点间距', self.editor.probe_properties.text())
+        self.assertTrue(self.editor.probe_reference.isHidden())
+        self.editor.load_selected([uid]); self.finish()
+        self.assertEqual(self.editor.probe_properties.text(), text)
+        self.assertFalse(self.editor.probe_reference.isHidden())
+        self.db.records[uid].revision += 1
+        self.editor._refresh_probe_properties()
+        self.assertNotIn('典型点间距', self.editor.probe_properties.text())
+        self.assertTrue(self.editor.probe_reference.isHidden())
+
+    def test_stale_selection_and_project(self):
+        uid = self.inputs()
+        original = spacing
+        for project in (False, True):
+            entered, release = threading.Event(), threading.Event()
+            def slow(points):
+                entered.set(); release.wait(5)
+                return original(points)
+            old = self.db.directory
+            with patch('core.postprocess.probe.spacing', side_effect=slow):
+                self.editor.analyze_probe()
+                self.wait(entered.is_set)
+                if project:
+                    self.db.directory = old/'other'
+                else:
+                    self.editor.load_selected([])
+                release.set()
+                self.wait(lambda: self.editor._worker is None)
+                self.assertIsNone(self.editor._probe_report)
+            self.db.directory = old
+            self.editor.load_selected([uid]); self.finish()
+
+
+if __name__ == '__main__':
+    unittest.main()

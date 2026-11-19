@@ -40,7 +40,7 @@ def main(*, composition=None):
         from PySide6.QtCore import QPropertyAnimation, QTimer
         from PySide6.QtWidgets import QApplication, QDialog
     except ImportError:
-        print("[ERROR] PySide6 未安装，仅 core 模块可用（python test_core.py）")
+        print("[ERROR] PySide6 未安装，仅 core 模块可用（python tests/test_core.py）")
         return 1
 
     from core.utils import logger

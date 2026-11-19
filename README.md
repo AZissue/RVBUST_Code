@@ -84,17 +84,17 @@ python -m pip install -r requirements.txt
 # PyRVC 需从 RVC SDK 安装：D:\Program Files\RVBUST\RVC\RVCSDK\Python
 
 python main.py                     # 启动 UI（默认进入 LauncherDialog 模式选择）
-python test_core.py                # core 模块测试（无需相机/GUI）
-python test_ui.py                  # 历史 UI / 公共组件兼容回归（offscreen）
-python test_integration.py         # 端到端集成测试（offscreen + 合成数据）
-python test_station.py             # 单相机多站位模式测试（offscreen + 合成数据）
-python test_chain_stitcher.py      # 链式拓扑与 N 路拼接测试
-python test_handeye.py             # 手眼标定求解测试（合成数据）
-python test_robot_stitch.py        # 机器人拼接工作流测试（mock 机器人）
-python test_turntable.py           # 转台标定器合成数据测试（转台 360° 拼接算法）
-python test_generate_coded_circle.py  # 编码圆标定板生成器测试
-python test_ui_overlay.py         # 2D 标记叠加回归（offscreen）
-python test_ui_architecture.py    # v2 依赖边界、组件替换、信号接线回归
+python tests/test_core.py                # core 模块测试（无需相机/GUI）
+python tests/test_ui.py                  # 历史 UI / 公共组件兼容回归（offscreen）
+python tests/test_integration.py         # 端到端集成测试（offscreen + 合成数据）
+python tests/test_station.py             # 单相机多站位模式测试（offscreen + 合成数据）
+python tests/test_chain_stitcher.py      # 链式拓扑与 N 路拼接测试
+python tests/test_handeye.py             # 手眼标定求解测试（合成数据）
+python tests/test_robot_stitch.py        # 机器人拼接工作流测试（mock 机器人）
+python tests/test_turntable.py           # 转台标定器合成数据测试（转台 360° 拼接算法）
+python tests/test_generate_coded_circle.py  # 编码圆标定板生成器测试
+python tests/test_ui_overlay.py         # 2D 标记叠加回归（offscreen）
+python tests/test_ui_architecture.py    # v2 依赖边界、组件替换、信号接线回归
 python src/ui_v2/smoke_test.py     # v2 工作区门控冒烟
 ```
 
@@ -107,8 +107,8 @@ $MccPython = 'D:/Program Files/Anaconda/envs/rvc/python.exe'
 Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
 $env:QT_QPA_PLATFORM = 'offscreen'
 $env:PYTHONIOENCODING = 'utf-8'
-& $MccPython test_core.py
-& $MccPython test_turntable.py
+& $MccPython tests/test_core.py
+& $MccPython tests/test_turntable.py
 ```
 
 回归按改动范围选择脚本，以进程退出码判定；基线为脚本直跑 / `unittest`，
@@ -116,7 +116,7 @@ $env:PYTHONIOENCODING = 'utf-8'
 `QT_QPA_PLATFORM=offscreen`。PyRVC 从本机 SDK 或匹配 Python ABI 的安装包获取，
 不能通过普通 PyPI 依赖安装替代。
 
-正式离线拼接使用 `test_offline_stitch.py` 和 `test_offline_fpfh.py` 回归。机器人原型另遵循
+正式离线拼接使用 `tests/test_offline_stitch.py` 和 `tests/test_offline_fpfh.py` 回归。机器人原型另遵循
 [回归手册](archive/prototypes/robot_handeye_transform/REGRESSION.md) 的 DLL oracle 等判据。
 历史验收数字不代表本次或本机最新回归结果。
 
@@ -232,7 +232,7 @@ MultiCameraCalibration/
 │   └── sync_capture_stress/        # 多相机并发采集诊断
 ├── archive/prototypes/             # 已归档原型
 ├── docs/                           # 文档索引与对外资料；历史方案位于 archived/
-└── test_*.py                       # 回归测试
+└── tests/                         # 项目级回归测试
 ```
 
 ## 架构
@@ -329,7 +329,7 @@ MultiCameraCalibration/
 - [原型索引](prototypes/README.md)：独立原型、并入状态与运行约定。
 - [后处理 v2](archive/prototypes/cloudcompare_like/README.md)：ROI 默认包含投影框内全部点；实机大点云性能须单独验证。
 - 转台主程序修复定位 `src/core/turntable_calibrator.py`，不要继续修改冻结原型副本。
-- `test_marker_detector.py` 仍依赖 `prototypes/coded_circle_ui` 的生成器，清理原型前必须检查运行时依赖。
+- `tests/test_marker_detector.py` 仍依赖 `prototypes/coded_circle_ui` 的生成器，清理原型前必须检查运行时依赖。
 - 新实验功能先独立验证，再按工作区契约合入；主程序缺陷在对应 `src/` 实现中修复。
 - 标定结果 `T` 为 cam→ref；SDK 内存点云通常以米计，检测与机器人链路涉及毫米，接入时显式核对单位。
 
