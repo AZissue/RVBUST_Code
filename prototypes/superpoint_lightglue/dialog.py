@@ -94,6 +94,9 @@ class RegionPreview(AspectRatioLabel):
         position = self._guide_position
         if position is not None and r.contains(position):
             for pen in (QPen(QColor(0, 0, 0, 170), 3), QPen(QColor(255, 255, 255, 205), 1)):
+                pen.setStyle(Qt.CustomDashLine)
+                pen.setDashPattern([6 / pen.widthF(), 5 / pen.widthF()])
+                pen.setCapStyle(Qt.FlatCap)
                 painter.setPen(pen)
                 painter.drawLine(QPointF(r.left(), position.y()), QPointF(r.right(), position.y()))
                 painter.drawLine(QPointF(position.x(), r.top()), QPointF(position.x(), r.bottom()))
