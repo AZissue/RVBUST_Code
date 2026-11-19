@@ -337,7 +337,7 @@ class PoseGraph:
     # ------------------------------------------------------------------
     def optimize_global_ba(self, reference_id: str,
                            max_iterations: int = 50, *,
-                           point_constraints=None) -> Dict[str, np.ndarray]:
+                           point_constraints=None, robust_scale=None) -> Dict[str, np.ndarray]:
         """全局位姿图 BA：以 reference_id 为锚点，联合优化所有节点位姿。
 
         使用 scipy.optimize.least_squares 以轴角和独立平移参数化，
@@ -347,6 +347,9 @@ class PoseGraph:
             measured inlier pairs in local coordinates. Their world-coordinate
             differences provide a single physical unit for rotation/translation;
             mobile stitching supplies millimeter observations.
+        robust_scale: optional soft-L1 residual scale, in the same physical unit
+            as point_constraints. Enables sparse finite differences; omitted by
+            existing marker workflows to preserve their solver behavior.
 
         Returns:
             {node_id: T_node_to_ref}（参考节点自身为 4x4 单位阵）
@@ -397,8 +400,21 @@ class PoseGraph:
             return np.array(res)
 
         try:
+            options = {}
+            if point_constraints is not None and robust_scale is not None:
+                from scipy.sparse import lil_matrix
+                sparsity = lil_matrix((sum(len(a)*3 for _, _, a, _ in point_constraints), n_params))
+                offset = 0
+                for a, b, points, _ in point_constraints:
+                    end = offset + len(points)*3
+                    for nid in (a, b):
+                        if nid in node_to_idx:
+                            column = node_to_idx[nid]*6
+                            sparsity[offset:end, column:column+6] = 1
+                    offset = end
+                options = dict(loss='soft_l1', f_scale=robust_scale, jac_sparsity=sparsity.tocsr())
             result = least_squares(residuals, x0, method='trf' if point_constraints is not None else 'lm',
-                                   max_nfev=max_iterations)
+                                   max_nfev=max_iterations, **options)
             if not np.isfinite(result.x).all() or not np.isfinite(result.fun).all():
                 raise ValueError('全局优化产生非有限结果')
             # 恢复优化后的位姿

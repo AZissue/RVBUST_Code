@@ -97,5 +97,5 @@ class AutomaticStitchingTests(unittest.TestCase):
             self.assertEqual(result.links, ((6, 5),))
             self.assertEqual(result.references, 1)
             np.testing.assert_allclose(np.asarray(database.records[result.uid].source_transforms[sixth])[:3, 3],
-                                       [-15, 0, 0], atol=1e-8)
-            np.testing.assert_allclose(np.asarray(row.source_transforms[fourth])[:3, 3], [-9, 0, 0], atol=1e-8)
+                                       [-15, 0, 0], atol=1e-5)
+            np.testing.assert_allclose(np.asarray(row.source_transforms[fourth])[:3, 3], [-9, 0, 0], atol=1e-5)

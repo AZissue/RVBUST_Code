@@ -20,6 +20,8 @@ class FeatureICPTests(unittest.TestCase):
         self.assertLess(len(points), 64*64)
         self.assertTrue(np.all(points[:,0]>=8))
         self.assertTrue(np.all(points[:,0]<24))
+        independent = feature_surface(frame,(0,0,.1,.1),(.25,.25,.75,.75),.25)
+        np.testing.assert_array_equal(independent,points)
         source = points.copy()
         shifted_pose = np.eye(4)
         shifted_pose[:3,3]=[.15,-.1,.25]
@@ -64,7 +66,7 @@ class FeatureICPTests(unittest.TestCase):
                 ids.append(uid)
                 hashes[uid]=(db.directory/'frames'/uid/'pointmap.ply').read_bytes()
             service=FeatureStitching(BiasedPixels())
-            base=service.stitch(db,ids,settings=replace(FeatureSettings(),icp_enabled=False))
+            base=service.stitch(db,ids,settings=replace(FeatureSettings(),icp_enabled=False,geometry_enabled=False))
             result=service.stitch(db,ids,settings=replace(FeatureSettings(),icp_distance=1.))
             initial=np.asarray(db.records[base.uid].source_transforms[ids[1]])
             final=np.asarray(db.records[result.uid].source_transforms[ids[1]])
@@ -78,6 +80,15 @@ class FeatureICPTests(unittest.TestCase):
             for uid in ids:
                 self.assertEqual((db.directory/'frames'/uid/'pointmap.ply').read_bytes(),hashes[uid])
             np.testing.assert_array_equal(db.records[result.uid].source_transforms[ids[0]],np.eye(4))
+            from unittest.mock import patch
+            with patch('prototypes.superpoint_lightglue.automatic.optimize_geometry',side_effect=RuntimeError('solver unavailable')):
+                fallback=service.stitch(db,ids)
+            self.assertIn('未采用',fallback.geometry_report)
+            self.assertEqual(len(fallback.cloud.points),2*x.size)
+            with patch('prototypes.superpoint_lightglue.automatic.feature_surface',side_effect=RuntimeError('sampling unavailable')):
+                fallback=service.stitch(db,ids)
+            self.assertIn('采样不可用',fallback.geometry_report)
+            self.assertEqual(len(fallback.cloud.points),2*x.size)
 
     def test_icp_cannot_override_inconsistent_feature_evidence(self):
         from dataclasses import replace
@@ -88,7 +99,7 @@ class FeatureICPTests(unittest.TestCase):
         evidence=(source,source+coarse[:3,3])
         matrix,report,accepted=refine_feature_pose(
             CloudLayer('fixed',source),source,coarse,evidence,
-            replace(FeatureSettings(),icp_voxel=.05,icp_distance=1.,tolerance=.01))
+            replace(FeatureSettings(),icp_voxel=.05,icp_distance=1.,tolerance=.01,geometry_enabled=False))
         self.assertFalse(accepted)
         self.assertIn('原有特征',report)
         np.testing.assert_array_equal(matrix,coarse)
@@ -105,3 +116,13 @@ class FeatureICPTests(unittest.TestCase):
         self.assertFalse(accepted)
         np.testing.assert_array_equal(matrix,initial)
         self.assertIn('保留特征配准',report)
+
+    def test_geometry_can_correct_biased_features_within_motion_limit(self):
+        from dataclasses import replace
+        from core.postprocess.session import CloudLayer
+        source=np.random.default_rng(9).uniform(-5,5,(2000,3))+[0,0,400]
+        coarse=np.eye(4); coarse[2,3]=.3
+        matrix,report,accepted=refine_feature_pose(CloudLayer('fixed',source),source,coarse,
+            (source,source+[0,0,.3]),replace(FeatureSettings(),icp_voxel=.1,tolerance=.01))
+        self.assertTrue(accepted,report)
+        self.assertLess(np.linalg.norm(matrix[:3,3]),.05)

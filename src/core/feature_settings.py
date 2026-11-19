@@ -15,6 +15,12 @@ class FeatureSettings:
     icp_voxel: float = .5
     icp_iterations: int = 50
     icp_overlap: int = 30
+    icp_max_correction: float = 5.
+    geometry_enabled: bool = True
+    geometry_fpfh: bool = False
+    geometry_voxel: float = 1.
+    geometry_neighbors: int = 3
+    geometry_rounds: int = 3
 
 
 # Bounds also drive the corresponding controls in the recognition panel.
@@ -29,17 +35,22 @@ FEATURE_SETTING_LIMITS = {
     'icp_voxel': (.05, 5., .05),
     'icp_iterations': (10, 200, 10),
     'icp_overlap': (10, 100, 5),
+    'icp_max_correction': (.1, 20., .1),
+    'geometry_voxel': (.1, 5., .1),
+    'geometry_neighbors': (1, 10, 1),
+    'geometry_rounds': (1, 10, 1),
 }
 
 
 def load_feature_settings(values):
-    if not isinstance(values, dict) or values.keys() - (FEATURE_SETTING_LIMITS.keys() | {'icp_enabled'}):
+    switches = {'icp_enabled', 'geometry_enabled', 'geometry_fpfh'}
+    if not isinstance(values, dict) or values.keys() - (FEATURE_SETTING_LIMITS.keys() | switches):
         raise ValueError('会话中的 2D 特征配准参数无效。')
     defaults = FeatureSettings()
     for key, value in values.items():
-        if key == 'icp_enabled':
+        if key in switches:
             if type(value) is not bool:
-                raise ValueError('ICP 开关必须为布尔值。')
+                raise ValueError('几何/ICP 开关必须为布尔值。')
             continue
         low, high, _ = FEATURE_SETTING_LIMITS[key]
         types = (int,) if isinstance(getattr(defaults, key), int) else (int, float)

@@ -15,6 +15,7 @@ from ui_v2.feature_recognition import FEATURE_RESULT_PREFIX
 from .pipeline import PretrainedMatcher, analyze_pair, estimate_pose, frame_image, read_frame
 from .matching import PixelMatchCache
 from .refinement import feature_surface, refine_feature_pose
+from .geometry import optimize_geometry
 
 MAX_REFERENCES = 3
 
@@ -49,6 +50,7 @@ class FeatureStitchResult:
     links: tuple
     icp_reports: tuple = ()
     icp_accepted: int = 0
+    geometry_report: str = ''
 
 class FeatureStitching:
     def __init__(self, matcher=None):
@@ -126,23 +128,33 @@ class FeatureStitching:
         if any(row.kind != 'raw' or row.pointcloud_aligned is False for row in rows):
             raise ValueError('请先开启「点云对应2D」并拍摄两帧对齐的原始数据。')
 
-        surfaces = {}
+        surfaces, local_surfaces = {}, {}
+        sampling_errors = []
+        def sample(frame, voxel):
+            try:
+                return feature_surface(frame,roi,workpiece_roi,voxel)
+            except (ValueError, RuntimeError) as exc:
+                sampling_errors.append(str(exc))
+                return np.empty((0,3))
+
         icp_reports, icp_accepted = [], 0
         if prior is None:
             first = 1
             initial = read_frame(database.directory, rows[0])
-            merged = frame_cloud(initial)
+            if settings.geometry_enabled:
+                local_surfaces[rows[0].uid] = sample(initial,settings.geometry_voxel)
             if settings.icp_enabled:
-                surfaces[rows[0].uid] = feature_surface(initial,roi,workpiece_roi,settings.icp_voxel)
+                surfaces[rows[0].uid] = sample(initial,settings.icp_voxel)
             poses = {rows[0].uid: np.eye(4).tolist()}
         else:
             first = len(prior.source_ids)
-            _, merged = database.load_frame(prior.uid, 'cloud')
             poses = dict(prior.source_transforms)
         observations, links = {}, []
         for index in range(first, len(rows)):
             row = rows[index]
             moving = read_frame(database.directory, row)
+            if settings.geometry_enabled:
+                local_surfaces[row.uid] = sample(moving,settings.geometry_voxel)
             references = rows[max(0, index - MAX_REFERENCES):index]
             pose, shared, inliers, rms, visible, used, evidence = self._register(
                 database, references, row, moving, poses, roi, settings, workpiece_roi, mask_settings)
@@ -150,14 +162,14 @@ class FeatureStitching:
                 for reference in references:
                     if reference.uid not in surfaces:
                         previous = read_frame(database.directory,reference)
-                        local = feature_surface(previous,roi,workpiece_roi,settings.icp_voxel)
+                        local = sample(previous,settings.icp_voxel)
                         previous_pose = np.asarray(poses[reference.uid])
                         surfaces[reference.uid] = local @ previous_pose[:3,:3].T + previous_pose[:3,3]
-                local = feature_surface(moving,roi,workpiece_roi,settings.icp_voxel)
+                local = sample(moving,settings.icp_voxel)
                 try:
                     target = CloudLayer('最近已拼接工件',np.vstack([surfaces[r.uid] for r in references]))
                     pose, report, accepted = refine_feature_pose(target,local,pose,evidence,settings)
-                except ValueError as exc:
+                except (ValueError, RuntimeError) as exc:
                     report, accepted = f'ICP 未采用，保留特征配准位姿。{exc}', False
                 icp_reports.append(f'帧 {row.frame_id:03d} 工件 ROI：{report}')
                 icp_accepted += int(accepted)
@@ -171,10 +183,31 @@ class FeatureStitching:
             observations.update((entry.uid, entry) for entry in visible)
             links.append((row.frame_id, visible[-1].reference_number))
             poses[row.uid] = pose.tolist()
-            merge_pointclouds(merged, frame_cloud(moving).transform(pose))
+        geometry_report = ''
+        if settings.geometry_enabled:
+            try:
+                for row in rows:
+                    if row.uid not in local_surfaces:
+                        frame = read_frame(database.directory, row)
+                        local_surfaces[row.uid] = sample(frame,settings.geometry_voxel)
+                optimized, geometry_report, _ = optimize_geometry(local_surfaces, poses, settings)
+                poses = {key: value.tolist() for key,value in optimized.items()}
+            except (ValueError, RuntimeError) as exc:
+                geometry_report = f'多帧几何未采用，保留逐帧位姿：{exc}'
+        if sampling_errors:
+            geometry_report += ' 几何采样不可用：' + '；'.join(dict.fromkeys(sampling_errors))
+        # Build the full-resolution output only after every pose is final.
+        merged = None
+        for row in rows:
+            cloud = frame_cloud(read_frame(database.directory,row)).transform(np.asarray(poses[row.uid]))
+            if merged is None:
+                merged = cloud
+            else:
+                merge_pointclouds(merged,cloud)
         uid = database.publish_result(merged, identifiers,
             name=f'{FEATURE_RESULT_PREFIX} · {len(identifiers)} 帧', source_transforms=poses)
-        return FeatureStitchResult(uid, merged, shared, inliers, rms, tuple(observations.values()), used, tuple(links), tuple(icp_reports), icp_accepted)
+        return FeatureStitchResult(uid, merged, shared, inliers, rms, tuple(observations.values()), used,
+                                   tuple(links), tuple(icp_reports), icp_accepted, geometry_report)
 
     def _register(self, database, references, row, moving, poses, roi, settings, workpiece_roi, mask_settings):
         threshold = settings.tolerance

@@ -121,20 +121,33 @@ class RecognitionParameters(QWidget):
         self.reset_feature_tuning.clicked.connect(self._reset_feature_settings)
         tuning_form.addRow(self.reset_feature_tuning)
         layout.addWidget(self.feature_tuning)
-        self.feature_icp = QGroupBox('ICP 点云精配准')
+        self.feature_icp = QGroupBox('几何辅助与 ICP 精配准')
         icp_form = QFormLayout(self.feature_icp)
         self.icp_enabled = QCheckBox('拼接时启用 ICP 优化')
         self.icp_enabled.toggled.connect(self._apply_feature_icp)
         icp_form.addRow(self.icp_enabled)
-        icp_note = QLabel('用工件 ROI 的点云精修特征初始位姿，匹配到最近三帧工件。建议框紧工件，避开静止台面和背景。')
+        self.geometry_enabled = QCheckBox('多尺度精修 + 多帧联合优化')
+        self.geometry_enabled.setToolTip('允许工件几何纠正有偏差的特征初值，固定首帧联合优化。关闭后使用原有特征约束 ICP。')
+        self.geometry_enabled.toggled.connect(self._apply_feature_icp)
+        icp_form.addRow(self.geometry_enabled)
+        self.geometry_fpfh = QCheckBox('FPFH 几何初值（可选，较慢）')
+        self.geometry_fpfh.setToolTip('只在已有特征初值附近尝试几何配准；重复、对称结构可能无改善，默认关闭。需同时启用 ICP 和多尺度精修。')
+        self.geometry_fpfh.toggled.connect(self._apply_feature_icp)
+        icp_form.addRow(self.geometry_fpfh)
+        icp_note = QLabel('工件框请避开背景。先多尺度精修，再联合校正多帧位姿。几何残差见日志；底栏显示特征初值误差。')
         icp_note.setWordWrap(True)
+        icp_note.setMinimumHeight(icp_note.fontMetrics().height()*4)
         icp_form.addRow(icp_note)
         self.feature_icp_fields = {}
         for key, label, suffix, hint in (
-            ('icp_distance', '允许寻找的距离', ' mm', 'ICP 寻找相邻点的最大距离，同时限制精修修正幅度。超出时保留特征初值。'),
+            ('icp_distance', '寻找相邻表面的范围', ' mm', '每次搜索相邻点的最大距离。过大容易吸到错误表面；与最大修正量独立。'),
+            ('icp_max_correction', '允许纠偏的最大幅度', ' mm', '精修及联合优化相对各自输入位姿，在工件采样上允许移动的最大距离。超出则不采用。'),
             ('icp_voxel', '计算采样间距', ' mm', '越小保留越多细节，计算越慢。只影响精配准计算用的点。'),
             ('icp_iterations', '最多优化次数', '', 'ICP 迭代上限。'),
-            ('icp_overlap', '最低工件重叠率', ' %', '最终必须有这个比例的移动点找到近邻，并通过原有特征对应检查。'),
+            ('icp_overlap', '最低工件重叠率', ' %', 'ICP 最终重叠率；联合优化检查双向覆盖率，并用法线一致的互近邻建立约束。'),
+            ('geometry_voxel', '联合优化采样间距', ' mm', '联合几何及 FPFH 的采样间距；越小保留越多细节，计算更慢，不改变输出原始点。'),
+            ('geometry_neighbors', '联合参考的相邻帧数', ' 帧', '联合优化连接最近若干帧，同时检查首尾是否形成闭环。需有实际重叠才采用。'),
+            ('geometry_rounds', '联合校正轮数', ' 轮', '重新寻找几何对应点并联合校正所有位姿的轮数。'),
         ):
             low, high, step = FEATURE_SETTING_LIMITS[key]
             spin = QSpinBox() if isinstance(low,int) else QDoubleSpinBox()
@@ -327,11 +340,19 @@ class RecognitionParameters(QWidget):
             self.feature_icp.setEnabled(idle)
             with QSignalBlocker(self.icp_enabled):
                 self.icp_enabled.setChecked(settings.icp_enabled)
+            for key in ('geometry_enabled', 'geometry_fpfh'):
+                control = getattr(self,key)
+                with QSignalBlocker(control):
+                    control.setChecked(getattr(settings,key))
+            self.geometry_enabled.setEnabled(idle)
+            self.geometry_fpfh.setEnabled(idle and settings.geometry_enabled and settings.icp_enabled)
             for key, spin in self.feature_icp_fields.items():
                 with QSignalBlocker(spin):
                     if spin.value() != getattr(settings,key):
                         spin.setValue(getattr(settings,key))
-                spin.setEnabled(idle and settings.icp_enabled)
+                active = settings.geometry_enabled if key.startswith('geometry_') else settings.icp_enabled
+                shared = key in ('icp_distance','icp_overlap','icp_max_correction','icp_iterations')
+                spin.setEnabled(idle and (active or shared and settings.geometry_enabled))
 
     def _draw_workpiece_roi(self):
         self.bridge.stitching.configure_feature_roi(workpiece=True)
@@ -365,6 +386,8 @@ class RecognitionParameters(QWidget):
         if self.bridge is not None and self.marker_type.currentData() == FEATURE_RECOGNITION:
             settings = replace(self.bridge.stitching.feature_settings(),
                 icp_enabled=self.icp_enabled.isChecked(),
+                geometry_enabled=self.geometry_enabled.isChecked(),
+                geometry_fpfh=self.geometry_fpfh.isChecked(),
                 **{key: spin.value() for key, spin in self.feature_icp_fields.items()})
             self.bridge.stitching.set_feature_settings(settings)
             self.refresh()
