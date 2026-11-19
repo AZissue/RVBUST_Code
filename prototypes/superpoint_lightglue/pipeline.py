@@ -179,10 +179,11 @@ def original_crop_pixels(points, width, height, rotation):
     return points
 
 
-def analyze_pair(frames, boxes, matcher, threshold, depth_jump, *, settings=None, rotation=0, masks=None):
+def analyze_pair(frames, boxes, matcher, threshold, depth_jump, *, settings=None, rotation=0, masks=None, pixels=None):
     images = [frame.image for frame in frames]
-    pixels = (matcher.match(images, boxes, settings=settings or FeatureSettings(), rotation=rotation, masks=masks)
-              if isinstance(matcher, PretrainedMatcher) else matcher.match(images, boxes))
+    if pixels is None:
+        pixels = (matcher.match(images, boxes, settings=settings or FeatureSettings(), rotation=rotation, masks=masks)
+                  if isinstance(matcher, PretrainedMatcher) else matcher.match(images, boxes))
     if masks is not None:
         keep = mask_keypoints(masks[0], pixels[0]) & mask_keypoints(masks[1], pixels[1])
         pixels = tuple(points[keep] for points in pixels)

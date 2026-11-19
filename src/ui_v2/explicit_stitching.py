@@ -25,6 +25,8 @@ class ExplicitStitching:
         self._feature_queue = deque()
         self._feature_observations = WeakKeyDictionary()
         self.feature_busy = False
+        self.feature_matching = False
+        self._pending_feature_stitch = None
 
     def _uses_features(self, mode):
         return (mode == 'mobile_chain'
@@ -100,7 +102,11 @@ class ExplicitStitching:
         self._feature_observations.pop(project.database, None)
         bridge.projects.mark_changed(mode)
         self._refresh_feature_image()
-        bridge.shell.log(f'已更新{label}。已有帧可点击「执行拼接」重新匹配。', 'info')
+        self._feature_queue = deque(entry for entry in self._feature_queue if entry[0] is not project.database)
+        for row in project.database.records.copy().values():
+            if row.kind == 'raw' and row.pointcloud_aligned is not False:
+                self._enqueue_feature_capture(project.database, row.uid)
+        bridge.shell.log(f'已更新{label}。后台将更新像素匹配缓存，点击「执行拼接」进行配准。', 'info')
 
     def configure_feature_roi(self, *, workpiece=False):
         from prototypes.superpoint_lightglue.dialog import choose_matching_region
@@ -137,7 +143,8 @@ class ExplicitStitching:
                        if row.kind == 'result' and row.status != STALE_RESULT
                        and row.logical_name.startswith(FEATURE_RESULT_PREFIX)), None)
         count = len(result.source_ids) if result else 0
-        activity = f' | 后台处理中（待处理 {len(self._feature_queue)} 帧）' if self.feature_busy else ''
+        activity = (f' | 后台匹配中（待处理 {len(self._feature_queue)} 帧）' if self.feature_matching else
+                    ' | 正在配准拼接' if self.feature_busy else '')
         return f'已拼接 {count} 帧{activity}'
 
     def feature_observation(self, mode, uid):
@@ -158,7 +165,9 @@ class ExplicitStitching:
         cache = self._feature_observations.setdefault(database, {})
         cache.update((entry.uid, entry) for entry in entries)
         displayed = self.bridge.frame_db._displayed.get('mobile_chain')
-        if displayed and displayed[0] in cache and displayed[1].image_np is not None:
+        if (self.bridge._current_mode == 'mobile_chain'
+                and database is self.bridge.frame_db.databases['mobile_chain']
+                and displayed and displayed[0] in cache and displayed[1].image_np is not None):
             uid, frame, _ = displayed
             self.bridge.shell.workspace_mobile()._industrial.show_database_image(
                 frame, refresh=True, feature_mode=True, feature=self.feature_observation('mobile_chain', uid))
@@ -182,53 +191,91 @@ class ExplicitStitching:
         bridge.shell.log(f'SuperPoint + LightGlue：{details}。本次接入关系 {path}。', 'success')
         bridge.shell._refresh_statusbar()
 
-    def _enqueue_feature_capture(self, database, uid):
-        self._feature_queue.append((database, uid))
-        if not self.feature_busy:
-            self._start_feature_capture()
+    def _feature_options(self):
+        return dict(roi=self.feature_roi(), settings=self.feature_settings(),
+                    workpiece_roi=self.workpiece_roi(), mask_settings=self.workpiece_mask())
+
+    def _pixel_options_key(self, options):
+        from prototypes.superpoint_lightglue.matching import matching_key
+        return matching_key(**options)
+
+    def _feature_inputs(self, database, uid):
+        from prototypes.superpoint_lightglue.automatic import MAX_REFERENCES
+        rows = [r for r in database.records.copy().values()
+                if r.kind == 'raw' and r.pointcloud_aligned is not False]
+        index = next((i for i, row in enumerate(rows) if row.uid == uid), None)
+        if index is None:
+            return ()
+        return tuple((r.uid, r.revision) for r in rows[max(0, index-MAX_REFERENCES):index+1])
+
+    def _matching_is_current(self, database, inputs, key):
+        return (self._uses_features('mobile_chain')
+                and database is self.bridge.frame_db.databases['mobile_chain']
+                and key == self._pixel_options_key(self._feature_options())
+                and all(uid in database.records and database.records[uid].revision == revision
+                        for uid, revision in inputs))
+
+    def _sync_feature_progress(self):
+        message = ('正在后台匹配 2D 特征，剩余 %d 帧' % len(self._feature_queue)
+                   if self.feature_matching else
+                   '正在根据像素匹配计算 3D 配准和点云拼接' if self.feature_busy else None)
+        self.bridge.shell.set_background_activity('feature_matching', message)
         self.bridge.shell._refresh_statusbar()
 
-    def _start_feature_capture(self):
-        from prototypes.superpoint_lightglue.automatic import FeatureObservation
+    def _enqueue_feature_capture(self, database, uid):
+        options = self._feature_options()
+        inputs = self._feature_inputs(database, uid)
+        self._feature_queue.append((database, uid, options, inputs))
+        self._start_feature_capture()
 
+    def _start_feature_capture(self):
         bridge = self.bridge
-        database, uid = self._feature_queue.popleft()
-        roi, settings = self.feature_roi(), self.feature_settings()
-        workpiece_roi, mask_settings = self.workpiece_roi(), self.workpiece_mask()
-        revision = database.records[uid].revision
-        self.feature_busy = True
+        if self.feature_matching or self.feature_busy or getattr(bridge, '_cleaned', False):
+            self._sync_feature_progress()
+            return
+        while self._feature_queue:
+            database, uid, options, inputs = self._feature_queue.popleft()
+            key = self._pixel_options_key(options)
+            if inputs and self._matching_is_current(database, inputs, key):
+                break
+        else:
+            self._sync_feature_progress()
+            return
+        self.feature_matching = True
+        self._sync_feature_progress()
 
         def done(result, error):
-            try:
-                if result is not None:
-                    self._show_feature_result(database, result)
-                elif error is not None:
-                    message = str(error)
-                    entry = getattr(error, 'observation', FeatureObservation(uid, revision, None, (), message))
-                    self._record_feature_observations(database, (entry,))
-                    bridge.shell.workspace_mobile().set_evaluation(0, 0, None, 'fail', message, scope='2D 特征')
-                    bridge.shell.log(f'原始帧已入 DB。2D 特征配准失败：{message}', 'warn')
+            self.feature_matching = False
+            if self._matching_is_current(database, inputs, key):
+                if error is not None:
+                    bridge.shell.log(f'帧 {database.records[uid].frame_id:03d} 的 2D 匹配失败：{error}', 'warn')
                 else:
-                    message = '已设置为参考帧，请移动相机并拍摄下一帧。'
-                    self._record_feature_observations(database, (FeatureObservation(uid, revision, None, (), message),))
-                    bridge.shell.log('2D 特征识别：' + message, 'info')
-            finally:
-                self.feature_busy = False
-                if self._feature_queue:
-                    self._start_feature_capture()
-                bridge.shell._refresh_statusbar()
+                    self._record_feature_observations(database, result)
+                    bridge.shell.log(f'帧 {database.records[uid].frame_id:03d} 的 2D 匹配已缓存。', 'info')
+            if self._pending_feature_stitch is not None:
+                self._run_feature_registration()
+            else:
+                self._start_feature_capture()
+            self._sync_feature_progress()
 
-        bridge._run_background(lambda: self._features().append(database, uid, roi=roi, settings=settings,
-                                workpiece_roi=workpiece_roi, mask_settings=mask_settings), done,
-                               must_finish=True, name='feature_stitch')
+        bridge._run_background(lambda: self._features().prepare(database, uid, **options), done,
+                               name='feature_match')
 
     def _execute_features(self, database, raw_ids):
-        bridge = self.bridge
-        roi, settings = self.feature_roi(), self.feature_settings()
-        workpiece_roi, mask_settings = self.workpiece_roi(), self.workpiece_mask()
         self.feature_busy = True
-        bridge.shell._refresh_statusbar()
-        bridge.shell.log(f'正在后台对 {len(raw_ids)} 帧执行 SuperPoint + LightGlue 拼接…', 'info')
+        self._pending_feature_stitch = (database, tuple(raw_ids), self._feature_options())
+        self._sync_feature_progress()
+        if self.feature_matching:
+            self.bridge.shell.log('已请求执行拼接，当前 2D 匹配完成后将使用缓存进行配准。', 'info')
+        else:
+            self._run_feature_registration()
+
+    def _run_feature_registration(self):
+        bridge = self.bridge
+        database, raw_ids, options = self._pending_feature_stitch
+        self._pending_feature_stitch = None
+        self._sync_feature_progress()
+        bridge.shell.log(f'正在使用像素匹配缓存对 {len(raw_ids)} 帧进行 3D 配准…', 'info')
 
         def done(result, error):
             self.feature_busy = False
@@ -239,12 +286,10 @@ class ExplicitStitching:
                 bridge.shell.log(f'SuperPoint + LightGlue 拼接失败：{error}', 'warn')
             else:
                 self._show_feature_result(database, result)
-            if self._feature_queue:
-                self._start_feature_capture()
-            bridge.shell._refresh_statusbar()
+            self._start_feature_capture()
+            self._sync_feature_progress()
 
-        bridge._run_background(lambda: self._features().stitch(database, raw_ids, roi=roi, settings=settings,
-                                workpiece_roi=workpiece_roi, mask_settings=mask_settings), done,
+        bridge._run_background(lambda: self._features().stitch(database, raw_ids, **options), done,
                                must_finish=True, name='feature_stitch')
 
     def configure_plane_filter(self):

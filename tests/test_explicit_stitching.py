@@ -195,16 +195,28 @@ class ExplicitStitchingTests(unittest.TestCase):
             stitch.capture_mobile()
             self.wait(started.is_set)
             self.assertFalse(self.win._overlay.isVisible())
-            self.assertIn('后台处理中', self.win._st_quality.full_text)
+            self.assertTrue(self.win._task_progress.isVisible())
             self.win.workspace_mobile()._btn_capture.click()
             self.wait(lambda: len(identifiers) == 3)
+            self.wait(self.bridge.can_change_workspace)
+            self.assertFalse(self.win._overlay.isVisible())
+            self.assertTrue(self.win._task_progress.isVisible())
             self.assertFalse(any(row.kind == 'result' for row in self.db.records.values()))
         finally:
             release.set()
 
+        self.wait(lambda: not stitch.feature_matching and self.bridge.can_change_workspace())
+        self.assertFalse(self.win._task_progress.isVisible())
+        self.assertFalse(any(row.kind == 'result' for row in self.db.records.values()))
+        self.assertEqual(set(boxes_seen), {(6, 6, 42, 42)})
+        before_manual = len(boxes_seen)
+        self.assertEqual(len(inspector.image_view.feature_points), 9)
+        self.assertEqual({point[2] for point in inspector.image_view.feature_points}, {3})
+        self.assertIn('像素匹配', inspector.counts.text())
+        stitch.execute()
         self.wait(lambda: self.bridge.can_change_workspace() and any(
             row.source_ids == identifiers for row in self.db.records.values() if row.kind == 'result'))
-        self.assertEqual(set(boxes_seen), {(6, 6, 42, 42)})
+        self.assertEqual(len(boxes_seen), before_manual, 'manual registration must reuse the 2D cache')
         self.assertIn('已拼接 3 帧', self.win._st_quality.full_text)
         self.assertEqual(self.bridge.frame_db._displayed[mode][0], identifiers[-1])
         self.assertEqual(len(inspector.image_view.feature_points), 9)
@@ -213,6 +225,64 @@ class ExplicitStitchingTests(unittest.TestCase):
         self.bridge.frame_db.select(mode, identifiers[0], 'image')
         self.wait(lambda: self.bridge.frame_db._displayed[mode][0] == identifiers[0])
         self.assertEqual(len(inspector.image_view.feature_points), 9)
+
+        # A manual request during a new background match waits and reuses that job.
+        started.clear()
+        release.clear()
+        try:
+            stitch.capture_mobile()
+            self.wait(started.is_set)
+            self.wait(lambda: self.bridge.can_change_workspace())
+            self.assertTrue(self.win._task_progress.isVisible())
+            stitch.execute()
+            self.assertIsNotNone(stitch._pending_feature_stitch)
+        finally:
+            release.set()
+        self.wait(lambda: not stitch.feature_busy and not stitch.feature_matching
+                  and self.bridge.can_change_workspace())
+        self.assertTrue(any(row.source_ids == identifiers for row in self.db.records.values()
+                            if row.kind == 'result'))
+        self.assertFalse(self.win._task_progress.isVisible())
+
+    def test_stale_background_pixel_matches_do_not_repopulate_overlays(self):
+        from threading import Event
+        from prototypes.superpoint_lightglue.automatic import FeatureStitching
+        from prototypes.superpoint_lightglue.test_automatic import SyntheticMatcher
+        from ui_v2.feature_recognition import FEATURE_RECOGNITION
+
+        mode = 'mobile_chain'
+        self.win.feature_recognition_enabled = True
+        self.bridge._current_mode = mode
+        self.win.set_mode(mode, [])
+        self.bridge.projects.prepare(mode)
+        database = self.bridge.frame_db.databases[mode]
+        config = self.bridge.recognition.config(mode)
+        self.bridge.recognition.configure(mode, FEATURE_RECOGNITION, config['boards'], config['gamma'])
+        identifiers = []
+        for number in (1, 2):
+            frame = self.source(number)
+            frame.image_np = np.full((48, 48), 100, dtype=np.uint8)
+            identifiers.append(database.ingest(frame))
+        started, release = Event(), Event()
+        class DelayedMatcher(SyntheticMatcher):
+            def match(self, images, boxes):
+                started.set()
+                if not release.wait(5):
+                    raise TimeoutError('matching was not released')
+                return super().match(images, boxes)
+        stitch = self.bridge.stitching
+        stitch._feature_stitcher = FeatureStitching(DelayedMatcher())
+        try:
+            stitch._enqueue_feature_capture(database, identifiers[1])
+            self.wait(started.is_set)
+            self.assertTrue(self.bridge.can_change_workspace())
+            database.records[identifiers[1]].revision += 1
+        finally:
+            release.set()
+        self.wait(lambda: not stitch.feature_matching)
+        self.assertIsNone(stitch.feature_observation(mode, identifiers[1]))
+        self.assertFalse(self.win._task_progress.isVisible())
+        self.assertFalse(any(row.kind == 'result' for row in database.records.values()))
 
     def test_mobile_and_turntable_plane_filter_roundtrip_and_preserve_raw(self):
         from core.frame_database import FrameDatabase

@@ -1,16 +1,18 @@
 """Automatic feature registration for the mobile capture and stitch flow."""
+from copy import deepcopy
 from dataclasses import dataclass
 
 import numpy as np
 
 from core.feature_settings import FeatureSettings
-from core.feature_masks import WorkpieceMaskSettings, build_feature_mask
+from core.feature_masks import WorkpieceMaskSettings
 from core.frame_database import STALE_RESULT
 from core.pcd_utils import merge_pointclouds
 from core.point_cloud_processor import PointCloudProcessor
-from ui_v2.feature_recognition import FEATURE_RESULT_PREFIX, feature_box
+from ui_v2.feature_recognition import FEATURE_RESULT_PREFIX
 
-from .pipeline import PretrainedMatcher, analyze_pair, estimate_pose, read_frame
+from .pipeline import PretrainedMatcher, analyze_pair, estimate_pose, frame_image, read_frame
+from .matching import PixelMatchCache
 
 MAX_REFERENCES = 3
 
@@ -24,6 +26,7 @@ class FeatureObservation:
     message: str = ''
     reference_uid: str | None = None
     reference_revision: int | None = None
+    stage: str = 'registration'
 
 
 class FeatureRegistrationError(ValueError):
@@ -47,6 +50,46 @@ class FeatureStitchResult:
 class FeatureStitching:
     def __init__(self, matcher=None):
         self.matcher = matcher if matcher is not None else PretrainedMatcher()
+        self._pixel_cache = PixelMatchCache(self.matcher)
+
+    def _pixels(self, database, rows, images, roi, settings, workpiece_roi, mask_settings, rotation=0):
+        if self._pixel_cache.matcher is not self.matcher:
+            self._pixel_cache = PixelMatchCache(self.matcher)
+        return self._pixel_cache.pair(database, rows, images, roi, settings,
+                                      workpiece_roi, mask_settings, rotation)
+
+    def prepare(self, database, uid, *, roi=None, settings=FeatureSettings(),
+                workpiece_roi=None, mask_settings=WorkpieceMaskSettings()):
+        """Read only image files; do not load XYZ, estimate poses, or publish results."""
+        with database._lock:
+            rows = [r for r in database.records.values() if r.kind == 'raw'
+                    and r.pointcloud_aligned is not False]
+            index = next(i for i, row in enumerate(rows) if row.uid == uid)
+            rows = deepcopy(rows[max(0, index-MAX_REFERENCES):index+1])
+        index = len(rows) - 1
+        row = rows[index]
+        if index == 0:
+            return (FeatureObservation(uid, row.revision, None, (),
+                    '参考图像已准备，拍摄后续帧后后台匹配。', stage='matching'),)
+        image = frame_image(database.directory, row)
+        best = None
+        for anchor in reversed(rows[max(0, index-MAX_REFERENCES):index]):
+            images = (frame_image(database.directory, anchor), image)
+            pixels = self._pixels(database, (anchor, row), images, roi, settings, workpiece_roi, mask_settings)
+            if len(pixels[0]) < 6 and isinstance(self.matcher, PretrainedMatcher):
+                for rotation in (1, 3, 2):
+                    candidate = self._pixels(database, (anchor, row), images, roi, settings,
+                                             workpiece_roi, mask_settings, rotation)
+                    if len(candidate[0]) > len(pixels[0]):
+                        pixels = candidate
+            if best is None or len(pixels[0]) > len(best[1][0]):
+                best = (anchor, pixels)
+        anchor, pixels = best
+        message = f'已缓存 {len(pixels[0])} 对 2D 匹配，点击「执行拼接」进行 3D 配准。'
+        return tuple(FeatureObservation(current.uid, current.revision, reference.frame_id,
+            tuple((float(x), float(y), 3) for x, y in points), message,
+            reference.uid, reference.revision, stage='matching')
+            for current, reference, points in ((anchor, row, pixels[0]), (row, anchor, pixels[1])))
 
     def append(self, database, uid, *, roi=None, settings=FeatureSettings(), workpiece_roi=None,
                mask_settings=WorkpieceMaskSettings()):
@@ -94,7 +137,7 @@ class FeatureStitching:
             moving = read_frame(database.directory, row)
             references = rows[max(0, index - MAX_REFERENCES):index]
             pose, shared, inliers, rms, visible, used = self._register(
-                database.directory, references, row, moving, poses, roi, settings, workpiece_roi, mask_settings)
+                database, references, row, moving, poses, roi, settings, workpiece_roi, mask_settings)
             observations.update((entry.uid, entry) for entry in visible)
             links.append((row.frame_id, visible[-1].reference_number))
             poses[row.uid] = pose.tolist()
@@ -103,29 +146,22 @@ class FeatureStitching:
             name=f'{FEATURE_RESULT_PREFIX} · {len(identifiers)} 帧', source_transforms=poses)
         return FeatureStitchResult(uid, merged, shared, inliers, rms, tuple(observations.values()), used, tuple(links))
 
-    def _register(self, directory, references, row, moving, poses, roi, settings, workpiece_roi, mask_settings):
+    def _register(self, database, references, row, moving, poses, roi, settings, workpiece_roi, mask_settings):
         threshold = settings.tolerance
         pairs = []
         for anchor in reversed(references):
-            reference = read_frame(directory, anchor)
+            reference = read_frame(database.directory, anchor)
             frames = (reference, moving)
-            boxes = [feature_box(frame.image.shape, roi) for frame in frames]
-            masks = None
-            if workpiece_roi is not None or mask_settings.enabled:
-                selections = [build_feature_mask(frame.image, roi, workpiece_roi, mask_settings)
-                              for frame in frames]
-                boxes = [selection.box for selection in selections]
-                if any(min(box[2]-box[0], box[3]-box[1]) < 32 for box in boxes):
-                    raise ValueError('两个 ROI 的重叠区域至少需要 32 × 32 像素。')
-                if any(not selection.mask.any() for selection in selections):
-                    raise ValueError('工件掩膜没有保留任何像素，请调整明暗类型、阈值或工件框。')
-                masks = [selection.mask for selection in selections]
-            pair = analyze_pair(frames, boxes, self.matcher, threshold=threshold,
-                                depth_jump=settings.depth_jump, settings=settings, masks=masks)
+            images = [frame.image for frame in frames]
+            pixels = self._pixels(database, (anchor, row), images, roi, settings, workpiece_roi, mask_settings)
+            pair = analyze_pair(frames, (), self.matcher, threshold=threshold,
+                                depth_jump=settings.depth_jump, settings=settings, pixels=pixels)
             if not pairs and pair.pose is None and isinstance(self.matcher, PretrainedMatcher):
                 for rotation in (1, 3, 2):
-                    retry = analyze_pair(frames, boxes, self.matcher, threshold=threshold,
-                                         depth_jump=settings.depth_jump, settings=settings, rotation=rotation, masks=masks)
+                    pixels = self._pixels(database, (anchor, row), images, roi, settings,
+                                          workpiece_roi, mask_settings, rotation)
+                    retry = analyze_pair(frames, (), self.matcher, threshold=threshold,
+                                         depth_jump=settings.depth_jump, settings=settings, pixels=pixels)
                     if retry.pose is not None:
                         pair = retry
                         break

@@ -365,7 +365,7 @@ class RecognitionParameters(QWidget):
         self._loading = False
         self._update_groups()
         self.status.setText(
-            '对齐的原始帧拍摄后自动匹配并拼接。请保持工件固定并移动相机。'
+            '拍摄后仅后台缓存 2D 匹配，蓝点表示待 3D 验证。点击「执行拼接」进行配准和合并。'
             if config['marker_type'] == FEATURE_RECOGNITION else '修改后自动应用；无需连接相机。')
 
     def _update_groups(self):

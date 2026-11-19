@@ -83,7 +83,7 @@ class MarkerImage(QWidget):
             painter.setPen(QPen(QColor(YELLOW), 2, Qt.DashLine))
             painter.setBrush(Qt.NoBrush)
             painter.drawPolygon(QPolygonF([QPointF(x+px*scale, y+py*scale) for px, py in self.match_triangle]))
-        colors = (YELLOW, RED, GREEN)
+        colors = (YELLOW, RED, GREEN, '#56c9ff')
         for px, py, category in self.feature_points:
             painter.setPen(Qt.NoPen)
             painter.setBrush(QColor(colors[category]))
@@ -382,6 +382,13 @@ class MarkerInspector(QFrame):
     def _show_feature_summary(self, frame_id, feature, message):
         self.title.setText(f'当前帧 {frame_id} · SuperPoint + LightGlue')
         points = self.image_view.feature_points
+        if feature and feature.stage == 'matching':
+            self.counts.setText(f'<span style="color:#56c9ff">● 像素匹配 {len(points)} 对（待 3D 验证）</span>')
+            self.pair_label.setText(f'与帧 {feature.reference_number:03d} 的匹配'
+                                   if feature.reference_number is not None else '')
+            self.ids.setText(escape(feature.message))
+            self.ids.setToolTip(feature.message)
+            return
         color_counts = [0, 0, 0]
         for _, _, category in points:
             color_counts[category] += 1

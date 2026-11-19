@@ -303,6 +303,7 @@ class MainWindowShell(QMainWindow):
         self._st_multi.setStyleSheet('color:#b8c7bc;background:transparent;font-size:11px;')
         self._st_multi.hide()
         lo.addWidget(self._st_multi)
+        self._background_activities = {}
         self._task_progress = QProgressBar()
         self._task_progress.setRange(0, 0)
         self._task_progress.setMaximumWidth(110)
@@ -645,7 +646,19 @@ class MainWindowShell(QMainWindow):
 
     def hide_loading(self):
         self._overlay.hide_overlay()
-        self._task_progress.hide()
+        self._refresh_task_progress()
+
+    def set_background_activity(self, key, message=None):
+        if message:
+            self._background_activities[key] = message
+        else:
+            self._background_activities.pop(key, None)
+        self._refresh_task_progress()
+
+    def _refresh_task_progress(self):
+        if self._background_activities:
+            self._task_progress.setToolTip('\n'.join(self._background_activities.values()))
+        self._task_progress.setVisible(not self._overlay.isHidden() or bool(self._background_activities))
 
     def set_dirty(self, dirty: bool):
         """标记有未保存的标定/会话数据。"""
