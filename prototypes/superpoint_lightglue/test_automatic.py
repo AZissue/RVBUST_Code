@@ -57,11 +57,9 @@ class AutomaticStitchingTests(unittest.TestCase):
             result = service.append(database, second)
             self.assertEqual(database.records[result.uid].source_ids, [first, second])
             self.assertEqual(result.inliers, 9)
-            count = len(database.records)
-            with self.assertRaisesRegex(ValueError, '没有保留任何像素'):
-                service.stitch(database, [first, second], workpiece_roi=(.125, .125, .875, .875),
-                               mask_settings=WorkpieceMaskSettings(True, 'bright', 255))
-            self.assertEqual(len(database.records), count)
+            baseline = service.stitch(database, [first, second], workpiece_roi=(.125, .125, .875, .875),
+                                      mask_settings=WorkpieceMaskSettings(True, 'bright', 255))
+            self.assertEqual(baseline.inliers, 9)
             masked = service.stitch(database, [first, second], workpiece_roi=(.125, .125, .875, .875),
                                     mask_settings=WorkpieceMaskSettings(True, 'bright', 50))
             self.assertEqual(masked.inliers, 9)

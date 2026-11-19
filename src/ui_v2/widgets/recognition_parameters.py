@@ -62,7 +62,7 @@ class RecognitionParameters(QWidget):
         self.workpiece_label.setWordWrap(True)
         self.draw_workpiece_roi = QPushButton('绘制工件 ROI…')
         self.clear_workpiece_roi = QPushButton('清除工件框')
-        self.mask_enabled = QCheckBox('用二值化掩膜筛选特征点')
+        self.mask_enabled = QCheckBox('用掩膜辅助增强工件纹理')
         self.mask_polarity = QComboBox()
         self.mask_polarity.addItem('亮工件 / 暗背景', 'bright')
         self.mask_polarity.addItem('暗工件 / 亮背景', 'dark')
@@ -72,7 +72,7 @@ class RecognitionParameters(QWidget):
         self.mask_threshold.setKeyboardTracking(False)
         self.mask_threshold.setToolTip('自动按两个 ROI 的重叠区域计算阈值，或输入 0～255 手动调整。')
         self.mask_overlay = QCheckBox('在原始 2D 图像上显示掩膜')
-        mask_note = QLabel('青框是匹配范围，橙框是工件范围。开启掩膜后，绿色区域参与匹配，红色区域被排除。')
+        mask_note = QLabel('原图匹配始终保留。绿色是增强重点，红色使用原始纹理；新增匹配合并并去重。')
         mask_note.setWordWrap(True)
         for control in (self.workpiece_label, self.draw_workpiece_roi, self.clear_workpiece_roi, self.mask_enabled):
             mask_layout.addRow(control)

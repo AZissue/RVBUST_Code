@@ -65,3 +65,45 @@ class PixelCacheTests(TestCase):
             calls = len(matcher.pairs)
             service.prepare(db, ids[1], settings=settings)
             self.assertEqual(len(matcher.pairs), calls+1)
+
+
+    def test_mask_enhancement_keeps_original_matches_and_only_adds_unique_pairs(self):
+        from types import SimpleNamespace
+        from core.feature_masks import WorkpieceMaskSettings
+        from .matching import PixelMatchCache
+
+        image = np.full((64, 64, 3), 20, dtype=np.uint8)
+        image[25:50, 25:50] = 180
+        original = image.copy()
+        baseline = np.array([[10., 10.], [30., 30.]])
+        class TwoPassMatcher:
+            calls = 0
+            def match(self, images, boxes):
+                self.calls += 1
+                if self.calls == 1:
+                    return baseline.copy(), baseline.copy()
+                # A near duplicate and two conflicting endpoints must not inflate support.
+                ref = np.array([[30.1, 30.1], [40., 40.], [30., 30.], [45., 45.]])
+                mov = np.array([[30.1, 30.1], [40., 40.], [35., 35.], [40., 40.]])
+                return ref, mov
+        class Database:
+            directory = 'test'
+            records = {key: SimpleNamespace(uid=key, revision=1) for key in ('a', 'b')}
+        db = Database()
+        matcher = TwoPassMatcher()
+        cache = PixelMatchCache(matcher)
+        rows = tuple(db.records.values())
+        settings = FeatureSettings()
+        raw = cache.pair(db, rows, (image, image), None, settings, None, WorkpieceMaskSettings())
+        result = cache.pair(db, rows, (image, image), None, settings, None,
+                            WorkpieceMaskSettings(True, 'bright', 100))
+        self.assertEqual(matcher.calls, 2, 'enabling enhancement must reuse original inference')
+        for points in result:
+            np.testing.assert_array_equal(points[:2], baseline)
+            np.testing.assert_array_equal(points[2:], [[40., 40.]])
+        np.testing.assert_array_equal(image, original)
+        empty = cache.pair(db, rows, (image, image), None, settings, None,
+                           WorkpieceMaskSettings(True, 'bright', 255))
+        for points in empty:
+            np.testing.assert_array_equal(points, baseline)
+        self.assertEqual(matcher.calls, 2)

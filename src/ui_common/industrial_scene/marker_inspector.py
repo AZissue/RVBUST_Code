@@ -372,11 +372,11 @@ class MarkerInspector(QFrame):
                 h, w = result.mask.shape
                 self.image_view.feature_overlay = QImage(
                     rgba.data, w, h, rgba.strides[0], QImage.Format_RGBA8888).copy()
-                state = '已用于特征筛选' if settings.enabled else '预览，特征筛选未启用'
+                state = '已启用纹理增强补充' if settings.enabled else '预览，纹理增强未启用'
                 retained = int(result.mask.sum())
                 self.mask_summary.setText(
-                    f'二值化掩膜 · 阈值 {result.threshold:g} · 保留 {retained:,} 像素 · {state}'
-                    + ('。请调整明暗类型、阈值或工件框。' if retained == 0 else ''))
+                    f'二值化掩膜 · 阈值 {result.threshold:g} · 增强重点 {retained:,} 像素 · {state}'
+                    + ('。增强区域为空，使用原始纹理匹配。' if retained == 0 else ''))
         self.image_view.update()
 
     def _show_feature_summary(self, frame_id, feature, message):

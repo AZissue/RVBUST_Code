@@ -132,7 +132,7 @@ class ExplicitStitchingTests(unittest.TestCase):
         self.assertEqual(view.feature_overlay.pixelColor(50, 25).red(), 255)
         self.assertEqual(view.feature_overlay.pixelColor(110, 40).alpha(), 0)
         self.assertIn('1,200', inspector.mask_summary.text())
-        self.assertIn('已用于特征筛选', inspector.mask_summary.text())
+        self.assertIn('已启用纹理增强补充', inspector.mask_summary.text())
         saved, _ = SessionProject.load(project.save({}), mode)
         self.addCleanup(saved.dispose)
         self.assertEqual(saved.workpiece_roi, project.workpiece_roi)

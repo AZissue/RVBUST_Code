@@ -1,4 +1,4 @@
-"""Binary workpiece selection in original image coordinates."""
+"""Binary focus regions and guided grayscale enhancement in sensor coordinates."""
 from dataclasses import dataclass
 from math import ceil, floor
 
@@ -72,3 +72,17 @@ def mask_keypoints(mask, points):
     inside = (xy[:, 0] >= 0) & (xy[:, 0] < w) & (xy[:, 1] >= 0) & (xy[:, 1] < h)
     keep[indices[inside]] = mask[xy[inside, 1], xy[inside, 0]]
     return keep
+
+
+def enhance_workpiece_texture(image, selection):
+    """Blend local grayscale contrast enhancement into a softly feathered focus mask."""
+    x0, y0, x1, y1 = selection.box
+    crop = image[y0:y1, x0:x1]
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY) if crop.ndim == 3 else crop
+    enhanced = cv2.createCLAHE(clipLimit=2., tileGridSize=(8, 8)).apply(gray)
+    weight = cv2.GaussianBlur(selection.mask[y0:y1, x0:x1].astype(np.float32), (0, 0), 2.)
+    blended = np.rint(gray.astype(np.float32) + weight*(enhanced.astype(np.float32)-gray))
+    blended = np.clip(blended, 0, 255).astype(np.uint8)
+    result = image.copy()
+    result[y0:y1, x0:x1] = cv2.cvtColor(blended, cv2.COLOR_GRAY2BGR) if crop.ndim == 3 else blended
+    return result
