@@ -134,18 +134,20 @@ class RecognitionParameters(QWidget):
         self.geometry_fpfh.setToolTip('只在已有特征初值附近尝试几何配准；重复、对称结构可能无改善，默认关闭。需同时启用 ICP 和多尺度精修。')
         self.geometry_fpfh.toggled.connect(self._apply_feature_icp)
         icp_form.addRow(self.geometry_fpfh)
-        icp_note = QLabel('工件框请避开背景。先多尺度精修，再联合校正多帧位姿。几何残差见日志；底栏显示特征初值误差。')
+        self.geometry_fpfh.hide()
+        self.geometry_enabled.setToolTip('从 2D 特征对应的 3D 初值开始，只在 ROI 和特征支撑范围内微调；所有结果必须保留原始特征约束。')
+        icp_note = QLabel('必须设置 ROI，避开背景。几何仅微调特征初值，偏离特征约束则回退。几何残差见日志；底栏为特征初值误差。')
         icp_note.setWordWrap(True)
         icp_note.setMinimumHeight(icp_note.fontMetrics().height()*4)
         icp_form.addRow(icp_note)
         self.feature_icp_fields = {}
         for key, label, suffix, hint in (
             ('icp_distance', '寻找相邻表面的范围', ' mm', '每次搜索相邻点的最大距离。过大容易吸到错误表面；与最大修正量独立。'),
-            ('icp_max_correction', '允许纠偏的最大幅度', ' mm', '精修及联合优化相对各自输入位姿，在工件采样上允许移动的最大距离。超出则不采用。'),
+            ('icp_max_correction', '允许纠偏的最大幅度', ' mm', '工件采样最大位移。逐帧精修还受特征配准容差限制；所有优化必须保持原始特征约束。'),
             ('icp_voxel', '计算采样间距', ' mm', '越小保留越多细节，计算越慢。只影响精配准计算用的点。'),
             ('icp_iterations', '最多优化次数', '', 'ICP 迭代上限。'),
             ('icp_overlap', '最低工件重叠率', ' %', 'ICP 最终重叠率；联合优化检查双向覆盖率，并用法线一致的互近邻建立约束。'),
-            ('geometry_voxel', '联合优化采样间距', ' mm', '联合几何及 FPFH 的采样间距；越小保留越多细节，计算更慢，不改变输出原始点。'),
+            ('geometry_voxel', '联合优化采样间距', ' mm', '联合几何的采样间距；越小保留越多细节，计算更慢，不改变输出原始点。'),
             ('geometry_neighbors', '联合参考的相邻帧数', ' 帧', '联合优化连接最近若干帧，同时检查首尾是否形成闭环。需有实际重叠才采用。'),
             ('geometry_rounds', '联合校正轮数', ' 轮', '重新寻找几何对应点并联合校正所有位姿的轮数。'),
         ):

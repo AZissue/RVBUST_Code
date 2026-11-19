@@ -67,7 +67,7 @@ class FeatureICPTests(unittest.TestCase):
                 hashes[uid]=(db.directory/'frames'/uid/'pointmap.ply').read_bytes()
             service=FeatureStitching(BiasedPixels())
             base=service.stitch(db,ids,settings=replace(FeatureSettings(),icp_enabled=False,geometry_enabled=False))
-            result=service.stitch(db,ids,settings=replace(FeatureSettings(),icp_distance=1.))
+            result=service.stitch(db,ids,workpiece_roi=(0,0,1,1),settings=replace(FeatureSettings(),icp_distance=1.))
             initial=np.asarray(db.records[base.uid].source_transforms[ids[1]])
             final=np.asarray(db.records[result.uid].source_transforms[ids[1]])
             self.assertEqual(result.icp_accepted,1,result.icp_reports)
@@ -85,6 +85,14 @@ class FeatureICPTests(unittest.TestCase):
                 fallback=service.stitch(db,ids)
             self.assertIn('未采用',fallback.geometry_report)
             self.assertEqual(len(fallback.cloud.points),2*x.size)
+            def unsafe_joint(surfaces,poses,settings):
+                changed={key:np.asarray(value).copy() for key,value in poses.items()}
+                changed[ids[1]][2,3]+=20
+                return changed,'unsafe proposal',True
+            with patch('prototypes.superpoint_lightglue.automatic.optimize_geometry',side_effect=unsafe_joint):
+                guarded=service.stitch(db,ids,workpiece_roi=(0,0,1,1))
+            self.assertIn('偏离原始特征',guarded.geometry_report)
+            self.assertLess(abs(np.asarray(db.records[guarded.uid].source_transforms[ids[1]])[2,3]),2.)
             with patch('prototypes.superpoint_lightglue.automatic.feature_surface',side_effect=RuntimeError('sampling unavailable')):
                 fallback=service.stitch(db,ids)
             self.assertIn('采样不可用',fallback.geometry_report)
@@ -117,12 +125,24 @@ class FeatureICPTests(unittest.TestCase):
         np.testing.assert_array_equal(matrix,initial)
         self.assertIn('保留特征配准',report)
 
-    def test_geometry_can_correct_biased_features_within_motion_limit(self):
+    def test_geometry_cannot_override_feature_initialization(self):
         from dataclasses import replace
         from core.postprocess.session import CloudLayer
         source=np.random.default_rng(9).uniform(-5,5,(2000,3))+[0,0,400]
         coarse=np.eye(4); coarse[2,3]=.3
         matrix,report,accepted=refine_feature_pose(CloudLayer('fixed',source),source,coarse,
             (source,source+[0,0,.3]),replace(FeatureSettings(),icp_voxel=.1,tolerance=.01))
-        self.assertTrue(accepted,report)
-        self.assertLess(np.linalg.norm(matrix[:3,3]),.05)
+        self.assertFalse(accepted,report)
+        np.testing.assert_array_equal(matrix,coarse)
+
+    def test_no_roi_never_uses_full_frame(self):
+        frame=AlignedFrame(np.zeros((8,8,3),np.uint8),np.ones((8,8,3)),None,'object',())
+        with self.assertRaisesRegex(ValueError,'不使用全幅'):
+            feature_surface(frame,None,None,.5)
+
+    def test_feature_support_excludes_distant_background(self):
+        from .refinement import supported_surface
+        seeds=np.random.default_rng(1).normal(size=(50,3))+[0,0,400]
+        background=seeds+[0,0,20]
+        result=supported_surface(np.vstack((seeds,background)),seeds,2.)
+        np.testing.assert_array_equal(result,seeds)

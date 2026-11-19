@@ -14,7 +14,7 @@ from ui_v2.feature_recognition import FEATURE_RESULT_PREFIX
 
 from .pipeline import PretrainedMatcher, analyze_pair, estimate_pose, frame_image, read_frame
 from .matching import PixelMatchCache
-from .refinement import feature_surface, refine_feature_pose
+from .refinement import feature_surface, refine_feature_pose, evidence_preserved, supported_surface
 from .geometry import optimize_geometry
 
 MAX_REFERENCES = 3
@@ -129,6 +129,7 @@ class FeatureStitching:
             raise ValueError('请先开启「点云对应2D」并拍摄两帧对齐的原始数据。')
 
         surfaces, local_surfaces = {}, {}
+        feature_constraints = {}
         sampling_errors = []
         def sample(frame, voxel):
             try:
@@ -158,6 +159,18 @@ class FeatureStitching:
             references = rows[max(0, index - MAX_REFERENCES):index]
             pose, shared, inliers, rms, visible, used, evidence = self._register(
                 database, references, row, moving, poses, roi, settings, workpiece_roi, mask_settings)
+            feature_constraints[row.uid] = (pose.copy(), evidence)
+            if index == 1 and rows[0].uid in local_surfaces:
+                try:
+                    local_surfaces[rows[0].uid] = supported_surface(
+                        local_surfaces[rows[0].uid],evidence[1],settings.icp_distance)
+                except ValueError:
+                    local_surfaces[rows[0].uid] = np.empty((0,3))
+            if row.uid in local_surfaces:
+                try:
+                    local_surfaces[row.uid] = supported_surface(local_surfaces[row.uid],evidence[0],settings.icp_distance)
+                except ValueError:
+                    local_surfaces[row.uid] = np.empty((0,3))
             if settings.icp_enabled:
                 for reference in references:
                     if reference.uid not in surfaces:
@@ -191,7 +204,11 @@ class FeatureStitching:
                         frame = read_frame(database.directory, row)
                         local_surfaces[row.uid] = sample(frame,settings.geometry_voxel)
                 optimized, geometry_report, _ = optimize_geometry(local_surfaces, poses, settings)
-                poses = {key: value.tolist() for key,value in optimized.items()}
+                if all(evidence_preserved(optimized[key],coarse,evidence,settings)
+                       for key,(coarse,evidence) in feature_constraints.items()):
+                    poses = {key: value.tolist() for key,value in optimized.items()}
+                else:
+                    geometry_report = '多帧几何未采用：偏离原始特征对应约束，保留逐帧精修位姿。'
             except (ValueError, RuntimeError) as exc:
                 geometry_report = f'多帧几何未采用，保留逐帧位姿：{exc}'
         if sampling_errors:
