@@ -152,6 +152,9 @@ class FrameDatabase:
                 if not ok:
                     raise IOError('2D图像编码失败')
                 encoded.tofile(folder / 'image.png')
+                depth = frame.load_depth_map()
+                if depth is not None:
+                    np.save(folder / 'depth.npy', depth, allow_pickle=False)
                 target = folder / 'pointmap.ply'
                 if frame.pointmap is not None and frame.rvc_image is not None:
                     sdk = _import_rvc()
@@ -355,6 +358,7 @@ class FrameDatabase:
             if image is None:
                 raise IOError('DB中对应2D图像读取失败')
         frame = FrameData(record.frame_id, record.camera, image_np=image,
+            offline_depth_path=str(folder / 'depth.npy') if (folder / 'depth.npy').is_file() else None,
             markers=[m for m in record.markers if m.get('valid_3d', True)], markers_all=record.markers,
             is_offline=True, offline_image_path=str(folder / 'image.png'),
             offline_pointmap_path=str(folder / 'pointmap.ply'), database_id=uid, pointcloud_aligned=record.pointcloud_aligned)

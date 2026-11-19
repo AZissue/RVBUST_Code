@@ -52,6 +52,9 @@ class FrameData:
     recognition_state: str = field(default='', kw_only=True)
     recognition_message: str = field(default='', kw_only=True)
     recognition_type: str = field(default='', kw_only=True)
+    # SDK GetDepthMap data in meters; shape is the SDK depth grid, not necessarily RGB.
+    depth_np: Optional[np.ndarray] = field(default=None, kw_only=True)
+    offline_depth_path: Optional[str] = field(default=None, kw_only=True)
     image_np: Optional[np.ndarray] = None
     pointmap: Optional['RVC.PointMap'] = None
     rvc_image: Optional['RVC.Image'] = None
@@ -77,6 +80,18 @@ class FrameData:
     def marker_count(self) -> int:
         return len(self.markers)
 
+    def load_depth_map(self) -> Optional[np.ndarray]:
+        """Return metric SDK depth (meters), or None for older/2D-only frames.
+
+        Preserves SDK invalid values (e.g. zero/NaN); callers should mask them.
+        Offline loading is lazy and never derives depth from a transformed PLY.
+        """
+        if self.depth_np is not None:
+            return self.depth_np
+        if self.offline_depth_path and os.path.isfile(self.offline_depth_path):
+            return np.load(self.offline_depth_path, allow_pickle=False)
+        return None
+
     @property
     def has_pointcloud(self) -> bool:
         if self.is_offline:
@@ -92,6 +107,7 @@ class FrameData:
         self.pointmap = None
         self.rvc_image = None
         self.image_np = None
+        self.depth_np = None
         self.markers = []
 
     def release_rvc(self):
@@ -127,6 +143,11 @@ class FrameData:
 
         img_name = f"{self.camera_name}.png" if shared else "image.png"
         ply_name = f"{self.camera_name}.ply" if shared else "pointmap.ply"
+        depth = self.load_depth_map()
+        if depth is not None:
+            depth_path = os.path.join(frame_dir, f"{self.camera_name}_depth.npy" if shared else "depth.npy")
+            np.save(depth_path, depth, allow_pickle=False)
+            self.offline_depth_path = depth_path
 
         # 保存图像
         if self.image_np is not None:
@@ -204,6 +225,9 @@ class FrameData:
         )
 
         # 加载图像
+        depth_path = os.path.join(frame_dir, "depth.npy")
+        if os.path.isfile(depth_path):
+            frame.offline_depth_path = depth_path
         img_path = os.path.join(frame_dir, "image.png")
         if os.path.exists(img_path):
             frame.image_np = cv2.imread(img_path)

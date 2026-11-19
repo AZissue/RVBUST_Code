@@ -279,10 +279,17 @@ class SingleCameraController:
                 return None, f"异常: {e}"
 
     def capture_3d(self, options=None) -> Tuple[Optional[np.ndarray], Optional['RVC.PointMap'], Optional['RVC.Image'], str]:
+        """Capture RGB/point map; optional SDK depth is copied to last_depth_np (meters).
+
+        CameraManager transfers depth to the same FrameData under rvc_sdk_lock.
+        The four-value return remains compatible with existing callers.
+        """
         if not self.is_connected or not self.camera:
+            self.last_depth_np = None
             return None, None, None, "相机未连接"
         # 先取 SDK 全局锁（跨相机/跨模块串行一切 PyRVC 调用），再取本机锁
         with rvc_sdk_lock, self._capture_lock:
+            self.last_depth_np = None
             try:
                 # 默认用无参 Capture()：直接按相机内部参数拍摄（SDK 推荐方式，
                 # 兼容 M 系列线扫模式）；仅当显式传入参数时才 Capture(opts)
@@ -303,6 +310,15 @@ class SingleCameraController:
                     and getattr(snapshot, 'capture_mode', None) == getattr(RVC, 'CaptureMode_SwingLineScan', object())
                     and getattr(snapshot, 'correspond2d', True) == False else (True if snapshot is not None else None))
                 image_np = np.array(img, copy=True)
+                try:
+                    depth = self.camera.GetDepthMap()
+                    if depth is not None:
+                        depth_np = np.array(depth, copy=True)
+                        if depth_np.ndim != 2 or not depth_np.size or depth_np.dtype.kind != 'f':
+                            raise ValueError('SDK深度图应为二维浮点数组（米）')
+                        self.last_depth_np = depth_np
+                except Exception as exc:
+                    logger.warning(f'获取深度图失败，图像与点云仍可用: {exc}')
                 return image_np, pm.Clone(), img.Clone(), "success"
             except Exception as e:
                 logger.error(f"拍摄异常: {e}")
@@ -722,6 +738,7 @@ class CameraManager:
                 return None
             frame = FrameData(frame_id=frame_id, camera_name=camera_id,
                               image_np=img, pointmap=pm, rvc_image=rvc_img,
+                              depth_np=getattr(cam, 'last_depth_np', None),
                               pointcloud_aligned=getattr(cam, "last_pointcloud_aligned", None))
             capture_sink = getattr(self, 'capture_sink', None)
             if capture_sink is not None:
