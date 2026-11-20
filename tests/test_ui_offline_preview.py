@@ -79,15 +79,15 @@ class OfflinePreviewTests(unittest.TestCase):
 
     def test_launcher_offline_requires_no_devices_and_obeys_busy_gate(self):
         dlg = LauncherDialog()
-        spy = QSignalSpy(dlg.offline_requested)
+        spy = QSignalSpy(dlg.offline_workspace_requested)
         for mode in dlg.MODE_NAMES:
             dlg._set_mode(mode, 'industrial')
             self.assertFalse(dlg._btn_connect.isEnabled())
-            dlg._btn_offline.click()
+            dlg._btn_offline_workspace.click()
             self.assertEqual(spy.at(spy.count() - 1)[0], mode)
         count = spy.count()
         dlg.set_busy(True)
-        dlg._btn_offline.click()
+        dlg._btn_offline_workspace.click()
         self.assertEqual(spy.count(), count)
         dlg.set_busy(False)
         dlg.reject()
@@ -140,15 +140,15 @@ class OfflinePreviewTests(unittest.TestCase):
         class OfflineLauncher(LauncherDialog):
             def exec(dialog):
                 dialog._set_mode('turntable', 'industrial')
-                QTimer.singleShot(0, dialog._btn_offline.click)
+                QTimer.singleShot(0, dialog._btn_offline_workspace.click)
                 return super().exec()
         self.win._launcher_factory = OfflineLauncher
-        with patch('ui_v2.offline_preview.load_stool', side_effect=self.records), \
+        with patch('ui_v2.offline_preview.load_stool', side_effect=AssertionError('demo loading used')), \
              patch.object(self.bridge, 'enumerate_devices', side_effect=AssertionError('enumeration used')):
-            self.bridge.open_offline_preview('multi_cam')
+            self.bridge.open_offline_workspace('multi_cam')
             self.win.open_device_manager()
         self.assertEqual(self.win.current_mode(), 'turntable')
-        self.assertIsNotNone(self.win.workspace_turntable().current_frame1)
+        self.assertIsNone(self.win.workspace_turntable().current_frame1)
 
     def test_archive_checksum_and_display_filter_preserve_original_ply(self):
         with tempfile.TemporaryDirectory() as directory:

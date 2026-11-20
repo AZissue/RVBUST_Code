@@ -45,6 +45,12 @@ class LauncherTests(unittest.TestCase):
         dlg=self.dialog
         dlg.set_devices([])
         dlg._set_mode(dlg.MODE_MOBILE_CHAIN)
+        dlg.show()
+        self.app.processEvents()
+        self.assertFalse(hasattr(dlg, '_btn_offline'))
+        self.assertEqual(dlg._btn_offline_workspace.geometry().y(), dlg._btn_cancel.geometry().y())
+        self.assertLess(dlg._btn_offline_stitch.geometry().x(), dlg._btn_offline_workspace.geometry().x())
+        self.assertLess(dlg._btn_offline_workspace.geometry().x(), dlg._btn_cancel.geometry().x())
         signal=QSignalSpy(dlg.offline_workspace_requested)
         dlg._btn_offline_workspace.click()
         self.assertEqual(signal.at(0),[dlg.MODE_MOBILE_CHAIN])

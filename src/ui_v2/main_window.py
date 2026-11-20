@@ -508,21 +508,9 @@ class MainWindowShell(QMainWindow):
             bridge = self._backend_bridge
             if bridge is None:
                 return
-            def finished(ok, message):
-                dialog.hide_connection_overlay()
-                if ok:
-                    dialog.accept()
-                else:
-                    dialog.log_summary.append(message, 'error')
-            def load():
-                dialog.show_connection_overlay('正在加载凳子离线数据...')
-                bridge.open_offline_preview(mode, finished)
-            projects = getattr(bridge, 'projects', None)
-            if projects:
-                projects.guard_switch(mode, load)
-            elif not self._dirty or self._confirm_discard():
-                load()
-        dialog.offline_requested.connect(_open_offline)
+            if bridge.open_offline_workspace(mode):
+                dialog.accept()
+        dialog.offline_workspace_requested.connect(_open_offline)
         def open_formal_offline():
             if self.open_offline_stitch() is not None:
                 dialog.accept()

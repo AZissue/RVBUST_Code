@@ -14,7 +14,6 @@ from PySide6.QtWidgets import (
     QPushButton, QVBoxLayout, QGroupBox, QScrollArea, QWidget,
 )
 
-from .customer_trial import is_customer_trial
 from .theme import (
     ACCENT, LAUNCHER_QSS, STATUS_OK, TEXT_MUTED, TEXT_SECONDARY,
 )
@@ -52,9 +51,6 @@ class LauncherDialog(QDialog):
 
     offline_stitch_requested = Signal()
     offline_workspace_requested = Signal(str)
-
-    offline_requested = Signal(str)
-    """使用项目自带数据进入新版工作区，不连接相机。"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -162,7 +158,6 @@ class LauncherDialog(QDialog):
         self._btn_offline_workspace = QPushButton('离线进入主程序')
         self._btn_offline_workspace.setToolTip('进入所选工作区，打开已有会话并调试离线数据；不连接相机、不加载示例数据')
         self._btn_offline_workspace.clicked.connect(self._on_offline_workspace)
-        right.addWidget(self._btn_offline_workspace)
         main.addWidget(self._device_panel, 4)
         root.addLayout(main, 1)
 
@@ -173,10 +168,7 @@ class LauncherDialog(QDialog):
         self._btn_offline_stitch.setToolTip('无需相机，加载自己的同名图像/PLY并保存正式会话')
         self._btn_offline_stitch.clicked.connect(self.offline_stitch_requested)
         bottom.addWidget(self._btn_offline_stitch)
-        self._btn_offline = QPushButton("离线预览 · 凳子数据")
-        self._btn_offline.setToolTip("无需相机，自动加载项目内的第 1、2 帧原始图像和点云")
-        self._btn_offline.clicked.connect(self._on_offline)
-        bottom.addWidget(self._btn_offline)
+        bottom.addWidget(self._btn_offline_workspace)
         self._btn_cancel = QPushButton("取消")
         self._btn_cancel.setMinimumWidth(80)
         self._btn_cancel.clicked.connect(self.reject)
@@ -308,14 +300,8 @@ class LauncherDialog(QDialog):
         self._selection_label.setText(hint)
         self._selection_label.setStyleSheet(f"color: {color}; font-size: 12px;")
         self._btn_connect.setEnabled(ok and not self._is_busy())
-        self._btn_offline.setVisible(self._presentation == 'industrial' and not is_customer_trial())
-        self._btn_offline.setEnabled(not self._is_busy())
 
     # ------------------------------------------------------------ 事件
-    def _on_offline(self):
-        if self._presentation == 'industrial' and not self._is_busy():
-            self.offline_requested.emit(self._mode)
-
     def _on_offline_workspace(self):
         if not self._is_busy():
             self.offline_workspace_requested.emit(self._mode)
