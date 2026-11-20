@@ -625,7 +625,9 @@ class PostprocessWindow(QDialog):
             # Keep the retained split visible; the discard branch remains in DB.
             self._show_records(layers if display_all else layers[:1], refresh=True)
             self.bridge.shell.set_dirty(True)
-            self._set_status(f'已自动新增 {len(layers)} 项 DB 后处理结果；原始数据保留，请在主程序保存会话。' +
+            save_hint = ('请在离线拼接窗口导出点云。' if getattr(self.bridge.shell, '_offline_stitch', False)
+                         else '请在主程序保存会话。')
+            self._set_status(f'已自动新增 {len(layers)} 项 DB 后处理结果；原始数据保留，' + save_hint +
                                 ('\n'+diagnostic() if diagnostic else ''))
         self._run(run, done, on_error=on_error)
 

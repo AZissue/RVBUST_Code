@@ -4,6 +4,7 @@ from PySide6.QtWidgets import QFileDialog, QCheckBox, QSizePolicy, QApplication
 from core.offline_pairs import OfflinePairLoader
 from .main_window import MainWindowShell
 from .backend_bridge import BackendBridge
+from .dialogs import ChineseMessageBox as QMessageBox
 from version import get_version
 
 
@@ -46,11 +47,7 @@ class OfflineStitchWindow(MainWindowShell):
         ribbon._group(row, '加载离线数据', [
             ('load_pairs', '加载数据目录', 'folder_open', self.select_directory),
         ], 'mobile_chain')
-        ribbon._group(row, '项目', [
-            ('new', '新建会话', 'folder_open', bridge.projects.new_dialog),
-            ('manage', '会话管理', 'layers', bridge.projects.manage),
-            ('open', '打开会话', 'folder_open', self.open_session_requested.emit),
-            ('save', '保存会话', 'save', self.save_session_requested.emit),
+        ribbon._group(row, '导出', [
             ('export', '导出点云', 'layers', lambda: bridge.stitching.export()),
         ], 'mobile_chain')
         ribbon._group(row, '拼接', [
@@ -82,7 +79,7 @@ class OfflineStitchWindow(MainWindowShell):
         # Hidden acquisition workspaces must not impose their widths on this file-only window.
         self._stack.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
         self.setMinimumSize(1050, 650)
-        self.log('正式离线拼接：会话手动保存到 sessions；可载入旧实验会话。')
+        self.log('离线拼接：加载本地数据，拼接后通过「导出点云」保存结果。')
         self.log('加载离线数据：同名 PNG / PLY 配对，数字编号排序；在DB选择图像或点云检查，勾选原始点云执行拼接。源文件只读。')
 
     def postprocess_editor_type(self):
@@ -155,6 +152,18 @@ class OfflineStitchWindow(MainWindowShell):
             self._on_return()
         else:
             self._returning_to_launcher = False
+
+    def _close_event_impl(self, event):
+        if any(project.dirty for project in self._backend_bridge.projects.projects.values()):
+            answer = QMessageBox.warning(
+                self, '退出离线拼接',
+                '退出将清理本次离线拼接数据。需要保留的结果请先导出点云。是否放弃本次数据并退出？',
+                QMessageBox.Discard | QMessageBox.Cancel, QMessageBox.Cancel)
+            if answer != QMessageBox.Discard:
+                event.ignore()
+                return
+        self._log_panel.detach_loggers()
+        event.accept()
 
     def closeEvent(self, event):
         if not self._backend_bridge.can_change_workspace():

@@ -132,7 +132,7 @@ class IndustrialRibbon(QWidget):
         self.badge = QLabel(objectName='studioBadge')
         line.addWidget(self.badge)
         self.offline_button = self._header_button('离线拼接', 'folder_open', shell.open_offline_stitch)
-        self.offline_button.setToolTip('加载本地图像与PLY，在正式离线工作区拼接并保存会话')
+        self.offline_button.setToolTip('加载本地图像与PLY，在离线工作区拼接并导出点云')
         line.addWidget(self.offline_button)
         self.return_button = None
         return_to_launcher = getattr(shell, 'return_to_launcher', None)

@@ -165,7 +165,7 @@ class LauncherDialog(QDialog):
         self._selection_label = QLabel("未选择设备")
         bottom.addWidget(self._selection_label, 1)
         self._btn_offline_stitch = QPushButton('离线拼接 · 本地文件')
-        self._btn_offline_stitch.setToolTip('无需相机，加载自己的同名图像/PLY并保存正式会话')
+        self._btn_offline_stitch.setToolTip('无需相机，加载自己的同名图像/PLY，拼接后导出点云')
         self._btn_offline_stitch.clicked.connect(self.offline_stitch_requested)
         bottom.addWidget(self._btn_offline_stitch)
         bottom.addWidget(self._btn_offline_workspace)
