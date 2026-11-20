@@ -56,6 +56,7 @@ class OfflineStitchWindow(MainWindowShell):
         ], 'mobile_chain')
         ribbon._group(row, '拼接', [
             ('stitch', '标记物拼接', 'stitch', lambda: bridge.stitching.execute()),
+            ('stitch_selected', '拼接所选帧', 'stitch', self.stitch_selected),
             ('fpfh', 'FPFH几何匹配', 'cloud_register', self.open_fpfh),
         ], 'mobile_chain')
         ribbon._group(row, '视图', [
@@ -84,11 +85,34 @@ class OfflineStitchWindow(MainWindowShell):
         self._stack.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
         self.setMinimumSize(1050, 650)
         self.log('离线拼接：加载本地数据，拼接后通过「导出点云」保存结果。')
+        ribbon.commands['mobile_chain', 'stitch_selected'].setToolTip(
+            '按 Ctrl 或 Shift 多选原始帧或其点云行，再点击此按钮，仅拼接高亮选中的帧')
         self.log('加载离线数据：同名 PNG / PLY 配对，数字编号排序；在DB选择图像或点云检查，勾选原始点云执行拼接。源文件只读。')
 
     def postprocess_editor_type(self):
         from .postprocess.fpfh_editor import FPFHEditor
         return FPFHEditor
+
+    def stitch_selected(self):
+        bridge = self._backend_bridge
+        if not bridge.can_change_workspace():
+            self.log('请等待当前任务完成后再拼接所选帧。', 'warn')
+            return
+        browser = bridge.frame_db.browsers['mobile_chain']
+        items = browser.tree.selectedItems()
+        database = browser.database
+        if any(item.data(0, Qt.UserRole) not in database.records
+               or item.data(0, Qt.UserRole + 2) == 'image'
+               or database.records[item.data(0, Qt.UserRole)].kind != 'raw' for item in items):
+            self.log('请按 Ctrl 或 Shift 多选原始帧或点云行，再点击「拼接所选帧」。', 'warn')
+            return
+        identifiers = browser.selected_ids()
+        if len(identifiers) < 2:
+            self.log('请按 Ctrl 或 Shift 至少选择两帧原始数据。', 'warn')
+            return
+        self.log('所选拼接输入：' + '、'.join(database.records[uid].logical_name for uid in identifiers))
+        bridge.stitching.execute(('mobile_chain', identifiers, True,
+                                 bridge.stitching.plane_filters.get('mobile_chain')))
 
     def open_fpfh(self):
         if not self._backend_bridge.can_change_workspace():

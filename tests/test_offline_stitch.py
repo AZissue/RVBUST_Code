@@ -120,6 +120,53 @@ class OfflineTests(unittest.TestCase):
             self.assertEqual([r.frame_id for r in database.records.values()], [1, 2, 3, 4, 5, 6])
         for project in bridge.projects.projects.values():
             project.dirty = False
+
+    def test_selected_stitch_preserves_names_and_excludes_other_frames(self):
+        from PySide6.QtCore import QSignalBlocker
+        window = self.open()
+        bridge = window._backend_bridge
+        database = bridge.frame_db.databases['mobile_chain']
+        browser = bridge.frame_db.browsers['mobile_chain']
+        xyz = np.random.default_rng(42).normal(size=(8, 3)) * 100
+        identifiers = []
+        try:
+            for number, name in enumerate(('1', '11', '111'), 1):
+                frame = fixture.FrameBrowserTests.source(self, number)
+                frame.kind = 'raw'
+                frame.markers = [dict(code=j, valid_3d=True, x_2d=1, y_2d=1,
+                    x_3d=float(v[0] + number * 10), y_3d=float(v[1]), z_3d=float(v[2]))
+                    for j, v in enumerate(xyz)]
+                frame.markers_all = frame.markers
+                identifiers.append(database.ingest(frame, camera='离线相机',
+                    logical_name=name, purpose='扫描数据'))
+            browser.refresh()
+            # Existing component checks must not override this explicit row action.
+            browser.set_component_checked(identifiers[2], 'cloud')
+            self.wait(lambda: not bridge._workers)
+            with QSignalBlocker(browser.tree):
+                browser.tree.clearSelection()
+                browser._items[identifiers[0]].setSelected(True)
+                browser._component_items[identifiers[1], 'cloud'].setSelected(True)
+            button = window._industrial_ribbon.commands['mobile_chain', 'stitch_selected']
+            button.click()
+            self.wait(lambda: not bridge._workers)
+            results = [r for r in database.records.values() if r.kind == 'result']
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0].source_ids, identifiers[:2])
+            bridge.frame_db.synchronize()
+            browser.refresh()
+            self.assertEqual([database.records[uid].logical_name for uid in identifiers], ['1', '11', '111'])
+            self.assertEqual([browser._items[uid].text(0) for uid in identifiers], ['1', '11', '111'])
+            # A single selected frame must not fall back to all imported data.
+            with QSignalBlocker(browser.tree):
+                browser.tree.clearSelection()
+                browser._items[identifiers[0]].setSelected(True)
+            button.click()
+            self.assertEqual(sum(r.kind == 'result' for r in database.records.values()), 1)
+        finally:
+            self.wait(lambda: not bridge._workers)
+            for project in bridge.projects.projects.values():
+                project.dirty = False
     def test_direct_startup_without_sdk_and_process_exits_on_close(self):
         self.exercise_startup(return_to_launcher=False)
 

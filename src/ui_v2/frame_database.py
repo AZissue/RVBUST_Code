@@ -952,7 +952,8 @@ class FrameDatabaseController(QObject):
             status = None
             if mode == 'mobile_chain':
                 status = '已入链' if frame.camera_name in active else '未入链 / 原始帧已保留'
-            database.annotate(frame, purpose=purpose, status=status)
+            logical_name = database.records[uid].logical_name if database.records[uid].camera == '离线相机' else None
+            database.annotate(frame, purpose=purpose, status=status, logical_name=logical_name)
         if mode == 'mobile_chain':
             active_ids = {frame.database_id for frame in active.values()}
             for row in database.snapshot()[1]:
