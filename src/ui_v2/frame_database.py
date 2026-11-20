@@ -183,6 +183,8 @@ class FrameBrowser(QWidget):
         for record in records:
             if record.kind == 'result':
                 title = record.logical_name if record.purpose in ('后处理结果','配准中间帧') else f'拼接帧 {record.frame_id:03d}'
+            elif record.camera == '离线相机':
+                title = record.logical_name
             else:
                 calibration = self.database.mode != 'mobile_chain' and ('标定' in record.purpose or record.purpose == 'calib')
                 prefix = '标定帧' if calibration else '拼接帧'

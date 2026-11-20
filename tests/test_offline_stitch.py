@@ -93,6 +93,33 @@ class OfflineTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'歧义'):collect_frame_pairs(root)
             (root/'1.jpg').unlink();self.pair(root,'1',(1,1))
             with self.assertRaisesRegex(ValueError,'分辨率'):OfflinePairLoader().load_pair(collect_frame_pairs(root)[0])
+
+    def test_source_names_order_and_independent_window(self):
+        window = self.open()
+        self.assertIsNone(window.parentWidget())
+        window.showMinimized()
+        self.app.processEvents()
+        self.assertTrue(window.isMinimized())
+        window.showNormal()
+        bridge = window._backend_bridge
+        with tempfile.TemporaryDirectory() as folder:
+            for name in ('111', '1', '11'):
+                self.pair(folder, name)
+            window.load_directory(folder)
+            self.wait(lambda: not bridge._workers)
+            database = bridge.frame_db.databases['mobile_chain']
+            records = list(database.records.values())
+            self.assertEqual([r.logical_name for r in records], ['1', '11', '111'])
+            self.assertEqual([r.frame_id for r in records], [1, 2, 3])
+            browser = bridge.frame_db.browsers['mobile_chain']
+            self.assertEqual([browser._items[r.uid].text(0) for r in records], ['1', '11', '111'])
+            self.assertEqual([browser._items[r.uid].parent().child(i).text(0)
+                              for i, r in enumerate(records)], ['1', '11', '111'])
+            window.load_directory(folder)
+            self.wait(lambda: not bridge._workers)
+            self.assertEqual([r.frame_id for r in database.records.values()], [1, 2, 3, 4, 5, 6])
+        for project in bridge.projects.projects.values():
+            project.dirty = False
     def test_direct_startup_without_sdk_and_process_exits_on_close(self):
         self.exercise_startup(return_to_launcher=False)
 

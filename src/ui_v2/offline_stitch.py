@@ -10,8 +10,12 @@ from version import get_version
 
 class OfflineStitchWindow(MainWindowShell):
     def __init__(self, owner=None, *, on_return=None):
-        super().__init__(owner.shell if owner else None)
+        # An owned native window minimizes onto the desktop when its host is hidden.
+        super().__init__()
         self.owner = owner
+        if owner is not None:
+            # Close/return explicitly decides whether the application should exit.
+            self.setAttribute(Qt.WA_QuitOnClose, False)
         self._on_return = on_return if on_return is not None else (
             owner.shell.open_device_manager if owner else None)
         self._returning_to_launcher = False
@@ -112,12 +116,15 @@ class OfflineStitchWindow(MainWindowShell):
             if not pairs:
                 raise ValueError('未找到同名图像/PLY文件对')
             imported, failed = [], []
+            next_frame_id = max((record.frame_id for record in database.records.values()), default=0) + 1
             for pair in pairs:
                 try:
                     frame = self.workflow.load_pair(pair)
                     frame.kind = 'raw'
+                    frame.frame_id = next_frame_id
                     uid = database.ingest(frame, purpose='扫描数据', camera='离线相机', logical_name=pair.name)
                     imported.append(uid)
+                    next_frame_id += 1
                 except Exception as exc:
                     failed.append(f'{pair.name}：{exc}')
             return imported, failed
