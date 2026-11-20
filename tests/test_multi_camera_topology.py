@@ -5,6 +5,7 @@ import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 import sys
 import json
+import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
 import unittest
@@ -51,12 +52,9 @@ def workflow(frames):
 
 
 class TopologyTests(unittest.TestCase):
-    def test_chain_succeeds_without_reference_visibility_and_star_fails(self):
+    def test_default_joint_succeeds_without_reference_visibility(self):
         poses, frames = fixture(5)
         wf = workflow(frames)
-        self.assertFalse(wf.calibrate()[0])
-        self.assertFalse(wf.start_scanning()[0])
-        wf.set_topology('chain')
         ok, message = wf.calibrate()
         self.assertTrue(ok, message)
         self.assertEqual(len(wf.calibration_engine.pair_results), 4)
@@ -66,11 +64,12 @@ class TopologyTests(unittest.TestCase):
                          ['cam4', 'cam3', 'cam2', 'cam1', 'cam0'])
         self.assertTrue(wf.start_scanning()[0])
 
-    def test_star_uses_direct_reference_pairs(self):
+    def test_joint_preserves_direct_reference_and_cross_camera_pairs(self):
         poses, frames = fixture(4, all_visible=True)
         wf = workflow(frames)
         self.assertTrue(wf.calibrate()[0])
-        self.assertEqual(set(wf.calibration_engine.pair_results), {('cam0', f'cam{i}') for i in range(1, 4)})
+        self.assertEqual(len(wf.calibration_engine.pair_results), 6)
+        self.assertTrue({('cam0', f'cam{i}') for i in range(1, 4)} <= wf.calibration_engine.pair_results.keys())
         for cid, expected in poses.items():
             np.testing.assert_allclose(wf.calibration_engine.get_transform(cid, 'cam0'), expected, atol=1e-8)
 
@@ -107,8 +106,6 @@ class TopologyTests(unittest.TestCase):
                 return dict(success=False, message='模拟直接配对失败')
             return original(ref, cam, *args, **kwargs)
         with patch.object(wf.calibration_engine, 'calibrate_pair', side_effect=solve_pair):
-            self.assertFalse(wf.calibrate()[0])
-            wf.set_topology('chain')
             self.assertTrue(wf.calibrate()[0])
             self.assertNotIn(('cam0', 'cam2'), wf.calibration_engine.pair_results)
             self.assertEqual(calibration_paths(wf.calibration_engine)['cam2'], ['cam2', 'cam1', 'cam0'])
@@ -133,7 +130,7 @@ class TopologyTests(unittest.TestCase):
         self.assertTrue(wf.calibrate()[0])
         engine = CalibrationEngine()
         self.assertTrue(engine.load_from_dict(json.loads(json.dumps(wf.calibration_engine.to_dict())))[0])
-        self.assertEqual(engine.topology, 'chain')
+        self.assertEqual(engine.topology, 'joint')
         self.assertTrue(quality_gate(engine)[0])
         np.testing.assert_allclose(engine.get_transform('cam2', 'cam0'), poses['cam2'], atol=1e-8)
         engine.required_cameras.append('missing')
@@ -182,6 +179,8 @@ class TopologyTests(unittest.TestCase):
         saved = wf.calibration_engine.to_dict()
         saved.pop('topology')
         saved.pop('required_cameras')
+        saved.pop('global_poses')
+        saved.pop('joint_report')
         engine = CalibrationEngine()
         self.assertTrue(engine.load_from_dict(saved)[0])
         self.assertEqual(engine.topology, 'star')
@@ -217,12 +216,12 @@ class TopologyUiTests(unittest.TestCase):
             description = bridge.projects.describe('multi_cam', include_raw=False)
             self.assertEqual(description['calibration_topology'], 'chain')
             self.assertIsNone(description['calibration'])
-            self.assertEqual(window._industrial_ribbon.commands['multi_cam', 'topology'].text(), '链式标定')
+            self.assertEqual(window._industrial_ribbon.commands['multi_cam', 'topology'].text(), '联合标定设置')
             self.assertTrue(bridge.fixed_workflow.calibrate()[0])
             session = OfflineSession()
             session._meta['calibration'] = bridge.calibration_engine.to_dict()
             bridge._load_fixed_session(session, {})
-            self.assertEqual(ws._calibration_topology, 'chain')
+            self.assertEqual(ws._calibration_topology, 'joint')
             self.assertIn('cam2 → cam1 → cam0', ws._path_summary.text())
             self.assertTrue(ws._quality_passed)
             self.assertEqual(bridge.fixed_workflow.get_state(), 'scanning')
@@ -231,6 +230,57 @@ class TopologyUiTests(unittest.TestCase):
             self.assertFalse(ws._quality_passed)
             self.assertFalse(ws._btn_scan_capture.isEnabled())
         finally:
+            bridge.cleanup()
+            window._dirty = False
+            window.close()
+            window.deleteLater()
+            self.app.processEvents()
+
+    def test_joint_session_snapshot_restores_actual_final_poses(self):
+        from ui_v2 import MainWindowShell
+        from ui_v2.backend_bridge import BackendBridge
+        from core.session_project import SessionProject
+        from test_joint_camera_calibration import loop_frames
+        window = MainWindowShell()
+        bridge = BackendBridge(window)
+        bridge.wire_all()
+        window.set_backend_bridge(bridge)
+        bridge.recognition.enabled = False
+        try:
+            self.assertTrue(bridge.open_offline_workspace('multi_cam'))
+            project = bridge.projects.projects['multi_cam']
+            with tempfile.TemporaryDirectory() as directory:
+                source = Path(directory) / 'tiny.ply'
+                source.write_bytes(b'ply\nformat ascii 1.0\nelement vertex 4\n'
+                    b'property float x\nproperty float y\nproperty float z\nend_header\n'
+                    b'1 1 1\n2 1 1\n1 2 1\n2 2 1\n')
+                project.save_root = Path(directory) / 'sessions'
+                bridge.fixed_workflow.start_calibration('cam0')
+                for frame in loop_frames().values():
+                    frame.image_np = np.zeros((2, 2, 3), dtype=np.uint8)
+                    frame.offline_pointmap_path = str(source)
+                    for marker in frame.markers:
+                        marker.update(x_2d=0., y_2d=0.)
+                    project.database.ingest(frame, purpose='标定数据')
+                    bridge.fixed_workflow.add_calibration_frame(frame)
+                self.assertTrue(bridge.fixed_workflow.calibrate()[0])
+                expected = bridge.calibration_engine.get_transform('cam3', 'cam0').copy()
+                description = bridge.projects.describe('multi_cam', include_raw=True)
+                saved = project.save(description)
+                loaded, data = SessionProject.load(saved, 'multi_cam')
+                try:
+                    prepared = bridge.projects.prepare_loaded(loaded, data)
+                    bridge.projects.reset_workflow('multi_cam')
+                    bridge.projects.install('multi_cam', loaded)
+                    bridge.projects.apply_loaded('multi_cam', data, prepared)
+                    np.testing.assert_allclose(bridge.calibration_engine.get_transform('cam3', 'cam0'), expected)
+                    self.assertEqual(len(bridge.calibration_engine.pair_results), 4)
+                    self.assertTrue(window.workspace_multi()._quality_passed)
+                    self.assertEqual(bridge.fixed_workflow.get_state(), 'scanning')
+                finally:
+                    loaded.dispose()
+        finally:
+            project.dispose()
             bridge.cleanup()
             window._dirty = False
             window.close()

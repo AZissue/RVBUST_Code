@@ -44,6 +44,9 @@ class CaptureSettingsTests(unittest.TestCase):
     def test_dialog_reference_and_timing_are_applied_to_real_workflow(self):
         def choose():
             dialog = self.app.activeModalWidget()
+            self.assertEqual(len(dialog.findChildren(QComboBox)), 2)
+            self.assertFalse(any('星型' in label.text() or '链式' in label.text()
+                                 for label in dialog.findChildren(QLabel)))
             dialog.findChild(QComboBox, 'calibrationReference').setCurrentIndex(1)
             dialog.findChild(QComboBox, 'calibrationTiming').setCurrentIndex(1)
             self.assertTrue(any('SERIAL-1' in label.text() for label in dialog.findChildren(QLabel)))

@@ -945,6 +945,7 @@ class ExplicitStitchingTests(unittest.TestCase):
         transform[0,3] = 10
         self.bridge.calibration_engine.pair_results[('cam0','cam1')] = dict(
             success=True, T=transform, rms_mm=.1, inlier_ratio=1.)
+        self.bridge.calibration_engine.topology = 'star'  # Legacy bare-pair result.
         self.bridge.fixed_workflow._reference_id = 'cam0'
         self.bridge.calibration_engine.reference_id = 'cam0'
         self.assertEqual(self.bridge.fixed_workflow.frames_scan, {})

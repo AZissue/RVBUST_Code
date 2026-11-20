@@ -334,10 +334,10 @@ class MultiCamWorkspace(QWidget):
         result_header.addWidget(self._btn_visualize_calibration)
         res_lo.addLayout(result_header)
         self._result_card = res_card
-        self._btn_topology = QPushButton('星型标定')
-        self._btn_topology.setToolTip('选择星型 / 链式标定方式；切换后保留标定帧，重新计算外参')
+        self._btn_topology = QPushButton('联合标定设置')
+        self._btn_topology.setToolTip('设置最终参考相机与拍摄时序；自动利用全部合格共视关系联合标定')
         self._btn_topology.clicked.connect(self._choose_topology)
-        self._calibration_topology = 'star'
+        self._calibration_topology = 'joint'
         self._path_summary = QLabel()
         self._path_summary.setWordWrap(True)
         res_lo.addWidget(self._btn_topology)
@@ -375,7 +375,7 @@ class MultiCamWorkspace(QWidget):
         self._gate_hint.setWordWrap(True)
         self._gate_hint.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 12px;")
         gate_lo.addWidget(self._gate_hint)
-        rules = QLabel('门禁：最大 RMS ≤ 2.0 mm，最小内点率 ≥ 50%。\n质量评分仅供参考；任一配对失败禁止扫描。')
+        rules = QLabel('门禁：RMS ≤ 2.0 mm，内点率 ≥ 50%，全部相机连通。\n联合标定还检查全部共视约束的全局一致性；质量评分仅供参考。')
         rules.setWordWrap(True)
         gate_lo.addWidget(rules)
         lo.addWidget(gate_card)
@@ -607,18 +607,13 @@ class MultiCamWorkspace(QWidget):
 
     def set_calibration_topology(self, topology):
         self._calibration_topology = topology
-        self._btn_topology.setText('链式标定' if topology == 'chain' else '星型标定')
-        self._btn_topology.setToolTip(self._btn_topology.text() + '：设置参考相机、标定方式与拍摄时序；批量拍摄全部已连接相机')
+        self._btn_topology.setText('联合标定设置')
+        self._btn_topology.setToolTip('选择最终参考相机与拍摄时序；重新计算自动使用全部合格共视约束')
 
     def _choose_topology(self):
         dialog = QDialog(self)
         dialog.setWindowTitle('多相机标定与采集设置')
         layout = QVBoxLayout(dialog)
-        choice = QComboBox()
-        choice.addItem('星型标定', 'star')
-        choice.addItem('链式标定（自动共视连接）', 'chain')
-        choice.setCurrentIndex(choice.findData(self._calibration_topology))
-        layout.addWidget(choice)
         reference = QComboBox()
         reference.setObjectName('calibrationReference')
         ids = self._camera_grid.camera_ids()
@@ -641,10 +636,10 @@ class MultiCamWorkspace(QWidget):
         timing.setCurrentIndex(0 if self._rb_sync.isChecked() else 1)
         layout.addWidget(timing)
         layout.addWidget(QLabel('扫描帧固定使用软件同步调度；离线数据仅供标定与查看，不执行实时拍摄。'))
-        note = QLabel('星型：每台相机都需要与参考相机共视。\n'
-                      '链式：自动检测共视配对，选择合格连接树，沿路径统一坐标。\n'
-                      '链式误差会沿路径累积；本模式不执行闭环全局优化。\n'
-                      '切换后保留原始标定帧，清除旧外参与扫描状态，需要重新计算。')
+        note = QLabel('自动建立所有合格共视关系，通过中间相机连接到参考系，并利用交叉连接联合优化。\n'
+                      '无需所有相机直接共视参考相机，也不要求按编号连接。\n'
+                      '缺少连接或约束冲突时无法通过质量门禁。\n'
+                      '改变参考相机后保留原始标定帧，清除旧外参与扫描状态，需要重新计算。')
         note.setWordWrap(True)
         layout.addWidget(note)
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -655,7 +650,7 @@ class MultiCamWorkspace(QWidget):
         layout.addWidget(buttons)
         buttons.button(QDialogButtonBox.Ok).setEnabled(reference.count() > 0)
         if dialog.exec() == QDialog.Accepted:
-            self.calibration_settings_changed.emit(choice.currentData(), reference.currentData(), timing.currentData())
+            self.calibration_settings_changed.emit('joint', reference.currentData(), timing.currentData())
 
     def current_reference_id(self) -> Optional[str]:
         """返回当前参考相机下拉选中的 camera_id。"""
@@ -704,7 +699,11 @@ class MultiCamWorkspace(QWidget):
                 matrices.append(pair['pair'] + ' · p_ref = T @ p_cam · 平移 mm\n' +
                     np.array2string(np.asarray(pair['T']), precision=6, suppress_small=True))
         self._matrix_values.setPlainText('\n\n'.join(matrices))
-        self._gate_card.setToolTip('业务门禁：所有所需相机可达参考相机，最大 RMS ≤ 2.0 mm，最小内点率 ≥ 50%。质量评分仅作参考。')
+        self._gate_card.setToolTip('业务门禁：所有所需相机可达参考相机，逐对与全局约束均须通过 RMS ≤ 2.0 mm、内点率 ≥ 50%。质量评分仅作参考。')
+        joint = any(pair.get('local_rms_mm') is not None for pair in pairs)
+        self._result_table.setHorizontalHeaderLabels(
+            ['配对', '最终RMS(mm)' if joint else 'RMS(mm)', '原配对内点率' if joint else '内点率', '状态'])
+        self._result_table.setToolTip('联合结果使用最终相对位姿计算 RMS；内点分类及原配对内点率保留局部 RANSAC 测量，全部共视约束另行检查全局一致性。' if joint else '')
         self._score_bar.setValue(max(0, min(100, score)))
         self._score_bar.setFormat('%p%' if pairs else '未通过')
         self._result_table.setRowCount(len(pairs))

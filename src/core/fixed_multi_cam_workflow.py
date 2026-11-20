@@ -45,6 +45,7 @@ class FixedMultiCamWorkflow(WorkflowBase):
         self._frames_calib: Dict[str, FrameData] = {}   # 标定阶段帧
         self._frames_scan: Dict[str, FrameData] = {}    # 扫描阶段帧
         self._calibration_locked = False
+        self.calibration_engine.topology = 'joint'
 
     # ------------------------------------------------------------------
     # 抽象接口实现
@@ -91,6 +92,9 @@ class FixedMultiCamWorkflow(WorkflowBase):
         self.calibration_engine.pair_results.clear()
         self.calibration_engine.reference_id = None
         self.calibration_engine.required_cameras = []
+        self.calibration_engine.global_poses = {}
+        self.calibration_engine.joint_report = {}
+        self.calibration_engine.topology = 'joint'
         logger.info("功能一工作流已重置")
 
     # ------------------------------------------------------------------
@@ -107,6 +111,8 @@ class FixedMultiCamWorkflow(WorkflowBase):
             self._frames_scan.clear()
             self._calibration_locked = False
             self.calibration_engine.pair_results.clear()
+            self.calibration_engine.global_poses = {}
+            self.calibration_engine.joint_report = {}
             logger.info("从扫描阶段回到标定阶段，已清空历史标定/扫描数据")
         elif self._state not in (self.STATE_IDLE, self.STATE_CALIBRATED):
             return False, f"当前状态 {self._state} 不允许重新标定"
@@ -166,11 +172,13 @@ class FixedMultiCamWorkflow(WorkflowBase):
         return True, f"标记检测完成，共 {total} 个"
 
     def calibrate(self) -> Tuple[bool, str]:
-        """按所选星型直接配对 / 链式共视连接树求解，并检查全部参与相机。"""
+        """自动共视图联合标定，并检查全部参与相机。"""
         if self._state != self.STATE_CALIBRATING:
             return False, "当前不在标定阶段"
         self._calibration_locked = False
         self.calibration_engine.pair_results.clear()
+        self.calibration_engine.global_poses = {}
+        self.calibration_engine.joint_report = {}
         if not self._reference_id:
             return False, "未设置参考相机"
         ref_frame = self._frames_calib.get(self._reference_id)
@@ -180,7 +188,7 @@ class FixedMultiCamWorkflow(WorkflowBase):
         from .multi_camera_topology import solve
         self._frames_scan.clear()
         results = solve(self.calibration_engine, self._frames_calib, self._reference_id,
-                        self.calibration_engine.topology,
+                        'joint',
                         set(self._frames_calib) | set(self.camera_manager.get_connected_ids()))
 
         ok, quality_msg = self._check_calibration_quality()
@@ -277,12 +285,14 @@ class FixedMultiCamWorkflow(WorkflowBase):
         return quality_gate(self.calibration_engine, self._frames_calib)
 
     def set_topology(self, topology):
-        if topology not in ('star', 'chain'):
+        if topology not in ('star', 'chain', 'joint'):
             raise ValueError('未知标定方式')
         if topology == self.calibration_engine.topology:
             return
         self.calibration_engine.topology = topology
         self.calibration_engine.pair_results.clear()
+        self.calibration_engine.global_poses = {}
+        self.calibration_engine.joint_report = {}
         self.calibration_engine.required_cameras = []
         self._frames_scan.clear()
         self._calibration_locked = False

@@ -51,14 +51,16 @@ from .widgets.device_table import DeviceInfo
 
 def _pairs_from_engine(engine) -> List[Dict]:
     """把 CalibrationEngine.pair_results 转为 UI 结果表格行。"""
+    from core.joint_camera_calibration import inspection_pairs
     pairs = []
-    for (ref, cam), res in engine.pair_results.items():
+    for (ref, cam), res in inspection_pairs(engine).items():
         if res.get('success'):
             pairs.append({
                 'pair': f"{cam}→{ref}",
                 'rms_mm': res['rms_mm'],
                 'inlier_ratio': res['inlier_ratio'],
                 'T': res.get('T'),
+                'local_rms_mm': res.get('local_rms_mm'),
                 'level': ('fail' if res['rms_mm'] > 2.0 or res['inlier_ratio'] < .5
                           else 'ok' if res['rms_mm'] < .5 else 'warn'),
             })
@@ -1089,8 +1091,8 @@ class BackendBridge(QObject):
         if not self.can_change_workspace():
             self.shell.log('请先等待当前任务完成，再查看标定可视化。', 'warn')
             return
-        pairs = {key: deepcopy(value) for key, value in self.calibration_engine.pair_results.items()
-                 if value.get('success')}
+        from core.joint_camera_calibration import inspection_pairs
+        pairs = inspection_pairs(self.calibration_engine)
         if not pairs:
             self.shell.log('尚无标定结果，请先计算外参或打开标定会话。', 'warn')
             return
@@ -1101,7 +1103,8 @@ class BackendBridge(QObject):
             return
         from core.multi_camera_topology import calibration_paths
         dialog = CalibrationInspector(pairs, self.shell, topology=self.calibration_engine.topology,
-                                      paths=calibration_paths(self.calibration_engine))
+                                      paths=calibration_paths(self.calibration_engine),
+                                      report=deepcopy(self.calibration_engine.joint_report))
         self._calibration_inspector = dialog
         paths = {cid: frame.offline_pointmap_path
                  for cid, frame in self.fixed_workflow.frames_calib.items()
@@ -1136,7 +1139,13 @@ class BackendBridge(QObject):
                   if cid != self.calibration_engine.reference_id]
         missing = set(self.calibration_engine.required_cameras) - paths.keys()
         routes.extend(cid + ' → 无合格路径' for cid in sorted(missing))
-        ws._path_summary.setText('参考坐标系：' + str(reference or '未设置') + '\n批量拍摄：全部已连接相机\n' + '\n'.join(routes))
+        report = self.calibration_engine.joint_report
+        joint = ('\n联合标定：' + report.get('error', report.get('message', ''))
+                 + (f"\n全局三维内点 RMS {report['final_rms_mm']:.3f} mm · {report['constraint_count']} 条共视约束"
+                    if 'final_rms_mm' in report else '')) if report else ''
+        route_title = '共视连接（最终位姿已联合求解）' if report.get('optimized') else '共视连接路径'
+        ws._path_summary.setText('参考坐标系：' + str(reference or '未设置') + '\n批量拍摄：全部已连接相机'
+                                + joint + '\n' + route_title + '\n' + '\n'.join(routes))
 
     def _on_multi_settings_changed(self, topology, reference, synchronous):
         ws = self.shell.workspace_multi()
@@ -2523,9 +2532,9 @@ class BackendBridge(QObject):
         calib_ok = False
         calib_data = session.get_meta("calibration")
         self.fixed_workflow.reset()
-        self.calibration_engine.topology = session.get_meta('calibration_topology') or 'star'
-        if self.calibration_engine.topology not in ('star', 'chain'):
-            self.calibration_engine.topology = 'star'
+        self.calibration_engine.topology = session.get_meta('calibration_topology') or 'joint'
+        if self.calibration_engine.topology not in ('star', 'chain', 'joint'):
+            self.calibration_engine.topology = 'joint'
         if calib_data:
             ok, msg = self.calibration_engine.load_from_dict(calib_data)
             if ok:
@@ -2566,6 +2575,8 @@ class BackendBridge(QObject):
             if not valid:
                 calib_ok = False
                 self.calibration_engine.pair_results.clear()
+                self.calibration_engine.global_poses = {}
+                self.calibration_engine.joint_report = {}
                 ws.clear_calibration_results()
                 self.shell.log('加载的外参未通过完整性门禁：' + reason, 'warn')
         self._sync_multi_topology()

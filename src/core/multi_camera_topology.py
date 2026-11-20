@@ -1,4 +1,4 @@
-"""Fixed-camera star / shared-marker graph calibration, in millimetres."""
+"""Automatic covisibility graph calibration; legacy star/chain APIs remain readable."""
 from itertools import combinations
 from collections import deque
 import numpy as np
@@ -6,10 +6,11 @@ import numpy as np
 
 def qualified(result):
     try:
+        from .joint_camera_calibration import rigid
         transform = np.asarray(result['T'], dtype=float)
         rms, ratio = float(result['rms_mm']), float(result['inlier_ratio'])
         return (bool(result.get('success')) and transform.shape == (4, 4)
-                and np.isfinite(transform).all() and abs(np.linalg.det(transform)) > 1e-12
+                and rigid(transform)
                 and np.isfinite([rms, ratio]).all() and 0 <= rms <= 2 and .5 <= ratio <= 1)
     except (KeyError, TypeError, ValueError, np.linalg.LinAlgError):
         return False
@@ -48,7 +49,12 @@ def quality_gate(engine, required=()):
     missing = sorted(cameras - paths.keys())
     if missing:
         return False, '无法通过合格配对连接到参考相机：' + '、'.join(missing)
-    if getattr(engine, 'topology', 'star') == 'star':
+    if getattr(engine, 'topology', 'star') == 'joint':
+        from .joint_camera_calibration import validate
+        ok, message = validate(engine)
+        if not ok:
+            return False, message
+    elif getattr(engine, 'topology', 'star') == 'star':
         missing = [cid for cid in sorted(cameras) if cid != engine.reference_id
                    and (engine.reference_id, cid) not in engine.pair_results
                    and (cid, engine.reference_id) not in engine.pair_results]
@@ -63,18 +69,21 @@ def quality_gate(engine, required=()):
             return False, f'{cid} 外参路径无效：{exc}'
     maximum = max(float(result['rms_mm']) for result in engine.pair_results.values())
     minimum = min(float(result['inlier_ratio']) for result in engine.pair_results.values())
-    return True, f'{len(cameras)} 台相机全部可达，最大 RMS {maximum:.3f}mm，最小内点率 {minimum:.1%}'
+    return True, f'{len(cameras)} 台相机全部可达，逐对最大 RMS {maximum:.3f}mm，最小内点率 {minimum:.1%}' + (
+        '；' + message if getattr(engine, 'topology', '') == 'joint' else '')
 
 
 def solve(engine, frames, reference, topology, required):
-    """Chain mode chooses a deterministic minimum-RMS spanning tree of good edges.
+    """Joint mode keeps every qualified edge and fits fixed-reference node poses.
 
-    No chain-wide precision claim or bundle adjustment: residuals belong to each
-    measured edge. Missing / bad candidate edges are diagnostics, never transforms.
+    Legacy explicit star/chain callers remain supported; formal workflows always
+    request joint. Local pair metrics never replace final-coordinate validation.
     """
-    if topology not in ('star', 'chain'):
+    if topology not in ('star', 'chain', 'joint'):
         raise ValueError('未知标定方式')
     engine.pair_results.clear()
+    engine.global_poses = {}
+    engine.joint_report = {}
     engine.reference_id = reference
     engine.topology = topology
     engine.required_cameras = sorted(set(required) | set(frames))
@@ -93,7 +102,19 @@ def solve(engine, frames, reference, topology, required):
             diagnostics.append(f'{cam}→{ref}：' + result.get('message', '配对质量未达标'))
     # calibrate_pair writes into the engine; replace these trial results atomically
     # at the end so failed trials / older calibrations cannot be used for stitching.
-    if topology == 'chain':
+    if topology == 'joint':
+        from .joint_camera_calibration import fit, validate
+        engine.pair_results = dict(candidates)
+        try:
+            engine.global_poses, engine.joint_report = fit(engine.pair_results, reference, engine.required_cameras)
+            ok, message = validate(engine)
+            if not ok:
+                engine.joint_report['error'] = message
+            diagnostics.append(engine.joint_report['message'])
+        except Exception as exc:
+            engine.joint_report = dict(error=str(exc), optimized=False)
+        diagnostics.append(engine.joint_report.get('error', ''))
+    elif topology == 'chain':
         connected, chosen = {reference}, {}
         candidates.sort(key=lambda item: (item[1]['rms_mm'], -item[1]['inlier_ratio'], item[0]))
         while True:

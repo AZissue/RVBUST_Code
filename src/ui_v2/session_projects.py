@@ -565,7 +565,7 @@ class SessionProjects(QObject):
         elif mode == 'multi_cam':
             session = OfflineSession()
             session._meta['calibration'] = data.get('calibration')
-            session._meta['calibration_topology'] = data.get('calibration_topology', 'star')
+            session._meta['calibration_topology'] = data.get('calibration_topology', 'joint')
             session._meta['calibration_reference'] = data.get('calibration_reference')
             session._meta['capture_synchronous'] = data.get('capture_synchronous', True)
             bridge._load_fixed_session(session, prepared)

@@ -10,10 +10,9 @@ N 相机外参标定引擎（CalibrationEngine）。
     现在平均前先把所有四元数翻到同一半球（与参考四元数点积为负则取反）。
 
 N 相机架构：
-  - 星型拓扑：所有非参考相机分别对标参考相机，pair 结果存于
-    pair_results[(ref_id, cam_id)]，T 为 cam→ref 的 4x4 变换；
-  - 链式拓扑（相邻共视）：预留 pose_graph.find_path_transform hook，
-    Phase 2 实现。
+  - pair_results 保存全部合格逐对测量，T 为 cam→ref 的局部变换；
+  - 正式联合标定在 global_poses 中保存固定参考系的最终位姿，查询与拼接使用此结果；
+  - 旧星型/链式结果没有节点位姿时，仍支持直达、求逆及路径累乘。
 
 方向约定（与 DualCameraFusion 一致）：
   T 是 cam→ref 的变换：pts_ref ≈ pts_cam @ R.T + t
@@ -31,7 +30,7 @@ from .utils import logger, write_json_atomic
 
 
 class CalibrationEngine:
-    """基于编码圆对应点的 N 相机外参标定（星型拓扑）。"""
+    """逐对标记测量及多相机最终外参；联合求解由工作流调度。"""
 
     def __init__(self, *, display_names=None):
         # Presentation-only aliases; graph keys and serialized IDs stay stable.
@@ -44,6 +43,8 @@ class CalibrationEngine:
         self.reference_id: Optional[str] = None
         self.topology = 'star'
         self.required_cameras = []
+        self.global_poses = {}
+        self.joint_report = {}
         # 多帧标定缓存：{(ref_id, cam_id): [(markers_ref, markers_cam), ...]}
         self._multi_frame_data: Dict[Tuple[str, str], list] = {}
         # 最近一次 load_calibration 失败原因（供上层展示）
@@ -54,6 +55,9 @@ class CalibrationEngine:
     # ------------------------------------------------------------------
     def set_reference(self, camera_id: str):
         """显式指定参考相机。"""
+        if camera_id != self.reference_id:
+            self.global_poses = {}
+            self.joint_report = {}
         self.reference_id = camera_id
 
     def display_name(self, camera_id: str) -> str:
@@ -138,6 +142,8 @@ class CalibrationEngine:
             失败时返回 {'success': False, 'message': str}
         """
         self._ensure_reference(ref_id)
+        self.global_poses = {}
+        self.joint_report = {}
         common_codes, pts_ref, pts_cam = self._match_markers(markers_ref, markers_cam)
 
         if len(common_codes) < min_pairs:
@@ -438,12 +444,20 @@ class CalibrationEngine:
     def get_transform(self, from_id: str, to_id: str) -> np.ndarray:
         """获取 from_id→to_id 的 4x4 变换（pts_to = T @ pts_from 齐次左乘）。
 
-        星型拓扑：
+        联合标定：inv(T_to_to_ref) @ T_from_to_ref，始终使用最终节点位姿。
+        旧星型拓扑：
           - pair (to_id, from_id) 存在 → 直达（存储的 T 即 from→to）；
           - pair (from_id, to_id) 存在 → 求逆（存储的 T 是 to→from）。
-        链式拓扑（预留 hook）：
-          - 找不到直达 pair 时委托 pose_graph.find_path_transform（Phase 2）。
+        旧链式拓扑：找不到直达 pair 时委托 pose_graph.find_path_transform。
         """
+        if self.global_poses:
+            if self.joint_report.get('error'):
+                raise ValueError(self.joint_report['error'])
+            if from_id not in self.global_poses or to_id not in self.global_poses:
+                raise ValueError('联合外参缺少相机节点')
+            return np.linalg.inv(self.global_poses[to_id]) @ self.global_poses[from_id]
+        if self.topology == 'joint':
+            raise ValueError(self.joint_report.get('error', '联合外参未生成'))
         if from_id == to_id:
             return np.eye(4)
 
@@ -469,6 +483,8 @@ class CalibrationEngine:
         self.reference_id = None
         self.topology = 'star'
         self.required_cameras = []
+        self.global_poses = {}
+        self.joint_report = {}
 
     # ------------------------------------------------------------------
     # 保存 / 加载
@@ -481,6 +497,9 @@ class CalibrationEngine:
             'required_cameras': self.required_cameras,
             'pairs': {},
         }
+        if self.global_poses:
+            data['global_poses'] = {cid: pose.tolist() for cid, pose in self.global_poses.items()}
+            data['joint_report'] = self.joint_report
         for (ref_id, cam_id), res in self.pair_results.items():
             entry = dict(res)
             entry['T'] = res['T'].tolist() if isinstance(res['T'], np.ndarray) else res['T']
@@ -488,6 +507,17 @@ class CalibrationEngine:
         return data
 
     def load_from_dict(self, data: dict) -> Tuple[bool, str]:
+        """Load transactionally; malformed joint results leave the old state intact."""
+        candidate = CalibrationEngine(display_names=self.display_names)
+        try:
+            ok, message = candidate._load_from_dict(data)
+        except (TypeError, ValueError, KeyError, np.linalg.LinAlgError) as exc:
+            return False, '标定外参无效：' + str(exc)
+        if ok:
+            self.__dict__.update(candidate.__dict__)
+        return ok, message
+
+    def _load_from_dict(self, data: dict) -> Tuple[bool, str]:
         """从 dict 恢复 pair 结果 + reference_id。
 
          Returns:
@@ -506,7 +536,7 @@ class CalibrationEngine:
         if self.reference_id is not None and not isinstance(self.reference_id, str):
             return False, '参考相机 ID 无效'
         self.topology = data.get('topology', 'star')
-        if self.topology not in ('star', 'chain'):
+        if self.topology not in ('star', 'chain', 'joint'):
             return False, '未知多相机标定方式'
         required = data.get('required_cameras', [])
         if not isinstance(required, list) or any(not isinstance(cid, str) for cid in required):
@@ -530,8 +560,30 @@ class CalibrationEngine:
                 n_invalid += 1
         if not self.pair_results:
             return False, f"标定结果全部无效（{n_invalid} 条记录无法解析）"
+        if n_invalid and self.topology == 'joint':
+            return False, f'联合标定包含 {n_invalid} 条无效共视约束，不能丢弃后载入'
         if n_invalid:
             logger.warning(f"加载标定时跳过 {n_invalid} 条无效记录")
+        if self.topology == 'joint':
+            poses = data.get('global_poses')
+            report = data.get('joint_report')
+            if not isinstance(poses, dict) or not isinstance(report, dict):
+                return False, '联合外参节点或优化报告格式无效'
+            if (type(report.get('optimized')) is not bool or not isinstance(report.get('message'), str)
+                    or any(type(report.get(key)) not in (int, float)
+                           or not np.isfinite(report[key]) or report[key] < 0
+                           for key in ('initial_rms_mm', 'final_rms_mm'))):
+                return False, '联合优化报告缺少有效的状态或误差'
+            self.global_poses = {cid: np.asarray(value, dtype=float)
+                                 for cid, value in poses.items()}
+            self.joint_report = dict(report)
+            from .multi_camera_topology import quality_gate
+            ok, message = quality_gate(self)
+            if not ok:
+                return False, message
+            from .joint_camera_calibration import constraints, statistics
+            self.joint_report['final_rms_mm'] = statistics(self.global_poses, constraints(self.pair_results))
+            self.joint_report['constraint_count'] = len(self.pair_results)
         return True, f"{len(self.pair_results)} 对"
 
     def save_calibration(self, path: str) -> bool:
