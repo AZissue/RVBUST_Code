@@ -11,8 +11,18 @@ def advice(error, marker_type):
         return '请在“属性 → 拍摄参数”开启“点云对应2D”，在DB树中选中黄色原始帧后点击顶部“重拍当前”。修改相机设置不会修复旧帧；请完成重拍后再执行拼接。'
     if any(word in text for word in ('写入DB', '存储', '磁盘', '文件', 'disk', 'Permission')):
         return '请检查项目路径、磁盘空间及写入权限，确认文件未被占用；恢复存储后在DB树右键重新识别，再执行拼接。'
+    if marker_type == 'superpoint_lightglue':
+        return ('当前识别类型：2D特征。请检查相邻帧的工件 ROI、纹理和重叠，'
+                '检查图像清晰度及匹配点处有效深度、点云与2D对齐；'
+                '大转角时补拍中间帧，重新匹配后再拼接。')
+    if marker_type == 'unencoded_circle':
+        return ('当前识别类型：普通圆点／圆环。请检查圆点极性、灰度阈值、半径范围及圆度，'
+                '确保各帧检测到足够且分布开的有效三维圆心；'
+                '检查点云与2D对齐，并增加相邻帧重叠后重试。')
     if any(word in text for word in ('标记', '识别', '圆', '内点', 'RMS', '配准')):
-        current = '编码圆' if marker_type == 'coded_circle' else '非对称圆标定板'
+        current = {'coded_circle': '编码圆', 'unencoded_circle': '普通圆点／圆环',
+                   'superpoint_lightglue': '2D特征', 'asymmetric_grid': '非对称圆标定板',
+                   'calib_board': '非对称圆标定板'}.get(marker_type, str(marker_type))
         return (f'当前识别类型：{current}。\n'
                 '1. 打开左侧“属性 → 识别参数”，核对实际拍摄的标记类型。若拍摄的是标定板，请选择“非对称圆标定板”，勾选正确的规格并核对圆心间距。\n'
                 '2. 若拍摄的是编码圆，请核对编码参数；检查曝光、清晰度和遮挡。\n'
@@ -26,29 +36,16 @@ def advice(error, marker_type):
 
 
 def show_stitch_failure(bridge, mode, error):
+    from .operation_failure import show_operation_failure
     shell = bridge.shell
-    shell.log('拼接失败：' + str(error), 'error')
     marker_type = bridge.recognition.config(mode).get('marker_type', 'coded_circle')
-    old = getattr(shell, '_stitch_failure_dialog', None)
-    if old is not None and old.isVisible():
-        old.raise_()
-        return
-    box = ChineseMessageBox(shell)
-    box.setWindowTitle('拼接失败')
-    box.setIcon(ChineseMessageBox.Critical)
-    box.setTextFormat(Qt.PlainText)
-    box.setText('未生成拼接结果。\n\n原因：' + str(error))
-    box.setInformativeText(advice(error, marker_type))
-    settings = box.addButton('打开识别参数', ChineseMessageBox.ActionRole)
-    box.addButton('关闭', ChineseMessageBox.RejectRole)
-    def clicked(button):
-        if button is settings:
-            props = bridge.frame_db.browsers[mode].properties
-            props.tabs.setCurrentWidget(props.recognition)
-        box.close()
-    box.buttonClicked.connect(clicked)
-    box.setWindowModality(Qt.WindowModal)
-    box.setAttribute(Qt.WA_DeleteOnClose)
-    box.finished.connect(lambda _: setattr(shell, '_stitch_failure_dialog', None))
-    shell._stitch_failure_dialog = box
-    box.open()
+    def settings():
+        props = bridge.frame_db.browsers[mode].properties
+        props.tabs.setCurrentWidget(props.recognition)
+    box = show_operation_failure(shell, '拼接失败', error,
+        advice=advice(error, marker_type), log=shell.log,
+        action=('打开识别参数', settings))
+    if getattr(shell, '_stitch_failure_dialog', None) is not box:
+        shell._stitch_failure_dialog = box
+        box.finished.connect(lambda _: setattr(shell, '_stitch_failure_dialog', None))
+    return box

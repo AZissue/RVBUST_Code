@@ -5,7 +5,7 @@ from PySide6.QtCore import Qt, QSize, QSignalBlocker, QItemSelectionModel, QTime
 from PySide6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QSplitter, QToolButton, QFileDialog, QMenu, QScrollArea, QGroupBox)
 from ui_common.industrial_viewer import IndustrialViewer
-from ui_common.worker_thread import WorkerThread
+from ui_common.background_task import start_background_task
 from ui_common.symbols import icon
 from core.frame_database import STALE_RESULT
 from core.postprocess.session import CloudLayer, read_cloud, write_cloud
@@ -14,6 +14,7 @@ from ..widgets import FloatingLogPanel
 from ..frame_database import FrameBrowser
 from ..industrial_ribbon import STYLE
 from ..dialogs import ChineseMessageBox as QMessageBox
+from ..operation_failure import show_operation_failure
 from .selection import PolygonSelectionOverlay
 from .viewport_tools import SegmentationToolbar
 from .downsample_dialog import DownsampleDialog
@@ -413,11 +414,7 @@ class PostprocessWindow(QDialog):
                 self.status.setText(f'{phase}… 已用时 {perf_counter()-started:.1f} 秒')
         timer.timeout.connect(update_progress)
         timer.start()
-        worker = WorkerThread(work)
-        self._worker, self._busy_kind = worker, kind
-        worker._task_name = 'postprocess'
-        worker._must_finish = True
-        self.bridge._workers.append(worker)
+        self._busy_kind = kind
 
         def completed(result, error):
             timer.stop()
@@ -429,6 +426,8 @@ class PostprocessWindow(QDialog):
                 self._set_status('处理失败：' + str(error))
                 if on_error:
                     on_error(error)
+                else:
+                    show_operation_failure(self, '后处理失败', error, automatic=kind == 'load')
             else:
                 self._set_status('处理完成。')
                 try:
@@ -437,15 +436,13 @@ class PostprocessWindow(QDialog):
                     if preserve_selection:
                         self._invalidate_polygon()
                     self._set_status('更新结果失败：' + str(exc))
+                    show_operation_failure(self, '更新结果失败', exc)
 
         def finished():
             timer.stop()
             timer.deleteLater()
             self._progress_state = None
-            if worker in self.bridge._workers:
-                self.bridge._workers.remove(worker)
             self._worker, self._busy_kind = None, None
-            worker.deleteLater()
             if not self._closed:
                 self._refresh_controls()
                 self.bridge.shell._industrial_ribbon.update_status()
@@ -457,11 +454,12 @@ class PostprocessWindow(QDialog):
                     uid, self._pending_intermediates = self._pending_intermediates, None
                     if self._display_ids == [uid]:
                         self.extract_intermediates(automatic=True)
-        worker.result_ready.connect(completed)
-        worker.finished.connect(finished)
+        self._worker = start_background_task(self.bridge, work, completed,
+            workers=self.bridge._workers, on_finished=finished,
+            is_active=lambda: not self._closed and not getattr(self.bridge, '_cleaned', False),
+            name='postprocess', must_finish=True)
         self._refresh_controls()
         self._set_status('正在后台读取点云…' if kind == 'load' else '正在处理并更新 DB…')
-        worker.start()
         return True
 
     def _refresh_controls(self):
@@ -829,7 +827,7 @@ class PostprocessWindow(QDialog):
             reports.append(message)
             return [output]
         self._commit_operation(work,diagnostic=lambda:'\n'.join(reports),
-            on_error=lambda error:QMessageBox.warning(self,'手动配准失败',str(error)))
+            on_error=lambda error:show_operation_failure(self,'手动配准失败',str(error)))
 
     def extract_intermediates(self, *, automatic=False):
         if not self._parameter_gate() or len(self._display_ids) != 1:
@@ -860,7 +858,7 @@ class PostprocessWindow(QDialog):
             return layers
         self._commit_operation(work,display_all=True,
             on_error=(lambda error:self._set_status('自动补齐中间帧失败：'+str(error)+'；请检查来源或点击提取中间帧查看。')) if automatic else
-            (lambda error:QMessageBox.warning(self,'提取中间帧失败',str(error))))
+            (lambda error:show_operation_failure(self,'提取中间帧失败',str(error))))
 
     def open_icp_dialog(self):
         if not self._parameter_gate() or len(self._display_ids) not in (1, 2):
@@ -882,7 +880,7 @@ class PostprocessWindow(QDialog):
                     raise ValueError('至少需要两帧来源数据和拼接位姿，请重新执行拼接')
                 inputs = [(key, f'采集帧{self.database.records[key].frame_id:03d} · {self.database.records[key].logical_name}') for key in poses]
             except ValueError as exc:
-                QMessageBox.warning(self, '无法重建ICP', str(exc))
+                show_operation_failure(self, '无法重建ICP', str(exc))
                 return
         dialog = ICPDialog(inputs, self, rebuild=rebuild)
         if dialog.exec() == QDialog.Accepted:
@@ -909,7 +907,7 @@ class PostprocessWindow(QDialog):
             reports.append(message)
             return [output]
         self._commit_operation(work, diagnostic=lambda: '\n'.join(reports),
-            on_error=lambda error: QMessageBox.warning(self, '来源帧ICP失败', str(error)))
+            on_error=lambda error: show_operation_failure(self, '来源帧ICP失败', str(error)))
 
     def register_icp(self, reference_uid, params, *, snapshot=None):
         if (not self._parameter_gate() or len(self._display_ids) != 2
@@ -930,7 +928,7 @@ class PostprocessWindow(QDialog):
             report.append(message)
             return [output]
         def failed(error):
-            QMessageBox.warning(self, 'ICP精配准失败', str(error))
+            show_operation_failure(self, 'ICP精配准失败', str(error))
         self._commit_operation(work, diagnostic=lambda: '\n'.join(report), on_error=failed)
 
     def merge_selected(self):

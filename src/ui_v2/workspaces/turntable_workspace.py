@@ -519,31 +519,19 @@ class TurntableWorkspace(QWidget):
         """启动后台线程。有统一 runner 时委托（on_done 单参，异常转日志）。"""
         if self._background_runner is not None:
             def _adapted(result, error):
-                if error:
-                    self.log(f"[ERROR] 后台任务异常: {error}", "error")
-                on_done(result)
-            return self._background_runner(func, _adapted, *args, **kwargs)
-        # 回退：本地引用池（防止 QThread 被 GC）
-        worker = WorkerThread(func, *args, **kwargs)
-        worker.result_ready.connect(lambda res, err, w=worker: self._on_worker_finished(res, err, on_done, w))
-        # 引用池摘除挂在基类 QThread.finished（线程真正退出后）
-        worker.finished.connect(lambda w=worker: self._on_worker_exited(w))
-        self._active_workers.append(worker)
-        worker.start()
-        return worker
-
-    def _on_worker_exited(self, worker):
-        """线程退出回调：从活动列表摘除并调度 Qt 回收。"""
-        if worker in self._active_workers:
-            self._active_workers.remove(worker)
-        worker.deleteLater()
+                self._on_worker_finished(result, error, on_done, None)
+            return self._background_runner(lambda: func(*args, **kwargs), _adapted, name='turntable')
+        from ui_common.background_task import start_background_task
+        return start_background_task(self, lambda: func(*args, **kwargs),
+            lambda result, error: self._on_worker_finished(result, error, on_done, None),
+            workers=self._active_workers, name='turntable', is_active=lambda: not getattr(self, '_closing', False))
 
     def _on_worker_finished(self, result, error, on_done, worker):
-        # 注意：引用池摘除在 _on_worker_exited（基类 QThread.finished）中处理，
-        # 此处只做结果分发，避免线程仍在运行时丢引用。
+        # Thread references are released by the shared executor after native exit.
         if error:
             self.log(f"[ERROR] {error}", "error")
-            QMessageBox.warning(self, "执行失败", str(error))
+            from ..operation_failure import show_operation_failure
+            show_operation_failure(self.window(), "执行失败", error)
             # 出错时也要释放忙状态，避免按钮一直不可用
             if self._busy:
                 self._set_busy(False)

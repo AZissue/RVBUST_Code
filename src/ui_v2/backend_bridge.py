@@ -67,56 +67,7 @@ def _pairs_from_engine(engine) -> List[Dict]:
     return pairs
 
 
-class PreviewCaptureThread(QThread):
-    """实时取景专用采集线程。
-
-    设计动机（2026-10-09 堆损坏崩溃排查）：
-      旧实现用 UI 线程 QTimer 每 100ms 同步执行 Capture2D（SDK 单次 75ms+），
-      既冻结 UI，又让"采集→转 QPixmap→释放 SDK Image"的高频生命周期全部压在
-      UI 线程上；两次 0xc0000374 堆损坏崩溃（14:18 / 15:16）均发生在该流程
-      运行期间。改为独立线程后：
-      1. 采集/转换/释放的生命周期收敛到单一后台线程，UI 只做结果显示；
-      2. 帧率由线程自行定速（默认 5fps：取景瞄准足够，同时把 SDK Image
-         高频建/销的堆损坏暴露量减半；采集慢于目标帧率时不堆积、不追帧）；
-      3. SDK 调用仍走 rvc_sdk_lock，与 3D 拍摄/拼接/检测自动串行。
-
-    stop() 会等待在飞的采集完成（带超时），语义等价于旧定时器 stop：
-    暂停预览后立即 3D 拍摄不会与在飞 Capture2D 并发。
-    """
-
-    frame_ready = Signal(object)  # QPixmap（已在子线程转换完成）
-
-    def __init__(self, camera_manager, camera_id: str,
-                 interval_ms: int = 200, parent=None):
-        super().__init__(parent)
-        self._camera_manager = camera_manager
-        self._camera_id = camera_id
-        self._interval_ms = interval_ms
-        self._stop_flag = False
-
-    def run(self):
-        while not self._stop_flag:
-            t0 = time.perf_counter()
-            try:
-                frame = self._camera_manager.capture_2d_preview(self._camera_id)
-                if frame is not None and frame.image_np is not None:
-                    pixmap = numpy_to_qpixmap(frame.image_np)
-                    if pixmap is not None:
-                        self.frame_ready.emit(pixmap)
-            except Exception as e:
-                logger.warning(f"实时取景采集异常 ({self._camera_id}): {e}")
-            elapsed_ms = (time.perf_counter() - t0) * 1000.0
-            self.msleep(max(10, int(self._interval_ms - elapsed_ms)))
-
-    def request_stop(self):
-        """Signal cancellation without blocking the GUI thread."""
-        self._stop_flag = True
-
-    def stop(self):
-        """请求退出并等待在飞采集完成（最多 3s）。"""
-        self.request_stop()
-        if not self.wait(3000):
-            logger.warning("预览采集线程退出超时（在飞 SDK 采集超过 3s）")
+from .preview_capture import PreviewCaptureThread
 
 
 def _score_from_pairs(pairs: List[Dict]) -> int:
@@ -174,6 +125,9 @@ class BackendBridge(QObject):
         self._card_preview_timer = QTimer(self)
         self._card_preview_timer.timeout.connect(self._on_card_preview_tick)
         self._card_preview_active: Set[str] = set()
+        self._retired_previews = []
+        self._card_capture = None
+        self._card_preview_epoch = 0
 
         # 后台任务引用保护：防止 QThread 运行期间被 Python GC 销毁
         self._workers: List[WorkerThread] = []
@@ -342,6 +296,8 @@ class BackendBridge(QObject):
                 self.shell.log(f'已断开 {len(connected)} 台相机；DB、标定和采集数据已保留。', 'success')
             else:
                 self.shell.log(f'断开连接未完成：{error or "仍有相机在线"}；剩余 {len(remaining)} 台在线，可重试。', 'error')
+                from .operation_failure import show_operation_failure
+                show_operation_failure(self.shell, '断开连接失败', error or '仍有相机在线，请重试断开连接')
             if on_finished is not None:
                 on_finished(success)
         self._run_background(work, done, must_finish=True, name='device_disconnect')
@@ -394,7 +350,7 @@ class BackendBridge(QObject):
             done(result, error)
         self._run_background(
             lambda: self.camera_manager.common_capture_parameters(camera_id, values, expected_source=source),
-            completed, must_finish=values is not None, name='capture_parameters')
+            completed, must_finish=values is not None, name='capture_parameters', automatic=values is None)
 
     # ------------------------------------------------------------------
     # 参数调试：打开官方 RVCManager
@@ -1447,6 +1403,7 @@ class BackendBridge(QObject):
 
     def _on_card_preview_toggled(self, camera_id: str, enabled: bool):
         """单相机卡片 2D 预览开关。多卡同时预览时自动降频以减轻 SDK 负担。"""
+        self._card_preview_epoch += 1
         if enabled:
             if not self.camera_manager.is_connected(camera_id):
                 self.shell.log(f"相机 {camera_id} 未连接，无法预览", "warn")
@@ -1464,27 +1421,46 @@ class BackendBridge(QObject):
             self._card_preview_active.discard(camera_id)
             if not self._card_preview_active:
                 self._card_preview_timer.stop()
+                if self._card_capture is not None:
+                    self._card_capture.request_stop()
             else:
                 interval = 200 if len(self._card_preview_active) > 2 else 100
                 self._card_preview_timer.setInterval(interval)
             self.shell.log(f"停止 2D 预览: {camera_id}", "info")
 
     def _on_card_preview_tick(self):
-        """刷新所有处于 2D 预览状态的相机卡片。"""
-        ws = self.shell.workspace_multi()
-        for camera_id in list(self._card_preview_active):
-            try:
-                if not self.camera_manager.is_connected(camera_id):
-                    self._card_preview_active.discard(camera_id)
-                    self._set_card_preview_checked(camera_id, False)
-                    continue
-                frame = self.camera_manager.capture_2d_preview(camera_id)
-                if frame is not None and frame.image_np is not None:
-                    ws.camera_grid().set_frame(camera_id, frame)
-            except Exception as e:
-                logger.warning(f"2D 预览刷新异常 ({camera_id}): {e}")
+        """Schedule one background round; never execute SDK calls on the GUI thread."""
+        for cid in list(self._card_preview_active):
+            if not self.camera_manager.is_connected(cid):
+                self._card_preview_active.discard(cid)
+                self._set_card_preview_checked(cid, False)
         if not self._card_preview_active:
             self._card_preview_timer.stop()
+            return
+        if self._card_capture is not None:
+            return
+        worker = PreviewCaptureThread(self.camera_manager, sorted(self._card_preview_active),
+                                      parent=self, single_pass=True)
+        worker.preview_epoch = self._card_preview_epoch
+        self._card_capture = worker
+        worker.camera_frame_ready.connect(self._on_card_preview_frame)
+        worker.finished.connect(self._on_card_preview_finished)
+        worker.start()
+
+    def _on_card_preview_frame(self, camera_id, frame):
+        worker = self.sender()
+        if (getattr(self, '_cleaned', False) or worker is not self._card_capture
+                or worker.preview_epoch != self._card_preview_epoch
+                or camera_id not in self._card_preview_active):
+            return
+        self.shell.workspace_multi().camera_grid().set_frame(camera_id, frame)
+
+    def _on_card_preview_finished(self):
+        worker = self.sender()
+        worker.wait()
+        if worker is self._card_capture:
+            self._card_capture = None
+        worker.deleteLater()
 
     def _set_card_preview_checked(self, camera_id: str, checked: bool):
         """同步卡片上 2D 预览按钮的勾选状态。"""
@@ -1497,6 +1473,9 @@ class BackendBridge(QObject):
     def _pause_card_preview(self) -> Set[str]:
         """暂停所有卡片 2D 预览，返回之前处于预览状态的 camera_id 集合。"""
         active = set(self._card_preview_active)
+        self._card_preview_epoch += 1
+        if self._card_capture is not None:
+            self._card_capture.request_stop()
         if active:
             self._card_preview_timer.stop()
             self._card_preview_active.clear()
@@ -1571,6 +1550,8 @@ class BackendBridge(QObject):
                 return
             if frame is None:
                 self.shell.log(f"拍摄失败 ({camera_id}): 无数据", "warn")
+                from .operation_failure import show_operation_failure
+                show_operation_failure(self.shell, '拍摄失败', '相机未取得图像或点云，请检查设备状态')
                 return
             ws = self.shell.workspace_multi()
             ok, msg = self.fixed_workflow.add_calibration_frame(frame)
@@ -1736,17 +1717,33 @@ class BackendBridge(QObject):
     def _stop_preview_thread(self, *, clear_frame=True):
         """Stop acquisition; user stop/pause retains the last displayed frame."""
         if self._preview_thread is not None:
-            self._preview_thread.stop()  # 等待在飞采集完成（带超时）
+            old = self._preview_thread
+            old.stop()
+            if hasattr(old, 'isRunning') and old.isRunning():
+                self._retired_previews.append(old)
+                old.finished.connect(self._on_retired_preview_finished)
+            else:
+                old.deleteLater()
             self._preview_thread = None
         self._preview_camera_id = None
         if clear_frame:
             self.shell.workspace_mobile().live_view().set_frame(None)
+
+    def _on_retired_preview_finished(self):
+        worker = self.sender()
+        worker.wait()
+        if worker in self._retired_previews:
+            self._retired_previews.remove(worker)
+        worker.deleteLater()
 
     def _on_preview_frame(self, pixmap, *, source=None):
         """预览帧到达（UI 线程）：仅做显示，采集/转换已在线程内完成。"""
         source = source or self.sender()
         if self._preview_thread is None or (source is not None and source is not self._preview_thread):
             return
+        from PySide6.QtGui import QImage
+        if isinstance(pixmap, QImage):
+            pixmap = QPixmap.fromImage(pixmap)
         self.shell.workspace_mobile().live_view().set_frame(pixmap)
 
     def _pause_2d_preview(self) -> Optional[str]:
@@ -2651,7 +2648,7 @@ class BackendBridge(QObject):
     # ------------------------------------------------------------------
     # 工具方法
     # ------------------------------------------------------------------
-    def _run_background(self, work, on_done, must_finish=False, name=None):
+    def _run_background(self, work, on_done, must_finish=False, name=None, *, automatic=False):
         """后台执行 work()，完成后主线程回调 on_done(result, error)。
 
         must_finish=True：B 类"必须完成"任务（会话保存/写盘/导出）。
@@ -2660,8 +2657,7 @@ class BackendBridge(QObject):
         name：任务名，cleanup warning 的唯一现场指认；缺省从调用栈推断
             （traceback.extract_stack()[-2] 取调用方方法名，零调用点改动）。
         """
-        from ui_common.worker_thread import WorkerThread
-        from .background_delivery import BackgroundDelivery
+        from ui_common.background_task import start_background_task
         if getattr(self, '_cleaned', False):
             return
         if name is None:
@@ -2682,10 +2678,6 @@ class BackendBridge(QObject):
             if name not in ('offline_preview', 'db_frame_preview', 'db_open_project', 'db_mutation') and not project_task and not inspection:
                 self.frame_db.archive_context(result)
             return result
-        worker = WorkerThread(archive_work)
-        worker._task_name = name
-        worker._must_finish = must_finish
-        self._workers.append(worker)
 
         def _wrapped_done(result, error):
             update_metadata = name not in ('offline_preview', 'db_frame_preview', 'db_open_project', 'db_mutation') and not project_task and not inspection
@@ -2695,7 +2687,16 @@ class BackendBridge(QObject):
                     self.frame_db._changed(self._current_mode)
                 except Exception as exc:
                     self.shell.log('DB元数据更新失败：' + str(exc), 'error')
-            on_done(result, error)
+            try:
+                on_done(result, error)
+            finally:
+                if error is not None:
+                    from .operation_failure import show_operation_failure
+                    silent = automatic or name in ('db_frame_preview', 'device_status', 'feature_match')
+                    titles = dict(project_export_cloud='导出失败', feature_stitch='拼接失败',
+                                  db_mutation='DB操作失败', project_save='保存会话失败')
+                    show_operation_failure(self.shell, titles.get(name, '操作失败'), error,
+                        automatic=silent, log=self.shell.log)
             if error is None and self.shell._presentation == 'industrial':
                 database = self.frame_db.databases[self._current_mode]
                 self.recognition.available.update((self._current_mode, database.directory, frame.database_id,
@@ -2710,17 +2711,22 @@ class BackendBridge(QObject):
         # 基类 QThread.finished：线程真正退出后才摘除引用并交 Qt 回收。
         # 不能挂在 result_ready 上（run() 内发射、线程仍在运行），
         # 也不能挂在已遮蔽的自定义信号上，否则运行中析构 → __fastfail。
-        worker._delivery = BackgroundDelivery(self, worker, _wrapped_done)
-        worker.start()
+        worker = start_background_task(self, archive_work, _wrapped_done, workers=self._workers,
+            on_finished=self._on_worker_thread_finished,
+            is_active=lambda: not getattr(self, '_cleaned', False),
+            name=name, must_finish=must_finish,
+            on_callback_error=lambda exc: self._report_callback_failure(exc))
         self.shell.workspace_robot()._refresh_actions()
         if hasattr(self.shell, '_industrial_ribbon'):
             self.shell._industrial_ribbon.update_status()
+        return worker
 
-    def _on_worker_thread_finished(self, worker):
-        """线程退出回调：从引用池摘除并调度 Qt 回收。"""
-        if worker in self._workers:
-            self._workers.remove(worker)
-        worker.deleteLater()
+    def _report_callback_failure(self, error):
+        from .operation_failure import show_operation_failure
+        show_operation_failure(self.shell, '更新操作结果失败', error, log=self.shell.log)
+
+    def _on_worker_thread_finished(self):
+        """Refresh action gates after the shared executor releases the task."""
         if getattr(self, '_cleaned', False):
             return
         self.shell.workspace_robot()._refresh_actions()
@@ -2738,19 +2744,24 @@ class BackendBridge(QObject):
         editor = getattr(self, '_postprocess_window', None)
         if editor is not None and not editor._closed:
             editor.shutdown()
-        # 停止实时取景（线程 stop 会等待在飞采集完成，带超时）
+        preview_workers = list(self._retired_previews)
         if self._preview_thread is not None:
             self._preview_thread.stop()
+            if hasattr(self._preview_thread, 'isRunning'):
+                preview_workers.append(self._preview_thread)
             self._preview_thread = None
         self._card_preview_timer.stop()
         self._card_preview_active.clear()
+        if self._card_capture is not None:
+            self._card_capture.request_stop()
+            preview_workers.append(self._card_capture)
         self.recognition.close()
         # 任务分级等待（E5：SDK 无法加超时，改为语义分级）：
         #   B 类 must_finish：无超时等待，禁止进 pending→os._exit 名单（数据完整性优先）；
         #   A 类：有界等待 3s，超时保留引用并记 warning（os._exit 安全网名单）。
         # os._exit 之后 warning 是唯一现场，必须带任务名。
         pending = []
-        for worker in list(self._workers):
+        for worker in [*self._workers, *preview_workers]:
             if not worker.isRunning():
                 continue
             task_name = getattr(worker, "_task_name", "?")
@@ -2764,7 +2775,7 @@ class BackendBridge(QObject):
                     f"[cleanup] 后台任务超过 3 秒未结束，保留引用待其自然退出: {task_name} ({worker})")
         self._workers[:] = pending
         self._pending_workers = pending
-        if self._sdk_initialized:
+        if self._sdk_initialized and not pending:
             self.camera_manager.shutdown()
             self._sdk_initialized = False
         if not pending:

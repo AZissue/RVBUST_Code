@@ -6,6 +6,8 @@ os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 import sys
 from pathlib import Path
 import unittest
+import threading
+import time
 from unittest.mock import Mock, patch
 import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
@@ -17,6 +19,34 @@ from ui_v2.widgets.device_table import DeviceInfo
 
 
 class ScanPreviewTests(unittest.TestCase):
+    def wait(self, predicate):
+        deadline = time.monotonic() + 4
+        while not predicate() and time.monotonic() < deadline:
+            self.app.processEvents()
+            time.sleep(.005)
+        self.assertTrue(predicate())
+
+    def test_slow_capture_runs_off_gui_and_paused_results_are_discarded(self):
+        started, release = threading.Event(), threading.Event()
+        main_thread = threading.get_ident()
+        def capture(cid):
+            self.assertNotEqual(threading.get_ident(), main_thread)
+            started.set()
+            release.wait(2)
+            return self.frames[cid]
+        self.bridge.camera_manager.capture_2d_preview.side_effect = capture
+        self.button.click()
+        self.bridge._card_preview_timer.stop()
+        try:
+            self.bridge._on_card_preview_tick()
+            self.wait(started.is_set)
+            self.bridge._pause_card_preview()
+        finally:
+            release.set()
+        self.wait(lambda: self.bridge._card_capture is None)
+        self.assertIsNone(self.ws.camera_grid().card('cam0').current_frame())
+        self.assertIsNone(self.ws.camera_grid().card('cam1').current_frame())
+
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
@@ -49,10 +79,12 @@ class ScanPreviewTests(unittest.TestCase):
         self.button.click()
         self.assertEqual(self.bridge._card_preview_active, self.connected)
         self.assertTrue(self.button.isChecked())
-        self.assertEqual(p._multi_view, 'joint')
+        self.assertEqual(p._multi_view, '2d')
         self.assertTrue(p.preview_toggle.isChecked())
         self.bridge._card_preview_timer.stop()
         self.bridge._on_card_preview_tick()
+        self.wait(lambda: all(self.ws.camera_grid().card(cid).current_frame() is self.frames[cid]
+                              for cid in self.connected))
         for cid in self.connected:
             self.assertIs(self.ws.camera_grid().card(cid).current_frame(), self.frames[cid])
         self.assertFalse(self.bridge.fixed_workflow.frames_scan)

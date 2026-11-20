@@ -291,7 +291,7 @@ class ExplicitStitching:
                 if hasattr(error, 'observation'):
                     self._record_feature_observations(database, (error.observation,))
                 bridge.shell.workspace_mobile().set_evaluation(0, 0, None, 'fail', str(error), scope='2D 特征')
-                bridge.shell.log(f'SuperPoint + LightGlue 拼接失败：{error}', 'warn')
+                show_stitch_failure(bridge, 'mobile_chain', error)
             else:
                 self._show_feature_result(database, result)
             self._start_feature_capture()
@@ -936,5 +936,9 @@ class ExplicitStitching:
         def work():
             return database.export_cloud(uid, path)
         def done(result, error):
-            bridge.shell.log('导出失败：' + str(error) if error else '点云已导出：' + path, 'error' if error else 'success')
+            if error:
+                from .operation_failure import show_operation_failure
+                show_operation_failure(bridge.shell, '导出失败', error, log=bridge.shell.log)
+            else:
+                bridge.shell.log('点云已导出：' + path, 'success')
         bridge._run_background(work, done, name='project_export_cloud', must_finish=True)

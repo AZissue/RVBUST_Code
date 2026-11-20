@@ -358,7 +358,9 @@ class RobotWorkspace(QWidget):
                 return
             self._busy = False
             if error or frame is None or frame.image_np is None:
-                self._log(f'2D预览失败：{error or "未取得图像"}', 'error')
+                from ..operation_failure import show_operation_failure
+                show_operation_failure(self.window(), '2D预览失败',
+                                       error or '未取得相机图像', log=self._log)
             else:
                 self._display_2d(frame.image_np)
             self._refresh_actions()
@@ -392,13 +394,17 @@ class RobotWorkspace(QWidget):
             return
         self._busy = False
         if error:
-            self._log(f'机器人采集失败：{error}', 'error')
+            from ..operation_failure import show_operation_failure
+            show_operation_failure(self.window(), '机器人采集失败', error, log=self._log)
         else:
             ok, message, info = result
             self._log(message, 'success' if ok else 'error')
             if ok:
                 self._show_capture(info)
                 self.dirty_changed.emit(True)
+            else:
+                from ..operation_failure import show_operation_failure
+                show_operation_failure(self.window(), '机器人采集失败', message)
         self._refresh_actions()
 
     def _show_capture(self, info):

@@ -86,10 +86,10 @@ class ICPUiTests(unittest.TestCase):
         b=self.db.publish_result(fixture.cloud(xyz+100),[raw])
         self.editor.load_selected([a,b]);self.finish()
         before=set(self.db.records)
-        with patch('ui_v2.postprocess.window.QMessageBox.warning') as warning:
+        with patch('ui_v2.postprocess.window.show_operation_failure') as warning:
             self.editor.register_icp(a,ICPParameters(.1,.01));self.wait(lambda: self.editor._worker is None)
             self.assertTrue(warning.called)
-            self.assertIn('粗配准',warning.call_args.args[-1])
+            self.assertIn('重叠',str(warning.call_args.args[-1]))
         self.assertEqual(set(self.db.records),before)
         self.assertFalse(self.editor._undo)
 
