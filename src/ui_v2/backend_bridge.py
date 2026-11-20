@@ -229,6 +229,20 @@ class BackendBridge(QObject):
             logger.log(20 if ok else 30, msg)
         return self._sdk_initialized
 
+    def open_offline_workspace(self, mode):
+        """Enter the ordinary workspace without hardware or demo data."""
+        if mode not in LauncherDialog.MODE_NAMES or not self.can_change_workspace():
+            return False
+        self._current_mode = mode
+        self.shell.set_presentation('industrial')
+        self.shell.set_mode(mode, [], preserve_state=True)
+        if mode == LauncherDialog.MODE_MOBILE_CHAIN and self.mobile_workflow.station_manager is None:
+            self.mobile_workflow.start_chaining()
+        self.projects.prepare(mode)
+        self.shell.log('已离线进入主程序：可打开会话调试；相机采集需连接设备。', 'info')
+        self.shell._refresh_statusbar()
+        return True
+
     def open_offline_preview(self, mode, on_finished=None):
         from .offline_preview import open_preview
         return open_preview(self, mode, on_finished)

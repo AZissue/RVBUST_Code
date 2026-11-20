@@ -24,6 +24,17 @@ class ExplicitStitchingTests(unittest.TestCase):
     wait = fixture.FrameBrowserTests.wait
     source = fixture.FrameBrowserTests.source
 
+    def test_offline_main_workspace_enters_without_sdk_or_demo_frames(self):
+        from core.camera_manager import CameraManager
+        with patch.object(CameraManager,'initialize',side_effect=AssertionError('SDK forbidden')):
+            with patch.object(self.bridge,'connect_devices',side_effect=AssertionError('connect forbidden')):
+                for mode in ('mobile_chain','multi_cam','turntable','robot_stitch'):
+                    self.assertTrue(self.bridge.open_offline_workspace(mode))
+                    self.assertEqual(self.win.current_mode(),mode)
+                    self.assertEqual(self.bridge._current_mode,mode)
+                    self.assertFalse(self.bridge.frame_db.databases[mode].records)
+        self.assertIsNotNone(self.bridge.mobile_workflow.station_manager)
+
     def mobile(self):
         self.win.set_mode('mobile_chain', [])
         self.bridge._current_mode = 'mobile_chain'

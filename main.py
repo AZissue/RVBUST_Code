@@ -136,6 +136,12 @@ def main(*, composition=None):
                 launcher.log_summary.append(message, 'error')
         bridge.open_offline_preview(mode, finished)
     launcher.offline_requested.connect(on_offline)
+    def on_offline_workspace(mode):
+        if bridge.open_offline_workspace(mode):
+            main_window.setWindowTitle(f'MCC 拼接工作站 — {LauncherDialog.MODE_NAMES[mode]} {get_version()} · 离线工作区')
+            main_window.show()
+            launcher.accept()
+    launcher.offline_workspace_requested.connect(on_offline_workspace)
 
     def show_launcher():
         launcher.show()

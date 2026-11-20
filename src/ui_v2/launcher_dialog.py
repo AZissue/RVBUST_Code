@@ -51,6 +51,7 @@ class LauncherDialog(QDialog):
     """连接设备：(mode, List[DeviceInfo])。全部成功后由调用方 accept() 本对话框。"""
 
     offline_stitch_requested = Signal()
+    offline_workspace_requested = Signal(str)
 
     offline_requested = Signal(str)
     """使用项目自带数据进入新版工作区，不连接相机。"""
@@ -80,7 +81,7 @@ class LauncherDialog(QDialog):
         root.setContentsMargins(18, 16, 18, 16)
         root.setSpacing(8)
         root.addWidget(QLabel("MCC / 重建工作站", objectName="launcherBrand"))
-        root.addWidget(QLabel("选择工作方案 → 连接相机 → 进入工作区",
+        root.addWidget(QLabel("选择工作方案 → 连接相机或离线进入工作区",
                              objectName="launcherSubtitle"))
         main = QHBoxLayout()
         main.setSpacing(16)
@@ -158,6 +159,10 @@ class LauncherDialog(QDialog):
         self._rule_hint.setWordWrap(True)
         self._rule_hint.setMinimumHeight(36)
         right.addWidget(self._rule_hint)
+        self._btn_offline_workspace = QPushButton('离线进入主程序')
+        self._btn_offline_workspace.setToolTip('进入所选工作区，打开已有会话并调试离线数据；不连接相机、不加载示例数据')
+        self._btn_offline_workspace.clicked.connect(self._on_offline_workspace)
+        right.addWidget(self._btn_offline_workspace)
         main.addWidget(self._device_panel, 4)
         root.addLayout(main, 1)
 
@@ -311,6 +316,10 @@ class LauncherDialog(QDialog):
         if self._presentation == 'industrial' and not self._is_busy():
             self.offline_requested.emit(self._mode)
 
+    def _on_offline_workspace(self):
+        if not self._is_busy():
+            self.offline_workspace_requested.emit(self._mode)
+
     def _on_filter(self, text: str):
         self._table.apply_filter(text)
 
@@ -389,7 +398,7 @@ class LauncherDialog(QDialog):
         busy = self._is_busy()
         for widget in (self._mode_choices, self._search_edit, self._table,
                        self._btn_refresh, self._btn_auto_ip,
-                       self._btn_cancel, self._btn_offline_stitch):
+                       self._btn_cancel, self._btn_offline_stitch, self._btn_offline_workspace):
             widget.setEnabled(not busy)
         self._refresh_connect_state()
 

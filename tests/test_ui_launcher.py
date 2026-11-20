@@ -41,6 +41,18 @@ class LauncherTests(unittest.TestCase):
         for checkbox in self.dialog._table._check_widgets:
             checkbox.setChecked(True)
 
+    def test_offline_workspace_entry_has_no_device_requirement_and_respects_busy(self):
+        dlg=self.dialog
+        dlg.set_devices([])
+        dlg._set_mode(dlg.MODE_MOBILE_CHAIN)
+        signal=QSignalSpy(dlg.offline_workspace_requested)
+        dlg._btn_offline_workspace.click()
+        self.assertEqual(signal.at(0),[dlg.MODE_MOBILE_CHAIN])
+        self.assertFalse(dlg._btn_connect.isEnabled())
+        dlg.set_busy(True)
+        dlg._btn_offline_workspace.click()
+        self.assertEqual(signal.count(),1)
+
     def test_only_industrial_entries_and_legacy_restore_redirect(self):
         from PySide6.QtWidgets import QLabel
         dlg=self.dialog
