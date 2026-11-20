@@ -116,6 +116,20 @@ class FeatureICPTests(unittest.TestCase):
             self.assertEqual(stages,['joint','final_icp'])
             self.assertEqual(len(result.icp_reports),1)
             self.assertIn('联合优化后 ICP',result.icp_reports[0])
+            reverse_stages=[]
+            def before_icp(*args,**kwargs):
+                reverse_stages.append('icp')
+                return refine_joint_result(*args,**kwargs)
+            def after_joint(*args):
+                self.assertEqual(reverse_stages,['icp'])
+                reverse_stages.append('joint')
+                return optimize_geometry(*args)
+            with patch('prototypes.superpoint_lightglue.automatic.optimize_geometry',side_effect=after_joint), \
+                 patch('prototypes.superpoint_lightglue.automatic.refine_joint_result',side_effect=before_icp):
+                reverse=service.stitch(db,ids,workpiece_roi=(0,0,1,1),
+                    settings=replace(FeatureSettings(),icp_after_geometry=False))
+            self.assertEqual(reverse_stages,['icp','joint'])
+            self.assertIn('联合优化前 ICP',reverse.icp_reports[0])
             self.assertLess(np.linalg.norm(final[:3,3]-[-2,0,0]),
                             np.linalg.norm(initial[:3,3]-[-2,0,0]))
             self.assertEqual(len(result.cloud.points),2*x.size)

@@ -190,10 +190,12 @@ class ExplicitStitching:
             ws.set_state('chaining')
         self._record_feature_observations(database, result.observations)
         bridge.shell.set_dirty(True)
+        reports = list(result.icp_reports)
         if result.geometry_report:
-            bridge.shell.log(result.geometry_report, 'warn' if '未采用' in result.geometry_report else 'info')
-        for report in result.icp_reports:
-            bridge.shell.log(report,'warn' if 'ICP 未采用' in report else 'info')
+            after = self.feature_settings().icp_after_geometry
+            reports.insert(0 if after else len(reports),result.geometry_report)
+        for report in reports:
+            bridge.shell.log(report,'warn' if '未采用' in report else 'info')
         bridge.shell.log(f'SuperPoint + LightGlue：{details}。本次接入关系 {path}。', 'success')
         bridge.shell._refresh_statusbar()
 

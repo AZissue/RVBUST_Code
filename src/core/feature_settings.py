@@ -11,6 +11,7 @@ class FeatureSettings:
     tolerance: float = 2.
     inlier_percent: int = 60
     icp_enabled: bool = True
+    icp_after_geometry: bool = True
     icp_distance: float = 2.
     icp_voxel: float = .5
     icp_iterations: int = 50
@@ -43,7 +44,7 @@ FEATURE_SETTING_LIMITS = {
 
 
 def load_feature_settings(values):
-    switches = {'icp_enabled', 'geometry_enabled', 'geometry_fpfh'}
+    switches = {'icp_enabled', 'geometry_enabled', 'geometry_fpfh', 'icp_after_geometry'}
     if not isinstance(values, dict) or values.keys() - (FEATURE_SETTING_LIMITS.keys() | switches):
         raise ValueError('会话中的 2D 特征配准参数无效。')
     defaults = FeatureSettings()

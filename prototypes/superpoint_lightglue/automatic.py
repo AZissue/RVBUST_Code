@@ -197,6 +197,13 @@ class FeatureStitching:
             links.append((row.frame_id, visible[-1].reference_number))
             poses[row.uid] = pose.tolist()
         geometry_report = ''
+        if settings.geometry_enabled and settings.icp_enabled and not settings.icp_after_geometry:
+            refined, reports, accepted = refine_joint_result(rows,poses,feature_constraints,
+                lambda row: sample(read_frame(database.directory,row),settings.icp_voxel),settings,
+                phase='联合优化前')
+            poses = {key:value.tolist() for key,value in refined.items()}
+            icp_reports.extend(reports)
+            icp_accepted += accepted
         if settings.geometry_enabled:
             try:
                 for row in rows:
@@ -211,7 +218,7 @@ class FeatureStitching:
                     geometry_report = '多帧几何未采用：偏离原始特征对应约束，保留逐帧精修位姿。'
             except (ValueError, RuntimeError) as exc:
                 geometry_report = f'多帧几何未采用，保留逐帧位姿：{exc}'
-        if settings.geometry_enabled and settings.icp_enabled:
+        if settings.geometry_enabled and settings.icp_enabled and settings.icp_after_geometry:
             refined, reports, accepted = refine_joint_result(rows,poses,feature_constraints,
                 lambda row: sample(read_frame(database.directory,row),settings.icp_voxel),settings)
             poses = {key:value.tolist() for key,value in refined.items()}

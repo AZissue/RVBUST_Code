@@ -8,8 +8,8 @@ from core.postprocess.session import CloudLayer
 from .geometry import bounded, multiscale_icp
 
 
-def refine_joint_result(rows, poses, constraints, load_surface, settings):
-    """Final point-to-point ICP against frozen joint poses, never a growing ICP chain."""
+def refine_joint_result(rows, poses, constraints, load_surface, settings, *, phase='联合优化后'):
+    """Point-to-point ICP against frozen stage poses, never a growing ICP chain."""
     from scipy.spatial import cKDTree
     frozen = {key:np.asarray(value).copy() for key,value in poses.items()}
     result = {key:value.copy() for key,value in frozen.items()}
@@ -29,7 +29,7 @@ def refine_joint_result(rows, poses, constraints, load_surface, settings):
                                 for ref in references])
             local = supported_surface(surface(row),evidence[0],settings.icp_distance)
             target = supported_surface(target,evidence[1],settings.icp_distance)
-            pose,report,accepted = refine_feature_pose(CloudLayer('联合优化后的固定工件参考',target),
+            pose,report,accepted = refine_feature_pose(CloudLayer(f'{phase}的固定工件参考',target),
                 local,initial,evidence,replace(settings,geometry_enabled=False))
             if accepted:
                 def score(matrix):
@@ -47,8 +47,8 @@ def refine_joint_result(rows, poses, constraints, load_surface, settings):
                 count += 1
         except (ValueError,RuntimeError) as exc:
             report = f'ICP 未采用：{exc}'
-        report = report.replace('保留特征配准位姿','保留联合阶段位姿')
-        reports.append(f'帧 {row.frame_id:03d} 联合优化后 ICP：{report} 未采用时保留联合阶段位姿。')
+        report = report.replace('保留特征配准位姿','保留该阶段初始位姿')
+        reports.append(f'帧 {row.frame_id:03d} {phase} ICP：{report} 未采用时保留该阶段初始位姿。')
         keep = {ref.uid for ref in rows[max(0,index-2):index+1]}
         cache = {key:value for key,value in cache.items() if key in keep}
     return result, tuple(reports), count

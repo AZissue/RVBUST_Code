@@ -8,6 +8,12 @@ from .geometry import optimize_geometry, geometric_initialization, multiscale_ic
 
 
 class GeometryAssistanceTests(TestCase):
+    def test_order_settings_are_backward_compatible_and_validated(self):
+        from core.feature_settings import load_feature_settings
+        self.assertTrue(load_feature_settings({}).icp_after_geometry)
+        self.assertFalse(load_feature_settings({'icp_after_geometry':False}).icp_after_geometry)
+        with self.assertRaises(ValueError):
+            load_feature_settings({'icp_after_geometry':1})
     def test_finer_scale_cannot_overwrite_better_coarse_candidate(self):
         from types import SimpleNamespace
         points=np.random.default_rng(3).uniform(-5,5,(2000,3))+[0,0,400]

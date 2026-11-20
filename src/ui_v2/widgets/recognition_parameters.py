@@ -130,13 +130,19 @@ class RecognitionParameters(QWidget):
         self.geometry_enabled.setToolTip('允许工件几何纠正有偏差的特征初值，固定首帧联合优化。关闭后使用原有特征约束 ICP。')
         self.geometry_enabled.toggled.connect(self._apply_feature_icp)
         icp_form.addRow(self.geometry_enabled)
+        self.refinement_order = QComboBox()
+        self.refinement_order.addItem('几何联合优化 → ICP',True)
+        self.refinement_order.addItem('ICP → 几何联合优化',False)
+        self.refinement_order.setToolTip('两项同时开启时生效；两种顺序均先执行 2D 特征初配准，ICP 使用该阶段固定参考，不逐帧传播修正。')
+        self.refinement_order.currentIndexChanged.connect(self._apply_feature_icp)
+        icp_form.addRow('执行顺序',self.refinement_order)
         self.geometry_fpfh = QCheckBox('FPFH 几何初值（可选，较慢）')
         self.geometry_fpfh.setToolTip('只在已有特征初值附近尝试几何配准；重复、对称结构可能无改善，默认关闭。需同时启用 ICP 和多尺度精修。')
         self.geometry_fpfh.toggled.connect(self._apply_feature_icp)
         icp_form.addRow(self.geometry_fpfh)
         self.geometry_fpfh.hide()
         self.geometry_enabled.setToolTip('从 2D 特征对应的 3D 初值开始，只在 ROI 和特征支撑范围内微调；所有结果必须保留原始特征约束。')
-        icp_note = QLabel('组合开启：特征初配准 → 几何联合优化 → ICP。末轮使用固定参考，拒绝时保留联合结果。必须设置 ROI；底栏为特征初值误差。')
+        icp_note = QLabel('先特征初配准，再按所选顺序优化。ICP 使用固定参考，拒绝时保留该阶段初值。必须设置 ROI；底栏为特征初值误差。')
         icp_note.setWordWrap(True)
         icp_note.setMinimumHeight(icp_note.fontMetrics().height()*4)
         icp_form.addRow(icp_note)
@@ -347,6 +353,9 @@ class RecognitionParameters(QWidget):
                 with QSignalBlocker(control):
                     control.setChecked(getattr(settings,key))
             self.geometry_enabled.setEnabled(idle)
+            with QSignalBlocker(self.refinement_order):
+                self.refinement_order.setCurrentIndex(self.refinement_order.findData(settings.icp_after_geometry))
+            self.refinement_order.setEnabled(idle and settings.geometry_enabled and settings.icp_enabled)
             self.geometry_fpfh.setEnabled(idle and settings.geometry_enabled and settings.icp_enabled)
             for key, spin in self.feature_icp_fields.items():
                 with QSignalBlocker(spin):
@@ -388,6 +397,7 @@ class RecognitionParameters(QWidget):
         if self.bridge is not None and self.marker_type.currentData() == FEATURE_RECOGNITION:
             settings = replace(self.bridge.stitching.feature_settings(),
                 icp_enabled=self.icp_enabled.isChecked(),
+                icp_after_geometry=self.refinement_order.currentData(),
                 geometry_enabled=self.geometry_enabled.isChecked(),
                 geometry_fpfh=self.geometry_fpfh.isChecked(),
                 **{key: spin.value() for key, spin in self.feature_icp_fields.items()})
