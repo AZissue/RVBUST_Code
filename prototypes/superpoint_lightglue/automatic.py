@@ -14,7 +14,7 @@ from ui_v2.feature_recognition import FEATURE_RESULT_PREFIX
 
 from .pipeline import PretrainedMatcher, analyze_pair, estimate_pose, frame_image, read_frame
 from .matching import PixelMatchCache
-from .refinement import feature_surface, refine_feature_pose, evidence_preserved, supported_surface
+from .refinement import feature_surface, refine_feature_pose, evidence_preserved, supported_surface, refine_joint_result
 from .geometry import optimize_geometry
 
 MAX_REFERENCES = 3
@@ -171,7 +171,7 @@ class FeatureStitching:
                     local_surfaces[row.uid] = supported_surface(local_surfaces[row.uid],evidence[0],settings.icp_distance)
                 except ValueError:
                     local_surfaces[row.uid] = np.empty((0,3))
-            if settings.icp_enabled:
+            if settings.icp_enabled and not settings.geometry_enabled:
                 for reference in references:
                     if reference.uid not in surfaces:
                         previous = read_frame(database.directory,reference)
@@ -211,6 +211,12 @@ class FeatureStitching:
                     geometry_report = '多帧几何未采用：偏离原始特征对应约束，保留逐帧精修位姿。'
             except (ValueError, RuntimeError) as exc:
                 geometry_report = f'多帧几何未采用，保留逐帧位姿：{exc}'
+        if settings.geometry_enabled and settings.icp_enabled:
+            refined, reports, accepted = refine_joint_result(rows,poses,feature_constraints,
+                lambda row: sample(read_frame(database.directory,row),settings.icp_voxel),settings)
+            poses = {key:value.tolist() for key,value in refined.items()}
+            icp_reports.extend(reports)
+            icp_accepted += accepted
         if sampling_errors:
             geometry_report += ' 几何采样不可用：' + '；'.join(dict.fromkeys(sampling_errors))
         # Build the full-resolution output only after every pose is final.

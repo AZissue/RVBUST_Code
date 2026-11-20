@@ -1,10 +1,57 @@
 """Object-ROI ICP refinement, using the project's existing quality-gated solver."""
 import numpy as np
+from dataclasses import replace
 
 from core.feature_masks import roi_pixels
 from core.postprocess.icp_registration import ICPParameters, refine_icp
 from core.postprocess.session import CloudLayer
 from .geometry import bounded, multiscale_icp
+
+
+def refine_joint_result(rows, poses, constraints, load_surface, settings):
+    """Final point-to-point ICP against frozen joint poses, never a growing ICP chain."""
+    from scipy.spatial import cKDTree
+    frozen = {key:np.asarray(value).copy() for key,value in poses.items()}
+    result = {key:value.copy() for key,value in frozen.items()}
+    reports, count, cache = [], 0, {}
+    def surface(row):
+        if row.uid not in cache:
+            cache[row.uid] = load_surface(row)
+        return cache[row.uid]
+    for index,row in enumerate(rows[1:],1):
+        if row.uid not in constraints:
+            continue
+        coarse,evidence = constraints[row.uid]
+        initial = frozen[row.uid]
+        try:
+            references = rows[max(0,index-3):index]
+            target = np.vstack([surface(ref) @ frozen[ref.uid][:3,:3].T + frozen[ref.uid][:3,3]
+                                for ref in references])
+            local = supported_surface(surface(row),evidence[0],settings.icp_distance)
+            target = supported_surface(target,evidence[1],settings.icp_distance)
+            pose,report,accepted = refine_feature_pose(CloudLayer('联合优化后的固定工件参考',target),
+                local,initial,evidence,replace(settings,geometry_enabled=False))
+            if accepted:
+                def score(matrix):
+                    world = local @ matrix[:3,:3].T + matrix[:3,3]
+                    forward = cKDTree(target).query(world)[0]
+                    backward = cKDTree(world).query(target)[0]
+                    return (np.mean(np.minimum(forward,settings.icp_distance)**2)
+                            + np.mean(np.minimum(backward,settings.icp_distance)**2))/2
+                if (not evidence_preserved(pose,coarse,evidence,settings)
+                        or score(pose) > score(initial)+1e-6):
+                    accepted = False
+                    report = 'ICP 未采用：原始特征约束或固定参考双向误差检查失败。'
+            if accepted:
+                result[row.uid] = pose
+                count += 1
+        except (ValueError,RuntimeError) as exc:
+            report = f'ICP 未采用：{exc}'
+        report = report.replace('保留特征配准位姿','保留联合阶段位姿')
+        reports.append(f'帧 {row.frame_id:03d} 联合优化后 ICP：{report} 未采用时保留联合阶段位姿。')
+        keep = {ref.uid for ref in rows[max(0,index-2):index+1]}
+        cache = {key:value for key,value in cache.items() if key in keep}
+    return result, tuple(reports), count
 
 
 def evidence_preserved(pose, coarse, evidence, settings):

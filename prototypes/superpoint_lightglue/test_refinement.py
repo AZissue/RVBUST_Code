@@ -9,6 +9,36 @@ from .pipeline import AlignedFrame
 
 
 class FeatureICPTests(unittest.TestCase):
+    def test_final_icp_uses_frozen_references_and_keeps_rejected_pose(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from .refinement import refine_joint_result
+        points=np.random.default_rng(8).uniform(-5,5,(1000,3))+[0,0,400]
+        rows=[SimpleNamespace(uid=str(i),frame_id=i+1) for i in range(3)]
+        poses={row.uid:np.eye(4) for row in rows}
+        poses['1'][2,3]=.2
+        poses['2'][2,3]=.2
+        constraints={key:(poses[key].copy(),(points,points+[0,0,.2])) for key in ('1','2')}
+        calls=[]
+        def solve(reference,local,initial,evidence,settings):
+            self.assertFalse(settings.geometry_enabled)
+            calls.append(reference.points.copy())
+            return (np.eye(4),'accepted',True) if len(calls)==1 else (initial,'rejected',False)
+        with patch('prototypes.superpoint_lightglue.refinement.refine_feature_pose',side_effect=solve):
+            result,reports,count=refine_joint_result(rows,poses,constraints,lambda row:points,FeatureSettings())
+        self.assertEqual(count,1)
+        np.testing.assert_array_equal(result['1'],np.eye(4))
+        np.testing.assert_array_equal(result['2'],poses['2'])
+        np.testing.assert_array_equal(result['0'],poses['0'])
+        self.assertAlmostEqual(np.max(calls[1][:,2]),np.max(points[:,2])+.2)
+        self.assertEqual(poses['1'][2,3],.2)
+        bad=np.eye(4); bad[0,3]=20
+        with patch('prototypes.superpoint_lightglue.refinement.refine_feature_pose',return_value=(bad,'bad proposal',True)):
+            rejected,_,count=refine_joint_result(rows,poses,constraints,lambda row:points,FeatureSettings())
+        self.assertEqual(count,0)
+        for key in poses:
+            np.testing.assert_array_equal(rejected[key],poses[key])
+
     def test_roi_surface_excludes_background_and_recovers_known_pose(self):
         from dataclasses import replace
         from core.postprocess.session import CloudLayer
@@ -67,10 +97,25 @@ class FeatureICPTests(unittest.TestCase):
                 hashes[uid]=(db.directory/'frames'/uid/'pointmap.ply').read_bytes()
             service=FeatureStitching(BiasedPixels())
             base=service.stitch(db,ids,settings=replace(FeatureSettings(),icp_enabled=False,geometry_enabled=False))
-            result=service.stitch(db,ids,workpiece_roi=(0,0,1,1),settings=replace(FeatureSettings(),icp_distance=1.))
+            from unittest.mock import patch
+            from .geometry import optimize_geometry
+            from .refinement import refine_joint_result
+            stages=[]
+            def joint(*args):
+                stages.append('joint')
+                return optimize_geometry(*args)
+            def final_icp(*args):
+                self.assertEqual(stages,['joint'])
+                stages.append('final_icp')
+                return refine_joint_result(*args)
+            with patch('prototypes.superpoint_lightglue.automatic.optimize_geometry',side_effect=joint), \
+                 patch('prototypes.superpoint_lightglue.automatic.refine_joint_result',side_effect=final_icp):
+                result=service.stitch(db,ids,workpiece_roi=(0,0,1,1),settings=replace(FeatureSettings(),icp_distance=1.))
             initial=np.asarray(db.records[base.uid].source_transforms[ids[1]])
             final=np.asarray(db.records[result.uid].source_transforms[ids[1]])
-            self.assertEqual(result.icp_accepted,1,result.icp_reports)
+            self.assertEqual(stages,['joint','final_icp'])
+            self.assertEqual(len(result.icp_reports),1)
+            self.assertIn('联合优化后 ICP',result.icp_reports[0])
             self.assertLess(np.linalg.norm(final[:3,3]-[-2,0,0]),
                             np.linalg.norm(initial[:3,3]-[-2,0,0]))
             self.assertEqual(len(result.cloud.points),2*x.size)
