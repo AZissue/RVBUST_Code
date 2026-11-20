@@ -394,6 +394,35 @@ class FrameBrowserTests(unittest.TestCase):
         self.assertFalse(self.browser.tree.topLevelItem(0).isExpanded())
         self.assertEqual(set(self.browser.selected_ids()), {first, second})
 
+    def test_pending_single_preview_does_not_replace_multi_selection_or_view(self):
+        from PySide6.QtCore import QSignalBlocker
+        first = self.db.ingest(self.source())
+        second = self.db.ingest(self.source(2))
+        owner = self.bridge.frame_db
+        original_load = self.db.load_frame
+        release = threading.Event()
+        entered = threading.Event()
+        def load(*args, **kwargs):
+            entered.set()
+            if not release.wait(4):
+                raise TimeoutError('preview test did not release worker')
+            return original_load(*args, **kwargs)
+        try:
+            with patch.object(self.db, 'load_frame', side_effect=load):
+                self.browser.tree.setCurrentItem(self.browser._items[first])
+                self.wait(entered.is_set)
+                with QSignalBlocker(self.browser.tree):
+                    self.browser._items[first].setSelected(True)
+                    self.browser._component_items[second, 'image'].setSelected(True)
+                self.browser._selection_changed()
+                release.set()
+                self.wait(lambda: not self.bridge._workers)
+            self.assertEqual(self.browser.selected_ids(), [first, second])
+            self.assertNotIn('multi_cam', owner._displayed)
+            self.assertIsNone(self.win.workspace_multi().viewer()._database_cloud)
+        finally:
+            release.set()
+
     def test_context_click_can_clear_db_without_loading_a_pointcloud(self):
         first = self.db.ingest(self.source())
         second = self.db.ingest(self.source(2))

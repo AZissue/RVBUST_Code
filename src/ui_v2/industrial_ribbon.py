@@ -350,6 +350,8 @@ class IndustrialRibbon(QWidget):
             self.commands[(shell.current_mode(), 'stitch')].setEnabled(ready and raw >= 2)
         self.commands[(shell.current_mode(), 'stitch')].setToolTip(
             '将当前基座系合并点云发布为独立DB结果，保留原始帧及来源关系。' if robot else
+            '按 Ctrl 或 Shift 在 DB 树选择至少两帧，仅拼接所选原始帧；帧与子项自动去重，复选框用于显示。'
+            if getattr(shell, '_offline_stitch', False) else
             '优先拼接DB勾选的至少两帧原始点云；按当前模式使用标记配准或标定参数，生成独立拼接帧。未勾选时沿用当前工作流。')
         if (shell.current_mode(), 'fpfh') in self.commands:
             self.commands[(shell.current_mode(), 'fpfh')].setEnabled(ready)

@@ -397,6 +397,9 @@ class FrameBrowser(QWidget):
         return uid if record is not None and record.status != STALE_RESULT else None
 
     def _selection_changed(self):
+        if len(self.selected_ids()) > 1:
+            # Cancel any single-frame read started before Ctrl/Shift extended the selection.
+            self.selection_cleared.emit()
         if not self.tree.selectedItems():
             self.tree.setToolTip('')
         if not self.tree.selectedItems() and self.tree.currentItem() is not None:
@@ -431,7 +434,7 @@ class FrameBrowser(QWidget):
         ids = self.selected_ids()
         if len(items) > 1:
             self.properties.show_values({'类型': '多项选择', '选中项': len(items),
-                '关联帧 / 结果': len(ids)})
+                '关联帧 / 结果': len(ids), '显示': '保留当前视图；单选可查看对应数据'})
             return
         item = items[0]
         component = item.data(0, Qt.UserRole + 2)
@@ -571,6 +574,8 @@ class FrameBrowser(QWidget):
         box.open()
 
     def _selected(self, item, previous):
+        if len(self.selected_ids()) > 1:
+            return
         if item and item.data(0, Qt.UserRole + 2) == 'calibration':
             self.calibration_selected.emit()
             return
@@ -761,7 +766,12 @@ class FrameDatabaseController(QObject):
                 bridge.shell.log('DB单帧读取失败：' + str(error), 'error')
                 return
             frame, cloud = result
-            self.display_frame(mode, uid, frame, cloud, component, switch_view=follow_view and requested_component in ('cloud','image'))
+            self.display_frame(mode, uid, frame, cloud, component,
+                               switch_view=follow_view and requested_component in ('cloud','image'),
+                               highlight=False)
+            browser = self.browsers[mode]
+            if browser.selected_ids() == [uid]:
+                browser.show_frame(uid, frame, component)
         bridge._run_background(lambda: self.databases[mode].load_frame(uid, component), done, name='db_frame_preview')
 
     def match_geometry(self, mode, uid, markers):

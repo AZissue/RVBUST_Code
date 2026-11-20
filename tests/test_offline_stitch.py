@@ -147,7 +147,10 @@ class OfflineTests(unittest.TestCase):
                 browser.tree.clearSelection()
                 browser._items[identifiers[0]].setSelected(True)
                 browser._component_items[identifiers[1], 'cloud'].setSelected(True)
-            button = window._industrial_ribbon.commands['mobile_chain', 'stitch_selected']
+                browser._component_items[identifiers[0], 'image'].setSelected(True)
+                browser._component_items[identifiers[1], 'image'].setSelected(True)
+            browser._selection_changed()
+            button = window._industrial_ribbon.commands['mobile_chain', 'stitch']
             button.click()
             self.wait(lambda: not bridge._workers)
             results = [r for r in database.records.values() if r.kind == 'result']
