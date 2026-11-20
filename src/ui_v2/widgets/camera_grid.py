@@ -321,21 +321,7 @@ class CameraCard(QFrame):
         # 无效标记，红圈显示），无全量列表时回退过滤后的 frame.markers。
         markers = (markers if markers is not None
                    else (frame.markers_all or frame.markers))
-        h, w = frame.image_np.shape[:2]
-        is_board = frame.board_pattern_name is not None
-        overlay = []
-        for m in markers or []:
-            px = m.get('x_2d', m.get('x', 0.0))
-            py = m.get('y_2d', m.get('y', 0.0))
-            has_3d = 'x_3d' in m
-            overlay.append({
-                'x': float(px) / w if w > 0 else 0.0,
-                'y': float(py) / h if h > 0 else 0.0,
-                'code': m.get('code', '?'),
-                'valid_3d': has_3d,
-                'marker_type': 'board' if is_board else 'coded',
-            })
-        self._thumb.set_markers(overlay)
+        self._thumb.set_marker_data(markers or [])
 
     def preview_rate_text(self):
         if self._freeze.isChecked():
@@ -571,7 +557,7 @@ class CameraGrid(QScrollArea):
             height, width = frame.image_np.shape[:2]
             display = classify_markers(frame.markers_all or frame.markers,
                 reference_markers if cid != reference_id else None, registration_accepted=accepted)
-            card.set_marker_overlay([dict(x=row.xy[0]/max(1,width), y=row.xy[1]/max(1,height),
+            card.set_marker_overlay([dict(row.marker, x=row.xy[0]/max(1,width), y=row.xy[1]/max(1,height),
                 code=row.code, valid_3d=row.xyz is not None, display_color=row.color) for row in display.rows])
 
     def resizeEvent(self, event: QResizeEvent):

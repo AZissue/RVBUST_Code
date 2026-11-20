@@ -504,17 +504,7 @@ class TurntableWorkspace(QWidget):
             self.preview_2d_label.clear_image()
             return
         self.preview_2d_label.setPixmap(pixmap)
-        if markers:
-            h, w = image_np.shape[:2]
-            overlay = [{
-                'x': float(m['x_2d']) / w if w > 0 else 0.0,
-                'y': float(m['y_2d']) / h if h > 0 else 0.0,
-                'code': m.get('code', '?'),
-                'valid_3d': bool(m.get('valid_3d', True)),
-            } for m in markers]
-            self.preview_2d_label.set_markers(overlay)
-        else:
-            self.preview_2d_label.clear_markers()
+        self.preview_2d_label.set_marker_data(markers or [], reference_markers)
 
     # ------------------------------------------------------------------ Worker
     def set_background_runner(self, runner):

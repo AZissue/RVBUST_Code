@@ -14,6 +14,33 @@ from PySide6.QtWidgets import QApplication
 
 
 class MarkerDisplayTests(unittest.TestCase):
+    def test_all_preview_presentations_share_interaction_and_marker_geometry(self):
+        from ui_common.image_preview import AspectRatioLabel
+        app = QApplication.instance() or QApplication([])
+        source = QImage(240, 175, QImage.Format_RGB32)
+        source.fill(QColor('black'))
+        marker = dict(code=7, x_2d=100, y_2d=85, marker_type='unencoded_circle',
+                      ellipse_2d=[16, 28, 90], valid_3d=False)
+        reference = MarkerImage()
+        preview = AspectRatioLabel()
+        self.assertIs(type(preview).wheelEvent, type(reference).wheelEvent)
+        for view in (reference, preview):
+            view.resize(240, 175)
+            view.set_image(source, [marker])
+            view.zoom = 2
+            view.pan = QPointF(10, 2.5)
+            view.show()
+        app.processEvents()
+        self.assertEqual(reference.grab().toImage(), preview.grab().toImage())
+        preview.set_markers([dict(marker, x=100/240, y=85/175)])
+        self.assertEqual(reference.grab().toImage(), preview.grab().toImage())
+        preview.clear_image()
+        self.assertEqual(preview.zoom, 1)
+        self.assertTrue(preview.image.isNull())
+        self.assertFalse(preview.display.rows)
+        for view in (reference, preview):
+            view.close()
+
     def test_cloud_points_preserve_coordinates_colors_and_duplicate_codes(self):
         def marker(code, z=30, **extra):
             return dict(code=code, x_2d=10, y_2d=20, x_3d=1, y_3d=2,

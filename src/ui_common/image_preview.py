@@ -1,10 +1,9 @@
 """Image conversion and aspect-preserving preview shared by all presentations."""
 from __future__ import annotations
-from typing import Dict, List, Optional
+from typing import Optional
 import numpy as np
-from PySide6.QtCore import Qt, QSize, QPointF
-from PySide6.QtGui import QImage, QPixmap, QPainter, QColor, QPen, QFont
-from PySide6.QtWidgets import QLabel
+from PySide6.QtCore import QSize
+from PySide6.QtGui import QImage, QPixmap
 from core.utils import logger
 from .appearance import ImagePreviewAppearance
 
@@ -39,104 +38,41 @@ def numpy_to_qpixmap(img: np.ndarray) -> Optional[QPixmap]:
         return None
 
 
-class AspectRatioLabel(QLabel):
-    """保持固定宽高比的 QLabel，图像居中显示不被拉伸，支持编码圆标记叠加。
+from .image_canvas import ImagePreviewCanvas
 
-    标记在 paintEvent 中按显示坐标绘制（圆半径为屏幕像素，与图像缩放
-    无关）：原实现把圈预渲染到原图尺寸的缓存层，4px 半径在全分辨率
-    图像（2448×2048）缩到预览大小时亚像素化，肉眼不可见（2026-10-10
-    转台"识别圆心没有显示"的根因）。标记数量通常为几十个，逐帧绘制开销
-    可忽略。
-    """
+
+class AspectRatioLabel(ImagePreviewCanvas):
+    """Compatibility adapter for normalized marker lists and QPixmap callers."""
 
     def __init__(self, ratio=4.0 / 3.0, parent=None, *, appearance=None):
         super().__init__(parent)
         self._appearance = appearance or ImagePreviewAppearance()
         self._ratio = ratio
-        self._fill = False
-        self.setAlignment(Qt.AlignCenter)
-        self.setStyleSheet(f"background-color: {self._appearance.background}; "
-                          f"border: 1px solid {self._appearance.border};")
-        self._pixmap: Optional[QPixmap] = None
-        self._markers: List[Dict] = []   # [{'x','y','code', 'valid_3d'}] 归一化坐标
-        self._marker_radius = self._appearance.marker_radius          # 屏幕像素（显示空间，不随图像缩放变化）
-        self._font = QFont("Consolas", 8)
-        self._font.setBold(True)
+        self.setStyleSheet(f"background-color: {self._appearance.background}; border: 1px solid {self._appearance.border};")
+        self.setMinimumHeight(0)
+        self.setMaximumHeight(16777215)
 
-    def set_markers(self, markers: List[Dict]):
-        """markers: 编码圆列表，元素含 x/y（归一化 0~1）、code、可选 valid_3d。
+    def setPixmap(self, pixmap):
+        self.set_image(None if pixmap is None else pixmap.toImage())
 
-        颜色语义：绿圈 = 3D 有效；红圈 = 2D 检出但 3D 无有效深度
-        （valid_3d=False，无 x_3d 字段）；蓝圈 = 标定板标记。
-        """
-        self._markers = markers or []
-        self.update()
+    def set_markers(self, markers):
+        converted = []
+        for marker in markers or ():
+            row = dict(marker)
+            row['x_2d'] = float(row.get('x', 0)) * self.image.width()
+            row['y_2d'] = float(row.get('y', 0)) * self.image.height()
+            converted.append(row)
+        self.set_marker_data(converted)
+        # Legacy normalized overlays carry only depth validity, never XYZ.
+        from dataclasses import replace
+        from .industrial_scene.marker_display import GREEN, YELLOW
+        self.display = replace(self.display, rows=tuple(
+            replace(row, color=row.marker.get('display_color') or
+                    (GREEN if row.marker.get('valid_3d', True) else YELLOW))
+            for row in self.display.rows))
 
     def clear_markers(self):
-        self._markers = []
-        self.update()
-
-    def set_fill(self, enabled):
-        """Fill by proportional cropping; markers use the same transform."""
-        self._fill = bool(enabled)
-        self.update()
-
-    def setPixmap(self, pixmap):  # noqa: N802（保持 Qt 接口名）
-        self._pixmap = pixmap
-        self.update()
-
-    def clear_image(self):
-        self._pixmap = None
-        self._markers = []
-        self.update()
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self.update()
-
-    def paintEvent(self, event):
-        super().paintEvent(event)
-        if self._pixmap is None or self._pixmap.isNull():
-            painter = QPainter(self)
-            painter.setPen(QPen(QColor(self._appearance.empty_color), 1))
-            painter.drawText(self.rect(), Qt.AlignCenter, "无图像")
-            return
-        # 在标签内居中按比例缩放绘制
-        pw, ph = self._pixmap.width(), self._pixmap.height()
-        lw, lh = self.width(), self.height()
-        scale = (max if self._fill else min)(lw / pw, lh / ph)
-        sw, sh = int(pw * scale), int(ph * scale)
-        x, y = (lw - sw) // 2, (lh - sh) // 2
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.SmoothPixmapTransform)
-        painter.drawPixmap(x, y, sw, sh, self._pixmap)
-        # 标记按显示坐标绘制（半径/线宽为屏幕像素，任何缩放下都清晰）
-        if self._markers:
-            painter.setRenderHint(QPainter.Antialiasing)
-            painter.setFont(self._font)
-            r = self._marker_radius
-            for m in self._markers:
-                dx = x + float(m['x']) * sw
-                dy = y + float(m['y']) * sh
-                marker_type = m.get('marker_type', 'coded')
-                if marker_type == 'board':
-                    color = QColor(self._appearance.board_color)
-                else:
-                    # 红 = 2D 检出但 3D 无有效深度；绿 = 3D 有效
-                    has_3d = m.get('valid_3d', True)
-                    color = QColor(self._appearance.valid_color if has_3d else self._appearance.invalid_color)
-                explicit_color = m.get('display_color')
-                if isinstance(explicit_color, str) and QColor(explicit_color).isValid():
-                    color = QColor(explicit_color)
-                painter.setPen(QPen(color, 2))
-                painter.setBrush(Qt.NoBrush)
-                painter.drawEllipse(QPointF(dx, dy), r, r)
-                painter.setPen(QPen(color, 1))
-                painter.drawText(
-                    QPointF(dx + r + 2, dy - r - 2),
-                    str(m.get('code', '')))
-        painter.end()
-
+        self.set_marker_data([])
 
     def heightForWidth(self, width: int) -> int:
         return int(width / self._ratio)

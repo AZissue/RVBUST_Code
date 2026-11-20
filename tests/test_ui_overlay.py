@@ -10,7 +10,7 @@ test_ui_overlay.py —— AspectRatioLabel 标记叠加绘制回归测试（离�
 圈在期望位置可见，防止回归。
 
 验证：
-  [1] 红圈（valid_3d=False）在期望位置可见
+  [1] 黄圈（valid_3d=False）在期望位置可见
   [2] 绿圈（valid_3d=True）在期望位置可见
   [3] clear_markers 后圈消失
 
@@ -79,16 +79,16 @@ def count_hits(px: float, py: float, want: str) -> int:
     for dy in range(-6, 7):
         for dx in range(-6, 7):
             c = grab.pixelColor(cx + dx, cy + dy)
-            if want == "red" and c.red() > 200 and c.green() < 100 and c.blue() < 100:
+            if want == "red" and c.red() > 200 and c.green() > 150 and c.blue() < 150:
                 hits += 1
             elif want == "green" and c.green() > 180 and c.red() < 80:
                 hits += 1
     return hits
 
 
-print("\n[1] 红圈（3D 无效）可见")
+print("\n[1] 黄圈（3D 无效）可见")
 hits_red = count_hits(1900.0, 730.0, "red")
-check("红圈命中像素充足（≥8）", hits_red >= 8, f"命中 {hits_red}")
+check("黄圈命中像素充足（≥8）", hits_red >= 8, f"命中 {hits_red}")
 
 print("\n[2] 绿圈（3D 有效）可见")
 hits_green = count_hits(500.0, 1300.0, "green")
@@ -105,14 +105,14 @@ def total_color(want: str) -> int:
     for yy in range(0, grab2.height(), 2):
         for xx in range(0, grab2.width(), 2):
             c = grab2.pixelColor(xx, yy)
-            if want == "red" and c.red() > 200 and c.green() < 100 and c.blue() < 100:
+            if want == "red" and c.red() > 200 and c.green() > 150 and c.blue() < 150:
                 n += 1
             elif want == "green" and c.green() > 180 and c.red() < 80:
                 n += 1
     return n
 
 
-check("clear 后红圈消失", total_color("red") == 0, f"残留 {total_color('red')}")
+check("clear 后黄圈消失", total_color("red") == 0, f"残留 {total_color('red')}")
 check("clear 后绿圈消失", total_color("green") == 0, f"残留 {total_color('green')}")
 
 print("\n" + "=" * 60)

@@ -258,10 +258,10 @@ class IndustrialTests(unittest.TestCase):
         ws.camera_grid().set_frame('cam1',second)
         ws.on_detect_done({'cam0':1,'cam1':2})
         card=ws.camera_grid().card('cam1')
-        self.assertEqual([m['display_color'] for m in card._thumb._markers],[RED,GREEN,YELLOW])
+        self.assertEqual([row.color for row in card._thumb.display.rows],[RED,GREEN,YELLOW])
         self.assertFalse(card._btn_capture.isHidden())
         ws.on_calibrate_done([],0,False);ws.set_state('calibrated')
-        self.assertNotIn(RED,[m['display_color'] for m in card._thumb._markers])
+        self.assertNotIn(RED,[row.color for row in card._thumb.display.rows])
 
 
 if __name__=='__main__':unittest.main(verbosity=2)
