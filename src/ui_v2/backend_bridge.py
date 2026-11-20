@@ -1405,7 +1405,7 @@ class BackendBridge(QObject):
             ws.set_state('detected' if ready else 'captured')
             if calibration_frames:
                 self.shell.log(f'保留 {len(frames)} 路标定帧，参考相机 {camera_id}，'
-                               + ('可直接计算外参。' if ready else '请先检测标记再计算外参。'), 'info')
+                               + ('可直接计算外参。' if ready else '请等待后台自动识别完成后计算外参。'), 'info')
             ws.viewer().set_reference(camera_id)
             self.shell._refresh_statusbar()
             self._sync_multi_topology()
@@ -2634,7 +2634,7 @@ class BackendBridge(QObject):
             else:
                 ws.set_state("captured")
                 self.shell.log(
-                    "会话加载完成: 标定帧已恢复（无标记数据，请重新检测）", "success")
+                    "会话加载完成: 标定帧已恢复，等待后台自动识别", "success")
         self.shell.set_dirty(True)
 
     # ------------------------------------------------------------------

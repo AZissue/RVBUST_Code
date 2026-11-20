@@ -45,7 +45,7 @@ class MultiCameraStatus(QObject):
             ribbon.camera_status.setToolTip('\n'.join(details))
             step = {'idle': 0, 'connected': 1, 'captured': 2, 'detected': 3,
                     'calibrated': 3, 'locked': 4}.get(self.workspace.current_state(), 0)
-            titles = ('连接设备', '采集数据', '检测标记', '计算外参', '扫描拼接')
+            titles = ('连接设备', '采集数据', '自动识别', '计算外参', '扫描拼接')
             ribbon.workflow_status.setText('  ›  '.join(
                 f'<span style="color:{"#eeeeee" if i == step else "#777777"}">{i+1} {title}</span>'
                 for i, title in enumerate(titles)))

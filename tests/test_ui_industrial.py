@@ -81,6 +81,7 @@ class IndustrialTests(unittest.TestCase):
 
     def test_real_buttons_and_gate_evaluation_turntable_session_survive(self):
         win=self.win
+        self.assertNotIn(('multi_cam', 'detect'), win._industrial_ribbon.commands)
         win.set_mode('multi_cam',[DeviceInfo(serial='A',backend_ref=0),DeviceInfo(serial='B',backend_ref=1)])
         multi=win.workspace_multi()
         capture=QSignalSpy(multi.capture_requested)

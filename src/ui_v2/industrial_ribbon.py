@@ -235,7 +235,6 @@ class IndustrialRibbon(QWidget):
             groups = [('外参标定', [
                 ('topology', '星型标定', 'layers', multi._btn_topology),
                 ('capture', '拍摄标定帧', 'camera', multi._btn_capture),
-                ('detect', '检测标记', 'detect', multi._btn_detect),
                 ('calibrate', '计算外参', 'calibrate', multi._btn_calibrate)]),
                 ('扫描采集', [('scan_preview', '2D实时预览', 'video', multi._btn_scan_preview),
                              ('scan', '全部拍扫描', 'camera', multi._btn_scan_capture)])]
