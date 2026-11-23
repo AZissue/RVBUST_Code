@@ -38,10 +38,13 @@ class RegionPreview(AspectRatioLabel):
             self.setPixmap(numpy_to_qpixmap(image))
 
     def _image_rect(self):
-        w, h = self._pixmap.width(), self._pixmap.height()
-        scale = min(self.width() / w, self.height() / h)
-        w, h = int(w * scale), int(h * scale)
-        return QRectF((self.width() - w) // 2, (self.height() - h) // 2, w, h)
+        if self.image.isNull():
+            return QRectF()
+        w, h = self.image.width(), self.image.height()
+        scale = (max if self._fill else min)(self.width() / w, self.height() / h) * self.zoom
+        w, h = w * scale, h * scale
+        return QRectF((self.width() - w) / 2 + self.pan.x(),
+                      (self.height() - h) / 2 + self.pan.y(), w, h)
 
     def _normalized(self, position):
         r = self._image_rect()
@@ -49,15 +52,15 @@ class RegionPreview(AspectRatioLabel):
                        np.clip((position.y() - r.y()) / r.height(), 0, 1))
 
     def pixel_box(self):
-        if self.region is None:
+        if self.region is None or self.image.isNull():
             return None
-        w, h = self._pixmap.width(), self._pixmap.height()
+        w, h = self.image.width(), self.image.height()
         r = self.region
         return (int(r.left() * w), int(r.top() * h),
                 int(np.ceil(r.right() * w)), int(np.ceil(r.bottom() * h)))
 
     def mousePressEvent(self, event):
-        if (event.button() == Qt.LeftButton and self._pixmap is not None
+        if (event.button() == Qt.LeftButton and not self.image.isNull()
                 and self._image_rect().contains(event.position())):
             self._anchor = self._normalized(event.position())
             self._drag = QRectF(self._anchor, self._anchor)
@@ -88,7 +91,7 @@ class RegionPreview(AspectRatioLabel):
     def paintEvent(self, event):
         super().paintEvent(event)
         region = self._drag if self._drag is not None else self.region
-        if self._pixmap is None or self._pixmap.isNull():
+        if self.image.isNull():
             return
         r = self._image_rect()
         painter = QPainter(self)
@@ -285,7 +288,7 @@ class FeatureMatchDialog(QDialog):
         rejected = np.flatnonzero(~result.inliers)
         displayed = np.r_[kept[:80], rejected[::max(1, int(np.ceil(len(rejected) / 35)))][:35]]
         for view, pixels in zip(self.views, result.pixels):
-            w, h = view._pixmap.width(), view._pixmap.height()
+            w, h = view.image.width(), view.image.height()
             view.set_markers([
                 dict(x=pixels[i, 0] / w, y=pixels[i, 1] / h, code=str(i+1),
                      display_color=('#55ee88' if result.inliers[i] else
