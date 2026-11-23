@@ -31,6 +31,13 @@
   - **注意**：`build-release` 的 CMakeCache 里 RVC 路径原先指向已删除的
     `D:/Program Files/RVBUST/RVC/RVCSDK`，已改指仓库内 `third_party/RVC`。
   - **待人工验收（UI）**：见本次会话给出的操作清单。
+  - **打包与推送（2026-11-23，用户明确要求）**：
+    - 绿色包：`dist\HandEyeCalibrationTool_v3.2\` 与同名 `.zip`
+      （129 个文件，解压后 231.9 MB，zip 86.3 MB；来源 `build-release`，
+      `HANDEYE_HIDE_MEASUREMENT_TOOLS=ON`）。已核对包内无测试 exe。
+    - `HandEyeTools` 分支 `1b7d6f9..10c91d9` 已推到 `AICode`
+      （keybord317/AICode）与 `RVBUST_Code`（AZissue/RVBUST_Code），
+      annotated 标签 `v3.2.0` 指向 `10c91d9`。
 
 - **2026-11-06（之四十：架构规范化定案；表现层 12 栅格 + SVG 图标）**
   - **用户决定**：整体架构按五层规范化（表现 / 通信与网关 / 核心引擎 /
