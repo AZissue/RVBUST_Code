@@ -363,6 +363,22 @@ void MainWindow::wireSignals()
             [this](const QImage& img) { m_view2d->updateFrame(img, true, true); });
     connect(m_camera, &CameraManager::previewRightFrameReady, this,
             [this](const QImage& img) { m_view3d->showImage(img); });
+    // 2D 视窗底部工具栏「相机选择」：只改预览流来自哪台相机。采集/识别仍用
+    // 相机自己的采集相机（X2 彩色优先），所以像素→3D 只在两者一致时有效。
+    connect(m_view2d, &Image2DView::previewCameraSelected, this,
+            [this](int camera) {
+                m_camera->setPreviewCamera(
+                    static_cast<CameraManager::PreviewCamera>(camera));
+                // 识别/取点标记画在采集相机的像素坐标里，换了预览相机就不再成立。
+                m_view2d->clearMarkers();
+                QString name;
+                switch (camera) {
+                case 1:  name = QStringLiteral("右相机"); break;
+                case 2:  name = QStringLiteral("彩色相机"); break;
+                default: name = QStringLiteral("左相机"); break;
+                }
+                m_logger->info(QStringLiteral("预览相机：%1").arg(name));
+            });
     connect(m_camera, &CameraManager::captureComplete,
             m_flow, &CaptureFlow::onCaptureReady);
     connect(m_camera, &CameraManager::captureComplete, this, [this]() {
@@ -402,6 +418,15 @@ void MainWindow::wireSignals()
         m_actionButtons->setPreviewEnabled(true);
         clearBusy();
 
+        // 「相机选择」按机型放开：X1 只有左相机；X2 有右相机，彩色相机看
+        // support_extra。默认选择与采集相机一致（彩色优先）。
+        m_view2d->setCameraChoices(
+            m_camera->supportsPreviewCamera(CameraManager::PreviewCamera::Left),
+            m_camera->supportsPreviewCamera(CameraManager::PreviewCamera::Right),
+            m_camera->supportsPreviewCamera(CameraManager::PreviewCamera::Color));
+        m_view2d->setPreviewCamera(static_cast<Image2DView::PreviewCamera>(
+            static_cast<int>(m_camera->previewCamera())));
+
         // 第 12 回合 任务 1: the capture parameters in effect are the camera's
         // own.  Name them in the operation log — with the settings UI gone this
         // is the only place the operator can see what the next capture will use.
@@ -421,6 +446,7 @@ void MainWindow::wireSignals()
         m_actionButtons->setCaptureEnabled(false);
         m_actionButtons->setPreviewActive(false);
         m_actionButtons->setPreviewEnabled(false);
+        m_view2d->setCameraChoices(false, false, false);
         // 断开是另一回事，不能继续挂着"无操作暂停"的提示。
         if (m_view2d) m_view2d->setPreviewPausedHint(false, 0);
         m_idlePreviewPaused = false;
@@ -526,7 +552,6 @@ void MainWindow::wireSignals()
                 m_view3d->setSelectableMarkers({}, {});
                 // Stale board pose until the new frame is recognized.
                 m_view3d->clearBoardFrame();
-                m_pendingBoardPose = BoardPoseFit::Pose{};
                 // Measurement page data source: the organized 3D grid of this
                 // very capture, handed over by refcount (no copy of the ~37 MB
                 // buffer).  CameraManager published it before emitting the
@@ -559,22 +584,12 @@ void MainWindow::wireSignals()
                 // Kept as-is because the visible result is identical and the
                 // behaviour cannot be re-verified without the GUI.
                 beginHeavyOp(QStringLiteral("3D点云重传(标记)"));
-                // Keep an active measurement colouring: the colours belong to
-                // this same cloud (same frame, same point count), so re-using
-                // them is both correct and cheaper than dropping them here.
                 const FrameBuffer::FloatBuf& pts = m_flow->capturedPoints();
-                // 重传必须带上颜色：偏差着色在用时用偏差色，否则回到这帧自己的
-                // 原始颜色（CaptureFlow 保留了它）。此前这里传空，识别一次点云
-                // 就变成灰色且再也回不来。
-                FrameBuffer::FloatBuf colors;
-                if (m_measureCloudColors && pts
-                    && m_measureCloudColors->size() == pts->size()) {
-                    colors = m_measureCloudColors;
-                } else {
-                    colors = m_flow->capturedColors();
-                    if (colors && pts && colors->size() != pts->size())
-                        colors.reset();
-                }
+                // 重传必须带上颜色：回到这帧自己的原始颜色（CaptureFlow 保留了
+                // 它）。此前这里传空，识别一次点云就变成灰色且再也回不来。
+                FrameBuffer::FloatBuf colors = m_flow->capturedColors();
+                if (colors && pts && colors->size() != pts->size())
+                    colors.reset();
                 showCloud(pts, colors);
                 endHeavyOp();
                 m_view3d->highlightPoints(highlights3d);
@@ -602,8 +617,8 @@ void MainWindow::wireSignals()
     connect(m_view3d, &VisSceneView::logRequested, this,
             [this](const QString& line) { m_logger->info(line); });
     // Measurement tool (3D 测量一体化工具 parity).  The panel computes, the
-    // views only paint: ROI rectangles go to the 2D view, the snapshot goes to
-    // the 2D display pages and to the 3D deviation/annotation overlay.
+    // views only paint: ROI rectangles go to the 2D view, the fitted plane and
+    // measured region go to the 3D annotation overlay.
     connect(m_view2d, &Image2DView::roiSelected,
             m_toolsPanel, &ToolsPanel::onRoiSelected);
     connect(m_toolsPanel, &ToolsPanel::roisChanged,
@@ -616,21 +631,13 @@ void MainWindow::wireSignals()
     connect(m_toolsPanel, &ToolsPanel::logMessage, this,
             [this](const QString& line) { m_logger->info(line); });
     connect(m_toolsPanel, &ToolsPanel::measurementUpdated,
-            m_view2d, &Image2DView::setMeasurement);
-    connect(m_toolsPanel, &ToolsPanel::measurementUpdated,
             this, &MainWindow::onMeasurementUpdated);
-    // The 3D "偏差着色" toolbar button and the panel's checkbox are two views of
-    // one state — route each to the other so they cannot drift apart.
-    connect(m_view3d, &VisSceneView::deviationColoringToggled,
-            m_toolsPanel, &ToolsPanel::setDeviationColoring);
     connect(m_toolsPanel, &ToolsPanel::pixelTo3DOnlineQueryRequested,
             this, &MainWindow::onPixelTo3DOnlineQueryRequested);
     connect(m_toolsPanel, &ToolsPanel::pixelTo3DOfflineImageRequested,
             this, &MainWindow::onPixelTo3DOfflineImageRequested);
     connect(m_toolsPanel, &ToolsPanel::pixelTo3DOfflineImageEnded,
             this, &MainWindow::onPixelTo3DOfflineImageEnded);
-    connect(m_toolsPanel, &ToolsPanel::deviationColoringChanged,
-            m_view3d, &VisSceneView::setDeviationColoringChecked);
     connect(m_flow, &CaptureFlow::clearMarkersRequested,
             m_view2d, &Image2DView::clearMarkers);
     connect(m_flow, &CaptureFlow::tipRequested,
@@ -719,7 +726,6 @@ void MainWindow::wireSignals()
             m_eyeHandMode == EyeHandMode::EyeInHand,
             m_calibType == CalibType::Marker,
             m_data->allRecords());
-        syncBoardHistory();
         // Refresh pose guidance too (每保存/读入一帧刷新「当前 vs 最近已采」).
         updatePoseGuide();
     });
@@ -879,8 +885,6 @@ void MainWindow::resetSession()
     m_flow->reset();
 
     // Stage 8 advisory state resets with the session.
-    m_boardFrames.clear();
-    m_pendingBoardPose = BoardPoseFit::Pose{};
     m_sidePanel->setPoseGuide(
         QStringLiteral("读取机器人位姿后显示与已采位姿的差异"), false);
     m_sidePanel->setQualityReport(
@@ -1032,6 +1036,14 @@ bool MainWindow::queryPixelFromCurrentFrame(int pixelX, int pixelY,
 {
     if (!m_camera->isConnected()) {
         message = QStringLiteral("请先连接相机并拍照后再点击取点");
+        return false;
+    }
+
+    // 预览流可以切到左/右/彩色任一台，但点云网格与对应图只属于采集相机。
+    // 两者不一致时像素坐标对不上，宁可拒绝也不能给一个错的 3D 点。
+    if (!m_camera->previewMatchesCaptureCamera()) {
+        message = QStringLiteral("当前预览的不是采集相机，像素→3D 只对采集相机"
+                                 "画面有效（请在「相机选择」里切回采集相机）");
         return false;
     }
 
@@ -1511,11 +1523,8 @@ void MainWindow::onBoardMarkers(const std::vector<std::array<float, 3>>& pts3d)
     const BoardPoseFit::Pose pose = BoardPoseFit::fit(pts3d);
     if (!pose.valid) {
         m_view3d->clearBoardFrame();
-        m_pendingBoardPose = BoardPoseFit::Pose{};
         return;
     }
-
-    m_pendingBoardPose = pose;
 
     VisSceneView::BoardFrame frame;
     frame.frameNo = 0;                     // current frame
@@ -1526,50 +1535,6 @@ void MainWindow::onBoardMarkers(const std::vector<std::array<float, 3>>& pts3d)
     m_view3d->setBoardFrame(frame);
 }
 
-void MainWindow::syncBoardHistory()
-{
-    const int n = m_data->count();
-    // Grow: one record was saved since the last sync — record its fitted pose.
-    while (static_cast<int>(m_boardFrames.size()) < n) {
-        BoardFrameEntry entry;
-        entry.frameNo = static_cast<int>(m_boardFrames.size()) + 1;
-        entry.pose = m_pendingBoardPose;   // may be invalid (no board fitted)
-        m_boardFrames.push_back(entry);
-        m_pendingBoardPose = BoardPoseFit::Pose{};
-    }
-    // Shrink: records were removed (undo) — drop trailing history frames.
-    while (static_cast<int>(m_boardFrames.size()) > n)
-        m_boardFrames.pop_back();
-
-    refreshBoardOverlay();
-}
-
-void MainWindow::refreshBoardOverlay()
-{
-    std::vector<VisSceneView::BoardFrame> frames;
-    frames.reserve(m_boardFrames.size());
-    for (const auto& e : m_boardFrames) {
-        if (!e.pose.valid) continue;
-        VisSceneView::BoardFrame f;
-        f.frameNo = e.frameNo;
-        f.centerMM = e.pose.center;
-        f.quat = e.pose.quat;
-        f.extentXMM = e.pose.extentX;
-        f.extentYMM = e.pose.extentY;
-        frames.push_back(f);
-    }
-    m_view3d->setBoardHistory(frames);
-}
-
-// Measurement tool -> 3D viewport (P4).
-//
-// Two independent things happen here, both through interfaces the 3D view
-// already had (no new Vis command, no change to the pick path):
-//   1. the captured cloud is re-uploaded with per-point RGB computed from the
-//      panel's robust ±3σ(MAD) deviation scale — the exact same colour function
-//      the 2D 偏差图 page uses;
-//   2. the fitted plane and the measured region are marked with a sphere, a
-//      normal arrow and a text label (尺寸总图 values).
 void MainWindow::showCloud(const FrameBuffer::FloatBuf& pts,
                            const FrameBuffer::FloatBuf& colors)
 {
@@ -1578,46 +1543,13 @@ void MainWindow::showCloud(const FrameBuffer::FloatBuf& pts,
     m_displayedCloudColors = colors;
 }
 
+// Measurement tool -> 3D viewport (P4).
+//
+// The 3D view already had these interfaces (no new Vis command, no change to
+// the pick path).  Measurement results are drawn as a sphere, a normal arrow
+// and a text label on the fitted plane / measured region.
 void MainWindow::onMeasurementUpdated(const Measurement::Snapshot& snapshot)
 {
-    const FrameBuffer::FloatBuf& pts = m_flow->capturedPoints();
-
-    // ── deviation colouring ──
-    // The panel builds one RGB triple per *valid* cloud point, following the
-    // same NaN/zero scan PointCloudUtils::filterValidPoints uses, so the array
-    // is index-aligned with `pts`.  A size mismatch means the cloud is from a
-    // different frame; colouring it would misplace every point, so it is
-    // skipped rather than drawn wrong.
-    const bool canColor = snapshot.hasCloudColors && pts && snapshot.cloudColors
-                          && snapshot.cloudColors->size() * 3 == pts->size();
-    if (canColor) {
-        const std::vector<std::array<float, 3>>& src = *snapshot.cloudColors;
-        std::vector<float> flat;
-        flat.reserve(src.size() * 3);
-        for (const std::array<float, 3>& c : src) {
-            flat.push_back(c[0]);
-            flat.push_back(c[1]);
-            flat.push_back(c[2]);
-        }
-        beginHeavyOp(QStringLiteral("3D偏差着色(%1点)").arg(flat.size() / 3));
-        m_measureCloudColors = FrameBuffer::makeFloat(std::move(flat));
-        showCloud(pts, m_measureCloudColors);
-        endHeavyOp();
-        m_cloudColored = true;
-    } else if (m_cloudColored && pts) {
-        // Colouring was switched off (or the capture changed): back to the
-        // plain cloud, once.
-        beginHeavyOp(QStringLiteral("3D点云重传(取消着色)"));
-        m_measureCloudColors.reset();
-        // 关掉偏差着色 = 回到这帧的原始颜色，而不是灰色。
-        FrameBuffer::FloatBuf colors = m_flow->capturedColors();
-        if (colors && colors->size() != pts->size())
-            colors.reset();
-        showCloud(pts, colors);
-        endHeavyOp();
-        m_cloudColored = false;
-    }
-
     // ── annotations ──
     for (int handle : m_measureHandles)
         m_view3d->removeObject(handle);

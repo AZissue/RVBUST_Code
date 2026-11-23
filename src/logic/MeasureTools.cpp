@@ -300,57 +300,6 @@ std::vector<Vec3> finitePoints(const std::vector<Vec3>& pts)
     return out;
 }
 
-Limits robustLimits(const std::vector<double>& values, double madK,
-                    double clipLoPct, double clipHiPct)
-{
-    Limits lim;
-    std::vector<double> v;
-    v.reserve(values.size());
-    for (double x : values) {
-        if (std::isfinite(x))
-            v.push_back(x);
-    }
-    if (v.size() < 2)
-        return lim;
-
-    const double med = medianOf(v);
-    std::vector<double> absDev(v.size());
-    for (std::size_t i = 0; i < v.size(); ++i)
-        absDev[i] = std::fabs(v[i] - med);
-    const double mad = medianOf(absDev);
-
-    if (mad > 1e-12) {
-        const double half = madK * kMadScale * mad;
-        lim.lo = med - half;
-        lim.hi = med + half;
-        lim.robust = true;
-    } else {
-        // Degenerate MAD: fall back to percentiles (numpy's linear
-        // interpolation), the same escape hatch the Python tool uses.
-        std::vector<double> sorted = v;
-        std::sort(sorted.begin(), sorted.end());
-        auto pct = [&sorted](double p) {
-            const double rank = p / 100.0 * static_cast<double>(sorted.size() - 1);
-            const std::size_t lo = static_cast<std::size_t>(std::floor(rank));
-            const std::size_t hi = std::min(lo + 1, sorted.size() - 1);
-            const double frac = rank - static_cast<double>(lo);
-            return sorted[lo] * (1.0 - frac) + sorted[hi] * frac;
-        };
-        lim.lo = pct(clipLoPct);
-        lim.hi = pct(clipHiPct);
-    }
-    if (lim.hi - lim.lo < 1e-9) {
-        lim.lo = med - 1e-3;
-        lim.hi = med + 1e-3;
-    }
-    for (double x : v) {
-        if (x < lim.lo || x > lim.hi)
-            ++lim.nClipped;
-    }
-    lim.valid = true;
-    return lim;
-}
-
 Plane fitPlane(const std::vector<Vec3>& pts)
 {
     Plane p;
@@ -2072,64 +2021,6 @@ SectionProfile sectionProfile(const std::vector<Vec3>& pts, int bins)
     if (!sp.valid)
         sp.message = "有效分箱过少，无法生成截面";
     return sp;
-}
-
-std::array<double, 3> colormap(double t, bool coolWarm)
-{
-    auto clip01 = [](double v) { return v < 0.0 ? 0.0 : (v > 1.0 ? 1.0 : v); };
-    // t is clamped here rather than trusted: the reference's green channel is
-    // not clipped by its own formula (1 - |2t-1| * 0.85 goes negative below
-    // t = 0), so an out-of-range t would otherwise produce a channel outside
-    // [0, 1] and overflow the 8-bit conversion in the views.
-    t = clip01(t);
-    if (coolWarm) {
-        return { clip01(1.6 * t + 0.1), 1.0 - std::fabs(2.0 * t - 1.0) * 0.85,
-                 clip01(1.7 - 1.6 * t) };
-    }
-    return { clip01(1.5 - std::fabs(4.0 * t - 3.0)),
-             clip01(1.5 - std::fabs(4.0 * t - 2.0)),
-             clip01(1.5 - std::fabs(4.0 * t - 1.0)) };
-}
-
-std::vector<std::array<float, 3>> cloudDeviationColors(
-    const std::vector<double>& grid, int w, int h, const Plane& plane,
-    double lo, double hi, bool coolWarm,
-    const std::vector<std::size_t>& highlightCells,
-    const std::array<float, 3>& baseRgb)
-{
-    std::vector<std::array<float, 3>> out;
-    if (w <= 0 || h <= 0 || grid.size() < 3)
-        return out;
-
-    const std::size_t cells = static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
-    const std::size_t n = std::min(cells, grid.size() / 3);
-
-    std::vector<char> highlight(n, 0);
-    for (std::size_t k : highlightCells)
-        if (k < n)
-            highlight[k] = 1;
-
-    const double span = (hi - lo) > 1e-12 ? (hi - lo) : 1e-12;
-    out.reserve(n);
-    for (std::size_t i = 0; i < n; ++i) {
-        const double x = grid[i * 3], y = grid[i * 3 + 1], z = grid[i * 3 + 2];
-        // Same rule (and same order) as PointCloudUtils::filterValidPoints.
-        if (std::isnan(x) || std::isnan(y) || std::isnan(z))
-            continue;
-        if (x == 0.0 && y == 0.0 && z == 0.0)
-            continue;
-        if (highlight[i] && plane.valid) {
-            const double dev = plane.normal[0] * x + plane.normal[1] * y
-                               + plane.normal[2] * z + plane.d;
-            const double t = std::min(1.0, std::max(0.0, (dev - lo) / span));
-            const std::array<double, 3> c = colormap(t, coolWarm);
-            out.push_back({ static_cast<float>(c[0]), static_cast<float>(c[1]),
-                            static_cast<float>(c[2]) });
-        } else {
-            out.push_back(baseRgb);
-        }
-    }
-    return out;
 }
 
 } // namespace MeasureTools

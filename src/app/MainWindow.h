@@ -163,12 +163,9 @@ private:
     void updatePoseGuide();
     void refreshQualityReport();
     void onBoardMarkers(const std::vector<std::array<float, 3>>& pts3d);
-    void syncBoardHistory();
-    void refreshBoardOverlay();
 
-    // Measurement tool -> 3D viewport (P4): deviation colouring of the captured
-    // cloud through the existing per-point RGB channel, plus sphere/arrow/text
-    // annotations for the fitted plane and the measured region.
+    // Measurement tool -> 3D viewport (P4): sphere/arrow/text annotations for
+    // the fitted plane and the measured region.
     void onMeasurementUpdated(const Measurement::Snapshot& snapshot);
 
     // 3D 点云显示的唯一入口：上传并记住"当前显示的是哪一份"，
@@ -216,14 +213,8 @@ private:
     // 使用说明窗口（顶栏「帮助」/ F1）：非模态、首次打开时创建，之后常驻一份。
     HelpDialog*     m_helpDialog    = nullptr;
 
-    // Measurement overlay state (3D): object handles of the last annotations and
-    // whether the uploaded cloud currently carries deviation colours.
+    // Measurement overlay state (3D): object handles of the last annotations.
     std::vector<int> m_measureHandles;
-    bool m_cloudColored = false;
-    // Per-point RGB of the last deviation colouring, kept so a later re-upload
-    // of the same frame (e.g. the marker-highlight pass after 识别) can restore
-    // the colouring instead of silently dropping it.
-    FrameBuffer::FloatBuf m_measureCloudColors;
     // What the 3D viewport is showing right now (refcount only, no copy), so the
     // offline pixel→3D cloud can be removed again without guessing — after a
     // save the captured buffer is gone but the view still shows that frame.
@@ -275,12 +266,6 @@ private:
     CalibrationController* m_calib = nullptr;
 
     // Stage 8: board-pose overlay (advisory visualization)
-    struct BoardFrameEntry {
-        int frameNo = 0;
-        BoardPoseFit::Pose pose;
-    };
-    std::vector<BoardFrameEntry> m_boardFrames;      // one fitted pose per saved frame
-    BoardPoseFit::Pose m_pendingBoardPose;           // last detected frame's board pose
 
     // 第 17 阶段 P1：机器人控制（合并后的唯一机器人连接：程序节点 / 运动
     // 后端 / 位姿读取 / 拍照一条龙）。原 RobotController 已并入它的后端。

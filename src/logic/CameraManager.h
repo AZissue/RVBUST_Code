@@ -137,6 +137,18 @@ public:
     // Native concentric circle detection results (from last capture)
     std::pair<std::vector<float>, std::vector<float>> nativeMarkerResult() const;
 
+    // ── 预览相机选择（2D 视窗底部工具栏「相机选择」）──
+    // 只决定预览流来自哪台相机；采集/识别仍用采集相机（captureCamera()）。
+    enum class PreviewCamera { Left = 0, Right = 1, Color = 2 };
+    // X1 只有左相机；X2 有右相机，彩色相机看设备是否带 Extra 传感器。
+    bool supportsPreviewCamera(PreviewCamera camera) const;
+    PreviewCamera previewCamera() const { return m_previewCamera; }
+    void setPreviewCamera(PreviewCamera camera);
+    // 采集相机 = 采集结果里那张 2D 图像/对应图所对应的相机（彩色优先）。
+    PreviewCamera captureCamera() const;
+    // 预览画面与采集画面是否同一台相机（像素→3D 只在同一台上有意义）。
+    bool previewMatchesCaptureCamera() const { return m_previewCamera == captureCamera(); }
+
     // Preview stream
     bool isStereo() const;
     bool isPreviewing() const;
@@ -260,6 +272,8 @@ private:
     std::unique_ptr<RvcImpl> m_impl;
 
     int m_cameraId = 0;   // X2: left/extra; X1: always Left
+    // 预览相机选择；连接成功后回到 captureCamera()（与旧行为一致：X2 彩色优先）。
+    PreviewCamera m_previewCamera = PreviewCamera::Left;
     QTimer* m_previewTimer = nullptr;
     // The one preview round currently in flight.  onPreviewTick() runs at most
     // one at a time (m_previewBusy), and stores its future here so

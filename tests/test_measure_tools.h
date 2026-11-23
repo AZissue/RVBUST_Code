@@ -24,10 +24,6 @@ private slots:
     void boundingBoxExtents();
     void boundingBoxIsOriented();
     void repeatabilityHandComputed();
-    void robustLimitsResistFlyer();
     void roiExtractionSkipsNan();
     void sectionProfileFollowsStep();
-    void colormapMatchesReferenceFormula();
-    void cloudColorsAlignWithFilteredCloud();
-    void cloudColorsHighlightOnlyTheRoi();
 };

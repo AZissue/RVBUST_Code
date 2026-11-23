@@ -751,6 +751,8 @@ bool CameraManager::initWithDeviceSerial(const QString& serial)
         m_released = false;            // a new session must be releasable again
         m_lastConnectHeadline.clear();
         m_lastSerial = serial;
+        // 每次连接回到默认预览相机（与采集相机一致：X2 彩色优先，X1 左）。
+        m_previewCamera = captureCamera();
         m_health->noteConnected();
         logCameraOptions("connect");
         RuntimeLog::log("connect OK: %s (%s, %lld ms)",
@@ -1123,6 +1125,69 @@ std::pair<std::vector<float>, std::vector<float>> CameraManager::nativeMarkerRes
 // Preview
 // ═══════════════════════════════════════════════════════════════
 
+namespace {
+RVC::CameraID previewCameraId(CameraManager::PreviewCamera camera)
+{
+    switch (camera) {
+    case CameraManager::PreviewCamera::Right:
+        return RVC::CameraID_Right;
+    case CameraManager::PreviewCamera::Color:
+        return RVC::CameraID_Extra;
+    case CameraManager::PreviewCamera::Left:
+    default:
+        return RVC::CameraID_Left;
+    }
+}
+
+const char* previewCameraName(CameraManager::PreviewCamera camera)
+{
+    switch (camera) {
+    case CameraManager::PreviewCamera::Right:  return "right";
+    case CameraManager::PreviewCamera::Color:  return "color";
+    case CameraManager::PreviewCamera::Left:
+    default:                                   return "left";
+    }
+}
+} // namespace
+
+bool CameraManager::supportsPreviewCamera(PreviewCamera camera) const
+{
+    if (!m_isConnected || !m_impl)
+        return false;
+    if (camera == PreviewCamera::Left)
+        return true;
+    if (!m_impl->isX2())
+        return false;          // X1 只有左相机
+    if (camera == PreviewCamera::Right) {
+        // 设备自报的 cameraid 位图为主；老固件不填时沿用旧预览的判据
+        // （之前只在带 Extra 传感器时抓右眼）。
+        const int ids = static_cast<int>(m_impl->devInfo.cameraid);
+        return (ids & static_cast<int>(RVC::CameraID_Right)) != 0
+               || m_impl->devInfo.support_extra;
+    }
+    return m_impl->devInfo.support_extra;   // Color = CameraID_Extra
+}
+
+CameraManager::PreviewCamera CameraManager::captureCamera() const
+{
+    // Same rule the capture path uses (see tryConnectX2): Extra when the device
+    // has it, otherwise the left camera.
+    if (m_impl && m_impl->isX2() && m_impl->devInfo.support_extra)
+        return PreviewCamera::Color;
+    return PreviewCamera::Left;
+}
+
+void CameraManager::setPreviewCamera(PreviewCamera camera)
+{
+    // 不支持的相机不能选中：回到与采集相机一致的那台，预览与像素→3D 仍对齐。
+    if (!supportsPreviewCamera(camera))
+        camera = captureCamera();
+    if (m_previewCamera == camera)
+        return;
+    m_previewCamera = camera;
+    RuntimeLog::log("[CAM] preview camera: %s", previewCameraName(camera));
+}
+
 bool CameraManager::isStereo() const
 {
     // X1 has no extra camera; X2 may or may not have it
@@ -1317,7 +1382,8 @@ CameraManager::PreviewFrames CameraManager::capturePreviewFrameX2()
             return out;
         }
 
-        auto cid = static_cast<RVC::CameraID>(m_cameraId);
+        // 预览流来自「相机选择」选中的那台；采集仍用 m_cameraId（不变）。
+        const RVC::CameraID cid = previewCameraId(m_previewCamera);
         if (!m_impl->x2.Capture2D(cid))
             return out;
 
@@ -1326,9 +1392,12 @@ CameraManager::PreviewFrames CameraManager::capturePreviewFrameX2()
 
         out.left = DetectionEngine::rvcToQImage(img);
 
-        // Stereo: also capture right camera view.  Re-check the yield request
-        // first so the second frame does not delay the waiting capture.
-        if (m_impl->devInfo.support_extra && gen == m_deviceYieldGen.load()) {
+        if (m_previewCamera == PreviewCamera::Right) {
+            // 3D 视窗的右眼叠加显示的正是这一帧：不用再抓一次。
+            out.right = out.left;
+        } else if (m_impl->devInfo.support_extra && gen == m_deviceYieldGen.load()) {
+            // 预览不是右相机时，仍抓一帧右眼给 3D 视窗的叠加用。先复查让位
+            // 请求，别让第二帧拖住正在等设备的采集。
             RVC::CameraID rightId = RVC::CameraID_Right;
             if (m_impl->x2.Capture2D(rightId)) {
                 RVC::Image rightImg = m_impl->x2.GetImage(rightId);

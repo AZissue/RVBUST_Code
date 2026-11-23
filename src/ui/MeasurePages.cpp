@@ -76,24 +76,9 @@ protected:
         ctx.primaryValue = f.mzPv;
         ctx.hasPrimary = true;
 
-        ctx.hasDeviation = true;
-        ctx.devValues = f.dev;
-        ctx.devCells = ctx.roiCells[0];
-        ctx.devCoolWarm = true;
-        ctx.plane = f.plane;
         ctx.hasPlane = true;
         ctx.planePoint = centroidOf(pts);
         ctx.planeNormal = f.plane.normal;
-        const QRect r = ctx.roiRects->value(0);
-        ctx.annotations.push_back({ QStringLiteral("平面度 PV %1 mm").arg(fmt4(f.mzPv)),
-                                    QPoint(r.center().x(), r.center().y()), false });
-        // 剖面：供「截面轮廓」页显示。
-        const MeasureTools::SectionProfile sec = MeasureTools::sectionProfile(pts, 64);
-        if (sec.valid) {
-            ctx.section = sec.points;
-            ctx.sectionStep = sec.stepMm;
-            ctx.hasSection = true;
-        }
         ctx.confidenceNote = QStringLiteral("PV = 最大−最小；MZ ≤ LSQ PV");
     }
 };
@@ -129,40 +114,10 @@ protected:
         ctx.primaryValue = h.value;
         ctx.hasPrimary = true;
 
-        std::vector<Vec3> pts;
-        std::vector<std::size_t> cells;
-        bothRois(ctx, pts, cells);
-        ctx.hasDeviation = true;
-        ctx.devValues = MeasureTools::deviations(pts, h.ref);
-        ctx.devCells = cells;
-        ctx.devCoolWarm = true;
-        ctx.plane = h.ref;
         ctx.hasPlane = true;
         ctx.planePoint = centroidOf(ctx.roi[0]);
         ctx.planeNormal = h.ref.normal;
-
-        const QRect ra = ctx.roiRects->value(0), rb = ctx.roiRects->value(1);
-        ctx.annotations.push_back({ QStringLiteral("基准 A"),
-                                    QPoint(ra.center().x(), ra.center().y()), false });
-        ctx.annotations.push_back({ QStringLiteral("B 相对 A %1 mm").arg(fmt4(h.value)),
-                                    QPoint(rb.center().x(), rb.center().y()), false });
-        const MeasureTools::SectionProfile sec = MeasureTools::sectionProfile(pts, 96);
-        if (sec.valid) {
-            ctx.section = sec.points;
-            ctx.sectionStep = sec.stepMm;
-            ctx.hasSection = true;
-        }
         ctx.confidenceNote = QStringLiteral("高度为正 = ROI B 朝向相机凸起");
-    }
-
-private:
-    static void bothRois(MeasureContext& ctx, std::vector<Vec3>& pts,
-                         std::vector<std::size_t>& cells)
-    {
-        pts = ctx.roi[0];
-        cells = ctx.roiCells[0];
-        pts.insert(pts.end(), ctx.roi[1].begin(), ctx.roi[1].end());
-        cells.insert(cells.end(), ctx.roiCells[1].begin(), ctx.roiCells[1].end());
     }
 };
 
@@ -205,27 +160,9 @@ protected:
         }
         ctx.hasPrimary = true;
 
-        std::vector<Vec3> p2;
-        std::vector<std::size_t> c2;
-        p2 = ctx.roi[0];
-        c2 = ctx.roiCells[0];
-        p2.insert(p2.end(), ctx.roi[1].begin(), ctx.roi[1].end());
-        c2.insert(c2.end(), ctx.roiCells[1].begin(), ctx.roiCells[1].end());
-        ctx.hasDeviation = true;
-        ctx.devValues = MeasureTools::deviations(p2, pp.planeA);
-        ctx.devCells = c2;
-        ctx.devCoolWarm = true;
-        ctx.plane = pp.planeA;
         ctx.hasPlane = true;
         ctx.planePoint = centroidOf(ctx.roi[0]);
         ctx.planeNormal = pp.planeA.normal;
-
-        const QRect ra = ctx.roiRects->value(0), rb = ctx.roiRects->value(1);
-        ctx.annotations.push_back({ QStringLiteral("A"),
-                                    QPoint(ra.center().x(), ra.center().y()), false });
-        ctx.annotations.push_back(
-            { QStringLiteral("B：夹角 %1°").arg(fmt4(pp.angleDeg)),
-              QPoint(rb.center().x(), rb.center().y()), false });
         ctx.confidenceNote = pp.parallel
             ? QStringLiteral("夹角 < 3°，按平行面给出间距")
             : QStringLiteral("夹角 ≥ 3°，不给出间距（不平行平面的「距离」没有意义）");
@@ -288,11 +225,6 @@ protected:
                 ctx.boxMax[k] = std::max(ctx.boxMax[k], v[k]);
             }
         }
-        const QRect r = ctx.roiRects->value(0);
-        ctx.annotations.push_back(
-            { QStringLiteral("%1 × %2 × %3 mm").arg(fmt4(b.length), fmt4(b.width),
-                                                     fmt4(b.height)),
-              QPoint(r.center().x(), r.center().y()), false });
         ctx.confidenceNote = QStringLiteral("PCA 主轴对齐；长 ≥ 宽 ≥ 高");
     }
 };
@@ -328,18 +260,9 @@ protected:
         ctx.primaryValue = length;
         ctx.hasPrimary = true;
 
-        ctx.hasSection = true;
-        ctx.section = sec.points;
-        ctx.sectionStep = sec.stepMm;
-
-        // 顺带给出被测面的平面标记与偏差图：截面页仍要能在 3D 里定位。
+        // 顺带给出被测面的平面标记：截面页仍要能在 3D 里定位。
         const MeasureTools::Plane p = MeasureTools::fitPlane(pts);
         if (p.valid) {
-            ctx.hasDeviation = true;
-            ctx.devValues = MeasureTools::deviations(pts, p);
-            ctx.devCells = ctx.roiCells[0];
-            ctx.devCoolWarm = true;
-            ctx.plane = p;
             ctx.hasPlane = true;
             ctx.planePoint = { p.normal[0] * -p.d, p.normal[1] * -p.d, p.normal[2] * -p.d };
             ctx.planeNormal = p.normal;
@@ -388,8 +311,6 @@ protected:
         ctx.primaryKey = QStringLiteral("均值");
         ctx.primaryValue = rep.mean;
         ctx.hasPrimary = true;
-        ctx.footer = QStringLiteral("序列「%1」：n=%2，均值 %3，σ %4（仅本次运行，未写入磁盘）")
-                         .arg(name).arg(rep.n).arg(fmt4(rep.mean)).arg(fmt4(rep.stdDev));
         ctx.confidenceNote = n >= 5
             ? QStringLiteral("n ≥ 5，σ 反映重复测同一处的波动")
             : QStringLiteral("n < 5：σ 本身不可信，只作参考");

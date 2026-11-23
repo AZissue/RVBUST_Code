@@ -198,12 +198,6 @@ void MeasurePage::buildUi()
     tolRow->addStretch();
     methodForm->addRow(QStringLiteral("公差 (mm)"), tolRow);
 
-    m_devColorBox = new QCheckBox(
-        QStringLiteral("3D 偏差着色（在 3D 视窗同步显示测量区域）"), methodGroup);
-    m_devColorBox->setObjectName(QStringLiteral("measure_dev3d_%1").arg(id));
-    m_devColorBox->setStyleSheet(QStringLiteral("font-size: %1px;").arg(Theme::FONT_HINT));
-    methodForm->addRow(QString(), m_devColorBox);
-
     auto* btnRow = new QHBoxLayout();
     m_runBtn = new QPushButton(m_spec.roiCount > 0 ? QStringLiteral("测量")
                                                   : QStringLiteral("统计"),
@@ -280,16 +274,11 @@ void MeasurePage::buildUi()
     connect(clearSeriesBtn, &QPushButton::clicked, this, &MeasurePage::clearSeries);
     connect(m_seriesCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [this](int) { refreshSeriesUi(); });
-    // 公差只影响重复性趋势页的判定线，改一下要重发快照（不重算）。
+    // 公差写进测量帧清单（回放口径），改一下重发一次快照（不重算）。
     for (QDoubleSpinBox* spin : { m_tolLo, m_tolHi })
         connect(spin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
                 this, [this](double) { publish(); });
     connect(m_tolEnable, &QCheckBox::toggled, this, [this](bool) { publish(); });
-    // 3D 偏差着色开关在主窗口 3D 工具栏上还有一个孪生按钮，两边同步（面板转发）。
-    connect(m_devColorBox, &QCheckBox::toggled, this, [this](bool on) {
-        emit deviationColoringChanged(on);
-        rerun();   // 立刻重算颜色，但不再写一条 [测量-结果]
-    });
 }
 
 QString MeasurePage::explainLine() const
@@ -387,31 +376,6 @@ void MeasurePage::setSeriesStore(QMap<QString, QVector<double>>* store)
     refreshSeriesUi();
 }
 
-void MeasurePage::setDeviationColoring(bool on)
-{
-    if (!m_devColorBox || m_devColorBox->isChecked() == on)
-        return;
-    // 设置勾选状态不得反弹回 deviationColoringChanged（面板是唯一写者）。
-    const QSignalBlocker block(m_devColorBox);
-    m_devColorBox->setChecked(on);
-}
-
-void MeasurePage::rerun()
-{
-    if (m_hasResult)
-        run(false);   // 已经有结果才重算；不写重复的 [测量-结果]
-}
-
-bool MeasurePage::deviationColoring() const
-{
-    return m_devColorBox && m_devColorBox->isChecked();
-}
-
-bool MeasurePage::wantsDeviationColors() const
-{
-    return deviationColoring();
-}
-
 const std::vector<MeasureTools::Vec3>& MeasurePage::roiPoints(int slot) const
 {
     static const std::vector<MeasureTools::Vec3> empty;
@@ -438,15 +402,6 @@ void MeasurePage::resetResult()
     m_hasPrimary = false;
     m_hasResult = false;
     m_primaryIndex = -1;
-    m_footer.clear();
-    m_devSamples.clear();
-    m_devRobust = false;
-    m_devClipped = 0;
-    m_devLo = m_devHi = 0.0;
-    m_annotations.clear();
-    m_section.clear();
-    m_sectionStep = 0.0;
-    m_cloudColors.reset();
     m_hasPlane = false;
     m_hasBox = false;
     m_planePoint = { 0.0, 0.0, 0.0 };
@@ -539,14 +494,6 @@ void MeasurePage::run(bool logResult)
     }
     if (m_primaryIndex < 0 && !m_rows.empty())
         m_primaryIndex = 0;
-    m_footer = ctx.footer;
-    // 有偏差图时底部说明行换成色标说明（与旧面板一致）。
-    applyDeviation(ctx);
-
-    m_annotations = QVector<Measurement::Annotation>(ctx.annotations.begin(),
-                                                     ctx.annotations.end());
-    m_section = ctx.section;
-    m_sectionStep = ctx.sectionStep;
     m_hasPlane = ctx.hasPlane;
     m_planePoint = ctx.planePoint;
     m_planeNormal = ctx.planeNormal;
@@ -587,48 +534,6 @@ void MeasurePage::run(bool logResult)
     }
 
     publish();
-}
-
-// 偏差图 + 3D 偏差着色：与旧面板同一套（稳健 ±3σ(MAD) 色标，色标行写进页脚）。
-void MeasurePage::applyDeviation(MeasureContext& ctx)
-{
-    m_devSamples.clear();
-    if (!ctx.hasDeviation || ctx.devValues.empty()
-        || ctx.devValues.size() != ctx.devCells.size())
-        return;
-
-    const int gw = m_gridW;
-    if (gw <= 0)
-        return;
-    m_devSamples.reserve(static_cast<int>(ctx.devValues.size()));
-    for (std::size_t k = 0; k < ctx.devValues.size(); ++k) {
-        Measurement::DevSample s;
-        s.value = ctx.devValues[k];
-        s.gx = static_cast<int>(ctx.devCells[k] % static_cast<std::size_t>(gw));
-        s.gy = static_cast<int>(ctx.devCells[k] / static_cast<std::size_t>(gw));
-        m_devSamples.push_back(s);
-    }
-    const MeasureTools::Limits lim = MeasureTools::robustLimits(ctx.devValues, 3.0);
-    m_devLo = lim.lo;
-    m_devHi = lim.hi;
-    m_devRobust = lim.robust;
-    m_devClipped = static_cast<int>(lim.nClipped);
-    m_devCoolWarm = ctx.devCoolWarm;
-    m_footer = QStringLiteral("色标 %1 = [%2, %3] mm，裁剪 %4 点")
-                   .arg(lim.robust ? QStringLiteral("中位数 ±3σ(MAD)")
-                                   : QStringLiteral("1–99% 分位"))
-                   .arg(fmt4(lim.lo)).arg(fmt4(lim.hi)).arg(lim.nClipped);
-
-    m_cloudColors.reset();
-    if (wantsDeviationColors() && ctx.plane.valid
-        && m_grid && m_gridW > 0 && m_gridH > 0) {
-        std::vector<std::size_t> highlight = m_cells[0];
-        highlight.insert(highlight.end(), m_cells[1].begin(), m_cells[1].end());
-        m_cloudColors = std::make_shared<const std::vector<std::array<float, 3>>>(
-            MeasureTools::cloudDeviationColors(*m_grid, m_gridW, m_gridH, ctx.plane,
-                                               m_devLo, m_devHi, ctx.devCoolWarm,
-                                               highlight));
-    }
 }
 
 void MeasurePage::onRepeatAdd()
@@ -699,54 +604,8 @@ void MeasurePage::refreshSeriesUi()
 Measurement::Snapshot MeasurePage::snapshot() const
 {
     Measurement::Snapshot s;
-    s.valid = m_hasResult;
-    s.title = QString::fromUtf8(m_spec.name);
-    s.footer = m_footer;
-    s.label = s.title;
+    s.label = QString::fromUtf8(m_spec.name);
 
-    s.devSamples = m_devSamples;
-    s.gridW = m_gridW;
-    s.gridH = m_gridH;
-    s.limitLo = m_devLo;
-    s.limitHi = m_devHi;
-    s.robustLimits = m_devRobust;
-    s.clipped = m_devClipped;
-    s.unit = QStringLiteral("mm");
-    s.coolWarm = m_devCoolWarm;
-
-    s.annotations = m_annotations;
-
-    s.section = m_section;
-    s.sectionStep = m_sectionStep;
-    s.sectionPoints = static_cast<int>(m_section.size());
-
-    // 运行图始终显示 combo 里选中的序列（也就是用户正在累积的那条）。
-    if (m_seriesCombo && m_series) {
-        const QString name = m_seriesCombo->currentText();
-        if (!name.isEmpty() && m_series->contains(name)) {
-            s.seriesName = name;
-            s.series = m_series->value(name);
-            const MeasureTools::Repeatability rep = MeasureTools::repeatability(
-                std::vector<double>(s.series.begin(), s.series.end()));
-            s.seriesN = static_cast<int>(rep.n);
-            s.seriesMean = rep.mean;
-            s.seriesSigma = rep.stdDev;
-            s.seriesRange = rep.range;
-        }
-    }
-    if (m_tolEnable) {
-        s.hasTolerance = m_tolEnable->isChecked();
-        s.tolLo = m_tolLo ? m_tolLo->value() : 0.0;
-        s.tolHi = m_tolHi ? m_tolHi->value() : 0.0;
-    } else {
-        // 自绘界面（3D 孔洞）自己维护公差。
-        s.hasTolerance = m_customTolEnabled;
-        s.tolLo = m_customTolLo;
-        s.tolHi = m_customTolHi;
-    }
-
-    s.cloudColors = m_cloudColors;   // 引用计数，不拷贝元素
-    s.hasCloudColors = m_cloudColors && !m_cloudColors->empty();
     s.hasPlane = m_hasPlane;
     s.planePoint = m_planePoint;
     s.planeNormal = m_planeNormal;
@@ -810,16 +669,13 @@ void MeasurePage::fillFrameExtra(QJsonObject* extra) const
 {
     if (!extra)
         return;
-    // 公差与偏差色标区间决定了"这一帧当时是怎么判的"，不存下来，回放时
-    // 同一组数会被当成另一套判据。
+    // 公差决定了"这一帧当时是怎么判的"，不存下来，回放时同一组数会被当成
+    // 另一套判据。
     extra->insert(QStringLiteral("tolerance_enabled"),
                   m_tolEnable ? m_tolEnable->isChecked() : m_customTolEnabled);
     extra->insert(QStringLiteral("tolerance_lo"),
                   m_tolLo ? m_tolLo->value() : m_customTolLo);
     extra->insert(QStringLiteral("tolerance_hi"),
                   m_tolHi ? m_tolHi->value() : m_customTolHi);
-    extra->insert(QStringLiteral("dev_lo"), m_devLo);
-    extra->insert(QStringLiteral("dev_hi"), m_devHi);
-    extra->insert(QStringLiteral("dev_robust"), m_devRobust);
     extra->insert(QStringLiteral("has_result"), m_hasResult);
 }

@@ -546,20 +546,6 @@ QWidget* Hole3DPage::buildParamsTab()
     fh->addWidget(sigma);
     fh->addWidget(sigmaUnit);
     ab->addWidget(filterRow);
-
-    auto* devRow = new QFrame(m_advancedBody);
-    devRow->setObjectName(QStringLiteral("hole3dTolBox"));
-    auto* dh = new QHBoxLayout(devRow);
-    dh->setContentsMargins(12, 10, 12, 10);
-    dh->setSpacing(12);
-    m_devColor = new ToggleSwitch(devRow);
-    auto* devLabel = new QLabel(
-        QStringLiteral("3D 偏差着色（在 3D 视窗同步显示测量区域）"), devRow);
-    devLabel->setObjectName(QStringLiteral("hole3dFormLabel"));
-    dh->addWidget(m_devColor);
-    dh->addWidget(devLabel);
-    dh->addStretch();
-    ab->addWidget(devRow);
     ab->addWidget(makeSmallLabel(
         QStringLiteral("边界圆拟合内部已按 MAD 剔除粗大点，离群点滤波暂不可调。"),
         m_advancedBody, "hole3dNote"));
@@ -600,10 +586,6 @@ QWidget* Hole3DPage::buildParamsTab()
     for (QDoubleSpinBox* spin : { m_tolLoOff, m_tolNominal, m_tolHiOff })
         connect(spin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
                 this, [this](double) { applyTolerance(); });
-    connect(m_devColor, &QAbstractButton::toggled, this, [this](bool on) {
-        emit deviationColoringChanged(on);
-        rerun();
-    });
 
     return content;
 }
@@ -898,30 +880,10 @@ void Hole3DPage::compute(MeasureContext& ctx)
     ctx.primaryValue = bc.diameter;
     ctx.hasPrimary = true;
 
-    // 偏差图 = 到拟合圆的半径残差（turbo，与合并前两个工具同一套视觉）。
-    std::vector<double> radial(pts.size());
-    for (std::size_t k = 0; k < pts.size(); ++k) {
-        const double dx = pts[k][0] - bc.center[0];
-        const double dy = pts[k][1] - bc.center[1];
-        const double dz = pts[k][2] - bc.center[2];
-        radial[k] = std::sqrt(dx * dx + dy * dy + dz * dz) - bc.radius;
-    }
-    ctx.hasDeviation = true;
-    ctx.devValues = radial;
-    ctx.devCells = ctx.roiCells[0];
-    ctx.devCoolWarm = false;
-
-    const QRect r = ctx.roiRects->value(0);
-    ctx.annotations.push_back({ QStringLiteral("⌀%1 mm").arg(fmt4(bc.diameter)),
-                                QPoint(r.center().x(), r.center().y()), false });
     ctx.hasPlane = true;
     ctx.planePoint = bc.center;
     ctx.planeNormal = bc.normal;
 
-    ctx.footer = bc.subpixel
-        ? QStringLiteral("图像亚像素边界 %1 条，局部尺度 %2 mm/px")
-              .arg(bc.used).arg(fmt4(bc.mmPerPx))
-        : QStringLiteral("图像不可用，本结果为 3D 边界（粗）");
     ctx.confidenceNote = QStringLiteral("%1（%2）：亚像素边缘 %3/%4 条（覆盖 %5%%），"
                                         "圆度 %6 mm，尺度 %7 mm/px")
                              .arg(inside ? QStringLiteral("从外向内 · 材料外缘")
@@ -948,32 +910,11 @@ void Hole3DPage::compute(MeasureContext& ctx)
     m_lastCenter = bc.center;
 }
 
-bool Hole3DPage::wantsDeviationColors() const
-{
-    return m_devColor && m_devColor->isChecked();
-}
-
-void Hole3DPage::setDeviationColoring(bool on)
-{
-    if (!m_devColor)
-        return;
-    // 面板是唯一写者：同步勾选状态时不得反弹 deviationColoringChanged。
-    const QSignalBlocker block(m_devColor);
-    m_devColor->setChecked(on);
-    m_devColor->update();
-}
-
 void Hole3DPage::resetResult()
 {
     MeasurePage::resetResult();
     if (m_resultValue)
         updateResultDisplay();
-}
-
-void Hole3DPage::rerun()
-{
-    MeasurePage::rerun();
-    updateResultDisplay();
 }
 
 void Hole3DPage::applyTolerance()

@@ -2462,16 +2462,6 @@ void ToolsPanel::buildMeasurePages(QStackedWidget* stack)
                 this, &ToolsPanel::saveActiveMeasureFrame);
         connect(page, &MeasurePage::frameOpenRequested,
                 this, &ToolsPanel::openMeasureFrame);
-        // 7 个页的「3D 偏差着色」状态必须一致：一页改了，其余 6 页跟着改，
-        // 再把事件转给 3D 工具栏的孪生按钮（MainWindow 是唯一的同步者）。
-        connect(page, &MeasurePage::deviationColoringChanged, this,
-                [this, page](bool on) {
-                    for (MeasurePage* other : m_pages) {
-                        if (other != page)
-                            other->setDeviationColoring(on);
-                    }
-                    emit deviationColoringChanged(on);
-                });
     }
 }
 
@@ -2755,12 +2745,3 @@ QStringList ToolsPanel::roiLabels() const
     return labels;
 }
 
-void ToolsPanel::setDeviationColoring(bool on)
-{
-    // 只同步状态（7 个页保持一致），重算交给最近测量的那一页自己做，
-    // 免得一次点击触发 8 次 3D 点云重传。
-    for (MeasurePage* page : m_pages)
-        page->setDeviationColoring(on);
-    if (m_page)
-        m_page->rerun();
-}

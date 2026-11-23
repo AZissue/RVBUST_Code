@@ -9,7 +9,7 @@
 //
 // 这是唯一一个**自绘整页**的测量页：不建基类的通用表单/结果表/序列区，
 // 但仍复用基类的 ROI 取点、算法调用（runMeasurement）与快照发布，所以
-// 2D/3D 叠加、3D 偏差着色与其它测量页完全一致。
+// 3D 标注与其它测量页完全一致。
 #include <vector>
 
 #include "logic/MeasureTools.h"
@@ -29,19 +29,14 @@ class Hole3DPage : public MeasurePage {
 public:
     explicit Hole3DPage(QWidget* parent = nullptr);
 
-    // 基类的勾选框在本页不存在：3D 工具栏的同步入口改为驱动页内的开关。
-    void setDeviationColoring(bool on) override;
     // 测量帧：本页的专有口径（探测方向、覆盖率、圆度、是否亚像素）写进 extra，
     // 回放/比较时"当时按哪条边量的"不会丢。
     void fillFrameExtra(QJsonObject* extra) const override;
     // 新一帧点云 / 新一轮测量：结果面板回到「等待测量」。
     void resetResult() override;
-    // 改 3D 着色开关会重算（不写日志）：重算后要把数值重新画回来。
-    void rerun() override;
 
 protected:
     void compute(MeasureContext& ctx) override;
-    bool wantsDeviationColors() const override;
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
@@ -79,7 +74,6 @@ private:
     QWidget* m_advancedHeader = nullptr;
     QWidget* m_advancedBody = nullptr;
     QLabel* m_advancedArrow = nullptr;
-    QAbstractButton* m_devColor = nullptr;
     QDoubleSpinBox* m_angle = nullptr;
 
     // ── 结果页 ──

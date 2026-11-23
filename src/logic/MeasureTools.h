@@ -83,24 +83,6 @@ inline bool isFinite(const Vec3& p)
 // valid measurement volume).
 std::vector<Vec3> finitePoints(const std::vector<Vec3>& pts);
 
-// Robust colour limits: lo/hi = median ∓ k * 1.4826 * MAD, i.e. a ±3σ_MAD band
-// **centred on the median**, deliberately not a percentile range.
-//
-// The Python tool paints the deviation map this way because one flyer at the
-// ROI edge would otherwise stretch a percentile range to ±1 mm and flatten
-// every real deviation into the middle colour.  Percentiles are only the
-// fallback for a degenerate MAD (a perfectly flat ROI); values outside the band
-// are clamped to the end colours and counted in `nClipped`.
-struct Limits {
-    double lo = 0.0;
-    double hi = 0.0;
-    std::size_t nClipped = 0;
-    bool robust = false;    // true when the ±3σ_MAD rule produced the band
-    bool valid = false;
-};
-Limits robustLimits(const std::vector<double>& values, double madK = 3.0,
-                    double clipLoPct = 1.0, double clipHiPct = 99.0);
-
 // ── 1. plane + flatness ────────────────────────────────────────────────
 
 struct Plane {
@@ -433,8 +415,8 @@ std::vector<Vec3> pointsInRoiIndexed(const std::vector<double>& grid, int w, int
 
 // Section profile: project the points on the ROI's principal in-plane
 // direction, bin them, and report the median height (z) of each bin.  Returns
-// pairs of (distance along the section, height) — this is the polyline the
-// 截面轮廓 page draws.
+// pairs of (distance along the section, height) — the profile the
+// 「截面轮廓」 measurement method reports.
 struct SectionProfile {
     std::vector<std::array<double, 2>> points;   // (t, z)
     double tMin = 0.0;
@@ -444,27 +426,5 @@ struct SectionProfile {
     std::string message;
 };
 SectionProfile sectionProfile(const std::vector<Vec3>& pts, int bins = 64);
-
-// ── Deviation colouring (偏差图 / 3D 偏差着色) ──────────────────────────
-
-// The Python reference's `colormap(t)` (mviz.py): coolwarm for surface
-// deviations, turbo for profile/line deviations.  `t` is clamped to [0, 1].
-std::array<double, 3> colormap(double t, bool coolWarm);
-
-// Per-point RGB for the organized 3D grid — one triple per point of the *flat
-// cloud*, i.e. index-aligned with PointCloudUtils::filterValidPoints' output.
-// The validity rule is deliberately identical to that function's (skip NaN,
-// skip exact (0,0,0), row-major) so the result can be handed to
-// VisSceneView::updatePointCloud together with that same cloud.
-//
-// Cells listed in `highlightCells` (grid indices, e.g. the measured ROI) are
-// coloured by their signed distance to `plane` mapped onto the [lo, hi] band;
-// every other valid cell gets `baseRgb`, so the measured region stays readable
-// in context instead of colouring the whole scene by a local plane fit.
-std::vector<std::array<float, 3>> cloudDeviationColors(
-    const std::vector<double>& grid, int w, int h, const Plane& plane,
-    double lo, double hi, bool coolWarm,
-    const std::vector<std::size_t>& highlightCells,
-    const std::array<float, 3>& baseRgb = { 0.28f, 0.30f, 0.34f });
 
 } // namespace MeasureTools

@@ -41,13 +41,12 @@ cmake -S . -B build-release -G "Visual Studio 18 2026" `
       -DHANDEYE_HIDE_MEASUREMENT_TOOLS=ON
 cmake --build build-release --config Release
 
-powershell -File pack_portable.ps1 -SourceDir build-release\src\Release -Version 3.1
-# 产出 dist\HandEyeCalibrationTool_v3.1\ 与同名 .zip，拷到目标机解压双击即用
+powershell -File pack_portable.ps1 -SourceDir build-release\src\Release -Version 3.2
+# 产出 dist\HandEyeCalibrationTool_v3.2\ 与同名 .zip，拷到目标机解压双击即用
 ```
 
 不带 `-DHANDEYE_HIDE_MEASUREMENT_TOOLS=ON` 的普通构建/单测仍包含全部 7 个
-测量方法；只有正式包隐藏它们（帮助正文同步不列出，3D 视窗的「偏差着色」
-按钮也一并不创建）。运行日志第二行区会出现
+测量方法；只有正式包隐藏它们（帮助正文同步不列出）。运行日志第二行区会出现
 `edition: release package (measurement tools hidden)`。
 
 ---
@@ -83,10 +82,10 @@ powershell -File pack_portable.ps1 -SourceDir build-release\src\Release -Version
 │ │ Image2DView         │ VisSceneView       │ │ │ 操作日志      [运行质检]   │ │
 │ │ 「2D 实时图像」      │  （无标题栏）       │ │ │  [注意事项] 标定过程中…    │ │
 │ │ 缩放：适应 / 百分比  │  悬浮工具栏：       │ │ │  [提示] …                  │ │
-│ │ [图像][偏差图]       │  [复位][叠加历史]   │ │ │  [姿态引导] …              │ │
-│ │ [尺寸总图][截面轮廓] │  [偏差着色]        │ │ │  [数据质检] …              │ │
-│ │ [重复性趋势]        │                    │ │ ├───────────────────────────┤ │
-│ │ [清除 ROI]          │                    │ │ │ 文件预览                   │ │
+│ │ 相机选择：[左][右]   │  [复位]            │ │ │  [姿态引导] …              │ │
+│ │ [彩色] [清除 ROI]    │                    │ │ │  [数据质检] …              │ │
+│ │                     │                    │ │ ├───────────────────────────┤ │
+│ │                     │                    │ │ │ 文件预览                   │ │
 │ ├─────────────────────┴────────────────────┤ │ │ [相机目标点][机器人位姿]    │ │
 │ │ DataInputArea  固定高度，3 张卡片          │ │ │ [机器人TCP点][标定结果]     │ │
 │ │  [相机目标点坐标] [机器人拍照位姿]         │ │ │  （文本预览区）             │ │
@@ -177,7 +176,8 @@ powershell -File pack_portable.ps1 -SourceDir build-release\src\Release -Version
 **测量方法的通用操作**：先在主窗口「拍照」，再在工具页选方法 → 在 2D 视图上拖框选
 ROI（需要两个 ROI 的方法依次拖两次）→ 点「测量」。结果表 5 列（方法/数值/单位/点数/可信度），
 同时写进「操作日志」的 `[测量-说明]` / `[测量-结果]` 两行。
-「加入重复性」把当前读数并入序列；2D 视图还有偏差图 / 尺寸总图 / 截面轮廓 / 重复性趋势四个页签。
+「加入重复性」把当前读数并入序列。2D 视图底部工具栏的「相机选择」可在左 / 右 /
+彩色相机之间切换预览（采集与识别仍用采集相机；预览不是采集相机时像素→3D 不可用）。
 
 **机器人通信页**：
 

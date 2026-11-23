@@ -647,8 +647,8 @@ VisSceneView::~VisSceneView()
 void VisSceneView::setupToolbar()
 {
     // Floating overlays that must render ABOVE the native OSG child window.
-    // Native widgets always stack above alien siblings, so the three toolbar
-    // buttons are made native themselves; WA_DontCreateNativeAncestors mirrors
+    // Native widgets always stack above alien siblings, so the toolbar button
+    // is made native itself; WA_DontCreateNativeAncestors mirrors
     // m_viewport so the alien m_containerWidget is not forced native (which the
     // Vis embedding relies on).  WA_TranslucentBackground lets the rounded pill
     // corners blend into the scene instead of showing an opaque rectangle.
@@ -670,52 +670,12 @@ void VisSceneView::setupToolbar()
     m_resetButton->setStyleSheet(overlayBtnStyle);
     QObject::connect(m_resetButton, SIGNAL(clicked()), this, SLOT(resetViewNoAnim()));
 
-    // "叠加历史" toggle: shows/hides the accumulated board-pose history frames.
-    m_historyButton = new GlassButton(m_containerWidget);
-    m_historyButton->setText(QStringLiteral("叠加历史"));
-    m_historyButton->setCheckable(true);
-    m_historyButton->setChecked(m_boardHistoryVisible);
-    m_historyButton->setCursor(Qt::PointingHandCursor);
-    m_historyButton->setToolTip(QStringLiteral("叠加显示历史帧的标定板姿态"));
-    m_historyButton->setAttribute(Qt::WA_NativeWindow, true);
-    m_historyButton->setAttribute(Qt::WA_DontCreateNativeAncestors, true);
-    m_historyButton->setAttribute(Qt::WA_TranslucentBackground, true);
-    m_historyButton->setStyleSheet(overlayBtnStyle);
-    QObject::connect(m_historyButton, SIGNAL(toggled(bool)), this, SLOT(onHistoryToggled(bool)));
-
-    // "偏差着色" toggle: the 3D half of the measurement colouring.  It lives in
-    // the 3D toolbar because it changes what *this* view renders; the actual
-    // colouring is computed by the tools panel, so the button only reports the
-    // user's wish (deviationColoringToggled) and is answered by a re-published
-    // snapshot — this view never reaches into the measurement code itself.
-#ifndef HANDEYE_HIDE_MEASUREMENT_TOOLS
-    // 正式包隐藏测量工具时这里也不建：没有测量页，按钮点了没有任何效果，
-    // 留着只会被当成故障。
-    m_deviationButton = new GlassButton(m_containerWidget);
-    m_deviationButton->setText(QStringLiteral("偏差着色"));
-    m_deviationButton->setObjectName(QStringLiteral("vis_deviation_toggle"));
-    m_deviationButton->setCheckable(true);
-    m_deviationButton->setCursor(Qt::PointingHandCursor);
-    m_deviationButton->setToolTip(
-        QStringLiteral("按测量结果给 3D 点云着色（与 2D 偏差图同一稳健色标）"));
-    m_deviationButton->setAttribute(Qt::WA_NativeWindow, true);
-    m_deviationButton->setAttribute(Qt::WA_DontCreateNativeAncestors, true);
-    m_deviationButton->setAttribute(Qt::WA_TranslucentBackground, true);
-    m_deviationButton->setStyleSheet(overlayBtnStyle);
-    QObject::connect(m_deviationButton, &QPushButton::toggled, this,
-                     &VisSceneView::deviationColoringToggled);
-#endif
-
     // T-002 判据 1：原来那条「识别后可点击场景中的点选择填充」的视窗内提示
     // （m_pickHint）已删除——它改由 logRequested 进操作日志，见
     // maybeAnnouncePickHint()。
 
-    // 3D 侧的真模糊：这三个浮层都挂上 DWM 的 blur-behind（见文件上方的说明）。
+    // 3D 侧的真模糊：复位浮层挂上 DWM 的 blur-behind（见文件上方的说明）。
     applyBlurBehind(m_resetButton);
-    applyBlurBehind(m_historyButton);
-#ifndef HANDEYE_HIDE_MEASUREMENT_TOOLS
-    applyBlurBehind(m_deviationButton);
-#endif
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1070,7 +1030,6 @@ void VisSceneView::clear()
 
     // Board-pose overlay handles are gone with the scene.
     m_boardFrameHandles.clear();
-    m_boardHistoryHandles.clear();
 
     d->view->Clear();
 
@@ -1410,81 +1369,6 @@ void VisSceneView::clearBoardFrame()
     m_boardFrameHandles.clear();
 }
 
-void VisSceneView::setBoardHistory(const std::vector<BoardFrame>& frames)
-{
-#ifdef HAS_RVBUST_VIS
-    if (!d || !d->initialized) return;
-    clearBoardHistory();
-
-    // Distinct palette cycles so consecutive frames stay distinguishable.
-    static const std::array<std::array<float, 3>, 6> palette = {{
-        {0.90f, 0.55f, 0.10f},  // orange
-        {0.10f, 0.70f, 0.90f},  // cyan
-        {0.55f, 0.90f, 0.10f},  // lime
-        {0.90f, 0.10f, 0.55f},  // magenta
-        {0.75f, 0.75f, 0.10f},  // yellow
-        {0.45f, 0.55f, 0.95f},  // periwinkle
-    }};
-
-    for (const auto& f : frames) {
-        const auto& col = palette[static_cast<std::size_t>(f.frameNo % 6)];
-        int h = addPlane(f.extentXMM * MM_TO_M, f.extentYMM * MM_TO_M,
-                         1, 1, &f.centerMM, &f.quat, col);
-        if (h >= 0) {
-            m_boardHistoryHandles.push_back(h);
-            setObjectTransparency(h, 0.40f);
-            setVisible(h, m_boardHistoryVisible);
-        }
-        // Frame-number label, offset slightly along the board normal.
-        const TransformTools::Rot3 r = TransformTools::quatToRot(
-            f.quat[0], f.quat[1], f.quat[2], f.quat[3]);
-        const std::array<float, 3> n = { static_cast<float>(r[2]), static_cast<float>(r[5]), static_cast<float>(r[8]) };
-        const std::array<float, 3> labelPos = {
-            f.centerMM[0] + n[0] * 3.0f,
-            f.centerMM[1] + n[1] * 3.0f,
-            f.centerMM[2] + n[2] * 3.0f,
-        };
-        int t = addText(QString::number(f.frameNo), labelPos, 0.015f, {1.0f, 1.0f, 1.0f});
-        if (t >= 0) {
-            m_boardHistoryHandles.push_back(t);
-            setVisible(t, m_boardHistoryVisible);
-        }
-    }
-#else
-    (void)frames;
-#endif
-}
-
-void VisSceneView::clearBoardHistory()
-{
-    for (int h : m_boardHistoryHandles)
-        removeObject(h);
-    m_boardHistoryHandles.clear();
-}
-
-void VisSceneView::setBoardHistoryVisible(bool visible)
-{
-    m_boardHistoryVisible = visible;
-    for (int h : m_boardHistoryHandles)
-        setVisible(h, visible);
-    if (m_historyButton)
-        m_historyButton->setChecked(visible);
-}
-
-void VisSceneView::onHistoryToggled(bool visible)
-{
-    setBoardHistoryVisible(visible);
-}
-
-void VisSceneView::setDeviationColoringChecked(bool on)
-{
-    if (!m_deviationButton || m_deviationButton->isChecked() == on)
-        return;
-    // Reflect the panel-side state without echoing it back as a user toggle.
-    const QSignalBlocker block(m_deviationButton);
-    m_deviationButton->setChecked(on);
-}
-
 // ═══════════════════════════════════════════════════════════════
 // 2D Image overlay
 // ═══════════════════════════════════════════════════════════════
@@ -1657,24 +1541,11 @@ void VisSceneView::resizeEvent(QResizeEvent* event)
     if (m_viewport)
         m_viewport->setGeometry(0, 0, cw, ch);
 
-    // Floating "复位" button (bottom-left) + "叠加历史" toggle.
+    // Floating "复位" button (bottom-left).
     if (m_resetButton) {
         m_resetButton->adjustSize();
         m_resetButton->move(8, ch - m_resetButton->height() - 8);
         m_resetButton->raise();
-    }
-    if (m_historyButton) {
-        m_historyButton->adjustSize();
-        m_historyButton->move(8 + (m_resetButton ? m_resetButton->width() + 8 : 0),
-                              ch - m_historyButton->height() - 8);
-        m_historyButton->raise();
-    }
-    if (m_deviationButton) {
-        m_deviationButton->adjustSize();
-        m_deviationButton->move(8 + (m_resetButton ? m_resetButton->width() + 8 : 0)
-                                    + (m_historyButton ? m_historyButton->width() + 8 : 0),
-                                ch - m_deviationButton->height() - 8);
-        m_deviationButton->raise();
     }
     if (m_resizeTimer)
         m_resizeTimer->start();
@@ -1685,10 +1556,6 @@ void VisSceneView::showEvent(QShowEvent* event)
     QWidget::showEvent(event);
     // Qt 在隐藏/显示之间可能重建原生窗口，accent 策略会跟着掉；露出来时补挂一次。
     applyBlurBehind(m_resetButton);
-    applyBlurBehind(m_historyButton);
-#ifndef HANDEYE_HIDE_MEASUREMENT_TOOLS
-    applyBlurBehind(m_deviationButton);
-#endif
 #ifdef HAS_RVBUST_VIS
     if (m_shuttingDown) return;
     if (d && !d->initialized)

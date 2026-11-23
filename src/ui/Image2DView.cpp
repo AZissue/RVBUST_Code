@@ -1,5 +1,4 @@
 #include "ui/Image2DView.h"
-#include "logic/MeasureTools.h"
 #include "logic/RuntimeLog.h"
 #include "ui/Theme.h"
 #include "ui/ViewOverlay.h"   // 与 3D 视窗共用的浮层（玻璃）按钮/标签组件（T-003）
@@ -11,9 +10,9 @@
 #include <QPainterPath>
 #include <QPen>
 #include <QFont>
-#include <QFontMetrics>
 #include <QApplication>
 #include <QPushButton>
+#include <QSignalBlocker>
 #include <QTimer>
 #include <algorithm>
 #include <cmath>
@@ -56,41 +55,6 @@ bool isAncestor(const QWidget* ancestor, const QWidget* w)
     }
     return false;
 }
-
-
-// Palette of the Python reference implementation (mviz.py) so the generated
-// pages look the same as the tool being matched.
-const QColor kPageBg(24, 26, 31);
-const QColor kPanelBg(31, 34, 41);
-const QColor kGridLine(55, 60, 70);
-const QColor kFg(222, 226, 233);
-const QColor kDim(140, 148, 162);
-const QColor kAccent(255, 167, 38);
-const QColor kOk(76, 191, 122);
-const QColor kNg(239, 83, 80);
-const QColor kLine(90, 170, 245);
-
-QFont pageFont(int px, bool bold = false)
-{
-    QFont f(QStringLiteral("Microsoft YaHei"), px);
-    f.setBold(bold);
-    return f;
-}
-
-// Deviation colormaps, copied from mviz.py's `colormap()` (t is already
-// clamped to [0, 1]).
-QRgb devColor(double t, bool coolWarm)
-{
-    // Shared with the 3D deviation colouring (MeasureTools::cloudDeviationColors)
-    // so the two views cannot drift apart.
-    const std::array<double, 3> c = MeasureTools::colormap(t, coolWarm);
-    return qRgb(static_cast<int>(c[0] * 255.0), static_cast<int>(c[1] * 255.0),
-                static_cast<int>(c[2] * 255.0));
-}
-
-// Page size before the first capture — the same canvas the Python tool renders
-// into (VW x VH = 900 x 660).
-QSize fallbackPageSize() { return QSize(900, 660); }
 
 } // namespace
 
@@ -161,7 +125,21 @@ Image2DView::Image2DView(QWidget* parent)
         render();
     });
 
-    buildPageBar();
+    buildToolbar();
+}
+
+void Image2DView::setDisplayImage(const QImage& image)
+{
+    if (image.isNull())
+        return;
+    // convertFromImage reuses the existing pixmap's storage when the size and
+    // format still match, so a streaming preview does not reallocate a 1.5 MP
+    // pixmap 20 times a second.
+    if (m_originalPixmap.isNull() || m_originalPixmap.size() != image.size())
+        m_originalPixmap = QPixmap::fromImage(image);
+    else
+        m_originalPixmap.convertFromImage(image);
+    m_canvasDirty = true;
 }
 
 void Image2DView::updateFrame(const QImage& image, bool preserveView, bool livePreview)
@@ -175,25 +153,7 @@ void Image2DView::updateFrame(const QImage& image, bool preserveView, bool liveP
     if (m_frozen)
         return;
 
-    // A streaming preview must not regenerate a measurement page 20 times a
-    // second: on a non-image page the live frames are ignored and the page
-    // keeps the last captured measurement.  A captured still always refreshes.
-    if (m_page != Page::Image && livePreview) {
-        m_canvasDirty = true;
-        return;
-    }
-    if (m_page != Page::Image) {
-        refreshPagePixmap();
-    } else {
-        // convertFromImage reuses the existing pixmap's storage when the size and
-        // format still match, so a streaming preview no longer reallocates a
-        // 1.5 MP pixmap 20 times a second.
-        if (m_originalPixmap.isNull() || m_originalPixmap.size() != image.size())
-            m_originalPixmap = QPixmap::fromImage(image);
-        else
-            m_originalPixmap.convertFromImage(image);
-    }
-    m_canvasDirty = true;
+    setDisplayImage(image);
 
     if (!preserveView) {
         m_autoFit = true;
@@ -252,7 +212,7 @@ void Image2DView::setFrozenImage(const QImage& image)
         return;
     m_frozenImage = image;
     m_frozen = true;
-    refreshPagePixmap();     // paints the still instead of the live frame
+    setDisplayImage(image);     // paints the still instead of the live frame
     m_autoFit = true;
     m_zoomLevel = 0.0;
     fitZoom();
@@ -271,7 +231,7 @@ void Image2DView::clearFrozenImage()
 
     if (!m_cameraImage.isNull()) {
         // Come back to the last real frame that arrived while frozen.
-        refreshPagePixmap();
+        setDisplayImage(m_cameraImage);
         m_autoFit = true;
         m_zoomLevel = 0.0;
         fitZoom();
@@ -325,37 +285,52 @@ void Image2DView::updatePausedHintGeometry()
     m_pausedHint->move(x, y);
 }
 
-// ── Display pages (inside this widget, no extra window) ───────────────
+// ── Bottom toolbar (相机选择 + 清除 ROI) ──────────────────────────────
 
-void Image2DView::buildPageBar()
+void Image2DView::buildToolbar()
 {
     auto* bar = new QWidget(this);
-    bar->setObjectName(QStringLiteral("view2d_page_bar"));
+    bar->setObjectName(QStringLiteral("view2d_toolbar"));
     auto* row = new QHBoxLayout(bar);
     row->setContentsMargins(0, 0, 0, 0);
     row->setSpacing(4);
 
-    const QStringList names = { QStringLiteral("图像"), QStringLiteral("偏差图"),
-                                QStringLiteral("尺寸总图"), QStringLiteral("截面轮廓"),
-                                QStringLiteral("重复性趋势") };
     // T-001 判据 3：工具栏按钮同样去掉边框与实心底色，底换成背后画面的模糊副本
     // （和视窗里两个标签用同一个模糊源）。
     const QString style = Theme::viewOverlayButtonStyle();
     const auto glassSource = [this](const QWidget* w) { return overlayBlurUnder(w); };
 
+    // 「相机选择」：左 / 右 / 彩色三台相机各一个互斥小按钮。文字用「相机选择」
+    // 打头，让功能名和按钮风格都和现有工具栏一致；未连接或该机型没有这台相机时
+    // 按钮禁用（保持可见，比藏起来更好找）。
+    auto* caption = new GlassLabel(bar);
+    caption->setText(QStringLiteral("相机选择"));
+    caption->setGlassSource(glassSource);
+    caption->setStyleSheet(Theme::viewOverlayLabelStyle());
+    caption->setAttribute(Qt::WA_TransparentForMouseEvents);
+    row->addWidget(caption);
+    m_glassWidgets.push_back(caption);
+
+    const QStringList names = { QStringLiteral("左相机"), QStringLiteral("右相机"),
+                                QStringLiteral("彩色相机") };
     for (int i = 0; i < names.size(); ++i) {
         auto* btn = new GlassButton(bar);
         btn->setText(names[i]);
+        btn->setObjectName(QStringLiteral("view2d_camera_%1").arg(i));
         btn->setGlassSource(glassSource);
         btn->setCheckable(true);
         btn->setAutoExclusive(true);
-        btn->setChecked(i == 0);
+        btn->setChecked(i == static_cast<int>(m_previewCamera));
+        btn->setEnabled(false);   // 连接成功后由主窗口按机型放开
         btn->setStyleSheet(style);
         btn->setCursor(Qt::PointingHandCursor);
         btn->setFocusPolicy(Qt::NoFocus);
-        connect(btn, &QPushButton::clicked, this, [this, i]() { setPage(static_cast<Page>(i)); });
+        connect(btn, &QPushButton::clicked, this, [this, i]() {
+            setPreviewCamera(static_cast<PreviewCamera>(i));
+            emit previewCameraSelected(i);
+        });
         row->addWidget(btn);
-        m_pageButtons.push_back(btn);
+        m_cameraButtons.push_back(btn);
         m_glassWidgets.push_back(btn);
     }
 
@@ -376,17 +351,55 @@ void Image2DView::buildPageBar()
 
     bar->adjustSize();
     bar->raise();
-    m_pageBar = bar;
-    updatePageBarGeometry();
+    m_toolBar = bar;
+    updateToolbarGeometry();
 }
 
-void Image2DView::updatePageBarGeometry()
+void Image2DView::updateToolbarGeometry()
 {
-    if (!m_pageBar)
+    if (!m_toolBar)
         return;
-    m_pageBar->adjustSize();
-    m_pageBar->move(8, std::max(8, height() - m_pageBar->height() - 8));
-    m_pageBar->raise();
+    m_toolBar->adjustSize();
+    m_toolBar->move(8, std::max(8, height() - m_toolBar->height() - 8));
+    m_toolBar->raise();
+}
+
+void Image2DView::setCameraChoices(bool leftAvailable, bool rightAvailable,
+                                   bool colorAvailable)
+{
+    const bool avail[3] = { leftAvailable, rightAvailable, colorAvailable };
+    for (int i = 0; i < m_cameraButtons.size() && i < 3; ++i) {
+        auto* btn = m_cameraButtons[i];
+        if (!btn)
+            continue;
+        btn->setEnabled(avail[i]);
+        // 不可用的相机不能停留在选中态：回退到第一款可用的（左相机总是可用）。
+        if (!avail[i] && i == static_cast<int>(m_previewCamera) && leftAvailable) {
+            m_previewCamera = PreviewCamera::Left;
+            const QSignalBlocker block(btn);
+            if (m_cameraButtons[0])
+                m_cameraButtons[0]->setChecked(true);
+        }
+    }
+}
+
+void Image2DView::setPreviewCamera(PreviewCamera camera)
+{
+    m_previewCamera = camera;
+    const int idx = static_cast<int>(camera);
+    if (idx >= 0 && idx < m_cameraButtons.size() && m_cameraButtons[idx]) {
+        const QSignalBlocker block(m_cameraButtons[idx]);
+        m_cameraButtons[idx]->setChecked(true);
+    }
+    if (m_titleLabel) {
+        const QString name = camera == PreviewCamera::Right
+                                 ? QStringLiteral("右相机")
+                                 : (camera == PreviewCamera::Color
+                                        ? QStringLiteral("彩色相机")
+                                        : QStringLiteral("左相机"));
+        m_titleLabel->setText(QStringLiteral("2D 实时图像（%1）").arg(name));
+        m_titleLabel->adjustSize();
+    }
 }
 
 // ── 浮层的模糊底（T-001 判据 3）────────────────────────────────────────
@@ -479,24 +492,6 @@ void Image2DView::updateOverlayBackdrops()
     }
 }
 
-void Image2DView::setPage(Page page)
-{
-    if (m_page == page)
-        return;
-    m_page = page;
-    if (m_pageButtons.size() > static_cast<int>(page)) {
-        // setChecked() on an auto-exclusive button clears its siblings.
-        if (!m_pageButtons[static_cast<int>(page)]->isChecked())
-            m_pageButtons[static_cast<int>(page)]->setChecked(true);
-    }
-    // The page pixmap has the same size as the camera image, so the current
-    // zoom / pan stay valid — switching pages never jumps the view.
-    refreshPagePixmap();
-    m_canvasDirty = true;
-    render();
-    emit pageChanged(static_cast<int>(page));
-}
-
 void Image2DView::setRois(const QVector<QRect>& rois, const QStringList& labels)
 {
     m_rois = rois;
@@ -515,517 +510,6 @@ void Image2DView::clearRois()
         m_clearRoiBtn->setEnabled(false);
     m_canvasDirty = true;
     render();
-}
-
-void Image2DView::setMeasurement(const Measurement::Snapshot& snapshot)
-{
-    m_snapshot = snapshot;
-    if (m_page != Page::Image) {
-        refreshPagePixmap();
-        m_canvasDirty = true;
-        render();
-    }
-}
-
-void Image2DView::refreshPagePixmap()
-{
-    if (m_frozen) {
-        // Frozen for an offline tool page: the still wins over every page, so a
-        // page switch during the offline session cannot drop it.
-        if (m_frozenImage.isNull())
-            return;
-        if (m_originalPixmap.isNull() || m_originalPixmap.size() != m_frozenImage.size())
-            m_originalPixmap = QPixmap::fromImage(m_frozenImage);
-        else
-            m_originalPixmap.convertFromImage(m_frozenImage);
-        return;
-    }
-
-    if (m_page == Page::Image) {
-        if (!m_cameraImage.isNull()) {
-            if (m_originalPixmap.isNull() || m_originalPixmap.size() != m_cameraImage.size())
-                m_originalPixmap = QPixmap::fromImage(m_cameraImage);
-            else
-                m_originalPixmap.convertFromImage(m_cameraImage);
-        }
-        return;
-    }
-
-    const QSize size = m_cameraImage.isNull() ? fallbackPageSize() : m_cameraImage.size();
-    QPixmap page;
-    switch (m_page) {
-    case Page::Deviation:
-        page = renderDeviationPage(size);
-        break;
-    case Page::Dimensions:
-        page = renderDimensionPage(size);
-        break;
-    case Page::Section:
-        page = renderSectionPage(size);
-        break;
-    case Page::Repeat:
-        page = renderRepeatPage(size);
-        break;
-    case Page::Image:
-        break;
-    }
-    if (!page.isNull())
-        m_originalPixmap = page;
-}
-
-// ── Measurement display pages ──────────────────────────────────────────
-
-// 偏差图: every ROI sample painted where it sits in the image, coloured by its
-// signed distance from the fitted plane.  The band is ±3σ_MAD around the
-// median (robustLimits) — deliberately not a percentile range, so a single
-// flyer at the ROI edge cannot flatten the whole map into one colour.  Samples
-// outside the band are pinned to the end colours and counted in the footer.
-QPixmap Image2DView::renderDeviationPage(const QSize& size) const
-{
-    QPixmap pm(size);
-    pm.fill(kPageBg);
-    QPainter p(&pm);
-    p.setRenderHint(QPainter::Antialiasing, true);
-
-    const int W = size.width();
-    const int H = size.height();
-
-    if (m_snapshot.devSamples.isEmpty() || m_snapshot.gridW <= 0 || m_snapshot.gridH <= 0) {
-        p.setPen(kDim);
-        p.setFont(pageFont(16));
-        p.drawText(QRect(0, 0, W, H), Qt::AlignCenter, QStringLiteral("数据不足"));
-        p.end();
-        return pm;
-    }
-
-    const double lo = m_snapshot.limitLo;
-    const double hi = m_snapshot.limitHi;
-    const double span = (hi - lo) > 1e-12 ? (hi - lo) : 1e-12;
-    const bool coolWarm = m_snapshot.coolWarm;
-
-    // Same margin layout as mviz.heatmap(): colour bar on the right.
-    const int padL = 46, padR = 96, padT = 40, padB = 40;
-    const int aw = std::max(1, W - padL - padR);
-    const int ah = std::max(1, H - padT - padB);
-    const double sx = static_cast<double>(aw) / m_snapshot.gridW;
-    const double sy = static_cast<double>(ah) / m_snapshot.gridH;
-
-    // The samples go into an ARGB layer (QPixmap has no setPixel) which is then
-    // blitted once, so the per-sample cost stays a pixel write.
-    QImage layer(W, H, QImage::Format_ARGB32);
-    layer.fill(Qt::transparent);
-    for (const Measurement::DevSample& s : m_snapshot.devSamples) {
-        const double t = std::min(1.0, std::max(0.0, (s.value - lo) / span));
-        const QRgb rgb = devColor(t, coolWarm);
-        const int cx = padL + static_cast<int>(s.gx * sx);
-        const int cy = padT + static_cast<int>(s.gy * sy);
-        // 2x2 splat: a single pixel would leave holes in a sparse ROI.
-        for (int dx = 0; dx < 2; ++dx) {
-            for (int dy = 0; dy < 2; ++dy) {
-                const int x = cx + dx, y = cy + dy;
-                if (x >= 0 && x < W && y >= 0 && y < H)
-                    layer.setPixel(x, y, rgb);
-            }
-        }
-    }
-    p.drawImage(0, 0, layer);
-
-    // Colour bar: hi at the top, lo at the bottom, three signed tick labels.
-    const int bx = W - padR + 22, by = padT + 10, bw = 20;
-    const int bh = std::max(2, ah - 20);
-    for (int i = 0; i < bh; ++i)
-        p.fillRect(bx, by + i, bw, 1, devColor(1.0 - static_cast<double>(i) / bh, coolWarm));
-    p.setPen(kGridLine);
-    p.drawRect(bx, by, bw, bh);
-    p.setFont(pageFont(10));
-    const double ticks[3] = { hi, 0.5 * (hi + lo), lo };
-    for (int i = 0; i < 3; ++i) {
-        const int ty = by + static_cast<int>(i * bh / 2.0);
-        p.setPen(kDim);
-        p.drawText(bx + bw + 5, ty + 4,
-                   QStringLiteral("%1").arg(ticks[i], 0, 'f', 3, QLatin1Char(' ')));
-    }
-    p.setPen(kDim);
-    p.drawText(bx, by - 8, m_snapshot.unit.isEmpty() ? QStringLiteral("mm") : m_snapshot.unit);
-
-    p.setPen(kFg);
-    p.setFont(pageFont(14, true));
-    p.drawText(12, 24, m_snapshot.title.isEmpty() ? QStringLiteral("偏差图") : m_snapshot.title);
-
-    p.setPen(kDim);
-    p.setFont(pageFont(10));
-    p.drawText(12, H - 22,
-               m_snapshot.footer.isEmpty()
-                   ? QStringLiteral("色标为稳健区间(±3σ_MAD)，超出的 %1 个点已压到端色")
-                         .arg(m_snapshot.clipped)
-                   : m_snapshot.footer);
-    p.end();
-    return pm;
-}
-
-// 尺寸总图: the captured image with leader lines and value call-outs.  Labels
-// are placed on a fixed radial fan (four quadrants, alternating radius) with a
-// leader back to the anchor — deterministic, and it never covers the ROI with
-// another label's box.
-QPixmap Image2DView::renderDimensionPage(const QSize& size) const
-{
-    QPixmap pm(size);
-    if (m_cameraImage.isNull()) {
-        pm.fill(kPageBg);
-    } else {
-        pm = QPixmap::fromImage(
-            m_cameraImage.scaled(size, Qt::IgnoreAspectRatio, Qt::SmoothTransformation));
-        // Dim the base so the annotations stay readable over bright pixels.
-        QPainter dim(&pm);
-        dim.fillRect(QRect(QPoint(0, 0), size), QColor(0, 0, 0, 60));
-        dim.end();
-    }
-
-    QPainter p(&pm);
-    p.setRenderHint(QPainter::Antialiasing, true);
-    const int W = size.width(), H = size.height();
-
-    if (m_snapshot.annotations.isEmpty()) {
-        p.setPen(kDim);
-        p.setFont(pageFont(16));
-        p.drawText(QRect(0, 0, W, H), Qt::AlignCenter,
-                   QStringLiteral("先执行一次测量，尺寸标注会显示在这里"));
-        p.end();
-        return pm;
-    }
-
-    p.setFont(pageFont(11, true));
-    const QFontMetrics fm(p.font());
-    for (int i = 0; i < m_snapshot.annotations.size(); ++i) {
-        const Measurement::Annotation& a = m_snapshot.annotations[i];
-        const QColor col = a.highlight ? kNg : kOk;
-        const int tw = fm.horizontalAdvance(a.text);
-        const int th = fm.height();
-        const int bw = tw + 12, bh = th + 8;
-
-        // Four-quadrant fan, stepping outwards so consecutive labels do not
-        // stack on top of each other.
-        const int k = i % 4;
-        const int radius = 40 + 26 * (i / 4);
-        const int dx = (k == 0 || k == 3) ? -radius : radius;
-        const int dy = (k < 2) ? -radius : radius;
-        QRect box(a.anchor.x() + dx - bw / 2, a.anchor.y() + dy - bh / 2, bw, bh);
-        box.moveLeft(std::max(2, std::min(box.left(), W - bw - 2)));
-        box.moveTop(std::max(2, std::min(box.top(), H - bh - 2)));
-
-        // Leader line from the box edge to the anchor, with a dot on the anchor.
-        const QPoint boxCentre = box.center();
-        p.setPen(QPen(col, 1));
-        p.drawLine(boxCentre, a.anchor);
-        p.setBrush(col);
-        p.setPen(Qt::NoPen);
-        p.drawEllipse(a.anchor, 3, 3);
-
-        p.setPen(QPen(col, 1));
-        p.setBrush(QColor(24, 28, 34, 235));
-        p.drawRoundedRect(box, 3, 3);
-        p.setPen(kFg);
-        p.drawText(box, Qt::AlignCenter, a.text);
-    }
-
-    p.setPen(kFg);
-    p.setFont(pageFont(14, true));
-    p.drawText(12, 24, m_snapshot.title.isEmpty() ? QStringLiteral("尺寸总图") : m_snapshot.title);
-    p.setPen(kDim);
-    p.setFont(pageFont(10));
-    p.drawText(12, H - 22, QStringLiteral("引线指向测量区域 · 单位 mm · 共 %1 项")
-                               .arg(m_snapshot.annotations.size()));
-    p.end();
-    return pm;
-}
-
-// 截面轮廓: the binned profile along the ROI's principal direction.
-QPixmap Image2DView::renderSectionPage(const QSize& size) const
-{
-    QPixmap pm(size);
-    pm.fill(kPageBg);
-    QPainter p(&pm);
-    p.setRenderHint(QPainter::Antialiasing, true);
-    const int W = size.width(), H = size.height();
-
-    if (m_snapshot.section.size() < 2) {
-        p.setPen(kDim);
-        p.setFont(pageFont(16));
-        p.drawText(QRect(0, 0, W, H), Qt::AlignCenter, QStringLiteral("无数据"));
-        p.end();
-        return pm;
-    }
-
-    const int pad = 56;
-    const int aw = std::max(1, W - 2 * pad), ah = std::max(1, H - 2 * pad);
-    double t0 = m_snapshot.section.front()[0], t1 = m_snapshot.section.front()[0];
-    double v0 = m_snapshot.section.front()[1], v1 = v0;
-    for (const auto& s : m_snapshot.section) {
-        t0 = std::min(t0, s[0]);
-        t1 = std::max(t1, s[0]);
-        v0 = std::min(v0, s[1]);
-        v1 = std::max(v1, s[1]);
-    }
-    if (t1 - t0 < 1e-9) t1 = t0 + 1.0;
-    if (v1 - v0 < 1e-9) { v0 -= 0.5; v1 += 0.5; }
-    const double m = (v1 - v0) * 0.12;
-    v0 -= m;
-    v1 += m;
-
-    const double sc = std::min(aw / (t1 - t0), ah / (v1 - v0));
-    const double ox = pad + (aw - (t1 - t0) * sc) / 2.0;
-    const double oy = pad + (ah - (v1 - v0) * sc) / 2.0;
-    auto TX = [&](double t) { return ox + (t - t0) * sc; };
-    auto TY = [&](double v) { return oy + (v1 - v) * sc; };
-
-    // Grid + height labels.
-    p.setPen(kGridLine);
-    p.setFont(pageFont(9));
-    for (int k = 0; k <= 4; ++k) {
-        const double v = v1 - (v1 - v0) * k / 4.0;
-        const double y = TY(v);
-        p.setPen(kGridLine);
-        p.drawLine(QPointF(ox, y), QPointF(ox + (t1 - t0) * sc, y));
-        p.setPen(kDim);
-        p.drawText(QPointF(pad - 6, y + 3), QStringLiteral("%1").arg(v, 0, 'f', 3));
-    }
-
-    // Profile polyline + sample dots.
-    QPainterPath path;
-    for (std::size_t i = 0; i < m_snapshot.section.size(); ++i) {
-        const QPointF pt(TX(m_snapshot.section[i][0]), TY(m_snapshot.section[i][1]));
-        if (i == 0)
-            path.moveTo(pt);
-        else
-            path.lineTo(pt);
-    }
-    p.setPen(QPen(kLine, 2));
-    p.setBrush(Qt::NoBrush);
-    p.drawPath(path);
-    p.setBrush(kAccent);
-    p.setPen(Qt::NoPen);
-    for (const auto& s : m_snapshot.section) {
-        p.drawEllipse(QPointF(TX(s[0]), TY(s[1])), 2.5, 2.5);
-    }
-
-    // Segment call-out: the steepest step between neighbouring bins is marked
-    // with two dots and labelled with its run and rise — that pair is what a
-    // step-height / 段长 reading is taken from.
-    const std::vector<std::array<double, 2>>& sec = m_snapshot.section;
-    std::size_t knee = 0;
-    double maxStep = -1.0;
-    for (std::size_t i = 1; i < sec.size(); ++i) {
-        const double d = std::fabs(sec[i][1] - sec[i - 1][1]);
-        if (d > maxStep) {
-            maxStep = d;
-            knee = i;
-        }
-    }
-    if (knee > 0) {
-        const QPointF a(TX(sec[knee - 1][0]), TY(sec[knee - 1][1]));
-        const QPointF b(TX(sec[knee][0]), TY(sec[knee][1]));
-        p.setBrush(Qt::NoBrush);
-        p.setPen(QPen(kAccent, 1, Qt::DashLine));
-        p.drawLine(a, b);
-        p.setPen(QPen(kAccent, 1));
-        p.drawEllipse(a, 4, 4);
-        p.drawEllipse(b, 4, 4);
-        const QString txt = QStringLiteral("段长 %1 mm · Δh %2 mm")
-                                .arg(sec[knee][0] - sec[knee - 1][0], 0, 'f', 3)
-                                .arg(maxStep, 0, 'f', 3);
-        p.setFont(pageFont(10, true));
-        const QFontMetrics sfm(p.font());
-        const int tw = sfm.horizontalAdvance(txt) + 10;
-        QRect tb(static_cast<int>((a.x() + b.x()) / 2) - tw / 2,
-                 static_cast<int>((a.y() + b.y()) / 2) - 26, tw, sfm.height() + 6);
-        tb.moveLeft(std::max(2, std::min(tb.left(), W - tw - 2)));
-        tb.moveTop(std::max(2, std::min(tb.top(), H - tb.height() - 2)));
-        p.setBrush(QColor(24, 28, 34, 235));
-        p.setPen(QPen(kAccent, 1));
-        p.drawRoundedRect(tb, 3, 3);
-        p.setPen(kFg);
-        p.drawText(tb, Qt::AlignCenter, txt);
-    }
-
-    p.setPen(kFg);
-    p.setFont(pageFont(14, true));
-    p.drawText(12, 24, QStringLiteral("截面轮廓"));
-    p.setPen(kDim);
-    p.setFont(pageFont(10));
-    p.drawText(12, H - 22,
-               QStringLiteral("沿 ROI 主方向 · 跨度 %1 mm · 分箱 %2 mm · %3 个采样 · 单位 mm")
-                   .arg(sec.back()[0] - sec.front()[0], 0, 'f', 3)
-                   .arg(m_snapshot.sectionStep, 0, 'f', 3)
-                   .arg(m_snapshot.sectionPoints));
-    // Axis titles.
-    p.drawText(pad, H - 40, QStringLiteral("截面方向 (mm)"));
-    p.drawText(pad, pad - 10, QStringLiteral("高度 (mm)"));
-    p.end();
-    return pm;
-}
-
-// 重复性趋势: run chart on top, histogram underneath — the Python tool's
-// composition (900x340 chart at y=10, 450x280 histogram below it).
-QPixmap Image2DView::renderRepeatPage(const QSize& size) const
-{
-    QPixmap pm(size);
-    pm.fill(kPanelBg);
-    QPainter p(&pm);
-    p.setRenderHint(QPainter::Antialiasing, true);
-    const int W = size.width(), H = size.height();
-
-    if (m_snapshot.series.size() < 1) {
-        p.setPen(kDim);
-        p.setFont(pageFont(16));
-        p.drawText(QRect(0, 0, W, H), Qt::AlignCenter,
-                   QStringLiteral("无有效数据（先测量并「加入重复性」）"));
-        p.end();
-        return pm;
-    }
-
-    const QVector<double>& v = m_snapshot.series;
-    const double mean = m_snapshot.seriesMean;
-    const double stdDev = m_snapshot.seriesSigma;
-    const double lo = m_snapshot.hasTolerance ? m_snapshot.tolLo : 0.0;
-    const double hi = m_snapshot.hasTolerance ? m_snapshot.tolHi : 0.0;
-    const bool hasTol = m_snapshot.hasTolerance;
-
-    // ── run chart ──
-    const int chartH = std::min(H - 60, std::max(180, H * 52 / 100));
-    const int padL = 78, padR = 22, padT = 38, padB = 34;
-    const int aw = std::max(1, W - padL - padR), ah = std::max(1, chartH - padT - padB);
-    double y0 = v[0], y1 = v[0];
-    for (double x : v) {
-        y0 = std::min(y0, x);
-        y1 = std::max(y1, x);
-    }
-    y0 = std::min(y0, mean - 3.0 * stdDev);
-    y1 = std::max(y1, mean + 3.0 * stdDev);
-    if (hasTol) {
-        y0 = std::min(y0, lo);
-        y1 = std::max(y1, hi);
-    }
-    if (y1 - y0 < 1e-9) { y0 -= 1e-3; y1 += 1e-3; }
-    const double pad = (y1 - y0) * 0.12;
-    y0 -= pad;
-    y1 += pad;
-    auto Y = [&](double val) { return padT + ah - (val - y0) / (y1 - y0) * ah; };
-    auto X = [&](int i) { return padL + (v.size() > 1
-                                              ? i * aw / static_cast<double>(v.size() - 1)
-                                              : 0.0); };
-
-    p.setFont(pageFont(9));
-    for (int k = 0; k <= 4; ++k) {
-        const double val = y1 - (y1 - y0) * k / 4.0;
-        const double y = padT + ah * k / 4.0;
-        p.setPen(kGridLine);
-        p.drawLine(QPointF(padL, y), QPointF(padL + aw, y));
-        p.setPen(kDim);
-        p.drawText(QPointF(padL - 6, y + 3), QStringLiteral("%1").arg(val, 0, 'f', 4));
-    }
-
-    auto hLine = [&](double val, const QColor& col, const QString& name, bool rightEnd) {
-        if (val < y0 || val > y1)
-            return;
-        const double y = Y(val);
-        p.setPen(QPen(col, 1));
-        p.drawLine(QPointF(padL, y), QPointF(padL + aw, y));
-        p.setPen(col);
-        p.drawText(rightEnd ? QPointF(padL + aw - 2, y - 4) : QPointF(padL + 2, y - 4), name);
-    };
-    hLine(mean, kDim, QStringLiteral("均值"), true);
-    hLine(mean + 3.0 * stdDev, kAccent, QStringLiteral("+3σ"), true);
-    hLine(mean - 3.0 * stdDev, kAccent, QStringLiteral("-3σ"), true);
-    if (hasTol) {
-        // Tolerance lines are dashed (4 px on / 4 px off) in the warning colour.
-        for (double val : { lo, hi }) {
-            if (val < y0 || val > y1)
-                continue;
-            const double y = Y(val);
-            p.setPen(kNg);
-            for (double x = padL; x < padL + aw; x += 8.0)
-                p.drawLine(QPointF(x, y), QPointF(std::min(x + 4.0, padL + aw * 1.0), y));
-            p.drawText(QPointF(padL + 2, y - 4), val == lo ? QStringLiteral("下限")
-                                                           : QStringLiteral("上限"));
-        }
-    }
-
-    p.setBrush(Qt::NoBrush);
-    if (v.size() > 1) {
-        QPainterPath path;
-        for (int i = 0; i < v.size(); ++i) {
-            const QPointF pt(X(i), Y(v[i]));
-            if (i == 0)
-                path.moveTo(pt);
-            else
-                path.lineTo(pt);
-        }
-        p.setPen(QPen(kLine, 2));
-        p.drawPath(path);
-    }
-    for (int i = 0; i < v.size(); ++i) {
-        const bool bad = hasTol && (v[i] < lo || v[i] > hi);
-        p.setPen(Qt::NoPen);
-        p.setBrush(bad ? kNg : kLine);
-        p.drawEllipse(QPointF(X(i), Y(v[i])), 3.0, 3.0);
-    }
-
-    p.setPen(kFg);
-    p.setFont(pageFont(13, true));
-    p.drawText(12, 22, m_snapshot.seriesName.isEmpty() ? QStringLiteral("重复性趋势")
-                                                       : m_snapshot.seriesName);
-    p.setPen(kDim);
-    p.setFont(pageFont(10));
-    p.drawText(padL, chartH + 6,
-               QStringLiteral("n=%1  均值 %2  σ %3  极差 %4  (mm)")
-                   .arg(v.size())
-                   .arg(mean, 0, 'f', 4)
-                   .arg(stdDev, 0, 'f', 4)
-                   .arg(m_snapshot.seriesRange, 0, 'f', 4));
-
-    // ── histogram ──
-    const int hW = std::max(240, W / 2), hH = std::max(140, H - chartH - 24);
-    const int hx = (W - hW) / 2, hy = chartH + 18;
-    p.setPen(kGridLine);
-    p.drawRect(hx, hy, hW, hH);
-    if (v.size() >= 2) {
-        const int bins = std::min(18, std::max(3, v.size() / 2));
-        double hv0 = v[0], hv1 = v[0];
-        for (double x : v) {
-            hv0 = std::min(hv0, x);
-            hv1 = std::max(hv1, x);
-        }
-        if (hv1 - hv0 < 1e-12)
-            hv1 = hv0 + 1e-6;
-        std::vector<int> counts(bins, 0);
-        for (double x : v) {
-            int b = static_cast<int>((x - hv0) / (hv1 - hv0) * bins);
-            b = std::min(bins - 1, std::max(0, b));
-            ++counts[b];
-        }
-        const int hm = *std::max_element(counts.begin(), counts.end());
-        const int hpadL = hx + 42, hpadR = hx + hW - 16;
-        const int hpadT = hy + 30, hpadB = hy + hH - 30;
-        const double baw = (hpadR - hpadL) / static_cast<double>(bins);
-        const double bah = std::max(1, hpadB - hpadT);
-        p.setPen(Qt::NoPen);
-        p.setBrush(kLine);
-        for (int i = 0; i < bins; ++i) {
-            const double hh = counts[i] / static_cast<double>(std::max(1, hm)) * bah;
-            p.drawRect(QRectF(hpadL + i * baw + 1, hpadB - hh, std::max(1.0, baw - 2), hh));
-        }
-        p.setPen(kGridLine);
-        p.drawLine(QPointF(hpadL, hpadB), QPointF(hpadR, hpadB));
-        p.setPen(kDim);
-        p.setFont(pageFont(9));
-        p.drawText(hpadL, hy + hH - 10, QStringLiteral("%1").arg(hv0, 0, 'f', 4));
-        p.drawText(hpadR - 60, hy + hH - 10, QStringLiteral("%1 mm").arg(hv1, 0, 'f', 4));
-    }
-    p.setPen(kFg);
-    p.setFont(pageFont(13, true));
-    p.drawText(hx + 12, hy + 22, QStringLiteral("分布"));
-    p.end();
-    return pm;
 }
 
 // ── Rendering (double-buffered Canvas + Visible) ──
@@ -1307,7 +791,7 @@ void Image2DView::resizeEvent(QResizeEvent* event)
         m_zoomLabel->move(width() - m_zoomLabel->width() - 8, 8);
         m_zoomLabel->raise();
     }
-    updatePageBarGeometry();
+    updateToolbarGeometry();
     if (m_pausedHint && m_pausedHint->isVisible()) {
         updatePausedHintGeometry();
         m_pausedHint->raise();

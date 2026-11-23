@@ -11,37 +11,31 @@
 #include <tuple>
 #include <string>
 
-#include "ui/MeasurementSnapshot.h"
-
 class QPushButton;
 
-// The 2D viewport is also the container for the measurement display pages:
-// 图像 | 偏差图 | 尺寸总图 | 截面轮廓 | 重复性趋势.  The pages live inside this
-// widget — no extra window — and share its zoom / pan / pick machinery, so
-// switching pages never changes how the image behaves.
+// 2D 预览视窗。画面是"相机的一帧"，底部浮层工具栏只放两件事：
+//   * 相机选择（左 / 右 / 彩色）——决定预览流来自哪台相机；
+//   * 清除 ROI——测量拖框的叠加层由工具面板持有，这里只发信号。
+// 缩放 / 平移 / 像素拾取 / 离屏冻结等画面行为全在本控件里。
 class Image2DView : public QWidget {
     Q_OBJECT
 public:
-    enum class Page {
-        Image = 0,   // the captured camera image
-        Deviation,   // colour map of the signed distance from the fitted plane
-        Dimensions,  // leader lines + value call-outs drawn over the image
-        Section,     // section profile along the ROI's principal direction
-        Repeat       // repeatability run chart + histogram
-    };
+    // 预览相机序号固定：0 = 左, 1 = 右, 2 = 彩色。与
+    // CameraManager::PreviewCamera 一一对应（主窗口负责转接；本控件不碰 SDK）。
+    enum class PreviewCamera { Left = 0, Right = 1, Color = 2 };
 
     explicit Image2DView(QWidget* parent = nullptr);
-
-    void setPage(Page page);
-    Page page() const { return m_page; }
 
     // ROI rectangles in image pixels, drawn over the image (A, B, ...).
     void setRois(const QVector<QRect>& rois, const QStringList& labels);
     void clearRois();
 
-    // Measurement results to paint on the display pages.  Cheap to copy (the
-    // heavy members are vectors that are moved in by the caller).
-    void setMeasurement(const Measurement::Snapshot& snapshot);
+    // 底部工具栏的「相机选择」。主窗口在连接成功后告知哪些相机可用，
+    // 并同步当前选择（未连接的相机按钮保持禁用）。
+    void setCameraChoices(bool leftAvailable, bool rightAvailable,
+                          bool colorAvailable);
+    void setPreviewCamera(PreviewCamera camera);
+    PreviewCamera previewCamera() const { return m_previewCamera; }
 
     // `livePreview` marks the streaming preview path (as opposed to a captured
     // still).  Live frames are rendered with a cheap nearest-neighbour scale and
@@ -76,7 +70,8 @@ signals:
     // The toolbar's 清除 ROI button (P3.3): the panel clears its own ROI state
     // and comes back with roisChanged({}, {}), which erases the overlay.
     void roiClearRequested();
-    void pageChanged(int page);
+    // 用户在「相机选择」里换了预览相机（取值见 PreviewCamera）。
+    void previewCameraSelected(int camera);
 
 protected:
     void wheelEvent(QWheelEvent* event) override;
@@ -89,8 +84,8 @@ protected:
 private:
     void fitZoom();
     void render();
-    void buildPageBar();
-    void updatePageBarGeometry();
+    void buildToolbar();
+    void updateToolbarGeometry();
     // 把「预览已暂停」提示摆到画面正中（浮层，不进布局）。
     void updatePausedHintGeometry();
     // 浮层「毛玻璃」底的模糊源（T-001 判据 3）。2D 画面是本进程画的 pixmap
@@ -103,13 +98,8 @@ private:
     // [OVERLAY] per_frame_us=… paints=… calls=… frames=…。仪表就是本任务的证据，
     // 契约冻结要求它**留在代码里**，别在优化后删掉。
     void tickOverlayMeter();
-    // Regenerates m_originalPixmap for the active page.  Cheap no-op when the
-    // camera image is unchanged and the page did not move.
-    void refreshPagePixmap();
-    QPixmap renderDeviationPage(const QSize& size) const;
-    QPixmap renderDimensionPage(const QSize& size) const;
-    QPixmap renderSectionPage(const QSize& size) const;
-    QPixmap renderRepeatPage(const QSize& size) const;
+    // 把给定图像装进 m_originalPixmap（尺寸不变时复用已有存储）。
+    void setDisplayImage(const QImage& image);
 
     QLabel* m_imageLabel;
     QLabel* m_titleLabel;
@@ -130,17 +120,16 @@ private:
     QElapsedTimer m_overlayWindow;         // 1 s 统计窗口
     bool m_overlayWindowStarted = false;
 
-    // Page machinery (all inside this widget: no extra window).
-    QPointer<QWidget> m_pageBar;
-    QVector<QPushButton*> m_pageButtons;
-    QPointer<QPushButton> m_clearRoiBtn;   // 清除 ROI（工具栏，无 ROI 时禁用）
-    Page m_page = Page::Image;
-    QImage m_cameraImage;        // last frame, kept for the 尺寸总图 base layer
+    // 底部工具栏（相机选择 + 清除 ROI）。
+    QPointer<QWidget> m_toolBar;
+    QVector<QPushButton*> m_cameraButtons;   // 左 / 右 / 彩色（自动互斥）
+    QPointer<QPushButton> m_clearRoiBtn;     // 清除 ROI（无 ROI 时禁用）
+    PreviewCamera m_previewCamera = PreviewCamera::Left;
+    QImage m_cameraImage;        // last live frame (restored after an offline freeze)
     // Offline freeze (the 像素→3D tool shows one of its own png on this view).
     // m_cameraImage keeps following the live stream while frozen.
     QImage m_frozenImage;
     bool m_frozen = false;
-    Measurement::Snapshot m_snapshot;
     QVector<QRect> m_rois;
     QStringList m_roiLabels;
     QPoint m_roiStart;

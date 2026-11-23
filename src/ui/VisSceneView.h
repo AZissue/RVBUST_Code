@@ -75,10 +75,6 @@ public:
     // Current captured frame's fitted board: semi-transparent plane + RGB axes.
     void setBoardFrame(const BoardFrame& frame);
     void clearBoardFrame();
-    // Optional overlay of past saved frames (semi-transparent planes + labels).
-    void setBoardHistory(const std::vector<BoardFrame>& frames);
-    void clearBoardHistory();
-    void setBoardHistoryVisible(bool visible);
 
     // 2D image overlay (for stereo camera right-eye preview)
     void showImage(const QImage& img);
@@ -95,16 +91,10 @@ public:
     // Lifecycle — call before destroying the parent window
     void shutdown();
 
-    // 偏差着色 toggle (toolbar).  The state is owned by the tools panel, which
-    // computes the colours; this only reflects it, so the two controls can
-    // never disagree.
-    void setDeviationColoringChecked(bool on);
-
     // Emitted when the user clicks on/near a selectable marker.
     // index matches the 2D overlay label; xyz in mm.
 signals:
     void markerPicked(int index, float x, float y, float z);
-    void deviationColoringToggled(bool on);
     // T-002 判据 1：原本画在 3D 视窗里的「识别后可点击场景中的点选择填充」
     // 提示改走操作日志。识别出标记、进入可点选状态时发一次（每次识别只发一行）。
     void logRequested(const QString& message);
@@ -115,7 +105,6 @@ protected:
 
 private slots:
     void resetViewNoAnim();
-    void onHistoryToggled(bool visible);
 
 public slots:
     // Called from the native WNDPROC (render thread) via queued invocation.
@@ -152,8 +141,6 @@ private:
     void maybeAnnouncePickHint();
 
     QPushButton* m_resetButton = nullptr;
-    QPushButton* m_historyButton = nullptr;   // toggles board-history overlay
-    QPushButton* m_deviationButton = nullptr; // toggles measurement colouring
     QWidget* m_containerWidget = nullptr;
     QWidget* m_viewport = nullptr;
     QLabel* m_placeholder = nullptr;
@@ -167,8 +154,6 @@ private:
 
     // Board-pose overlay state (stage 8)
     std::vector<int> m_boardFrameHandles;     // current-frame objects
-    std::vector<int> m_boardHistoryHandles;   // history-frame objects
-    bool m_boardHistoryVisible = false;
 
     QTimer* m_hoverTimer = nullptr;
     QTimer* m_resizeTimer = nullptr;

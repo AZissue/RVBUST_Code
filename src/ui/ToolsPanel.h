@@ -69,9 +69,6 @@ public:
     // is told what happened, never silently restarted.
     void onRoiSelected(const QRect& rect);
     void clearMeasurementRois();
-    // Mirror of the 3D view's toolbar toggle.  Applying it re-runs the last
-    // measurement so the colouring appears (or disappears) immediately.
-    void setDeviationColoring(bool on);
 
     // 阶段 27：测量帧目录（当前会话目录）由主窗口注入；返回空 = 没有会话，
     // 保存时会请用户选一个目录。
@@ -99,10 +96,7 @@ public slots:
     }
 
 signals:
-    // Emitted when the panel's own 3D-colouring checkbox is toggled, so the 3D
-    // toolbar button can follow it.
-    void deviationColoringChanged(bool on);
-    // Everything the 2D/3D views need to paint the measurement pages.
+    // Everything the 3D view needs to annotate the measured region.
     void measurementUpdated(const Measurement::Snapshot& snapshot);
     // ROI rectangles to draw on the 2D image (image pixels).
     void roisChanged(const QVector<QRect>& rois, const QStringList& labels);
@@ -349,7 +343,7 @@ private:
 
     // ── Measurement tools (3D 测量一体化工具 parity) ──
     // 7 个方法页，左侧列表里各占一项。面板只留三样共享状态：点云、ROI 矩形、
-    // 重复性序列库；结果表 / 偏差图 / 快照都由各页自己发布（MeasurePage）。
+    // 重复性序列库；结果表 / 3D 标注快照都由各页自己发布（MeasurePage）。
     std::vector<MeasurePage*> m_pages;
     MeasurePage* m_page = nullptr;      // 最近一次显示的方法页（切到别的工具后仍指向它）
     int m_firstMeasureRow = 0;          // 左侧列表里第一个测量方法所在的行

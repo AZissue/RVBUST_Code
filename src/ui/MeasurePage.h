@@ -14,10 +14,10 @@
 //     pointsInRoiIndexed，与校验工装同一条链路），按 spec 的 roiCount 限制与提示；
 //   * 结果表：5 列（方法/数值/单位/点数/可信度）的填充与主值记录；
 //   * 重复性序列：combo / 统计 / 清空，序列库由面板持有（跨页共用，跨帧累积）；
-//   * 快照发布：把偏差图/尺寸总图/截面/3D 载荷装进 Measurement::Snapshot 发出去，
-//     既有链路（3D 偏差着色、四个显示页签、ROI 叠加）完全不变。
+//   * 快照发布：把 3D 标注载荷（拟合平面 / ROI 包围盒）装进
+//     Measurement::Snapshot 发出去，由 3D 视窗负责绘制。
 //
-// 子类只写 compute()：本方法自己的算法 + 自己那几行结果 + 自己的显示载荷。
+// 子类只写 compute()：本方法自己的算法 + 自己那几行结果。
 #include <QImage>
 #include <QMap>
 #include <QRect>
@@ -61,25 +61,15 @@ struct MeasureContext {
     double primaryValue = 0.0;
     bool hasPrimary = false;
     QString refusal;             // 非空 = 这次跑不了，直接显示这句并停
-    QString footer;              // 无偏差图时页面底部的说明行
     QString confidenceNote;      // 可信度的补充口径，如"扇区覆盖 34/36"
 
-    // ── 输出：显示载荷（偏差图 / 截面 / 3D 标注）──
-    bool hasDeviation = false;
-    std::vector<double> devValues;             // 与 devCells 等长
-    std::vector<std::size_t> devCells;
-    bool devCoolWarm = true;                   // false = turbo（轮廓/圆周类）
-    MeasureTools::Plane plane;
+    // ── 输出：3D 标注载荷（拟合平面 / ROI 包围盒）──
     bool hasPlane = false;
     std::array<double, 3> planePoint{};
     std::array<double, 3> planeNormal{};
     bool hasBox = false;
     std::array<double, 3> boxMin{};
     std::array<double, 3> boxMax{};
-    bool hasSection = false;
-    std::vector<std::array<double, 2>> section;   // (距离, 高度)
-    double sectionStep = 0.0;
-    std::vector<Measurement::Annotation> annotations;
 };
 
 class MeasurePage : public QWidget {
@@ -102,14 +92,6 @@ public:
     void setRoiRects(const QVector<QRect>& rects, const QString& note);
     // 重复性序列库由面板持有：跨页共用、跨帧累积。
     void setSeriesStore(QMap<QString, QVector<double>>* store);
-    // 3D 偏差着色开关的双向同步（面板 / 3D 工具栏）。只同步勾选状态；要立刻
-    // 看到效果由调用方决定（rerun()），免得一次点击触发 7 页各自重算。
-    // 自绘界面的页（3D 孔洞）没有基类的勾选框，所以这两个入口是虚函数。
-    virtual void setDeviationColoring(bool on);
-    bool deviationColoring() const;
-    // 用当前 ROI 重算上一次的结果（不写新的 [测量-结果]）：改着色开关时用。
-    // 自绘界面重写它来把重算后的数值重新画到结果面板。
-    virtual void rerun();
     // 新的一帧 / 新一轮测量：清掉结果与显示载荷（重复性序列不动）。
     // 自绘界面重写它来把结果面板复位成「等待测量」。
     virtual void resetResult();
@@ -130,7 +112,6 @@ public:
 
 signals:
     void snapshotReady(const Measurement::Snapshot& snapshot);
-    void deviationColoringChanged(bool on);
     void clearRoiRequested();
     void logRequested(const QString& line);
     // ROI 选择变化（自定义界面的页用它刷新「测量区域」等显示）。
@@ -155,7 +136,7 @@ protected:
     double primaryValue() const { return m_primaryValue; }
     QString primaryKey() const { return m_primaryKey; }
     QString lastHintText() const { return m_lastHint; }
-    // 自绘界面的公差（写进快照，3D 着色/趋势与其他页一致）。
+    // 自绘界面的公差（写进测量帧清单，回放时口径不丢）。
     void setCustomTolerance(bool enabled, double lo, double hi);
 
     // 给子类用的小工具（与旧面板同一套口径）。
@@ -171,11 +152,7 @@ protected:
     // 重复性页要读的当前序列（序列库在基类手里，跨页共用）。
     QString currentSeriesName() const;
     const QVector<double>* currentSeries() const;
-    // applyDeviation() 用它判断要不要生成 3D 着色点云（自绘界面重写）。
-    virtual bool wantsDeviationColors() const;
 
-    double m_devLo = 0.0;
-    double m_devHi = 0.0;
     QString m_lastHint;
     bool m_customTolEnabled = false;
     double m_customTolLo = -0.05;
@@ -186,7 +163,6 @@ private:
     void run(bool logResult = true);
     void publish();
     void showHint(const QString& text, bool error = true);
-    void applyDeviation(MeasureContext& ctx);
     void onRepeatAdd();
     void clearSeries();
 
@@ -204,22 +180,13 @@ private:
     std::vector<MeasureTools::Vec3> m_pts[2];
     std::vector<std::size_t> m_cells[2];
 
-    // 结果与显示载荷（本页私有：7 个页各有一份，互不干扰）
+    // 结果与 3D 标注载荷（本页私有：7 个页各有一份，互不干扰）
     std::vector<Measurement::ResultRow> m_rows;
     QString m_primaryKey;
     double m_primaryValue = 0.0;
     bool m_hasPrimary = false;
     int m_primaryIndex = -1;     // 主值在结果表里的行号（[测量-结果] 取它的点数与可信度）
     bool m_hasResult = false;
-    QString m_footer;
-    QVector<Measurement::DevSample> m_devSamples;
-    bool m_devRobust = false;
-    int m_devClipped = 0;
-    bool m_devCoolWarm = true;
-    QVector<Measurement::Annotation> m_annotations;
-    std::vector<std::array<double, 2>> m_section;
-    double m_sectionStep = 0.0;
-    std::shared_ptr<const std::vector<std::array<float, 3>>> m_cloudColors;
     bool m_hasPlane = false;
     std::array<double, 3> m_planePoint{};
     std::array<double, 3> m_planeNormal{};
@@ -238,7 +205,6 @@ private:
     QCheckBox* m_tolEnable = nullptr;
     QDoubleSpinBox* m_tolLo = nullptr;
     QDoubleSpinBox* m_tolHi = nullptr;
-    QCheckBox* m_devColorBox = nullptr;
     QPushButton* m_runBtn = nullptr;
     QPushButton* m_repeatAddBtn = nullptr;
     QPushButton* m_roiClearBtn = nullptr;
