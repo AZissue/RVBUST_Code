@@ -1188,12 +1188,6 @@ void CameraManager::setPreviewCamera(PreviewCamera camera)
     RuntimeLog::log("[CAM] preview camera: %s", previewCameraName(camera));
 }
 
-bool CameraManager::isStereo() const
-{
-    // X1 has no extra camera; X2 may or may not have it
-    return m_impl->isX2() && m_impl->devInfo.support_extra;
-}
-
 bool CameraManager::isPreviewing() const
 {
     return m_previewTimer->isActive();
@@ -1292,7 +1286,7 @@ void CameraManager::onPreviewTick()
                                 m_previewTimer->isActive() ? 1 : 0,
                                 m_previewFailures.load(), gen);
             }
-            if (!frames.left.isNull()) {
+            if (!frames.image.isNull()) {
                 const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
                 const qint64 gapMs = m_lastPreviewFrameMs > 0
                                          ? nowMs - m_lastPreviewFrameMs : 0;
@@ -1310,7 +1304,7 @@ void CameraManager::onPreviewTick()
                                     m_previewFailures.load(), gen);
                 }
                 m_lastPreviewFrameMs = nowMs;
-                emit previewFrameReady(frames.left);
+                emit previewFrameReady(frames.image);
                 m_previewFailures = 0;
             } else if (++m_previewFailures >= 20) {
                 // ~2 s of consecutive failures: the camera is probably gone.
@@ -1318,11 +1312,9 @@ void CameraManager::onPreviewTick()
                 emit cameraError(QStringLiteral("预览连续失败，相机可能已断开"));
                 scheduleReconnect();
             }
-            if (!frames.right.isNull())
-                emit previewRightFrameReady(frames.right);
             // Self-schedule the next capture for maximum throughput; the
             // timer acts as a fallback kick when a frame fails.
-            if (m_previewTimer->isActive() && !frames.left.isNull())
+            if (m_previewTimer->isActive() && !frames.image.isNull())
                 onPreviewTick();
         }, Qt::QueuedConnection);
     });
@@ -1352,8 +1344,7 @@ CameraManager::PreviewFrames CameraManager::capturePreviewFrameX1()
         RVC::Image img = m_impl->x1.GetImage();
         if (!img.IsValid()) return out;
 
-        out.left = DetectionEngine::rvcToQImage(img);
-        // X1 has no right camera — no stereo preview
+        out.image = DetectionEngine::rvcToQImage(img);
     } catch (const std::exception& e) {
         emit cameraError(QStringLiteral("预览失败: %1").arg(e.what()));
     } catch (...) {
@@ -1390,21 +1381,7 @@ CameraManager::PreviewFrames CameraManager::capturePreviewFrameX2()
         RVC::Image img = m_impl->x2.GetImage(cid);
         if (!img.IsValid()) return out;
 
-        out.left = DetectionEngine::rvcToQImage(img);
-
-        if (m_previewCamera == PreviewCamera::Right) {
-            // 3D 视窗的右眼叠加显示的正是这一帧：不用再抓一次。
-            out.right = out.left;
-        } else if (m_impl->devInfo.support_extra && gen == m_deviceYieldGen.load()) {
-            // 预览不是右相机时，仍抓一帧右眼给 3D 视窗的叠加用。先复查让位
-            // 请求，别让第二帧拖住正在等设备的采集。
-            RVC::CameraID rightId = RVC::CameraID_Right;
-            if (m_impl->x2.Capture2D(rightId)) {
-                RVC::Image rightImg = m_impl->x2.GetImage(rightId);
-                if (rightImg.IsValid())
-                    out.right = DetectionEngine::rvcToQImage(rightImg);
-            }
-        }
+        out.image = DetectionEngine::rvcToQImage(img);
     } catch (const std::exception& e) {
         emit cameraError(QStringLiteral("预览失败: %1").arg(e.what()));
     } catch (...) {

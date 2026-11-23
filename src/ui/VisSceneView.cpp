@@ -601,12 +601,6 @@ VisSceneView::VisSceneView(QWidget* parent)
                                  + QStringLiteral("QLabel { font-size: %1px; }")
                                        .arg(Theme::FONT_H2));
 
-    m_imageOverlay = new QLabel(m_containerWidget);
-    m_imageOverlay->setAlignment(Qt::AlignCenter);
-    m_imageOverlay->setScaledContents(true);
-    m_imageOverlay->setStyleSheet(QStringLiteral("border: none; background-color: transparent;"));
-    m_imageOverlay->hide();
-
     // No title bar — the "3D 标定场景" label lives inside the view (the
     // placeholder), so the scene fills the whole widget and can grow larger.
     setupToolbar();
@@ -728,7 +722,6 @@ void VisSceneView::updatePointCloud(const FrameBuffer::FloatBuf& xyz,
     }
 
     m_placeholder->hide();
-    m_imageOverlay->hide();
 #else
     (void)xyz; (void)rgb;
 #endif
@@ -1038,8 +1031,7 @@ void VisSceneView::clear()
     d->ensureGround();
     d->ensureAxes();
 
-    // Make sure the floating window is visible again (it is hidden while the
-    // stereo image overlay is shown).
+    // Make sure the floating Vis window is visible.
     if (d->visHwnd) {
         ShowWindow(d->visHwnd, SW_SHOW);
         positionVisWindow(*d, m_viewport);
@@ -1370,40 +1362,6 @@ void VisSceneView::clearBoardFrame()
 }
 
 // ═══════════════════════════════════════════════════════════════
-// 2D Image overlay
-// ═══════════════════════════════════════════════════════════════
-
-void VisSceneView::showImage(const QImage& img)
-{
-    m_placeholder->hide();
-    m_imageOverlay->setPixmap(QPixmap::fromImage(img.scaled(m_containerWidget->size(),
-                              Qt::KeepAspectRatio, Qt::SmoothTransformation)));
-    m_imageOverlay->setGeometry(0, 0, m_containerWidget->width(), m_containerWidget->height());
-    m_imageOverlay->show();
-#ifdef HAS_RVBUST_VIS
-    // The floating Vis window would cover the Qt overlay; hide it while the
-    // stereo right-camera image is shown.
-    if (d && d->initialized && d->visHwnd)
-        ShowWindow(d->visHwnd, SW_HIDE);
-#endif
-}
-
-void VisSceneView::hideImage()
-{
-    m_imageOverlay->hide();
-#ifdef HAS_RVBUST_VIS
-    if (d && d->initialized && d->visHwnd && !m_shuttingDown) {
-        ShowWindow(d->visHwnd, SW_SHOW);
-        positionVisWindow(*d, m_viewport);
-    } else {
-        m_placeholder->show();
-    }
-#else
-    m_placeholder->show();
-#endif
-}
-
-// ═══════════════════════════════════════════════════════════════
 // Lifecycle
 // ═══════════════════════════════════════════════════════════════
 
@@ -1536,8 +1494,6 @@ void VisSceneView::resizeEvent(QResizeEvent* event)
     // never blocks on a synchronous Vis command.
     if (m_placeholder)
         m_placeholder->setGeometry(0, 0, cw, ch);
-    if (m_imageOverlay)
-        m_imageOverlay->setGeometry(0, 0, cw, ch);
     if (m_viewport)
         m_viewport->setGeometry(0, 0, cw, ch);
 

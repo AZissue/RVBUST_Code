@@ -150,7 +150,6 @@ public:
     bool previewMatchesCaptureCamera() const { return m_previewCamera == captureCamera(); }
 
     // Preview stream
-    bool isStereo() const;
     bool isPreviewing() const;
     void startPreview();
     void stopPreview();
@@ -163,7 +162,6 @@ public:
 
 signals:
     void previewFrameReady(const QImage& image);
-    void previewRightFrameReady(const QImage& image);
     // Point/colour payload is handed over as shared immutable buffers: emitting
     // the signal (and every slot that keeps a reference) costs a refcount bump
     // instead of an 8 MB copy each.
@@ -218,8 +216,7 @@ private:
     // Preview frame capture (runs in a worker thread; projector disabled so
     // the 2D stream is as fast as the camera allows).
     struct PreviewFrames {
-        QImage left;
-        QImage right;      // stereo X2 only
+        QImage image;      // the selected preview camera's frame
         bool abandoned = false;   // round dropped to hand the device to a capture
         // Wall time the round spent inside the worker (device lock wait + SDK
         // Capture2D/GetImage + pixel conversion), measured by the caller.  Only

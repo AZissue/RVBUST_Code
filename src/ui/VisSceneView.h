@@ -76,10 +76,6 @@ public:
     void setBoardFrame(const BoardFrame& frame);
     void clearBoardFrame();
 
-    // 2D image overlay (for stereo camera right-eye preview)
-    void showImage(const QImage& img);
-    void hideImage();
-
     // ── Marker picking (识别点选择填充) ──
     // Recognition markers (3D + their 2D-overlay labels) become clickable /
     // hoverable in the 3D scene.  Picking never changes the rendered scene:
@@ -144,7 +140,6 @@ private:
     QWidget* m_containerWidget = nullptr;
     QWidget* m_viewport = nullptr;
     QLabel* m_placeholder = nullptr;
-    QLabel* m_imageOverlay = nullptr;
     // T-002 判据 1：原来那条「识别后可点击场景中的点选择填充」视窗内提示已删除，
     // 改由 logRequested 进操作日志；m_pickHintAnnounced 保证一次识别只写一行。
     QLabel* m_hoverTip = nullptr;   // light-weight hover label (white text +

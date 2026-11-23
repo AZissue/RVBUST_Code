@@ -361,8 +361,6 @@ void MainWindow::wireSignals()
             // livePreview=true: streaming frames take the cheap nearest-neighbour
             // path and the 200 ms settle timer does one smooth pass afterwards.
             [this](const QImage& img) { m_view2d->updateFrame(img, true, true); });
-    connect(m_camera, &CameraManager::previewRightFrameReady, this,
-            [this](const QImage& img) { m_view3d->showImage(img); });
     // 2D 视窗底部工具栏「相机选择」：只改预览流来自哪台相机。采集/识别仍用
     // 相机自己的采集相机（X2 彩色优先），所以像素→3D 只在两者一致时有效。
     connect(m_view2d, &Image2DView::previewCameraSelected, this,
@@ -442,7 +440,6 @@ void MainWindow::wireSignals()
     });
     connect(m_camera, &CameraManager::cameraDisconnected, this, [this]() {
         m_topNav->setCameraStatus(false);
-        m_view3d->hideImage();
         m_actionButtons->setCaptureEnabled(false);
         m_actionButtons->setPreviewActive(false);
         m_actionButtons->setPreviewEnabled(false);
@@ -702,8 +699,7 @@ void MainWindow::wireSignals()
                     m_logger->info(QStringLiteral("预览已开启"));
                 } else {
                     m_camera->stopPreview();
-                    m_view3d->hideImage();
-                    m_actionButtons->setPreviewActive(false);
+                                m_actionButtons->setPreviewActive(false);
                     m_logger->info(QStringLiteral("预览已停止"));
                 }
             });
@@ -1014,7 +1010,6 @@ void MainWindow::onCapture()
         m_actionButtons->setPreviewActive(false);
         if (m_view2d) m_view2d->setPreviewPausedHint(false, 0);
     }
-    m_view3d->hideImage();
     m_flow->beginCapture();
 }
 
@@ -1964,7 +1959,6 @@ void MainWindow::beginProgramCapture()
         if (m_view2d)
             m_view2d->setPreviewPausedHint(false, 0);
     }
-    m_view3d->hideImage();
     m_flow->beginCapture();
 }
 

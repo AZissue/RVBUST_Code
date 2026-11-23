@@ -21,6 +21,10 @@
       采集/识别仍用采集相机（X2 彩色优先）。预览≠采集相机时像素→3D 拒绝取点
       并提示切回，避免用错对应图。
     - 版本号升到 **3.2**（`AppInfo.h` + `CMakeLists.txt`），帮助文档同步。
+    - **补充（同日）**：3D 视窗预览时不再叠加另一台相机的画面——删除
+      `VisSceneView` 的右眼图像浮层（`showImage`/`hideImage`/`m_imageOverlay`）
+      与 `CameraManager::previewRightFrameReady`；预览每轮只抓「相机选择」里的
+      那一台（少一次 `Capture2D`），`PreviewFrames::left/right` 合并为 `image`。
   - **验证**：D 工作区 `build`（完整）与 `build-release`
     （`HANDEYE_HIDE_MEASUREMENT_TOOLS=ON`）均构建成功，ctest 3/3 通过；
     AICode 镜像同步后构建 + ctest 3/3 通过。
