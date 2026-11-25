@@ -1,0 +1,39 @@
+QWidget#startup { background: #181b20; }
+QWidget {
+    color: #eef0f4;
+    font-family: "Segoe UI", "Microsoft YaHei UI";
+    font-size: 14px;
+}
+QLabel#productName { color: #ff868c; font-size: 13px; font-weight: 700; }
+QLabel#pageTitle { font-size: 34px; font-weight: 700; }
+QFrame#startupSidebar {
+    background: #20242b;
+    border-right: 1px solid #323842;
+}
+QPushButton, QLineEdit {
+    background: #262b34;
+    border: 1px solid #414955;
+    border-radius: 8px;
+    padding: 9px 12px;
+}
+QPushButton:hover { background: #333a46; }
+QPushButton:focus, QLineEdit:focus { border-color: #ff9ca2; }
+QPushButton:disabled { color: #89919d; background: #232730; border-color: #323842; }
+QFrame#startupSidebar QPushButton {
+    text-align: left;
+    min-height: 26px;
+    background: transparent;
+    border-color: transparent;
+}
+QFrame#startupSidebar QPushButton:hover { background: #303640; }
+QFrame#startupSidebar QPushButton:checked { background: #59353e; border-color: #79515a; }
+QFrame#startupSidebar QPushButton:focus { border-color: #ff9ca2; }
+QPushButton[entry="true"] { min-height: 66px; font-size: 16px; font-weight: 600; }
+QPushButton#newProject { background: #912c39; border-color: #c15a65; }
+QPushButton#newProject:hover { background: #a73644; }
+QPushButton#newProject:focus { border-color: #ffb3b7; }
+QFrame#libraryPanel, QDialog, QMessageBox { background: #20242b; }
+QFrame#libraryPanel { border: 1px solid #323842; border-radius: 10px; }
+QLabel#libraryTitle { font-size: 16px; font-weight: 600; }
+QLabel#emptyLibrary { color: #a9b2bf; }
+QListWidget { background: #20242b; border: 0; outline: 0; }
